@@ -1,0 +1,55 @@
+{
+  "name": "tmux-claude-telegram",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "setup": "tsx src/scripts/setup.ts",
+    "setup:reconfigure": "tsx src/scripts/setup.ts --reconfigure",
+    "doctor": "tsx src/scripts/doctor.ts",
+    "service:install": "scripts/install-launchd.sh",
+    "service:uninstall": "scripts/uninstall-launchd.sh",
+    "service:status": "scripts/service.sh status",
+    "service:pause": "scripts/service.sh pause",
+    "service:resume": "scripts/service.sh resume",
+    "service:restart": "scripts/service.sh restart",
+    "service:logs": "scripts/service.sh logs",
+    "release": "scripts/release.sh",
+    "lint:types": "tsc --noEmit",
+    "lint:types:tests": "tsc -p tsconfig.tests.json --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "knip": "knip",
+    "depcruise": "depcruise src --config .dependency-cruiser.cjs",
+    "prepare": "husky || true"
+  },
+  "dependencies": {
+    "@grammyjs/files": "^1.2.0",
+    "dotenv": "^17.4.0",
+    "grammy": "^1.43.0",
+    "https-proxy-agent": "^9.0.0",
+    "node-fetch": "^3.3.2",
+    "telegramify-markdown": "^1.3.3",
+    "tsx": "^4.22.4",
+    "zod": "^4.4.3"
+  },
+  "lint-staged": {
+    "*.{ts,js,json}": "biome check --write --no-errors-on-unmatched"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "@types/node": "^25.9.2",
+    "@vitest/coverage-v8": "^4.1.8",
+    "dependency-cruiser": "^17.4.3",
+    "husky": "^9.1.7",
+    "knip": "^6.16.1",
+    "lint-staged": "^17.0.7",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.8"
+  }
+}

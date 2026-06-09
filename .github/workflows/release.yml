@@ -1,0 +1,64 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history + tags so the changelog can diff against the previous tag
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          REPO="OctopusGarage/tmux-claude-bot"
+          PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+
+          {
+            echo "## Changes"
+            echo
+            if [ -n "$PREV" ]; then
+              git log --no-merges --pretty='- %s' "${PREV}..${TAG}" | grep -v '^- release:' || true
+            else
+              git log --no-merges --pretty='- %s' "${TAG}" | grep -v '^- release:' || true
+            fi
+            echo
+            echo "## Install / update (macOS)"
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash"
+            echo '```'
+            echo
+            echo "Pin this version with \`TMUX_CLAUDE_BOT_VERSION=${TAG}\`. See [CONTRIBUTING.md](https://github.com/${REPO}/blob/main/CONTRIBUTING.md) for dev, deploy, and release."
+            echo
+            echo "Prefer an AI assistant? Paste this to ChatGPT / Claude / Gemini (or a shell agent):"
+            echo
+            echo '```text'
+            echo 'Install "tmux-claude-bot" on my Mac for me (open-source, macOS-only). Download the latest'
+            echo "release tarball from https://github.com/${REPO}/releases/latest, extract it, read the"
+            echo 'INSTALL.md inside, and follow it. Guide me step by step and ask me for anything it needs'
+            echo '(like my Telegram bot token).'
+            echo '```'
+            if [ -n "$PREV" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${REPO}/compare/${PREV}...${TAG}"
+            fi
+          } > release-notes.md
+
+          gh release create "$TAG" --title "$TAG" --notes-file release-notes.md
+
+          # Attach a lean runtime tarball: source + scripts + manifests only — no
+          # tests, CI, lint configs, or docs. The installer extracts this (not the
+          # full source archive) and installs with --omit=dev.
+          STAGE="tmux-claude-bot-${TAG}"
+          git archive --format=tar.gz --prefix="${STAGE}/" "$TAG" \
+            src scripts package.json package-lock.json .env.example tsconfig.json README.md INSTALL.md install.sh \
+            -o "${STAGE}.tar.gz"
+          gh release upload "$TAG" "${STAGE}.tar.gz"

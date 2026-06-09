@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.octopusgarage.tmux-claude-bot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PROJECT_DIR__/scripts/launchd-wrapper.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_DIR__</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>__PROJECT_DIR__/logs/launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_DIR__/logs/launchd.err.log</string>
+
+  <!--
+    Only PATH is set here. Proxy and all other config live in .env (single
+    source of truth) and are loaded by dotenv at startup. Do NOT set HTTP_PROXY
+    here: launchd EnvironmentVariables become process.env, and dotenv does not
+    override existing env vars, so a value here (even empty) would shadow .env.
+  -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

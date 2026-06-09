@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/scripts/*.ts"],
+  "project": ["src/**/*.ts"],
+  "ignoreBinaries": [
+    "scripts/install-launchd.sh",
+    "scripts/uninstall-launchd.sh",
+    "scripts/release.sh",
+    "scripts/service.sh"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "vitest": {
+    "config": ["vitest.config.ts"],
+    "entry": ["tests/**/*.test.ts"]
+  }
+}
