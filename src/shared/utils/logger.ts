@@ -122,11 +122,23 @@ function formatLine(level: LogLevel, file: string, line: number, message: string
   return `${local} ${paddedLevel} ${file}:${line} ${message}`;
 }
 
+/**
+ * Strip the Telegram bot token before anything is written. node-fetch error
+ * messages embed the failing request URL, which for the Bot API contains the
+ * secret (…/bot<id>:<secret>/…). Redacting the exact env token plus the generic
+ * URL pattern keeps the credential out of console output and log files.
+ */
+export function redactSecrets(message: string): string {
+  const token = process.env.BOT_TOKEN;
+  const withoutToken = token ? message.split(token).join("<redacted-token>") : message;
+  return withoutToken.replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot<redacted-token>");
+}
+
 function write(level: LogLevel, message: string): void {
   if (LEVELS[level] < LEVELS[MIN_LEVEL]) return;
 
   const { file, line } = resolveCallerFrame();
-  const formatted = formatLine(level, file, line, message);
+  const formatted = formatLine(level, file, line, redactSecrets(message));
   const dateStr = getDateStr();
 
   // Console output with color
