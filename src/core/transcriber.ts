@@ -7,7 +7,11 @@ const execAsync = promisify(exec);
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
 
-export async function transcribeOgg(filePath: string, bin?: string): Promise<string> {
+export async function transcribeOgg(
+  filePath: string,
+  bin?: string,
+  language?: string,
+): Promise<string> {
   const MLX_WHISPER_BIN = bin ?? process.env.MLX_WHISPER_BIN;
   if (!MLX_WHISPER_BIN) {
     throw new Error("MLX_WHISPER_BIN not configured. Set it in .env");
@@ -22,7 +26,12 @@ export async function transcribeOgg(filePath: string, bin?: string): Promise<str
   const parsed = nodePath.parse(resolved);
   const outputDir = os.tmpdir();
 
-  await execAsync(`${MLX_WHISPER_BIN} ${resolved} --output-format txt --output-dir ${outputDir}`);
+  // Force a language when set (e.g. zh) — whisper's auto-detect frequently
+  // mistakes Chinese for Japanese. "auto"/empty leaves detection to whisper.
+  const langFlag = language && language !== "auto" ? ` --language ${language}` : "";
+  await execAsync(
+    `${MLX_WHISPER_BIN} ${resolved} --output-format txt --output-dir ${outputDir}${langFlag}`,
+  );
 
   const txtFile = nodePath.join(outputDir, `${parsed.name}.txt`);
   if (!fs.existsSync(txtFile)) {

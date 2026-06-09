@@ -81,10 +81,11 @@ async function main(): Promise<void> {
 
   // 5. optional voice transcription (mlx_whisper). Not configured == not a failure.
   const mlxBin = envMap?.get("MLX_WHISPER_BIN") ?? "";
+  const langPref = envMap?.get("WHISPER_LANGUAGE") || "zh";
   if (!mlxBin) {
     console.log("- voice transcription disabled (MLX_WHISPER_BIN empty; npm run whisper:install)");
   } else if (existsSync(mlxBin)) {
-    ok("voice: MLX_WHISPER_BIN points to an existing binary");
+    ok(`voice: MLX_WHISPER_BIN points to an existing binary (language ${langPref})`);
   } else {
     bad("voice: MLX_WHISPER_BIN set but binary is missing", "run: npm run whisper:install");
   }

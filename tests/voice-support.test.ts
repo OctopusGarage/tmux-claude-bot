@@ -10,9 +10,34 @@ vi.mock("node:os", async (importActual) => {
 });
 
 import * as os from "node:os";
-import { checkVoiceSupport, resolveWhisperBin } from "../src/core/voice-support.js";
+import {
+  checkVoiceSupport,
+  resolveWhisperBin,
+  resolveWhisperLanguage,
+} from "../src/core/voice-support.js";
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
+
+describe("resolveWhisperLanguage", () => {
+  afterEach(() => {
+    delete process.env.WHISPER_LANGUAGE;
+  });
+
+  it("defaults to zh when unset", () => {
+    delete process.env.WHISPER_LANGUAGE;
+    expect(resolveWhisperLanguage()).toBe("zh");
+  });
+
+  it("honours an explicit WHISPER_LANGUAGE", () => {
+    process.env.WHISPER_LANGUAGE = "en";
+    expect(resolveWhisperLanguage()).toBe("en");
+  });
+
+  it("passes through auto", () => {
+    process.env.WHISPER_LANGUAGE = "auto";
+    expect(resolveWhisperLanguage()).toBe("auto");
+  });
+});
 
 describe("resolveWhisperBin", () => {
   afterEach(() => {

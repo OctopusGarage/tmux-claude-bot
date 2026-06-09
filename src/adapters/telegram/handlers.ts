@@ -34,7 +34,7 @@ import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.j
 const HELP_TEXT = `🤖 tmux-claude-telegram
 
 发任意文字 → 转给 Claude → 返回结果
-🎙️ 语音转写为可选功能 · /voice_install 一键启用（仅 Apple Silicon）
+🎙️ 语音转写为可选功能 · /voice_install 启用（仅 Apple Silicon）· /voice_lang 设识别语言
 
 提示：消息会收到 👀（已接收）/👍（完成）回应；处理中就地显示进度并编辑成结果；结果下方有 ⏎/✋/⎋/🔄 快捷按钮。
 

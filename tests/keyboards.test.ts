@@ -51,6 +51,14 @@ describe("parseCallbackData", () => {
     expect(parseCallbackData("qs")).toEqual({ kind: "queuestatus" });
   });
 
+  it("parses voice-language picks and rejects unknown languages", () => {
+    expect(parseCallbackData("vl:zh")).toEqual({ kind: "voicelang", lang: "zh" });
+    expect(parseCallbackData("vl:en")).toEqual({ kind: "voicelang", lang: "en" });
+    expect(parseCallbackData("vl:auto")).toEqual({ kind: "voicelang", lang: "auto" });
+    expect(parseCallbackData("vl:ja")).toBeNull();
+    expect(parseCallbackData("vl:")).toBeNull();
+  });
+
   it("returns null for unknown / malformed data", () => {
     expect(parseCallbackData("")).toBeNull();
     expect(parseCallbackData("garbage")).toBeNull();

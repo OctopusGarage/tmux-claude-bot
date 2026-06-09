@@ -8,10 +8,13 @@ import {
   checkVoiceSupport,
   INSTALL_SCRIPT,
   isVoicePlatformSupported,
+  persistEnvVar,
   persistWhisperBin,
+  resolveWhisperLanguage,
 } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
+import { buildVoiceLangKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
@@ -65,6 +68,29 @@ export function registerVoiceHandler<TContext extends Context>(
     }
   });
 
+  // Set/show the forced recognition language. Works any time (even before the
+  // feature is installed) so the preference is ready when voice is enabled.
+  bot.command("voice_lang", async (ctx: Context) => {
+    const arg = (ctx.message?.text ?? "").split(/\s+/)[1]?.trim().toLowerCase();
+    if (!arg) {
+      // No arg → show a button picker; tapping is handled in handleCallbackQuery.
+      const current = resolveWhisperLanguage();
+      await reply(ctx, "info", MSG.voiceLangCurrent(current), {
+        replyTarget,
+        replyMarkup: buildVoiceLangKeyboard(current),
+      });
+      return;
+    }
+    if (!/^(auto|[a-z]{2})$/.test(arg)) {
+      await reply(ctx, "err", MSG.voiceLangInvalid, { replyTarget });
+      return;
+    }
+    process.env.WHISPER_LANGUAGE = arg;
+    persistEnvVar("WHISPER_LANGUAGE", arg);
+    logger.info(`[voice-lang] recognition language set to ${arg}`);
+    await reply(ctx, "info", MSG.voiceLangSet(arg), { replyTarget });
+  });
+
   bot.on("message:voice", async (ctx: Context) => {
     const chatId = ctx.chat?.id ?? "unknown";
     logger.info(`[voice-handler] voice message received chat=${chatId}`);
@@ -91,6 +117,7 @@ export function registerVoiceHandler<TContext extends Context>(
       return;
     }
 
+    const language = resolveWhisperLanguage();
     let transcribed: string;
     try {
       if (file.file_path.startsWith("http")) {
@@ -100,7 +127,7 @@ export function registerVoiceHandler<TContext extends Context>(
         if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
         const buffer = await res.arrayBuffer();
         fs.writeFileSync(tmpPath, Buffer.from(buffer));
-        transcribed = await transcribeOgg(tmpPath, support.bin);
+        transcribed = await transcribeOgg(tmpPath, support.bin, language);
         try {
           fs.unlinkSync(tmpPath);
         } catch {
@@ -112,7 +139,7 @@ export function registerVoiceHandler<TContext extends Context>(
         // download() added by hydrateFiles at runtime — cast to avoid TS error
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const downloadedPath = await (file as any).download(tmpPath);
-        transcribed = await transcribeOgg(downloadedPath, support.bin);
+        transcribed = await transcribeOgg(downloadedPath, support.bin, language);
         try {
           fs.unlinkSync(downloadedPath);
         } catch {

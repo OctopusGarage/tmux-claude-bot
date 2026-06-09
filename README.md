@@ -167,6 +167,11 @@ off until you install it** — if you never use voice, you can ignore this entir
 If you send a voice message before enabling the feature, the bot replies with a
 short note telling you how to turn it on — it never fails silently.
 
+**Recognition language.** whisper's auto-detect often misreads Chinese as
+Japanese, so transcription forces a language — **`zh` by default**. Switch any
+time from Telegram with `/voice_lang <zh|en|auto>` (`auto` re-enables detection);
+it persists to `.env`. Override the default with `WHISPER_LANGUAGE` in `.env`.
+
 ## Claude Running Detection
 
 The bot decides whether Claude is running by **process detection**, not screen

@@ -11,7 +11,9 @@ vi.mock("../src/core/transcriber.js", () => ({
 vi.mock("../src/core/voice-support.js", () => ({
   checkVoiceSupport: vi.fn(() => ({ ready: true, bin: "mlx_whisper" })),
   isVoicePlatformSupported: vi.fn(() => true),
+  resolveWhisperLanguage: vi.fn(() => "zh"),
   persistWhisperBin: vi.fn(),
+  persistEnvVar: vi.fn(),
   INSTALL_SCRIPT: "/repo/scripts/install-whisper.sh",
 }));
 
@@ -79,7 +81,7 @@ describe("registerVoiceHandler", () => {
     await capturedHandler(mockCtx);
 
     expect(mockCtx.getFile).toHaveBeenCalled();
-    expect(transcribeOgg).toHaveBeenCalledWith("/tmp/test.ogg", "mlx_whisper");
+    expect(transcribeOgg).toHaveBeenCalledWith("/tmp/test.ogg", "mlx_whisper", "zh");
     const replyTexts = (mockCtx.reply as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(
       replyTexts.some((t) => typeof t === "string" && t.includes("🎙️ 你说的是：「hello world」")),

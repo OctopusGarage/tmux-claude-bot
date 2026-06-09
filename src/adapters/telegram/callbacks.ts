@@ -2,6 +2,7 @@ import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage } from "../../core/dispatch.js";
 import type { QueuedMessage } from "../../core/queue.js";
+import { persistEnvVar } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { timeApi } from "../../shared/utils/timing.js";
@@ -11,8 +12,10 @@ import {
   buildExpandedControlKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
+  buildVoiceLangKeyboard,
   parseCallbackData,
 } from "./keyboards.js";
+import { MSG } from "./messages.js";
 import {
   addRecentProjectBySid,
   aliveProjectButtons,
@@ -85,6 +88,22 @@ export async function handleCallbackQuery(
     if (parsed.kind === "queuestatus") {
       await safeAnswerCallback(ctx);
       await sendQueueStatus(ctx, deps);
+      return;
+    }
+    // Voice-language pick: set it live + persist, confirm via toast, and refresh
+    // the picker in place so the ✅ moves to the new selection.
+    if (parsed.kind === "voicelang") {
+      process.env.WHISPER_LANGUAGE = parsed.lang;
+      persistEnvVar("WHISPER_LANGUAGE", parsed.lang);
+      logger.info(`[voice-lang] set to ${parsed.lang} via button`);
+      await safeAnswerCallback(ctx, MSG.voiceLangSet(parsed.lang));
+      try {
+        await timeApi("editMessageReplyMarkup", () =>
+          ctx.editMessageReplyMarkup({ reply_markup: buildVoiceLangKeyboard(parsed.lang) }),
+        );
+      } catch {
+        /* message may be gone or unchanged */
+      }
       return;
     }
     // Recreate/switch a recent project — resolves by recent path, not by an

@@ -49,6 +49,32 @@ describe("transcribeOgg", () => {
     expect(result).toBe("test transcription output");
   });
 
+  it("passes --language when a language is given", async () => {
+    const ogg = nodePath.join(TMP, "test_voice_lang.ogg");
+    fs.writeFileSync(ogg, "fake ogg data");
+    fs.writeFileSync(nodePath.join(TMP, "test_voice_lang.txt"), "你好");
+
+    await transcribeOgg(ogg, "mlx_whisper", "zh");
+
+    expect(exec).toHaveBeenCalledWith(
+      expect.stringContaining("--language zh"),
+      expect.any(Function),
+    );
+  });
+
+  it("omits --language for auto", async () => {
+    const ogg = nodePath.join(TMP, "test_voice_auto.ogg");
+    fs.writeFileSync(ogg, "fake ogg data");
+    fs.writeFileSync(nodePath.join(TMP, "test_voice_auto.txt"), "hi");
+
+    await transcribeOgg(ogg, "mlx_whisper", "auto");
+
+    expect(exec).toHaveBeenCalledWith(
+      expect.not.stringContaining("--language"),
+      expect.any(Function),
+    );
+  });
+
   it("throws on mlx_whisper failure", async () => {
     const ogg = nodePath.join(TMP, "test_voice_fail.ogg");
     fs.writeFileSync(ogg, "fake ogg data");

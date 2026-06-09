@@ -52,6 +52,18 @@ export function resolveWhisperBin(): string {
   return process.env.MLX_WHISPER_BIN || WHISPER_VENV_BIN;
 }
 
+/** Default recognition language: Chinese — whisper auto-detect often misreads it as Japanese. */
+export const DEFAULT_WHISPER_LANGUAGE = "zh";
+
+/**
+ * Resolve the forced recognition language for mlx_whisper. Empty/unset falls
+ * back to zh; "auto" means let whisper detect. Switchable at runtime via the
+ * /voice_lang command, which sets process.env and persists to .env.
+ */
+export function resolveWhisperLanguage(): string {
+  return process.env.WHISPER_LANGUAGE || DEFAULT_WHISPER_LANGUAGE;
+}
+
 export function checkVoiceSupport(): VoiceSupport {
   const bin = resolveWhisperBin();
   if (existsSync(bin) && isExecutable(bin)) return { ready: true, bin };
@@ -60,18 +72,22 @@ export function checkVoiceSupport(): VoiceSupport {
 }
 
 /**
- * Persist MLX_WHISPER_BIN into .env so voice survives a restart (the running
- * process picks it up immediately via process.env; this is for next boot).
- * No-op when there is no .env to write into — process.env is enough for now.
+ * Persist a single var into .env so a voice preference survives a restart (the
+ * running process picks it up immediately via process.env; this is for next
+ * boot). No-op when there is no .env to write into — process.env is enough.
+ * Uses the existing file as the template: serializeEnv replaces only that one
+ * line (or appends it) and leaves every other line untouched.
  */
-export function persistWhisperBin(bin: string): void {
+export function persistEnvVar(key: string, value: string): void {
   if (!existsSync(ENV_PATH)) return;
   const current = readFileSync(ENV_PATH, "utf8");
-  // Use the existing file as the template: serializeEnv replaces only the
-  // MLX_WHISPER_BIN line (or appends it) and leaves every other line untouched.
-  const next = serializeEnv(current, { MLX_WHISPER_BIN: bin });
+  const next = serializeEnv(current, { [key]: value });
   const tmp = `${ENV_PATH}.tmp`;
   writeFileSync(tmp, next, "utf8");
   chmodSync(tmp, 0o600);
   renameSync(tmp, ENV_PATH);
+}
+
+export function persistWhisperBin(bin: string): void {
+  persistEnvVar("MLX_WHISPER_BIN", bin);
 }

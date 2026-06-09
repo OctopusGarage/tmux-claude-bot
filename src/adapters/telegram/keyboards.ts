@@ -20,7 +20,8 @@ export type CallbackAction =
   | { kind: "delmode" }
   | { kind: "dellist" }
   | { kind: "listalive" }
-  | { kind: "queuestatus" };
+  | { kind: "queuestatus" }
+  | { kind: "voicelang"; lang: string };
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
@@ -54,12 +55,43 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (!isMessageAction(action)) return null;
     return { kind: "act", action, sid };
   }
+  if (tag === "vl") {
+    const lang = parts[1];
+    if (parts.length !== 2 || !lang || !isVoiceLang(lang)) return null;
+    return { kind: "voicelang", lang };
+  }
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
     return { kind: SID_TAGS[tag] as SidKind, sid };
   }
   return null;
+}
+
+/** Selectable voice recognition languages, in display order. "auto" clears the
+ * forced language and lets whisper detect. */
+export const VOICE_LANGS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: "zh", label: "中文" },
+  { code: "en", label: "英文" },
+  { code: "auto", label: "🌐 自动检测" },
+];
+
+function isVoiceLang(code: string): boolean {
+  return VOICE_LANGS.some((l) => l.code === code);
+}
+
+/**
+ * Voice-language picker: one button per language, the active one marked and
+ * inert. Tapping sends `vl:<code>`, handled in handleCallbackQuery.
+ */
+export function buildVoiceLangKeyboard(current: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  VOICE_LANGS.forEach((l, i) => {
+    if (l.code === current) kb.text(`✅ ${l.label}`, "noop");
+    else kb.text(l.label, `vl:${l.code}`);
+    if (i < VOICE_LANGS.length - 1) kb.row();
+  });
+  return kb;
 }
 
 // The primary control rows, shared by the collapsed and expanded keyboards.

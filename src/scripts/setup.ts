@@ -199,6 +199,10 @@ async function main(): Promise<void> {
       "mlx_whisper binary for voice (optional; blank to disable)",
       mlxDefault,
     );
+    values.WHISPER_LANGUAGE = await ask(
+      "Voice recognition language (zh/en/auto)",
+      existing.get("WHISPER_LANGUAGE") ?? "zh",
+    );
 
     await writeEnv(template, { ...Object.fromEntries(existing), ...values });
     C.ok(`Wrote ${ENV_PATH}`);

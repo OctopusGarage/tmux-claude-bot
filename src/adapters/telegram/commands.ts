@@ -24,4 +24,5 @@ export const BOT_COMMANDS: BotCommand[] = [
     description: "Show recent conversation history (default: last, /history N for Nth recent)",
   },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
+  { command: "voice_lang", description: "Set voice recognition language (zh/en/auto)" },
 ];
