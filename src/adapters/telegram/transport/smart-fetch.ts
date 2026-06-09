@@ -1,4 +1,4 @@
-import { logger } from "../utils/logger.js";
+import { logger } from "../../../shared/utils/logger.js";
 import type { RouteHealthStore, RouteName } from "./route-health.js";
 
 // Kept intentionally loose: the underlying route fetches are node-fetch, whose

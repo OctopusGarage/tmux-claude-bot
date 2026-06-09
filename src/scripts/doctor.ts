@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { parseEnv, validateTokenShape } from "../services/onboarding.js";
+import { parseEnv, validateTokenShape } from "../core/onboarding.js";
 
 const run = promisify(execFile);
 const ROOT = process.cwd();

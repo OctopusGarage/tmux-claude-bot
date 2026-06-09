@@ -1,4 +1,4 @@
-import type { ReplyTargetMap } from "../services/reply-target.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 
 /**
  * Resolve which tmux session an incoming message targets. If the user is

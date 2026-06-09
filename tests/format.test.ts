@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { looksLikeTerminalOutput } from "../src/bot/format.js";
+import { looksLikeTerminalOutput } from "../src/adapters/telegram/format.js";
 
 describe("looksLikeTerminalOutput", () => {
   it("treats a natural-language answer as prose, not terminal", () => {

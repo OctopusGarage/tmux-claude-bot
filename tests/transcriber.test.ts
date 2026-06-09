@@ -12,7 +12,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { exec } from "node:child_process";
-import { transcribeOgg } from "../src/services/transcriber.js";
+import { transcribeOgg } from "../src/core/transcriber.js";
 
 const TMP = os.tmpdir();
 

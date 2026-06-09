@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { startProgress } from "../src/bot/progress.js";
+import { startProgress } from "../src/adapters/telegram/progress.js";
 
 function okApi() {
   return {

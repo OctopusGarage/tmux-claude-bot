@@ -1,13 +1,13 @@
 import * as fs from "node:fs";
 import type { Bot, Context } from "grammy";
-import type { ReplyTargetMap } from "../services/reply-target.js";
-import { transcribeOgg } from "../services/transcriber.js";
-import type { HandlerDeps } from "../types.js";
-import { logger } from "../utils/logger.js";
+import type { HandlerDeps } from "../../core/deps.js";
+import { transcribeOgg } from "../../core/transcriber.js";
+import { logger } from "../../shared/utils/logger.js";
 import { MSG } from "./messages.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
 import { resolveSessionForMessage } from "./reply-routing.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 
 export function registerVoiceHandler<TContext extends Context>(
   bot: Bot<TContext>,

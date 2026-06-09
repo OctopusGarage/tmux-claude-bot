@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sessionShortId } from "../src/utils/hash.js";
+import { sessionShortId } from "../src/shared/utils/hash.js";
 
 const BASE62_REGEX = /^[0-9a-zA-Z]{6}$/;
 

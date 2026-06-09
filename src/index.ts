@@ -2,22 +2,28 @@ import { type FileFlavor, hydrateFiles } from "@grammyjs/files";
 import { Bot, type Context } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
-import { createAuthGuard } from "./bot/auth.js";
-import { BOT_COMMANDS } from "./bot/commands.js";
-import { registerHandlers } from "./bot/handlers.js";
-import { registerVoiceHandler } from "./bot/voice-handler.js";
-import { claudeBinFromStartCommand, loadConfig } from "./config.js";
-import { ClaudeRunner } from "./services/claude.js";
-import { createConfigResolver, createExecProbe } from "./services/claude-config-resolver.js";
-import { DEFAULT_CONFIG_ROOT } from "./services/history.js";
-import { OutputProcessor } from "./services/output.js";
-import { createProjectManager, getPathBySession } from "./services/project-manager.js";
-import { MessageQueue } from "./services/queue.js";
-import { createReplyTargetMap } from "./services/reply-target.js";
-import { createRouteHealthStore, type RouteName } from "./services/route-health.js";
-import { createSmartFetch, type SmartFetchRoute } from "./services/smart-fetch.js";
-import { TmuxBridge } from "./services/tmux.js";
-import { sleep } from "./utils/sleep.js";
+import { createAuthGuard } from "./adapters/telegram/auth.js";
+import { BOT_COMMANDS } from "./adapters/telegram/commands.js";
+import { registerHandlers } from "./adapters/telegram/handlers.js";
+import { createReplyTargetMap } from "./adapters/telegram/reply-target.js";
+import {
+  createRouteHealthStore,
+  type RouteName,
+} from "./adapters/telegram/transport/route-health.js";
+import {
+  createSmartFetch,
+  type SmartFetchRoute,
+} from "./adapters/telegram/transport/smart-fetch.js";
+import { registerVoiceHandler } from "./adapters/telegram/voice-handler.js";
+import { ClaudeRunner } from "./core/claude.js";
+import { createConfigResolver, createExecProbe } from "./core/claude-config-resolver.js";
+import { DEFAULT_CONFIG_ROOT } from "./core/history.js";
+import { OutputProcessor } from "./core/output.js";
+import { createProjectManager, getPathBySession } from "./core/project-manager.js";
+import { MessageQueue } from "./core/queue.js";
+import { TmuxBridge } from "./core/tmux.js";
+import { claudeBinFromStartCommand, loadConfig } from "./shared/config.js";
+import { sleep } from "./shared/utils/sleep.js";
 
 const AUTO_START_DELAY_MS = 1000;
 

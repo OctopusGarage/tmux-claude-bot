@@ -1,14 +1,16 @@
-import { randomUUID } from "node:crypto";
-import type { Bot, Context } from "grammy";
-import { getLatestAssistantReply } from "../services/history.js";
-import type { PersistedMessage, QueuedMessage } from "../services/queue.js";
-import { getPathBySession } from "../services/sessionPathMap.js";
-import type { HandlerDeps } from "../types.js";
-import { normalizeError } from "../utils/error.js";
-import { logger } from "../utils/logger.js";
-import { MSG } from "./messages.js";
-import { reply, send } from "./replies.js";
-import { requireSession } from "./session.js";
+import { normalizeError } from "../shared/utils/error.js";
+import { logger } from "../shared/utils/logger.js";
+import type { HandlerDeps } from "./deps.js";
+import { getLatestAssistantReply } from "./history.js";
+import type { QueuedMessage } from "./queue.js";
+import { getPathBySession } from "./sessionPathMap.js";
+
+/**
+ * The protocol-agnostic command layer. Given a queued message (an action + the
+ * session it targets) and the core service bundle, perform the work against
+ * tmux/Claude and return the plain-text result. Knows nothing about Telegram,
+ * grammy, chats, or rendering — adapters wrap this and present the string.
+ */
 
 export const MESSAGE_ACTIONS = [
   "text",
@@ -160,120 +162,4 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       throw new Error(`Unknown action: ${_exhaustive}`);
     }
   }
-}
-
-const IMMEDIATE_ACTIONS = new Set([
-  "esc",
-  "interrupt",
-  "status",
-  "up",
-  "down",
-  "enter",
-  "clear",
-  "compact",
-] as const);
-
-export async function enqueueSessionCommand(
-  ctx: Context,
-  deps: HandlerDeps,
-  session: string,
-  action: MessageAction,
-  text?: string,
-  replyTo?: number,
-  onResolve?: (output: string) => void,
-): Promise<void> {
-  const queueSizeBefore = deps.queue.size(session);
-
-  const queued = deps.queue.enqueue({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${randomUUID().slice(0, 6)}`,
-    text: text ?? action,
-    chatId: ctx.chat?.id ?? 0,
-    sessionName: session,
-    action,
-    resolve:
-      onResolve ??
-      ((output: string) => {
-        logger.info(
-          `[executor] resolve callback fired session=${session} output_len=${output.length}`,
-        );
-        void reply(ctx, "info", output, { session, replyTo });
-      }),
-    reject: (err: Error) => {
-      logger.error(`[executor] reject callback fired session=${session} err=${err.message}`);
-      void reply(ctx, "err", `${err.message}`, { session, replyTo });
-    },
-  });
-
-  if (!queued) {
-    logger.warn(`[executor] queue full session=${session} max=${deps.queue.getMaxSize()}`);
-    await reply(ctx, "err", MSG.queueFull(deps.queue.getMaxSize()), { session });
-    return;
-  }
-
-  logger.info(
-    `[executor] enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`,
-  );
-  if (queueSizeBefore === 0) {
-    await reply(ctx, "ok", "已接收", { session });
-  } else {
-    await reply(ctx, "queued", `已排队 · 第 ${queueSizeBefore} 位`, { session });
-  }
-}
-
-export async function handleQueuedCommand(
-  ctx: Context,
-  deps: HandlerDeps,
-  action: MessageAction,
-  text?: string,
-  replyTarget?: ReturnType<typeof import("../services/reply-target.js").createReplyTargetMap>,
-): Promise<void> {
-  const replyToMsg = ctx.message?.reply_to_message;
-  let session: string | null = null;
-  if (replyToMsg && replyTarget) {
-    const fromReply = replyTarget.resolveReplyTarget(replyToMsg.message_id);
-    if (fromReply) session = fromReply;
-  }
-  if (!session) {
-    session = await requireSession(deps);
-  }
-  if (!session) {
-    await reply(ctx, "err", MSG.noSession, {
-      replyTarget,
-    });
-    return;
-  }
-  const replyTo = ctx.message?.message_id;
-
-  if (IMMEDIATE_ACTIONS.has(action as typeof IMMEDIATE_ACTIONS extends Set<infer T> ? T : never)) {
-    const result = await executeMessage(
-      { sessionName: session, action, text, id: "" } as QueuedMessage,
-      deps,
-    );
-    await reply(ctx, "info", result, { session, replyTo, replyTarget });
-    return;
-  }
-
-  await enqueueSessionCommand(ctx, deps, session, action, text, replyTo);
-}
-
-export function createRestoredMessage(p: PersistedMessage, bot: Bot): QueuedMessage {
-  return {
-    id: p.id,
-    text: p.text,
-    chatId: p.chatId,
-    sessionName: p.sessionName,
-    action: p.action,
-    resolve: (output: string) => {
-      void send(bot, p.chatId, "recover", "Recovered", {
-        session: p.sessionName,
-        body: output,
-        code: true,
-      });
-    },
-    reject: (err: Error) => {
-      void send(bot, p.chatId, "err", `Recovered failed: ${err.message}`, {
-        session: p.sessionName,
-      });
-    },
-  };
 }

@@ -16,12 +16,12 @@ import { execFile } from "node:child_process";
 import * as nodePath from "node:path";
 import { promisify } from "node:util";
 import { config as loadEnv } from "dotenv";
-import { claudeBinFromStartCommand, loadScriptConfig } from "../config.js";
-import { createConfigResolver, createExecProbe } from "../services/claude-config-resolver.js";
-import { DEFAULT_CONFIG_ROOT } from "../services/history.js";
-import { sessionNameFromPath, setPathForSession } from "../services/project-manager.js";
-import { TmuxBridge } from "../services/tmux.js";
-import { sleep } from "../utils/sleep.js";
+import { createConfigResolver, createExecProbe } from "../core/claude-config-resolver.js";
+import { DEFAULT_CONFIG_ROOT } from "../core/history.js";
+import { sessionNameFromPath, setPathForSession } from "../core/project-manager.js";
+import { TmuxBridge } from "../core/tmux.js";
+import { claudeBinFromStartCommand, loadScriptConfig } from "../shared/config.js";
+import { sleep } from "../shared/utils/sleep.js";
 
 const execFileAsync = promisify(execFile);
 

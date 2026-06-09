@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "grammy";
-import type { ReplyTargetMap } from "../services/reply-target.js";
-import type { HandlerDeps } from "../types.js";
-import { sessionShortId } from "../utils/hash.js";
-import { logger } from "../utils/logger.js";
+import type { HandlerDeps } from "../../core/deps.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
+import { logger } from "../../shared/utils/logger.js";
 import { looksLikeTerminalOutput } from "./format.js";
 import { buildControlKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { startProgress } from "./progress.js";
 import { REACTION, type ReactionApi, reactToMessage } from "./reactions.js";
 import { composeMessage, reply } from "./replies.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 import { startTyping } from "./typing.js";
 
 const PROGRESS_TICK_MS = 5000;

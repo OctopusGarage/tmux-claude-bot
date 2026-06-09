@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { createAuthGuard, isAuthorized } from "../src/bot/auth.js";
+import { createAuthGuard, isAuthorized } from "../src/adapters/telegram/auth.js";
 
 describe("isAuthorized", () => {
   it("rejects everyone when the allowlist is empty (fail closed)", () => {

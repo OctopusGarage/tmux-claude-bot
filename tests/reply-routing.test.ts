@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { resolveSessionForMessage } from "../src/bot/reply-routing.js";
-import type { ReplyTargetMap } from "../src/services/reply-target.js";
+import { resolveSessionForMessage } from "../src/adapters/telegram/reply-routing.js";
+import type { ReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
 
 function fakeMap(entries: Record<number, string>): ReplyTargetMap {
   return {

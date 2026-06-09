@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExecFileLike, ExecResult } from "../src/services/tmux.js";
-import { TmuxBridge } from "../src/services/tmux.js";
+import type { ExecFileLike, ExecResult } from "../src/core/tmux.js";
+import { TmuxBridge } from "../src/core/tmux.js";
 
 type MockExecFile = ExecFileLike & ReturnType<typeof vi.fn>;
 

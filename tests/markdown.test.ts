@@ -4,7 +4,7 @@ import {
   escapeMarkdownV2,
   stripMarkdownV2,
   toTelegramMarkdown,
-} from "../src/bot/markdown.js";
+} from "../src/adapters/telegram/markdown.js";
 
 describe("escapeMarkdownV2", () => {
   it("backslash-escapes MarkdownV2-significant characters", () => {

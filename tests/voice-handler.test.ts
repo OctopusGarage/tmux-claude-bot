@@ -1,18 +1,18 @@
 import type { Bot, Context } from "grammy";
 import { describe, expect, it, vi } from "vitest";
-import type { HandlerDeps } from "../src/types.js";
+import type { HandlerDeps } from "../src/core/deps.js";
 
-vi.mock("../src/services/transcriber.js", () => ({
+vi.mock("../src/core/transcriber.js", () => ({
   transcribeOgg: vi.fn(),
 }));
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { registerVoiceHandler } from "../src/bot/voice-handler.js";
-import { createReplyTargetMap } from "../src/services/reply-target.js";
-import { transcribeOgg } from "../src/services/transcriber.js";
+import { createReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
+import { registerVoiceHandler } from "../src/adapters/telegram/voice-handler.js";
+import { transcribeOgg } from "../src/core/transcriber.js";
 
 function createMockVoiceContext(): Context {
   return {

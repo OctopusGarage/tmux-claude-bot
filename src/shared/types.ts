@@ -1,10 +1,3 @@
-import type { ClaudeRunner } from "./services/claude.js";
-import type { ConfigResolver } from "./services/claude-config-resolver.js";
-import type { CurrentProjectManager } from "./services/currentProject.js";
-import type { OutputProcessor } from "./services/output.js";
-import type { MessageQueue } from "./services/queue.js";
-import type { TmuxBridge } from "./services/tmux.js";
-
 export type AppConfig = {
   botToken: string;
   claudeStartCommand: string;
@@ -30,14 +23,4 @@ export type ScriptConfig = {
   claudeStartCommand: string;
   sessionWarmupMs: number;
   projectSessionPrefix: string;
-};
-
-export type HandlerDeps = {
-  bridge: TmuxBridge;
-  queue: MessageQueue;
-  claude: ClaudeRunner;
-  output: OutputProcessor;
-  config: AppConfig;
-  currentProject: CurrentProjectManager;
-  configResolver: ConfigResolver;
 };

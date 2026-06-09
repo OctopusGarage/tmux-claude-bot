@@ -1,4 +1,4 @@
-import { timeApi } from "../utils/timing.js";
+import { timeApi } from "../../shared/utils/timing.js";
 
 export interface TypingApi {
   sendChatAction(chatId: number, action: "typing"): Promise<unknown>;

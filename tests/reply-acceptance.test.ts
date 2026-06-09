@@ -3,17 +3,17 @@ import * as os from "node:os";
 import * as nodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../src/utils/error.js", () => ({
+vi.mock("../src/shared/utils/error.js", () => ({
   normalizeError: (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
 }));
 
 import type { Context } from "grammy";
-import { reply } from "../src/bot/replies.js";
-import { createReplyTargetMap } from "../src/services/reply-target.js";
+import { reply } from "../src/adapters/telegram/replies.js";
+import { createReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
 
 function createMockContext(overrides: Partial<Context> = {}): Context {
   return {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
@@ -9,7 +9,7 @@ import {
   findClaudePid,
   parseClaudeConfigDir,
   type ResolverProbe,
-} from "../src/services/claude-config-resolver.js";
+} from "../src/core/claude-config-resolver.js";
 
 describe("parseClaudeConfigDir", () => {
   it("extracts CLAUDE_CONFIG_DIR from ps eww output", () => {

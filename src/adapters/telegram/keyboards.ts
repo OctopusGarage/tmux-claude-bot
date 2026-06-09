@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { isMessageAction } from "./executor.js";
+import { isMessageAction } from "../../core/dispatch.js";
 
 /**
  * Parsed inline-button callback. Telegram limits callback_data to 64 bytes, so

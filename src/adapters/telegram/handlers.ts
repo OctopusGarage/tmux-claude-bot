@@ -2,20 +2,20 @@ import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import type { Bot } from "grammy";
-import { appendRecentProject } from "../services/recentProjects.js";
-import type { ReplyTargetMap } from "../services/reply-target.js";
+import type { HandlerDeps } from "../../core/deps.js";
+import { executeMessage } from "../../core/dispatch.js";
+import { appendRecentProject } from "../../core/recentProjects.js";
 import {
   getPathBySession,
   isCdAllowed,
   sessionNameFromPath,
   setPathForSession,
-} from "../services/sessionPathMap.js";
-import type { HandlerDeps } from "../types.js";
-import { normalizeError } from "../utils/error.js";
-import { logger } from "../utils/logger.js";
-import { sleep } from "../utils/sleep.js";
+} from "../../core/sessionPathMap.js";
+import { normalizeError } from "../../shared/utils/error.js";
+import { logger } from "../../shared/utils/logger.js";
+import { sleep } from "../../shared/utils/sleep.js";
 import { handleCallbackQuery } from "./callbacks.js";
-import { createRestoredMessage, executeMessage, handleQueuedCommand } from "./executor.js";
+import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
 import { buildRecentKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
@@ -27,6 +27,7 @@ import {
 } from "./project-ops.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 import { resolveSessionFromReply } from "./session.js";
 import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
 

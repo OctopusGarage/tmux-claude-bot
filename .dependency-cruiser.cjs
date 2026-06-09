@@ -1,10 +1,16 @@
 /**
- * Architecture rules for the Telegram bot.
+ * Architecture rules for the layered bot.
  *
- * Layering (presentation -> domain -> primitives):
- *   src/bot       (grammY handlers, replies, executor)  may depend on services + utils
- *   src/services  (domain: tmux, claude, queue, history) may depend on utils
- *   src/utils     (logger, hash, sleep, string, error)   depends on nothing internal
+ * Layering (adapter -> core -> shared primitives):
+ *   src/adapters/*  (platform adapters: Telegram grammY handlers, replies,
+ *                    rendering, keyboards, transport) may depend on core + shared
+ *   src/core        (protocol-agnostic: tmux, claude, queue, command dispatch,
+ *                    project, history) may depend on shared
+ *   src/shared      (config, types, utils: logger, hash, sleep, error) depends
+ *                    on nothing internal — leaf primitives
+ *
+ * The point of the seam: core must NEVER import from an adapter, so the same
+ * core can be driven by Telegram today and Feishu later.
  *
  * Enforced in CI via `npm run depcruise`. Run `npx depcruise --output-type err` locally.
  */
@@ -18,18 +24,19 @@ module.exports = {
       to: { circular: true },
     },
     {
-      name: "utils-are-primitives",
+      name: "shared-are-primitives",
       severity: "error",
-      comment: "src/utils are leaf primitives: they must not import from services or bot.",
-      from: { path: "^src/utils" },
-      to: { path: "^src/(services|bot)" },
+      comment: "src/shared are leaf primitives: they must not import from core or adapters.",
+      from: { path: "^src/shared" },
+      to: { path: "^src/(core|adapters)" },
     },
     {
-      name: "services-not-depend-on-bot",
+      name: "core-not-depend-on-adapters",
       severity: "error",
-      comment: "Domain (services) must not depend on presentation (bot).",
-      from: { path: "^src/services" },
-      to: { path: "^src/bot" },
+      comment:
+        "Core is protocol-agnostic and reusable across platforms: it must not depend on any adapter (Telegram, Feishu, …).",
+      from: { path: "^src/core" },
+      to: { path: "^src/adapters" },
     },
     {
       name: "no-orphans",

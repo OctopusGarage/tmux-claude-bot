@@ -2,7 +2,20 @@
 
 ## Core job
 
-Remote control Claude Code from Telegram — send commands, get results back.
+Remote control Claude Code from a chat app — send commands, get results back.
+Telegram is the current adapter; Feishu is planned. The platform-independent
+logic lives in `src/core/`; each chat app is an adapter under `src/adapters/`.
+See ADR-0002 for the layering.
+
+## Layers (adapter → core → shared)
+
+| Layer | Path | Responsibility |
+|-------|------|----------------|
+| **Adapter** | `src/adapters/telegram/` | Ingest platform messages, render results, keyboards/reactions/typing, network transport. One package per chat app. |
+| **Core** | `src/core/` | Protocol-agnostic: tmux management, Claude lifecycle, command dispatch (`dispatch.ts`), queue, project management, history. Reusable by any adapter. |
+| **Shared** | `src/shared/` | Leaf primitives: config, types, utils. No internal dependencies. |
+
+`core/` must never import from `adapters/` — enforced by `.dependency-cruiser.cjs`.
 
 ## Entities
 
@@ -10,7 +23,7 @@ Remote control Claude Code from Telegram — send commands, get results back.
 |--------|-------------|
 | **Project** | A directory + tmux session. Bot manages lifecycle. |
 | **Session** | The tmux process. One per project. Hosts Claude. |
-| **Chat** | Telegram chat. One bot serves many chats. |
+| **Chat** | A conversation in the messaging app (Telegram chat today). One bot serves many chats. |
 | **Message** | User input. Classified as *action* (command) or *text* (natural language). |
 | **Queue** | Serialized command backlog. |
 

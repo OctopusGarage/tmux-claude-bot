@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
-import { logger } from "../utils/logger.js";
+import { logger } from "../../../shared/utils/logger.js";
 
 export type RouteName = string;
 

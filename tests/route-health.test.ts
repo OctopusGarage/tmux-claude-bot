@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
@@ -15,7 +15,7 @@ import {
   recordFailure,
   recordSuccess,
   routeScore,
-} from "../src/services/route-health.js";
+} from "../src/adapters/telegram/transport/route-health.js";
 
 describe("recordAlive (success without a latency sample)", () => {
   it("resets the fail streak and bumps lastOkAt but leaves EWMA untouched", () => {

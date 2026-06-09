@@ -1,7 +1,9 @@
 # ADR-0001: Bot Architecture Refactor
 
 **Date:** 2026-05-04
-**Status:** Proposed
+**Status:** Accepted — extended by ADR-0002 (the `src/bot` / `src/services`
+paths below were relocated to `src/adapters/telegram` / `src/core`; the layering
+intent is unchanged).
 
 ## Context
 

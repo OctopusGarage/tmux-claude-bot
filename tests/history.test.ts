@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import { describe, expect, it } from "vitest";
-import { projectPathToHistoryDir } from "../src/services/history.js";
+import { projectPathToHistoryDir } from "../src/core/history.js";
 
 describe("projectPathToHistoryDir", () => {
   it("converts slashes and underscores to hyphens to match Claude's actual behavior", () => {

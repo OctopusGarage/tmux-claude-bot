@@ -1,4 +1,4 @@
-import type { BotCommand } from "../types.js";
+import type { BotCommand } from "../../shared/types.js";
 
 export const BOT_COMMANDS: BotCommand[] = [
   { command: "help", description: "Show all commands" },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.js";
+import { loadConfig } from "../src/shared/config.js";
 
 describe("maxInboundLength config", () => {
   it("defaults to at least Telegram's 4096 single-message limit", () => {

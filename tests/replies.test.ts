@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock logger before importing replies (vi.mock is hoisted)
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -10,13 +10,13 @@ vi.mock("../src/utils/logger.js", () => ({
 }));
 
 // Mock normalizeError
-vi.mock("../src/utils/error.js", () => ({
+vi.mock("../src/shared/utils/error.js", () => ({
   normalizeError: (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
 }));
 
 import type { Bot, Context } from "grammy";
-import { reply, send, type Tone } from "../src/bot/replies.js";
-import { logger } from "../src/utils/logger.js";
+import { reply, send, type Tone } from "../src/adapters/telegram/replies.js";
+import { logger } from "../src/shared/utils/logger.js";
 
 function createMockContext(overrides: Partial<Context> = {}): Context {
   return {

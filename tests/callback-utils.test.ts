@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { safeAnswerCallback } from "../src/bot/callback-utils.js";
+import { safeAnswerCallback } from "../src/adapters/telegram/callback-utils.js";
 
 describe("safeAnswerCallback", () => {
   it("answers with a toast text when provided", async () => {

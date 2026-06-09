@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OutputProcessor } from "../src/services/output.js";
+import { OutputProcessor } from "../src/core/output.js";
 
 describe("OutputProcessor", () => {
   describe("constructor", () => {
