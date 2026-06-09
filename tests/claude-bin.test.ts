@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claudeBinFromStartCommand } from "../src/config.js";
+import { claudeBinFromStartCommand } from "../src/shared/config.js";
 
 describe("claudeBinFromStartCommand", () => {
   it("skips leading VAR=value env assignments and returns the real binary", () => {

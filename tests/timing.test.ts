@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { logger } from "../src/utils/logger.js";
-import { timeApi } from "../src/utils/timing.js";
+import { logger } from "../src/shared/utils/logger.js";
+import { timeApi } from "../src/shared/utils/timing.js";
 
 describe("timeApi", () => {
   it("returns the wrapped call's result", async () => {

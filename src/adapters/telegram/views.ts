@@ -1,15 +1,15 @@
 import type { Context } from "grammy";
-import { formatSingleConversation, getRecentConversations } from "../services/history.js";
-import type { ReplyTargetMap } from "../services/reply-target.js";
-import { getPathBySession } from "../services/sessionPathMap.js";
-import type { HandlerDeps } from "../types.js";
-import { normalizeError } from "../utils/error.js";
-import { sessionShortId } from "../utils/hash.js";
-import { truncate } from "../utils/string.js";
+import type { HandlerDeps } from "../../core/deps.js";
+import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
+import { getPathBySession } from "../../core/sessionPathMap.js";
+import { normalizeError } from "../../shared/utils/error.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
+import { truncate } from "../../shared/utils/string.js";
 import { buildControlKeyboard, buildProjectKeyboard } from "./keyboards.js";
 import { projectLabel } from "./project-label.js";
 import { aliveProjectButtons } from "./project-ops.js";
 import { reply } from "./replies.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 
 /**
  * Read-side renderers: fetch state (tmux pane, conversation history, queue) and

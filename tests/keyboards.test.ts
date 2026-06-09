@@ -7,7 +7,7 @@ import {
   buildRecentKeyboard,
   encodeControlAction,
   parseCallbackData,
-} from "../src/bot/keyboards.js";
+} from "../src/adapters/telegram/keyboards.js";
 
 function callbackDatas(kb: { inline_keyboard: { text: string; callback_data?: string }[][] }) {
   return kb.inline_keyboard.flat().map((b) => b.callback_data);

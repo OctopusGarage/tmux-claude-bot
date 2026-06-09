@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import type { RouteHealthStore } from "../src/services/route-health.js";
-import { createSmartFetch } from "../src/services/smart-fetch.js";
+import type { RouteHealthStore } from "../src/adapters/telegram/transport/route-health.js";
+import { createSmartFetch } from "../src/adapters/telegram/transport/smart-fetch.js";
 
 function fakeHealth(preferred: string): RouteHealthStore & {
   successes: Array<[string, number | undefined]>;

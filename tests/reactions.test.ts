@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { REACTION, reactToMessage } from "../src/bot/reactions.js";
+import { REACTION, reactToMessage } from "../src/adapters/telegram/reactions.js";
 
 describe("reactToMessage", () => {
   it("sets an emoji reaction in Telegram's expected shape", async () => {

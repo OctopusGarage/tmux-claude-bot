@@ -1,5 +1,5 @@
 import type { Context, NextFunction } from "grammy";
-import { logger } from "../utils/logger.js";
+import { logger } from "../../shared/utils/logger.js";
 
 /**
  * Whitelist check. Fails CLOSED: an empty allowlist rejects everyone, matching

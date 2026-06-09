@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/logger.js", () => ({
+vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { startTyping } from "../src/bot/typing.js";
+import { startTyping } from "../src/adapters/telegram/typing.js";
 
 describe("startTyping", () => {
   beforeEach(() => vi.useFakeTimers());

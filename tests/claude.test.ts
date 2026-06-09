@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ClaudeRunner } from "../src/services/claude.js";
-import type { ConfigResolver } from "../src/services/claude-config-resolver.js";
-import { OutputProcessor } from "../src/services/output.js";
-import type { ExecResult } from "../src/services/tmux.js";
-import { TmuxBridge } from "../src/services/tmux.js";
+import { ClaudeRunner } from "../src/core/claude.js";
+import type { ConfigResolver } from "../src/core/claude-config-resolver.js";
+import { OutputProcessor } from "../src/core/output.js";
+import type { ExecResult } from "../src/core/tmux.js";
+import { TmuxBridge } from "../src/core/tmux.js";
 
 function createMockResolver(): ConfigResolver {
   return {

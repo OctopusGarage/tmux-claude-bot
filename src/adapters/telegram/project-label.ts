@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { sessionShortId } from "../utils/hash.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 
 /**
  * A short, friendly name for a project session — used in the `📂 <name>` line

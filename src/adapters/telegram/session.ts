@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
-import type { ReplyTargetMap } from "../services/reply-target.js";
-import type { HandlerDeps } from "../types.js";
+import type { HandlerDeps } from "../../core/deps.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 
 /** The current project's session, but only if its tmux pane is actually alive. */
 export async function requireSession(deps: HandlerDeps): Promise<string | null> {

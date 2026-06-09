@@ -6,7 +6,7 @@ import {
   isCdAllowed,
   sessionNameFromPath,
   setPathForSession,
-} from "../src/services/project-manager.js";
+} from "../src/core/project-manager.js";
 
 const MAP_FILE = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),

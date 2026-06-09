@@ -1,12 +1,12 @@
 import type { Bot, Context } from "grammy";
-import type { ReplyTargetMap } from "../services/reply-target.js";
-import { getPathBySession } from "../services/sessionPathMap.js";
-import { normalizeError } from "../utils/error.js";
-import { logger } from "../utils/logger.js";
-import { sleep } from "../utils/sleep.js";
-import { timeApi } from "../utils/timing.js";
+import { getPathBySession } from "../../core/sessionPathMap.js";
+import { normalizeError } from "../../shared/utils/error.js";
+import { logger } from "../../shared/utils/logger.js";
+import { sleep } from "../../shared/utils/sleep.js";
+import { timeApi } from "../../shared/utils/timing.js";
 import { codeBlockV2, escapeMarkdownV2, stripMarkdownV2, toTelegramMarkdown } from "./markdown.js";
 import { projectLabel } from "./project-label.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 
 export type Tone =
   | "ok"

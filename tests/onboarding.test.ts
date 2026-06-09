@@ -5,7 +5,7 @@ import {
   parseEnv,
   serializeEnv,
   validateTokenShape,
-} from "../src/services/onboarding.js";
+} from "../src/core/onboarding.js";
 
 describe("parseEnv", () => {
   it("parses KEY=value lines, ignoring comments and blanks", () => {

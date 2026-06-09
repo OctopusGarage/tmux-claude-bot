@@ -17,7 +17,7 @@ import {
   parseEnv,
   serializeEnv,
   validateTokenShape,
-} from "../services/onboarding.js";
+} from "../core/onboarding.js";
 
 const ROOT = process.cwd();
 const ENV_PATH = join(ROOT, ".env");

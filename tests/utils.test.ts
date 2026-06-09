@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { normalizeError } from "../src/utils/error.js";
-import { Queue } from "../src/utils/queue.js";
+import { normalizeError } from "../src/shared/utils/error.js";
+import { Queue } from "../src/shared/utils/queue.js";
 
 function isPathAllowed(targetPath: string, allowedRoots: string[]): boolean {
   return allowedRoots.some((root) => {

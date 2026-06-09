@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
-import { sleep } from "../utils/sleep.js";
+import { sleep } from "../shared/utils/sleep.js";
 
 export interface ConversationRound {
   user: string;

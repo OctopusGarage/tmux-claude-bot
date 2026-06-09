@@ -1,12 +1,11 @@
 import type { Context } from "grammy";
-import type { QueuedMessage } from "../services/queue.js";
-import type { ReplyTargetMap } from "../services/reply-target.js";
-import type { HandlerDeps } from "../types.js";
-import { normalizeError } from "../utils/error.js";
-import { logger } from "../utils/logger.js";
-import { timeApi } from "../utils/timing.js";
+import type { HandlerDeps } from "../../core/deps.js";
+import { executeMessage } from "../../core/dispatch.js";
+import type { QueuedMessage } from "../../core/queue.js";
+import { normalizeError } from "../../shared/utils/error.js";
+import { logger } from "../../shared/utils/logger.js";
+import { timeApi } from "../../shared/utils/timing.js";
 import { safeAnswerCallback } from "./callback-utils.js";
-import { executeMessage } from "./executor.js";
 import {
   buildControlKeyboard,
   buildExpandedControlKeyboard,
@@ -22,6 +21,7 @@ import {
   switchToProject,
 } from "./project-ops.js";
 import { reply } from "./replies.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
 
 /**

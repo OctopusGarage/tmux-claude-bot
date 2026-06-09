@@ -1,4 +1,4 @@
-import { logger } from "../utils/logger.js";
+import { logger } from "../shared/utils/logger.js";
 import type { ConfigResolver } from "./claude-config-resolver.js";
 import type { OutputProcessor } from "./output.js";
 import type { TmuxBridge } from "./tmux.js";

@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
-import { normalizeError } from "../utils/error.js";
-import { logger } from "../utils/logger.js";
-import { Queue } from "../utils/queue.js";
+import { normalizeError } from "../shared/utils/error.js";
+import { logger } from "../shared/utils/logger.js";
+import { Queue } from "../shared/utils/queue.js";
 
 export type QueuedMessage = {
   id: string;

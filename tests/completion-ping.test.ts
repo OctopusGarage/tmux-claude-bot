@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldSendCompletionPing } from "../src/bot/prompt-lifecycle.js";
+import { shouldSendCompletionPing } from "../src/adapters/telegram/prompt-lifecycle.js";
 
 describe("shouldSendCompletionPing", () => {
   it("does not ping for quick tasks", () => {

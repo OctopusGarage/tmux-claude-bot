@@ -1,5 +1,5 @@
-import { logger } from "../utils/logger.js";
-import { timeApi } from "../utils/timing.js";
+import { logger } from "../../shared/utils/logger.js";
+import { timeApi } from "../../shared/utils/timing.js";
 
 export interface AnswerableCtx {
   answerCallbackQuery(other?: { text?: string }): Promise<unknown>;

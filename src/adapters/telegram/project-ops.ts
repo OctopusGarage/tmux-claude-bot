@@ -1,21 +1,21 @@
 import * as fs from "node:fs";
 import type { Context } from "grammy";
-import { appendRecentProject, readRecentProjectLines } from "../services/recentProjects.js";
-import type { ReplyTargetMap } from "../services/reply-target.js";
+import type { HandlerDeps } from "../../core/deps.js";
+import { appendRecentProject, readRecentProjectLines } from "../../core/recentProjects.js";
 import {
   getPathBySession,
   isCdAllowed,
   sessionNameFromPath,
   setPathForSession,
-} from "../services/sessionPathMap.js";
-import type { HandlerDeps } from "../types.js";
-import { normalizeError } from "../utils/error.js";
-import { sessionShortId } from "../utils/hash.js";
-import { sleep } from "../utils/sleep.js";
+} from "../../core/sessionPathMap.js";
+import { normalizeError } from "../../shared/utils/error.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
+import { sleep } from "../../shared/utils/sleep.js";
 import type { ProjectButton, RecentButton } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { projectLabel } from "./project-label.js";
 import { reply } from "./replies.js";
+import type { ReplyTargetMap } from "./reply-target.js";
 
 /**
  * Project lifecycle: the single home for everything that creates, switches,

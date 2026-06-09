@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectLabel } from "../src/bot/project-label.js";
+import { projectLabel } from "../src/adapters/telegram/project-label.js";
 
 describe("projectLabel", () => {
   it("uses the basename of the mapped project path", () => {
