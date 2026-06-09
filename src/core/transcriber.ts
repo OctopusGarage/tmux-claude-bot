@@ -7,8 +7,8 @@ const execAsync = promisify(exec);
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
 
-export async function transcribeOgg(filePath: string): Promise<string> {
-  const MLX_WHISPER_BIN = process.env.MLX_WHISPER_BIN;
+export async function transcribeOgg(filePath: string, bin?: string): Promise<string> {
+  const MLX_WHISPER_BIN = bin ?? process.env.MLX_WHISPER_BIN;
   if (!MLX_WHISPER_BIN) {
     throw new Error("MLX_WHISPER_BIN not configured. Set it in .env");
   }

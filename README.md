@@ -142,6 +142,31 @@ The active session name is stored in `.current_project` (gitignored).
 
 When Claude is running, any text message is sent to Claude and the result is returned.
 
+## Voice transcription (optional)
+
+Voice messages are transcribed locally with [mlx-whisper](https://pypi.org/project/mlx-whisper/)
+(Apple Silicon only) and then forwarded to Claude like any text. **The feature is
+off until you install it** — if you never use voice, you can ignore this entirely.
+
+**Enable it (two ways):**
+
+- **From Telegram:** send `/voice_install`. The bot runs the installer, enables the
+  feature, and persists the path to `.env` — no restart needed. (No-op politely if
+  the host isn't Apple Silicon.)
+- **On the host:** `npm run whisper:install`, then put the printed path into
+  `MLX_WHISPER_BIN` in `.env` (or re-run `npm run setup:reconfigure`).
+
+**What gets installed** (project-managed, reproducible — nothing global):
+
+- A project-local `.venv` created by [uv](https://docs.astral.sh/uv/), with
+  `mlx-whisper` pinned in [`requirements.txt`](requirements.txt). Model weights are
+  downloaded from HuggingFace on first transcription.
+- **ffmpeg** is required to decode audio (`brew install ffmpeg`). The installer and
+  `npm run doctor` both check for it.
+
+If you send a voice message before enabling the feature, the bot replies with a
+short note telling you how to turn it on — it never fails silently.
+
 ## Claude Running Detection
 
 The bot decides whether Claude is running by **process detection**, not screen
@@ -194,3 +219,4 @@ the install/deploy/release flow. In short:
 - Node.js 20+
 - tmux
 - Claude Code CLI (`claude-yolo` or similar)
+- _Optional, for voice:_ Apple Silicon Mac + [uv](https://docs.astral.sh/uv/) + ffmpeg (see [Voice transcription](#voice-transcription-optional))

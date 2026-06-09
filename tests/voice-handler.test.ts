@@ -6,6 +6,15 @@ vi.mock("../src/core/transcriber.js", () => ({
   transcribeOgg: vi.fn(),
 }));
 
+// Voice is "ready" in tests so the handler proceeds to download + transcribe;
+// readiness gating itself is covered by voice-support's own unit tests.
+vi.mock("../src/core/voice-support.js", () => ({
+  checkVoiceSupport: vi.fn(() => ({ ready: true, bin: "mlx_whisper" })),
+  isVoicePlatformSupported: vi.fn(() => true),
+  persistWhisperBin: vi.fn(),
+  INSTALL_SCRIPT: "/repo/scripts/install-whisper.sh",
+}));
+
 vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -56,7 +65,7 @@ describe("registerVoiceHandler", () => {
       config: { maxMessageLength: 4000, projectSessionPrefix: "tmux_proj_" },
     } as unknown as HandlerDeps;
     const rt = createReplyTargetMap();
-    const mockBot = { on: vi.fn() } as unknown as Bot;
+    const mockBot = { on: vi.fn(), command: vi.fn() } as unknown as Bot;
     const mockCtx = createMockVoiceContext();
 
     let capturedHandler: any;
@@ -70,7 +79,7 @@ describe("registerVoiceHandler", () => {
     await capturedHandler(mockCtx);
 
     expect(mockCtx.getFile).toHaveBeenCalled();
-    expect(transcribeOgg).toHaveBeenCalledWith("/tmp/test.ogg");
+    expect(transcribeOgg).toHaveBeenCalledWith("/tmp/test.ogg", "mlx_whisper");
     const replyTexts = (mockCtx.reply as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(
       replyTexts.some((t) => typeof t === "string" && t.includes("🎙️ 你说的是：「hello world」")),
@@ -101,7 +110,7 @@ describe("registerVoiceHandler", () => {
       config: { maxMessageLength: 4000, projectSessionPrefix: "tmux_proj_" },
     } as unknown as HandlerDeps;
     const rt = createReplyTargetMap();
-    const mockBot = { on: vi.fn() } as unknown as Bot;
+    const mockBot = { on: vi.fn(), command: vi.fn() } as unknown as Bot;
     const mockCtx = createMockVoiceContext();
 
     let capturedHandler: any;

@@ -1,7 +1,16 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
+import { promisify } from "node:util";
 import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { transcribeOgg } from "../../core/transcriber.js";
+import {
+  checkVoiceSupport,
+  INSTALL_SCRIPT,
+  isVoicePlatformSupported,
+  persistWhisperBin,
+} from "../../core/voice-support.js";
+import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { MSG } from "./messages.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
@@ -9,11 +18,53 @@ import { reply } from "./replies.js";
 import { resolveSessionForMessage } from "./reply-routing.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 
+const execFileAsync = promisify(execFile);
+const INSTALL_TIMEOUT_MS = 300_000;
+
 export function registerVoiceHandler<TContext extends Context>(
   bot: Bot<TContext>,
   deps: HandlerDeps,
   replyTarget: ReplyTargetMap,
 ): void {
+  // In-bot trigger to install the optional voice feature (Apple Silicon only).
+  // `installing` guards against a double-tap kicking off two installs at once.
+  let installing = false;
+  bot.command("voice_install", async (ctx: Context) => {
+    if (checkVoiceSupport().ready) {
+      await reply(ctx, "info", MSG.voiceAlreadyInstalled, { replyTarget });
+      return;
+    }
+    if (!isVoicePlatformSupported()) {
+      await reply(ctx, "err", MSG.voiceUnsupported, { replyTarget });
+      return;
+    }
+    if (installing) {
+      await reply(ctx, "info", MSG.voiceInstalling, { replyTarget });
+      return;
+    }
+    installing = true;
+    await reply(ctx, "info", MSG.voiceInstalling, { replyTarget });
+    try {
+      // Fixed bundled script, no user-controlled args — not arbitrary exec.
+      await execFileAsync(INSTALL_SCRIPT, [], {
+        timeout: INSTALL_TIMEOUT_MS,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const status = checkVoiceSupport();
+      if (!status.ready) throw new Error("binary still missing after install");
+      // Live process reads process.env at transcribe time; persist for restarts.
+      process.env.MLX_WHISPER_BIN = status.bin;
+      persistWhisperBin(status.bin);
+      logger.info("[voice-install] voice feature installed and enabled");
+      await reply(ctx, "info", MSG.voiceInstallOk, { replyTarget });
+    } catch (err) {
+      logger.error(`[voice-install] failed: ${err}`);
+      await reply(ctx, "err", MSG.voiceInstallFailed(normalizeError(err).message), { replyTarget });
+    } finally {
+      installing = false;
+    }
+  });
+
   bot.on("message:voice", async (ctx: Context) => {
     const chatId = ctx.chat?.id ?? "unknown";
     logger.info(`[voice-handler] voice message received chat=${chatId}`);
@@ -24,6 +75,16 @@ export function registerVoiceHandler<TContext extends Context>(
     const voice = msg.voice;
     if (!voice) return;
 
+    // Friendly gate before downloading: if voice isn't usable, tell the user
+    // exactly how to enable it instead of failing later with a generic error.
+    const support = checkVoiceSupport();
+    if (!support.ready) {
+      const hint =
+        support.reason === "unsupported-platform" ? MSG.voiceUnsupported : MSG.voiceNotInstalled;
+      await reply(ctx, "info", hint, { replyTarget });
+      return;
+    }
+
     const file = await ctx.getFile();
     if (!file.file_path) {
       await reply(ctx, "err", "转写失败 · 无法下载文件", { replyTarget });
@@ -32,16 +93,14 @@ export function registerVoiceHandler<TContext extends Context>(
 
     let transcribed: string;
     try {
-      const file = await ctx.getFile();
-
-      if (file.file_path?.startsWith("http")) {
+      if (file.file_path.startsWith("http")) {
         // When using local Bot API server, file_path is HTTP URL directly
         const tmpPath = `/tmp/voice_${Date.now()}.ogg`;
         const res = await fetch(file.file_path);
         if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
         const buffer = await res.arrayBuffer();
         fs.writeFileSync(tmpPath, Buffer.from(buffer));
-        transcribed = await transcribeOgg(tmpPath);
+        transcribed = await transcribeOgg(tmpPath, support.bin);
         try {
           fs.unlinkSync(tmpPath);
         } catch {
@@ -53,7 +112,7 @@ export function registerVoiceHandler<TContext extends Context>(
         // download() added by hydrateFiles at runtime — cast to avoid TS error
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const downloadedPath = await (file as any).download(tmpPath);
-        transcribed = await transcribeOgg(downloadedPath);
+        transcribed = await transcribeOgg(downloadedPath, support.bin);
         try {
           fs.unlinkSync(downloadedPath);
         } catch {

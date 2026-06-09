@@ -1,0 +1,5 @@
+# Project-managed Python dependency for voice transcription (optional feature).
+# Installed into a project-local .venv via `npm run whisper:install` (uv-based).
+# mlx-whisper is Apple Silicon only and pulls in mlx + numba; model weights are
+# downloaded from HuggingFace on first run.
+mlx-whisper==0.4.3

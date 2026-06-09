@@ -50,8 +50,9 @@ async function launchdLoaded(): Promise<boolean> {
 async function main(): Promise<void> {
   // 1. .env + token
   const envPath = join(ROOT, ".env");
-  if (existsSync(envPath)) {
-    const token = parseEnv(readFileSync(envPath, "utf8")).get("BOT_TOKEN") ?? "";
+  const envMap = existsSync(envPath) ? parseEnv(readFileSync(envPath, "utf8")) : null;
+  if (envMap) {
+    const token = envMap.get("BOT_TOKEN") ?? "";
     if (validateTokenShape(token)) ok(".env present with a well-formed BOT_TOKEN");
     else bad(".env present but BOT_TOKEN looks invalid", "run: npm run setup:reconfigure");
   } else {
@@ -77,6 +78,16 @@ async function main(): Promise<void> {
       `${n} bot processes running (409 conflict risk)`,
       `more than one instance (409 risk). Kill the stray non-launchd PIDs (PPID != 1), then: launchctl kickstart -k gui/$(id -u)/${LABEL}`,
     );
+
+  // 5. optional voice transcription (mlx_whisper). Not configured == not a failure.
+  const mlxBin = envMap?.get("MLX_WHISPER_BIN") ?? "";
+  if (!mlxBin) {
+    console.log("- voice transcription disabled (MLX_WHISPER_BIN empty; npm run whisper:install)");
+  } else if (existsSync(mlxBin)) {
+    ok("voice: MLX_WHISPER_BIN points to an existing binary");
+  } else {
+    bad("voice: MLX_WHISPER_BIN set but binary is missing", "run: npm run whisper:install");
+  }
 
   console.log(
     failures === 0

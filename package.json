@@ -10,6 +10,7 @@
     "setup": "tsx src/scripts/setup.ts",
     "setup:reconfigure": "tsx src/scripts/setup.ts --reconfigure",
     "doctor": "tsx src/scripts/doctor.ts",
+    "whisper:install": "scripts/install-whisper.sh",
     "service:install": "scripts/install-launchd.sh",
     "service:uninstall": "scripts/uninstall-launchd.sh",
     "service:status": "scripts/service.sh status",
