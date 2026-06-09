@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.venv/
 .env
 .current_project
 recent_projects.txt

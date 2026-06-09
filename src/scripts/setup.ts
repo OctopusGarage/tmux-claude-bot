@@ -189,9 +189,15 @@ async function main(): Promise<void> {
       "Claude start command",
       existing.get("CLAUDE_START_COMMAND") ?? "claude-yolo",
     );
+    const venvWhisper = join(ROOT, ".venv", "bin", "mlx_whisper");
+    const mlxDefault =
+      existing.get("MLX_WHISPER_BIN") || (existsSync(venvWhisper) ? venvWhisper : "");
+    C.info(
+      "Voice transcription is optional. To install it project-managed: npm run whisper:install",
+    );
     values.MLX_WHISPER_BIN = await ask(
-      "mlx_whisper binary for voice (optional)",
-      existing.get("MLX_WHISPER_BIN") ?? "",
+      "mlx_whisper binary for voice (optional; blank to disable)",
+      mlxDefault,
     );
 
     await writeEnv(template, { ...Object.fromEntries(existing), ...values });

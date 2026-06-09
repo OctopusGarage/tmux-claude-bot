@@ -149,14 +149,19 @@ bot.catch((err) => {
 
 // One reply-target map (TG message id → session) shared by both handler sets.
 const replyTarget = createReplyTargetMap();
+// Order matters: registerVoiceHandler MUST run before registerHandlers. The
+// latter ends with a catch-all `message:text` handler that forwards any text
+// (commands included) to Claude. Registering /voice_install first puts its
+// command handler ahead of that catch-all in grammy's middleware chain — else
+// `/voice_install` is forwarded to Claude, which replies "Unknown command".
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-registerHandlers(
+registerVoiceHandler(
   bot as any,
   { bridge, queue, claude, output, config, currentProject, configResolver },
   replyTarget,
 );
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-registerVoiceHandler(
+registerHandlers(
   bot as any,
   { bridge, queue, claude, output, config, currentProject, configResolver },
   replyTarget,
