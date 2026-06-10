@@ -129,7 +129,7 @@ function formatLine(level: LogLevel, file: string, line: number, message: string
  * URL pattern keeps the credential out of console output and log files.
  */
 export function redactSecrets(message: string): string {
-  const token = process.env.BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
   const withoutToken = token ? message.split(token).join("<redacted-token>") : message;
   return withoutToken.replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot<redacted-token>");
 }

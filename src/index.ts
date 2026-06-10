@@ -1,62 +1,13 @@
-import { type FileFlavor, hydrateFiles } from "@grammyjs/files";
-import { Bot, type Context } from "grammy";
-import { HttpsProxyAgent } from "https-proxy-agent";
-import nodeFetch from "node-fetch";
-import { createAuthGuard } from "./adapters/telegram/auth.js";
-import { BOT_COMMANDS } from "./adapters/telegram/commands.js";
-import { registerHandlers } from "./adapters/telegram/handlers.js";
-import { createReplyTargetMap } from "./adapters/telegram/reply-target.js";
-import {
-  createRouteHealthStore,
-  type RouteName,
-} from "./adapters/telegram/transport/route-health.js";
-import {
-  createSmartFetch,
-  type SmartFetchRoute,
-} from "./adapters/telegram/transport/smart-fetch.js";
-import { registerVoiceHandler } from "./adapters/telegram/voice-handler.js";
-import { ClaudeRunner } from "./core/claude.js";
-import { createConfigResolver, createExecProbe } from "./core/claude-config-resolver.js";
-import { DEFAULT_CONFIG_ROOT } from "./core/history.js";
-import { OutputProcessor } from "./core/output.js";
-import { createProjectManager, getPathBySession } from "./core/project-manager.js";
-import { MessageQueue } from "./core/queue.js";
-import { TmuxBridge } from "./core/tmux.js";
-import { claudeBinFromStartCommand, loadConfig } from "./shared/config.js";
+import { startLark } from "./adapters/lark/start.js";
+import { startTelegram } from "./adapters/telegram/start.js";
+import { bootstrap } from "./bootstrap.js";
+import { getPathBySession } from "./core/project-manager.js";
 import { sleep } from "./shared/utils/sleep.js";
 
 const AUTO_START_DELAY_MS = 1000;
 
-const config = loadConfig();
-const { currentProject } = createProjectManager(process.cwd());
-
-const bridge = new TmuxBridge({
-  getSessionName: () => currentProject.get().then((s) => s ?? "claude_telegram_bot"),
-  projectSessionPrefix: config.projectSessionPrefix,
-});
-
-const output = new OutputProcessor({
-  maxOutputLines: config.maxOutputLines,
-  maxMessageLength: config.maxMessageLength,
-});
-const queue = new MessageQueue(config.maxQueueSize);
-// Per-session resolver for each tmux pane's claude config dir (history root),
-// since different panes may run claude with a different CLAUDE_CONFIG_DIR.
-const configResolver = createConfigResolver(createExecProbe(), {
-  defaultRoot: DEFAULT_CONFIG_ROOT,
-  claudeBin: claudeBinFromStartCommand(config.claudeStartCommand),
-  ttlMs: 60_000,
-});
-const claude = new ClaudeRunner({
-  bridge,
-  output,
-  configResolver,
-  claudeCommand: config.claudeStartCommand,
-  idlePollTicks: config.idlePollTicks,
-  pollIntervalMs: config.pollIntervalMs,
-  maxWaitReadyMs: config.maxWaitReadyMs,
-  maxWaitDoneMs: config.maxWaitDoneMs,
-});
+const deps = bootstrap();
+const { config, currentProject, bridge } = deps;
 
 async function init(): Promise<void> {
   const session = await currentProject.get();
@@ -87,140 +38,43 @@ async function init(): Promise<void> {
   }
 }
 
-// Dual-route transport: race proxy vs. direct, learn which is faster/healthier,
-// and fail over when one degrades (the proxy intermittently drops TLS). Direct
-// is always available; the proxy route is added only when configured.
-const routes: SmartFetchRoute[] = [];
-if (config.httpProxy) {
-  const agent = new HttpsProxyAgent(config.httpProxy);
-  routes.push({
-    name: "proxy",
-    fetch: (url, init) =>
-      nodeFetch(url as string, { ...init, agent } as Record<string, unknown>) as Promise<unknown>,
-  });
-}
-routes.push({
-  name: "direct",
-  fetch: (url, init) =>
-    nodeFetch(url as string, { ...init } as Record<string, unknown>) as Promise<unknown>,
-});
-const defaultRoute: RouteName = config.httpProxy ? "proxy" : "direct";
-const routeHealth = createRouteHealthStore({
-  filePath: ".queue/route_health.json",
-  available: routes.map((r) => r.name),
-  defaultRoute,
-});
-const smartFetch = createSmartFetch({
-  routes,
-  health: routeHealth,
-  timeoutMs: 5000,
-  isLongPoll: (url) => url.includes("/getUpdates"),
-});
-console.log(
-  `[bot] transport routes: ${routes.map((r) => r.name).join(", ")} (default: ${defaultRoute})`,
-);
-
-// smartFetch wraps node-fetch, whose fetch type differs nominally from grammy's
-// DOM fetch type; the runtime contract (url, init) -> Response is identical.
-const botOptions = {
-  client: {
-    fetch: smartFetch as any,
-  },
-};
-type MyContext = FileFlavor<Context>;
-const bot = new Bot<MyContext>(config.botToken, botOptions);
-bot.api.config.use(hydrateFiles(config.botToken));
-
-// Authorization gate: drop updates from non-allowlisted users before any
-// handler runs. Without this the bot drives Claude for anyone who finds it.
-bot.use(createAuthGuard(config.allowedUserIds));
-if (config.allowedUserIds.size === 0) {
-  console.warn("[bot] ALLOWED_USER_IDS is empty — the bot will reject ALL messages.");
-}
-
-// Catch any error thrown inside a handler so a transient Telegram/network blip
-// (e.g. ECONNRESET on answerCallbackQuery) is logged instead of becoming an
-// uncaughtException that exits the process — which would also redeliver the
-// unconfirmed update on restart and crash-loop.
-bot.catch((err) => {
-  const e = err.error;
-  console.error(`[bot] handler error on update ${err.ctx.update.update_id}:`, e);
-});
-
-// One reply-target map (TG message id → session) shared by both handler sets.
-const replyTarget = createReplyTargetMap();
-// Order matters: registerVoiceHandler MUST run before registerHandlers. The
-// latter ends with a catch-all `message:text` handler that forwards any text
-// (commands included) to Claude. Registering /voice_install first puts its
-// command handler ahead of that catch-all in grammy's middleware chain — else
-// `/voice_install` is forwarded to Claude, which replies "Unknown command".
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-registerVoiceHandler(
-  bot as any,
-  { bridge, queue, claude, output, config, currentProject, configResolver },
-  replyTarget,
-);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-registerHandlers(
-  bot as any,
-  { bridge, queue, claude, output, config, currentProject, configResolver },
-  replyTarget,
-);
-
-try {
-  await bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } });
-  console.log(`[bot] Registered ${BOT_COMMANDS.length} commands to Telegram`);
-} catch (err) {
-  console.error("[bot] Failed to set commands:", err instanceof Error ? err.message : err);
-}
-
-let stopping = false;
-const stop = async (signal: string) => {
-  if (stopping) return;
-  stopping = true;
-  console.log(`Stopping bot after ${signal}`);
-  try {
-    await bot.stop();
-  } catch {
-    /* ignore */
-  }
-  queue.flushPending();
-  process.exit(0);
-};
-
-process.once("SIGINT", () => void stop("SIGINT"));
-process.once("SIGTERM", () => void stop("SIGTERM"));
-
 process.on("uncaughtException", (err) => {
   console.error(`[fatal] uncaughtException: ${err.message}`);
   process.exit(1);
 });
-
 process.on("unhandledRejection", (reason) => {
   console.error(`[fatal] unhandledRejection: ${reason instanceof Error ? reason.message : reason}`);
 });
 
-await init();
-console.log("[bot] Starting bot...");
-// Verify Telegram connectivity with exponential backoff
-const maxRetries = 5;
-let me: Awaited<ReturnType<typeof bot.api.getMe>> | undefined;
-for (let i = 0; i < maxRetries; i++) {
-  try {
-    me = await bot.api.getMe();
-    console.log(`[bot] Connected to Telegram as @${me.username} (bot ID: ${me.id})`);
-    break;
-  } catch (err) {
-    const delayMs = Math.min(1000 * 2 ** i, 30000);
-    console.error(
-      `[bot] Failed to connect (attempt ${i + 1}/${maxRetries}): ${err instanceof Error ? err.message : err}. Retrying in ${delayMs}ms...`,
-    );
-    if (i === maxRetries - 1) {
-      console.error("[bot] Max retries exceeded, exiting.");
-      process.exit(1);
-    }
-    await sleep(delayMs);
-  }
+// Each adapter is independently optional: Telegram is on when TELEGRAM_BOT_TOKEN is
+// set, Feishu/Lark when LARK_* is configured. LARK_ONLY forces Feishu-only even with
+// a token (handy for debugging the Lark adapter in isolation).
+const telegramEnabled = Boolean(config.telegramBotToken) && process.env.LARK_ONLY !== "true";
+const larkEnabled = Boolean(config.lark);
+
+if (!telegramEnabled && !larkEnabled) {
+  console.error(
+    "[bot] No chat adapter configured. Set TELEGRAM_BOT_TOKEN for Telegram and/or run `npm run setup:lark` for Feishu/Lark, then restart.",
+  );
+  process.exit(1);
 }
-await bot.start();
-console.log("[bot] Bot started successfully");
+
+await init();
+
+// Lark connects over a WebSocket (non-blocking); start it first. No-op unless
+// config.lark is set.
+startLark(deps);
+
+if (telegramEnabled) {
+  // grammy's long-poll loop blocks until the bot is stopped; this runs last.
+  await startTelegram(deps);
+} else {
+  // Feishu-only: the Lark WS keeps the process alive. Wire a minimal shutdown.
+  console.log("[bot] Telegram disabled — running Feishu (Lark) only. Ctrl-C to stop.");
+  const stop = (): void => {
+    deps.queue.flushPending();
+    process.exit(0);
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}

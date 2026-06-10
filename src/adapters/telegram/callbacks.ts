@@ -126,7 +126,8 @@ export async function handleCallbackQuery(
     }
     if (parsed.kind === "remove") {
       await safeAnswerCallback(ctx, "🗑 移除中…");
-      await removeProjectBySession(deps, replyTarget, sessionName);
+      replyTarget.removeSession(sessionName);
+      await removeProjectBySession(deps, sessionName);
       await reply(ctx, "ok", "已移除", { session: sessionName, replyTarget });
       return;
     }

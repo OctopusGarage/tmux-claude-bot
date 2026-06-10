@@ -3,7 +3,10 @@ import { z } from "zod";
 import type { AppConfig, ScriptConfig } from "./types.js";
 
 const envSchema = z.object({
-  BOT_TOKEN: z.string().min(1),
+  // Optional: Telegram is enabled only when a token is present. A Feishu/Lark-only
+  // install (LARK_* configured) needs no Telegram token.
+  TELEGRAM_BOT_TOKEN: z.string().default(""),
+  BOT_TOKEN: z.string().default(""), // legacy alias (pre-multi-protocol); read as fallback
   CLAUDE_START_COMMAND: z.string().min(1).default("claude-yolo"),
   IDLE_POLL_TICKS: z.coerce.number().int().positive().default(5),
   POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
@@ -19,10 +22,17 @@ const envSchema = z.object({
   MAX_QUEUE_SIZE: z.coerce.number().int().positive().default(30),
   MAX_WAIT_READY_MS: z.coerce.number().int().positive().default(60000),
   MAX_WAIT_DONE_MS: z.coerce.number().int().positive().default(300000),
-  ALLOWED_USER_IDS: z.string().default(""),
+  TELEGRAM_ALLOWED_USER_IDS: z.string().default(""),
+  ALLOWED_USER_IDS: z.string().default(""), // legacy alias
   CD_ALLOWED_DIRS: z.string().default(""),
   PROJECT_SESSION_PREFIX: z.string().min(1).default("tmux_proj_"),
-  HTTP_PROXY: z.string().optional(),
+  TELEGRAM_HTTP_PROXY: z.string().optional(),
+  HTTP_PROXY: z.string().optional(), // legacy alias
+  LARK_ENABLED: z.string().default("false"),
+  LARK_APP_ID: z.string().default(""),
+  LARK_APP_SECRET: z.string().default(""),
+  LARK_ALLOWED_OPEN_IDS: z.string().default(""),
+  LARK_DOMAIN: z.enum(["feishu", "lark"]).default("feishu"),
 });
 
 /**
@@ -44,8 +54,29 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
   }
   const parsed = envSchema.parse(env);
 
+  // Resolve new-or-legacy: the unprefixed keys predate multi-protocol support and
+  // are kept as read-only fallbacks so existing .env files keep working.
+  const telegramBotToken = parsed.TELEGRAM_BOT_TOKEN || parsed.BOT_TOKEN;
+  const telegramHttpProxy = parsed.TELEGRAM_HTTP_PROXY ?? parsed.HTTP_PROXY;
+  const telegramAllowedRaw = parsed.TELEGRAM_ALLOWED_USER_IDS || parsed.ALLOWED_USER_IDS;
+
+  const larkEnabled = parsed.LARK_ENABLED === "true";
+  const lark =
+    larkEnabled && parsed.LARK_APP_ID && parsed.LARK_APP_SECRET
+      ? {
+          appId: parsed.LARK_APP_ID,
+          appSecret: parsed.LARK_APP_SECRET,
+          allowedOpenIds: new Set(
+            parsed.LARK_ALLOWED_OPEN_IDS.split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          ),
+          domain: parsed.LARK_DOMAIN,
+        }
+      : undefined;
+
   return {
-    botToken: parsed.BOT_TOKEN,
+    telegramBotToken,
     claudeStartCommand: parsed.CLAUDE_START_COMMAND,
     idlePollTicks: parsed.IDLE_POLL_TICKS,
     pollIntervalMs: parsed.POLL_INTERVAL_MS,
@@ -57,8 +88,9 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
     maxQueueSize: parsed.MAX_QUEUE_SIZE,
     maxWaitReadyMs: parsed.MAX_WAIT_READY_MS,
     maxWaitDoneMs: parsed.MAX_WAIT_DONE_MS,
-    allowedUserIds: new Set(
-      parsed.ALLOWED_USER_IDS.split(",")
+    telegramAllowedUserIds: new Set(
+      telegramAllowedRaw
+        .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
     ),
@@ -66,7 +98,8 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       .map((s) => s.trim())
       .filter(Boolean),
     projectSessionPrefix: parsed.PROJECT_SESSION_PREFIX,
-    httpProxy: parsed.HTTP_PROXY,
+    telegramHttpProxy,
+    lark,
   };
 }
 

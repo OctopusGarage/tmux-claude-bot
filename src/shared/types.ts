@@ -1,5 +1,12 @@
+export type LarkConfig = {
+  appId: string;
+  appSecret: string;
+  allowedOpenIds: Set<string>;
+  domain: "feishu" | "lark";
+};
+
 export type AppConfig = {
-  botToken: string;
+  telegramBotToken: string;
   claudeStartCommand: string;
   idlePollTicks: number;
   pollIntervalMs: number;
@@ -11,10 +18,11 @@ export type AppConfig = {
   maxQueueSize: number;
   maxWaitReadyMs: number;
   maxWaitDoneMs: number;
-  allowedUserIds: Set<string>;
+  telegramAllowedUserIds: Set<string>;
   cdAllowedDirs: string[];
   projectSessionPrefix: string;
-  httpProxy?: string | undefined;
+  telegramHttpProxy?: string | undefined;
+  lark?: LarkConfig | undefined;
 };
 
 export type BotCommand = { command: string; description: string };

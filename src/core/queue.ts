@@ -7,7 +7,8 @@ import { Queue } from "../shared/utils/queue.js";
 export type QueuedMessage = {
   id: string;
   text: string;
-  chatId: number;
+  chatId: string | number;
+  channel?: "telegram" | "lark" | undefined;
   sessionName?: string | undefined;
   action: string;
   resolve: (output: string) => void;
@@ -17,7 +18,8 @@ export type QueuedMessage = {
 export type PersistedMessage = {
   id: string;
   text: string;
-  chatId: number;
+  chatId: string | number;
+  channel?: "telegram" | "lark" | undefined;
   sessionName?: string | undefined;
   action: string;
 };
@@ -76,6 +78,7 @@ export class MessageQueue {
         id: msg.id,
         text: msg.text,
         chatId: msg.chatId,
+        channel: msg.channel,
         sessionName: msg.sessionName,
         action: msg.action,
       });
@@ -86,6 +89,7 @@ export class MessageQueue {
           id: msg.id,
           text: msg.text,
           chatId: msg.chatId,
+          channel: msg.channel,
           sessionName: msg.sessionName,
           action: msg.action,
         });

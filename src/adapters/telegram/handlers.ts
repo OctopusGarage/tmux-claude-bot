@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import type { Bot } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
-import { executeMessage } from "../../core/dispatch.js";
 import { appendRecentProject } from "../../core/recentProjects.js";
 import {
   getPathBySession,
@@ -31,7 +30,7 @@ import type { ReplyTargetMap } from "./reply-target.js";
 import { resolveSessionFromReply } from "./session.js";
 import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
 
-const HELP_TEXT = `🤖 tmux-claude-telegram
+const HELP_TEXT = `🤖 tmux-claude-bot
 
 发任意文字 → 转给 Claude → 返回结果
 🎙️ 语音转写为可选功能 · /voice_install 启用（仅 Apple Silicon）· /voice_lang 设识别语言
@@ -59,19 +58,11 @@ const HELP_TEXT = `🤖 tmux-claude-telegram
 /help — 本帮助`;
 
 export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: ReplyTargetMap): void {
-  deps.queue.setHandler(async (msg) => {
-    try {
-      const result = await executeMessage(msg, deps);
-      msg.resolve(result);
-    } catch (err) {
-      msg.reject(normalizeError(err));
-    }
-  });
-
   const persisted = deps.queue.loadPersisted();
   if (persisted.length > 0) {
     deps.queue.clearPersisted();
     for (const p of persisted) {
+      if (p.channel === "lark") continue; // Lark restore is out of scope (Phase 1)
       deps.queue.enqueue(createRestoredMessage(p, bot));
     }
   }
@@ -276,7 +267,8 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
           await reply(ctx, "err", MSG.noShortId(id), { replyTarget });
           return;
         }
-        await removeProjectBySession(deps, replyTarget, sessionName);
+        replyTarget.removeSession(sessionName);
+        await removeProjectBySession(deps, sessionName);
         await reply(ctx, "ok", "已移除", { session: sessionName, replyTarget });
       } catch (err) {
         await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });

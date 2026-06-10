@@ -8,7 +8,7 @@ import type { TmuxBridge } from "./tmux.js";
 
 /**
  * The protocol-agnostic capability bundle the command dispatcher needs. Any
- * adapter (Telegram, Feishu, …) constructs these core services and hands them
+ * adapter (Telegram, Lark, …) constructs these core services and hands them
  * to `executeMessage`. Carries no platform/UI concepts.
  */
 export type HandlerDeps = {

@@ -36,6 +36,7 @@ export async function enqueueSessionCommand(
     chatId: ctx.chat?.id ?? 0,
     sessionName: session,
     action,
+    channel: "telegram",
     resolve:
       onResolve ??
       ((output: string) => {
@@ -109,15 +110,16 @@ export function createRestoredMessage(p: PersistedMessage, bot: Bot): QueuedMess
     chatId: p.chatId,
     sessionName: p.sessionName,
     action: p.action,
+    channel: "telegram",
     resolve: (output: string) => {
-      void send(bot, p.chatId, "recover", "Recovered", {
+      void send(bot, Number(p.chatId), "recover", "Recovered", {
         session: p.sessionName,
         body: output,
         code: true,
       });
     },
     reject: (err: Error) => {
-      void send(bot, p.chatId, "err", `Recovered failed: ${err.message}`, {
+      void send(bot, Number(p.chatId), "err", `Recovered failed: ${err.message}`, {
         session: p.sessionName,
       });
     },

@@ -1,6 +1,6 @@
-# tmux-claude-telegram
+# tmux-claude-bot
 
-A Telegram bot that drives [Claude Code](https://docs.anthropic.com/en/docs/claude-code) inside tmux sessions — enabling voice/image input and remote control from Telegram. Supports **multiple projects**, each with its own tmux session.
+A chat bot that drives [Claude Code](https://docs.anthropic.com/en/docs/claude-code) inside tmux sessions — remote-control your local Claude from **Telegram and/or Feishu/Lark**, with voice and text input. Supports **multiple projects**, each with its own tmux session. Pick one chat app or run both.
 
 ## Features
 
@@ -40,11 +40,14 @@ curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/
 The installer checks prerequisites (`node`, `tmux`, Claude Code CLI), installs
 dependencies, then runs a guided wizard that:
 
-1. asks for your **bot token** (from [@BotFather](https://t.me/BotFather)) and validates it live,
-2. **auto-captures your Telegram id** — just send your bot any message when prompted,
-3. asks which project directories the bot may use,
+1. asks which **chat app** to connect — **Telegram, Feishu/Lark, or both**,
+2. **Telegram:** asks for your **bot token** ([@BotFather](https://t.me/BotFather)), validates it live, and auto-captures your Telegram id (just message the bot),
+3. **Feishu/Lark:** renders a **QR code** — scan it to create the app; credentials are written for you,
+4. asks which project directories the bot may use,
 
 and finally installs and starts the bot as a launchd service (auto-restart on crash/boot).
+
+> Re-running the installer **updates code + dependencies and restarts the service while preserving your `.env` and runtime state** — a safe one-click update. Add Feishu later anytime with `npm run setup:lark`.
 
 > Prefer to clone first? `git clone … && cd tmux-claude-bot && ./install.sh` does the same thing in place.
 > The install location defaults to `~/.tmux-claude-bot`; override it with `TMUX_CLAUDE_BOT_DIR=/path`.
@@ -92,13 +95,14 @@ All settings via `.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BOT_TOKEN` | *(required)* | Telegram bot token from @BotFather |
+| `TELEGRAM_BOT_TOKEN` | *(optional)* | Telegram bot token from @BotFather. Blank = Telegram off (Feishu-only) |
+| `LARK_ENABLED` / `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_ALLOWED_OPEN_IDS` / `LARK_DOMAIN` | *(optional)* | Feishu/Lark adapter — set by `npm run setup:lark`. At least one of Telegram/Feishu must be configured |
 | `CLAUDE_START_COMMAND` | `claude-yolo` | Command to launch Claude |
 | `IDLE_POLL_TICKS` | `3` | Consecutive idle polls before considered idle |
 | `POLL_INTERVAL_MS` | `1000` | Milliseconds between idle polls |
 | `MAX_OUTPUT_LINES` | `200` | Max tmux pane lines to capture |
 | `MAX_MESSAGE_LENGTH` | `3500` | Max Telegram message size |
-| `ALLOWED_USER_IDS` | *(empty)* | Comma-separated Telegram user IDs that can use the bot |
+| `TELEGRAM_ALLOWED_USER_IDS` | *(empty)* | Comma-separated Telegram user IDs that can use the bot |
 | `CD_ALLOWED_DIRS` | *(empty)* | Allowed directories for project creation |
 
 ## Session Naming

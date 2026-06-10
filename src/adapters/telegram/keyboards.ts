@@ -1,5 +1,8 @@
 import { InlineKeyboard } from "grammy";
 import { isMessageAction } from "../../core/dispatch.js";
+import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
+
+export type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 
 /**
  * Parsed inline-button callback. Telegram limits callback_data to 64 bytes, so
@@ -142,12 +145,6 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
     .text("▴ 收起", `l:${sid}`);
 }
 
-export interface ProjectButton {
-  sid: string;
-  label: string;
-  active: boolean;
-}
-
 /**
  * Project list: one full-width row per project (tap to switch; the active one
  * is marked and inert), plus a delete-mode toggle. Telegram splits a row's
@@ -173,13 +170,6 @@ export function buildProjectDeleteKeyboard(projects: ProjectButton[]): InlineKey
     kb.text(`🗑 删除 ${p.label}`, `r:${p.sid}`).row();
   }
   return kb.text("✕ 取消", "dl");
-}
-
-export interface RecentButton {
-  sid: string;
-  label: string;
-  alive: boolean;
-  active: boolean;
 }
 
 /**

@@ -1,4 +1,4 @@
-# tmux-claude-telegram Bot Command Reference
+# tmux-claude-bot Bot Command Reference
 
 ## Telegram Menu Commands (16)
 

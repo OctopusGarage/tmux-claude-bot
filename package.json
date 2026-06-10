@@ -1,15 +1,16 @@
 {
-  "name": "tmux-claude-telegram",
-  "version": "0.1.1",
+  "name": "tmux-claude-bot",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "setup": "tsx src/scripts/setup.ts",
-    "setup:reconfigure": "tsx src/scripts/setup.ts --reconfigure",
-    "doctor": "tsx src/scripts/doctor.ts",
+    "setup": "NODE_NO_WARNINGS=1 tsx src/scripts/setup.ts",
+    "setup:reconfigure": "NODE_NO_WARNINGS=1 tsx src/scripts/setup.ts --reconfigure",
+    "setup:lark": "NODE_NO_WARNINGS=1 tsx src/scripts/lark-setup.ts",
+    "doctor": "NODE_NO_WARNINGS=1 tsx src/scripts/doctor.ts",
     "whisper:install": "scripts/install-whisper.sh",
     "service:install": "scripts/install-launchd.sh",
     "service:uninstall": "scripts/uninstall-launchd.sh",
@@ -27,14 +28,16 @@
     "test:watch": "vitest",
     "knip": "knip",
     "depcruise": "depcruise src --config .dependency-cruiser.cjs",
-    "prepare": "husky || true"
+    "prepare": "husky 2>/dev/null || true"
   },
   "dependencies": {
     "@grammyjs/files": "^1.2.0",
+    "@larksuiteoapi/node-sdk": "^1.66.1",
     "dotenv": "^17.4.0",
     "grammy": "^1.43.0",
     "https-proxy-agent": "^9.0.0",
     "node-fetch": "^3.3.2",
+    "qrcode-terminal": "^0.12.0",
     "telegramify-markdown": "^1.3.3",
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
@@ -45,6 +48,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
     "@types/node": "^25.9.2",
+    "@types/qrcode-terminal": "^0.12.2",
     "@vitest/coverage-v8": "^4.1.8",
     "dependency-cruiser": "^17.4.3",
     "husky": "^9.1.7",
