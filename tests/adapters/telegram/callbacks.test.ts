@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Avoid touching the real .env in the voice-language branch.
-vi.mock("../../../src/core/voice-support.js", () => ({
+// Avoid touching the real .env in the voice-language branch; keep VOICE_LANGS etc.
+vi.mock("../../../src/core/voice-support.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/core/voice-support.js")>()),
   persistEnvVar: vi.fn(),
 }));
 
@@ -78,18 +79,18 @@ describe("handleCallbackQuery", () => {
   });
 
   it("voicelang (vl:) sets the env var and refreshes the picker", async () => {
-    const prev = process.env.WHISPER_LANGUAGE;
+    const prev = process.env.TELEGRAM_WHISPER_LANGUAGE;
     const ctx = fakeCtx({ callbackData: "vl:en" });
     const deps = fakeDeps();
 
     await handleCallbackQuery(ctx, deps, replyTarget);
 
-    expect(process.env.WHISPER_LANGUAGE).toBe("en");
+    expect(process.env.TELEGRAM_WHISPER_LANGUAGE).toBe("en");
     expect(ctx.answered.some((t) => typeof t === "string" && t.includes("en"))).toBe(true);
     expect(ctx.editedMarkups).toHaveLength(1);
 
-    if (prev === undefined) delete process.env.WHISPER_LANGUAGE;
-    else process.env.WHISPER_LANGUAGE = prev;
+    if (prev === undefined) delete process.env.TELEGRAM_WHISPER_LANGUAGE;
+    else process.env.TELEGRAM_WHISPER_LANGUAGE = prev;
   });
 
   it("answers 'session gone' when the sid resolves to no alive session", async () => {
@@ -108,7 +109,7 @@ describe("handleCallbackQuery", () => {
 
     await handleCallbackQuery(ctx, deps, replyTarget);
 
-    expect(setCurrent).toHaveBeenCalledWith(SESSION);
+    expect(setCurrent).toHaveBeenCalledWith("telegram", SESSION);
     expect(ctx.answered.some((t) => typeof t === "string" && t.includes("已切换"))).toBe(true);
     expect(ctx.texts().some((t) => t.includes("已切换"))).toBe(true);
   });

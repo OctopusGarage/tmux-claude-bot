@@ -140,14 +140,14 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     try {
       const exists = await deps.bridge.hasSession(sessionName);
       if (exists) {
-        await deps.currentProject.set(sessionName);
+        await deps.currentProject.set("telegram", sessionName);
         setPathForSession(sessionName, resolvedPath);
         await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
         await reply(ctx, "warn", "已存在 · 已切换", { session: sessionName, replyTarget });
         return;
       }
       await deps.bridge.createSession(sessionName);
-      await deps.currentProject.set(sessionName);
+      await deps.currentProject.set("telegram", sessionName);
       await sleep(deps.config.sessionWarmupMs);
       await deps.bridge.sendKeys(`cd "${resolvedPath}"`);
       await sleep(deps.config.sessionWarmupMs);
@@ -164,7 +164,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("current_project", async (ctx) => {
-    const session = await deps.currentProject.get();
+    const session = await deps.currentProject.get("telegram");
     if (!session) {
       await reply(ctx, "err", "未设置当前项目\n\n用 /add_project <路径> 设置一个");
       return;
@@ -180,7 +180,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("list_recent_projects", async (ctx) => {
-    const buttons = await recentProjectButtons(deps);
+    const buttons = await recentProjectButtons(deps, "telegram");
     if (buttons.length === 0) {
       await reply(ctx, "list", "没有近期项目\n\n用 /add_project <路径> 添加一个");
       return;
@@ -250,7 +250,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
           await reply(ctx, "err", MSG.noShortId(id), { replyTarget });
           return;
         }
-        await switchToProject(deps, sessionName);
+        await switchToProject(deps, "telegram", sessionName);
         await reply(ctx, "ok", "已切换", { session: sessionName, replyTarget });
       } catch (err) {
         await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
@@ -282,7 +282,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
 
-    const currentSessionName = targetSession ?? (await deps.currentProject.get());
+    const currentSessionName = targetSession ?? (await deps.currentProject.get("telegram"));
     if (!currentSessionName) {
       logger.warn(`[handlers] no current session chat=${chatId}`);
       await reply(ctx, "err", MSG.noSession);

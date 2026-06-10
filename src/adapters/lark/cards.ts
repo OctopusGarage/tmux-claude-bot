@@ -1,4 +1,5 @@
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
+import { VOICE_LANGS } from "../../core/voice-support.js";
 import { HELP_TEXT } from "./commands.js";
 
 /** A card button spec. `value` is echoed back in cardAction.action.value. */
@@ -44,6 +45,22 @@ const shell = (title: string, elements: object[]): object => ({
   header: { title: { tag: "plain_text", content: title } },
   body: { elements },
 });
+
+/** Voice recognition-language picker — mirrors Telegram's button picker. The
+ * active language is marked and inert; tapping another sends `voicelang` with the
+ * chosen code. The recognition language is per-channel — this sets Feishu's only. */
+export function voiceLangCard(current: string): object {
+  return shell("🎙️ 语音识别语言", [
+    md(`当前(飞书)：**${current === "auto" ? "自动检测" : current}** · 点按钮切换`),
+    gridRow(
+      VOICE_LANGS.map((l) =>
+        l.code === current
+          ? { text: `✅ ${l.label}`, value: { cmd: "noop" } }
+          : { text: l.label, value: { cmd: "voicelang", lang: l.code } },
+      ),
+    ),
+  ]);
+}
 
 /** Collapsed (default) control rows — mirrors Telegram `buildControlKeyboard`
  * row-for-row: esc/clear/compact · peek/历史 · 项目/队列. */
@@ -169,5 +186,6 @@ export function helpCard(): object {
       { text: "🕘 近期", value: { cmd: "recent" } },
       { text: "📌 当前", value: { cmd: "current" } },
     ]),
+    gridRow([{ text: "🎙️ 语音语言", value: { cmd: "voicelangmenu" } }]),
   ]);
 }

@@ -108,6 +108,14 @@ describe("parseLarkInput", () => {
     });
   });
 
+  it("/voice_lang → view voicelang", () => {
+    expect(parseLarkInput("/voice_lang")).toEqual({
+      kind: "view",
+      name: "voicelang",
+      arg: undefined,
+    });
+  });
+
   it("/history → view history, no arg", () => {
     expect(parseLarkInput("/history")).toEqual({ kind: "view", name: "history", arg: undefined });
   });

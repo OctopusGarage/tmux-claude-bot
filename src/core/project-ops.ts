@@ -4,6 +4,7 @@ import { sessionShortId } from "../shared/utils/hash.js";
 import { sleep } from "../shared/utils/sleep.js";
 import type { HandlerDeps } from "./deps.js";
 import { projectLabel } from "./project-label.js";
+import type { Channel } from "./project-manager.js";
 import { appendRecentProject, readRecentProjectLines } from "./recentProjects.js";
 import { getPathBySession, sessionNameFromPath } from "./sessionPathMap.js";
 
@@ -37,9 +38,14 @@ export async function resolveAliveSessionByShortId(
   return sessions.find((s) => sessionShortId(s) === id) ?? null;
 }
 
-/** Make `sessionName` the current project and bump it in the recents list. */
-export async function switchToProject(deps: HandlerDeps, sessionName: string): Promise<void> {
-  await deps.currentProject.set(sessionName);
+/** Make `sessionName` the current project FOR THIS CHANNEL and bump it in the
+ * (shared) recents list. */
+export async function switchToProject(
+  deps: HandlerDeps,
+  channel: Channel,
+  sessionName: string,
+): Promise<void> {
+  await deps.currentProject.set(channel, sessionName);
   const projectPath = getPathBySession(sessionName);
   if (projectPath) {
     await appendRecentProject(projectPath, deps.config.projectSessionPrefix);
@@ -75,7 +81,6 @@ export async function removeProjectBySession(
   deps: HandlerDeps,
   sessionName: string,
 ): Promise<void> {
-  const current = await deps.currentProject.get();
   const isRunning = await deps.claude.checkIfRunning(sessionName);
 
   deps.queue.clearSession(sessionName);
@@ -97,9 +102,8 @@ export async function removeProjectBySession(
   }
   await deps.bridge.killSession(sessionName);
   deps.configResolver.invalidate(sessionName);
-  if (current === sessionName) {
-    await deps.currentProject.clear();
-  }
+  // The session is gone — drop it from any channel that had it as current.
+  await deps.currentProject.clearSession(sessionName);
 }
 
 /**
@@ -107,13 +111,16 @@ export async function removeProjectBySession(
  * buttons. Used by `/list_alive_projects` and the delete-mode toggles so they
  * always reflect the same set.
  */
-export async function aliveProjectButtons(deps: HandlerDeps): Promise<ProjectButton[]> {
+export async function aliveProjectButtons(
+  deps: HandlerDeps,
+  channel: Channel,
+): Promise<ProjectButton[]> {
   const sessions = await deps.bridge.listProjectSessions();
   const valid = sessions.filter((session) => {
     const projectPath = getPathBySession(session);
     return projectPath && fs.existsSync(projectPath);
   });
-  const currentSession = await deps.currentProject.get();
+  const currentSession = await deps.currentProject.get(channel);
   return valid
     .slice()
     .sort()
@@ -125,9 +132,12 @@ export async function aliveProjectButtons(deps: HandlerDeps): Promise<ProjectBut
 }
 
 /** Recent projects (existing dirs) as keyboard buttons, with alive/active flags. */
-export async function recentProjectButtons(deps: HandlerDeps): Promise<RecentButton[]> {
+export async function recentProjectButtons(
+  deps: HandlerDeps,
+  channel: Channel,
+): Promise<RecentButton[]> {
   const paths = (await readRecentProjectLines()).filter((p) => fs.existsSync(p));
-  const currentSession = await deps.currentProject.get();
+  const currentSession = await deps.currentProject.get(channel);
   const prefix = deps.config.projectSessionPrefix;
   return Promise.all(
     paths.map(async (projectPath) => {

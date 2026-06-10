@@ -4,7 +4,7 @@ import type { ReplyTargetMap } from "./reply-target.js";
 
 /** The current project's session, but only if its tmux pane is actually alive. */
 export async function requireSession(deps: HandlerDeps): Promise<string | null> {
-  const session = await deps.currentProject.get();
+  const session = await deps.currentProject.get("telegram");
   if (!session) return null;
   const exists = await deps.bridge.hasSession(session);
   if (!exists) return null;

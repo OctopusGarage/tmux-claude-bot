@@ -13,13 +13,19 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "../../core/sessionPathMap.js";
+import { resolveWhisperLanguage } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { truncate } from "../../shared/utils/string.js";
-import { projectListCard, recentListCard, viewCard } from "./cards.js";
+import { projectListCard, recentListCard, viewCard, voiceLangCard } from "./cards.js";
 import { sendCard, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
+
+/** Send the voice recognition-language picker card (current language marked). */
+export async function sendVoiceLangPicker(channel: LarkChannel, chatId: string): Promise<void> {
+  await sendCard(channel, chatId, voiceLangCard(resolveWhisperLanguage("lark")));
+}
 
 /**
  * Read-side renderers for the Lark adapter: fetch state (project lists, tmux
@@ -35,7 +41,7 @@ export async function sendAliveList(
   chatId: string,
 ): Promise<void> {
   try {
-    const buttons = await aliveProjectButtons(deps);
+    const buttons = await aliveProjectButtons(deps, "lark");
     await sendCard(channel, chatId, projectListCard(buttons));
   } catch (err) {
     await sendText(channel, chatId, `错误：${normalizeError(err).message}`);
@@ -49,7 +55,7 @@ export async function sendRecentList(
   chatId: string,
 ): Promise<void> {
   try {
-    const buttons = await recentProjectButtons(deps);
+    const buttons = await recentProjectButtons(deps, "lark");
     await sendCard(channel, chatId, recentListCard(buttons));
   } catch (err) {
     await sendText(channel, chatId, `错误：${normalizeError(err).message}`);
@@ -62,7 +68,7 @@ export async function sendPeek(
   deps: HandlerDeps,
   chatId: string,
 ): Promise<void> {
-  const session = await deps.currentProject.get();
+  const session = await deps.currentProject.get("lark");
   if (!session) {
     await sendText(channel, chatId, "无当前项目");
     return;
@@ -84,7 +90,7 @@ export async function sendHistory(
   chatId: string,
   index: number,
 ): Promise<void> {
-  const session = await deps.currentProject.get();
+  const session = await deps.currentProject.get("lark");
   if (!session) {
     await sendText(channel, chatId, "无当前项目");
     return;
@@ -175,7 +181,7 @@ export async function sendCurrentProject(
   deps: HandlerDeps,
   chatId: string,
 ): Promise<void> {
-  const session = await deps.currentProject.get();
+  const session = await deps.currentProject.get("lark");
   if (!session) {
     await sendText(channel, chatId, "无当前项目");
     return;
@@ -219,14 +225,14 @@ export async function addProject(
   const sessionName = sessionNameFromPath(resolvedPath, deps.config.projectSessionPrefix);
   try {
     if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set(sessionName);
+      await deps.currentProject.set("lark", sessionName);
       setPathForSession(sessionName, resolvedPath);
       await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
       await sendText(channel, chatId, "已存在 · 已切换");
       return;
     }
     await deps.bridge.createSession(sessionName);
-    await deps.currentProject.set(sessionName);
+    await deps.currentProject.set("lark", sessionName);
     await sleep(deps.config.sessionWarmupMs);
     await deps.bridge.sendKeys(`cd "${resolvedPath}"`);
     await sleep(deps.config.sessionWarmupMs);
@@ -259,7 +265,7 @@ export async function addRecentBySid(
   const sessionName = sessionNameFromPath(projectPath, prefix);
   try {
     if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set(sessionName);
+      await deps.currentProject.set("lark", sessionName);
       await sendText(channel, chatId, "已切换");
       return;
     }
@@ -268,7 +274,7 @@ export async function addRecentBySid(
       return;
     }
     await deps.bridge.createSession(sessionName);
-    await deps.currentProject.set(sessionName);
+    await deps.currentProject.set("lark", sessionName);
     setPathForSession(sessionName, projectPath);
     await sleep(deps.config.sessionWarmupMs);
     await deps.bridge.sendKeys(`cd "${projectPath}"`);

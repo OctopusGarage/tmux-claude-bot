@@ -11,7 +11,7 @@ import { markDone, markWorking } from "./reactions.js";
 import { sendCard, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
 
-const NO_SESSION_MSG = "无当前项目，请先在 Telegram 选择/新建项目";
+const NO_SESSION_MSG = "无当前项目，请先用 /list_alive_projects 选择或 /add_project 新建";
 
 /** "📂 <friendly project>" tag stamped on every reply so the user can see which
  * tmux session received it — mirrors the Telegram adapter's project line. */
@@ -25,7 +25,7 @@ async function resolveSession(
   chatId: string,
   sessionOverride?: string,
 ): Promise<string | null> {
-  const session = sessionOverride ?? (await deps.currentProject.get());
+  const session = sessionOverride ?? (await deps.currentProject.get("lark"));
   if (!session) {
     await sendText(channel, chatId, NO_SESSION_MSG);
     return null;

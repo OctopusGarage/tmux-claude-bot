@@ -4,6 +4,12 @@ import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.j
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
+// Keep the real VOICE_LANGS/resolveWhisperLanguage; stub the .env writer.
+vi.mock("../../../src/core/voice-support.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/core/voice-support.js")>()),
+  persistEnvVar: vi.fn(),
+}));
+
 function evt(value: unknown, over: Partial<CardActionEvent> = {}): CardActionEvent {
   return {
     messageId: "msg-1",
@@ -17,6 +23,27 @@ function evt(value: unknown, over: Partial<CardActionEvent> = {}): CardActionEve
 describe("makeCardActionHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("voicelangmenu → sends the voice-language picker card", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+    await handle(evt({ cmd: "voicelangmenu" }));
+    expect(channel.cards().some((c) => JSON.stringify(c).includes("语音识别语言"))).toBe(true);
+  });
+
+  it("voicelang → sets WHISPER_LANGUAGE and re-sends the picker", async () => {
+    const prev = process.env.LARK_WHISPER_LANGUAGE;
+    try {
+      const channel = fakeChannel();
+      const handle = makeCardActionHandler(channel, fakeDeps());
+      await handle(evt({ cmd: "voicelang", lang: "yue" }));
+      expect(process.env.LARK_WHISPER_LANGUAGE).toBe("yue");
+      expect(channel.cards().some((c) => JSON.stringify(c).includes("语音识别语言"))).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.LARK_WHISPER_LANGUAGE;
+      else process.env.LARK_WHISPER_LANGUAGE = prev;
+    }
   });
 
   it("drops cardAction from a non-allowlisted operator", async () => {
@@ -104,7 +131,7 @@ describe("makeCardActionHandler", () => {
 
     await handler(evt({ cmd: "switch", sid }));
 
-    expect(deps.currentProject.set).toHaveBeenCalledWith(session);
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", session);
     expect(channel.texts().some((t) => t.includes("已切换"))).toBe(true);
   });
 

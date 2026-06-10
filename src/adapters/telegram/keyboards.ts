@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { isMessageAction } from "../../core/dispatch.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
+import { VOICE_LANGS } from "../../core/voice-support.js";
 
 export type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 
@@ -70,14 +71,6 @@ export function parseCallbackData(data: string): CallbackAction | null {
   }
   return null;
 }
-
-/** Selectable voice recognition languages, in display order. "auto" clears the
- * forced language and lets whisper detect. */
-export const VOICE_LANGS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: "zh", label: "中文" },
-  { code: "en", label: "英文" },
-  { code: "auto", label: "🌐 自动检测" },
-];
 
 function isVoiceLang(code: string): boolean {
   return VOICE_LANGS.some((l) => l.code === code);

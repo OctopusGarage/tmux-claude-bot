@@ -2,10 +2,12 @@ import type { NormalizedMessage, ResourceDescriptor } from "@larksuiteoapi/node-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeChannel, fakeDeps, fakeMessage } from "./_fakes.js";
 
-// Control the whisper core: voice readiness, language, and the transcription.
+// Control the whisper core: voice readiness, language, and the transcription;
+// and the Feishu message-resource download (no real network).
 const checkVoiceSupport = vi.fn();
 const resolveWhisperLanguage = vi.fn(() => "en");
 const transcribeOgg = vi.fn();
+const downloadMessageResource = vi.fn();
 
 vi.mock("../../../src/core/voice-support.js", () => ({
   checkVoiceSupport: () => checkVoiceSupport(),
@@ -13,6 +15,9 @@ vi.mock("../../../src/core/voice-support.js", () => ({
 }));
 vi.mock("../../../src/core/transcriber.js", () => ({
   transcribeOgg: (...args: unknown[]) => transcribeOgg(...args),
+}));
+vi.mock("../../../src/adapters/lark/resource.js", () => ({
+  downloadMessageResource: (...args: unknown[]) => downloadMessageResource(...args),
 }));
 
 // Imported AFTER the mocks are registered.
@@ -26,6 +31,7 @@ describe("handleLarkVoice", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resolveWhisperLanguage.mockReturnValue("en");
+    downloadMessageResource.mockResolvedValue(undefined);
   });
 
   it("voice support not ready → hint reply, no transcription", async () => {
@@ -63,6 +69,40 @@ describe("handleLarkVoice", () => {
     expect(deps.queue.enqueued[0]?.action).toBe("text");
     expect(deps.queue.enqueued[0]?.text).toBe("hello world");
     expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-override");
+  });
+
+  it("download error (the messageResource 400 bug) → 转写失败 reply, no enqueue", async () => {
+    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
+    downloadMessageResource.mockRejectedValue(new Error("Request failed with status code 400"));
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await handleLarkVoice(channel, deps, msg(), audio);
+
+    expect(transcribeOgg).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("转写失败"))).toBe(true);
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("downloads via messageResource with the message_id (not file.get)", async () => {
+    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
+    transcribeOgg.mockResolvedValue("ok");
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await handleLarkVoice(
+      channel,
+      deps,
+      fakeMessage({ messageId: "om_123", resources: [audio] }),
+      audio,
+    );
+
+    expect(downloadMessageResource).toHaveBeenCalledWith(
+      expect.anything(),
+      "om_123",
+      "fk-1",
+      expect.stringContaining("/tmp/lark_voice_"),
+    );
   });
 
   it("transcription error → 转写失败 reply, no enqueue", async () => {

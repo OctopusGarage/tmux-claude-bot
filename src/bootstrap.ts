@@ -20,7 +20,7 @@ export function bootstrap(): HandlerDeps {
   const { currentProject } = createProjectManager(process.cwd());
 
   const bridge = new TmuxBridge({
-    getSessionName: () => currentProject.get().then((s) => s ?? "claude_bot"),
+    getSessionName: () => currentProject.getAny().then((s) => s ?? "claude_bot"),
     projectSessionPrefix: config.projectSessionPrefix,
   });
   const output = new OutputProcessor({

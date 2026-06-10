@@ -9,9 +9,10 @@ import {
   switchToProject,
 } from "../../core/project-ops.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
+import { resolveWhisperLanguage, setWhisperLanguage } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
-import { helpCard } from "./cards.js";
+import { helpCard, voiceLangCard } from "./cards.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
 import { sendCard, sendText } from "./replies.js";
@@ -41,7 +42,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     }
 
     const value = evt.action?.value as
-      | { cmd?: string; sid?: string; body?: string; title?: string; view?: boolean }
+      | { cmd?: string; sid?: string; body?: string; title?: string; view?: boolean; lang?: string }
       | undefined;
     const cmd = value?.cmd;
     if (!cmd) return;
@@ -79,11 +80,24 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       await sendQueueStatus(channel, deps, evt.chatId);
       return;
     }
+    // Voice recognition-language picker (mirrors Telegram /voice_lang).
+    if (cmd === "voicelangmenu") {
+      await sendCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
+      return;
+    }
+    if (cmd === "voicelang" && value?.lang) {
+      setWhisperLanguage("lark", value.lang);
+      logger.info(`[lark] voice recognition language set to ${value.lang} via card`);
+      // Re-send the picker so the ✅ moves to the new selection (updateCard is
+      // unreliable for 2.0 cards).
+      await sendCard(channel, evt.chatId, voiceLangCard(value.lang));
+      return;
+    }
 
     if (cmd === "switch" && value?.sid) {
       const session = await resolveAliveSessionByShortId(deps, value.sid);
       if (session) {
-        await switchToProject(deps, session);
+        await switchToProject(deps, "lark", session);
         const path = getPathBySession(session) ?? undefined;
         const warn = botSelfRepoWarning(path);
         await sendText(

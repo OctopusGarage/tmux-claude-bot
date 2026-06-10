@@ -16,6 +16,7 @@ import {
 import * as os from "node:os";
 import * as nodePath from "node:path";
 import { serializeEnv } from "./onboarding.js";
+import type { Channel } from "./project-manager.js";
 
 const ROOT = process.cwd();
 const ENV_PATH = nodePath.join(ROOT, ".env");
@@ -56,12 +57,41 @@ export function resolveWhisperBin(): string {
 export const DEFAULT_WHISPER_LANGUAGE = "zh";
 
 /**
- * Resolve the forced recognition language for mlx_whisper. Empty/unset falls
- * back to zh; "auto" means let whisper detect. Switchable at runtime via the
- * /voice_lang command, which sets process.env and persists to .env.
+ * Selectable recognition languages (mlx_whisper codes + display labels), in
+ * display order. "auto" clears the forced language and lets whisper detect.
+ * Shared by the Telegram keyboard picker and the Lark card picker.
  */
-export function resolveWhisperLanguage(): string {
+export const VOICE_LANGS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: "zh", label: "中文" },
+  { code: "yue", label: "粤语" },
+  { code: "en", label: "英文" },
+  { code: "auto", label: "🌐 自动检测" },
+];
+
+function whisperLangEnvKey(channel: Channel): string {
+  return channel === "telegram" ? "TELEGRAM_WHISPER_LANGUAGE" : "LARK_WHISPER_LANGUAGE";
+}
+
+/**
+ * Resolve the forced recognition language for mlx_whisper, PER CHANNEL. Each
+ * channel keeps its own language (`TELEGRAM_WHISPER_LANGUAGE` /
+ * `LARK_WHISPER_LANGUAGE`) so e.g. Feishu can be Cantonese while Telegram is
+ * Mandarin; both fall back to the shared `WHISPER_LANGUAGE`, then to zh. "auto"
+ * means let whisper detect. Omit `channel` to read just the shared default.
+ */
+export function resolveWhisperLanguage(channel?: Channel): string {
+  if (channel) {
+    const perChannel = process.env[whisperLangEnvKey(channel)];
+    if (perChannel) return perChannel;
+  }
   return process.env.WHISPER_LANGUAGE || DEFAULT_WHISPER_LANGUAGE;
+}
+
+/** Set + persist a channel's recognition language (live + survives restart). */
+export function setWhisperLanguage(channel: Channel, lang: string): void {
+  const key = whisperLangEnvKey(channel);
+  process.env[key] = lang;
+  persistEnvVar(key, lang);
 }
 
 export function checkVoiceSupport(): VoiceSupport {

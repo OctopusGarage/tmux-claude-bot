@@ -20,7 +20,7 @@ import type { ReplyTargetMap } from "./reply-target.js";
 /** The alive-projects list (tappable switch/delete keyboard, no body text). */
 export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<void> {
   try {
-    const buttons = await aliveProjectButtons(deps);
+    const buttons = await aliveProjectButtons(deps, "telegram");
     if (buttons.length === 0) {
       await reply(ctx, "list", "没有活跃项目\n\n用 /add_project <路径> 新建一个");
       return;

@@ -45,7 +45,7 @@ export async function addRecentProjectBySid(
   const sessionName = sessionNameFromPath(projectPath, prefix);
   try {
     if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set(sessionName);
+      await deps.currentProject.set("telegram", sessionName);
       await reply(ctx, "ok", "已切换", { session: sessionName, replyTarget });
       return;
     }
@@ -56,7 +56,7 @@ export async function addRecentProjectBySid(
       return;
     }
     await deps.bridge.createSession(sessionName);
-    await deps.currentProject.set(sessionName);
+    await deps.currentProject.set("telegram", sessionName);
     setPathForSession(sessionName, projectPath);
     await sleep(deps.config.sessionWarmupMs);
     await deps.bridge.sendKeys(`cd "${projectPath}"`);

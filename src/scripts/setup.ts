@@ -198,7 +198,9 @@ async function main(): Promise<void> {
         try {
           ids = await captureIds(token, values.TELEGRAM_HTTP_PROXY || undefined);
         } catch (e) {
-          C.warn(`Could not start capture listener (${e instanceof Error ? e.message : String(e)}).`);
+          C.warn(
+            `Could not start capture listener (${e instanceof Error ? e.message : String(e)}).`,
+          );
           C.warn(
             "If the bot is already running, stop it first (npm run service:uninstall) or enter your id manually.",
           );

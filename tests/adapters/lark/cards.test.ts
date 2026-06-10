@@ -138,6 +138,7 @@ describe("helpCard", () => {
       "listalive",
       "recent",
       "current",
+      "voicelangmenu",
     ]);
   });
 });

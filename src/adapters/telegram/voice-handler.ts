@@ -8,9 +8,9 @@ import {
   checkVoiceSupport,
   INSTALL_SCRIPT,
   isVoicePlatformSupported,
-  persistEnvVar,
   persistWhisperBin,
   resolveWhisperLanguage,
+  setWhisperLanguage,
 } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -74,20 +74,20 @@ export function registerVoiceHandler<TContext extends Context>(
     const arg = (ctx.message?.text ?? "").split(/\s+/)[1]?.trim().toLowerCase();
     if (!arg) {
       // No arg → show a button picker; tapping is handled in handleCallbackQuery.
-      const current = resolveWhisperLanguage();
+      const current = resolveWhisperLanguage("telegram");
       await reply(ctx, "info", MSG.voiceLangCurrent(current), {
         replyTarget,
         replyMarkup: buildVoiceLangKeyboard(current),
       });
       return;
     }
-    if (!/^(auto|[a-z]{2})$/.test(arg)) {
+    // Accept `auto` or a 2-3 letter whisper code (covers yue = Cantonese).
+    if (!/^(auto|[a-z]{2,3})$/.test(arg)) {
       await reply(ctx, "err", MSG.voiceLangInvalid, { replyTarget });
       return;
     }
-    process.env.WHISPER_LANGUAGE = arg;
-    persistEnvVar("WHISPER_LANGUAGE", arg);
-    logger.info(`[voice-lang] recognition language set to ${arg}`);
+    setWhisperLanguage("telegram", arg);
+    logger.info(`[voice-lang] telegram recognition language set to ${arg}`);
     await reply(ctx, "info", MSG.voiceLangSet(arg), { replyTarget });
   });
 
@@ -117,7 +117,7 @@ export function registerVoiceHandler<TContext extends Context>(
       return;
     }
 
-    const language = resolveWhisperLanguage();
+    const language = resolveWhisperLanguage("telegram");
     let transcribed: string;
     try {
       if (file.file_path.startsWith("http")) {
@@ -154,7 +154,7 @@ export function registerVoiceHandler<TContext extends Context>(
 
     logger.info(`[voice-handler] transcribed len=${transcribed.length}`);
 
-    const fallbackSession = await deps.currentProject.get();
+    const fallbackSession = await deps.currentProject.get("telegram");
     const currentSession = resolveSessionForMessage(
       msg.reply_to_message?.message_id,
       replyTarget,

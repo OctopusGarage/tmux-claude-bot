@@ -20,5 +20,5 @@ export const MSG = {
     `🎙️ 当前识别语言：${lang === "auto" ? "自动检测" : lang} · 点下方按钮切换`,
   voiceLangSet: (lang: string) =>
     `🎙️ 识别语言已设为 ${lang === "auto" ? "自动检测" : lang} · 下条语音生效`,
-  voiceLangInvalid: "🎙️ 用法：/voice_lang <zh|en|auto 或两位语言代码>",
+  voiceLangInvalid: "🎙️ 用法：/voice_lang <zh|yue|en|auto 或 2-3 位语言代码>",
 } as const;

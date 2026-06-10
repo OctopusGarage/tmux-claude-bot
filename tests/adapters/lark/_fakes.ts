@@ -135,9 +135,12 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
   } as unknown as FakeQueue;
 
   const currentProject = {
-    get: vi.fn(async () => session),
-    set: vi.fn(async () => {}),
-    clear: vi.fn(async () => {}),
+    get: vi.fn(async (_channel?: string) => session),
+    set: vi.fn(async (_channel?: string, _s?: string) => {}),
+    clear: vi.fn(async (_channel?: string) => {}),
+    clearSession: vi.fn(async (_s?: string) => {}),
+    getAny: vi.fn(async () => session),
+    allCurrent: vi.fn(async () => (session ? [session] : [])),
     ...overrides.currentProject,
   } as unknown as HandlerDeps["currentProject"];
 

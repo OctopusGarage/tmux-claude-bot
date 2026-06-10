@@ -13,6 +13,7 @@ export const HELP_TEXT = `\
 /queue_status — 队列状态
 /history [N] — 对话历史（默认最近一条）
 /peek — 查看 tmux 画面
+/voice_lang — 语音识别语言（中/粤/英/自动）
 
 ━━ ⚡ 运行中 ━━
 /enter — 回车   /esc — Escape
@@ -47,7 +48,8 @@ export type ViewName =
   | "recent"
   | "queuestatus"
   | "current"
-  | "addproject";
+  | "addproject"
+  | "voicelang";
 
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
  * Lark command surface matches Telegram's. */
@@ -59,6 +61,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   queue_status: "queuestatus",
   current_project: "current",
   add_project: "addproject",
+  voice_lang: "voicelang",
 };
 
 export type ParsedInput =

@@ -3,7 +3,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage } from "../../core/dispatch.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
-import { persistEnvVar } from "../../core/voice-support.js";
+import { setWhisperLanguage } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { timeApi } from "../../shared/utils/timing.js";
@@ -66,7 +66,7 @@ export async function handleCallbackQuery(
     // Toggle the project list between switch mode and delete mode — re-fetch
     // the live project list and swap the keyboard in place.
     if (parsed.kind === "delmode" || parsed.kind === "dellist") {
-      const buttons = await aliveProjectButtons(deps);
+      const buttons = await aliveProjectButtons(deps, "telegram");
       const kb =
         parsed.kind === "delmode"
           ? buildProjectDeleteKeyboard(buttons)
@@ -95,9 +95,8 @@ export async function handleCallbackQuery(
     // Voice-language pick: set it live + persist, confirm via toast, and refresh
     // the picker in place so the ✅ moves to the new selection.
     if (parsed.kind === "voicelang") {
-      process.env.WHISPER_LANGUAGE = parsed.lang;
-      persistEnvVar("WHISPER_LANGUAGE", parsed.lang);
-      logger.info(`[voice-lang] set to ${parsed.lang} via button`);
+      setWhisperLanguage("telegram", parsed.lang);
+      logger.info(`[voice-lang] telegram set to ${parsed.lang} via button`);
       await safeAnswerCallback(ctx, MSG.voiceLangSet(parsed.lang));
       try {
         await timeApi("editMessageReplyMarkup", () =>
@@ -121,7 +120,7 @@ export async function handleCallbackQuery(
       return;
     }
     if (parsed.kind === "switch") {
-      await switchToProject(deps, sessionName);
+      await switchToProject(deps, "telegram", sessionName);
       await safeAnswerCallback(ctx, "✅ 已切换");
       const warn = botSelfRepoWarning(getPathBySession(sessionName));
       await reply(ctx, "ok", warn ? `已切换\n\n${warn}` : "已切换", {

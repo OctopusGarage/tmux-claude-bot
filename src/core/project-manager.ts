@@ -15,10 +15,21 @@ const projectRoot = nodePath.resolve(
 
 // ─── current_project ───────────────────────────────────────────────────────────
 
+/** Chat channel — each keeps its OWN current project so switching on one does not
+ * affect the other. */
+export type Channel = "telegram" | "lark";
+
+type CurrentMap = Partial<Record<Channel, string>>;
+
+/**
+ * Per-channel "current project" pointer, stored as JSON in `.current_project`:
+ * `{ "telegram": "<session>", "lark": "<session>" }`. A legacy plain-string file
+ * (one shared current project) is migrated on read by seeding both channels with
+ * it, so an existing install keeps working until each channel diverges.
+ */
 export class CurrentProjectManager {
   private readonly baseDir: string;
-  private sessionCache: string | null = null;
-  private cacheDirty = true;
+  private cache: CurrentMap | null = null;
 
   constructor(baseDir: string) {
     this.baseDir = baseDir;
@@ -28,35 +39,68 @@ export class CurrentProjectManager {
     return nodePath.join(this.baseDir, CURRENT_PROJECT_FILE);
   }
 
-  async get(): Promise<string | null> {
-    if (!this.cacheDirty && this.sessionCache !== null) {
-      return this.sessionCache;
-    }
+  private async read(): Promise<CurrentMap> {
+    if (this.cache !== null) return this.cache;
     try {
-      this.sessionCache = await fsAsync.readFile(this.filePath(), "utf-8");
-      this.cacheDirty = false;
-      return this.sessionCache;
+      const raw = (await fsAsync.readFile(this.filePath(), "utf-8")).trim();
+      if (!raw) {
+        this.cache = {};
+      } else if (raw.startsWith("{")) {
+        this.cache = JSON.parse(raw) as CurrentMap;
+      } else {
+        // Legacy single-string format → seed both channels with the old value.
+        this.cache = { telegram: raw, lark: raw };
+      }
     } catch {
-      this.sessionCache = null;
-      this.cacheDirty = false;
-      return null;
+      this.cache = {};
     }
+    return this.cache;
   }
 
-  async set(sessionName: string): Promise<void> {
-    await fsAsync.writeFile(this.filePath(), sessionName, "utf-8");
-    this.sessionCache = sessionName;
-    this.cacheDirty = false;
+  private async write(map: CurrentMap): Promise<void> {
+    await fsAsync.writeFile(this.filePath(), `${JSON.stringify(map, null, 2)}\n`, "utf-8");
+    this.cache = map;
   }
 
-  async clear(): Promise<void> {
-    try {
-      await fsAsync.unlink(this.filePath());
-    } catch {
-      // ignore
+  async get(channel: Channel): Promise<string | null> {
+    return (await this.read())[channel] ?? null;
+  }
+
+  async set(channel: Channel, sessionName: string): Promise<void> {
+    await this.write({ ...(await this.read()), [channel]: sessionName });
+  }
+
+  /** Clear one channel's current project (e.g. it pointed at a removed session). */
+  async clear(channel: Channel): Promise<void> {
+    const map = { ...(await this.read()) };
+    delete map[channel];
+    await this.write(map);
+  }
+
+  /** Drop `sessionName` from EVERY channel that points at it — used when the
+   * session is torn down, so no channel is left pointing at a dead session. */
+  async clearSession(sessionName: string): Promise<void> {
+    const map = { ...(await this.read()) };
+    let changed = false;
+    for (const ch of ["telegram", "lark"] as Channel[]) {
+      if (map[ch] === sessionName) {
+        delete map[ch];
+        changed = true;
+      }
     }
-    this.sessionCache = null;
-    this.cacheDirty = false;
+    if (changed) await this.write(map);
+  }
+
+  /** Any channel's current project — for the bridge's default-session fallback. */
+  async getAny(): Promise<string | null> {
+    const map = await this.read();
+    return map.telegram ?? map.lark ?? null;
+  }
+
+  /** Distinct current sessions across channels — for boot-time session restore. */
+  async allCurrent(): Promise<string[]> {
+    const map = await this.read();
+    return [...new Set([map.telegram, map.lark].filter((s): s is string => Boolean(s)))];
   }
 }
 

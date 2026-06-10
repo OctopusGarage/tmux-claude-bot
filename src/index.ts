@@ -10,32 +10,34 @@ const deps = bootstrap();
 const { config, currentProject, bridge } = deps;
 
 async function init(): Promise<void> {
-  const session = await currentProject.get();
-  if (!session) {
-    console.log("[init] No .current_project found, skipping auto-start.");
+  // Restore every channel's current session (Telegram + Feishu may differ).
+  const sessions = await currentProject.allCurrent();
+  if (sessions.length === 0) {
+    console.log("[init] No current project for any channel, skipping auto-start.");
     return;
   }
-  try {
-    const alive = await bridge.isPaneAlive();
-    if (!alive) {
-      console.log(`[init] Session ${session} not alive, creating...`);
-      await bridge.createSession(session);
-      await sleep(AUTO_START_DELAY_MS);
-      // Restore working directory if mapped
-      const projectPath = getPathBySession(session);
-      if (projectPath) {
-        await bridge.sendKeys(`cd "${projectPath}"`, session);
+  for (const session of sessions) {
+    try {
+      const alive = await bridge.isPaneAlive(session);
+      if (!alive) {
+        console.log(`[init] Session ${session} not alive, creating...`);
+        await bridge.createSession(session);
         await sleep(AUTO_START_DELAY_MS);
-        console.log(`[init] Restored directory: ${projectPath}`);
+        // Restore working directory if mapped
+        const projectPath = getPathBySession(session);
+        if (projectPath) {
+          await bridge.sendKeys(`cd "${projectPath}"`, session);
+          await sleep(AUTO_START_DELAY_MS);
+          console.log(`[init] Restored directory: ${projectPath}`);
+        }
       }
+    } catch (err) {
+      console.error(`[init] init failed for ${session}:`, err);
     }
-    // Auto-starting Claude on boot is disabled by design: the bot must never
-    // type the start command into a pane on its own (it once landed inside an
-    // interactive Claude session). Launch Claude explicitly with /start.
-    console.log("[init] Auto-start disabled — use /start to launch Claude.");
-  } catch (err) {
-    console.error("[init] init failed:", err);
   }
+  // Auto-starting Claude on boot is disabled by design: the bot must never type
+  // the start command into a pane on its own. Launch Claude explicitly with /start.
+  console.log("[init] Auto-start disabled — use /start to launch Claude.");
 }
 
 process.on("uncaughtException", (err) => {

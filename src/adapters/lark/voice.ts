@@ -6,6 +6,7 @@ import { checkVoiceSupport, resolveWhisperLanguage } from "../../core/voice-supp
 import { logger } from "../../shared/utils/logger.js";
 import { enqueueLarkAction } from "./executor.js";
 import { sendText } from "./replies.js";
+import { downloadMessageResource } from "./resource.js";
 
 /**
  * Transcribe a Feishu voice/audio message and feed the text into the normal
@@ -29,14 +30,16 @@ export async function handleLarkVoice(
     return;
   }
 
-  // Feishu voice arrives as an audio resource; download it via the "file"
-  // resource type, write a temp file, and hand it to mlx_whisper.
+  // Feishu voice is a MESSAGE resource: download it via im.v1.messageResource.get
+  // (needs the message_id), NOT the channel's downloadResource — that hits
+  // im.v1.file.get (standalone files) and 400s on message media (the 转写失败 bug).
+  const larkCfg = deps.config.lark;
   const tmpPath = `/tmp/lark_voice_${Date.now()}.opus`;
   let transcribed: string;
   try {
-    const buf = await channel.downloadResource(audio.fileKey, "file");
-    fs.writeFileSync(tmpPath, buf);
-    transcribed = await transcribeOgg(tmpPath, support.bin, resolveWhisperLanguage());
+    if (!larkCfg) throw new Error("lark not configured");
+    await downloadMessageResource(larkCfg, msg.messageId, audio.fileKey, tmpPath);
+    transcribed = await transcribeOgg(tmpPath, support.bin, resolveWhisperLanguage("lark"));
   } catch (err) {
     logger.error(`[lark] voice transcription failed: ${err instanceof Error ? err.message : err}`);
     await sendText(channel, msg.chatId, "转写失败 · 请重试或改发文字");

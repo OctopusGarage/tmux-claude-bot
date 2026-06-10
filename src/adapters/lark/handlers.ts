@@ -15,6 +15,7 @@ import {
   sendPeek,
   sendQueueStatus,
   sendRecentList,
+  sendVoiceLangPicker,
 } from "./views.js";
 import { handleLarkVoice } from "./voice.js";
 
@@ -115,6 +116,9 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             break;
           case "current":
             await sendCurrentProject(channel, deps, msg.chatId);
+            break;
+          case "voicelang":
+            await sendVoiceLangPicker(channel, msg.chatId);
             break;
           case "addproject":
             if (!parsed.arg) {
