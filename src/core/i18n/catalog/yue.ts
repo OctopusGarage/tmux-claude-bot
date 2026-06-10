@@ -17,7 +17,7 @@ export const yue: Messages = {
   autoDetect: "自動偵測",
   voiceHeard: (text) => `🎙️ 你說的是：「${text}」`,
   voiceTranscribeFailed: "轉寫失敗 · 請重試或改用文字",
-  voiceEmpty: "轉寫結果為空 · 請重試",
+  voiceEmpty: "未能識別語音 · 請再說一次或改用文字",
   voiceUnsupported: "語音轉寫僅支援 Apple Silicon",
   voiceNotInstalled: "語音轉寫尚未安裝（在倉庫執行 npm run whisper:install）",
 
@@ -134,7 +134,7 @@ export const yue: Messages = {
   processing: "處理中",
   failed: "失敗",
   taskStillRunning: (body) => `⏳ 任務仍在進行中，請稍後用 /peek 查看當前結果\n\n${body}`,
-  voiceDownloadFailed: "轉寫失敗 · 無法下載檔案",
+  voiceDownloadFailed: "語音下載失敗 · 網絡波動,請重試",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot 異常重啟 — 上次未正常退出（崩潰／被殺），已自動恢復 · ${time}`,

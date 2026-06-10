@@ -23,8 +23,11 @@ export function parseEnv(text: string): Map<string, string> {
  * `values` that are absent from the template are appended. Always ends in "\n".
  */
 export function serializeEnv(template: string, values: Record<string, string>): string {
+  // .env has no quoting, so a value with a newline would inject spurious lines and
+  // corrupt the file. Strip CR/LF from every value (these are tokens/paths/ids).
+  const oneLine = (v: string): string => v.replace(/[\r\n]/g, "");
   if (template === "") {
-    const appended = Object.entries(values).map(([k, v]) => `${k}=${v}`);
+    const appended = Object.entries(values).map(([k, v]) => `${k}=${oneLine(v)}`);
     return `${appended.join("\n")}\n`;
   }
   const seen = new Set<string>();
@@ -41,14 +44,14 @@ export function serializeEnv(template: string, values: Record<string, string>): 
     }
     const key = raw.slice(0, eq).trim();
     if (Object.hasOwn(values, key)) {
-      result.push(`${key}=${values[key]}`);
+      result.push(`${key}=${oneLine(values[key] ?? "")}`);
       seen.add(key);
     } else {
       result.push(raw);
     }
   }
   for (const [key, val] of Object.entries(values)) {
-    if (!seen.has(key)) result.push(`${key}=${val}`);
+    if (!seen.has(key)) result.push(`${key}=${oneLine(val)}`);
   }
   return `${result.join("\n")}\n`;
 }

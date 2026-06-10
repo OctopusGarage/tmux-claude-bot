@@ -81,7 +81,12 @@ describe("registerVoiceHandler", () => {
     await capturedHandler(mockCtx);
 
     expect(mockCtx.getFile).toHaveBeenCalled();
-    expect(transcribeOgg).toHaveBeenCalledWith("/tmp/test.ogg", "mlx_whisper", "zh");
+    // download(tmpPath) writes to the bot-generated tmp path; that's what we transcribe.
+    expect(transcribeOgg).toHaveBeenCalledWith(
+      expect.stringContaining("/tmp/voice_"),
+      "mlx_whisper",
+      "zh",
+    );
     const replyTexts = (mockCtx.reply as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(
       replyTexts.some((t) => typeof t === "string" && t.includes("🎙️ 你说的是：「hello world」")),

@@ -37,6 +37,13 @@ describe("CurrentProjectManager (per-channel)", () => {
     expect(await manager.get("lark")).toBe("sess_B");
   });
 
+  it("concurrent set on different channels does not lose an update", async () => {
+    // Without the mutate() lock the cached read-modify-write races and one wins.
+    await Promise.all([manager.set("telegram", "sess_A"), manager.set("lark", "sess_B")]);
+    expect(await manager.get("telegram")).toBe("sess_A");
+    expect(await manager.get("lark")).toBe("sess_B");
+  });
+
   it("persists as JSON and reloads", async () => {
     await manager.set("telegram", "sess_A");
     await manager.set("lark", "sess_B");

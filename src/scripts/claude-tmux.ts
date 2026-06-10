@@ -18,7 +18,7 @@ import { promisify } from "node:util";
 import { config as loadEnv } from "dotenv";
 import { createConfigResolver, createExecProbe } from "../core/claude-config-resolver.js";
 import { DEFAULT_CONFIG_ROOT } from "../core/history.js";
-import { sessionNameFromPath, setPathForSession } from "../core/project-manager.js";
+import { sessionNameFromPath, setPathForSession } from "../core/sessionPathMap.js";
 import { TmuxBridge } from "../core/tmux.js";
 import { claudeBinFromStartCommand, loadScriptConfig } from "../shared/config.js";
 import { sleep } from "../shared/utils/sleep.js";

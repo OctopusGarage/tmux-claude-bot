@@ -170,3 +170,19 @@ describe("parseLarkInput", () => {
     expect(result).toEqual({ kind: "help" });
   });
 });
+
+describe("parseLarkInput arg extraction", () => {
+  it("extracts the add_project path verbatim, case-insensitively", () => {
+    expect(parseLarkInput("/add_project /home/user/app")).toMatchObject({
+      kind: "view",
+      name: "addproject",
+      arg: "/home/user/app",
+    });
+    // Uppercase command must NOT corrupt the path (was: indexOf(name) === -1 → garbage).
+    expect(parseLarkInput("/ADD_PROJECT /home/user/app")).toMatchObject({
+      kind: "view",
+      name: "addproject",
+      arg: "/home/user/app",
+    });
+  });
+});

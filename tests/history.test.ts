@@ -1,7 +1,13 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
-import { describe, expect, it } from "vitest";
-import { projectPathToHistoryDir } from "../src/core/history.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  getLatestAssistantReply,
+  getRecentConversations,
+  projectPathToHistoryDir,
+} from "../src/core/history.js";
 
 describe("projectPathToHistoryDir", () => {
   it("converts slashes and underscores to hyphens to match Claude's actual behavior", () => {
@@ -35,5 +41,100 @@ describe("projectPathToHistoryDir", () => {
     expect(result).toBe(
       nodePath.join(homedir(), ".claude/projects", "-Users-test-entropy-nexus-social-media-posts"),
     );
+  });
+});
+
+describe("parseConversationRounds (via getRecentConversations)", () => {
+  let configRoot: string;
+  const projectPath = "/proj/test";
+  let histDir: string;
+
+  const line = (
+    type: "user" | "assistant",
+    content: unknown,
+    extra: Record<string, unknown> = {},
+  ): string =>
+    JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content }, ...extra });
+
+  beforeEach(() => {
+    configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-hist-"));
+    histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(histDir, { recursive: true });
+  });
+  afterEach(() => fs.rmSync(configRoot, { recursive: true, force: true }));
+
+  const write = (name: string, lines: string[]): void =>
+    fs.writeFileSync(nodePath.join(histDir, name), `${lines.join("\n")}\n`, "utf-8");
+
+  it("pairs user → assistant into a round", async () => {
+    write("a.jsonl", [line("user", "hello world test"), line("assistant", "hi there")]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]).toMatchObject({ user: "hello world test", assistant: "hi there" });
+  });
+
+  it("skips malformed JSON lines and isMeta lines", async () => {
+    write("a.jsonl", [
+      "{ not valid json",
+      line("user", "real prompt here", { isMeta: true }), // meta → skipped
+      line("user", "actual prompt"),
+      line("assistant", "the answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("actual prompt");
+  });
+
+  it("collapses an agentic trace (tool_result has no text) to the final assistant block", async () => {
+    write("a.jsonl", [
+      line("user", "do the thing"),
+      line("assistant", "let me call a tool"),
+      line("user", [{ type: "tool_result", content: "output" }]), // no text → skipped
+      line("assistant", "final conclusion"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.assistant).toBe("final conclusion");
+  });
+
+  it("extracts a slash command name from a user turn", async () => {
+    write("a.jsonl", [
+      line("user", "<command-name>/clear</command-name>"),
+      line("assistant", "cleared"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds[0]?.user).toBe("[/clear]");
+  });
+
+  it("extracts text from a content-array message", async () => {
+    write("a.jsonl", [
+      line("user", "array prompt content"),
+      line("assistant", [{ type: "text", text: "array answer" }]),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds[0]?.assistant).toBe("array answer");
+  });
+
+  it("getLatestAssistantReply matches the sent prompt exactly", async () => {
+    write("a.jsonl", [line("user", "what is 2+2"), line("assistant", "4")]);
+    const reply = await getLatestAssistantReply(projectPath, "what is 2+2", configRoot, 0);
+    expect(reply).toBe("4");
+  });
+
+  it("getLatestAssistantReply fuzzy-matches when the sent text contains the stored prompt", async () => {
+    write("a.jsonl", [line("user", "summarize the file"), line("assistant", "summary done")]);
+    const reply = await getLatestAssistantReply(
+      projectPath,
+      "please summarize the file now",
+      configRoot,
+      0,
+    );
+    expect(reply).toBe("summary done");
+  });
+
+  it("getLatestAssistantReply returns null when nothing matches", async () => {
+    write("a.jsonl", [line("user", "unrelated prompt"), line("assistant", "x")]);
+    const reply = await getLatestAssistantReply(projectPath, "totally different", configRoot, 0);
+    expect(reply).toBeNull();
   });
 });

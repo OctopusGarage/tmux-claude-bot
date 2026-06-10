@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import type { LarkChannel, NormalizedMessage, ResourceDescriptor } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
@@ -5,6 +6,7 @@ import { messages } from "../../core/i18n/index.js";
 import { transcribeOgg } from "../../core/transcriber.js";
 import { checkVoiceSupport, resolveWhisperLanguage } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
+import { withRetry } from "../../shared/utils/retry.js";
 import { enqueueLarkAction } from "./executor.js";
 import { sendText } from "./replies.js";
 import { downloadMessageResource } from "./resource.js";
@@ -34,11 +36,26 @@ export async function handleLarkVoice(
   // (needs the message_id), NOT the channel's downloadResource — that hits
   // im.v1.file.get (standalone files) and 400s on message media (the 转写失败 bug).
   const larkCfg = deps.config.lark;
-  const tmpPath = `/tmp/lark_voice_${Date.now()}.opus`;
+  if (!larkCfg) {
+    await sendText(channel, msg.chatId, messages("lark").voiceDownloadFailed);
+    return;
+  }
+  const tmpPath = `/tmp/lark_voice_${randomUUID()}.opus`;
+
+  // 1) Download the message resource — retried, because Feishu can return 400 for
+  // a beat right after the message arrives, before the resource is fetchable.
+  // Reported distinctly from a transcribe failure.
+  try {
+    await withRetry(() => downloadMessageResource(larkCfg, msg.messageId, audio.fileKey, tmpPath));
+  } catch (err) {
+    logger.error(`[lark] voice download failed: ${err instanceof Error ? err.message : err}`);
+    await sendText(channel, msg.chatId, messages("lark").voiceDownloadFailed);
+    return;
+  }
+
+  // 2) Transcribe.
   let transcribed: string;
   try {
-    if (!larkCfg) throw new Error("lark not configured");
-    await downloadMessageResource(larkCfg, msg.messageId, audio.fileKey, tmpPath);
     transcribed = await transcribeOgg(tmpPath, support.bin, resolveWhisperLanguage("lark"));
   } catch (err) {
     logger.error(`[lark] voice transcription failed: ${err instanceof Error ? err.message : err}`);

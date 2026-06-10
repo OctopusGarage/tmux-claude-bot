@@ -61,6 +61,28 @@ describe("Queue", () => {
     const defaultQueue = new Queue<number>();
     expect(defaultQueue.getMaxSize()).toBe(Infinity);
   });
+
+  it("rejects enqueue past maxSize and keeps size accurate", () => {
+    const queue = new Queue<number>(2);
+    expect(queue.enqueue(1)).toBe(true);
+    expect(queue.enqueue(2)).toBe(true);
+    expect(queue.enqueue(3)).toBe(false); // full
+    expect(queue.size()).toBe(2);
+    queue.dequeue();
+    expect(queue.enqueue(3)).toBe(true); // room again after dequeue
+    expect(queue.toArray()).toEqual([2, 3]);
+  });
+
+  it("compacts the backing array after many dequeues without losing items (head>100)", () => {
+    const queue = new Queue<number>();
+    for (let i = 0; i < 250; i++) queue.enqueue(i);
+    // Dequeue past the compaction threshold (head>100 && head*2>=length).
+    for (let i = 0; i < 130; i++) expect(queue.dequeue()).toBe(i);
+    // Remaining items must still be intact and in order after compaction.
+    expect(queue.size()).toBe(120);
+    expect(queue.peek()).toBe(130);
+    expect(queue.toArray()).toEqual(Array.from({ length: 120 }, (_, i) => i + 130));
+  });
 });
 
 describe("normalizeError", () => {

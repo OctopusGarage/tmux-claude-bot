@@ -203,8 +203,13 @@ export async function getRecentConversations(
     return [];
   }
 
+  // Read only the newest few transcripts. `files` is mtime-sorted newest-first and
+  // callers want recent rounds (latest history, or the reply to a just-sent prompt),
+  // so reading every .jsonl in the project — potentially hundreds of multi-MB files,
+  // fully into memory on each call — is wasteful and unnecessary.
+  const MAX_HISTORY_FILES = 10;
   const allRounds: ConversationRound[] = [];
-  for (const file of files) {
+  for (const file of files.slice(0, MAX_HISTORY_FILES)) {
     let rawContent: string;
     try {
       rawContent = await fs.readFile(file.path, "utf-8");

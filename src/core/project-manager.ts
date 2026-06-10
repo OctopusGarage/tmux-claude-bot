@@ -1,17 +1,14 @@
-import * as fs from "node:fs";
 import * as fsAsync from "node:fs/promises";
-import { homedir } from "node:os";
 import * as nodePath from "node:path";
+import { appendRecentProject, readRecentProjectLines } from "./recentProjects.js";
+import {
+  getPathBySession,
+  isCdAllowed,
+  sessionNameFromPath,
+  setPathForSession,
+} from "./sessionPathMap.js";
 
 const CURRENT_PROJECT_FILE = ".current_project";
-const SESSION_PATH_MAP_FILE = "session_path_map.json";
-const RECENT_PROJECTS_FILE = "recent_projects.txt";
-const MAX_RECENT_PROJECTS = 15;
-const projectRoot = nodePath.resolve(
-  nodePath.dirname(new URL(import.meta.url).pathname),
-  "..",
-  "..",
-);
 
 // ─── current_project ───────────────────────────────────────────────────────────
 
@@ -30,9 +27,30 @@ type CurrentMap = Partial<Record<Channel, string>>;
 export class CurrentProjectManager {
   private readonly baseDir: string;
   private cache: CurrentMap | null = null;
+  private lock: Promise<void> = Promise.resolve();
 
   constructor(baseDir: string) {
     this.baseDir = baseDir;
+  }
+
+  /**
+   * Serialize the read-modify-write so two concurrent mutations (e.g. Telegram
+   * and Feishu both switching project in the same async window) can't clobber
+   * each other — the in-memory cache makes a bare RMW non-atomic, dropping one
+   * channel's update.
+   */
+  private async mutate(fn: (map: CurrentMap) => CurrentMap): Promise<void> {
+    const prev = this.lock;
+    let release!: () => void;
+    this.lock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await prev;
+    try {
+      await this.write(fn({ ...(await this.read()) }));
+    } finally {
+      release();
+    }
   }
 
   private filePath(): string {
@@ -67,28 +85,26 @@ export class CurrentProjectManager {
   }
 
   async set(channel: Channel, sessionName: string): Promise<void> {
-    await this.write({ ...(await this.read()), [channel]: sessionName });
+    await this.mutate((map) => ({ ...map, [channel]: sessionName }));
   }
 
   /** Clear one channel's current project (e.g. it pointed at a removed session). */
   async clear(channel: Channel): Promise<void> {
-    const map = { ...(await this.read()) };
-    delete map[channel];
-    await this.write(map);
+    await this.mutate((map) => {
+      delete map[channel];
+      return map;
+    });
   }
 
   /** Drop `sessionName` from EVERY channel that points at it — used when the
    * session is torn down, so no channel is left pointing at a dead session. */
   async clearSession(sessionName: string): Promise<void> {
-    const map = { ...(await this.read()) };
-    let changed = false;
-    for (const ch of ["telegram", "lark"] as Channel[]) {
-      if (map[ch] === sessionName) {
-        delete map[ch];
-        changed = true;
+    await this.mutate((map) => {
+      for (const ch of ["telegram", "lark"] as Channel[]) {
+        if (map[ch] === sessionName) delete map[ch];
       }
-    }
-    if (changed) await this.write(map);
+      return map;
+    });
   }
 
   /** Any channel's current project — for the bridge's default-session fallback. */
@@ -104,94 +120,11 @@ export class CurrentProjectManager {
   }
 }
 
-// ─── session ↔ path map ────────────────────────────────────────────────────────
-
-function sessionPathMapPath(): string {
-  return nodePath.join(projectRoot, SESSION_PATH_MAP_FILE);
-}
-
-export function loadSessionPathMap(): Record<string, string> {
-  try {
-    const raw = fs.readFileSync(sessionPathMapPath(), "utf-8");
-    return JSON.parse(raw) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-function saveSessionPathMap(map: Record<string, string>): void {
-  fs.writeFileSync(sessionPathMapPath(), JSON.stringify(map, null, 2), "utf-8");
-}
-
-export function getPathBySession(sessionName: string): string | null {
-  const map = loadSessionPathMap();
-  return map[sessionName] ?? null;
-}
-
-export function setPathForSession(sessionName: string, projectPath: string): void {
-  const map = loadSessionPathMap();
-  map[sessionName] = projectPath;
-  saveSessionPathMap(map);
-}
-
-export function sessionNameFromPath(projectPath: string, prefix: string): string {
-  const absPath = nodePath.resolve(projectPath);
-  return prefix + absPath.replace(/\//g, "-");
-}
-
-export function isCdAllowed(targetPath: string, allowed: readonly string[]): boolean {
-  if (allowed.length === 0) return true;
-  const expanded = allowed.map((d) => nodePath.resolve(d.replaceAll("~", homedir())));
-  return expanded.some((dir) => targetPath.startsWith(`${dir}/`) || targetPath === dir);
-}
-
-// ─── recent projects ────────────────────────────────────────────────────────────
-
-let recentProjectsCache: string[] | null = null;
-let recentProjectLock: Promise<void> = Promise.resolve();
-
-export async function readRecentProjectLines(): Promise<string[]> {
-  if (recentProjectsCache !== null) return recentProjectsCache;
-  try {
-    const raw = await fsAsync.readFile(nodePath.join(projectRoot, RECENT_PROJECTS_FILE), "utf-8");
-    recentProjectsCache = raw.split("\n").filter(Boolean);
-    return recentProjectsCache;
-  } catch {
-    recentProjectsCache = [];
-    return recentProjectsCache;
-  }
-}
-
-export async function appendRecentProject(newPath: string, prefix: string): Promise<void> {
-  const prev = recentProjectLock;
-  let release!: () => void;
-  recentProjectLock = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await prev;
-  try {
-    const newSession = sessionNameFromPath(newPath, prefix);
-    const lines = await readRecentProjectLines();
-    const filtered = lines.filter((l) => {
-      if (l === newPath) return false;
-      return sessionNameFromPath(l, prefix) !== newSession;
-    });
-    filtered.unshift(newPath);
-    if (filtered.length > MAX_RECENT_PROJECTS) {
-      filtered.length = MAX_RECENT_PROJECTS;
-    }
-    await fsAsync.writeFile(
-      nodePath.join(projectRoot, RECENT_PROJECTS_FILE),
-      `${filtered.join("\n")}\n`,
-      "utf-8",
-    );
-    recentProjectsCache = filtered;
-  } finally {
-    release();
-  }
-}
-
 // ─── project manager facade ────────────────────────────────────────────────────
+// The session ↔ path map and recent-projects helpers live in their own modules
+// (sessionPathMap.ts / recentProjects.ts) — the single, TCB_STATE_DIR-aware
+// implementation. This facade just bundles them with the current-project pointer
+// for the bootstrap wiring.
 
 export interface ProjectManager {
   currentProject: CurrentProjectManager;

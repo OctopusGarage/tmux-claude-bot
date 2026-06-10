@@ -10,7 +10,11 @@ import {
   switchToProject,
 } from "../../core/project-ops.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
-import { resolveWhisperLanguage, setWhisperLanguage } from "../../core/voice-support.js";
+import {
+  resolveWhisperLanguage,
+  setWhisperLanguage,
+  VOICE_LANGS,
+} from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { helpCard, langCard, voiceLangCard } from "./cards.js";
@@ -86,7 +90,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       await sendCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
       return;
     }
-    if (cmd === "voicelang" && value?.lang) {
+    if (cmd === "voicelang" && value?.lang && VOICE_LANGS.some((l) => l.code === value.lang)) {
       setWhisperLanguage("lark", value.lang);
       logger.info(`[lark] voice recognition language set to ${value.lang} via card`);
       // Re-send the picker so the ✅ moves to the new selection (updateCard is

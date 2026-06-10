@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { promisify } from "node:util";
 import type { Bot, Context } from "grammy";
@@ -15,6 +16,7 @@ import {
 } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
+import { withRetry } from "../../shared/utils/retry.js";
 import { buildVoiceLangKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
@@ -119,37 +121,50 @@ export function registerVoiceHandler<TContext extends Context>(
     }
 
     const language = resolveWhisperLanguage("telegram");
+    const filePath = file.file_path;
+    const tmpPath = `/tmp/voice_${randomUUID()}.ogg`;
+
+    // 1) Download — retried, because a proxy/network drop here is transient and a
+    // single retry usually rides it out. Reported distinctly from a transcribe error.
+    try {
+      await withRetry(async () => {
+        if (filePath.startsWith("http")) {
+          // Local Bot API server: file_path is a direct HTTP URL.
+          const res = await fetch(filePath);
+          if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+          fs.writeFileSync(tmpPath, Buffer.from(await res.arrayBuffer()));
+        } else {
+          // Standard Bot API: download via hydrateFiles' file.download().
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (file as any).download(tmpPath);
+        }
+      });
+    } catch (err) {
+      logger.error(`[voice-handler] download failed: ${err}`);
+      await reply(ctx, "err", messages("telegram").voiceDownloadFailed, { replyTarget });
+      return;
+    }
+
+    // 2) Transcribe — a distinct error so the user knows it downloaded fine but
+    // whisper failed (vs a network problem they'd handle differently).
     let transcribed: string;
     try {
-      if (file.file_path.startsWith("http")) {
-        // When using local Bot API server, file_path is HTTP URL directly
-        const tmpPath = `/tmp/voice_${Date.now()}.ogg`;
-        const res = await fetch(file.file_path);
-        if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-        const buffer = await res.arrayBuffer();
-        fs.writeFileSync(tmpPath, Buffer.from(buffer));
-        transcribed = await transcribeOgg(tmpPath, support.bin, language);
-        try {
-          fs.unlinkSync(tmpPath);
-        } catch {
-          /* cleanup best-effort */
-        }
-      } else {
-        // Standard Telegram Bot API: download via file.download() with hydrateFiles
-        const tmpPath = `/tmp/voice_${Date.now()}.ogg`;
-        // download() added by hydrateFiles at runtime — cast to avoid TS error
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const downloadedPath = await (file as any).download(tmpPath);
-        transcribed = await transcribeOgg(downloadedPath, support.bin, language);
-        try {
-          fs.unlinkSync(downloadedPath);
-        } catch {
-          /* cleanup best-effort */
-        }
-      }
+      transcribed = await transcribeOgg(tmpPath, support.bin, language);
     } catch (err) {
       logger.error(`[voice-handler] transcription failed: ${err}`);
       await reply(ctx, "err", messages("telegram").voiceTranscribeFailed, { replyTarget });
+      return;
+    } finally {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        /* cleanup best-effort */
+      }
+    }
+
+    // 3) Empty result (too short / silence) → ask the user to speak up, not a generic fail.
+    if (!transcribed.trim()) {
+      await reply(ctx, "err", messages("telegram").voiceEmpty, { replyTarget });
       return;
     }
 

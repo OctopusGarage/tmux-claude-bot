@@ -28,6 +28,15 @@ describe("startProgress", () => {
     expect(api.editMessageText).toHaveBeenCalledWith(12345, 555, "⏳ 处理中…(用时 5s)");
   });
 
+  it("update() after finalize() is a no-op (a late tick can't revert the result)", async () => {
+    const api = okApi();
+    const handle = await startProgress(api, 12345, "⏳ 处理中…");
+    await handle?.finalize("✅ done");
+    api.editMessageText.mockClear();
+    await handle?.update("⏳ 处理中…(stale tick)");
+    expect(api.editMessageText).not.toHaveBeenCalled();
+  });
+
   it("finalize() edits the message with the given extra (e.g. parse_mode)", async () => {
     const api = okApi();
     const handle = await startProgress(api, 12345, "⏳ 处理中…");

@@ -26,3 +26,18 @@ describe("redactSecrets", () => {
     expect(redactSecrets(msg)).toBe(msg);
   });
 });
+
+describe("redactSecrets (Lark app secret)", () => {
+  it("redacts LARK_APP_SECRET wherever it appears", () => {
+    const prev = process.env.LARK_APP_SECRET;
+    process.env.LARK_APP_SECRET = "super-secret-feishu-value";
+    try {
+      const out = redactSecrets("lark error: appSecret=super-secret-feishu-value boom");
+      expect(out).not.toContain("super-secret-feishu-value");
+      expect(out).toContain("<redacted-token>");
+    } finally {
+      if (prev === undefined) delete process.env.LARK_APP_SECRET;
+      else process.env.LARK_APP_SECRET = prev;
+    }
+  });
+});

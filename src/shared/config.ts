@@ -32,7 +32,10 @@ const envSchema = z.object({
   LARK_APP_ID: z.string().default(""),
   LARK_APP_SECRET: z.string().default(""),
   LARK_ALLOWED_OPEN_IDS: z.string().default(""),
-  LARK_DOMAIN: z.enum(["feishu", "lark"]).default("feishu"),
+  // `.catch` (not just `.default`) so a blank/invalid LARK_DOMAIN=... line falls
+  // back instead of throwing at startup — a stray Lark line must not take down a
+  // Telegram-only install.
+  LARK_DOMAIN: z.enum(["feishu", "lark"]).catch("feishu"),
 });
 
 /**

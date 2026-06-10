@@ -71,7 +71,7 @@ describe("handleLarkVoice", () => {
     expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-override");
   });
 
-  it("download error (the messageResource 400 bug) → 转写失败 reply, no enqueue", async () => {
+  it("download keeps failing (after retry) → distinct download-failed reply, no transcribe", async () => {
     checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
     downloadMessageResource.mockRejectedValue(new Error("Request failed with status code 400"));
     const channel = fakeChannel();
@@ -79,9 +79,26 @@ describe("handleLarkVoice", () => {
 
     await handleLarkVoice(channel, deps, msg(), audio);
 
+    expect(downloadMessageResource).toHaveBeenCalledTimes(2); // retried once
     expect(transcribeOgg).not.toHaveBeenCalled();
-    expect(channel.texts().some((t) => t.includes("转写失败"))).toBe(true);
+    expect(channel.texts().some((t) => t.includes("下载失败"))).toBe(true);
     expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("download fails once then succeeds (retry) → transcribes and enqueues", async () => {
+    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
+    downloadMessageResource
+      .mockRejectedValueOnce(new Error("transient 400"))
+      .mockResolvedValue(undefined);
+    transcribeOgg.mockResolvedValue("recovered");
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await handleLarkVoice(channel, deps, msg(), audio);
+
+    expect(downloadMessageResource).toHaveBeenCalledTimes(2);
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]?.text).toBe("recovered");
   });
 
   it("downloads via messageResource with the message_id (not file.get)", async () => {
@@ -117,7 +134,7 @@ describe("handleLarkVoice", () => {
     expect(deps.queue.enqueued).toHaveLength(0);
   });
 
-  it("empty transcription → 转写为空 reply, no enqueue", async () => {
+  it("empty transcription → didn't-catch reply, no enqueue", async () => {
     checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
     transcribeOgg.mockResolvedValue("   ");
     const channel = fakeChannel();
@@ -125,7 +142,7 @@ describe("handleLarkVoice", () => {
 
     await handleLarkVoice(channel, deps, msg(), audio);
 
-    expect(channel.texts().some((t) => t.includes("转写为空"))).toBe(true);
+    expect(channel.texts().some((t) => t.includes("没听清"))).toBe(true);
     expect(deps.queue.enqueued).toHaveLength(0);
   });
 });

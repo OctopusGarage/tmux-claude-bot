@@ -66,10 +66,29 @@ export async function startProgress(
   }
 
   const messageId = sent.message_id;
+  let finalized = false;
+  // Serialize edits so they always apply in CALL order — otherwise a slow,
+  // already-in-flight progress tick can resolve AFTER finalize and revert the
+  // message back to "处理中…", clobbering the result. `finalized` then stops any
+  // tick scheduled after finalize from running at all.
+  let chain: Promise<unknown> = Promise.resolve();
+  const edit = (text: string, extra?: Record<string, unknown>): Promise<unknown> => {
+    const doEdit = (): Promise<unknown> =>
+      extra === undefined
+        ? api.editMessageText(chatId, messageId, text)
+        : api.editMessageText(chatId, messageId, text, extra);
+    const run = chain.then(doEdit, doEdit);
+    chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 
   const update = async (text: string): Promise<void> => {
+    if (finalized) return; // a tick after finalize must not overwrite the result
     try {
-      await timeApi("editMessageText(tick)", () => api.editMessageText(chatId, messageId, text));
+      await timeApi("editMessageText(tick)", () => edit(text));
     } catch (err) {
       logger.warn(
         `[progress] failed to edit chat=${chatId} msg=${messageId}: ${err instanceof Error ? err.message : err}`,
@@ -81,10 +100,9 @@ export async function startProgress(
     text: string,
     finalizeExtra?: Record<string, unknown>,
   ): Promise<boolean> => {
+    finalized = true;
     try {
-      await timeApi("editMessageText(final)", () =>
-        api.editMessageText(chatId, messageId, text, finalizeExtra),
-      );
+      await timeApi("editMessageText(final)", () => edit(text, finalizeExtra));
       return true;
     } catch (err) {
       // Mirror the reply() path: if Markdown parsing fails, retry as plain text
@@ -92,9 +110,7 @@ export async function startProgress(
       if (isMarkdownParseError(err) && finalizeExtra?.parse_mode) {
         const { parse_mode: _drop, ...rest } = finalizeExtra;
         try {
-          await timeApi("editMessageText(final,plain)", () =>
-            api.editMessageText(chatId, messageId, text, rest),
-          );
+          await timeApi("editMessageText(final,plain)", () => edit(text, rest));
           return true;
         } catch (fallbackErr) {
           logger.warn(

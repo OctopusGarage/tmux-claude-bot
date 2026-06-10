@@ -2,7 +2,7 @@ import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
 import { detectUncleanRestart, markCleanShutdown } from "./core/lifecycle.js";
-import { getPathBySession } from "./core/project-manager.js";
+import { getPathBySession } from "./core/sessionPathMap.js";
 import { logger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 

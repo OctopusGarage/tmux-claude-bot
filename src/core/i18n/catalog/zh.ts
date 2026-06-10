@@ -20,7 +20,7 @@ export const zh = {
   autoDetect: "自动检测",
   voiceHeard: (text: string) => `🎙️ 你说的是：「${text}」`,
   voiceTranscribeFailed: "转写失败 · 请重试或改发文字",
-  voiceEmpty: "转写为空 · 请重试",
+  voiceEmpty: "没听清 · 请再说一遍或改发文字",
   voiceUnsupported: "语音转写仅支持 Apple Silicon",
   voiceNotInstalled: "语音转写未安装（在仓库运行 npm run whisper:install）",
 
@@ -149,7 +149,7 @@ export const zh = {
   processing: "处理中",
   failed: "失败",
   taskStillRunning: (body: string) => `⏳ 任务仍在进行中，请稍后通过 /peek 查看当前结果\n\n${body}`,
-  voiceDownloadFailed: "转写失败 · 无法下载文件",
+  voiceDownloadFailed: "语音下载失败 · 网络波动,请重试",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time: string) =>
     `♻️ tmux-claude-bot 异常重启 — 上次未正常退出（崩溃/被杀），已自动恢复 · ${time}`,

@@ -1,11 +1,10 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
+import * as fs from "node:fs";
 import * as os from "node:os";
+import * as nodePath from "node:path";
 import { promisify } from "node:util";
 
-const execAsync = promisify(exec);
-
-import * as fs from "node:fs";
-import * as nodePath from "node:path";
+const execFileAsync = promisify(execFile);
 
 export async function transcribeOgg(
   filePath: string,
@@ -28,10 +27,17 @@ export async function transcribeOgg(
 
   // Force a language when set (e.g. zh) — whisper's auto-detect frequently
   // mistakes Chinese for Japanese. "auto"/empty leaves detection to whisper.
-  const langFlag = language && language !== "auto" ? ` --language ${language}` : "";
-  await execAsync(
-    `${MLX_WHISPER_BIN} ${resolved} --output-format txt --output-dir ${outputDir}${langFlag}`,
-  );
+  // Arg-vector exec (no shell) so a path with spaces/metacharacters can't break
+  // or inject — the security property lives here in core, not in callers.
+  const langArgs = language && language !== "auto" ? ["--language", language] : [];
+  await execFileAsync(MLX_WHISPER_BIN, [
+    resolved,
+    "--output-format",
+    "txt",
+    "--output-dir",
+    outputDir,
+    ...langArgs,
+  ]);
 
   const txtFile = nodePath.join(outputDir, `${parsed.name}.txt`);
   if (!fs.existsSync(txtFile)) {

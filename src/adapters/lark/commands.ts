@@ -54,10 +54,13 @@ export function parseLarkInput(raw: string): ParsedInput {
     return { kind: "text", text: trimmed };
   }
 
-  // Take the first whitespace-delimited token, strip leading `/`, lowercase
-  const name = (trimmed.split(/\s+/)[0] ?? trimmed).slice(1).toLowerCase();
+  // First whitespace-delimited token (original case), then strip `/` + lowercase
+  // for the command name. Slice the arg by the TOKEN's length — not indexOf(name),
+  // which returns -1 for a mixed/upper-case command and corrupts the path.
+  const firstToken = trimmed.split(/\s+/)[0] ?? trimmed;
+  const name = firstToken.slice(1).toLowerCase();
   // Everything after the first token, preserved verbatim (e.g. the add_project path).
-  const arg = trimmed.slice(trimmed.indexOf(name) + name.length).trim() || undefined;
+  const arg = trimmed.slice(firstToken.length).trim() || undefined;
 
   if (name === "help") {
     return { kind: "help" };

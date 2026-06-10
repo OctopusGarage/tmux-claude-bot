@@ -6,11 +6,12 @@ import {
   isCdAllowed,
   sessionNameFromPath,
   setPathForSession,
-} from "../src/core/project-manager.js";
+} from "../src/core/sessionPathMap.js";
 
-const MAP_FILE = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
-  "..",
+// The session map resolves under TCB_STATE_DIR (set to a temp dir by tests/setup.ts),
+// falling back to the project root — target the same location the functions use.
+const MAP_FILE = path.join(
+  process.env.TCB_STATE_DIR ?? path.resolve(path.dirname(new URL(import.meta.url).pathname), ".."),
   "session_path_map.json",
 );
 

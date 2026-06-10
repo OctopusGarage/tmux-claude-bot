@@ -136,6 +136,19 @@ function isRetryableError(err: unknown): boolean {
   return false;
 }
 
+/** Backoff before a retry — honor Telegram's 429 `retry_after`, else 1s. Retrying
+ * a rate-limit after a flat 1s just earns another 429 and burns the attempt. */
+function retryDelayMs(err: unknown): number {
+  if (err && typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    const params = e.parameters as Record<string, unknown> | undefined;
+    if (e.error_code === 429 && typeof params?.retry_after === "number") {
+      return Math.max(1000, params.retry_after * 1000);
+    }
+  }
+  return 1000;
+}
+
 function describe(err: unknown): string {
   if (err && typeof err === "object") {
     const e = err as Record<string, unknown>;
@@ -194,7 +207,7 @@ export async function reply(
         logger.warn(
           `[replies] network error on attempt ${attempt}/${MAX_RETRIES}, retrying in 1s: ${desc}`,
         );
-        await sleep(1000);
+        await sleep(retryDelayMs(err));
         continue;
       }
 
@@ -257,7 +270,7 @@ export async function send(
         logger.warn(
           `[replies] send network error on attempt ${attempt}/${MAX_RETRIES}, retrying in 1s: ${describe(err)}`,
         );
-        await sleep(1000);
+        await sleep(retryDelayMs(err));
         continue;
       }
       logger.error(`[replies] send failed ${describe(err)}`);

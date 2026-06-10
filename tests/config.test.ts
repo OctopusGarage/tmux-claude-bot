@@ -85,3 +85,17 @@ describe("config schema", () => {
     expect(parsed.MAX_WAIT_DONE_MS).toBe(60000);
   });
 });
+
+import { loadConfig } from "../src/shared/config.js";
+
+describe("loadConfig (real schema)", () => {
+  it("a blank/invalid LARK_DOMAIN falls back to feishu instead of crashing", () => {
+    // A stray `LARK_DOMAIN=` line must not take down a Telegram-only install.
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", LARK_ENABLED: "false", LARK_DOMAIN: "" }),
+    ).not.toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", LARK_ENABLED: "false", LARK_DOMAIN: "garbage" }),
+    ).not.toThrow();
+  });
+});

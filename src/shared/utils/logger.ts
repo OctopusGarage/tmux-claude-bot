@@ -129,9 +129,16 @@ function formatLine(level: LogLevel, file: string, line: number, message: string
  * URL pattern keeps the credential out of console output and log files.
  */
 export function redactSecrets(message: string): string {
-  const token = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
-  const withoutToken = token ? message.split(token).join("<redacted-token>") : message;
-  return withoutToken.replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot<redacted-token>");
+  let out = message;
+  // Exact secrets from the environment (Telegram token + Feishu/Lark app secret).
+  for (const secret of [
+    process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN,
+    process.env.LARK_APP_SECRET,
+  ]) {
+    if (secret) out = out.split(secret).join("<redacted-token>");
+  }
+  // Generic Bot API URL pattern (…/bot<id>:<secret>/…) for tokens not matching env.
+  return out.replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot<redacted-token>");
 }
 
 function write(level: LogLevel, message: string): void {

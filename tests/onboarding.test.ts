@@ -97,3 +97,13 @@ describe("maskToken", () => {
     expect(maskToken("abc")).toBe("••••");
   });
 });
+
+describe("serializeEnv value sanitization", () => {
+  it("strips CR/LF from values so a multiline value can't inject .env lines", () => {
+    const out = serializeEnv("", { TOKEN: "abc\ndef\rghi", PATH: "/a/b" });
+    expect(out).toBe("TOKEN=abcdefghi\nPATH=/a/b\n");
+    // and on the template-merge path
+    const merged = serializeEnv("TOKEN=old\n", { TOKEN: "x\ny" });
+    expect(merged).toBe("TOKEN=xy\n");
+  });
+});

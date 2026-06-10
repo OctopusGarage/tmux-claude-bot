@@ -15,7 +15,7 @@ export const en: Messages = {
   autoDetect: "auto-detect",
   voiceHeard: (text) => `🎙️ You said: “${text}”`,
   voiceTranscribeFailed: "Transcription failed · retry or send text",
-  voiceEmpty: "Transcription empty · retry",
+  voiceEmpty: "Didn’t catch that · say it again or send text",
   voiceUnsupported: "Voice transcription needs Apple Silicon",
   voiceNotInstalled: "Voice not installed (run `npm run whisper:install` in the repo)",
 
@@ -133,7 +133,7 @@ export const en: Messages = {
   processing: "Working",
   failed: "Failed",
   taskStillRunning: (body) => `⏳ Task still running · /peek to see the current result\n\n${body}`,
-  voiceDownloadFailed: "Transcription failed · couldn't download the file",
+  voiceDownloadFailed: "Voice download failed · network hiccup, please retry",
   historyYou: "🧑‍💻 You",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot recovered from an unclean exit (crash / kill) · ${time}`,
