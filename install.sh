@@ -23,7 +23,7 @@ command -v git  >/dev/null 2>&1 || { err "git not found - run: xcode-select --in
 
 # Determine mode: local clone vs remote curl|bash.
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
-if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && grep -q '"tmux-claude-telegram"' "$SELF_DIR/package.json" 2>/dev/null; then
+if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && grep -q '"tmux-claude-bot"' "$SELF_DIR/package.json" 2>/dev/null; then
   PROJECT_DIR="$SELF_DIR"
   info "Local install at $PROJECT_DIR"
 else
@@ -106,6 +106,9 @@ info "Installing launchd service..."
 scripts/install-launchd.sh
 
 info "Done. Installed at $PROJECT_DIR"
-info "  Health check:  npm run doctor"
-info "  Reconfigure:   npm run setup:reconfigure"
-info "  Uninstall:     npm run service:uninstall"
+info "These npm commands must run from the install dir (cd shown):"
+info "  Health check:  cd $PROJECT_DIR && npm run doctor"
+info "  Reconfigure:   cd $PROJECT_DIR && npm run setup:reconfigure"
+info "  Add Feishu:    cd $PROJECT_DIR && npm run setup:lark   (scan a QR; works with or instead of Telegram)"
+info "  Uninstall:     cd $PROJECT_DIR && npm run service:uninstall"
+info "  Live logs:     tail -f $PROJECT_DIR/logs/launchd.err.log   (absolute path; runs from anywhere)"

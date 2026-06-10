@@ -15,6 +15,7 @@ const LABEL = "com.octopusgarage.tmux-claude-bot";
 
 let failures = 0;
 const ok = (s: string) => console.log(`\x1b[1;32m✓\x1b[0m ${s}`);
+const info = (s: string) => console.log(`\x1b[1;34mi\x1b[0m ${s}`);
 const bad = (s: string, fix: string) => {
   console.log(`\x1b[1;31m✗\x1b[0m ${s}\n   fix: ${fix}`);
   failures++;
@@ -48,15 +49,30 @@ async function launchdLoaded(): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
-  // 1. .env + token
+  // 1. .env + at least one chat adapter (Telegram via TELEGRAM_BOT_TOKEN, Feishu via LARK_*)
   const envPath = join(ROOT, ".env");
   const envMap = existsSync(envPath) ? parseEnv(readFileSync(envPath, "utf8")) : null;
-  if (envMap) {
-    const token = envMap.get("BOT_TOKEN") ?? "";
-    if (validateTokenShape(token)) ok(".env present with a well-formed BOT_TOKEN");
-    else bad(".env present but BOT_TOKEN looks invalid", "run: npm run setup:reconfigure");
-  } else {
+  if (!envMap) {
     bad("no .env found", "run: npm run setup");
+  } else {
+    const token = envMap.get("TELEGRAM_BOT_TOKEN") ?? envMap.get("BOT_TOKEN") ?? "";
+    const telegram = validateTokenShape(token);
+    const lark =
+      envMap.get("LARK_ENABLED") === "true" &&
+      Boolean(envMap.get("LARK_APP_ID")) &&
+      Boolean(envMap.get("LARK_APP_SECRET"));
+
+    if (telegram) ok("Telegram configured (well-formed TELEGRAM_BOT_TOKEN)");
+    else if (token)
+      bad("TELEGRAM_BOT_TOKEN is set but looks invalid", "run: npm run setup:reconfigure");
+    else info("Telegram not configured (no TELEGRAM_BOT_TOKEN)");
+
+    if (lark) ok(`Feishu/Lark configured (app ${envMap.get("LARK_APP_ID")})`);
+    else info("Feishu/Lark not configured (run: npm run setup:lark)");
+
+    if (!telegram && !lark) {
+      bad("no chat adapter configured", "run: npm run setup  (choose Telegram, Feishu, or both)");
+    }
   }
 
   // 2. tmux + node on PATH

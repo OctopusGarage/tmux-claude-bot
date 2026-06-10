@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Bot } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
+import { runLarkOnboardingWizard } from "../adapters/lark/onboarding-wizard.js";
 import {
   maskToken,
   parseCaptureUpdate,
@@ -54,30 +55,44 @@ async function validateToken(token: string, proxy?: string): Promise<string | nu
   }
 }
 
-/** Briefly long-poll until the operator messages the bot, returning captured ids. */
+/**
+ * Wait until the operator messages the bot, returning the captured id(s).
+ *
+ * Uses repeated SHORT polls (`getUpdates` with `timeout=0`) every ~1.5s rather
+ * than one 30s long-poll. A China proxy that handles short requests fine (getMe
+ * succeeds) routinely drops the long-held getUpdates connection, so the long-poll
+ * never delivers the message and the wizard just hangs. Short polls behave like
+ * getMe and reliably pick up the pending message — including one the user sent a
+ * moment ago (we do NOT drop pending updates, so a just-sent message is caught
+ * on the first poll). Best-effort and crash-proof: any failure is swallowed and
+ * the loop falls through to manual id entry on timeout.
+ */
 async function captureIds(token: string, proxy?: string): Promise<string[]> {
   const bot = botFor(token, proxy);
   const ids: string[] = [];
-  return new Promise<string[]>((resolve, reject) => {
-    const done = (result: string[]) => {
-      clearTimeout(timer);
-      void bot.stop().then(() => resolve(result));
-    };
-    const timer = setTimeout(() => done(ids), CAPTURE_TIMEOUT_MS);
-    bot.on("message", (ctx) => {
-      const hit = parseCaptureUpdate(ctx.update);
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
+  let offset = 0;
+  while (Date.now() < deadline) {
+    let updates: Awaited<ReturnType<typeof bot.api.getUpdates>>;
+    try {
+      updates = await bot.api.getUpdates({ offset, timeout: 0, allowed_updates: ["message"] });
+    } catch {
+      await sleep(1500);
+      continue;
+    }
+    for (const update of updates) {
+      offset = update.update_id + 1;
+      const hit = parseCaptureUpdate(update);
       if (hit && !ids.includes(hit.id)) {
         ids.push(hit.id);
         C.ok(`Captured ${hit.username ? `@${hit.username} ` : ""}(${hit.id})`);
-        done(ids);
+        return ids;
       }
-    });
-    bot.start({ drop_pending_updates: true }).catch((err) => {
-      clearTimeout(timer);
-      void bot.stop().catch(() => undefined);
-      reject(err instanceof Error ? err : new Error(String(err)));
-    });
-  });
+    }
+    await sleep(1500);
+  }
+  return ids;
 }
 
 async function main(): Promise<void> {
@@ -99,19 +114,37 @@ async function main(): Promise<void> {
 
   const values: Record<string, string> = {};
 
-  // Non-interactive: take BOT_TOKEN from env, keep existing/default everything else.
+  // Non-interactive (CI / re-install): take TELEGRAM_BOT_TOKEN from env, keep
+  // everything else. Can't do the Feishu QR scan headlessly, so it's
+  // Telegram-oriented — but it no longer hard-fails when there's no token (a
+  // Feishu-only install whose LARK_* config is already in .env is preserved).
   if (NON_INTERACTIVE) {
-    const token = process.env.BOT_TOKEN ?? existing.get("BOT_TOKEN") ?? "";
-    if (!validateTokenShape(token)) {
-      C.err("--yes requires a valid BOT_TOKEN in the environment.");
+    const token =
+      process.env.TELEGRAM_BOT_TOKEN ??
+      process.env.BOT_TOKEN ??
+      existing.get("TELEGRAM_BOT_TOKEN") ??
+      existing.get("BOT_TOKEN") ??
+      "";
+    if (validateTokenShape(token)) {
+      values.TELEGRAM_BOT_TOKEN = token;
+    } else if (existing.get("LARK_ENABLED") === "true") {
+      C.info("No TELEGRAM_BOT_TOKEN — keeping existing Feishu/Lark-only config.");
+    } else {
+      C.err("--yes needs either a valid TELEGRAM_BOT_TOKEN or an existing LARK_* (Feishu) config.");
       process.exit(1);
     }
-    values.BOT_TOKEN = token;
     await writeEnv(template, { ...Object.fromEntries(existing), ...values });
     C.ok("Wrote .env (non-interactive).");
-    if (!(values.ALLOWED_USER_IDS || existing.get("ALLOWED_USER_IDS"))) {
+    if (
+      values.TELEGRAM_BOT_TOKEN &&
+      !(
+        values.TELEGRAM_ALLOWED_USER_IDS ||
+        existing.get("TELEGRAM_ALLOWED_USER_IDS") ||
+        existing.get("ALLOWED_USER_IDS")
+      )
+    ) {
       C.warn(
-        "ALLOWED_USER_IDS is empty — the bot will reject ALL messages until you set it (npm run setup:reconfigure).",
+        "TELEGRAM_ALLOWED_USER_IDS is empty — the bot will reject ALL messages until you set it (npm run setup:reconfigure).",
       );
     }
     return;
@@ -126,57 +159,85 @@ async function main(): Promise<void> {
   try {
     C.info("Configuring tmux-claude-bot. Press Enter to accept the [default].");
 
-    // 1. BOT_TOKEN (required, validated live). Ask proxy once, up front.
-    const proxyPre =
-      (await ask("HTTP proxy for Telegram (optional)", existing.get("HTTP_PROXY") ?? "")) ||
-      undefined;
-    values.HTTP_PROXY = proxyPre ?? "";
-
-    let token = "";
-    for (let attempt = 0; attempt < 3; attempt++) {
-      token = await ask("Telegram bot token (from @BotFather)", existing.get("BOT_TOKEN") ?? "");
-      if (!validateTokenShape(token)) {
-        C.warn("That doesn't look like a token (digits:letters). Try again.");
-        continue;
-      }
-      const username = await validateToken(token, proxyPre);
-      if (username) {
-        C.ok(`Bot: @${username}  (token ${maskToken(token)})`);
-        break;
-      }
-      C.warn("Telegram rejected that token. Check it and try again.");
-      token = "";
-    }
-    if (!validateTokenShape(token)) {
-      C.err("No valid token after 3 attempts. Aborting.");
+    // 0. Which chat app(s) to connect?
+    const choice = await ask("Which chat app? 1) Telegram  2) Feishu/Lark  3) Both", "1");
+    const wantTelegram = choice === "1" || choice === "3";
+    const wantLark = choice === "2" || choice === "3";
+    if (!wantTelegram && !wantLark) {
+      C.err("Invalid choice — pick 1, 2, or 3.");
       process.exit(1);
     }
-    values.BOT_TOKEN = token;
 
-    // 2. ALLOWED_USER_IDS via auto-capture
-    C.info("Now authorize yourself: open Telegram and send your bot ANY message.");
-    C.info(`Waiting up to ${CAPTURE_TIMEOUT_MS / 1000}s…`);
-    let ids: string[] = [];
-    try {
-      ids = await captureIds(token, values.HTTP_PROXY || undefined);
-    } catch (e) {
-      C.warn(`Could not start capture listener (${e instanceof Error ? e.message : String(e)}).`);
-      C.warn(
-        "If the bot is already running, stop it first (npm run service:uninstall) or enter your id manually.",
-      );
+    // 1. Telegram (token + authorized ids), only if chosen.
+    if (wantTelegram) {
+      const proxyPre =
+        (await ask(
+          "HTTP proxy for Telegram (optional)",
+          existing.get("TELEGRAM_HTTP_PROXY") ?? existing.get("HTTP_PROXY") ?? "",
+        )) || undefined;
+      values.TELEGRAM_HTTP_PROXY = proxyPre ?? "";
+
+      let token = "";
+      for (let attempt = 0; attempt < 3; attempt++) {
+        token = await ask(
+          "Telegram bot token (from @BotFather)",
+          existing.get("TELEGRAM_BOT_TOKEN") ?? existing.get("BOT_TOKEN") ?? "",
+        );
+        if (!validateTokenShape(token)) {
+          C.warn("That doesn't look like a token (digits:letters). Try again.");
+          continue;
+        }
+        const username = await validateToken(token, proxyPre);
+        if (username) {
+          C.ok(`Bot: @${username}  (token ${maskToken(token)})`);
+          break;
+        }
+        C.warn("Telegram rejected that token. Check it and try again.");
+        token = "";
+      }
+      if (!validateTokenShape(token)) {
+        C.err("No valid token after 3 attempts. Aborting.");
+        process.exit(1);
+      }
+      values.TELEGRAM_BOT_TOKEN = token;
+
+      C.info("Now authorize yourself: open Telegram and send your bot ANY message.");
+      C.info(`Waiting up to ${CAPTURE_TIMEOUT_MS / 1000}s…`);
+      let ids: string[] = [];
+      try {
+        ids = await captureIds(token, values.TELEGRAM_HTTP_PROXY || undefined);
+      } catch (e) {
+        C.warn(`Could not start capture listener (${e instanceof Error ? e.message : String(e)}).`);
+        C.warn(
+          "If the bot is already running, stop it first (npm run service:uninstall) or enter your id manually.",
+        );
+      }
+      if (ids.length === 0) {
+        C.warn("No message received.");
+        const manual = await ask(
+          "Enter your numeric Telegram id(s), comma-separated",
+          existing.get("TELEGRAM_ALLOWED_USER_IDS") ?? existing.get("ALLOWED_USER_IDS") ?? "",
+        );
+        ids = manual
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+      values.TELEGRAM_ALLOWED_USER_IDS = ids.join(",");
     }
-    if (ids.length === 0) {
-      C.warn("No message received.");
-      const manual = await ask(
-        "Enter your numeric Telegram id(s), comma-separated",
-        existing.get("ALLOWED_USER_IDS") ?? "",
-      );
-      ids = manual
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+
+    // 2. Feishu/Lark — scan a QR to create the app (inline QR wizard).
+    if (wantLark) {
+      C.info("飞书接入：用飞书 App 扫码创建应用。");
+      const larkValues = await runLarkOnboardingWizard(C);
+      Object.assign(values, larkValues);
+      C.ok(`飞书已接入 · App ID: ${larkValues.LARK_APP_ID} · Tenant: ${larkValues.LARK_DOMAIN}`);
+      if (larkValues.LARK_ALLOWED_OPEN_IDS) {
+        C.info(`已授权扫码用户：${larkValues.LARK_ALLOWED_OPEN_IDS}`);
+      } else {
+        C.warn("未拿到扫码用户 open_id —— LARK_ALLOWED_OPEN_IDS 为空，请稍后手动填入 .env。");
+      }
     }
-    values.ALLOWED_USER_IDS = ids.join(",");
 
     // 3. CD_ALLOWED_DIRS
     values.CD_ALLOWED_DIRS = await ask(
@@ -192,13 +253,13 @@ async function main(): Promise<void> {
     const venvWhisper = join(ROOT, ".venv", "bin", "mlx_whisper");
     const mlxDefault =
       existing.get("MLX_WHISPER_BIN") || (existsSync(venvWhisper) ? venvWhisper : "");
+    C.info("Voice transcription (optional): turn voice messages into text. Apple Silicon only.");
     C.info(
-      "Voice transcription is optional. To install it project-managed: npm run whisper:install",
+      mlxDefault
+        ? "Found an mlx_whisper binary — press Enter to use it, or blank it out to disable voice."
+        : "Press ENTER to skip for now. To enable later: `npm run whisper:install` auto-fills this. (No need to type a path by hand.)",
     );
-    values.MLX_WHISPER_BIN = await ask(
-      "mlx_whisper binary for voice (optional; blank to disable)",
-      mlxDefault,
-    );
+    values.MLX_WHISPER_BIN = await ask("mlx_whisper binary path (Enter to skip)", mlxDefault);
     values.WHISPER_LANGUAGE = await ask(
       "Voice recognition language (zh/en/auto)",
       existing.get("WHISPER_LANGUAGE") ?? "zh",
@@ -206,7 +267,14 @@ async function main(): Promise<void> {
 
     await writeEnv(template, { ...Object.fromEntries(existing), ...values });
     C.ok(`Wrote ${ENV_PATH}`);
-    C.info(`Authorized ids: ${values.ALLOWED_USER_IDS || "(none — bot will reject everyone!)"}`);
+    if (values.TELEGRAM_BOT_TOKEN) {
+      C.info(
+        `Telegram ids: ${values.TELEGRAM_ALLOWED_USER_IDS || "(none — Telegram will reject everyone!)"}`,
+      );
+    }
+    if (values.LARK_ENABLED === "true") {
+      C.info("Feishu/Lark configured. Restart the bot to connect.");
+    }
   } finally {
     rl.close();
   }
