@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve as resolvePath } from "node:path";
 import { sessionShortId } from "../shared/utils/hash.js";
 import { sleep } from "../shared/utils/sleep.js";
 import type { HandlerDeps } from "./deps.js";
@@ -7,7 +8,40 @@ import { messages } from "./i18n/index.js";
 import { projectLabel } from "./project-label.js";
 import type { Channel } from "./project-manager.js";
 import { appendRecentProject, readRecentProjectLines } from "./recentProjects.js";
-import { getPathBySession, sessionNameFromPath } from "./sessionPathMap.js";
+import {
+  getPathBySession,
+  isCdAllowed,
+  sessionNameFromPath,
+  setPathForSession,
+} from "./sessionPathMap.js";
+
+/** Outcome of validating a raw `/add_project` path. `resolvedPath` is always the
+ * expanded absolute path (handy for the error message); `error` says why it was
+ * rejected, or is absent when the path is a usable, allow-listed directory. */
+export type ResolveProjectResult = {
+  resolvedPath: string;
+  error?: "not-a-directory" | "not-found" | "not-allowed";
+};
+
+/**
+ * Expand `~`, resolve to an absolute path, and check it is an existing directory
+ * inside the cd allow-list. The single validation used by both adapters'
+ * `/add_project` — each maps the `error` to its own reply.
+ */
+export async function resolveProjectPath(
+  rawPath: string,
+  cdAllowedDirs: readonly string[],
+): Promise<ResolveProjectResult> {
+  const resolvedPath = resolvePath(rawPath.replaceAll("~", homedir()));
+  try {
+    const stat = await fs.promises.stat(resolvedPath);
+    if (!stat.isDirectory()) return { resolvedPath, error: "not-a-directory" };
+  } catch {
+    return { resolvedPath, error: "not-found" };
+  }
+  if (!isCdAllowed(resolvedPath, cdAllowedDirs)) return { resolvedPath, error: "not-allowed" };
+  return { resolvedPath };
+}
 
 /**
  * Protocol-agnostic project lifecycle: the single home for everything that
@@ -37,6 +71,31 @@ export async function resolveAliveSessionByShortId(
 ): Promise<string | null> {
   const sessions = (await deps.bridge.listProjectSessions()).slice().sort();
   return sessions.find((s) => sessionShortId(s) === id) ?? null;
+}
+
+/**
+ * Spin up a project: create its tmux session, record the path mapping, make it
+ * the channel's current project, cd into the directory, and bump it in recents.
+ * The single source of truth for "create a project" — previously copied (with
+ * subtly different ordering) across both adapters' add_project / add-recent paths.
+ *
+ * The cd is sent to `sessionName` EXPLICITLY rather than the channel default, so a
+ * Feishu create can't land its `cd` in Telegram's current session when both
+ * channels have a current project set.
+ */
+export async function createProjectSession(
+  deps: HandlerDeps,
+  channel: Channel,
+  sessionName: string,
+  projectPath: string,
+): Promise<void> {
+  await deps.bridge.createSession(sessionName);
+  setPathForSession(sessionName, projectPath); // record before cd so it survives a cd failure
+  await deps.currentProject.set(channel, sessionName);
+  await sleep(deps.config.sessionWarmupMs);
+  await deps.bridge.sendKeys(`cd "${projectPath}"`, sessionName);
+  await sleep(deps.config.sessionWarmupMs);
+  await appendRecentProject(projectPath, deps.config.projectSessionPrefix);
 }
 
 /** Make `sessionName` the current project FOR THIS CHANNEL and bump it in the

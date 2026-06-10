@@ -1,4 +1,6 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
+import { messages } from "../../core/i18n/index.js";
+import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { textOrPlaceholder } from "./format.js";
 
@@ -16,6 +18,12 @@ export async function sendText(
       `[lark] sendText failed chat=${chatId}: ${err instanceof Error ? err.message : err}`,
     );
   }
+}
+
+/** Send a normalized "错误：<msg>" reply — the one place the Lark view handlers'
+ * catch blocks funnel through, in the channel's language. */
+export async function sendError(channel: LarkChannel, chatId: string, err: unknown): Promise<void> {
+  await sendText(channel, chatId, messages("lark").errorPrefix(normalizeError(err).message));
 }
 
 /** Send an interactive card reply, returning the sent message id so the card can

@@ -1,11 +1,10 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { appendRecentProject, readRecentProjectLines } from "../../core/recentProjects.js";
-import { isCdAllowed, sessionNameFromPath, setPathForSession } from "../../core/sessionPathMap.js";
+import { readRecentProjectLines } from "../../core/recentProjects.js";
+import { isCdAllowed, sessionNameFromPath } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
-import { sleep } from "../../shared/utils/sleep.js";
 import { MSG } from "./messages.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
@@ -15,6 +14,8 @@ import type { ReplyTargetMap } from "./reply-target.js";
  * `core/project-ops.js` and are re-exported here so existing telegram importers
  * keep working; this file only keeps the entry point that needs ctx/reply.
  */
+
+import { createProjectSession } from "../../core/project-ops.js";
 
 export {
   aliveProjectButtons,
@@ -56,13 +57,7 @@ export async function addRecentProjectBySid(
       });
       return;
     }
-    await deps.bridge.createSession(sessionName);
-    await deps.currentProject.set("telegram", sessionName);
-    setPathForSession(sessionName, projectPath);
-    await sleep(deps.config.sessionWarmupMs);
-    await deps.bridge.sendKeys(`cd "${projectPath}"`);
-    await sleep(deps.config.sessionWarmupMs);
-    await appendRecentProject(projectPath, prefix);
+    await createProjectSession(deps, "telegram", sessionName, projectPath);
     await reply(ctx, "ok", messages("telegram").projectCreated, {
       session: sessionName,
       body: projectPath,

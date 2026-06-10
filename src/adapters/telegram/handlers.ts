@@ -1,19 +1,15 @@
-import * as fs from "node:fs";
-import { homedir } from "node:os";
-import * as nodePath from "node:path";
 import type { Bot } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
+import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
 import { appendRecentProject } from "../../core/recentProjects.js";
 import {
   getPathBySession,
-  isCdAllowed,
   sessionNameFromPath,
   setPathForSession,
 } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
-import { sleep } from "../../shared/utils/sleep.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
 import { buildLangKeyboard, buildRecentKeyboard } from "./keyboards.js";
@@ -110,21 +106,20 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       await reply(ctx, "info", messages("telegram").addProjectUsageExample);
       return;
     }
-    const rawPath = args.join(" ");
-    const resolvedPath = nodePath.resolve(rawPath.replaceAll("~", homedir()));
-
-    try {
-      const stat = await fs.promises.stat(resolvedPath);
-      if (!stat.isDirectory()) {
-        await reply(ctx, "err", messages("telegram").notADir(resolvedPath));
-        return;
-      }
-    } catch {
-      await reply(ctx, "err", messages("telegram").dirNotExist(resolvedPath));
+    const { resolvedPath, error } = await resolveProjectPath(
+      args.join(" "),
+      deps.config.cdAllowedDirs,
+    );
+    const tm = messages("telegram");
+    if (error === "not-a-directory") {
+      await reply(ctx, "err", tm.notADir(resolvedPath));
       return;
     }
-
-    if (!isCdAllowed(resolvedPath, deps.config.cdAllowedDirs)) {
+    if (error === "not-found") {
+      await reply(ctx, "err", tm.dirNotExist(resolvedPath));
+      return;
+    }
+    if (error === "not-allowed") {
       await reply(ctx, "err", MSG.pathNotAllowed(deps.config.cdAllowedDirs));
       return;
     }
@@ -142,13 +137,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
         });
         return;
       }
-      await deps.bridge.createSession(sessionName);
-      await deps.currentProject.set("telegram", sessionName);
-      await sleep(deps.config.sessionWarmupMs);
-      await deps.bridge.sendKeys(`cd "${resolvedPath}"`);
-      await sleep(deps.config.sessionWarmupMs);
-      setPathForSession(sessionName, resolvedPath);
-      await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
+      await createProjectSession(deps, "telegram", sessionName, resolvedPath);
       await reply(ctx, "ok", messages("telegram").projectCreated, {
         session: sessionName,
         body: resolvedPath,

@@ -2,12 +2,11 @@ import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
 import { messages } from "../../core/i18n/index.js";
+import { buildQueueStatusLines } from "../../core/queue-status.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
-import { truncate } from "../../shared/utils/string.js";
 import { buildControlKeyboard, buildProjectKeyboard } from "./keyboards.js";
-import { projectLabel } from "./project-label.js";
 import { aliveProjectButtons } from "./project-ops.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
@@ -112,49 +111,6 @@ export async function sendHistory(
 
 /** Build and send the message-queue status across global and session queues. */
 export async function sendQueueStatus(ctx: Context, deps: HandlerDeps): Promise<void> {
-  const lines: string[] = [];
-
-  const globalQueue = deps.queue.getGlobalQueue();
-  const globalProcessing = deps.queue.isGlobalProcessing();
-  const globalCurrent = deps.queue.getCurrentGlobalMessage();
-  lines.push(messages("telegram").queueGlobalHeader);
-  lines.push(messages("telegram").queueCounts(globalQueue.length, globalProcessing));
-  if (globalCurrent) {
-    lines.push(`  ▶ ${truncate(globalCurrent.text, 40)}`);
-  }
-  if (globalQueue.length > 0) {
-    globalQueue.forEach((msg, i) => {
-      lines.push(`  ${i + 1}. ${truncate(msg.text, 40)}`);
-    });
-  }
-
-  const sessionNames = deps.queue.getSessionNames();
-  if (sessionNames.length === 0) {
-    lines.push(`\n${messages("telegram").queueSessionHeader}`);
-    lines.push(messages("telegram").queueNoSessions);
-  } else {
-    for (const sessionName of sessionNames.sort()) {
-      const queueItems = deps.queue.getSessionQueue(sessionName);
-      const isProcessing = deps.queue.isSessionProcessing(sessionName);
-      const currentMsg = deps.queue.getCurrentSessionMessage(sessionName);
-      const lastAt = deps.queue.getLastProcessedAt(sessionName);
-      const name = projectLabel(sessionName, getPathBySession(sessionName) ?? undefined);
-      lines.push(`\n━━ 📂 ${name} ━━`);
-      lines.push(messages("telegram").queueCounts(queueItems.length, isProcessing));
-      if (currentMsg) {
-        lines.push(`  ▶ ${truncate(currentMsg.text, 40)}`);
-      }
-      if (queueItems.length > 0) {
-        queueItems.forEach((msg, i) => {
-          lines.push(`  ${i + 1}. ${truncate(msg.text, 40)}`);
-        });
-      }
-      if (lastAt) {
-        const secondsAgo = Math.floor((Date.now() - lastAt) / 1000);
-        lines.push(`  ${messages("telegram").queueLastDone(secondsAgo)}`);
-      }
-    }
-  }
-
-  await reply(ctx, "queue", messages("telegram").queueTitle, { body: lines.join("\n") });
+  const body = buildQueueStatusLines(deps, "telegram").join("\n");
+  await reply(ctx, "queue", messages("telegram").queueTitle, { body });
 }
