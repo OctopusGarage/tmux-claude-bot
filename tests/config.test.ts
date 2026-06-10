@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 const envSchema = z.object({
-  BOT_TOKEN: z.string().min(1),
+  TELEGRAM_BOT_TOKEN: z.string().min(1),
   CLAUDE_START_COMMAND: z.string().min(1).default("claude-yolo"),
   IDLE_POLL_TICKS: z.coerce.number().int().positive().default(3),
   POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
@@ -13,14 +13,14 @@ const envSchema = z.object({
   MAX_QUEUE_SIZE: z.coerce.number().int().positive().default(10),
   MAX_WAIT_READY_MS: z.coerce.number().int().positive().default(60000),
   MAX_WAIT_DONE_MS: z.coerce.number().int().positive().default(300000),
-  ALLOWED_USER_IDS: z.string().default(""),
+  TELEGRAM_ALLOWED_USER_IDS: z.string().default(""),
   CD_ALLOWED_DIRS: z.string().default(""),
   PROJECT_SESSION_PREFIX: z.string().min(1).default("tmux_proj_"),
 });
 
 describe("config schema", () => {
   it("uses defaults when env vars are empty", () => {
-    const env = { BOT_TOKEN: "test-token" };
+    const env = { TELEGRAM_BOT_TOKEN: "test-token" };
     const parsed = envSchema.parse(env);
     expect(parsed.CLAUDE_START_COMMAND).toBe("claude-yolo");
     expect(parsed.IDLE_POLL_TICKS).toBe(3);
@@ -33,30 +33,33 @@ describe("config schema", () => {
   });
 
   it("parses PROJECT_SESSION_PREFIX from env", () => {
-    const env = { BOT_TOKEN: "test-token", PROJECT_SESSION_PREFIX: "custom_proj_" };
+    const env = { TELEGRAM_BOT_TOKEN: "test-token", PROJECT_SESSION_PREFIX: "custom_proj_" };
     const parsed = envSchema.parse(env);
     expect(parsed.PROJECT_SESSION_PREFIX).toBe("custom_proj_");
   });
 
-  it("parses ALLOWED_USER_IDS comma-separated list", () => {
-    const env = { BOT_TOKEN: "test-token", ALLOWED_USER_IDS: "123, 456, 789" };
+  it("parses TELEGRAM_ALLOWED_USER_IDS comma-separated list", () => {
+    const env = { TELEGRAM_BOT_TOKEN: "test-token", TELEGRAM_ALLOWED_USER_IDS: "123, 456, 789" };
     const parsed = envSchema.parse(env);
-    expect(parsed.ALLOWED_USER_IDS).toBe("123, 456, 789");
+    expect(parsed.TELEGRAM_ALLOWED_USER_IDS).toBe("123, 456, 789");
   });
 
   it("parses CD_ALLOWED_DIRS comma-separated list", () => {
-    const env = { BOT_TOKEN: "test-token", CD_ALLOWED_DIRS: "/home/user/projects,/home/user/work" };
+    const env = {
+      TELEGRAM_BOT_TOKEN: "test-token",
+      CD_ALLOWED_DIRS: "/home/user/projects,/home/user/work",
+    };
     const parsed = envSchema.parse(env);
     expect(parsed.CD_ALLOWED_DIRS).toBe("/home/user/projects,/home/user/work");
   });
 
-  it("requires BOT_TOKEN", () => {
+  it("requires TELEGRAM_BOT_TOKEN", () => {
     expect(() => envSchema.parse({})).toThrow();
   });
 
   it("coerces numeric strings to numbers", () => {
     const env = {
-      BOT_TOKEN: "test-token",
+      TELEGRAM_BOT_TOKEN: "test-token",
       IDLE_POLL_TICKS: "5",
       POLL_INTERVAL_MS: "2000",
     };
@@ -67,7 +70,7 @@ describe("config schema", () => {
 
   it("parses all new timing configs", () => {
     const env = {
-      BOT_TOKEN: "test-token",
+      TELEGRAM_BOT_TOKEN: "test-token",
       RATE_LIMIT_MS: "3000",
       SESSION_WARMUP_MS: "1000",
       MAX_QUEUE_SIZE: "5",

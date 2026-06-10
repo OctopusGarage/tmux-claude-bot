@@ -3,6 +3,7 @@ import { redactSecrets } from "../src/shared/utils/logger.js";
 
 describe("redactSecrets", () => {
   afterEach(() => {
+    delete process.env.TELEGRAM_BOT_TOKEN;
     delete process.env.BOT_TOKEN;
   });
 
@@ -15,7 +16,7 @@ describe("redactSecrets", () => {
   });
 
   it("redacts the exact configured token wherever it appears", () => {
-    process.env.BOT_TOKEN = "8539533731:AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U";
+    process.env.TELEGRAM_BOT_TOKEN = "8539533731:AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U";
     const out = redactSecrets("token leaked: 8539533731:AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U end");
     expect(out).toBe("token leaked: <redacted-token> end");
   });
