@@ -1,0 +1,63 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for reporting a bug. Please fill in as much detail as you can."
+  - type: dropdown
+    id: os
+    attributes:
+      label: macOS version
+      options:
+        - macOS 15 (Sequoia)
+        - macOS 14 (Sonoma)
+        - macOS 13 (Ventura)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: "Run: node -v"
+      placeholder: "v22.x.x"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that reliably reproduce the issue
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      placeholder: What actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "Paste from ~/.tmux-claude-bot/logs/launchd.err.log (remove personal info)"
+      render: shell
+  - type: checkboxes
+    id: doctor
+    attributes:
+      label: Health check
+      options:
+        - label: I ran `npm run doctor` and noted its output above

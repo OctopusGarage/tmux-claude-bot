@@ -1,6 +1,31 @@
 # tmux-claude-bot
 
+[![CI](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/OctopusGarage/tmux-claude-bot/branch/main/graph/badge.svg)](https://codecov.io/gh/OctopusGarage/tmux-claude-bot)
+[![version](https://img.shields.io/github/package-json/v/OctopusGarage/tmux-claude-bot)](https://github.com/OctopusGarage/tmux-claude-bot/releases/latest)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![platform: macOS](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)](#requirements)
+[![Checked with Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?logo=biome)](https://biomejs.dev)
+
 A chat bot that drives [Claude Code](https://docs.anthropic.com/en/docs/claude-code) inside tmux sessions — remote-control your local Claude from **Telegram and/or Feishu/Lark**, with voice and text input. Supports **multiple projects**, each with its own tmux session. Pick one chat app or run both.
+
+## Contents
+
+- [Features](#features)
+- [Demo](#demo)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Session Naming](#session-naming)
+- [Telegram Commands](#telegram-commands)
+- [Voice transcription](#voice-transcription-optional)
+- [Claude Running Detection](#claude-running-detection)
+- [Production Deployment](#production-deployment-macos-launchd)
+- [Resilience](#resilience)
+- [Development & releases](#development--releases)
+- [Requirements](#requirements)
 
 ## Features
 
@@ -10,6 +35,12 @@ A chat bot that drives [Claude Code](https://docs.anthropic.com/en/docs/claude-c
 - **Queue-based execution** — prevents concurrent commands from interleaving
 - **Idle detection** — polls tmux pane to detect when Claude is idle vs. running
 - **Directory guard** — operations restricted to configured allowed directories
+
+## Demo
+
+| Telegram — keyboard & output | Voice transcription | Feishu/Lark |
+|:---:|:---:|:---:|
+| ![Telegram keyboard](.github/assets/demo-telegram-keyboard.png) | ![Voice](.github/assets/demo-voice.png) | ![Feishu](.github/assets/demo-feishu.png) |
 
 ## Architecture
 
