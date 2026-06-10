@@ -1,7 +1,9 @@
 import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
+import { detectUncleanRestart, markCleanShutdown } from "./core/lifecycle.js";
 import { getPathBySession } from "./core/project-manager.js";
+import { logger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 
 const AUTO_START_DELAY_MS = 1000;
@@ -40,12 +42,20 @@ async function init(): Promise<void> {
   console.log("[init] Auto-start disabled — use /start to launch Claude.");
 }
 
+// Did the previous run exit cleanly? If not, launchd auto-recovered a crash —
+// the adapters alert the owner once connected. Clean shutdowns clear the marker.
+const recoveredFromCrash = detectUncleanRestart();
+process.once("SIGINT", markCleanShutdown);
+process.once("SIGTERM", markCleanShutdown);
+
 process.on("uncaughtException", (err) => {
-  console.error(`[fatal] uncaughtException: ${err.message}`);
-  process.exit(1);
+  logger.error(`[fatal] uncaughtException: ${err.stack ?? err.message}`);
+  process.exit(1); // launchd restarts → startup flags the unclean exit → owner alert
 });
 process.on("unhandledRejection", (reason) => {
-  console.error(`[fatal] unhandledRejection: ${reason instanceof Error ? reason.message : reason}`);
+  logger.error(
+    `[fatal] unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : reason}`,
+  );
 });
 
 // Each adapter is independently optional: Telegram is on when TELEGRAM_BOT_TOKEN is
@@ -65,15 +75,16 @@ await init();
 
 // Lark connects over a WebSocket (non-blocking); start it first. No-op unless
 // config.lark is set.
-startLark(deps);
+startLark(deps, { recoveredFromCrash });
 
 if (telegramEnabled) {
   // grammy's long-poll loop blocks until the bot is stopped; this runs last.
-  await startTelegram(deps);
+  await startTelegram(deps, { recoveredFromCrash });
 } else {
   // Feishu-only: the Lark WS keeps the process alive. Wire a minimal shutdown.
   console.log("[bot] Telegram disabled — running Feishu (Lark) only. Ctrl-C to stop.");
   const stop = (): void => {
+    markCleanShutdown();
     deps.queue.flushPending();
     process.exit(0);
   };

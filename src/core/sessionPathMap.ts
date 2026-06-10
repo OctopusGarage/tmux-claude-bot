@@ -1,18 +1,21 @@
 import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
+import { stateFile } from "./state-dir.js";
 
-// Resolve to project root so bot and claude-tmux.ts share the same file regardless of cwd
+// Resolve to project root so bot and claude-tmux.ts share the same file regardless
+// of cwd; TCB_STATE_DIR overrides it (tests isolate, dev mirrors prod). Resolved
+// per call so the override applies even when set after this module loads.
 const projectRoot = nodePath.resolve(
   nodePath.dirname(new URL(import.meta.url).pathname),
   "..",
   "..",
 );
-const SESSION_PATH_MAP_FILE = nodePath.join(projectRoot, "session_path_map.json");
+const sessionPathMapFile = (): string => stateFile(projectRoot, "session_path_map.json");
 
 export function loadSessionPathMap(): Record<string, string> {
   try {
-    const raw = fs.readFileSync(SESSION_PATH_MAP_FILE, "utf-8");
+    const raw = fs.readFileSync(sessionPathMapFile(), "utf-8");
     return JSON.parse(raw) as Record<string, string>;
   } catch {
     return {};
@@ -20,7 +23,7 @@ export function loadSessionPathMap(): Record<string, string> {
 }
 
 export function saveSessionPathMap(map: Record<string, string>): void {
-  fs.writeFileSync(SESSION_PATH_MAP_FILE, JSON.stringify(map, null, 2), "utf-8");
+  fs.writeFileSync(sessionPathMapFile(), JSON.stringify(map, null, 2), "utf-8");
 }
 
 export function getPathBySession(sessionName: string): string | null {

@@ -136,6 +136,8 @@ export const yue: Messages = {
   taskStillRunning: (body) => `⏳ 任務仍在進行中，請稍後用 /peek 查看當前結果\n\n${body}`,
   voiceDownloadFailed: "轉寫失敗 · 無法下載檔案",
   historyYou: "🧑‍💻 你",
+  crashRecovered: (time) =>
+    `♻️ tmux-claude-bot 異常重啟 — 上次未正常退出（崩潰／被殺），已自動恢復 · ${time}`,
 
   noSession: "沒有活躍會話 · 請先 /list_alive_projects 或 /add_project",
   notRunning: "Claude 未運行 · /start 啟動，或 /restart 繼續",

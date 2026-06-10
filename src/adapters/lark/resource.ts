@@ -17,6 +17,20 @@ function clientFor(cfg: LarkConfig): Client {
 }
 
 /**
+ * Best-effort proactive DM to the first allow-listed owner (open_id) — used for
+ * the crash-restart alert. Uses the HTTP API (independent of the WS channel), so
+ * it works as soon as the app credentials are valid. No-op without an owner.
+ */
+export async function notifyLarkOwner(cfg: LarkConfig, text: string): Promise<void> {
+  const owner = [...cfg.allowedOpenIds][0];
+  if (owner === undefined) return;
+  await clientFor(cfg).im.v1.message.create({
+    params: { receive_id_type: "open_id" },
+    data: { receive_id: owner, msg_type: "text", content: JSON.stringify({ text }) },
+  });
+}
+
+/**
  * Download a resource embedded in a Feishu message (voice/audio/video/file) to
  * `destPath`. Message media MUST go through `im.v1.messageResource.get` with the
  * MESSAGE_ID — the channel's `downloadResource` hits `im.v1.file.get`, which is

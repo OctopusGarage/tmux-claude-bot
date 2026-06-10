@@ -102,8 +102,7 @@ export async function enqueueLarkAction(
   void markWorking(channel, messageId);
   // Mirror Telegram's tone emoji (✅ received / ⏳ queued) so both channels read
   // the same — Feishu has no tone layer, so it's stamped here.
-  const ack =
-    queueSizeBefore === 0 ? `✅ ${m.ackReceived}` : `⏳ ${m.queuedAt(queueSizeBefore)}`;
+  const ack = queueSizeBefore === 0 ? `✅ ${m.ackReceived}` : `⏳ ${m.queuedAt(queueSizeBefore)}`;
   await sendText(channel, chatId, `${ack}\n${tag}`);
 }
 

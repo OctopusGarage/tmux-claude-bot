@@ -1,14 +1,15 @@
 import * as fs from "node:fs/promises";
 import { sessionNameFromPath } from "./sessionPathMap.js";
+import { stateFile } from "./state-dir.js";
 
 const MAX_RECENT_PROJECTS = 15;
-const RECENT_PROJECTS_FILE = "recent_projects.txt";
+const recentProjectsFile = (): string => stateFile(process.cwd(), "recent_projects.txt");
 let recentProjectsCache: string[] | null = null;
 
 export async function readRecentProjectLines(): Promise<string[]> {
   if (recentProjectsCache !== null) return recentProjectsCache;
   try {
-    const raw = await fs.readFile(RECENT_PROJECTS_FILE, "utf-8");
+    const raw = await fs.readFile(recentProjectsFile(), "utf-8");
     recentProjectsCache = raw.split("\n").filter(Boolean);
     return recentProjectsCache;
   } catch {
@@ -37,7 +38,7 @@ export async function appendRecentProject(newPath: string, prefix: string): Prom
     if (filtered.length > MAX_RECENT_PROJECTS) {
       filtered.length = MAX_RECENT_PROJECTS;
     }
-    await fs.writeFile(RECENT_PROJECTS_FILE, `${filtered.join("\n")}\n`, "utf-8");
+    await fs.writeFile(recentProjectsFile(), `${filtered.join("\n")}\n`, "utf-8");
     recentProjectsCache = filtered;
   } finally {
     release();

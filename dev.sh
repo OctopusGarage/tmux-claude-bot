@@ -7,7 +7,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 LABEL="com.octopusgarage.tmux-claude-bot"
-PROD_ENV="${TMUX_CLAUDE_BOT_DIR:-$HOME/.tmux-claude-bot}/.env"
+PROD_DIR="${TMUX_CLAUDE_BOT_DIR:-$HOME/.tmux-claude-bot}"
+PROD_ENV="$PROD_DIR/.env"
 
 if [ ! -f "$PROD_ENV" ]; then
   echo "No deployed config at $PROD_ENV." >&2
@@ -32,6 +33,8 @@ resume() {
 }
 trap resume EXIT INT TERM
 
-echo "=> Dev mode: clone code + deployed config ($PROD_ENV), hot-reload."
+echo "=> Dev mode: clone code + deployed config ($PROD_ENV) + deployed state, hot-reload."
 echo "   Edit and save -> reloads instantly. Ctrl-C to stop and resume prod."
-TCB_ENV_FILE="$PROD_ENV" npm run dev
+# Borrow prod's state dir too (recent_projects / session_path_map / current
+# project) so dev mirrors the real projects instead of the checkout's files.
+TCB_ENV_FILE="$PROD_ENV" TCB_STATE_DIR="$PROD_DIR" npm run dev

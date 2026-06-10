@@ -135,6 +135,8 @@ export const en: Messages = {
   taskStillRunning: (body) => `⏳ Task still running · /peek to see the current result\n\n${body}`,
   voiceDownloadFailed: "Transcription failed · couldn't download the file",
   historyYou: "🧑‍💻 You",
+  crashRecovered: (time) =>
+    `♻️ tmux-claude-bot recovered from an unclean exit (crash / kill) · ${time}`,
 
   noSession: "No active session · /list_alive_projects or /add_project first",
   notRunning: "Claude isn't running · /start to launch, or /restart to continue",

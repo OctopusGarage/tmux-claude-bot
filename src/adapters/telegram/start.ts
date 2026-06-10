@@ -3,6 +3,9 @@ import { Bot, type Context } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 import type { HandlerDeps } from "../../core/deps.js";
+import { messages } from "../../core/i18n/index.js";
+import { markCleanShutdown } from "../../core/lifecycle.js";
+import { logger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
@@ -20,7 +23,10 @@ type MyContext = FileFlavor<Context>;
  * blocks until the bot is stopped (SIGINT/SIGTERM, wired here). Requires
  * `deps.config.telegramBotToken`; the caller only invokes this when Telegram is enabled.
  */
-export async function startTelegram(deps: HandlerDeps): Promise<void> {
+export async function startTelegram(
+  deps: HandlerDeps,
+  opts: { recoveredFromCrash?: boolean } = {},
+): Promise<void> {
   const { config, queue } = deps;
 
   // Dual-route transport: race proxy vs. direct, learn which is faster/healthier,
@@ -98,6 +104,7 @@ export async function startTelegram(deps: HandlerDeps): Promise<void> {
     if (stopping) return;
     stopping = true;
     console.log(`Stopping bot after ${signal}`);
+    markCleanShutdown();
     try {
       await bot.stop();
     } catch {
@@ -129,6 +136,24 @@ export async function startTelegram(deps: HandlerDeps): Promise<void> {
       await sleep(delayMs);
     }
   }
+
+  // launchd KeepAlive restarts crashes silently — after an unclean exit, tell the
+  // owner the bot auto-recovered (repeated alerts = a crash-loop to investigate).
+  // Best-effort; never blocks startup. Disable with TCB_STARTUP_NOTIFY=0.
+  if (opts.recoveredFromCrash && process.env.TCB_STARTUP_NOTIFY !== "0") {
+    const owner = [...config.telegramAllowedUserIds][0];
+    if (owner !== undefined) {
+      try {
+        await bot.api.sendMessage(
+          owner,
+          messages("telegram").crashRecovered(new Date().toLocaleString()),
+        );
+      } catch (err) {
+        logger.warn(`[bot] owner crash-alert failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }
+
   await bot.start();
   console.log("[bot] Bot started successfully");
 }

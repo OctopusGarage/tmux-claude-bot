@@ -151,6 +151,8 @@ export const zh = {
   taskStillRunning: (body: string) => `⏳ 任务仍在进行中，请稍后通过 /peek 查看当前结果\n\n${body}`,
   voiceDownloadFailed: "转写失败 · 无法下载文件",
   historyYou: "🧑‍💻 你",
+  crashRecovered: (time: string) =>
+    `♻️ tmux-claude-bot 异常重启 — 上次未正常退出（崩溃/被杀），已自动恢复 · ${time}`,
 
   // ── Telegram MSG (shared reply strings) ──
   noSession: "没有活跃会话 · 先 /list_alive_projects 或 /add_project",
