@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveReplyTarget } from "../../../src/adapters/lark/reply-target.js";
 import {
   addProject,
@@ -146,23 +146,79 @@ describe("alive/recent error branches", () => {
         }),
       },
     });
-
     await sendAliveList(channel, deps, "chat-1");
-
     expect(channel.texts().some((t) => t.includes("错误：tmux down"))).toBe(true);
+  });
+
+  it("sendRecentList reports the error when listing fails", async () => {
+    const channel = fakeChannel();
+    // mock recentProjectButtons to throw by making bridge.hasSession throw
+    const deps = fakeDeps({
+      bridge: {
+        hasSession: vi.fn(async () => {
+          throw new Error("recent fail");
+        }),
+      },
+    });
+    // populate recents so the path hits bridge.hasSession
+    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+    const tmpDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-rl-err-"));
+    await appendRecentProject(tmpDir, "tmux_proj_");
+    await sendRecentList(channel, deps, "chat-1");
+    expect(channel.texts().some((t) => t.includes("错误：recent fail"))).toBe(true);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 
 describe("addRecentBySid", () => {
-  beforeEach(() => vi.clearAllMocks());
+  let allowedRoot: string;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    allowedRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-rsid-"));
+  });
+  afterEach(() => fs.rmSync(allowedRoot, { recursive: true, force: true }));
 
   it("replies 'not found' when the sid matches no recent project", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
-
     await addRecentBySid(channel, deps, "chat-1", "no-such-sid");
-
     expect(channel.texts().some((t) => t.includes("未找到短 id"))).toBe(true);
+  });
+
+  it("switches to the session when it already exists", async () => {
+    const channel = fakeChannel();
+    const prefix = "tmux_proj_";
+    const sessionName = `tmux_proj_${allowedRoot.replace(/\//g, "-")}`;
+    const deps = fakeDeps({
+      config: { cdAllowedDirs: [allowedRoot], projectSessionPrefix: prefix, sessionWarmupMs: 0 },
+      bridge: { hasSession: vi.fn(async () => true) },
+    });
+    // populate recents so addRecentBySid can find the sid
+    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+    await appendRecentProject(allowedRoot, prefix);
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const sid = sessionShortId(sessionName);
+    await addRecentBySid(channel, deps, "chat-1", sid);
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", sessionName);
+    expect(channel.texts().some((t) => t.includes("已切换"))).toBe(true);
+  });
+
+  it("rejects a path outside cdAllowedDirs when session does not exist", async () => {
+    const channel = fakeChannel();
+    const prefix = "tmux_proj_";
+    const allowedOther = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-other-"));
+    const deps = fakeDeps({
+      config: { cdAllowedDirs: [allowedOther], projectSessionPrefix: prefix, sessionWarmupMs: 0 },
+      bridge: { hasSession: vi.fn(async () => false) },
+    });
+    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+    await appendRecentProject(allowedRoot, prefix);
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const sessionName = `tmux_proj_${allowedRoot.replace(/\//g, "-")}`;
+    const sid = sessionShortId(sessionName);
+    await addRecentBySid(channel, deps, "chat-1", sid);
+    expect(channel.texts().some((t) => t.includes("路径不在允许范围"))).toBe(true);
+    fs.rmSync(allowedOther, { recursive: true, force: true });
   });
 });
 
@@ -237,6 +293,25 @@ describe("addProject path allow-listing", () => {
     expect(deps.bridge.createSession).toHaveBeenCalled();
     expect(deps.currentProject.set).toHaveBeenCalled();
     expect(channel.texts().some((t) => t.includes("项目已创建"))).toBe(true);
+  });
+
+  it("reports the error when createSession throws", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      config: {
+        cdAllowedDirs: [allowedRoot],
+        projectSessionPrefix: "tmux_proj_",
+        sessionWarmupMs: 0,
+      },
+      bridge: {
+        hasSession: vi.fn(async () => false),
+        createSession: vi.fn(async () => {
+          throw new Error("tmux create failed");
+        }),
+      },
+    });
+    await addProject(channel, deps, "chat-1", allowedRoot);
+    expect(channel.texts().some((t) => t.includes("错误：tmux create failed"))).toBe(true);
   });
 
   it("switches to an allowed project that already has a session", async () => {

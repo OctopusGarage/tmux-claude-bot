@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  formatSingleConversation,
   getLatestAssistantReply,
   getRecentConversations,
   projectPathToHistoryDir,
@@ -136,5 +137,57 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
     write("a.jsonl", [line("user", "unrelated prompt"), line("assistant", "x")]);
     const reply = await getLatestAssistantReply(projectPath, "totally different", configRoot, 0);
     expect(reply).toBeNull();
+  });
+
+  it("getLatestAssistantReply fuzzy-matches when the stored prompt contains the sent text", async () => {
+    // Second fuzzy branch: userText.includes(normalizedSent), not the other way around.
+    // Store a long prompt; sent text is a substring of the stored prompt.
+    write("a.jsonl", [
+      line("user", "please summarize the entire long document for me"),
+      line("assistant", "summary here"),
+    ]);
+    const reply = await getLatestAssistantReply(
+      projectPath,
+      "summarize the entire long document",
+      configRoot,
+      0,
+    );
+    expect(reply).toBe("summary here");
+  });
+
+  it("getLatestAssistantReply returns null when the history file cannot be read", async () => {
+    // Write a directory with the .jsonl name so fs.readFile fails.
+    const histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(nodePath.join(histDir, "unreadable.jsonl"), { recursive: true });
+    const reply = await getLatestAssistantReply(projectPath, "anything", configRoot, 0);
+    expect(reply).toBeNull();
+  });
+
+  it("getRecentConversations skips unreadable history files", async () => {
+    // One readable file and one that's actually a directory (read will throw).
+    write("readable.jsonl", [line("user", "real question"), line("assistant", "real answer")]);
+    const histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(nodePath.join(histDir, "unreadable.jsonl"), { recursive: true });
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    // readable.jsonl produces one round; unreadable.jsonl is skipped.
+    expect(rounds.length).toBeGreaterThanOrEqual(1);
+    expect(rounds.some((r) => r.user === "real question")).toBe(true);
+  });
+});
+
+describe("formatSingleConversation", () => {
+  it("formats a round with index and totals for telegram", () => {
+    const round = { user: "hello", assistant: "world", time: "10:00", file: "a.jsonl" };
+    const text = formatSingleConversation(round, 0, 3, "telegram");
+    expect(text).toContain("[1/3]");
+    expect(text).toContain("hello");
+    expect(text).toContain("world");
+    expect(text).toContain("🤖 Claude");
+  });
+
+  it("defaults to telegram channel", () => {
+    const round = { user: "q", assistant: "a", time: "10:00", file: "b.jsonl" };
+    const text = formatSingleConversation(round, 1, 2);
+    expect(text).toContain("[2/2]");
   });
 });
