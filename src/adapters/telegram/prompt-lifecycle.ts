@@ -39,13 +39,13 @@ function thinkingText(session: string, queuePosition: number, elapsed?: number):
 
 /**
  * Premium lifecycle for a prompt sent to Claude:
- *   👀 react (silent ack) → typing indicator + a live "处理中…" message that
+ *   👀 react (silent ack) → typing indicator + a live "processing…" message that
  *   ticks elapsed time → on completion the message is edited in place into the
  *   formatted answer (prose vs. code chosen automatically) with a control
  *   keyboard, and the prompt gets a 👍 (or 😱 on failure).
  *
  * Tradeoff: the final answer arrives via an in-place edit, which Telegram does
- * not push-notify. The initial "处理中…" message does notify, signalling that
+ * not push-notify. The initial "processing…" message does notify, signalling that
  * work started. If startProgress fails we fall back to a fresh reply (which
  * does notify).
  */

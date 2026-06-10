@@ -6,7 +6,7 @@ import { type Messages, zh } from "./catalog/zh.js";
 
 export type { Messages };
 
-/** Supported UI languages (display order: English, 中文, 粤语). `zh` stays the
+/** Supported UI languages (display order: English, Chinese, Cantonese). `zh` stays the
  * canonical catalog shape + default. */
 export type Lang = "en" | "zh" | "yue";
 

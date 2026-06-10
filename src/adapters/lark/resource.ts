@@ -35,7 +35,7 @@ export async function notifyLarkOwner(cfg: LarkConfig, text: string): Promise<vo
  * `destPath`. Message media MUST go through `im.v1.messageResource.get` with the
  * MESSAGE_ID — the channel's `downloadResource` hits `im.v1.file.get`, which is
  * for standalone uploaded files and returns 400 on a message resource (this was
- * the "转写失败" voice bug). `type` is "file" for audio/video/file, "image" for
+ * the "transcription failed" voice bug). `type` is "file" for audio/video/file, "image" for
  * images.
  */
 export async function downloadMessageResource(

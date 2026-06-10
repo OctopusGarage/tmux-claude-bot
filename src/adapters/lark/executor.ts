@@ -37,7 +37,7 @@ async function resolveSession(
 /**
  * Enqueue any action (text, start, restart, exit) with acks.
  * Resolves the current session, enqueues the message, and sends
- * 已接收 / 已排队 / queue-full replies.
+ * "received" / "queued" / queue-full replies.
  */
 export async function enqueueLarkAction(
   channel: LarkChannel,

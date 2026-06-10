@@ -20,7 +20,7 @@ export async function sendText(
   }
 }
 
-/** Send a normalized "错误：<msg>" reply — the one place the Lark view handlers'
+/** Send a normalized "Error: <msg>" reply — the one place the Lark view handlers'
  * catch blocks funnel through, in the channel's language. */
 export async function sendError(channel: LarkChannel, chatId: string, err: unknown): Promise<void> {
   await sendText(channel, chatId, messages("lark").errorPrefix(normalizeError(err).message));

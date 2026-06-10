@@ -7,10 +7,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { runLarkOnboardingWizard } from "../adapters/lark/onboarding-wizard.js";
+import type { Lang } from "../core/i18n/index.js";
+import { parseSetupLang, SETUP_LANG_PROMPT, setupMessages } from "../core/i18n/setup.js";
 import { serializeEnv } from "../core/onboarding.js";
 
 const ENV_PATH = join(process.cwd(), ".env");
+const RESTART_CMD = 'launchctl kickstart -k "gui/$(id -u)/com.octopusgarage.tmux-claude-bot"';
 
 const C = {
   info: (s: string) => console.log(`\x1b[1;34m=>\x1b[0m ${s}`),
@@ -32,27 +36,37 @@ async function writeEnv(values: Record<string, string>): Promise<void> {
   await rename(tmp, ENV_PATH);
 }
 
-async function main(): Promise<void> {
-  C.info("飞书接入向导：用飞书 App 扫码创建应用，凭证将写入 .env\n");
+async function askLang(): Promise<Lang> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(`${SETUP_LANG_PROMPT} [1]: `)).trim();
+    return parseSetupLang(answer || "1") ?? "en";
+  } finally {
+    rl.close();
+  }
+}
 
-  const values = await runLarkOnboardingWizard(C);
+async function main(): Promise<void> {
+  const lang = await askLang();
+  const M = setupMessages(lang);
+
+  C.info(`${M.larkWizardIntro}\n`);
+
+  const values = await runLarkOnboardingWizard(C, M);
+  values.UI_LANG = lang;
   await writeEnv(values);
 
   console.log("");
-  C.ok("应用创建成功，凭证已写入 .env");
+  C.ok(M.larkAppCreated);
   C.info(`App ID: ${values.LARK_APP_ID}`);
   C.info(`Tenant: ${values.LARK_DOMAIN}`);
   if (values.LARK_ALLOWED_OPEN_IDS) {
-    C.info(`已授权扫码用户：${values.LARK_ALLOWED_OPEN_IDS}`);
+    C.info(M.larkAuthorizedUser(values.LARK_ALLOWED_OPEN_IDS));
   } else {
-    C.warn(
-      "未拿到扫码用户的 open_id —— LARK_ALLOWED_OPEN_IDS 为空（会拒绝所有人）。请手动把你的 open_id 填入 .env。",
-    );
+    C.warn(M.larkNoOpenId);
   }
   console.log("");
-  C.info(
-    '重启 bot 生效：launchctl kickstart -k "gui/$(id -u)/com.octopusgarage.tmux-claude-bot"（开发态则重启 npm run dev）',
-  );
+  C.info(M.larkRestartHint(RESTART_CMD));
 }
 
 main().catch((e) => {

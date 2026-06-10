@@ -34,7 +34,7 @@ export async function handleLarkVoice(
 
   // Feishu voice is a MESSAGE resource: download it via im.v1.messageResource.get
   // (needs the message_id), NOT the channel's downloadResource — that hits
-  // im.v1.file.get (standalone files) and 400s on message media (the 转写失败 bug).
+  // im.v1.file.get (standalone files) and 400s on message media (the transcription-failed bug).
   const larkCfg = deps.config.lark;
   if (!larkCfg) {
     await sendText(channel, msg.chatId, messages("lark").voiceDownloadFailed);

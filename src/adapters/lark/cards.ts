@@ -137,7 +137,7 @@ export function recoveryCard(body: string, title = "⚠️"): object {
 }
 
 /** A Claude-result card: the output (or placeholder), the 7 control shortcuts,
- * and a 帮助 button. The title carries the 📂 project so the user sees which
+ * and a help button. The title carries the 📂 project so the user sees which
  * session answered. */
 export function resultCard(output: string, title = "Claude"): object {
   const body = output && output.trim() ? output : messages("lark").emptyOutput;
@@ -152,7 +152,7 @@ export function viewCard(title: string, body: string): object {
 }
 
 /** Alive-project list: one labelled row per project with switch/remove buttons
- * (the active one shows an inert "当前" marker). */
+ * (the active one shows an inert "current" marker). */
 export function projectListCard(projects: ProjectButton[]): object {
   if (projects.length === 0) {
     return shell(messages("lark").aliveListTitle(0), [md(messages("lark").aliveListEmpty)]);

@@ -206,7 +206,7 @@ export async function addProject(
 /**
  * Switch to (or create) a recent project by its short id. Mirrors the create
  * branch of the Telegram `addRecentProjectBySid`. Shared by the recent-list
- * "创建" button.
+ * "create" button.
  */
 export async function addRecentBySid(
   channel: LarkChannel,

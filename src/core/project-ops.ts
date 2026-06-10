@@ -116,7 +116,7 @@ export async function switchToProject(
  * Driving a tmux-claude-bot checkout via the bot is almost always the nesting
  * trap: the bot types into a Claude session running in its OWN code — frequently
  * the very conversation that controls the bot — so replies loop and the user sees
- * only the ack ("已接收") with no result. Returns a warning to surface on switch,
+ * only the ack ("received") with no result. Returns a warning to surface on switch,
  * or null when the path is not a tmux-claude-bot checkout.
  */
 export function botSelfRepoWarning(

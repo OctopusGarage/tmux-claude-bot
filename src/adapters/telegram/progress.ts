@@ -69,7 +69,7 @@ export async function startProgress(
   let finalized = false;
   // Serialize edits so they always apply in CALL order — otherwise a slow,
   // already-in-flight progress tick can resolve AFTER finalize and revert the
-  // message back to "处理中…", clobbering the result. `finalized` then stops any
+  // message back to "processing…", clobbering the result. `finalized` then stops any
   // tick scheduled after finalize from running at all.
   let chain: Promise<unknown> = Promise.resolve();
   const edit = (text: string, extra?: Record<string, unknown>): Promise<unknown> => {
