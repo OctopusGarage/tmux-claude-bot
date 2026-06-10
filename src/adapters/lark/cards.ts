@@ -1,6 +1,6 @@
+import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 import { VOICE_LANGS } from "../../core/voice-support.js";
-import { HELP_TEXT } from "./commands.js";
 
 /** A card button spec. `value` is echoed back in cardAction.action.value. */
 interface ButtonSpec {
@@ -50,8 +50,9 @@ const shell = (title: string, elements: object[]): object => ({
  * active language is marked and inert; tapping another sends `voicelang` with the
  * chosen code. The recognition language is per-channel — this sets Feishu's only. */
 export function voiceLangCard(current: string): object {
-  return shell("🎙️ 语音识别语言", [
-    md(`当前(飞书)：**${current === "auto" ? "自动检测" : current}** · 点按钮切换`),
+  const mv = messages("lark");
+  return shell(mv.voiceLangTitle, [
+    md(mv.voiceLangCardPrompt(current === "auto" ? mv.autoDetect : current)),
     gridRow(
       VOICE_LANGS.map((l) =>
         l.code === current
@@ -62,47 +63,91 @@ export function voiceLangCard(current: string): object {
   ]);
 }
 
-/** Collapsed (default) control rows — mirrors Telegram `buildControlKeyboard`
- * row-for-row: esc/clear/compact · peek/历史 · 项目/队列. */
-const CONTROL_COLLAPSED_ROWS: ButtonSpec[][] = [
-  [
-    { text: "⎋ Esc", value: { cmd: "esc" } },
-    { text: "🧹 clear", value: { cmd: "clear" } },
-    { text: "🗜 compact", value: { cmd: "compact" } },
-  ],
-  [
-    { text: "👁 peek", value: { cmd: "peek" } },
-    { text: "📜 历史", value: { cmd: "history" } },
-  ],
-  [
-    { text: "📁 项目", value: { cmd: "listalive" } },
-    { text: "📋 队列", value: { cmd: "queuestatus" } },
-  ],
-];
+/** UI-language picker — mirrors voiceLangCard. Tapping sends `uilang` with the
+ * chosen Lang; the title/prompt render in the channel's CURRENT language. */
+export function langCard(current: Lang): object {
+  const m = messages("lark");
+  const label = UI_LANGS.find((l) => l.code === current)?.label ?? current;
+  return shell(m.uiLangTitle, [
+    md(m.uiLangCurrent(label)),
+    gridRow(
+      UI_LANGS.map((l) =>
+        l.code === current
+          ? { text: `✅ ${l.label}`, value: { cmd: "noop" } }
+          : { text: l.label, value: { cmd: "uilang", lang: l.code } },
+      ),
+    ),
+  ]);
+}
 
 /**
- * The control panel: one grid row per Telegram keyboard row (the 7 collapsed
- * controls), then a 💡 帮助 button. (An expand/collapse toggle was dropped —
- * Feishu's in-place card update via updateCard isn't reliable for 2.0 cards, so
- * the full control set lives in the /help card instead.)
+ * The control panel stamped on every result/view card. Feishu has neither
+ * Telegram's "/" command discovery nor a reliable expand/collapse (updateCard is
+ * unreliable for 2.0 cards), so this carries the high-frequency controls inline
+ * rather than the collapsed subset — `enter`/`interrupt`/`restart` included.
+ * `start` lives on the recovery card; `up`/`down`/`exit` + the language pickers
+ * stay in /help.
  */
+function controlRows(): ButtonSpec[][] {
+  const m = messages("lark");
+  return [
+    [
+      { text: m.btnEsc, value: { cmd: "esc" } },
+      { text: m.btnEnter, value: { cmd: "enter" } },
+      { text: m.btnInterrupt, value: { cmd: "interrupt" }, style: "danger" },
+    ],
+    [
+      { text: m.btnClear, value: { cmd: "clear" } },
+      { text: m.btnCompact, value: { cmd: "compact" } },
+      { text: m.btnRestart, value: { cmd: "restart" } },
+    ],
+    [
+      { text: m.btnPeek, value: { cmd: "peek" } },
+      { text: m.btnHistory, value: { cmd: "history" } },
+      { text: m.btnQueue, value: { cmd: "queuestatus" } },
+    ],
+    [
+      { text: m.btnProjects, value: { cmd: "listalive" } },
+      { text: m.btnCurrent, value: { cmd: "current" } },
+      { text: m.btnHelp, value: { cmd: "help" } },
+    ],
+  ];
+}
+
 export function controlActions(): object[] {
-  const help: ButtonSpec = { text: "💡 帮助", value: { cmd: "help" } };
-  return [...CONTROL_COLLAPSED_ROWS.map(gridRow), gridRow([help])];
+  return controlRows().map(gridRow);
+}
+
+/**
+ * A dead-end recovery card: the message plus Claude-lifecycle buttons
+ * (start/exit) on top of the normal controls, so a "not running" / error reply
+ * stays actionable in Feishu without having to type a command.
+ */
+export function recoveryCard(body: string, title = "⚠️"): object {
+  const m = messages("lark");
+  return shell(title, [
+    md(body),
+    HR,
+    gridRow([
+      { text: m.btnStart, value: { cmd: "start" }, style: "primary" },
+      { text: m.btnExit, value: { cmd: "exit" } },
+    ]),
+    ...controlActions(),
+  ]);
 }
 
 /** A Claude-result card: the output (or placeholder), the 7 control shortcuts,
  * and a 帮助 button. The title carries the 📂 project so the user sees which
  * session answered. */
 export function resultCard(output: string, title = "Claude"): object {
-  const body = output && output.trim() ? output : "(无输出)";
+  const body = output && output.trim() ? output : messages("lark").emptyOutput;
   return shell(title, [md(body), HR, ...controlActions()]);
 }
 
 /** A read-only view card (peek / history): a title, the body, then the same
  * control buttons the result card carries. */
 export function viewCard(title: string, body: string): object {
-  const content = body && body.trim() ? body : "(空)";
+  const content = body && body.trim() ? body : messages("lark").emptyPane;
   return shell(title, [md(content), HR, ...controlActions()]);
 }
 
@@ -110,82 +155,88 @@ export function viewCard(title: string, body: string): object {
  * (the active one shows an inert "当前" marker). */
 export function projectListCard(projects: ProjectButton[]): object {
   if (projects.length === 0) {
-    return shell("活跃项目 (0)", [md("没有活跃项目，用 /add_project <路径> 新建")]);
+    return shell(messages("lark").aliveListTitle(0), [md(messages("lark").aliveListEmpty)]);
   }
+  const m = messages("lark");
   const elements: object[] = [];
   for (const p of projects) {
     elements.push(md(p.label));
     if (p.active) {
-      elements.push(gridRow([{ text: "✅ 当前", value: { cmd: "noop" } }]));
+      elements.push(gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]));
     } else {
       elements.push(
         gridRow([
-          { text: "🔀 切换", value: { cmd: "switch", sid: p.sid } },
-          { text: "🗑 删除", value: { cmd: "remove", sid: p.sid }, style: "danger" },
+          { text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } },
+          { text: m.btnRemove, value: { cmd: "remove", sid: p.sid }, style: "danger" },
         ]),
       );
     }
   }
-  return shell(`活跃项目 (${projects.length})`, elements);
+  return shell(messages("lark").aliveListTitle(projects.length), elements);
 }
 
 /** Recent-project list: per project, tap an alive one to switch, a stopped one
  * to (re)create it; the active one is inert. */
 export function recentListCard(projects: RecentButton[]): object {
   if (projects.length === 0) {
-    return shell("近期项目", [md("没有近期项目，用 /add_project <路径> 添加")]);
+    return shell(messages("lark").recentListTitle, [md(messages("lark").recentListEmpty)]);
   }
+  const m = messages("lark");
   const elements: object[] = [];
   for (const p of projects) {
     elements.push(md(p.label));
     if (p.active) {
-      elements.push(gridRow([{ text: "✅ 当前", value: { cmd: "noop" } }]));
+      elements.push(gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]));
     } else if (p.alive) {
-      elements.push(gridRow([{ text: "🔀 切换", value: { cmd: "switch", sid: p.sid } }]));
+      elements.push(gridRow([{ text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } }]));
     } else {
-      elements.push(gridRow([{ text: "➕ 创建", value: { cmd: "addrecent", sid: p.sid } }]));
+      elements.push(gridRow([{ text: m.btnCreate, value: { cmd: "addrecent", sid: p.sid } }]));
     }
   }
-  return shell("近期项目", elements);
+  return shell(messages("lark").recentListTitle, elements);
 }
 
 /** The interactive /help menu card: a button for every command. */
 export function helpCard(): object {
-  return shell("使用帮助", [
-    md(HELP_TEXT),
+  const m = messages("lark");
+  return shell(m.helpTitle, [
+    md(m.helpBodyLark),
     HR,
-    md("**⚡ 运行中**"),
+    md(m.helpRunning),
     gridRow([
-      { text: "⏎ 回车", value: { cmd: "enter" } },
-      { text: "⎋ Esc", value: { cmd: "esc" } },
-      { text: "✋ 中断", value: { cmd: "interrupt" }, style: "danger" },
+      { text: m.btnEnter, value: { cmd: "enter" } },
+      { text: m.btnEsc, value: { cmd: "esc" } },
+      { text: m.btnInterrupt, value: { cmd: "interrupt" }, style: "danger" },
     ]),
     gridRow([
-      { text: "🔄 重启", value: { cmd: "restart" } },
-      { text: "🧹 clear", value: { cmd: "clear" } },
-      { text: "🗜 compact", value: { cmd: "compact" } },
+      { text: m.btnRestart, value: { cmd: "restart" } },
+      { text: m.btnClear, value: { cmd: "clear" } },
+      { text: m.btnCompact, value: { cmd: "compact" } },
     ]),
     gridRow([
-      { text: "⬆️ up", value: { cmd: "up" } },
-      { text: "⬇️ down", value: { cmd: "down" } },
-      { text: "📊 状态", value: { cmd: "status" } },
+      { text: m.btnUp, value: { cmd: "up" } },
+      { text: m.btnDown, value: { cmd: "down" } },
+      { text: m.btnStatus, value: { cmd: "status" } },
     ]),
     gridRow([
-      { text: "🚀 启动", value: { cmd: "start" }, style: "primary" },
-      { text: "🚪 退出", value: { cmd: "exit" } },
+      { text: m.btnStart, value: { cmd: "start" }, style: "primary" },
+      { text: m.btnExit, value: { cmd: "exit" } },
     ]),
     HR,
-    md("**📂 项目 / 视图**"),
+    md(m.helpProjects),
     gridRow([
-      { text: "👁 peek", value: { cmd: "peek" } },
-      { text: "📜 历史", value: { cmd: "history" } },
-      { text: "📋 队列", value: { cmd: "queuestatus" } },
+      { text: m.btnPeek, value: { cmd: "peek" } },
+      { text: m.btnHistory, value: { cmd: "history" } },
+      { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ]),
     gridRow([
-      { text: "📁 项目", value: { cmd: "listalive" } },
-      { text: "🕘 近期", value: { cmd: "recent" } },
-      { text: "📌 当前", value: { cmd: "current" } },
+      { text: m.btnProjects, value: { cmd: "listalive" } },
+      { text: m.btnRecent, value: { cmd: "recent" } },
+      { text: m.btnCurrent, value: { cmd: "current" } },
     ]),
-    gridRow([{ text: "🎙️ 语音语言", value: { cmd: "voicelangmenu" } }]),
+    gridRow([
+      { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
+      { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
+    ]),
   ]);
 }

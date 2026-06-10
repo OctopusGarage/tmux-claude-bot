@@ -4,22 +4,13 @@
  * persist the resolved path. Keeps all the "is voice usable?" environment logic
  * out of the Telegram adapter so the handler just maps a status to a message.
  */
-import {
-  accessSync,
-  chmodSync,
-  constants,
-  existsSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
-import { serializeEnv } from "./onboarding.js";
+import { persistEnvVar } from "./env-store.js";
 import type { Channel } from "./project-manager.js";
 
 const ROOT = process.cwd();
-const ENV_PATH = nodePath.join(ROOT, ".env");
 
 /** Binary produced by `npm run whisper:install` (project-managed venv). */
 export const WHISPER_VENV_BIN = nodePath.join(ROOT, ".venv", "bin", "mlx_whisper");
@@ -62,9 +53,9 @@ export const DEFAULT_WHISPER_LANGUAGE = "zh";
  * Shared by the Telegram keyboard picker and the Lark card picker.
  */
 export const VOICE_LANGS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: "en", label: "English" },
   { code: "zh", label: "中文" },
-  { code: "yue", label: "粤语" },
-  { code: "en", label: "英文" },
+  { code: "yue", label: "粵語" },
   { code: "auto", label: "🌐 自动检测" },
 ];
 
@@ -99,23 +90,6 @@ export function checkVoiceSupport(): VoiceSupport {
   if (existsSync(bin) && isExecutable(bin)) return { ready: true, bin };
   if (!isVoicePlatformSupported()) return { ready: false, reason: "unsupported-platform" };
   return { ready: false, reason: "not-installed" };
-}
-
-/**
- * Persist a single var into .env so a voice preference survives a restart (the
- * running process picks it up immediately via process.env; this is for next
- * boot). No-op when there is no .env to write into — process.env is enough.
- * Uses the existing file as the template: serializeEnv replaces only that one
- * line (or appends it) and leaves every other line untouched.
- */
-export function persistEnvVar(key: string, value: string): void {
-  if (!existsSync(ENV_PATH)) return;
-  const current = readFileSync(ENV_PATH, "utf8");
-  const next = serializeEnv(current, { [key]: value });
-  const tmp = `${ENV_PATH}.tmp`;
-  writeFileSync(tmp, next, "utf8");
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, ENV_PATH);
 }
 
 export function persistWhisperBin(bin: string): void {

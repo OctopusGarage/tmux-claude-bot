@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage, type MessageAction } from "../../core/dispatch.js";
+import { messages } from "../../core/i18n/index.js";
 import type { PersistedMessage, QueuedMessage } from "../../core/queue.js";
 import { logger } from "../../shared/utils/logger.js";
 import { MSG } from "./messages.js";
@@ -60,10 +61,11 @@ export async function enqueueSessionCommand(
   logger.info(
     `[executor] enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`,
   );
+  const m = messages("telegram");
   if (queueSizeBefore === 0) {
-    await reply(ctx, "ok", "已接收", { session });
+    await reply(ctx, "ok", m.ackReceived, { session });
   } else {
-    await reply(ctx, "queued", `已排队 · 第 ${queueSizeBefore} 位`, { session });
+    await reply(ctx, "queued", m.queuedAt(queueSizeBefore), { session });
   }
 }
 

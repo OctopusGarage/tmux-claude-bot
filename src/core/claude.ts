@@ -1,6 +1,8 @@
 import { logger } from "../shared/utils/logger.js";
 import type { ConfigResolver } from "./claude-config-resolver.js";
+import { messages } from "./i18n/index.js";
 import type { OutputProcessor } from "./output.js";
+import type { Channel } from "./project-manager.js";
 import type { TmuxBridge } from "./tmux.js";
 
 export type ClaudeRunnerOptions = {
@@ -100,7 +102,7 @@ export class ClaudeRunner {
     throw new Error("Claude did not become ready in time");
   }
 
-  async waitUntilDone(sessionName?: string): Promise<string> {
+  async waitUntilDone(sessionName?: string, channel?: Channel): Promise<string> {
     let identicalCount = 0;
     let lastContent = "";
     const maxIterations = Math.ceil(this.maxWaitDoneMs / this.pollIntervalMs);
@@ -156,7 +158,7 @@ export class ClaudeRunner {
     logger.warn(
       `[claude] waitUntilDone session=${sess} TIMEOUT after ${maxIterations} iterations, output_len=${processed.length}`,
     );
-    return `⏳ 任务仍在进行中，请稍后通过 /peek 查看当前结果\n\n${processed}`;
+    return messages(channel ?? "telegram").taskStillRunning(processed);
   }
 
   async interrupt(sessionName?: string): Promise<void> {

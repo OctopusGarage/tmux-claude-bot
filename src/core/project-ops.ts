@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { sessionShortId } from "../shared/utils/hash.js";
 import { sleep } from "../shared/utils/sleep.js";
 import type { HandlerDeps } from "./deps.js";
+import { messages } from "./i18n/index.js";
 import { projectLabel } from "./project-label.js";
 import type { Channel } from "./project-manager.js";
 import { appendRecentProject, readRecentProjectLines } from "./recentProjects.js";
@@ -59,12 +60,15 @@ export async function switchToProject(
  * only the ack ("已接收") with no result. Returns a warning to surface on switch,
  * or null when the path is not a tmux-claude-bot checkout.
  */
-export function botSelfRepoWarning(projectPath: string | null | undefined): string | null {
+export function botSelfRepoWarning(
+  projectPath: string | null | undefined,
+  channel: Channel = "telegram",
+): string | null {
   if (!projectPath) return null;
   try {
     const pkg = JSON.parse(fs.readFileSync(join(projectPath, "package.json"), "utf8"));
     if (pkg?.name === "tmux-claude-bot") {
-      return "⚠️ 这是 tmux-claude-bot 自己的代码库——用 bot 驱动它通常会嵌套(只回「已接收」无结果)。建议切到别的真实项目。";
+      return messages(channel).nestingWarning;
     }
   } catch {
     /* no/unreadable package.json -> not a checkout */

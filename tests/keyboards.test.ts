@@ -57,6 +57,11 @@ describe("parseCallbackData", () => {
     expect(parseCallbackData("vl:en")).toEqual({ kind: "voicelang", lang: "en" });
     expect(parseCallbackData("vl:auto")).toEqual({ kind: "voicelang", lang: "auto" });
     expect(parseCallbackData("vl:ja")).toBeNull();
+    // UI-language picks (ul:) accept only supported UI langs.
+    expect(parseCallbackData("ul:en")).toEqual({ kind: "uilang", lang: "en" });
+    expect(parseCallbackData("ul:zh")).toEqual({ kind: "uilang", lang: "zh" });
+    expect(parseCallbackData("ul:yue")).toEqual({ kind: "uilang", lang: "yue" });
+    expect(parseCallbackData("ul:")).toBeNull();
     expect(parseCallbackData("vl:")).toBeNull();
   });
 

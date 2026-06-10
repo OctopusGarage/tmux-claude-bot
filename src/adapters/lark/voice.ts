@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import type { LarkChannel, NormalizedMessage, ResourceDescriptor } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
+import { messages } from "../../core/i18n/index.js";
 import { transcribeOgg } from "../../core/transcriber.js";
 import { checkVoiceSupport, resolveWhisperLanguage } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -22,10 +23,9 @@ export async function handleLarkVoice(
 ): Promise<void> {
   const support = checkVoiceSupport();
   if (!support.ready) {
+    const m = messages("lark");
     const hint =
-      support.reason === "unsupported-platform"
-        ? "语音转写仅支持 Apple Silicon"
-        : "语音转写未安装（在仓库运行 npm run whisper:install）";
+      support.reason === "unsupported-platform" ? m.voiceUnsupported : m.voiceNotInstalled;
     await sendText(channel, msg.chatId, hint);
     return;
   }
@@ -42,7 +42,7 @@ export async function handleLarkVoice(
     transcribed = await transcribeOgg(tmpPath, support.bin, resolveWhisperLanguage("lark"));
   } catch (err) {
     logger.error(`[lark] voice transcription failed: ${err instanceof Error ? err.message : err}`);
-    await sendText(channel, msg.chatId, "转写失败 · 请重试或改发文字");
+    await sendText(channel, msg.chatId, messages("lark").voiceTranscribeFailed);
     return;
   } finally {
     try {
@@ -53,13 +53,13 @@ export async function handleLarkVoice(
   }
 
   if (!transcribed.trim()) {
-    await sendText(channel, msg.chatId, "转写为空 · 请重试");
+    await sendText(channel, msg.chatId, messages("lark").voiceEmpty);
     return;
   }
 
   logger.info(`[lark] voice transcribed chat=${msg.chatId} len=${transcribed.length}`);
   // Echo the transcription (like Telegram), then process it as a normal prompt.
-  await sendText(channel, msg.chatId, `🎙️ 你说的是：「${transcribed}」`);
+  await sendText(channel, msg.chatId, messages("lark").voiceHeard(transcribed));
   await enqueueLarkAction(
     channel,
     deps,

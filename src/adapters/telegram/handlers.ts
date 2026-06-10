@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import type { Bot } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
+import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { appendRecentProject } from "../../core/recentProjects.js";
 import {
   getPathBySession,
@@ -15,7 +16,7 @@ import { logger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
-import { buildRecentKeyboard } from "./keyboards.js";
+import { buildLangKeyboard, buildRecentKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
   addRecentProjectBySid,
@@ -30,33 +31,6 @@ import type { ReplyTargetMap } from "./reply-target.js";
 import { resolveSessionFromReply } from "./session.js";
 import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
 
-const HELP_TEXT = `🤖 tmux-claude-bot
-
-发任意文字 → 转给 Claude → 返回结果
-🎙️ 语音转写为可选功能 · /voice_install 启用（仅 Apple Silicon）· /voice_lang 设识别语言
-
-提示：消息会收到 👀（已接收）/👍（完成）回应；处理中就地显示进度并编辑成结果；结果下方有 ⏎/✋/⎋/🔄 快捷按钮。
-
-━━ 📂 项目 ━━
-/current_project — 当前项目
-/list_alive_projects — 活跃项目（点按切换/删除）
-/list_recent_projects — 近期项目
-/add_project <路径> — 新建项目
-/queue_status — 队列状态
-/history [N] — 对话历史（默认最近一条）
-
-━━ ⚡ Claude 运行中 ━━
-/enter — 回车    /esc — Escape
-/interrupt — Ctrl-C    /restart — 重启 (--continue)
-/clear — 清空上下文    /compact — 压缩上下文
-/up · /down — 上下方向键    /exit — 退出
-
-━━ 🚀 未运行 ━━
-/start — 启动 Claude
-/peek — 查看 tmux 画面
-/status — 检查状态
-/help — 本帮助`;
-
 export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: ReplyTargetMap): void {
   const persisted = deps.queue.loadPersisted();
   if (persisted.length > 0) {
@@ -67,8 +41,27 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     }
   }
 
+  bot.command("lang", async (ctx) => {
+    const arg = (ctx.message?.text ?? "").split(/\s+/)[1]?.trim().toLowerCase();
+    const labelOf = (l: string): string => UI_LANGS.find((x) => x.code === l)?.label ?? l;
+    if (!arg) {
+      const current = resolveUiLang("telegram");
+      await reply(ctx, "info", messages("telegram").uiLangCurrent(labelOf(current)), {
+        replyTarget,
+        replyMarkup: buildLangKeyboard(current),
+      });
+      return;
+    }
+    if (!isUiLang(arg)) {
+      await reply(ctx, "err", "用法 / Usage: /lang <en|zh|yue>", { replyTarget });
+      return;
+    }
+    setUiLang("telegram", arg);
+    await reply(ctx, "info", messages("telegram").uiLangSet(labelOf(arg)), { replyTarget });
+  });
+
   bot.command("help", async (ctx) => {
-    await reply(ctx, "help", HELP_TEXT);
+    await reply(ctx, "help", messages("telegram").helpBodyTelegram);
   });
 
   bot.command("status", async (ctx) =>
@@ -114,7 +107,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   bot.command("add_project", async (ctx) => {
     const args = (ctx.message?.text ?? "").split(" ").slice(1);
     if (args.length === 0) {
-      await reply(ctx, "info", "用法：/add_project <路径>\n\n示例：/add_project ~/projects/myapp");
+      await reply(ctx, "info", messages("telegram").addProjectUsageExample);
       return;
     }
     const rawPath = args.join(" ");
@@ -123,11 +116,11 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     try {
       const stat = await fs.promises.stat(resolvedPath);
       if (!stat.isDirectory()) {
-        await reply(ctx, "err", `${resolvedPath} 不是目录`);
+        await reply(ctx, "err", messages("telegram").notADir(resolvedPath));
         return;
       }
     } catch {
-      await reply(ctx, "err", `目录不存在：${resolvedPath}`);
+      await reply(ctx, "err", messages("telegram").dirNotExist(resolvedPath));
       return;
     }
 
@@ -143,7 +136,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
         await deps.currentProject.set("telegram", sessionName);
         setPathForSession(sessionName, resolvedPath);
         await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
-        await reply(ctx, "warn", "已存在 · 已切换", { session: sessionName, replyTarget });
+        await reply(ctx, "warn", messages("telegram").alreadySwitched, {
+          session: sessionName,
+          replyTarget,
+        });
         return;
       }
       await deps.bridge.createSession(sessionName);
@@ -153,7 +149,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       await sleep(deps.config.sessionWarmupMs);
       setPathForSession(sessionName, resolvedPath);
       await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
-      await reply(ctx, "ok", "项目已创建", {
+      await reply(ctx, "ok", messages("telegram").projectCreated, {
         session: sessionName,
         body: resolvedPath,
         replyTarget,
@@ -166,13 +162,18 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   bot.command("current_project", async (ctx) => {
     const session = await deps.currentProject.get("telegram");
     if (!session) {
-      await reply(ctx, "err", "未设置当前项目\n\n用 /add_project <路径> 设置一个");
+      await reply(ctx, "err", messages("telegram").noCurrentProjectSet);
       return;
     }
     const exists = await deps.bridge.hasSession(session);
     const pathPart = getPathBySession(session) ?? session;
-    const status = exists ? "✅ 当前活跃" : "🔴 未找到";
-    await reply(ctx, "list", "当前项目", { session, body: `${pathPart}\n${status}` });
+    const status = exists
+      ? messages("telegram").currentActive
+      : messages("telegram").currentNotFound;
+    await reply(ctx, "list", messages("telegram").currentProjectTitle, {
+      session,
+      body: `${pathPart}\n${status}`,
+    });
   });
 
   bot.command("list_alive_projects", async (ctx) => {
@@ -182,11 +183,11 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   bot.command("list_recent_projects", async (ctx) => {
     const buttons = await recentProjectButtons(deps, "telegram");
     if (buttons.length === 0) {
-      await reply(ctx, "list", "没有近期项目\n\n用 /add_project <路径> 添加一个");
+      await reply(ctx, "list", messages("telegram").noRecentProjects);
       return;
     }
     // No body — the buttons already show each project name + status (✅/🔀/➕).
-    await reply(ctx, "list", `近期项目 (${buttons.length})`, {
+    await reply(ctx, "list", messages("telegram").recentListTitleN(buttons.length), {
       replyMarkup: buildRecentKeyboard(buttons),
     });
   });
@@ -225,7 +226,11 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
     if (text.length > deps.config.maxInboundLength) {
       logger.warn(`[handlers] message too long chat=${chatId} len=${text.length}`);
-      await reply(ctx, "err", `消息过长 · ${text.length} > ${deps.config.maxInboundLength} 字符`);
+      await reply(
+        ctx,
+        "err",
+        messages("telegram").messageTooLong(text.length, deps.config.maxInboundLength),
+      );
       return;
     }
 
@@ -251,7 +256,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
           return;
         }
         await switchToProject(deps, "telegram", sessionName);
-        await reply(ctx, "ok", "已切换", { session: sessionName, replyTarget });
+        await reply(ctx, "ok", messages("telegram").switched, {
+          session: sessionName,
+          replyTarget,
+        });
       } catch (err) {
         await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
       }
@@ -269,7 +277,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
         }
         replyTarget.removeSession(sessionName);
         await removeProjectBySession(deps, sessionName);
-        await reply(ctx, "ok", "已移除", { session: sessionName, replyTarget });
+        await reply(ctx, "ok", messages("telegram").removed, { session: sessionName, replyTarget });
       } catch (err) {
         await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
       }

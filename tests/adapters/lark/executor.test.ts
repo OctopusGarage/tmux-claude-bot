@@ -14,7 +14,8 @@ describe("enqueueLarkAction", () => {
     await enqueueLarkAction(channel, deps, "chat-1", "msg-1", "text", "hi");
 
     expect(deps.queue.enqueued).toHaveLength(0);
-    expect(channel.texts().some((t) => t.includes("无当前项目"))).toBe(true);
+    // No "/" discovery on Feishu — the no-project reply is a recovery card.
+    expect(JSON.stringify(channel.cards())).toContain("无当前项目");
   });
 
   it("acks '已接收' when the queue was empty", async () => {
@@ -92,7 +93,7 @@ describe("runImmediateLarkAction", () => {
 
     await runImmediateLarkAction(channel, deps, "chat-1", "msg-1", "status");
 
-    expect(channel.texts().some((t) => t.includes("无当前项目"))).toBe(true);
+    expect(JSON.stringify(channel.cards())).toContain("无当前项目");
   });
 
   it("runs executeMessage and replies plain text with the result", async () => {
@@ -120,6 +121,7 @@ describe("runImmediateLarkAction", () => {
 
     await runImmediateLarkAction(channel, deps, "chat-1", "msg-1", "status");
 
-    expect(channel.texts().some((t) => t.includes("错误：boom"))).toBe(true);
+    // Errors come back as a recovery card (start/restart + controls).
+    expect(JSON.stringify(channel.cards())).toContain("错误：boom");
   });
 });

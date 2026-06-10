@@ -1,6 +1,7 @@
 import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import type { MessageAction } from "../../core/dispatch.js";
+import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import {
   botSelfRepoWarning,
@@ -12,7 +13,7 @@ import { getPathBySession } from "../../core/sessionPathMap.js";
 import { resolveWhisperLanguage, setWhisperLanguage } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
-import { helpCard, voiceLangCard } from "./cards.js";
+import { helpCard, langCard, voiceLangCard } from "./cards.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
 import { sendCard, sendText } from "./replies.js";
@@ -93,17 +94,31 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       await sendCard(channel, evt.chatId, voiceLangCard(value.lang));
       return;
     }
+    // UI-language picker (/lang).
+    if (cmd === "uilangmenu") {
+      await sendCard(channel, evt.chatId, langCard(resolveUiLang("lark")));
+      return;
+    }
+    if (cmd === "uilang" && value?.lang) {
+      const lang = value.lang;
+      if (isUiLang(lang)) {
+        setUiLang("lark", lang);
+        logger.info(`[lark] ui language set to ${lang} via card`);
+        await sendCard(channel, evt.chatId, langCard(lang));
+      }
+      return;
+    }
 
     if (cmd === "switch" && value?.sid) {
       const session = await resolveAliveSessionByShortId(deps, value.sid);
       if (session) {
         await switchToProject(deps, "lark", session);
         const path = getPathBySession(session) ?? undefined;
-        const warn = botSelfRepoWarning(path);
+        const warn = botSelfRepoWarning(path, "lark");
         await sendText(
           channel,
           evt.chatId,
-          `已切换：${projectLabel(session, path)}${warn ? `\n\n${warn}` : ""}`,
+          `${messages("lark").switchedTo(projectLabel(session, path))}${warn ? `\n\n${warn}` : ""}`,
         );
       }
       return;
@@ -113,7 +128,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       if (session) {
         await removeProjectBySession(deps, session);
         removeReplyTargetSession(session);
-        await sendText(channel, evt.chatId, "已移除");
+        await sendText(channel, evt.chatId, messages("lark").removed);
       }
       return;
     }

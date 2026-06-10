@@ -1,4 +1,5 @@
 import type { Bot, Context } from "grammy";
+import { messages } from "../../core/i18n/index.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -64,7 +65,6 @@ interface Composed {
 // hard limit (leaving room for the head line and code-block fence) so every
 // reply path degrades to a truncated message instead of no message at all.
 const TELEGRAM_MAX_LEN = 4096;
-const TRUNCATION_NOTICE = "\n…(内容过长，已截断)";
 
 export function composeMessage(tone: Tone, head: string, opts: ReplyOpts = {}): Composed {
   return compose(tone, head, opts);
@@ -105,8 +105,9 @@ function compose(tone: Tone, head: string, opts: ReplyOpts): Composed {
   // Oversized after rendering → drop formatting, send plain + truncated so the
   // message still goes through (Telegram silently drops messages over 4096).
   if (text.length > TELEGRAM_MAX_LEN) {
-    const budget = TELEGRAM_MAX_LEN - header.length - 2 - TRUNCATION_NOTICE.length;
-    const plainBody = opts.body.slice(0, Math.max(0, budget)) + TRUNCATION_NOTICE;
+    const truncationNotice = `\n${messages("telegram").contentTruncated}`;
+    const budget = TELEGRAM_MAX_LEN - header.length - 2 - truncationNotice.length;
+    const plainBody = opts.body.slice(0, Math.max(0, budget)) + truncationNotice;
     return { text: join(header, plainBody), extra };
   }
 

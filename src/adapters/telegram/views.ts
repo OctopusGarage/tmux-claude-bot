@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
+import { messages } from "../../core/i18n/index.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
@@ -22,10 +23,10 @@ export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<vo
   try {
     const buttons = await aliveProjectButtons(deps, "telegram");
     if (buttons.length === 0) {
-      await reply(ctx, "list", "没有活跃项目\n\n用 /add_project <路径> 新建一个");
+      await reply(ctx, "list", messages("telegram").aliveListEmpty);
       return;
     }
-    await reply(ctx, "list", `活跃项目 (${buttons.length})`, {
+    await reply(ctx, "list", messages("telegram").aliveListTitle(buttons.length), {
       replyMarkup: buildProjectKeyboard(buttons),
     });
   } catch (err) {
@@ -53,7 +54,11 @@ export async function sendPeek(
         replyTarget,
       });
     } else {
-      await reply(ctx, "view", "（空）", { session, replyMarkup: keyboard, replyTarget });
+      await reply(ctx, "view", messages("telegram").emptyPane, {
+        session,
+        replyMarkup: keyboard,
+        replyTarget,
+      });
     }
   } catch (err) {
     await reply(ctx, "err", `${normalizeError(err).message}`, { session, replyTarget });
@@ -71,7 +76,7 @@ export async function sendHistory(
   try {
     const projectPath = getPathBySession(session);
     if (!projectPath) {
-      await reply(ctx, "warn", "缺少项目路径映射 · 先用 /add_project 建立", {
+      await reply(ctx, "warn", messages("telegram").noPathMapping, {
         session,
         replyTarget,
       });
@@ -80,17 +85,20 @@ export async function sendHistory(
     const configRoot = await deps.configResolver.resolveConfigRoot(session);
     const rounds = await getRecentConversations(projectPath, configRoot);
     if (rounds.length === 0) {
-      await reply(ctx, "info", "没有找到对话历史", { session, replyTarget });
+      await reply(ctx, "info", messages("telegram").noHistory, { session, replyTarget });
       return;
     }
     if (index >= rounds.length) {
-      await reply(ctx, "warn", `只有 ${rounds.length} 条对话记录`, { session, replyTarget });
+      await reply(ctx, "warn", messages("telegram").onlyNRounds(rounds.length), {
+        session,
+        replyTarget,
+      });
       return;
     }
     const round = rounds[index];
     if (round === undefined) return;
-    const body = formatSingleConversation(round, index, rounds.length);
-    await reply(ctx, "view", "历史记录", {
+    const body = formatSingleConversation(round, index, rounds.length, "telegram");
+    await reply(ctx, "view", messages("telegram").historyTitleShort, {
       session,
       body,
       markdown: true,
@@ -109,8 +117,8 @@ export async function sendQueueStatus(ctx: Context, deps: HandlerDeps): Promise<
   const globalQueue = deps.queue.getGlobalQueue();
   const globalProcessing = deps.queue.isGlobalProcessing();
   const globalCurrent = deps.queue.getCurrentGlobalMessage();
-  lines.push(`━━ 🌐 全局队列 ━━`);
-  lines.push(`排队中： ${globalQueue.length} | 处理中： ${globalProcessing ? "🟢" : "🔴"}`);
+  lines.push(messages("telegram").queueGlobalHeader);
+  lines.push(messages("telegram").queueCounts(globalQueue.length, globalProcessing));
   if (globalCurrent) {
     lines.push(`  ▶ ${truncate(globalCurrent.text, 40)}`);
   }
@@ -122,8 +130,8 @@ export async function sendQueueStatus(ctx: Context, deps: HandlerDeps): Promise<
 
   const sessionNames = deps.queue.getSessionNames();
   if (sessionNames.length === 0) {
-    lines.push(`\n━━ 会话队列 ━━`);
-    lines.push(`没有活跃的会话队列`);
+    lines.push(`\n${messages("telegram").queueSessionHeader}`);
+    lines.push(messages("telegram").queueNoSessions);
   } else {
     for (const sessionName of sessionNames.sort()) {
       const queueItems = deps.queue.getSessionQueue(sessionName);
@@ -132,7 +140,7 @@ export async function sendQueueStatus(ctx: Context, deps: HandlerDeps): Promise<
       const lastAt = deps.queue.getLastProcessedAt(sessionName);
       const name = projectLabel(sessionName, getPathBySession(sessionName) ?? undefined);
       lines.push(`\n━━ 📂 ${name} ━━`);
-      lines.push(`排队中： ${queueItems.length} | 处理中： ${isProcessing ? "🟢" : "🔴"}`);
+      lines.push(messages("telegram").queueCounts(queueItems.length, isProcessing));
       if (currentMsg) {
         lines.push(`  ▶ ${truncate(currentMsg.text, 40)}`);
       }
@@ -143,10 +151,10 @@ export async function sendQueueStatus(ctx: Context, deps: HandlerDeps): Promise<
       }
       if (lastAt) {
         const secondsAgo = Math.floor((Date.now() - lastAt) / 1000);
-        lines.push(`  上次完成： ${secondsAgo}s 前`);
+        lines.push(`  ${messages("telegram").queueLastDone(secondsAgo)}`);
       }
     }
   }
 
-  await reply(ctx, "queue", "队列状态", { body: lines.join("\n") });
+  await reply(ctx, "queue", messages("telegram").queueTitle, { body: lines.join("\n") });
 }

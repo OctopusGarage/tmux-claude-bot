@@ -1,31 +1,5 @@
 import type { MessageAction } from "../../core/dispatch.js";
 
-export const HELP_TEXT = `\
-🤖 tmux-claude (Lark)
-
-发任意文字 → 转给 Claude → 返回结果
-
-━━ 📂 项目 ━━
-/current_project — 当前项目
-/list_alive_projects — 活跃项目（点按切换/删除）
-/list_recent_projects — 近期项目
-/add_project <路径> — 新建项目
-/queue_status — 队列状态
-/history [N] — 对话历史（默认最近一条）
-/peek — 查看 tmux 画面
-/voice_lang — 语音识别语言（中/粤/英/自动）
-
-━━ ⚡ 运行中 ━━
-/enter — 回车   /esc — Escape
-/interrupt — Ctrl-C   /restart — 重启
-/clear — 清空上下文   /compact — 压缩
-/up · /down — 方向键   /exit — 退出
-/status — 状态
-
-━━ 🚀 未运行 ━━
-/start — 启动 Claude
-/help — 本帮助`;
-
 export const IMMEDIATE = new Set<MessageAction>([
   "esc",
   "interrupt",
@@ -49,7 +23,8 @@ export type ViewName =
   | "queuestatus"
   | "current"
   | "addproject"
-  | "voicelang";
+  | "voicelang"
+  | "uilang";
 
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
  * Lark command surface matches Telegram's. */
@@ -62,6 +37,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   current_project: "current",
   add_project: "addproject",
   voice_lang: "voicelang",
+  lang: "uilang",
 };
 
 export type ParsedInput =

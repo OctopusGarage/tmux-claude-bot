@@ -1,24 +1,41 @@
+import { messages } from "../../core/i18n/index.js";
+
 /**
- * Shared user-facing strings, kept in one place so every command speaks with a
- * consistent voice: one concise line, `·` as the separator, no English filler.
+ * Telegram's shared user-facing strings. Thin façade over the i18n catalog so
+ * every existing `MSG.x` call site stays unchanged while the text now follows
+ * the channel's UI language (resolved live on each access).
  */
+const m = () => messages("telegram");
+
 export const MSG = {
-  noSession: "没有活跃会话 · 先 /list_alive_projects 或 /add_project",
-  notRunning: "Claude 未运行 · /start 启动，或 /restart 继续",
-  noShortId: (id: string) => `未找到短 ID：${id}`,
-  pathNotAllowed: (dirs: string[]) => `路径不在允许列表 · 允许：${dirs.join("、")}`,
-  queueFull: (max: number) => `队列已满 (${max}) · 请稍候再试`,
-  voiceNotInstalled:
-    "🎙️ 语音功能未启用 · 发送 /voice_install 一键安装（仅 Apple Silicon），或在主机运行 npm run whisper:install",
-  voiceUnsupported: "🎙️ 语音转写需要 Apple Silicon（macOS arm64）· 当前主机不支持，请改发文字",
-  voiceAlreadyInstalled: "🎙️ 语音功能已就绪 · 直接发语音即可",
-  voiceInstalling: "🎙️ 正在安装语音功能 · 首次需下载依赖（约 1-2 分钟），稍候…",
-  voiceInstallOk: "🎙️ 语音功能已就绪 · 现在可以直接发语音了",
-  voiceInstallFailed: (e: string) =>
-    `🎙️ 安装失败 · ${e} · 可在主机运行 npm run whisper:install 查看详情`,
-  voiceLangCurrent: (lang: string) =>
-    `🎙️ 当前识别语言：${lang === "auto" ? "自动检测" : lang} · 点下方按钮切换`,
-  voiceLangSet: (lang: string) =>
-    `🎙️ 识别语言已设为 ${lang === "auto" ? "自动检测" : lang} · 下条语音生效`,
-  voiceLangInvalid: "🎙️ 用法：/voice_lang <zh|yue|en|auto 或 2-3 位语言代码>",
-} as const;
+  get noSession() {
+    return m().noSession;
+  },
+  get notRunning() {
+    return m().notRunning;
+  },
+  noShortId: (id: string) => m().noShortId(id),
+  pathNotAllowed: (dirs: string[]) => m().pathNotAllowed(dirs),
+  queueFull: (max: number) => m().queueFull(max),
+  get voiceNotInstalled() {
+    return m().voiceNotEnabled;
+  },
+  get voiceUnsupported() {
+    return m().voiceNeedsAppleSilicon;
+  },
+  get voiceAlreadyInstalled() {
+    return m().voiceAlreadyInstalled;
+  },
+  get voiceInstalling() {
+    return m().voiceInstalling;
+  },
+  get voiceInstallOk() {
+    return m().voiceInstallOk;
+  },
+  voiceInstallFailed: (e: string) => m().voiceInstallFailed(e),
+  voiceLangCurrent: (lang: string) => m().voiceLangCurrent(lang),
+  voiceLangSet: (lang: string) => m().voiceLangSet(lang),
+  get voiceLangInvalid() {
+    return m().voiceLangInvalid;
+  },
+};

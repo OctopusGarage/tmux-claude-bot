@@ -2,6 +2,7 @@ import { normalizeError } from "../shared/utils/error.js";
 import { logger } from "../shared/utils/logger.js";
 import type { HandlerDeps } from "./deps.js";
 import { getLatestAssistantReply } from "./history.js";
+import { messages } from "./i18n/index.js";
 import type { QueuedMessage } from "./queue.js";
 import { getPathBySession } from "./sessionPathMap.js";
 
@@ -34,8 +35,9 @@ export function isMessageAction(action: string): action is MessageAction {
 }
 
 export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Promise<string> {
+  const m = messages(msg.channel ?? "telegram");
   const session = msg.sessionName;
-  if (!session) return "完成";
+  if (!session) return m.doneShort;
   if (!isMessageAction(msg.action)) {
     throw new Error(`Unknown action: ${msg.action}`);
   }
@@ -49,7 +51,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       const running = await deps.claude.checkIfRunning(session);
       if (!running) {
         logger.warn(`[executor] text action rejected: Claude not running session=${session}`);
-        throw new Error("Claude 未运行，请使用 /restart 启动");
+        throw new Error(m.claudeNotRunningRestart);
       }
       logger.info(`[executor] sending keys session=${session}`);
       await deps.bridge.sendKeys(msg.text, session);
@@ -57,7 +59,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
 
       let rawResult: string;
       try {
-        rawResult = await deps.claude.waitUntilDone(session);
+        rawResult = await deps.claude.waitUntilDone(session, msg.channel ?? "telegram");
       } catch (err) {
         logger.error(
           `[executor] waitUntilDone failed: ${err instanceof Error ? err.message : err}`,
@@ -83,7 +85,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         logger.info(`[executor] history reply found len=${historyReply.length}`);
         const maxLen = deps.config.maxMessageLength - 100;
         if (historyReply.length > maxLen) {
-          return `${historyReply.slice(0, maxLen)}\n\n...(内容过长，已截断)`;
+          return `${historyReply.slice(0, maxLen)}\n\n${m.contentTruncated}`;
         }
         return historyReply;
       }
@@ -94,7 +96,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       const processed = deps.output.process(rawResult);
       logger.info(`[executor] processed output len=${processed.length}`);
       if (!processed.trim()) {
-        return "Claude 返回空内容 · 用 /peek 查看画面";
+        return m.claudeEmptyOutput;
       }
       return processed;
     }
@@ -102,60 +104,60 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       logger.info(`[executor] starting claude session=${session}`);
       await deps.claude.start(session);
       deps.configResolver.invalidate(session); // new process → re-detect config dir
-      return "✅ Claude 已启动";
+      return m.claudeStarted;
     }
     case "exit": {
       logger.info(`[executor] exiting claude session=${session}`);
       deps.queue.clearSession(session);
       await deps.bridge.sendExit(session);
       deps.configResolver.invalidate(session);
-      return "✅ 已退出 Claude";
+      return m.claudeExited;
     }
     case "restart": {
       logger.info(`[executor] restarting claude session=${session}`);
       await deps.claude.gracefulRestartWithContinue(session);
       deps.configResolver.invalidate(session);
-      return "🔄 Claude 已重启 · --continue";
+      return m.claudeRestarted;
     }
     case "esc": {
       logger.info(`[executor] sending esc session=${session}`);
       await deps.claude.interrupt(session);
-      return "✅ 已发送 Esc";
+      return m.sentEsc;
     }
     case "interrupt": {
       logger.info(`[executor] sending ctrl-c session=${session}`);
       await deps.bridge.sendRawKey("C-c", session);
-      return "✅ 已中断 · Ctrl-C";
+      return m.interrupted;
     }
     case "clear": {
       logger.info(`[executor] sending /clear session=${session}`);
       await deps.bridge.sendKeys("/clear", session);
-      return "✅ 已清空上下文 · /clear";
+      return m.clearedContext;
     }
     case "compact": {
       logger.info(`[executor] sending /compact session=${session}`);
       await deps.bridge.sendKeys("/compact", session);
-      return "✅ 已压缩上下文 · /compact";
+      return m.compactedContext;
     }
     case "enter": {
       logger.info(`[executor] sending enter session=${session}`);
       await deps.bridge.sendRawKey("C-m", session);
-      return "✅ 已回车";
+      return m.sentEnter;
     }
     case "up": {
       logger.info(`[executor] sending up session=${session}`);
       await deps.bridge.sendRawKey("Up", session);
-      return "✅ 已发送 ↑";
+      return m.sentUp;
     }
     case "down": {
       logger.info(`[executor] sending down session=${session}`);
       await deps.bridge.sendRawKey("Down", session);
-      return "✅ 已发送 ↓";
+      return m.sentDown;
     }
     case "status": {
       logger.info(`[executor] checking status session=${session}`);
       const running = await deps.claude.checkIfRunning(session);
-      return running ? "🟢 Claude 运行中" : "🔴 Claude 未运行";
+      return running ? m.statusRunning : m.statusNotRunning;
     }
     default: {
       const _exhaustive: never = msg.action;

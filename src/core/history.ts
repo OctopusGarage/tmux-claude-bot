@@ -2,6 +2,8 @@ import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import { sleep } from "../shared/utils/sleep.js";
+import { messages } from "./i18n/index.js";
+import type { Channel } from "./project-manager.js";
 
 export interface ConversationRound {
   user: string;
@@ -220,6 +222,7 @@ export function formatSingleConversation(
   round: ConversationRound,
   index: number,
   total: number,
+  channel: Channel = "telegram",
 ): string {
   // Labels sit on their own lines so the user prompt and Claude's answer each
   // start at a line boundary — required for block markdown (headings, lists,
@@ -227,7 +230,7 @@ export function formatSingleConversation(
   return [
     `🗂 [${index + 1}/${total}] · ${round.time}`,
     "",
-    "🧑‍💻 你",
+    messages(channel).historyYou,
     round.user,
     "",
     "🤖 Claude",

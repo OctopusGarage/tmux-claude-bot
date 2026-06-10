@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import { isMessageAction } from "../../core/dispatch.js";
+import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 import { VOICE_LANGS } from "../../core/voice-support.js";
 
@@ -25,7 +26,8 @@ export type CallbackAction =
   | { kind: "dellist" }
   | { kind: "listalive" }
   | { kind: "queuestatus" }
-  | { kind: "voicelang"; lang: string };
+  | { kind: "voicelang"; lang: string }
+  | { kind: "uilang"; lang: Lang };
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
@@ -64,6 +66,11 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (parts.length !== 2 || !lang || !isVoiceLang(lang)) return null;
     return { kind: "voicelang", lang };
   }
+  if (tag === "ul") {
+    const lang = parts[1];
+    if (parts.length !== 2 || !lang || !isUiLang(lang)) return null;
+    return { kind: "uilang", lang };
+  }
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
@@ -90,52 +97,67 @@ export function buildVoiceLangKeyboard(current: string): InlineKeyboard {
   return kb;
 }
 
+/** UI-language picker: one button per language, the active one marked. Tapping
+ * sends `ul:<code>`, handled in handleCallbackQuery. */
+export function buildLangKeyboard(current: Lang): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  UI_LANGS.forEach((l, i) => {
+    if (l.code === current) kb.text(`✅ ${l.label}`, "noop");
+    else kb.text(l.label, `ul:${l.code}`);
+    if (i < UI_LANGS.length - 1) kb.row();
+  });
+  return kb;
+}
+
 // The primary control rows, shared by the collapsed and expanded keyboards.
 function primaryRows(kb: InlineKeyboard, sid: string): InlineKeyboard {
+  const m = messages("telegram");
   return kb
-    .text("⏎ Enter", encodeControlAction("enter", sid))
-    .text("✋ 中断", encodeControlAction("interrupt", sid))
+    .text(m.btnEnter, encodeControlAction("enter", sid))
+    .text(m.btnInterrupt, encodeControlAction("interrupt", sid))
     .row()
-    .text("⎋ Esc", encodeControlAction("esc", sid))
-    .text("🔄 重启", encodeControlAction("restart", sid))
+    .text(m.btnEsc, encodeControlAction("esc", sid))
+    .text(m.btnRestart, encodeControlAction("restart", sid))
     .row();
 }
 
 /** Collapsed control panel: the most-used controls + views, then a "more" toggle. */
 export function buildControlKeyboard(sid: string): InlineKeyboard {
+  const m = messages("telegram");
   return new InlineKeyboard()
-    .text("⎋ Esc", encodeControlAction("esc", sid))
-    .text("🧹 clear", encodeControlAction("clear", sid))
-    .text("🗜 compact", encodeControlAction("compact", sid))
+    .text(m.btnEsc, encodeControlAction("esc", sid))
+    .text(m.btnClear, encodeControlAction("clear", sid))
+    .text(m.btnCompact, encodeControlAction("compact", sid))
     .row()
-    .text("👁 peek", `pk:${sid}`)
-    .text("📜 历史", `hi:${sid}`)
+    .text(m.btnPeek, `pk:${sid}`)
+    .text(m.btnHistory, `hi:${sid}`)
     .row()
-    .text("📁 项目", "la")
-    .text("📋 队列", "qs")
+    .text(m.btnProjects, "la")
+    .text(m.btnQueue, "qs")
     .row()
-    .text("⌨️ 更多控制 ▾", `m:${sid}`);
+    .text(m.btnMore, `m:${sid}`);
 }
 
 /** Expanded control panel: primary + secondary controls + a "collapse" toggle. */
 export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
+  const m = messages("telegram");
   return primaryRows(new InlineKeyboard(), sid)
-    .text("🧹 clear", encodeControlAction("clear", sid))
-    .text("🗜 compact", encodeControlAction("compact", sid))
+    .text(m.btnClear, encodeControlAction("clear", sid))
+    .text(m.btnCompact, encodeControlAction("compact", sid))
     .row()
-    .text("⬆️ up", encodeControlAction("up", sid))
-    .text("⬇️ down", encodeControlAction("down", sid))
+    .text(m.btnUp, encodeControlAction("up", sid))
+    .text(m.btnDown, encodeControlAction("down", sid))
     .row()
-    .text("🚪 exit", encodeControlAction("exit", sid))
-    .text("📊 status", encodeControlAction("status", sid))
+    .text(m.btnExit, encodeControlAction("exit", sid))
+    .text(m.btnStatus, encodeControlAction("status", sid))
     .row()
-    .text("👁 peek", `pk:${sid}`)
-    .text("📜 历史", `hi:${sid}`)
+    .text(m.btnPeek, `pk:${sid}`)
+    .text(m.btnHistory, `hi:${sid}`)
     .row()
-    .text("📁 项目", "la")
-    .text("📋 队列", "qs")
+    .text(m.btnProjects, "la")
+    .text(m.btnQueue, "qs")
     .row()
-    .text("▴ 收起", `l:${sid}`);
+    .text(m.btnCollapse, `l:${sid}`);
 }
 
 /**
@@ -153,16 +175,17 @@ export function buildProjectKeyboard(projects: ProjectButton[]): InlineKeyboard 
       kb.text(`🔀 ${p.label}`, `s:${p.sid}`).row();
     }
   }
-  return kb.text("🗑 删除…", "dm");
+  return kb.text(messages("telegram").btnDeleteMode, "dm");
 }
 
 /** Delete mode: one full-width "delete <project>" row each, plus a cancel toggle. */
 export function buildProjectDeleteKeyboard(projects: ProjectButton[]): InlineKeyboard {
+  const m = messages("telegram");
   const kb = new InlineKeyboard();
   for (const p of projects) {
-    kb.text(`🗑 删除 ${p.label}`, `r:${p.sid}`).row();
+    kb.text(`${m.btnRemove} ${p.label}`, `r:${p.sid}`).row();
   }
-  return kb.text("✕ 取消", "dl");
+  return kb.text(m.btnCancel, "dl");
 }
 
 /**

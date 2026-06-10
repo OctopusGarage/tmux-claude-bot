@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { promisify } from "node:util";
 import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
+import { messages } from "../../core/i18n/index.js";
 import { transcribeOgg } from "../../core/transcriber.js";
 import {
   checkVoiceSupport,
@@ -113,7 +114,7 @@ export function registerVoiceHandler<TContext extends Context>(
 
     const file = await ctx.getFile();
     if (!file.file_path) {
-      await reply(ctx, "err", "转写失败 · 无法下载文件", { replyTarget });
+      await reply(ctx, "err", messages("telegram").voiceDownloadFailed, { replyTarget });
       return;
     }
 
@@ -148,7 +149,7 @@ export function registerVoiceHandler<TContext extends Context>(
       }
     } catch (err) {
       logger.error(`[voice-handler] transcription failed: ${err}`);
-      await reply(ctx, "err", "转写失败 · 请重试或改发文字", { replyTarget });
+      await reply(ctx, "err", messages("telegram").voiceTranscribeFailed, { replyTarget });
       return;
     }
 
@@ -177,7 +178,7 @@ export function registerVoiceHandler<TContext extends Context>(
     replyTarget.record(msgId, currentSession);
 
     // Confirm transcription to user
-    await reply(ctx, "info", `🎙️ 你说的是：「${transcribed}」`, {
+    await reply(ctx, "info", messages("telegram").voiceHeard(transcribed), {
       session: currentSession,
       replyTarget,
     });

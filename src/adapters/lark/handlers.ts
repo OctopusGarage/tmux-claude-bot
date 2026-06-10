@@ -1,5 +1,6 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
+import { messages } from "../../core/i18n/index.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { helpCard } from "./cards.js";
@@ -12,6 +13,7 @@ import {
   sendAliveList,
   sendCurrentProject,
   sendHistory,
+  sendLangPicker,
   sendPeek,
   sendQueueStatus,
   sendRecentList,
@@ -50,7 +52,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         await handleLarkVoice(channel, deps, msg, audio, replySession);
         return;
       }
-      await sendText(channel, msg.chatId, "暂仅支持文本和语音消息");
+      await sendText(channel, msg.chatId, messages("lark").onlyTextVoice);
       return;
     }
 
@@ -120,9 +122,12 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
           case "voicelang":
             await sendVoiceLangPicker(channel, msg.chatId);
             break;
+          case "uilang":
+            await sendLangPicker(channel, msg.chatId);
+            break;
           case "addproject":
             if (!parsed.arg) {
-              await sendText(channel, msg.chatId, "用法：/add_project <路径>");
+              await sendText(channel, msg.chatId, messages("lark").addProjectUsage);
             } else {
               await addProject(channel, deps, msg.chatId, parsed.arg);
             }
@@ -131,7 +136,10 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         break;
 
       case "unknown":
-        await sendText(channel, msg.chatId, `未知命令：/${parsed.name}（发送 /help 查看命令）`);
+        // No "/" command discovery on Feishu — show the full button menu so an
+        // unknown command isn't a dead end.
+        await sendText(channel, msg.chatId, messages("lark").unknownCommand(parsed.name));
+        await sendCard(channel, msg.chatId, helpCard());
         break;
 
       case "text":

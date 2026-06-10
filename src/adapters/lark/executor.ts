@@ -2,21 +2,20 @@ import { randomUUID } from "node:crypto";
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage, type MessageAction } from "../../core/dispatch.js";
+import { messages } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { logger } from "../../shared/utils/logger.js";
-import { resultCard } from "./cards.js";
+import { recoveryCard, resultCard } from "./cards.js";
 import { markDone, markWorking } from "./reactions.js";
 import { sendCard, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
 
-const NO_SESSION_MSG = "无当前项目，请先用 /list_alive_projects 选择或 /add_project 新建";
-
 /** "📂 <friendly project>" tag stamped on every reply so the user can see which
  * tmux session received it — mirrors the Telegram adapter's project line. */
 function projectTag(session: string): string {
-  return `📂 ${projectLabel(session, getPathBySession(session) ?? undefined)}`;
+  return messages("lark").projectTag(projectLabel(session, getPathBySession(session) ?? undefined));
 }
 
 async function resolveSession(
@@ -27,7 +26,9 @@ async function resolveSession(
 ): Promise<string | null> {
   const session = sessionOverride ?? (await deps.currentProject.get("lark"));
   if (!session) {
-    await sendText(channel, chatId, NO_SESSION_MSG);
+    // No "/" discovery on Feishu — give buttons (projects/recent via the panel)
+    // instead of a text hint pointing at commands they'd have to type.
+    await sendCard(channel, chatId, recoveryCard(messages("lark").noCurrentProject));
     return null;
   }
   return session;
@@ -78,18 +79,20 @@ export async function enqueueLarkAction(
     },
     reject: (err) => {
       logger.error(`[lark] reject session=${session} err=${err.message}`);
-      void sendText(channel, chatId, `错误：${err.message}\n${projectTag(session)}`);
+      // Errors often mean Claude died / isn't running — surface start/restart.
+      void sendCard(
+        channel,
+        chatId,
+        recoveryCard(`${messages("lark").errorPrefix(err.message)}\n${projectTag(session)}`),
+      );
     },
   });
 
+  const m = messages("lark");
   const tag = projectTag(session);
   if (!queued) {
     logger.warn(`[lark] queue full session=${session} max=${deps.queue.getMaxSize()}`);
-    await sendText(
-      channel,
-      chatId,
-      `队列已满（上限 ${deps.queue.getMaxSize()}），请稍后再试\n${tag}`,
-    );
+    await sendText(channel, chatId, `⚠️ ${m.queueFull(deps.queue.getMaxSize())}\n${tag}`);
     return;
   }
 
@@ -97,11 +100,11 @@ export async function enqueueLarkAction(
     `[lark] enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`,
   );
   void markWorking(channel, messageId);
-  if (queueSizeBefore === 0) {
-    await sendText(channel, chatId, `已接收\n${tag}`);
-  } else {
-    await sendText(channel, chatId, `已排队 · 第 ${queueSizeBefore} 位\n${tag}`);
-  }
+  // Mirror Telegram's tone emoji (✅ received / ⏳ queued) so both channels read
+  // the same — Feishu has no tone layer, so it's stamped here.
+  const ack =
+    queueSizeBefore === 0 ? `✅ ${m.ackReceived}` : `⏳ ${m.queuedAt(queueSizeBefore)}`;
+  await sendText(channel, chatId, `${ack}\n${tag}`);
 }
 
 /**
@@ -141,6 +144,10 @@ export async function runImmediateLarkAction(
     logger.error(
       `[lark] immediate action failed action=${action} session=${session} err=${errMsg}`,
     );
-    await sendText(channel, chatId, `错误：${errMsg}\n${projectTag(session)}`);
+    await sendCard(
+      channel,
+      chatId,
+      recoveryCard(`${messages("lark").errorPrefix(errMsg)}\n${projectTag(session)}`),
+    );
   }
 }

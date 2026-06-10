@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
+import { messages } from "../../core/i18n/index.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
 import { looksLikeTerminalOutput } from "./format.js";
@@ -28,9 +29,12 @@ export function shouldSendCompletionPing(elapsed: number): boolean {
 
 function thinkingText(session: string, queuePosition: number, elapsed?: number): string {
   if (queuePosition > 0) {
-    return composeMessage("queued", `处理中 · 队列第 ${queuePosition} 位`, { session }).text;
+    return composeMessage("queued", messages("telegram").processingQueued(queuePosition), {
+      session,
+    }).text;
   }
-  return composeMessage("queued", "处理中", { session, elapsedS: elapsed }).text;
+  return composeMessage("queued", messages("telegram").processing, { session, elapsedS: elapsed })
+    .text;
 }
 
 /**
@@ -128,7 +132,7 @@ async function deliverResult(
 ): Promise<void> {
   const trimmed = output.trim();
   const isTerminal = looksLikeTerminalOutput(output);
-  const head = trimmed ? "完成" : "已完成";
+  const head = messages("telegram").doneShort;
   const opts = trimmed
     ? { session, body: output, code: isTerminal, markdown: !isTerminal, elapsedS: elapsed }
     : { session, elapsedS: elapsed };
@@ -142,7 +146,11 @@ async function deliverResult(
       // The in-place edit above is silent; nudge the user's device if the task
       // ran long enough that they probably walked away.
       if (shouldSendCompletionPing(elapsed)) {
-        await reply(ctx, "result", "完成", { session, elapsedS: elapsed, replyTarget });
+        await reply(ctx, "result", messages("telegram").doneShort, {
+          session,
+          elapsedS: elapsed,
+          replyTarget,
+        });
       }
       return;
     }
@@ -160,7 +168,7 @@ async function deliverError(
   replyTarget: ReplyTargetMap,
 ): Promise<void> {
   if (progress) {
-    const { text } = composeMessage("err", "失败", {
+    const { text } = composeMessage("err", messages("telegram").failed, {
       session,
       body: err.message,
       elapsedS: elapsed,
@@ -169,10 +177,19 @@ async function deliverError(
     if (ok) {
       replyTarget.record(progress.messageId, session);
       if (shouldSendCompletionPing(elapsed)) {
-        await reply(ctx, "err", "失败", { session, elapsedS: elapsed, replyTarget });
+        await reply(ctx, "err", messages("telegram").failed, {
+          session,
+          elapsedS: elapsed,
+          replyTarget,
+        });
       }
       return;
     }
   }
-  await reply(ctx, "err", "失败", { session, body: err.message, elapsedS: elapsed, replyTarget });
+  await reply(ctx, "err", messages("telegram").failed, {
+    session,
+    body: err.message,
+    elapsedS: elapsed,
+    replyTarget,
+  });
 }

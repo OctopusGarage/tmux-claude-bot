@@ -38,19 +38,23 @@ const allCmds = (c: Card): (string | undefined)[] =>
   collectButtons(c.body.elements).map((b) => b.behaviors?.[0]?.value?.cmd);
 
 describe("resultCard", () => {
-  it("collapsed: 7 view/control buttons plus a 'more' toggle", () => {
+  it("carries the full inline control panel (Feishu has no / discovery)", () => {
     const card = cardOf(resultCard("hi"));
 
     expect(mds(card).some((d) => d.content === "hi")).toBe(true);
 
     expect(allCmds(card)).toEqual([
       "esc",
+      "enter",
+      "interrupt",
       "clear",
       "compact",
+      "restart",
       "peek",
       "history",
-      "listalive",
       "queuestatus",
+      "listalive",
+      "current",
       "help",
     ]);
   });
@@ -62,25 +66,29 @@ describe("resultCard", () => {
 });
 
 describe("viewCard", () => {
-  it("carries the collapsed control buttons", () => {
+  it("carries the inline control panel", () => {
     const card = cardOf(viewCard("👁 tmux 画面", "pane body"));
     expect(card.header?.title?.content).toBe("👁 tmux 画面");
     expect(mds(card).some((d) => d.content === "pane body")).toBe(true);
     expect(allCmds(card)).toEqual([
       "esc",
+      "enter",
+      "interrupt",
       "clear",
       "compact",
+      "restart",
       "peek",
       "history",
-      "listalive",
       "queuestatus",
+      "listalive",
+      "current",
       "help",
     ]);
   });
 
-  it("uses the (空) placeholder for empty body", () => {
+  it("uses the （空） placeholder for empty body", () => {
     const card = cardOf(viewCard("t", ""));
-    expect(mds(card).some((d) => d.content === "(空)")).toBe(true);
+    expect(mds(card).some((d) => d.content === "（空）")).toBe(true);
   });
 });
 
@@ -139,6 +147,7 @@ describe("helpCard", () => {
       "recent",
       "current",
       "voicelangmenu",
+      "uilangmenu",
     ]);
   });
 });

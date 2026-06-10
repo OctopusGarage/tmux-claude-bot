@@ -1,0 +1,209 @@
+import type { Messages } from "./zh.js";
+
+/** Traditional-Chinese written register (繁體書面語) — the register real
+ * Cantonese / Hong Kong software UIs use: Traditional characters + formal
+ * written grammar, not colloquial spoken Cantonese. Typed `: Messages`, so it
+ * must implement every key in zh.ts. */
+export const yue: Messages = {
+  ackReceived: "已接收",
+  queuedAt: (pos) => `已排隊 · 第 ${pos} 位`,
+  queueFull: (max) => `隊列已滿（上限 ${max}），請稍後再試`,
+  noCurrentProject: "沒有當前項目，請先用 /list_alive_projects 選擇，或 /add_project 新增",
+  errorPrefix: (msg) => `錯誤：${msg}`,
+  projectTag: (project) => `📂 ${project}`,
+
+  voiceLangTitle: "🎙️ 語音識別語言",
+  voiceLangCardPrompt: (lang) => `目前（飛書）：**${lang}** · 點擊按鈕切換`,
+  autoDetect: "自動偵測",
+  voiceHeard: (text) => `🎙️ 你說的是：「${text}」`,
+  voiceTranscribeFailed: "轉寫失敗 · 請重試或改用文字",
+  voiceEmpty: "轉寫結果為空 · 請重試",
+  voiceUnsupported: "語音轉寫僅支援 Apple Silicon",
+  voiceNotInstalled: "語音轉寫尚未安裝（在倉庫執行 npm run whisper:install）",
+
+  currentProjectIs: (project) => `📂 當前項目：${project}`,
+  switched: "已切換",
+  switchedTo: (project) => `已切換：${project}`,
+  removed: "已移除",
+  nestingWarning:
+    "⚠️ 這是 tmux-claude-bot 自己的代碼庫——用 bot 驅動它通常會嵌套（只回「已接收」沒有結果）。建議切換至其他真實項目。",
+
+  uiLangTitle: "🌐 介面語言",
+  uiLangCurrent: (lang) => `目前介面語言：${lang} · 點擊按鈕切換`,
+  uiLangSet: (lang) => `介面語言已設為 ${lang}`,
+
+  helpTitle: "使用說明",
+  helpRunning: "**⚡ 運行中**",
+  helpProjects: "**📂 項目 / 視圖**",
+
+  btnEnter: "⏎ 回車",
+  btnEsc: "⎋ Esc",
+  btnInterrupt: "✋ 中斷",
+  btnRestart: "🔄 重啟",
+  btnClear: "🧹 clear",
+  btnCompact: "🗜 compact",
+  btnUp: "⬆️ up",
+  btnDown: "⬇️ down",
+  btnStatus: "📊 狀態",
+  btnStart: "🚀 啟動",
+  btnExit: "🚪 退出",
+  btnPeek: "👁 peek",
+  btnHistory: "📜 歷史",
+  btnQueue: "📋 隊列",
+  btnProjects: "📁 項目",
+  btnRecent: "🕘 近期",
+  btnCurrent: "📌 當前",
+  btnSwitch: "🔀 切換",
+  btnRemove: "🗑 刪除",
+  btnCreate: "➕ 新增",
+  btnHelp: "💡 說明",
+  btnVoiceLang: "🎙️ 語音語言",
+  btnUiLang: "🌐 介面語言",
+  btnActiveMarker: "✅ 當前",
+  btnMore: "⌨️ 更多控制 ▾",
+  btnCollapse: "▴ 收起",
+  btnCancel: "✕ 取消",
+  btnDeleteMode: "🗑 刪除…",
+
+  doneShort: "完成",
+  claudeNotRunningRestart: "Claude 未運行，請使用 /restart 啟動",
+  contentTruncated: "...(內容過長，已截斷)",
+  claudeEmptyOutput: "Claude 沒有返回內容 · 用 /peek 查看畫面",
+  claudeStarted: "✅ Claude 已啟動",
+  claudeExited: "✅ 已退出 Claude",
+  claudeRestarted: "🔄 Claude 已重啟 · --continue",
+  sentEsc: "✅ 已傳送 Esc",
+  interrupted: "✅ 已中斷 · Ctrl-C",
+  clearedContext: "✅ 已清空上下文 · /clear",
+  compactedContext: "✅ 已壓縮上下文 · /compact",
+  sentEnter: "✅ 已傳送 Enter",
+  sentUp: "✅ 已傳送 ↑",
+  sentDown: "✅ 已傳送 ↓",
+  statusRunning: "🟢 Claude 運行中",
+  statusNotRunning: "🔴 Claude 未運行",
+
+  queueGlobalHeader: "━━ 🌐 全域隊列 ━━",
+  queueCounts: (queued, processing) => `排隊中： ${queued} | 處理中： ${processing ? "🟢" : "🔴"}`,
+  queueSessionHeader: "━━ 會話隊列 ━━",
+  queueNoSessions: "沒有活躍的會話隊列",
+  queueLastDone: (s) => `上次完成： ${s}s 前`,
+  queueTitle: "隊列狀態",
+
+  paneTitle: "👁 tmux 畫面",
+  emptyPane: "（空）",
+  historyTitle: "📜 歷史記錄",
+  historyTitleShort: "歷史記錄",
+  noPathMapping: "缺少項目路徑映射 · 請先用 /add_project 建立",
+  noHistory: "找不到對話歷史",
+  onlyNRounds: (n) => `僅有 ${n} 條對話記錄`,
+  emptyOutput: "(沒有輸出)",
+
+  noCurrentProjectShort: "沒有當前項目",
+  aliveListTitle: (n) => `活躍項目 (${n})`,
+  aliveListEmpty: "沒有活躍項目，請用 /add_project <路徑> 新增",
+  recentListTitle: "近期項目",
+  recentListTitleN: (n) => `近期項目 (${n})`,
+  recentListEmpty: "沒有近期項目，請用 /add_project <路徑> 新增",
+
+  addProjectUsage: "用法：/add_project <路徑>",
+  addProjectUsageExample: "用法：/add_project <路徑>\n\n範例：/add_project ~/projects/myapp",
+  notADir: (p) => `${p} 不是目錄`,
+  dirNotExist: (p) => `目錄不存在：${p}`,
+  pathNotAllowedPath: (p) => `該路徑不在允許範圍內：${p}`,
+  alreadySwitched: "已存在 · 已切換",
+  projectCreated: "項目已建立",
+  projectCreatedPath: (p) => `項目已建立：${p}`,
+  shortIdNotFound: (id) => `找不到短 id：${id}`,
+  noCurrentProjectSet: "尚未設定當前項目\n\n請用 /add_project <路徑> 設定",
+  currentActive: "✅ 當前活躍",
+  currentNotFound: "🔴 找不到",
+  currentProjectTitle: "當前項目",
+  noRecentProjects: "沒有近期項目\n\n請用 /add_project <路徑> 新增",
+  messageTooLong: (len, max) => `訊息過長 · ${len} > ${max} 字`,
+  onlyTextVoice: "暫僅支援文字與語音訊息",
+  unknownCommand: (name) => `未知命令：/${name}（傳送 /help 查看命令）`,
+
+  toastProcessing: "➕ 處理中…",
+  sessionGone: "會話不存在或已結束",
+  toastSwitched: "✅ 已切換",
+  toastRemoving: "🗑 移除中…",
+  toastSent: (action) => `已傳送 /${action}`,
+  toastError: "發生錯誤",
+
+  processingQueued: (pos) => `處理中 · 隊列第 ${pos} 位`,
+  processing: "處理中",
+  failed: "失敗",
+  taskStillRunning: (body) => `⏳ 任務仍在進行中，請稍後用 /peek 查看當前結果\n\n${body}`,
+  voiceDownloadFailed: "轉寫失敗 · 無法下載檔案",
+  historyYou: "🧑‍💻 你",
+
+  noSession: "沒有活躍會話 · 請先 /list_alive_projects 或 /add_project",
+  notRunning: "Claude 未運行 · /start 啟動，或 /restart 繼續",
+  noShortId: (id) => `找不到短 ID：${id}`,
+  pathNotAllowed: (dirs) => `路徑不在允許清單 · 允許：${dirs.join("、")}`,
+  voiceNotEnabled:
+    "🎙️ 語音功能尚未啟用 · 傳送 /voice_install 一鍵安裝（僅 Apple Silicon），或在主機執行 npm run whisper:install",
+  voiceNeedsAppleSilicon: "🎙️ 語音轉寫需要 Apple Silicon（macOS arm64）· 此主機不支援，請改用文字",
+  voiceAlreadyInstalled: "🎙️ 語音功能已就緒 · 直接傳送語音即可",
+  voiceInstalling: "🎙️ 正在安裝語音功能 · 首次需下載依賴（約 1-2 分鐘），請稍候…",
+  voiceInstallOk: "🎙️ 語音功能已就緒 · 現在可直接傳送語音",
+  voiceInstallFailed: (e) => `🎙️ 安裝失敗 · ${e} · 可在主機執行 npm run whisper:install 查看詳情`,
+  voiceLangCurrent: (lang) =>
+    `🎙️ 目前識別語言：${lang === "auto" ? "自動偵測" : lang} · 點擊下方按鈕切換`,
+  voiceLangSet: (lang) =>
+    `🎙️ 識別語言已設為 ${lang === "auto" ? "自動偵測" : lang} · 下一條語音生效`,
+  voiceLangInvalid: "🎙️ 用法：/voice_lang <en|zh|yue|auto 或 2-3 位語言代碼>",
+
+  helpBodyTelegram: `🤖 tmux-claude-bot
+
+傳送任何文字 → 轉交 Claude → 返回結果
+🎙️ 語音轉寫為可選功能 · /voice_install 啟用（僅 Apple Silicon）· /voice_lang 設定識別語言
+
+提示：訊息會收到 👀（已接收）/👍（完成）回應；處理中即時顯示進度並更新為結果；結果下方有 ⏎/✋/⎋/🔄 快捷按鈕。
+
+━━ 📂 項目 ━━
+/current_project — 當前項目
+/list_alive_projects — 活躍項目（點擊切換/刪除）
+/list_recent_projects — 近期項目
+/add_project <路徑> — 新增項目
+/queue_status — 隊列狀態
+/history [N] — 對話歷史（預設最近一條）
+
+━━ ⚡ Claude 運行中 ━━
+/enter — Enter    /esc — Escape
+/interrupt — Ctrl-C    /restart — 重啟 (--continue)
+/clear — 清空上下文    /compact — 壓縮上下文
+/up · /down — 上下方向鍵    /exit — 退出
+
+━━ 🚀 未運行 ━━
+/start — 啟動 Claude
+/peek — 查看 tmux 畫面
+/status — 檢查狀態
+/help — 本說明`,
+
+  helpBodyLark: `🤖 tmux-claude (Lark)
+
+傳送任何文字 → 轉交 Claude → 返回結果
+
+━━ 📂 項目 ━━
+/current_project — 當前項目
+/list_alive_projects — 活躍項目（點擊切換/刪除）
+/list_recent_projects — 近期項目
+/add_project <路徑> — 新增項目
+/queue_status — 隊列狀態
+/history [N] — 對話歷史（預設最近一條）
+/peek — 查看 tmux 畫面
+/voice_lang — 語音識別語言（英/中/粵/自動）
+/lang — 介面語言（英/中/粵）
+
+━━ ⚡ 運行中 ━━
+/enter — Enter   /esc — Escape
+/interrupt — Ctrl-C   /restart — 重啟
+/clear — 清空上下文   /compact — 壓縮
+/up · /down — 方向鍵   /exit — 退出
+/status — 狀態
+
+━━ 🚀 未運行 ━━
+/start — 啟動 Claude
+/help — 本說明`,
+};

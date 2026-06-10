@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage } from "../../core/dispatch.js";
+import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { setWhisperLanguage } from "../../core/voice-support.js";
@@ -11,6 +12,7 @@ import { safeAnswerCallback } from "./callback-utils.js";
 import {
   buildControlKeyboard,
   buildExpandedControlKeyboard,
+  buildLangKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
   buildVoiceLangKeyboard,
@@ -107,33 +109,53 @@ export async function handleCallbackQuery(
       }
       return;
     }
+    // UI-language pick: set + persist, then refresh the picker in place.
+    if (parsed.kind === "uilang") {
+      setUiLang("telegram", parsed.lang);
+      logger.info(`[ui-lang] telegram set to ${parsed.lang} via button`);
+      const label = UI_LANGS.find((l) => l.code === parsed.lang)?.label ?? parsed.lang;
+      await safeAnswerCallback(ctx, messages("telegram").uiLangSet(label));
+      try {
+        await timeApi("editMessageReplyMarkup", () =>
+          ctx.editMessageReplyMarkup({ reply_markup: buildLangKeyboard(parsed.lang) }),
+        );
+      } catch {
+        /* message may be gone or unchanged */
+      }
+      return;
+    }
     // Recreate/switch a recent project — resolves by recent path, not by an
     // alive session, so it runs before the alive-session lookup below.
     if (parsed.kind === "add") {
-      await safeAnswerCallback(ctx, "➕ 处理中…");
+      await safeAnswerCallback(ctx, messages("telegram").toastProcessing);
       await addRecentProjectBySid(deps, ctx, parsed.sid, replyTarget);
       return;
     }
     const sessionName = await resolveAliveSessionByShortId(deps, parsed.sid);
     if (!sessionName) {
-      await safeAnswerCallback(ctx, "会话不存在或已结束");
+      await safeAnswerCallback(ctx, messages("telegram").sessionGone);
       return;
     }
     if (parsed.kind === "switch") {
       await switchToProject(deps, "telegram", sessionName);
-      await safeAnswerCallback(ctx, "✅ 已切换");
-      const warn = botSelfRepoWarning(getPathBySession(sessionName));
-      await reply(ctx, "ok", warn ? `已切换\n\n${warn}` : "已切换", {
-        session: sessionName,
-        replyTarget,
-      });
+      await safeAnswerCallback(ctx, messages("telegram").toastSwitched);
+      const warn = botSelfRepoWarning(getPathBySession(sessionName), "telegram");
+      await reply(
+        ctx,
+        "ok",
+        warn ? `${messages("telegram").switched}\n\n${warn}` : messages("telegram").switched,
+        {
+          session: sessionName,
+          replyTarget,
+        },
+      );
       return;
     }
     if (parsed.kind === "remove") {
-      await safeAnswerCallback(ctx, "🗑 移除中…");
+      await safeAnswerCallback(ctx, messages("telegram").toastRemoving);
       replyTarget.removeSession(sessionName);
       await removeProjectBySession(deps, sessionName);
-      await reply(ctx, "ok", "已移除", { session: sessionName, replyTarget });
+      await reply(ctx, "ok", messages("telegram").removed, { session: sessionName, replyTarget });
       return;
     }
     if (parsed.kind === "peek") {
@@ -147,7 +169,7 @@ export async function handleCallbackQuery(
       return;
     }
     // Control action — verb already validated as a safe MessageAction.
-    await safeAnswerCallback(ctx, `已发送 /${parsed.action}`);
+    await safeAnswerCallback(ctx, messages("telegram").toastSent(parsed.action));
     const result = await executeMessage(
       { sessionName, action: parsed.action, id: "" } as QueuedMessage,
       deps,
@@ -155,6 +177,6 @@ export async function handleCallbackQuery(
     await reply(ctx, "info", result, { session: sessionName, replyTarget });
   } catch (err) {
     logger.error(`[callback] error: ${normalizeError(err).message}`);
-    await safeAnswerCallback(ctx, "出错了");
+    await safeAnswerCallback(ctx, messages("telegram").toastError);
   }
 }

@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
+import { messages } from "../../core/i18n/index.js";
 import { appendRecentProject, readRecentProjectLines } from "../../core/recentProjects.js";
 import { isCdAllowed, sessionNameFromPath, setPathForSession } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
@@ -46,7 +47,7 @@ export async function addRecentProjectBySid(
   try {
     if (await deps.bridge.hasSession(sessionName)) {
       await deps.currentProject.set("telegram", sessionName);
-      await reply(ctx, "ok", "已切换", { session: sessionName, replyTarget });
+      await reply(ctx, "ok", messages("telegram").switched, { session: sessionName, replyTarget });
       return;
     }
     if (!isCdAllowed(projectPath, deps.config.cdAllowedDirs)) {
@@ -62,7 +63,11 @@ export async function addRecentProjectBySid(
     await deps.bridge.sendKeys(`cd "${projectPath}"`);
     await sleep(deps.config.sessionWarmupMs);
     await appendRecentProject(projectPath, prefix);
-    await reply(ctx, "ok", "项目已创建", { session: sessionName, body: projectPath, replyTarget });
+    await reply(ctx, "ok", messages("telegram").projectCreated, {
+      session: sessionName,
+      body: projectPath,
+      replyTarget,
+    });
   } catch (err) {
     await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
   }
