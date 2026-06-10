@@ -39,12 +39,15 @@
     "@larksuiteoapi/node-sdk": "^1.66.1",
     "dotenv": "^17.4.0",
     "grammy": "^1.43.0",
-    "https-proxy-agent": "^9.0.0",
+    "https-proxy-agent": "^9.1.0",
     "node-fetch": "^3.3.2",
     "qrcode-terminal": "^0.12.0",
     "telegramify-markdown": "^1.3.3",
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "axios": "^1.17.0"
   },
   "lint-staged": {
     "*.{ts,js,json}": "biome check --write --no-errors-on-unmatched"
