@@ -46,6 +46,9 @@
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },
+  "overrides": {
+    "axios": "^1.17.0"
+  },
   "lint-staged": {
     "*.{ts,js,json}": "biome check --write --no-errors-on-unmatched"
   },
