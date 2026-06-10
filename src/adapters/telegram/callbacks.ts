@@ -2,6 +2,7 @@ import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage } from "../../core/dispatch.js";
 import type { QueuedMessage } from "../../core/queue.js";
+import { getPathBySession } from "../../core/sessionPathMap.js";
 import { persistEnvVar } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -19,6 +20,7 @@ import { MSG } from "./messages.js";
 import {
   addRecentProjectBySid,
   aliveProjectButtons,
+  botSelfRepoWarning,
   removeProjectBySession,
   resolveAliveSessionByShortId,
   switchToProject,
@@ -121,7 +123,11 @@ export async function handleCallbackQuery(
     if (parsed.kind === "switch") {
       await switchToProject(deps, sessionName);
       await safeAnswerCallback(ctx, "✅ 已切换");
-      await reply(ctx, "ok", "已切换", { session: sessionName, replyTarget });
+      const warn = botSelfRepoWarning(getPathBySession(sessionName));
+      await reply(ctx, "ok", warn ? `已切换\n\n${warn}` : "已切换", {
+        session: sessionName,
+        replyTarget,
+      });
       return;
     }
     if (parsed.kind === "remove") {

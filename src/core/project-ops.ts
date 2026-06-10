@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { join } from "node:path";
 import { sessionShortId } from "../shared/utils/hash.js";
 import { sleep } from "../shared/utils/sleep.js";
 import type { HandlerDeps } from "./deps.js";
@@ -43,6 +44,26 @@ export async function switchToProject(deps: HandlerDeps, sessionName: string): P
   if (projectPath) {
     await appendRecentProject(projectPath, deps.config.projectSessionPrefix);
   }
+}
+
+/**
+ * Driving a tmux-claude-bot checkout via the bot is almost always the nesting
+ * trap: the bot types into a Claude session running in its OWN code — frequently
+ * the very conversation that controls the bot — so replies loop and the user sees
+ * only the ack ("已接收") with no result. Returns a warning to surface on switch,
+ * or null when the path is not a tmux-claude-bot checkout.
+ */
+export function botSelfRepoWarning(projectPath: string | null | undefined): string | null {
+  if (!projectPath) return null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(join(projectPath, "package.json"), "utf8"));
+    if (pkg?.name === "tmux-claude-bot") {
+      return "⚠️ 这是 tmux-claude-bot 自己的代码库——用 bot 驱动它通常会嵌套(只回「已接收」无结果)。建议切到别的真实项目。";
+    }
+  } catch {
+    /* no/unreadable package.json -> not a checkout */
+  }
+  return null;
 }
 
 /**

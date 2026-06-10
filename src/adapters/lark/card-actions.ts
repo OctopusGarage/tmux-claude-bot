@@ -3,6 +3,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import type { MessageAction } from "../../core/dispatch.js";
 import { projectLabel } from "../../core/project-label.js";
 import {
+  botSelfRepoWarning,
   removeProjectBySession,
   resolveAliveSessionByShortId,
   switchToProject,
@@ -83,10 +84,12 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       const session = await resolveAliveSessionByShortId(deps, value.sid);
       if (session) {
         await switchToProject(deps, session);
+        const path = getPathBySession(session) ?? undefined;
+        const warn = botSelfRepoWarning(path);
         await sendText(
           channel,
           evt.chatId,
-          `已切换：${projectLabel(session, getPathBySession(session) ?? undefined)}`,
+          `已切换：${projectLabel(session, path)}${warn ? `\n\n${warn}` : ""}`,
         );
       }
       return;

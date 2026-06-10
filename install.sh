@@ -21,9 +21,17 @@ err()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; }
 [ "$(uname)" = "Darwin" ] || { err "tmux-claude-bot is macOS-only (launchd)."; exit 1; }
 command -v git  >/dev/null 2>&1 || { err "git not found - run: xcode-select --install"; exit 1; }
 
-# Determine mode: local clone vs remote curl|bash.
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
-if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && grep -q '"tmux-claude-bot"' "$SELF_DIR/package.json" 2>/dev/null; then
+# Determine mode: local clone (run AS a file from a checkout) vs remote curl|bash.
+# IMPORTANT: derive SELF_DIR from BASH_SOURCE[0] ONLY, never $0/cwd. When piped
+# (`bash -c "$(curl ...)"`) BASH_SOURCE is empty -> SELF_DIR stays empty -> remote
+# mode, no matter the working directory. Falling back to the cwd here is the
+# footgun that made `curl | bash` from inside a clone install in-place (and strip
+# its devDeps). A deploy intent (TMUX_CLAUDE_BOT_VERSION set) also forces remote.
+SELF_DIR=""
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+  SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+fi
+if [ -z "${TMUX_CLAUDE_BOT_VERSION:-}" ] && [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && grep -q '"tmux-claude-bot"' "$SELF_DIR/package.json" 2>/dev/null; then
   PROJECT_DIR="$SELF_DIR"
   info "Local install at $PROJECT_DIR"
 else

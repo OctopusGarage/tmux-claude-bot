@@ -17,6 +17,7 @@ import type { ReplyTargetMap } from "./reply-target.js";
 
 export {
   aliveProjectButtons,
+  botSelfRepoWarning,
   recentProjectButtons,
   removeProjectBySession,
   resolveAliveSessionByShortId,

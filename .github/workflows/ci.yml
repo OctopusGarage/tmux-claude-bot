@@ -15,6 +15,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: shellcheck --severity=warning install.sh dev.sh scripts/*.sh
       - run: npx biome check .
       - run: npx tsc --noEmit
       - run: npx tsc -p tsconfig.tests.json --noEmit

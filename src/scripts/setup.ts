@@ -14,8 +14,8 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { runLarkOnboardingWizard } from "../adapters/lark/onboarding-wizard.js";
 import {
   maskToken,
-  parseCaptureUpdate,
   parseEnv,
+  pollForCaptureIds,
   serializeEnv,
   validateTokenShape,
 } from "../core/onboarding.js";
@@ -27,6 +27,10 @@ const CAPTURE_TIMEOUT_MS = 60_000;
 
 const args = new Set(process.argv.slice(2));
 const NON_INTERACTIVE = args.has("--yes");
+// Walk the full wizard locally without touching Telegram / Feishu / the real .env:
+// stubs the live token check, id capture and QR scan, and prints (not writes) the
+// resolved config. For verifying the flow + prompts during development.
+const DRY_RUN = args.has("--dry-run");
 
 const C = {
   info: (s: string) => console.log(`\x1b[1;34m=>\x1b[0m ${s}`),
@@ -56,43 +60,24 @@ async function validateToken(token: string, proxy?: string): Promise<string | nu
 }
 
 /**
- * Wait until the operator messages the bot, returning the captured id(s).
- *
- * Uses repeated SHORT polls (`getUpdates` with `timeout=0`) every ~1.5s rather
- * than one 30s long-poll. A China proxy that handles short requests fine (getMe
- * succeeds) routinely drops the long-held getUpdates connection, so the long-poll
- * never delivers the message and the wizard just hangs. Short polls behave like
- * getMe and reliably pick up the pending message — including one the user sent a
- * moment ago (we do NOT drop pending updates, so a just-sent message is caught
- * on the first poll). Best-effort and crash-proof: any failure is swallowed and
- * the loop falls through to manual id entry on timeout.
+ * Wait until the operator messages the bot, returning the captured id(s). The
+ * short-poll loop lives in core/onboarding (`pollForCaptureIds`, unit-tested); we
+ * just wire the real bot.api.getUpdates and the clock. Short polls (timeout=0)
+ * survive a CN proxy that drops long-held connections; crash-proof, falling back
+ * to manual entry on timeout.
  */
 async function captureIds(token: string, proxy?: string): Promise<string[]> {
   const bot = botFor(token, proxy);
-  const ids: string[] = [];
-  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-  const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
-  let offset = 0;
-  while (Date.now() < deadline) {
-    let updates: Awaited<ReturnType<typeof bot.api.getUpdates>>;
-    try {
-      updates = await bot.api.getUpdates({ offset, timeout: 0, allowed_updates: ["message"] });
-    } catch {
-      await sleep(1500);
-      continue;
-    }
-    for (const update of updates) {
-      offset = update.update_id + 1;
-      const hit = parseCaptureUpdate(update);
-      if (hit && !ids.includes(hit.id)) {
-        ids.push(hit.id);
-        C.ok(`Captured ${hit.username ? `@${hit.username} ` : ""}(${hit.id})`);
-        return ids;
-      }
-    }
-    await sleep(1500);
-  }
-  return ids;
+  return pollForCaptureIds(
+    {
+      getUpdates: (offset) =>
+        bot.api.getUpdates({ offset, timeout: 0, allowed_updates: ["message"] }),
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      onCapture: (id, username) => C.ok(`Captured ${username ? `@${username} ` : ""}(${id})`),
+    },
+    CAPTURE_TIMEOUT_MS,
+  );
 }
 
 async function main(): Promise<void> {
@@ -105,7 +90,7 @@ async function main(): Promise<void> {
     ? parseEnv(readFileSync(ENV_PATH, "utf8"))
     : new Map<string, string>();
 
-  if (existsSync(ENV_PATH) && !args.has("--reconfigure") && !NON_INTERACTIVE) {
+  if (existsSync(ENV_PATH) && !args.has("--reconfigure") && !NON_INTERACTIVE && !DRY_RUN) {
     C.warn(
       `${ENV_PATH} already exists. Re-run with --reconfigure (npm run setup:reconfigure) to edit it.`,
     );
@@ -181,13 +166,15 @@ async function main(): Promise<void> {
       for (let attempt = 0; attempt < 3; attempt++) {
         token = await ask(
           "Telegram bot token (from @BotFather)",
-          existing.get("TELEGRAM_BOT_TOKEN") ?? existing.get("BOT_TOKEN") ?? "",
+          DRY_RUN
+            ? "123456789:DRYRUN0000000000000000000000000000000"
+            : (existing.get("TELEGRAM_BOT_TOKEN") ?? existing.get("BOT_TOKEN") ?? ""),
         );
         if (!validateTokenShape(token)) {
           C.warn("That doesn't look like a token (digits:letters). Try again.");
           continue;
         }
-        const username = await validateToken(token, proxyPre);
+        const username = DRY_RUN ? "dryrun_bot" : await validateToken(token, proxyPre);
         if (username) {
           C.ok(`Bot: @${username}  (token ${maskToken(token)})`);
           break;
@@ -201,16 +188,21 @@ async function main(): Promise<void> {
       }
       values.TELEGRAM_BOT_TOKEN = token;
 
-      C.info("Now authorize yourself: open Telegram and send your bot ANY message.");
-      C.info(`Waiting up to ${CAPTURE_TIMEOUT_MS / 1000}s…`);
       let ids: string[] = [];
-      try {
-        ids = await captureIds(token, values.TELEGRAM_HTTP_PROXY || undefined);
-      } catch (e) {
-        C.warn(`Could not start capture listener (${e instanceof Error ? e.message : String(e)}).`);
-        C.warn(
-          "If the bot is already running, stop it first (npm run service:uninstall) or enter your id manually.",
-        );
+      if (DRY_RUN) {
+        C.info("[dry-run] skipping live id capture; using 123456789.");
+        ids = ["123456789"];
+      } else {
+        C.info("Now authorize yourself: open Telegram and send your bot ANY message.");
+        C.info(`Waiting up to ${CAPTURE_TIMEOUT_MS / 1000}s…`);
+        try {
+          ids = await captureIds(token, values.TELEGRAM_HTTP_PROXY || undefined);
+        } catch (e) {
+          C.warn(`Could not start capture listener (${e instanceof Error ? e.message : String(e)}).`);
+          C.warn(
+            "If the bot is already running, stop it first (npm run service:uninstall) or enter your id manually.",
+          );
+        }
       }
       if (ids.length === 0) {
         C.warn("No message received.");
@@ -228,8 +220,20 @@ async function main(): Promise<void> {
 
     // 2. Feishu/Lark — scan a QR to create the app (inline QR wizard).
     if (wantLark) {
-      C.info("飞书接入：用飞书 App 扫码创建应用。");
-      const larkValues = await runLarkOnboardingWizard(C);
+      let larkValues: Record<string, string>;
+      if (DRY_RUN) {
+        C.info("[dry-run] skipping Feishu QR; using placeholder LARK_* values.");
+        larkValues = {
+          LARK_ENABLED: "true",
+          LARK_APP_ID: "cli_dryrun",
+          LARK_APP_SECRET: "dryrun_secret",
+          LARK_DOMAIN: "feishu",
+          LARK_ALLOWED_OPEN_IDS: "ou_dryrun",
+        };
+      } else {
+        C.info("飞书接入：用飞书 App 扫码创建应用。");
+        larkValues = await runLarkOnboardingWizard(C);
+      }
       Object.assign(values, larkValues);
       C.ok(`飞书已接入 · App ID: ${larkValues.LARK_APP_ID} · Tenant: ${larkValues.LARK_DOMAIN}`);
       if (larkValues.LARK_ALLOWED_OPEN_IDS) {
@@ -264,6 +268,14 @@ async function main(): Promise<void> {
       "Voice recognition language (zh/en/auto)",
       existing.get("WHISPER_LANGUAGE") ?? "zh",
     );
+
+    if (DRY_RUN) {
+      C.ok("[dry-run] flow complete. Resolved config (NOT written, secrets masked):");
+      for (const [k, v] of Object.entries(values)) {
+        console.log(`  ${k}=${/TOKEN|SECRET/.test(k) ? "***" : v}`);
+      }
+      return;
+    }
 
     await writeEnv(template, { ...Object.fromEntries(existing), ...values });
     C.ok(`Wrote ${ENV_PATH}`);

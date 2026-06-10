@@ -61,6 +61,56 @@ export function parseCaptureUpdate(update: unknown): { id: string; username?: st
   return from.username ? { id: String(from.id), username: from.username } : { id: String(from.id) };
 }
 
+export interface CapturePollDeps {
+  /** One short `getUpdates` call (the caller uses timeout=0) from `offset`. */
+  getUpdates: (offset: number) => Promise<unknown[]>;
+  /** Wall clock in ms (injectable so tests don't actually wait). */
+  now: () => number;
+  /** Sleep between polls (injectable / no-op in tests). */
+  sleep: (ms: number) => Promise<void>;
+  /** Called once when an id is captured (e.g. to print a confirmation). */
+  onCapture?: (id: string, username?: string) => void;
+}
+
+/**
+ * Poll for the operator's message and return its sender id. The caller supplies a
+ * SHORT-poll `getUpdates` (timeout=0): a proxy that handles short requests but
+ * drops the long-held connection (common in CN) still delivers, where one 30s
+ * long-poll would hang. Crash-proof — a failing poll is retried until the
+ * deadline — and returns whatever was captured (`[]` on timeout) so callers fall
+ * back to manual entry instead of throwing.
+ */
+export async function pollForCaptureIds(
+  deps: CapturePollDeps,
+  timeoutMs: number,
+  pollIntervalMs = 1500,
+): Promise<string[]> {
+  const ids: string[] = [];
+  const deadline = deps.now() + timeoutMs;
+  let offset = 0;
+  while (deps.now() < deadline) {
+    let updates: unknown[];
+    try {
+      updates = await deps.getUpdates(offset);
+    } catch {
+      await deps.sleep(pollIntervalMs);
+      continue;
+    }
+    for (const update of updates) {
+      const updateId = (update as { update_id?: number }).update_id;
+      if (typeof updateId === "number") offset = updateId + 1;
+      const hit = parseCaptureUpdate(update);
+      if (hit && !ids.includes(hit.id)) {
+        ids.push(hit.id);
+        deps.onCapture?.(hit.id, hit.username);
+        return ids;
+      }
+    }
+    await deps.sleep(pollIntervalMs);
+  }
+  return ids;
+}
+
 /** Cheap structural check for a Telegram bot token before any network call. */
 export function validateTokenShape(token: string): boolean {
   return /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(token.trim());

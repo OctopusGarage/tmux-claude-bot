@@ -17,7 +17,7 @@ fi
 rm -f "$PROJECT_ROOT/.bot.pid"
 
 echo "[start] Starting $PROJECT_NAME..."
-cd "$PROJECT_ROOT"
+cd "$PROJECT_ROOT" || exit 1
 
 # Use npm run dev for development with auto-reload
 npm run dev > logs/bot-start.log 2>&1 &

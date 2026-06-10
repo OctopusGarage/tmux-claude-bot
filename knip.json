@@ -7,7 +7,8 @@
     "scripts/uninstall-launchd.sh",
     "scripts/release.sh",
     "scripts/service.sh",
-    "scripts/install-whisper.sh"
+    "scripts/install-whisper.sh",
+    "shellcheck"
   ],
   "ignoreExportsUsedInFile": true,
   "vitest": {

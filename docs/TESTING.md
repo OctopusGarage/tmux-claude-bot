@@ -39,10 +39,30 @@ Assert *what came out* — which `channel.send` payloads were sent, which
 was called or in what order. Tests should survive a refactor that preserves
 behavior.
 
+## Scripts are code too — verify locally, never ship-to-prod-to-test
+
+The `setup` / `install.sh` scripts caused the most pain precisely because they
+were untested and could only be exercised by releasing and running them in a real
+(proxy-constrained) environment. Don't do that. For anything shippable:
+
+- **Extract the risky logic into a pure, injectable unit and unit-test it.** The
+  proxy-robust id capture lives in `core/onboarding.pollForCaptureIds` with
+  injectable `getUpdates`/`now`/`sleep`, so its short-poll, crash-proofing, and
+  timeout-fallback are tested without a real bot (`tests/core/onboarding-poll`).
+  This is what would have caught the long-poll hang and the crash.
+- **Shellcheck every `*.sh`:** `npm run lint:sh` (also a CI gate). Fix warnings,
+  don't suppress them.
+- **Walk the wizard with no side effects:** `npm run setup -- --dry-run` stubs the
+  live token check, id capture, and QR scan and prints (never writes) the resolved
+  config. Note: a real terminal is required — Node's readline doesn't accept piped
+  stdin cleanly — so dry-run is for *manual* local verification, automation relies
+  on the unit tests above.
+
 ## Running
 
 ```bash
 npm test                       # full suite (vitest run)
+npm run lint:sh                # shellcheck the scripts
 npx vitest run path/to.test.ts # a single file
 npx vitest run --coverage      # coverage report (v8)
 ```
@@ -51,4 +71,5 @@ npx vitest run --coverage      # coverage report (v8)
 
 New adapter orchestration logic ships **with** tests using the fakes pattern
 above. A new handler, view, or executor branch is not done until its observable
-behavior is covered.
+behavior is covered. A script change ships with either a unit test for its
+extracted logic or, at minimum, a passing `lint:sh` — never "release and see".

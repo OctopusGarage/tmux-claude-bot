@@ -23,6 +23,7 @@
     "lint:types": "tsc --noEmit",
     "lint:types:tests": "tsc -p tsconfig.tests.json --noEmit",
     "lint": "biome check .",
+    "lint:sh": "shellcheck --severity=warning install.sh dev.sh scripts/*.sh",
     "format": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",

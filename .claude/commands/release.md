@@ -24,6 +24,7 @@ Constants: repo `OctopusGarage/tmux-claude-bot` · launchd label
 3. Run the verification gate; require all green:
    - `npm test`
    - `npm run lint`
+   - `npm run lint:sh` (shellcheck — install.sh / dev.sh / scripts)
    - `npm run lint:types && npm run lint:types:tests`
    - `npm run knip`
    - Secret / personal-path scan (from CLAUDE.md). `/Users/x`, `/Users/test`,
@@ -33,6 +34,28 @@ Constants: repo `OctopusGarage/tmux-claude-bot` · launchd label
        | grep -vE "/Users/(x|test)/|/home/(user|u)/" || echo "clean"
      ```
      Expect `clean`.
+
+## Phase 0.5 — Consolidate commits (don't ship a pile of fragments)
+
+Releases should land as a few **logical** commits, not a trail of `fix: typo`,
+`fix: again`, `chore: …` and per-fix version bumps. First **prefer batching**:
+develop a change set fully (with local tests — `/dev`, `--dry-run`, unit tests)
+and release ONCE, rather than patch→release→patch→release.
+
+If the commits since the last tag are already fragmented, squash them before
+bumping. Interactive rebase isn't available here, so use **reset --soft +
+grouped recommit**:
+
+1. `git log --oneline $(git describe --tags --abbrev=0)..HEAD` — review what's there.
+2. If it reads as one or a few logical units, `git reset --soft <last-tag>` (all
+   changes become staged; working tree untouched).
+3. Recommit in logical groups by path — e.g. stage `src/` (minus tests) as a
+   `feat:`/`fix:` commit, then `tests/` + `vitest.config.ts` as a `test:` commit.
+   Unstage a group with `git restore --staged <paths>` before committing the rest.
+4. **Verify nothing was lost**: `git diff <old-HEAD> HEAD -- . ':!package.json'`
+   must be empty (only the version should differ). Then run the Phase 0 gate again.
+
+Confirm with the user before any force-related rewrite of already-pushed history.
 
 ## Phase 1 — Bump, tag, push
 

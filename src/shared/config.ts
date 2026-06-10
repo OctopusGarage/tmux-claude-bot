@@ -47,9 +47,19 @@ export function claudeBinFromStartCommand(cmd: string): string {
   return tokens.find((t) => !/^[A-Za-z_]\w*=/.test(t)) ?? "claude";
 }
 
+/**
+ * Load `.env` into process.env. Honors `TCB_ENV_FILE` so `npm run dev` can borrow
+ * the deployed (prod) config — develop against the real token/proxy/Feishu with
+ * hot reload, with no second `.env` to drift. Defaults to `./.env`.
+ */
+function loadEnvFile(): void {
+  const path = process.env.TCB_ENV_FILE;
+  loadEnv(path ? { path } : undefined);
+}
+
 export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
   if (!env) {
-    loadEnv();
+    loadEnvFile();
     env = process.env;
   }
   const parsed = envSchema.parse(env);
@@ -111,7 +121,7 @@ const scriptEnvSchema = z.object({
 
 export function loadScriptConfig(env?: NodeJS.ProcessEnv): ScriptConfig {
   if (!env) {
-    loadEnv();
+    loadEnvFile();
     env = process.env;
   }
   const parsed = scriptEnvSchema.parse(env);

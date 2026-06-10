@@ -19,17 +19,23 @@ Constants: repo `OctopusGarage/tmux-claude-bot` · launchd label
 
 1. **Preflight.** macOS only. Note the current PID:
    `launchctl list | grep com.octopusgarage.tmux-claude-bot`.
-2. **Deploy** via the canonical installer (it preserves `.env` + runtime state,
-   refreshes deps, and restarts the launchd service). Pass the target as the
-   version; omit it for `latest`:
+2. **Deploy** via the canonical installer (preserves `.env` + runtime state,
+   refreshes deps, restarts the service). Run it so it targets the **install dir**,
+   never the clone — download to `/tmp` and run it from there (its path can't be
+   mistaken for a checkout):
    ```
-   TMUX_CLAUDE_BOT_VERSION="<latest|vX.Y.Z|main>" \
-     bash -c "$(curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh)"
+   curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh -o /tmp/tcb-install.sh
+   TMUX_CLAUDE_BOT_VERSION="<vX.Y.Z|main>" bash /tmp/tcb-install.sh   # omit the var for latest
    ```
-   For a local working-tree deploy instead, run `./install.sh` from the repo clone.
-   Note: `raw.githubusercontent.com` caches `install.sh` ~5 min — if you just pushed
-   an installer change, run `./install.sh` from the clone (or see `/release` Phase 4's
-   checksum-poll) so you don't deploy with a stale installer.
+   **Footgun (learned the hard way):** do NOT run `./install.sh` from inside the
+   repo clone expecting a deploy — the installer would treat the clone as a local
+   install, rebuild it in place, and `npm install --omit=dev` would strip its
+   devDeps (breaking `tsc`/tests there). install.sh now guards this (piped stdin
+   and a set `TMUX_CLAUDE_BOT_VERSION` both force install-dir mode), and the `/tmp`
+   form above is immune regardless of cwd. The ONLY intended in-place build is a
+   bare `./install.sh` from a clone with no version (a dev install).
+   Stale-CDN note: `raw.githubusercontent.com` caches `install.sh` ~5 min; if you
+   just pushed an installer change, see `/release` Phase 4's checksum-poll first.
 3. **Verify** (all must hold):
    - Single instance, launchd-managed: `pgrep -fl "tmux-claude-bot.*src/index.ts"`
      shows one PID with PPID `1`; `launchctl list | grep com.octopusgarage.tmux-claude-bot`
