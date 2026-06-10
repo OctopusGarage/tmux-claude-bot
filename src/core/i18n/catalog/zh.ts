@@ -51,6 +51,7 @@ export const zh = {
   btnCompact: "🗜 compact",
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
+  btnTab: "⇥ Tab",
   btnStatus: "📊 状态",
   btnStart: "🚀 启动",
   btnExit: "🚪 退出",
@@ -87,6 +88,7 @@ export const zh = {
   sentEnter: "✅ 已回车",
   sentUp: "✅ 已发送 ↑",
   sentDown: "✅ 已发送 ↓",
+  sentTab: "✅ 已发送 Tab",
   statusRunning: "🟢 Claude 运行中",
   statusNotRunning: "🔴 Claude 未运行",
 
@@ -193,7 +195,7 @@ export const zh = {
 /enter — 回车    /esc — Escape
 /interrupt — Ctrl-C    /restart — 重启 (--continue)
 /clear — 清空上下文    /compact — 压缩上下文
-/up · /down — 上下方向键    /exit — 退出
+/up · /down · /tab — 方向键 / Tab    /exit — 退出
 
 ━━ 🚀 未运行 ━━
 /start — 启动 Claude
@@ -220,7 +222,7 @@ export const zh = {
 /enter — 回车   /esc — Escape
 /interrupt — Ctrl-C   /restart — 重启
 /clear — 清空上下文   /compact — 压缩
-/up · /down — 方向键   /exit — 退出
+/up · /down · /tab — 方向键/Tab   /exit — 退出
 /status — 状态
 
 ━━ 🚀 未运行 ━━

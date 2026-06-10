@@ -147,6 +147,7 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
     .row()
     .text(m.btnUp, encodeControlAction("up", sid))
     .text(m.btnDown, encodeControlAction("down", sid))
+    .text(m.btnTab, encodeControlAction("tab", sid))
     .row()
     .text(m.btnExit, encodeControlAction("exit", sid))
     .text(m.btnStatus, encodeControlAction("status", sid))

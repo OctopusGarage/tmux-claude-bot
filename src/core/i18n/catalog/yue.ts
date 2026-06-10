@@ -44,6 +44,7 @@ export const yue: Messages = {
   btnCompact: "🗜 compact",
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
+  btnTab: "⇥ Tab",
   btnStatus: "📊 狀態",
   btnStart: "🚀 啟動",
   btnExit: "🚪 退出",
@@ -79,6 +80,7 @@ export const yue: Messages = {
   sentEnter: "✅ 已傳送 Enter",
   sentUp: "✅ 已傳送 ↑",
   sentDown: "✅ 已傳送 ↓",
+  sentTab: "✅ 已傳送 Tab",
   statusRunning: "🟢 Claude 運行中",
   statusNotRunning: "🔴 Claude 未運行",
 

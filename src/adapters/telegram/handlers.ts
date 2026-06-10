@@ -89,6 +89,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   bot.command("down", async (ctx) =>
     handleQueuedCommand(ctx, deps, "down", undefined, replyTarget),
   );
+  bot.command("tab", async (ctx) => handleQueuedCommand(ctx, deps, "tab", undefined, replyTarget));
 
   bot.command("peek", async (ctx) => {
     const session = await resolveSessionFromReply(ctx, replyTarget, deps);

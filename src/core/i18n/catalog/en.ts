@@ -42,6 +42,7 @@ export const en: Messages = {
   btnCompact: "🗜 compact",
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
+  btnTab: "⇥ Tab",
   btnStatus: "📊 Status",
   btnStart: "🚀 Start",
   btnExit: "🚪 Exit",
@@ -77,6 +78,7 @@ export const en: Messages = {
   sentEnter: "✅ Sent Enter",
   sentUp: "✅ Sent ↑",
   sentDown: "✅ Sent ↓",
+  sentTab: "✅ Sent Tab",
   statusRunning: "🟢 Claude running",
   statusNotRunning: "🔴 Claude not running",
 

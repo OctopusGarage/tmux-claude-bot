@@ -6,6 +6,7 @@ export const IMMEDIATE = new Set<MessageAction>([
   "status",
   "up",
   "down",
+  "tab",
   "enter",
   "clear",
   "compact",

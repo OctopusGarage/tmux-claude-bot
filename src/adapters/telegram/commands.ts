@@ -12,6 +12,7 @@ export const BOT_COMMANDS: BotCommand[] = [
   { command: "enter", description: "Send Enter key" },
   { command: "up", description: "Send Up arrow" },
   { command: "down", description: "Send Down arrow" },
+  { command: "tab", description: "Send Tab key" },
   { command: "exit", description: "Exit Claude" },
   { command: "restart", description: "Restart Claude with --continue" },
   { command: "list_alive_projects", description: "List alive projects" },
