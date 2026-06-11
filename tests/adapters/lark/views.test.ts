@@ -10,9 +10,11 @@ import {
   sendAliveList,
   sendCurrentProject,
   sendHistory,
+  sendLangPicker,
   sendPeek,
   sendQueueStatus,
   sendRecentList,
+  sendVoiceLangPicker,
 } from "../../../src/adapters/lark/views.js";
 import { projectPathToHistoryDir } from "../../../src/core/history.js";
 import type { QueuedMessage } from "../../../src/core/queue.js";
@@ -21,6 +23,22 @@ import { fakeChannel, fakeDeps } from "./_fakes.js";
 
 const qmsg = (text: string): QueuedMessage =>
   ({ id: "x", text, chatId: "c", action: "text", resolve() {}, reject() {} }) as QueuedMessage;
+
+describe("language pickers go out as managed cards", () => {
+  it("sendVoiceLangPicker sends the picker via cardkit so clicks can update it in place", async () => {
+    const channel = fakeChannel();
+    await sendVoiceLangPicker(channel, "oc_chat");
+    expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
+    expect(channel.imCreates).toHaveLength(1);
+  });
+
+  it("sendLangPicker sends the picker via cardkit so clicks can update it in place", async () => {
+    const channel = fakeChannel();
+    await sendLangPicker(channel, "oc_chat");
+    expect(channel.cardkitCreates).toHaveLength(1);
+    expect(channel.imCreates).toHaveLength(1);
+  });
+});
 
 describe("sendQueueStatus", () => {
   beforeEach(() => vi.clearAllMocks());

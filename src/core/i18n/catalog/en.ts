@@ -195,6 +195,7 @@ Send any text → forwarded to Claude → reply`,
   cmdExit: "exit",
   cmdStatus: "check status",
   cmdStart: "start Claude",
+  cmdDoctor: "run install health checks",
   cmdHelp: "this help",
   cmdWs: "workspace management (save/use/list/remove)",
 

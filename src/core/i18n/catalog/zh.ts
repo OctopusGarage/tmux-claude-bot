@@ -213,6 +213,7 @@ export const zh = {
   cmdExit: "退出",
   cmdStatus: "检查状态",
   cmdStart: "启动 Claude",
+  cmdDoctor: "运行安装健康检查",
   cmdHelp: "本帮助",
   cmdWs: "工作区管理（save/use/list/remove）",
 

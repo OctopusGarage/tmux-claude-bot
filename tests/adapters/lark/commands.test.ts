@@ -121,6 +121,10 @@ describe("parseLarkInput", () => {
     });
   });
 
+  it("/doctor → view doctor", () => {
+    expect(parseLarkInput("/doctor")).toEqual({ kind: "view", name: "doctor", arg: undefined });
+  });
+
   it("/history → view history, no arg", () => {
     expect(parseLarkInput("/history")).toEqual({ kind: "view", name: "history", arg: undefined });
   });

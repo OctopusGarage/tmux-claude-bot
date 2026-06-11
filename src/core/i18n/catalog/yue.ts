@@ -193,6 +193,7 @@ export const yue: Messages = {
   cmdExit: "退出",
   cmdStatus: "檢查狀態",
   cmdStart: "啟動 Claude",
+  cmdDoctor: "執行安裝健康檢查",
   cmdHelp: "本說明",
   cmdWs: "工作區管理（save/use/list/remove）",
 

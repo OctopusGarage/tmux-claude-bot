@@ -319,24 +319,40 @@ describe("makeMessageHandler", () => {
       expect(channel.texts().length).toBeGreaterThan(0);
     });
 
-    it("/lang sends the language picker card", async () => {
+    it("/doctor sends a redacted health report", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "/doctor" }));
+
+      const report = channel.texts().join("\n");
+      // Environment-independent: the summary always mentions "check"; the
+      // chat rendering must carry no ANSI escapes.
+      expect(report).toContain("check");
+      expect(report).not.toContain("\x1b[");
+    });
+
+    it("/lang sends the language picker as a managed card", async () => {
       const channel = fakeChannel();
       const deps = fakeDeps();
       const handler = makeMessageHandler(channel, deps);
 
       await handler(fakeMessage({ content: "/lang" }));
 
-      expect(channel.cards()).toHaveLength(1);
+      expect(channel.cardkitCreates).toHaveLength(1);
+      expect(channel.imCreates).toHaveLength(1);
     });
 
-    it("/voice_lang sends the voice language picker card", async () => {
+    it("/voice_lang sends the voice language picker as a managed card", async () => {
       const channel = fakeChannel();
       const deps = fakeDeps();
       const handler = makeMessageHandler(channel, deps);
 
       await handler(fakeMessage({ content: "/voice_lang" }));
 
-      expect(channel.cards()).toHaveLength(1);
+      expect(channel.cardkitCreates).toHaveLength(1);
+      expect(channel.imCreates).toHaveLength(1);
     });
 
     it("/history 2 sends history at index 1", async () => {

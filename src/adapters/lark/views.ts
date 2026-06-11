@@ -1,5 +1,6 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
+import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import {
   formatSingleConversation,
   getRecentConversations,
@@ -33,17 +34,26 @@ import {
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { langCard, projectListCard, recentListCard, viewCard, voiceLangCard } from "./cards.js";
+import { sendManagedCard } from "./managed-card.js";
 import { sendCard, sendError, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
 
-/** Send the voice recognition-language picker card (current language marked). */
+/** Send the voice recognition-language picker card (current language marked).
+ * Managed, so a click moves the ✅ on the card itself instead of re-sending. */
 export async function sendVoiceLangPicker(channel: LarkChannel, chatId: string): Promise<void> {
-  await sendCard(channel, chatId, voiceLangCard(resolveWhisperLanguage("lark")));
+  await sendManagedCard(channel, chatId, voiceLangCard(resolveWhisperLanguage("lark")));
 }
 
-/** Send the UI-language picker card (current language marked). */
+/** Send the UI-language picker card (current language marked). Managed, like
+ * the voice picker. */
 export async function sendLangPicker(channel: LarkChannel, chatId: string): Promise<void> {
-  await sendCard(channel, chatId, langCard(resolveUiLang("lark")));
+  await sendManagedCard(channel, chatId, langCard(resolveUiLang("lark")));
+}
+
+/** Run the install health checks and send the redacted report. */
+export async function sendDoctor(channel: LarkChannel, chatId: string): Promise<void> {
+  const report = await runDoctorChecks(defaultProbes());
+  await sendText(channel, chatId, renderDoctorReport(report, { redacted: true }));
 }
 
 /**

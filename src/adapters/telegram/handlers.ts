@@ -1,6 +1,7 @@
 import type { Bot } from "grammy";
 import { buildHelpBody, getTelegramActions } from "../../core/action-registry.js";
 import type { HandlerDeps } from "../../core/deps.js";
+import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import { listClaudeSessions } from "../../core/history.js";
 import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { chatScope } from "../../core/project-manager.js";
@@ -179,6 +180,11 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
   bot.command("queue_status", async (ctx) => {
     await sendQueueStatus(ctx, deps);
+  });
+
+  bot.command("doctor", async (ctx) => {
+    const report = await runDoctorChecks(defaultProbes());
+    await reply(ctx, "info", renderDoctorReport(report, { redacted: true }));
   });
 
   bot.command("sessions", async (ctx) => {

@@ -14,6 +14,7 @@ import {
   handleWsCommand,
   sendAliveList,
   sendCurrentProject,
+  sendDoctor,
   sendHistory,
   sendLangPicker,
   sendPeek,
@@ -179,6 +180,9 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             break;
           case "sessions":
             await sendSessionsList(channel, deps, msg.chatId, parsed.arg);
+            break;
+          case "doctor":
+            await sendDoctor(channel, msg.chatId);
             break;
         }
         break;

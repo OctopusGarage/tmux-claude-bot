@@ -160,6 +160,7 @@ const TELEGRAM_SECTIONS: readonly HelpSection[] = [
       [{ cmds: ["start"], descKey: "cmdStart" }],
       [{ cmds: ["peek"], descKey: "cmdPeek" }],
       [{ cmds: ["status"], descKey: "cmdStatus" }],
+      [{ cmds: ["doctor"], descKey: "cmdDoctor" }],
       [{ cmds: ["help"], descKey: "cmdHelp" }],
     ],
   },
@@ -181,7 +182,11 @@ const LARK_SECTIONS: readonly HelpSection[] = [
   },
   {
     headerKey: "helpSectionIdle",
-    rows: [[{ cmds: ["start"], descKey: "cmdStart" }], [{ cmds: ["help"], descKey: "cmdHelp" }]],
+    rows: [
+      [{ cmds: ["start"], descKey: "cmdStart" }],
+      [{ cmds: ["doctor"], descKey: "cmdDoctor" }],
+      [{ cmds: ["help"], descKey: "cmdHelp" }],
+    ],
   },
 ];
 
@@ -238,6 +243,7 @@ export const BOT_COMMANDS: BotCommand[] = [
     command: "history",
     description: "Show recent conversation history (default: last, /history N for Nth recent)",
   },
+  { command: "doctor", description: "Run install health checks" },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
   { command: "voice_lang", description: "Set voice recognition language (zh/en/auto)" },
   { command: "lang", description: "Set interface language (zh/en)" },
