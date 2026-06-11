@@ -18,6 +18,13 @@ import {
   setPathForSession,
 } from "../../core/sessionPathMap.js";
 import { resolveWhisperLanguage } from "../../core/voice-support.js";
+import {
+  getWorkspace,
+  listWorkspaces,
+  removeWorkspace,
+  saveWorkspace,
+  WORKSPACE_NAME_RE,
+} from "../../core/workspaces.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { langCard, projectListCard, recentListCard, viewCard, voiceLangCard } from "./cards.js";
 import { sendCard, sendError, sendText } from "./replies.js";
@@ -237,4 +244,80 @@ export async function addRecentBySid(
   } catch (err) {
     await sendError(channel, chatId, err);
   }
+}
+
+/**
+ * Handle `/ws <subcommand> [name]` — workspace save/use/list/remove.
+ * `arg` is everything after `/ws` (e.g. "save my-project").
+ */
+export async function handleWsCommand(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+  arg: string | undefined,
+): Promise<void> {
+  const m = messages("lark");
+  const parts = (arg ?? "").trim().split(/\s+/).filter(Boolean);
+  const sub = parts[0]?.toLowerCase();
+  const name = parts[1];
+
+  if (sub === "list") {
+    const all = listWorkspaces();
+    if (all.length === 0) {
+      await sendText(channel, chatId, m.wsListEmpty);
+      return;
+    }
+    const lines = [m.wsListTitle, ...all.map((w) => m.wsListItem(w.name, w.session))];
+    await sendText(channel, chatId, lines.join("\n"));
+    return;
+  }
+
+  if (sub === "save") {
+    if (!name || !WORKSPACE_NAME_RE.test(name)) {
+      await sendText(channel, chatId, name ? m.wsInvalidName : m.wsUsage);
+      return;
+    }
+    const session = await deps.currentProject.get("lark");
+    if (!session) {
+      await sendText(channel, chatId, m.wsNoCurrentProject);
+      return;
+    }
+    saveWorkspace(name, session);
+    await sendText(channel, chatId, m.wsSaved(name, session));
+    return;
+  }
+
+  if (sub === "use") {
+    if (!name || !WORKSPACE_NAME_RE.test(name)) {
+      await sendText(channel, chatId, name ? m.wsInvalidName : m.wsUsage);
+      return;
+    }
+    const session = getWorkspace(name);
+    if (!session) {
+      await sendText(channel, chatId, m.wsNotFound(name));
+      return;
+    }
+    if (!(await deps.bridge.hasSession(session))) {
+      await sendText(channel, chatId, m.wsSessionGone(name));
+      return;
+    }
+    await deps.currentProject.set("lark", session);
+    await sendText(channel, chatId, m.wsUsed(name));
+    return;
+  }
+
+  if (sub === "remove") {
+    if (!name || !WORKSPACE_NAME_RE.test(name)) {
+      await sendText(channel, chatId, name ? m.wsInvalidName : m.wsUsage);
+      return;
+    }
+    if (!removeWorkspace(name)) {
+      await sendText(channel, chatId, m.wsNotFound(name));
+      return;
+    }
+    await sendText(channel, chatId, m.wsRemoved(name));
+    return;
+  }
+
+  await sendText(channel, chatId, m.wsUsage);
 }

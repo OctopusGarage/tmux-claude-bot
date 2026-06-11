@@ -10,6 +10,7 @@ import { sendCard, sendText } from "./replies.js";
 import { resolveReplyTarget } from "./reply-target.js";
 import {
   addProject,
+  handleWsCommand,
   sendAliveList,
   sendCurrentProject,
   sendHistory,
@@ -131,6 +132,9 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             } else {
               await addProject(channel, deps, msg.chatId, parsed.arg);
             }
+            break;
+          case "ws":
+            await handleWsCommand(channel, deps, msg.chatId, parsed.arg);
             break;
         }
         break;

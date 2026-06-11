@@ -193,4 +193,18 @@ export const yue: Messages = {
   cmdStatus: "檢查狀態",
   cmdStart: "啟動 Claude",
   cmdHelp: "本說明",
+  cmdWs: "工作區管理（save/use/list/remove）",
+
+  // ── workspaces ──
+  wsSaved: (name, session) => `✅ 已儲存工作區「${name}」→ ${session}`,
+  wsUsed: (name) => `✅ 已切換至工作區「${name}」`,
+  wsRemoved: (name) => `✅ 已刪除工作區「${name}」`,
+  wsNotFound: (name) => `工作區「${name}」不存在`,
+  wsSessionGone: (name) => `工作區「${name}」對應的會話已不存在`,
+  wsNoCurrentProject: "沒有當前項目，請先用 /add_project 新增項目",
+  wsListEmpty: "暫無已儲存的工作區",
+  wsListTitle: "📎 工作區",
+  wsListItem: (name, session) => `• **${name}** → ${session}`,
+  wsInvalidName: "工作區名稱只允許字母、數字、連字符和底線（1-32 位）",
+  wsUsage: "用法：/ws <save <name> | use <name> | list | remove <name>>",
 };

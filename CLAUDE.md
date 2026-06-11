@@ -96,6 +96,25 @@ The project root directory name `tmux-claude-bot` is used as the process identit
 - `npm run dev` or `tsx src/index.ts` - Start development
 - Commands exposed via Telegram Bot menu
 
+## Coverage Threshold Protocol
+
+When the branch coverage threshold blocks a commit, follow this diagnostic order — don't jump straight to writing tests.
+
+**Step 1 — Is coverage simply missing?**
+Check the uncovered lines. If they're reachable logic (happy paths, error paths, conditional branches) with no corresponding test, write the test. This is the normal case.
+
+**Step 2 — Is the code itself the problem?**
+If a branch can only be covered by contorting the test setup, ask why. Common root causes:
+
+- **Dead defensive code**: a `?? fallback` on a value that's structurally always defined, or an `if (!x) return` guarding something the type system already guarantees. Remove the guard or simplify the expression.
+- **Over-coupled code**: a function that does too much, making individual branches hard to isolate. Extract the branch into a named function and test it directly.
+- **Untestable boundary**: a file that's mostly wiring (e.g. a bot framework's top-level handler registrations). Consider extracting the logic into a separately testable layer and leaving the wiring thin.
+
+**Step 3 — Is the threshold the problem?**
+If a file is genuinely an integration boundary (pure framework glue with no extractable logic), and force-covering it would produce meaningless tests, consult before adjusting the threshold — document the reasoning inline in `vitest.config.ts`.
+
+**The rule**: never write a test whose only purpose is to hit a line. Tests must assert behavior. If you can't assert anything meaningful, the test doesn't belong — the code does.
+
 ## Agent skills
 
 ### Issue tracker

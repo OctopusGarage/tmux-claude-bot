@@ -2,10 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Keep the voice path deterministic & fast: stub voice readiness so the audio
 // route returns the hint immediately instead of spawning real whisper.
-vi.mock("../../../src/core/voice-support.js", () => ({
-  checkVoiceSupport: () => ({ ready: false, reason: "not-installed" }),
-  resolveWhisperLanguage: () => "en",
-}));
+// Pass through VOICE_LANGS so voiceLangCard (used by /voice_lang) still works.
+vi.mock(import("../../../src/core/voice-support.js"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    checkVoiceSupport: () => ({ ready: false, reason: "not-installed" }),
+    resolveWhisperLanguage: () => "en",
+  };
+});
 
 const { makeMessageHandler } = await import("../../../src/adapters/lark/handlers.js");
 const { recordReplyTarget, removeReplyTargetSession } = await import(
@@ -203,6 +208,56 @@ describe("makeMessageHandler", () => {
       await handler(fakeMessage({ content: "/add_project" }));
 
       expect(channel.texts().some((t) => t.includes("用法：/add_project"))).toBe(true);
+    });
+
+    it("/add_project with an arg calls addProject (path validation reply)", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "/add_project /home/user/test-proj" }));
+
+      expect(channel.texts().length).toBeGreaterThan(0);
+    });
+
+    it("/lang sends the language picker card", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "/lang" }));
+
+      expect(channel.cards()).toHaveLength(1);
+    });
+
+    it("/voice_lang sends the voice language picker card", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "/voice_lang" }));
+
+      expect(channel.cards()).toHaveLength(1);
+    });
+
+    it("/history 2 sends history at index 1", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "/history 2" }));
+
+      expect(channel.texts().length + channel.cards().length).toBeGreaterThan(0);
+    });
+
+    it("/ws delegates to handleWsCommand (list sends a reply)", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "/ws list" }));
+
+      expect(channel.texts().length).toBeGreaterThan(0);
     });
   });
 

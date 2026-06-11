@@ -6,6 +6,7 @@ import { resolveReplyTarget } from "../../../src/adapters/lark/reply-target.js";
 import {
   addProject,
   addRecentBySid,
+  handleWsCommand,
   sendAliveList,
   sendCurrentProject,
   sendHistory,
@@ -418,5 +419,109 @@ describe("addProject path allow-listing", () => {
     expect(deps.bridge.createSession).not.toHaveBeenCalled();
     expect(deps.currentProject.set).toHaveBeenCalled();
     expect(channel.texts().some((t) => t.includes("已存在 · 已切换"))).toBe(true);
+  });
+});
+
+// ── handleWsCommand ────────────────────────────────────────────────────────────
+
+describe("handleWsCommand", () => {
+  let wsStateDir: string;
+  let origTCB: string | undefined;
+
+  beforeEach(() => {
+    wsStateDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-ws-"));
+    origTCB = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = wsStateDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(wsStateDir, { recursive: true, force: true });
+    if (origTCB === undefined) delete process.env.TCB_STATE_DIR;
+    else process.env.TCB_STATE_DIR = origTCB;
+  });
+
+  it("list → empty message when no workspaces saved", async () => {
+    const channel = fakeChannel();
+    await handleWsCommand(channel, fakeDeps(), "chat-1", "list");
+    expect(channel.texts().some((t) => t.includes("暂无"))).toBe(true);
+  });
+
+  it("save → stores current project under name", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: "proj-1" });
+    await handleWsCommand(channel, deps, "chat-1", "save my-ws");
+    expect(channel.texts().some((t) => t.includes("已保存工作区「my-ws」"))).toBe(true);
+  });
+
+  it("save → no current project → error", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: null });
+    await handleWsCommand(channel, deps, "chat-1", "save my-ws");
+    expect(channel.texts().some((t) => t.includes("无当前项目"))).toBe(true);
+  });
+
+  it("save → invalid name → error", async () => {
+    const channel = fakeChannel();
+    await handleWsCommand(channel, fakeDeps(), "chat-1", "save inv@lid!");
+    expect(channel.texts().some((t) => t.includes("仅允许"))).toBe(true);
+  });
+
+  it("use → switches to the saved session when alive", async () => {
+    const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+    saveWorkspace("my-ws", "proj-1");
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+    await handleWsCommand(channel, deps, "chat-1", "use my-ws");
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", "proj-1");
+    expect(channel.texts().some((t) => t.includes("已切换到工作区「my-ws」"))).toBe(true);
+  });
+
+  it("use → session gone → error", async () => {
+    const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+    saveWorkspace("gone-ws", "dead-session");
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => false) } });
+    await handleWsCommand(channel, deps, "chat-1", "use gone-ws");
+    expect(channel.texts().some((t) => t.includes("会话已不存在"))).toBe(true);
+  });
+
+  it("use → workspace not found → error", async () => {
+    const channel = fakeChannel();
+    await handleWsCommand(channel, fakeDeps(), "chat-1", "use no-such-ws");
+    expect(channel.texts().some((t) => t.includes("不存在"))).toBe(true);
+  });
+
+  it("remove → deletes saved workspace", async () => {
+    const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+    saveWorkspace("del-ws", "proj-x");
+    const channel = fakeChannel();
+    await handleWsCommand(channel, fakeDeps(), "chat-1", "remove del-ws");
+    expect(channel.texts().some((t) => t.includes("已删除工作区「del-ws」"))).toBe(true);
+  });
+
+  it("remove → not found → error", async () => {
+    const channel = fakeChannel();
+    await handleWsCommand(channel, fakeDeps(), "chat-1", "remove ghost");
+    expect(channel.texts().some((t) => t.includes("不存在"))).toBe(true);
+  });
+
+  it("unknown subcommand → usage hint", async () => {
+    const channel = fakeChannel();
+    await handleWsCommand(channel, fakeDeps(), "chat-1", "bogus");
+    expect(channel.texts().some((t) => t.includes("用法"))).toBe(true);
+  });
+
+  it("no arg → usage hint", async () => {
+    const channel = fakeChannel();
+    await handleWsCommand(channel, fakeDeps(), "chat-1", undefined);
+    expect(channel.texts().some((t) => t.includes("用法"))).toBe(true);
+  });
+
+  it("list → shows saved workspaces", async () => {
+    const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+    saveWorkspace("proj-a", "sess-a");
+    const channel = fakeChannel();
+    await handleWsCommand(channel, fakeDeps(), "chat-1", "list");
+    expect(channel.texts().some((t) => t.includes("proj-a"))).toBe(true);
   });
 });
