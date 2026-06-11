@@ -3,6 +3,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
+import { chatScope } from "../../core/project-manager.js";
 import {
   aliveProjectButtons,
   createProjectSession,
@@ -54,7 +55,7 @@ export async function sendAliveList(
   chatId: string,
 ): Promise<void> {
   try {
-    const buttons = await aliveProjectButtons(deps, "lark");
+    const buttons = await aliveProjectButtons(deps, chatScope("lark", chatId));
     await sendCard(channel, chatId, projectListCard(buttons));
   } catch (err) {
     await sendError(channel, chatId, err);
@@ -68,7 +69,7 @@ export async function sendRecentList(
   chatId: string,
 ): Promise<void> {
   try {
-    const buttons = await recentProjectButtons(deps, "lark");
+    const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
     await sendCard(channel, chatId, recentListCard(buttons));
   } catch (err) {
     await sendError(channel, chatId, err);
@@ -81,7 +82,7 @@ export async function sendPeek(
   deps: HandlerDeps,
   chatId: string,
 ): Promise<void> {
-  const session = await deps.currentProject.get("lark");
+  const session = await deps.currentProject.get(chatScope("lark", chatId));
   if (!session) {
     await sendText(channel, chatId, messages("lark").noCurrentProjectShort);
     return;
@@ -107,7 +108,7 @@ export async function sendHistory(
   chatId: string,
   index: number,
 ): Promise<void> {
-  const session = await deps.currentProject.get("lark");
+  const session = await deps.currentProject.get(chatScope("lark", chatId));
   if (!session) {
     await sendText(channel, chatId, messages("lark").noCurrentProjectShort);
     return;
@@ -154,7 +155,7 @@ export async function sendCurrentProject(
   deps: HandlerDeps,
   chatId: string,
 ): Promise<void> {
-  const session = await deps.currentProject.get("lark");
+  const session = await deps.currentProject.get(chatScope("lark", chatId));
   if (!session) {
     await sendText(channel, chatId, messages("lark").noCurrentProjectShort);
     return;
@@ -197,13 +198,13 @@ export async function addProject(
   const sessionName = sessionNameFromPath(resolvedPath, deps.config.projectSessionPrefix);
   try {
     if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set("lark", sessionName);
+      await deps.currentProject.set(chatScope("lark", chatId), sessionName);
       setPathForSession(sessionName, resolvedPath);
       await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
       await sendText(channel, chatId, messages("lark").alreadySwitched);
       return;
     }
-    await createProjectSession(deps, "lark", sessionName, resolvedPath);
+    await createProjectSession(deps, chatScope("lark", chatId), sessionName, resolvedPath);
     await sendText(channel, chatId, messages("lark").projectCreatedPath(resolvedPath));
   } catch (err) {
     await sendError(channel, chatId, err);
@@ -231,7 +232,7 @@ export async function addRecentBySid(
   const sessionName = sessionNameFromPath(projectPath, prefix);
   try {
     if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set("lark", sessionName);
+      await deps.currentProject.set(chatScope("lark", chatId), sessionName);
       await sendText(channel, chatId, messages("lark").switched);
       return;
     }
@@ -239,7 +240,7 @@ export async function addRecentBySid(
       await sendText(channel, chatId, messages("lark").pathNotAllowedPath(projectPath));
       return;
     }
-    await createProjectSession(deps, "lark", sessionName, projectPath);
+    await createProjectSession(deps, chatScope("lark", chatId), sessionName, projectPath);
     await sendText(channel, chatId, messages("lark").projectCreatedPath(projectPath));
   } catch (err) {
     await sendError(channel, chatId, err);
@@ -277,7 +278,7 @@ export async function handleWsCommand(
       await sendText(channel, chatId, name ? m.wsInvalidName : m.wsUsage);
       return;
     }
-    const session = await deps.currentProject.get("lark");
+    const session = await deps.currentProject.get(chatScope("lark", chatId));
     if (!session) {
       await sendText(channel, chatId, m.wsNoCurrentProject);
       return;
@@ -301,7 +302,7 @@ export async function handleWsCommand(
       await sendText(channel, chatId, m.wsSessionGone(name));
       return;
     }
-    await deps.currentProject.set("lark", session);
+    await deps.currentProject.set(chatScope("lark", chatId), session);
     await sendText(channel, chatId, m.wsUsed(name));
     return;
   }

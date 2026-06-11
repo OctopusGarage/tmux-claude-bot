@@ -3,6 +3,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import type { MessageAction } from "../../core/dispatch.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
+import { chatScope } from "../../core/project-manager.js";
 import {
   botSelfRepoWarning,
   removeProjectBySession,
@@ -123,9 +124,9 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     if (cmd === "switch" && value?.sid) {
       const session = await resolveAliveSessionByShortId(deps, value.sid);
       if (session) {
-        await switchToProject(deps, "lark", session);
+        await switchToProject(deps, chatScope("lark", evt.chatId), session);
         const path = getPathBySession(session) ?? undefined;
-        const warn = botSelfRepoWarning(path, "lark");
+        const warn = botSelfRepoWarning(path, chatScope("lark", evt.chatId));
         await sendText(
           channel,
           evt.chatId,

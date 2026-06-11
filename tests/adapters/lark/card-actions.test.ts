@@ -131,7 +131,7 @@ describe("makeCardActionHandler", () => {
 
     await handler(evt({ cmd: "switch", sid }));
 
-    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", session);
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark:chat-1", session);
     expect(channel.texts().some((t) => t.includes("已切换"))).toBe(true);
   });
 

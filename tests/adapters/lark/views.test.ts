@@ -288,7 +288,7 @@ describe("addRecentBySid", () => {
     const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
     const sid = sessionShortId(sessionName);
     await addRecentBySid(channel, deps, "chat-1", sid);
-    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", sessionName);
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark:chat-1", sessionName);
     expect(channel.texts().some((t) => t.includes("已切换"))).toBe(true);
   });
 
@@ -472,7 +472,7 @@ describe("handleWsCommand", () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
     await handleWsCommand(channel, deps, "chat-1", "use my-ws");
-    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", "proj-1");
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark:chat-1", "proj-1");
     expect(channel.texts().some((t) => t.includes("已切换到工作区「my-ws」"))).toBe(true);
   });
 

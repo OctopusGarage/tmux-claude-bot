@@ -4,6 +4,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage, type MessageAction } from "../../core/dispatch.js";
 import { messages } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
+import { chatScope } from "../../core/project-manager.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -24,7 +25,7 @@ async function resolveSession(
   chatId: string,
   sessionOverride?: string,
 ): Promise<string | null> {
-  const session = sessionOverride ?? (await deps.currentProject.get("lark"));
+  const session = sessionOverride ?? (await deps.currentProject.get(chatScope("lark", chatId)));
   if (!session) {
     // No "/" discovery on Feishu — give buttons (projects/recent via the panel)
     // instead of a text hint pointing at commands they'd have to type.

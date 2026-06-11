@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
+import { chatScope } from "../../core/project-manager.js";
 import { transcribeOgg } from "../../core/transcriber.js";
 import {
   checkVoiceSupport,
@@ -192,7 +193,7 @@ export function registerVoiceHandler<TContext extends Context>(
 
     logger.info(`[voice-handler] transcribed len=${transcribed.length}`);
 
-    const fallbackSession = await deps.currentProject.get("telegram");
+    const fallbackSession = await deps.currentProject.get(chatScope("telegram", String(chatId)));
     const currentSession = resolveSessionForMessage(
       msg.reply_to_message?.message_id,
       replyTarget,
