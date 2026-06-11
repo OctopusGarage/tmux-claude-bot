@@ -21,6 +21,12 @@ export default defineConfig({
         "src/core/i18n/catalog/**",
         "src/core/i18n/setup.ts",
       ],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 74, // current ~74%; raise toward 80 as branch coverage improves
+        statements: 80,
+      },
     },
   },
 });
