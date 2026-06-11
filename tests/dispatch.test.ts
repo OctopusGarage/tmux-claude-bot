@@ -60,7 +60,7 @@ describe("executeMessage — control actions", () => {
     expect(d.claude.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1");
   });
 
-  it("esc interrupts; interrupt sends Ctrl-C; enter/up/down send raw keys", async () => {
+  it("esc interrupts; interrupt sends Ctrl-C; enter/up/down/tab send raw keys", async () => {
     const d = deps();
     expect(await executeMessage(msg("esc"), d)).toBe("✅ 已发送 Esc");
     expect(d.claude.interrupt).toHaveBeenCalledWith("proj-1");
@@ -72,6 +72,8 @@ describe("executeMessage — control actions", () => {
     expect(await executeMessage(msg("down"), d)).toBe("✅ 已发送 ↓");
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Up", "proj-1");
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Down", "proj-1");
+    expect(await executeMessage(msg("tab"), d)).toBe("✅ 已发送 Tab");
+    expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Tab", "proj-1");
   });
 
   it("clear/compact send the slash commands to the pane", async () => {

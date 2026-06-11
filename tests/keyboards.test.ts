@@ -126,6 +126,7 @@ describe("buildExpandedControlKeyboard", () => {
     expect(datas).toContain("a:compact:abc123");
     expect(datas).toContain("a:up:abc123");
     expect(datas).toContain("a:down:abc123");
+    expect(datas).toContain("a:tab:abc123");
     expect(datas).toContain("a:exit:abc123");
     // view actions
     expect(datas).toContain("pk:abc123"); // peek
