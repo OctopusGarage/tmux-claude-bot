@@ -110,3 +110,54 @@ describe("CurrentProjectManager (per-channel)", () => {
     expect(await new CurrentProjectManager(tempDir).get("telegram")).toBe(name);
   });
 });
+
+/**
+ * Upgrade path: pre-scope-refactor state files hold bare channel keys
+ * ("telegram", "lark"). Scoped reads must fall back to them so a deploy
+ * doesn't make every chat forget its current project (and the stale legacy
+ * key must retire on the first scoped write, or the alive list keeps
+ * marking the old project as ✅ current forever).
+ */
+describe("legacy bare-channel key migration", () => {
+  let tempDir: string;
+  let manager: CurrentProjectManager;
+  const file = (): string => path.join(tempDir, ".current_project");
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "current-project-legacy-"));
+    manager = new CurrentProjectManager(tempDir);
+  });
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("scoped get falls back to the legacy bare-channel key", async () => {
+    fs.writeFileSync(file(), JSON.stringify({ telegram: "sess_legacy" }));
+    expect(await manager.get("telegram:123")).toBe("sess_legacy");
+  });
+
+  it("scoped key wins over the legacy key once set", async () => {
+    fs.writeFileSync(file(), JSON.stringify({ telegram: "sess_legacy" }));
+    await manager.set("telegram:123", "sess_new");
+    expect(await manager.get("telegram:123")).toBe("sess_new");
+  });
+
+  it("a scoped set retires the legacy key (no resurrection after clear)", async () => {
+    fs.writeFileSync(file(), JSON.stringify({ telegram: "sess_legacy" }));
+    await manager.set("telegram:123", "sess_new");
+    await manager.clear("telegram:123");
+    expect(await manager.get("telegram:123")).toBeNull();
+    // The other channel's legacy key is untouched.
+    expect(await manager.get("lark:oc_x")).toBeNull();
+  });
+
+  it("legacy fallback never leaks across channels", async () => {
+    fs.writeFileSync(file(), JSON.stringify({ telegram: "sess_tg" }));
+    expect(await manager.get("lark:oc_x")).toBeNull();
+  });
+
+  it("bare-channel reads keep working (no fallback loop)", async () => {
+    fs.writeFileSync(file(), JSON.stringify({ telegram: "sess_legacy" }));
+    expect(await manager.get("telegram")).toBe("sess_legacy");
+  });
+});
