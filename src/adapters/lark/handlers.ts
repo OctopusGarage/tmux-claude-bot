@@ -45,18 +45,29 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
   // quick sends lands in Claude as ONE prompt. Scope includes the reply
   // target — replies routed to different sessions must never merge.
   // Commands and voice bypass this (parsed before reaching the queue).
-  const pendingTexts = new PendingQueue<PendingText>(TEXT_DEBOUNCE_MS, async (_scope, batch) => {
+  //
+  // While a flushed batch is running, the scope is blocked: texts sent during
+  // the run accumulate and land as ONE follow-up prompt when it settles,
+  // instead of one Claude turn per message.
+  const pendingTexts = new PendingQueue<PendingText>(TEXT_DEBOUNCE_MS, async (scope, batch) => {
     const first = batch[0];
     const text = batch.map((b) => b.text).join("\n");
-    await enqueueLarkAction(
-      channel,
-      deps,
-      first.chatId,
-      first.messageId,
-      "text",
-      text,
-      first.replySession,
-    );
+    pendingTexts.block(scope);
+    try {
+      await enqueueLarkAction(
+        channel,
+        deps,
+        first.chatId,
+        first.messageId,
+        "text",
+        text,
+        first.replySession,
+        () => pendingTexts.unblock(scope),
+      );
+    } catch (err) {
+      pendingTexts.unblock(scope); // never leave the scope jammed
+      throw err;
+    }
   });
 
   return async (msg: NormalizedMessage): Promise<void> => {

@@ -83,9 +83,32 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       await deps.bridge.sendKeys(msg.text, session);
       logger.info(`[executor] keys sent, waiting for done session=${session}`);
 
+      // Wait in maxWaitDoneMs rounds up to maxWaitDoneTotalMs total. The first
+      // expired round sends a one-time "still running" notice (when the adapter
+      // provided a notify channel) and waiting continues — so long tasks resolve
+      // with their real result instead of a partial snapshot, and nothing gets
+      // typed into a still-busy pane. Past the horizon, give up with partials.
       let rawResult: string;
       try {
-        rawResult = await deps.claude.waitUntilDone(session, msg.channel ?? "telegram");
+        let round = await deps.claude.waitUntilDone(session);
+        let waitedMs = deps.config.maxWaitDoneMs;
+        let noticed = false;
+        while (!round.done && waitedMs < deps.config.maxWaitDoneTotalMs) {
+          if (!noticed) {
+            msg.notify?.(m.taskStillRunningNotice);
+            noticed = true;
+          }
+          logger.info(
+            `[executor] still running session=${session} waited=${waitedMs}ms, continuing to wait`,
+          );
+          round = await deps.claude.waitUntilDone(session);
+          waitedMs += deps.config.maxWaitDoneMs;
+        }
+        if (!round.done) {
+          logger.warn(`[executor] gave up waiting session=${session} after ${waitedMs}ms`);
+          return m.taskStillRunning(deps.output.process(round.output));
+        }
+        rawResult = round.output;
       } catch (err) {
         logger.error(
           `[executor] waitUntilDone failed: ${err instanceof Error ? err.message : err}`,

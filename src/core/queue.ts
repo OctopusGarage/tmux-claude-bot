@@ -13,6 +13,9 @@ export type QueuedMessage = {
   action: string;
   resolve: (output: string) => void;
   reject: (err: Error) => void;
+  /** Optional interim-progress channel: sends a message to the chat while the
+   * run is still in flight (resolve/reject remain the one-shot finale). */
+  notify?: ((text: string) => void) | undefined;
 };
 
 export type PersistedMessage = {
@@ -134,12 +137,16 @@ export class MessageQueue {
     return false;
   }
 
-  enqueue(msg: QueuedMessage): boolean {
+  /** "queued" and "duplicate" are both truthy (callers that only check
+   * success need no change), but a deduped message is dropped without ever
+   * firing resolve/reject — callers holding resources tied to settlement
+   * (e.g. a blocked debounce scope) must release them on "duplicate". */
+  enqueue(msg: QueuedMessage): "queued" | "duplicate" | false {
     if (msg.action === "text" && this.hasDuplicateText(msg.chatId, msg.text)) {
       logger.info(
         `[queue] dedup: skipping identical text from chatId=${msg.chatId} session=${msg.sessionName ?? "global"}`,
       );
-      return true;
+      return "duplicate";
     }
 
     if (msg.sessionName) {
@@ -166,7 +173,7 @@ export class MessageQueue {
       this.persist();
       void this.processGlobal();
     }
-    return true;
+    return "queued";
   }
 
   isEmpty(): boolean {

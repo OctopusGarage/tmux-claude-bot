@@ -383,9 +383,9 @@ describe("MessageQueue", () => {
       });
 
       // processSession removes msg1 immediately, queue becomes empty
-      expect(queue.enqueue(createTestMessage({ id: "1", text: "a" }))).toBe(true);
+      expect(queue.enqueue(createTestMessage({ id: "1", text: "a" }))).toBe("queued");
       // queue is empty, msg2 can enter
-      expect(queue.enqueue(createTestMessage({ id: "2", text: "b" }))).toBe(true);
+      expect(queue.enqueue(createTestMessage({ id: "2", text: "b" }))).toBe("queued");
       // queue now has msg2, msg3 is rejected
       expect(queue.enqueue(createTestMessage({ id: "3", text: "c" }))).toBe(false);
     });
@@ -398,10 +398,10 @@ describe("MessageQueue", () => {
       });
 
       expect(queue.enqueue(createTestMessage({ id: "1", text: "a", sessionName: undefined }))).toBe(
-        true,
+        "queued",
       );
       expect(queue.enqueue(createTestMessage({ id: "2", text: "b", sessionName: undefined }))).toBe(
-        true,
+        "queued",
       );
       expect(queue.enqueue(createTestMessage({ id: "3", text: "c", sessionName: undefined }))).toBe(
         false,
@@ -416,13 +416,13 @@ describe("MessageQueue", () => {
       });
 
       // s1 at capacity
-      expect(queue.enqueue(createTestMessage({ id: "1", text: "a" }))).toBe(true);
-      expect(queue.enqueue(createTestMessage({ id: "2", text: "b" }))).toBe(true);
+      expect(queue.enqueue(createTestMessage({ id: "1", text: "a" }))).toBe("queued");
+      expect(queue.enqueue(createTestMessage({ id: "2", text: "b" }))).toBe("queued");
       expect(queue.enqueue(createTestMessage({ id: "3", text: "c" }))).toBe(false);
 
       // s2 still has room
       expect(queue.enqueue(createTestMessage({ id: "4", text: "d", sessionName: "s2" }))).toBe(
-        true,
+        "queued",
       );
     });
   });
@@ -647,6 +647,27 @@ describe("MessageQueue", () => {
       expect(queue.size("s1")).toBe(1);
       queue.enqueue(mkTextMsg("2", "hello", 42)); // duplicate → deduped
       expect(queue.size("s1")).toBe(1);
+
+      releaseBlocker();
+    });
+
+    it("reports dedup distinctly: 'queued' vs 'duplicate' (both truthy)", async () => {
+      const queue = new MessageQueue(10);
+      let releaseBlocker!: () => void;
+      queue.setHandler(async (msg) => {
+        if (msg.id === "0")
+          await new Promise<void>((r) => {
+            releaseBlocker = r;
+          });
+        msg.resolve("ok");
+      });
+      queue.enqueue(mkBlocker());
+      await waitFor(() => queue.isSessionProcessing("s1"));
+
+      // Callers that only truthy-check keep working; callers that must release
+      // resources (a deduped message NEVER resolves/rejects) can tell them apart.
+      expect(queue.enqueue(mkTextMsg("1", "hello", 42))).toBe("queued");
+      expect(queue.enqueue(mkTextMsg("2", "hello", 42))).toBe("duplicate");
 
       releaseBlocker();
     });

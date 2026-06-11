@@ -136,6 +136,7 @@ export const yue: Messages = {
   processing: "處理中",
   failed: "失敗",
   taskStillRunning: (body) => `⏳ 任務仍在進行中，請稍後用 /peek 查看當前結果\n\n${body}`,
+  taskStillRunningNotice: "⏳ 任務仍在進行中，完成後會自動推送結果 · /peek 查看當前畫面",
   voiceDownloadFailed: "語音下載失敗 · 網絡波動,請重試",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time) =>

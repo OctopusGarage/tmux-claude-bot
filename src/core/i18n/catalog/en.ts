@@ -135,6 +135,8 @@ export const en: Messages = {
   processing: "Working",
   failed: "Failed",
   taskStillRunning: (body) => `⏳ Task still running · /peek to see the current result\n\n${body}`,
+  taskStillRunningNotice:
+    "⏳ Still running — the result will be pushed automatically when it finishes · /peek for a live look",
   voiceDownloadFailed: "Voice download failed · network hiccup, please retry",
   historyYou: "🧑‍💻 You",
   crashRecovered: (time) =>

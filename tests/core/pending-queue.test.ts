@@ -80,6 +80,71 @@ describe("PendingQueue", () => {
     expect(flushed).toEqual([["a"], ["b"]]);
   });
 
+  it("block() pauses the quiet window: no flush while blocked", async () => {
+    const flushed: string[][] = [];
+    const q = new PendingQueue<string>(DELAY, (_scope, batch) => {
+      flushed.push([...batch]);
+    });
+
+    q.block("s");
+    q.push("s", "a");
+    q.push("s", "b");
+    await vi.advanceTimersByTimeAsync(DELAY * 3);
+    expect(flushed).toEqual([]);
+  });
+
+  it("block() cancels an already-armed timer", async () => {
+    const flushed: string[][] = [];
+    const q = new PendingQueue<string>(DELAY, (_scope, batch) => {
+      flushed.push([...batch]);
+    });
+
+    q.push("s", "a"); // arms the timer
+    q.block("s"); // run started before the window elapsed
+    await vi.advanceTimersByTimeAsync(DELAY * 3);
+    expect(flushed).toEqual([]);
+  });
+
+  it("unblock() arms a fresh window and flushes the accumulated batch as one", async () => {
+    const flushed: string[][] = [];
+    const q = new PendingQueue<string>(DELAY, (_scope, batch) => {
+      flushed.push([...batch]);
+    });
+
+    q.block("s");
+    q.push("s", "a");
+    q.push("s", "b");
+    q.unblock("s");
+    expect(flushed).toEqual([]); // fresh quiet window, not an immediate flush
+    await vi.advanceTimersByTimeAsync(DELAY);
+    expect(flushed).toEqual([["a", "b"]]);
+  });
+
+  it("unblock() with nothing accumulated is a no-op", async () => {
+    const flushed: string[][] = [];
+    const q = new PendingQueue<string>(DELAY, (_scope, batch) => {
+      flushed.push([...batch]);
+    });
+
+    q.block("s");
+    q.unblock("s");
+    await vi.advanceTimersByTimeAsync(DELAY * 2);
+    expect(flushed).toEqual([]);
+  });
+
+  it("block() only affects its own scope", async () => {
+    const flushed: Array<[string, string[]]> = [];
+    const q = new PendingQueue<string>(DELAY, (scope, batch) => {
+      flushed.push([scope, [...batch]]);
+    });
+
+    q.block("busy");
+    q.push("busy", "a");
+    q.push("idle", "x");
+    await vi.advanceTimersByTimeAsync(DELAY);
+    expect(flushed).toEqual([["idle", ["x"]]]);
+  });
+
   it("an async flush handler rejection is logged, not unhandled", async () => {
     const q = new PendingQueue<string>(DELAY, async () => {
       throw new Error("boom");

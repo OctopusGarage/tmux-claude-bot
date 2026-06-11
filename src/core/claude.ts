@@ -1,8 +1,6 @@
 import { logger } from "../shared/utils/logger.js";
 import type { ConfigResolver } from "./claude-config-resolver.js";
-import { messages } from "./i18n/index.js";
 import type { OutputProcessor } from "./output.js";
-import type { Channel } from "./project-manager.js";
 import type { TmuxBridge } from "./tmux.js";
 
 export type ClaudeRunnerOptions = {
@@ -109,7 +107,12 @@ export class ClaudeRunner {
     throw new Error("Claude did not become ready in time");
   }
 
-  async waitUntilDone(sessionName?: string, channel?: Channel): Promise<string> {
+  /**
+   * Poll the pane until it is stable for `idlePollTicks` consecutive polls
+   * (done) or `maxWaitDoneMs` elapses (one waiting round exhausted — the task
+   * may well still be running; callers decide whether to keep waiting).
+   */
+  async waitUntilDone(sessionName?: string): Promise<{ done: boolean; output: string }> {
     let identicalCount = 0;
     let lastContent = "";
     const maxIterations = Math.ceil(this.maxWaitDoneMs / this.pollIntervalMs);
@@ -145,7 +148,7 @@ export class ClaudeRunner {
           logger.info(
             `[claude] waitUntilDone session=${sess} idle detected after ${i} iterations, output_len=${processed.length}`,
           );
-          return processed;
+          return { done: true, output: processed };
         }
       } else {
         if (identicalCount > 0) {
@@ -160,12 +163,12 @@ export class ClaudeRunner {
       await this.sleep(this.pollIntervalMs);
     }
 
-    // Timeout - return what we have with a notice
+    // Round exhausted — hand back what we have; the caller owns the messaging.
     const processed = this.output.process(lastContent);
     logger.warn(
       `[claude] waitUntilDone session=${sess} TIMEOUT after ${maxIterations} iterations, output_len=${processed.length}`,
     );
-    return messages(channel ?? "telegram").taskStillRunning(processed);
+    return { done: false, output: processed };
   }
 
   async interrupt(sessionName?: string): Promise<void> {

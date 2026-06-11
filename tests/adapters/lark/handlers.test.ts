@@ -121,6 +121,78 @@ describe("makeMessageHandler", () => {
     }
   });
 
+  it("texts sent during an active run accumulate and land as ONE follow-up prompt", async () => {
+    vi.useFakeTimers();
+    try {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      // First message flushes and starts a run (resolve not called yet).
+      await handler(fakeMessage({ content: "kick off" }));
+      await vi.advanceTimersByTimeAsync(600);
+      expect(deps.queue.enqueued).toHaveLength(1);
+
+      // Messages during the run must NOT flush, however long it takes.
+      await handler(fakeMessage({ content: "also check tests" }));
+      await vi.advanceTimersByTimeAsync(1800);
+      await handler(fakeMessage({ content: "and update docs" }));
+      await vi.advanceTimersByTimeAsync(1800);
+      expect(deps.queue.enqueued).toHaveLength(1);
+
+      // Run ends → fresh quiet window → one merged follow-up prompt.
+      deps.queue.resolveLast("done");
+      await vi.advanceTimersByTimeAsync(600);
+      expect(deps.queue.enqueued).toHaveLength(2);
+      expect(deps.queue.enqueued[1]?.text).toBe("also check tests\nand update docs");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a rejected run also unblocks the debounce window", async () => {
+    vi.useFakeTimers();
+    try {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "kick off" }));
+      await vi.advanceTimersByTimeAsync(600);
+      expect(deps.queue.enqueued).toHaveLength(1);
+
+      await handler(fakeMessage({ content: "follow up" }));
+      deps.queue.rejectLast(new Error("claude died"));
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect(deps.queue.enqueued).toHaveLength(2);
+      expect(deps.queue.enqueued[1]?.text).toBe("follow up");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a flush with no current session does not jam later messages", async () => {
+    vi.useFakeTimers();
+    try {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ session: null });
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "first" }));
+      await vi.advanceTimersByTimeAsync(600);
+      const cardsAfterFirst = channel.cards().length;
+      expect(cardsAfterFirst).toBeGreaterThan(0); // recovery card
+
+      // The early-return path must not leave the scope blocked forever.
+      await handler(fakeMessage({ content: "second" }));
+      await vi.advanceTimersByTimeAsync(600);
+      expect(channel.cards().length).toBeGreaterThan(cardsAfterFirst);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores blank text (no enqueue)", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();

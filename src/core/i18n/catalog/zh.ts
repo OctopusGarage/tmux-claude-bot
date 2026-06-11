@@ -151,6 +151,7 @@ export const zh = {
   processing: "处理中",
   failed: "失败",
   taskStillRunning: (body: string) => `⏳ 任务仍在进行中，请稍后通过 /peek 查看当前结果\n\n${body}`,
+  taskStillRunningNotice: "⏳ 任务仍在进行中，完成后会自动推送结果 · /peek 查看当前画面",
   voiceDownloadFailed: "语音下载失败 · 网络波动,请重试",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time: string) =>

@@ -118,7 +118,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     },
     enqueue: vi.fn((msg: QueuedMessage) => {
       enqueued.push(msg);
-      return overrides.queueFull ? undefined : msg;
+      return overrides.queueFull ? false : "queued";
     }),
     size: vi.fn(() => overrides.queueSize ?? 0),
     getMaxSize: vi.fn(() => 30),
@@ -158,7 +158,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
 
   const claude = {
     checkIfRunning: vi.fn(async () => true),
-    waitUntilDone: vi.fn(async () => "done"),
+    waitUntilDone: vi.fn(async () => ({ done: true, output: "done" })),
     ...overrides.claude,
   } as unknown as HandlerDeps["claude"];
 

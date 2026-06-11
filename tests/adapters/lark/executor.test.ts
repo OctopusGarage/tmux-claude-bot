@@ -70,6 +70,20 @@ describe("enqueueLarkAction", () => {
     expect(channel.texts().some((t) => t.includes("started"))).toBe(true);
   });
 
+  it("the enqueued message carries a notify channel that sends plain text", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await enqueueLarkAction(channel, deps, "chat-1", "msg-1", "text", "hi");
+
+    const queuedMsg = deps.queue.enqueued[0];
+    expect(queuedMsg?.notify).toBeTypeOf("function");
+    queuedMsg?.notify?.("⏳ 仍在运行");
+    await vi.waitFor(() =>
+      expect(channel.texts().some((t) => t.includes("⏳ 仍在运行") && t.includes("📂"))).toBe(true),
+    );
+  });
+
   it("uses sessionOverride instead of the current project", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ session: "proj-current" });
