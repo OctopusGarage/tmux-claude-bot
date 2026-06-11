@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
+import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
 import { stateFile } from "./state-dir.js";
 
 // Resolve to project root so bot and claude-tmux.ts share the same file regardless
@@ -23,7 +24,7 @@ export function loadSessionPathMap(): Record<string, string> {
 }
 
 export function saveSessionPathMap(map: Record<string, string>): void {
-  fs.writeFileSync(sessionPathMapFile(), JSON.stringify(map, null, 2), "utf-8");
+  writeFileAtomicSync(sessionPathMapFile(), JSON.stringify(map, null, 2));
 }
 
 export function getPathBySession(sessionName: string): string | null {

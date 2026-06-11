@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import * as nodePath from "node:path";
+import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
 import { stateFile } from "./state-dir.js";
 
 function workspacesFile(): string {
@@ -20,9 +20,7 @@ function readMap(): WorkspaceMap {
 }
 
 function writeMap(map: WorkspaceMap): void {
-  const file = workspacesFile();
-  fs.mkdirSync(nodePath.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(map, null, 2)}\n`, "utf-8");
+  writeFileAtomicSync(workspacesFile(), `${JSON.stringify(map, null, 2)}\n`);
 }
 
 /** Save the current session under a friendly name. Overwrites any prior mapping. */
