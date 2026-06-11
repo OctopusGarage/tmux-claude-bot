@@ -42,6 +42,7 @@ export const en: Messages = {
   btnCompact: "🗜 compact",
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
+  btnTab: "⇥ Tab",
   btnStatus: "📊 Status",
   btnStart: "🚀 Start",
   btnExit: "🚪 Exit",
@@ -77,6 +78,7 @@ export const en: Messages = {
   sentEnter: "✅ Sent Enter",
   sentUp: "✅ Sent ↑",
   sentDown: "✅ Sent ↓",
+  sentTab: "✅ Sent Tab",
   statusRunning: "🟢 Claude running",
   statusNotRunning: "🔴 Claude not running",
 
@@ -157,56 +159,39 @@ export const en: Messages = {
     `🎙️ Recognition language set to ${lang === "auto" ? "auto-detect" : lang} · next voice message`,
   voiceLangInvalid: "🎙️ Usage: /voice_lang <en|zh|yue|auto or a 2-3 letter code>",
 
-  helpBodyTelegram: `🤖 tmux-claude-bot
+  helpIntroTelegram: `🤖 tmux-claude-bot
 
 Send any text → forwarded to Claude → reply
 🎙️ Voice transcription is optional · /voice_install to enable (Apple Silicon only) · /voice_lang to set the language
 
-Tip: messages get 👀 (received) / 👍 (done) reactions; progress shows in place and is edited into the result; the result has ⏎/✋/⎋/🔄 shortcut buttons below it.
+Tip: messages get 👀 (received) / 👍 (done) reactions; progress shows in place and is edited into the result; the result has ⏎/✋/⎋/🔄 shortcut buttons below it.`,
 
-━━ 📂 Projects ━━
-/current_project — current project
-/list_alive_projects — active projects (tap to switch/delete)
-/list_recent_projects — recent projects
-/add_project <path> — create a project
-/queue_status — queue status
-/history [N] — conversation history (latest by default)
+  helpIntroLark: `🤖 tmux-claude (Lark)
 
-━━ ⚡ Claude running ━━
-/enter — Enter    /esc — Escape
-/interrupt — Ctrl-C    /restart — restart (--continue)
-/clear — clear context    /compact — compact context
-/up · /down — arrow keys    /exit — exit
+Send any text → forwarded to Claude → reply`,
 
-━━ 🚀 Not running ━━
-/start — start Claude
-/peek — view the tmux pane
-/status — check status
-/help — this help`,
+  helpSectionProjects: "📂 Projects",
+  helpSectionRunning: "⚡ Running",
+  helpSectionIdle: "🚀 Not running",
 
-  helpBodyLark: `🤖 tmux-claude (Lark)
-
-Send any text → forwarded to Claude → reply
-
-━━ 📂 Projects ━━
-/current_project — current project
-/list_alive_projects — active projects (tap to switch/delete)
-/list_recent_projects — recent projects
-/add_project <path> — create a project
-/queue_status — queue status
-/history [N] — conversation history (latest by default)
-/peek — view the tmux pane
-/voice_lang — voice recognition language (en/zh/yue/auto)
-/lang — interface language (en/zh/yue)
-
-━━ ⚡ Running ━━
-/enter — Enter   /esc — Escape
-/interrupt — Ctrl-C   /restart — restart
-/clear — clear context   /compact — compact
-/up · /down — arrow keys   /exit — exit
-/status — status
-
-━━ 🚀 Not running ━━
-/start — start Claude
-/help — this help`,
+  cmdCurrentProject: "current project",
+  cmdListAlive: "active projects (tap to switch/delete)",
+  cmdListRecent: "recent projects",
+  cmdAddProject: "create a project",
+  cmdQueueStatus: "queue status",
+  cmdHistory: "conversation history (latest by default)",
+  cmdPeek: "view the tmux pane",
+  cmdVoiceLang: "voice recognition language (en/zh/yue/auto)",
+  cmdLang: "interface language (en/zh/yue)",
+  cmdEnter: "Enter",
+  cmdEsc: "Escape",
+  cmdInterrupt: "Ctrl-C",
+  cmdRestart: "restart (--continue)",
+  cmdClear: "clear context",
+  cmdCompact: "compact context",
+  cmdArrowsTab: "arrow keys / Tab",
+  cmdExit: "exit",
+  cmdStatus: "check status",
+  cmdStart: "start Claude",
+  cmdHelp: "this help",
 };

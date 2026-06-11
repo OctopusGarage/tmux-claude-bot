@@ -42,6 +42,11 @@ describe("parseLarkInput", () => {
     expect(result).toEqual({ kind: "command", action: "down", immediate: true });
   });
 
+  it("/tab → immediate command", () => {
+    const result = parseLarkInput("/tab");
+    expect(result).toEqual({ kind: "command", action: "tab", immediate: true });
+  });
+
   it("/enter → immediate command", () => {
     const result = parseLarkInput("/enter");
     expect(result).toEqual({ kind: "command", action: "enter", immediate: true });

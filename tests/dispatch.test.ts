@@ -60,7 +60,7 @@ describe("executeMessage — control actions", () => {
     expect(d.claude.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1");
   });
 
-  it("esc interrupts; interrupt sends Ctrl-C; enter/up/down send raw keys", async () => {
+  it("esc interrupts; interrupt sends Ctrl-C; enter/up/down/tab send raw keys", async () => {
     const d = deps();
     expect(await executeMessage(msg("esc"), d)).toBe("✅ 已发送 Esc");
     expect(d.claude.interrupt).toHaveBeenCalledWith("proj-1");
@@ -72,6 +72,8 @@ describe("executeMessage — control actions", () => {
     expect(await executeMessage(msg("down"), d)).toBe("✅ 已发送 ↓");
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Up", "proj-1");
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Down", "proj-1");
+    expect(await executeMessage(msg("tab"), d)).toBe("✅ 已发送 Tab");
+    expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Tab", "proj-1");
   });
 
   it("clear/compact send the slash commands to the pane", async () => {
@@ -95,6 +97,13 @@ describe("executeMessage — control actions", () => {
       "Claude 未运行",
     );
     expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("throws for an unknown action (isMessageAction returns false)", async () => {
+    const bad = { ...msg("text"), action: "bogus-unknown" };
+    await expect(
+      executeMessage(bad as Parameters<typeof executeMessage>[0], deps()),
+    ).rejects.toThrow("Unknown action");
   });
 });
 
@@ -175,5 +184,54 @@ describe("executeMessage — text action with history", () => {
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "another unmatched prompt abc" }), d);
     expect(out).toBe("Claude 返回空内容 · 用 /peek 查看画面");
+  });
+
+  it("falls back to capturePane when waitUntilDone throws", async () => {
+    const d = fakeDeps({
+      claude: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilDone: vi.fn(async () => {
+          throw new Error("done failed");
+        }),
+      } as never,
+      bridge: {
+        capturePane: vi.fn(async () => "PANE_FALLBACK"),
+        sendKeys: vi.fn(async () => {}),
+        sendExit: vi.fn(async () => {}),
+        sendRawKey: vi.fn(async () => {}),
+        createSession: vi.fn(async () => {}),
+        killSession: vi.fn(async () => {}),
+        hasSession: vi.fn(async () => false),
+        listProjectSessions: vi.fn(async () => []),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+    const out = await executeMessage(msg("text", { text: "fallback pane test xyz" }), d);
+    expect(out).toBe("PANE_FALLBACK");
+  });
+
+  it("rethrows when both waitUntilDone and capturePane throw", async () => {
+    const d = fakeDeps({
+      claude: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilDone: vi.fn(async () => {
+          throw new Error("done failed");
+        }),
+      } as never,
+      bridge: {
+        capturePane: vi.fn(async () => {
+          throw new Error("pane failed");
+        }),
+        sendKeys: vi.fn(async () => {}),
+        sendExit: vi.fn(async () => {}),
+        sendRawKey: vi.fn(async () => {}),
+        createSession: vi.fn(async () => {}),
+        killSession: vi.fn(async () => {}),
+        hasSession: vi.fn(async () => false),
+        listProjectSessions: vi.fn(async () => []),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+    await expect(executeMessage(msg("text", { text: "double fail xyz" }), d)).rejects.toThrow();
   });
 });

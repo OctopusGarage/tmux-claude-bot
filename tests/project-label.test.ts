@@ -24,4 +24,9 @@ describe("projectLabel", () => {
   it("is stable for the same session", () => {
     expect(projectLabel("tmux_proj_-a", undefined)).toBe(projectLabel("tmux_proj_-a", undefined));
   });
+
+  it("falls back to short id when path is root (basename is empty)", () => {
+    const label = projectLabel("tmux_proj_-x", "/");
+    expect(label.startsWith("#")).toBe(true);
+  });
 });

@@ -13,6 +13,7 @@ import {
   sendQueueStatus,
   sendRecentList,
 } from "../../../src/adapters/lark/views.js";
+import { projectPathToHistoryDir } from "../../../src/core/history.js";
 import type { QueuedMessage } from "../../../src/core/queue.js";
 import { setPathForSession } from "../../../src/core/sessionPathMap.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
@@ -61,6 +62,23 @@ describe("sendQueueStatus", () => {
     const text = channel.texts().join("\n");
     expect(text).toContain("▶ s-inflight");
     expect(text).toContain("1. s-waiting");
+  });
+
+  it("shows last-processed time when getLastProcessedAt returns a timestamp", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      queue: {
+        getGlobalQueue: vi.fn(() => []),
+        getSessionNames: vi.fn(() => ["tmux_proj_eta"]),
+        getSessionQueue: vi.fn(() => []),
+        isSessionProcessing: vi.fn(() => false),
+        getCurrentSessionMessage: vi.fn(() => undefined),
+        getLastProcessedAt: vi.fn(() => Date.now() - 5000),
+      },
+    });
+    await sendQueueStatus(channel, deps, "chat-1");
+    const text = channel.texts().join("\n");
+    expect(text).toContain("上次完成");
   });
 });
 
@@ -131,6 +149,76 @@ describe("sendPeek / sendHistory record reply targets", () => {
     await sendHistory(channel, deps, "chat-1", 0);
 
     expect(channel.texts().some((t) => t.includes("没有找到对话历史"))).toBe(true);
+  });
+
+  it("sendPeek uses the emptyPane placeholder when output.process returns empty string", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ output: { process: vi.fn(() => "") } });
+
+    await sendPeek(channel, deps, "chat-1");
+
+    // The card should contain the emptyPane placeholder, not be skipped entirely.
+    expect(channel.cards()).toHaveLength(1);
+  });
+
+  it("sendHistory with a valid index sends a history card", async () => {
+    const session = "proj-hist-valid";
+    const projectPath = "/proj/hist/valid";
+    const configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-hist-v-"));
+    try {
+      const histDir = projectPathToHistoryDir(projectPath, configRoot);
+      fs.mkdirSync(histDir, { recursive: true });
+      const mkLine = (type: string, content: string) =>
+        JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+      fs.writeFileSync(
+        nodePath.join(histDir, "a.jsonl"),
+        `${[mkLine("user", "test question here"), mkLine("assistant", "test answer here")].join("\n")}\n`,
+        "utf-8",
+      );
+
+      setPathForSession(session, projectPath);
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        session,
+        configResolver: { resolveConfigRoot: vi.fn(async () => configRoot) },
+      });
+
+      await sendHistory(channel, deps, "chat-1", 0);
+
+      expect(channel.cards()).toHaveLength(1);
+    } finally {
+      fs.rmSync(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("sendHistory with an out-of-bounds index replies onlyNRounds", async () => {
+    const session = "proj-hist-oob";
+    const projectPath = "/proj/hist/oob";
+    const configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-hist-oob-"));
+    try {
+      const histDir = projectPathToHistoryDir(projectPath, configRoot);
+      fs.mkdirSync(histDir, { recursive: true });
+      const mkLine = (type: string, content: string) =>
+        JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+      fs.writeFileSync(
+        nodePath.join(histDir, "a.jsonl"),
+        `${[mkLine("user", "one question"), mkLine("assistant", "one answer")].join("\n")}\n`,
+        "utf-8",
+      );
+
+      setPathForSession(session, projectPath);
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        session,
+        configResolver: { resolveConfigRoot: vi.fn(async () => configRoot) },
+      });
+
+      await sendHistory(channel, deps, "chat-1", 99);
+
+      expect(channel.texts().some((t) => t.includes("只有"))).toBe(true);
+    } finally {
+      fs.rmSync(configRoot, { recursive: true, force: true });
+    }
   });
 });
 

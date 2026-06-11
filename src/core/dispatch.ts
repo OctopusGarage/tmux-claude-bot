@@ -25,6 +25,7 @@ export const MESSAGE_ACTIONS = [
   "enter",
   "up",
   "down",
+  "tab",
   "status",
 ] as const;
 
@@ -153,6 +154,11 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       logger.info(`[executor] sending down session=${session}`);
       await deps.bridge.sendRawKey("Down", session);
       return m.sentDown;
+    }
+    case "tab": {
+      logger.info(`[executor] sending tab session=${session}`);
+      await deps.bridge.sendRawKey("Tab", session);
+      return m.sentTab;
     }
     case "status": {
       logger.info(`[executor] checking status session=${session}`);

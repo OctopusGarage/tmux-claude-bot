@@ -1,5 +1,11 @@
 import { InlineKeyboard } from "grammy";
-import { isMessageAction } from "../../core/dispatch.js";
+import {
+  ACTION_META,
+  TELEGRAM_COLLAPSED_ROW,
+  TELEGRAM_EXPANDED_ROWS,
+  TELEGRAM_PRIMARY_ROWS,
+} from "../../core/action-registry.js";
+import { isMessageAction, type MessageAction } from "../../core/dispatch.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 import { VOICE_LANGS } from "../../core/voice-support.js";
@@ -109,25 +115,32 @@ export function buildLangKeyboard(current: Lang): InlineKeyboard {
   return kb;
 }
 
+function addActionRows(kb: InlineKeyboard, rows: MessageAction[][], sid: string): InlineKeyboard {
+  const m = messages("telegram");
+  for (const row of rows) {
+    for (const action of row) {
+      const meta = ACTION_META[action];
+      if (meta) kb.text(m[meta.btnKey] as string, encodeControlAction(action, sid));
+    }
+    kb.row();
+  }
+  return kb;
+}
+
 // The primary control rows, shared by the collapsed and expanded keyboards.
 function primaryRows(kb: InlineKeyboard, sid: string): InlineKeyboard {
-  const m = messages("telegram");
-  return kb
-    .text(m.btnEnter, encodeControlAction("enter", sid))
-    .text(m.btnInterrupt, encodeControlAction("interrupt", sid))
-    .row()
-    .text(m.btnEsc, encodeControlAction("esc", sid))
-    .text(m.btnRestart, encodeControlAction("restart", sid))
-    .row();
+  return addActionRows(kb, TELEGRAM_PRIMARY_ROWS, sid);
 }
 
 /** Collapsed control panel: the most-used controls + views, then a "more" toggle. */
 export function buildControlKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
-  return new InlineKeyboard()
-    .text(m.btnEsc, encodeControlAction("esc", sid))
-    .text(m.btnClear, encodeControlAction("clear", sid))
-    .text(m.btnCompact, encodeControlAction("compact", sid))
+  const kb = new InlineKeyboard();
+  for (const action of TELEGRAM_COLLAPSED_ROW) {
+    const meta = ACTION_META[action];
+    if (meta) kb.text(m[meta.btnKey] as string, encodeControlAction(action, sid));
+  }
+  return kb
     .row()
     .text(m.btnPeek, `pk:${sid}`)
     .text(m.btnHistory, `hi:${sid}`)
@@ -141,16 +154,9 @@ export function buildControlKeyboard(sid: string): InlineKeyboard {
 /** Expanded control panel: primary + secondary controls + a "collapse" toggle. */
 export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
-  return primaryRows(new InlineKeyboard(), sid)
-    .text(m.btnClear, encodeControlAction("clear", sid))
-    .text(m.btnCompact, encodeControlAction("compact", sid))
-    .row()
-    .text(m.btnUp, encodeControlAction("up", sid))
-    .text(m.btnDown, encodeControlAction("down", sid))
-    .row()
-    .text(m.btnExit, encodeControlAction("exit", sid))
-    .text(m.btnStatus, encodeControlAction("status", sid))
-    .row()
+  const kb = primaryRows(new InlineKeyboard(), sid);
+  addActionRows(kb, TELEGRAM_EXPANDED_ROWS, sid);
+  return kb
     .text(m.btnPeek, `pk:${sid}`)
     .text(m.btnHistory, `hi:${sid}`)
     .row()

@@ -209,4 +209,32 @@ describe("makeCardActionHandler", () => {
     expect(channel.sent).toHaveLength(0);
     expect(deps.queue.enqueued).toHaveLength(0);
   });
+
+  it("uilangmenu → sends the UI-language picker card", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+    await handle(evt({ cmd: "uilangmenu" }));
+    expect(channel.cards().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("uilang with a valid lang → sets UI language and re-sends the picker", async () => {
+    const prev = process.env.LARK_UI_LANG;
+    try {
+      const channel = fakeChannel();
+      const handle = makeCardActionHandler(channel, fakeDeps());
+      await handle(evt({ cmd: "uilang", lang: "en" }));
+      expect(process.env.LARK_UI_LANG).toBe("en");
+      expect(channel.cards().length).toBeGreaterThanOrEqual(1);
+    } finally {
+      if (prev === undefined) delete process.env.LARK_UI_LANG;
+      else process.env.LARK_UI_LANG = prev;
+    }
+  });
+
+  it("uilang with an unrecognised lang → no-op (isUiLang returns false)", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+    await handle(evt({ cmd: "uilang", lang: "klingon" }));
+    expect(channel.sent).toHaveLength(0);
+  });
 });

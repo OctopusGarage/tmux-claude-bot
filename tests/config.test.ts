@@ -86,7 +86,23 @@ describe("config schema", () => {
   });
 });
 
-import { loadConfig } from "../src/shared/config.js";
+import { loadConfig, loadScriptConfig } from "../src/shared/config.js";
+
+describe("loadScriptConfig without args", () => {
+  it("reads from process.env and returns a valid config", () => {
+    // Sets CLAUDE_START_COMMAND so the schema doesn't fail.
+    const saved = process.env.CLAUDE_START_COMMAND;
+    process.env.CLAUDE_START_COMMAND = "claude-yolo";
+    try {
+      const cfg = loadScriptConfig();
+      expect(cfg).toHaveProperty("claudeStartCommand");
+      expect(cfg.projectSessionPrefix).toBeTruthy();
+    } finally {
+      if (saved === undefined) delete process.env.CLAUDE_START_COMMAND;
+      else process.env.CLAUDE_START_COMMAND = saved;
+    }
+  });
+});
 
 describe("loadConfig (real schema)", () => {
   it("a blank/invalid LARK_DOMAIN falls back to feishu instead of crashing", () => {
