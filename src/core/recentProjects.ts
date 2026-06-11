@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { writeFileAtomic } from "../shared/utils/atomic-write.js";
 import { sessionNameFromPath } from "./sessionPathMap.js";
 import { stateFile } from "./state-dir.js";
 
@@ -38,7 +39,7 @@ export async function appendRecentProject(newPath: string, prefix: string): Prom
     if (filtered.length > MAX_RECENT_PROJECTS) {
       filtered.length = MAX_RECENT_PROJECTS;
     }
-    await fs.writeFile(recentProjectsFile(), `${filtered.join("\n")}\n`, "utf-8");
+    await writeFileAtomic(recentProjectsFile(), `${filtered.join("\n")}\n`);
     recentProjectsCache = filtered;
   } finally {
     release();

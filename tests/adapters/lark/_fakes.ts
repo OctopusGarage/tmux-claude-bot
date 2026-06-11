@@ -19,11 +19,24 @@ export type SentRecord = {
   opts?: unknown;
 };
 
+export type CardkitCreateRecord = { data: { type: string; data: string } };
+export type CardkitUpdateRecord = {
+  data: { card: { type: string; data: string }; sequence: number };
+  path: { card_id: string };
+};
+export type ImCreateRecord = {
+  params: { receive_id_type: string };
+  data: { receive_id: string; msg_type: string; content: string };
+};
+
 export type FakeChannel = LarkChannel & {
   sent: SentRecord[];
   reactions: { messageId: string; emoji: string }[];
   removedReactions: { messageId: string; emoji: string }[];
   updatedCards: { messageId: string; card: unknown }[];
+  cardkitCreates: CardkitCreateRecord[];
+  cardkitUpdates: CardkitUpdateRecord[];
+  imCreates: ImCreateRecord[];
   /** Text of every `{ markdown }` send, for quick assertions. */
   texts: () => string[];
   /** The `card` object of every `{ card }` send. */
@@ -35,13 +48,49 @@ export function fakeChannel(): FakeChannel {
   const reactions: { messageId: string; emoji: string }[] = [];
   const removedReactions: { messageId: string; emoji: string }[] = [];
   const updatedCards: { messageId: string; card: unknown }[] = [];
+  const cardkitCreates: CardkitCreateRecord[] = [];
+  const cardkitUpdates: CardkitUpdateRecord[] = [];
+  const imCreates: ImCreateRecord[] = [];
   let n = 0;
+  let entityN = 0;
+  let imN = 0;
 
   const channel = {
     sent,
     reactions,
     removedReactions,
     updatedCards,
+    cardkitCreates,
+    cardkitUpdates,
+    imCreates,
+    rawClient: {
+      cardkit: {
+        v1: {
+          card: {
+            create: vi.fn(async (payload: CardkitCreateRecord) => {
+              cardkitCreates.push(payload);
+              entityN += 1;
+              return { code: 0, data: { card_id: `card${entityN}` } };
+            }),
+            update: vi.fn(async (payload: CardkitUpdateRecord) => {
+              cardkitUpdates.push(payload);
+              return { code: 0 };
+            }),
+          },
+        },
+      },
+      im: {
+        v1: {
+          message: {
+            create: vi.fn(async (payload: ImCreateRecord) => {
+              imCreates.push(payload);
+              imN += 1;
+              return { code: 0, data: { message_id: `im-m${imN}` } };
+            }),
+          },
+        },
+      },
+    },
     texts: () =>
       sent
         .map((s) => (s.input as { markdown?: string }).markdown)
@@ -118,7 +167,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     },
     enqueue: vi.fn((msg: QueuedMessage) => {
       enqueued.push(msg);
-      return overrides.queueFull ? undefined : msg;
+      return overrides.queueFull ? false : "queued";
     }),
     size: vi.fn(() => overrides.queueSize ?? 0),
     getMaxSize: vi.fn(() => 30),
@@ -158,7 +207,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
 
   const claude = {
     checkIfRunning: vi.fn(async () => true),
-    waitUntilDone: vi.fn(async () => "done"),
+    waitUntilDone: vi.fn(async () => ({ done: true, output: "done" })),
     ...overrides.claude,
   } as unknown as HandlerDeps["claude"];
 
@@ -178,6 +227,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     projectSessionPrefix: "tmux_proj_",
     sessionWarmupMs: 0,
     maxQueueSize: 30,
+    claudeStartCommand: "bash",
     lark: { allowedOpenIds },
     ...overrides.config,
   } as unknown as HandlerDeps["config"];

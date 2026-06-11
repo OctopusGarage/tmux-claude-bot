@@ -83,7 +83,7 @@ export async function handleQueuedCommand(
     if (fromReply) session = fromReply;
   }
   if (!session) {
-    session = await requireSession(deps);
+    session = await requireSession(deps, ctx.chat?.id ?? 0);
   }
   if (!session) {
     await reply(ctx, "err", MSG.noSession, {

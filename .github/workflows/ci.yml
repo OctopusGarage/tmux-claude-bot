@@ -6,8 +6,14 @@ on:
   pull_request:
 
 jobs:
-  verify:
-    runs-on: ubuntu-latest
+  checks:
+    strategy:
+      fail-fast: false
+      # The deploy target is macOS (launchd, mlx_whisper, tmux quirks), so
+      # verify on both: ubuntu for speed, macos to match production.
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -15,14 +21,28 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # Not preinstalled on the macOS runner image, and the lint result is
+      # platform-independent anyway — once on ubuntu is enough.
       - run: shellcheck --severity=warning install.sh dev.sh scripts/*.sh
+        if: matrix.os == 'ubuntu-latest'
       - run: npx biome check .
       - run: npx tsc --noEmit
       - run: npx tsc -p tsconfig.tests.json --noEmit
       - run: npx vitest run --coverage
       - uses: codecov/codecov-action@v5
+        if: matrix.os == 'ubuntu-latest'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
       - run: npx knip
       - run: npx depcruise src --config .dependency-cruiser.cjs
+
+  # Stable name for the branch-protection required check: stays "verify"
+  # no matter how the matrix above evolves.
+  verify:
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All matrix checks passed
+        run: test "${{ needs.checks.result }}" = "success"

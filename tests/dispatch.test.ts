@@ -2,7 +2,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { executeMessage, type MessageAction } from "../src/core/dispatch.js";
+import {
+  assertClaudeBinaryAccessible,
+  executeMessage,
+  type MessageAction,
+} from "../src/core/dispatch.js";
 import { projectPathToHistoryDir } from "../src/core/history.js";
 import type { QueuedMessage } from "../src/core/queue.js";
 import { setPathForSession } from "../src/core/sessionPathMap.js";
@@ -26,7 +30,7 @@ function deps(claudeOver: Record<string, unknown> = {}) {
   return fakeDeps({
     claude: {
       checkIfRunning: vi.fn(async () => true),
-      waitUntilDone: vi.fn(async () => "PANE"),
+      waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE" })),
       start: vi.fn(async () => {}),
       interrupt: vi.fn(async () => {}),
       gracefulRestartWithContinue: vi.fn(async () => {}),
@@ -34,6 +38,25 @@ function deps(claudeOver: Record<string, unknown> = {}) {
     } as never,
   });
 }
+
+describe("assertClaudeBinaryAccessible", () => {
+  it("does not throw when an absolute path binary is executable", () => {
+    // /bin/sh is guaranteed to exist and be executable on all POSIX systems
+    expect(() => assertClaudeBinaryAccessible("/bin/sh")).not.toThrow();
+  });
+
+  it("throws when the absolute path binary does not exist", () => {
+    expect(() => assertClaudeBinaryAccessible("/this/binary/does/not/exist/ever")).toThrow(
+      /not found or not executable/,
+    );
+  });
+
+  it("throws when a named binary cannot be found in PATH", () => {
+    expect(() => assertClaudeBinaryAccessible("__no_such_binary_xyz_1234__")).toThrow(
+      /not found in PATH/,
+    );
+  });
+});
 
 describe("executeMessage — control actions", () => {
   it("no session → done", async () => {
@@ -150,7 +173,7 @@ describe("executeMessage — text action with history", () => {
     const d = fakeDeps({
       claude: {
         checkIfRunning: vi.fn(async () => true),
-        waitUntilDone: vi.fn(async () => "P"),
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "P" })),
       } as never,
       config: { maxMessageLength: 120 } as never,
     });
@@ -166,7 +189,7 @@ describe("executeMessage — text action with history", () => {
     const d = fakeDeps({
       claude: {
         checkIfRunning: vi.fn(async () => true),
-        waitUntilDone: vi.fn(async () => "PANE_SNAPSHOT"),
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE_SNAPSHOT" })),
       } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
@@ -178,12 +201,67 @@ describe("executeMessage — text action with history", () => {
     const d = fakeDeps({
       claude: {
         checkIfRunning: vi.fn(async () => true),
-        waitUntilDone: vi.fn(async () => "   "),
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "   " })),
       } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "another unmatched prompt abc" }), d);
     expect(out).toBe("Claude 返回空内容 · 用 /peek 查看画面");
+  });
+
+  it("keeps waiting across timeout rounds and notifies once, then resolves the real result", async () => {
+    const waitUntilDone = vi
+      .fn()
+      .mockResolvedValueOnce({ done: false, output: "partial 1" })
+      .mockResolvedValueOnce({ done: false, output: "partial 2" })
+      .mockResolvedValueOnce({ done: true, output: "FINAL" });
+    const d = fakeDeps({
+      claude: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
+      config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 1000 } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    const notices: string[] = [];
+    const out = await executeMessage(
+      msg("text", { text: "long task xyz", notify: (t) => notices.push(t) }),
+      d,
+    );
+
+    expect(out).toBe("FINAL");
+    expect(waitUntilDone).toHaveBeenCalledTimes(3);
+    expect(notices).toHaveLength(1); // one notice at the first timeout, not one per round
+    expect(notices[0]).toContain("任务仍在进行中");
+  });
+
+  it("gives up at the total-wait horizon with the still-running reply", async () => {
+    const waitUntilDone = vi.fn(async () => ({ done: false, output: "PARTIAL" }));
+    const d = fakeDeps({
+      claude: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
+      config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 250 } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    const out = await executeMessage(msg("text", { text: "endless task xyz" }), d);
+
+    // 100ms per round → cumulative wait hits 100/200/300ms; 300 ≥ 250 stops it.
+    expect(waitUntilDone).toHaveBeenCalledTimes(3);
+    expect(out).toContain("任务仍在进行中");
+    expect(out).toContain("PARTIAL");
+  });
+
+  it("a timeout without a notify channel still keeps waiting (no crash)", async () => {
+    const waitUntilDone = vi
+      .fn()
+      .mockResolvedValueOnce({ done: false, output: "partial" })
+      .mockResolvedValueOnce({ done: true, output: "DONE_LATE" });
+    const d = fakeDeps({
+      claude: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
+      config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 1000 } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    const out = await executeMessage(msg("text", { text: "quiet long task xyz" }), d);
+    expect(out).toBe("DONE_LATE");
   });
 
   it("falls back to capturePane when waitUntilDone throws", async () => {

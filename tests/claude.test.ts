@@ -230,14 +230,17 @@ describe("ClaudeRunner", () => {
         maxWaitDoneMs: 1000,
       });
       const result = await runner.waitUntilDone();
-      expect(result).toBeDefined();
-      expect(typeof result).toBe("string");
+      expect(result.done).toBe(true);
+      expect(result.output).toContain("final output");
     });
 
-    it("returns processed output on timeout", async () => {
+    it("reports done=false with the partial output on timeout", async () => {
+      let callCount = 0;
       mockExecFile.mockImplementation(async (cmd: string): Promise<ExecResult> => {
         if (cmd === "tmux") {
-          return { stdout: "still working...", stderr: "" };
+          callCount++;
+          // Keeps changing (spinner-style) → never idle → round times out.
+          return { stdout: `still working... ${callCount}`, stderr: "" };
         }
         return { stdout: "", stderr: "" };
       });
@@ -250,7 +253,8 @@ describe("ClaudeRunner", () => {
         pollIntervalMs: 10,
       });
       const result = await runner.waitUntilDone();
-      expect(result).toBeDefined();
+      expect(result.done).toBe(false);
+      expect(result.output).toContain("still working");
     });
 
     it("detects idle regardless of spinner when content is stable", async () => {
@@ -276,7 +280,7 @@ describe("ClaudeRunner", () => {
         maxWaitDoneMs: 1000,
       });
       const result = await runner.waitUntilDone();
-      expect(result).toBeDefined();
+      expect(result.done).toBe(true);
     });
 
     it("continues polling when capturePane fails", async () => {
@@ -301,7 +305,7 @@ describe("ClaudeRunner", () => {
         maxWaitDoneMs: 1000,
       });
       const result = await runner.waitUntilDone();
-      expect(result).toBeDefined();
+      expect(result.done).toBe(true);
     });
 
     it("resets identicalCount when content changes", async () => {
@@ -324,8 +328,8 @@ describe("ClaudeRunner", () => {
         maxWaitDoneMs: 50,
       });
       const result = await runner.waitUntilDone();
-      // Should timeout and return notice
-      expect(result).toContain("任务仍在进行中");
+      // Should time out; the user-facing notice is the dispatcher's job now.
+      expect(result.done).toBe(false);
     });
   });
 

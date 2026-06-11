@@ -8,6 +8,7 @@ import type { MessageAction } from "../../core/dispatch.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 import { VOICE_LANGS } from "../../core/voice-support.js";
+import { signValue } from "./card-signing.js";
 
 /** A card button spec. `value` is echoed back in cardAction.action.value. */
 interface ButtonSpec {
@@ -27,7 +28,7 @@ const button = ({ text, value, style }: ButtonSpec): object => ({
   tag: "button",
   text: { tag: "plain_text", content: text },
   type: style ?? "default",
-  behaviors: [{ type: "callback", value }],
+  behaviors: [{ type: "callback", value: signValue(value) }],
 });
 
 /** One row of buttons as a column_set — each button in its own auto-width column

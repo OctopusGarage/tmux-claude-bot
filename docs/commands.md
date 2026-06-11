@@ -1,45 +1,51 @@
 # tmux-claude-bot Bot Command Reference
 
-## Telegram Menu Commands (16)
+The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts`
+(registered to the Telegram menu at startup; the Lark help card mirrors it).
+`tests/docs-contract.test.ts` asserts every command below stays documented.
 
-| Command | Description | Status Restriction |
-|---------|-------------|-------------------|
-| `help` | Show all commands | None |
-| `start` | Start Claude | Claude **not running** |
-| `status` | Check Claude status | None |
-| `peek` | Capture tmux pane | None |
-| `esc` | Send Escape key | Claude running |
-| `interrupt` | Send Ctrl-C | Claude running |
-| `exit` | Exit Claude | Claude running |
-| `restart` | Restart Claude with --continue | Claude running |
-| `clear` | Send /clear command | Claude running |
-| `new` | Send /new command | Claude running |
-| `enter` | Send Enter key | Claude running |
-| `up` | Send Up arrow | Claude running |
-| `down` | Send Down arrow | Claude running |
-| `pwd` | Show current directory | Claude **not running** |
-| `switch` | Switch to directory | Claude **not running** |
-| `switch_workdir` | List projects | Claude **not running** |
+## Telegram Menu Commands
+
+| Command | Description |
+|---------|-------------|
+| `help` | Show all commands |
+| `start` | Start Claude |
+| `status` | Check Claude status |
+| `peek` | Capture tmux pane |
+| `esc` | Send Escape key |
+| `interrupt` | Send Ctrl-C |
+| `clear` | Send /clear command |
+| `compact` | Send /compact command |
+| `enter` | Send Enter key |
+| `up` | Send Up arrow |
+| `down` | Send Down arrow |
+| `tab` | Send Tab key |
+| `exit` | Exit Claude |
+| `restart` | Restart Claude with --continue |
+| `list_alive_projects` | List alive projects |
+| `list_recent_projects` | List recent projects |
+| `current_project` | Show current project |
+| `add_project` | Add a new project |
+| `queue_status` | Show message queue status |
+| `history` | Show recent conversation history (`/history N` for the Nth recent round) |
+| `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |
+| `voice_install` | Install voice transcription (Apple Silicon) |
+| `voice_lang` | Set voice recognition language (zh/en/auto) |
+| `lang` | Set interface language (zh/en/yue) |
 
 ## Non-Command Special Handling
 
 | Message | Condition | Implementation |
 |---------|-----------|----------------|
-| `/switch_<N>` | Claude **not running** | Parse index -> `cd <project path>` |
-| Any text | Claude **running** | Send to tmux -> `waitUntilDone()` -> clean and reply |
-| `cd <path>` | Claude **not running** | Check `cdAllowedDirs` -> `cd <path>` |
+| `/switch_<id>` | `<id>` = 6-char session short id | Resolve alive session by short id → switch current project |
+| Any text | Claude **running** | Send to tmux → `waitUntilDone()` rounds (one-time "still running" notice past `MAX_WAIT_DONE_MS`, give up at `MAX_WAIT_DONE_TOTAL_MS`) → clean and reply |
 
 ## Claude Running Detection
 
-`checkIfRunning()` checks the last line of tmux pane:
-- Contains `➜` or `❯` -> shell prompt visible -> Claude **not running**
-- No shell prompt -> Claude **running**
-
-## cdAllowedDirs Path Checking
-
-`/switch_<N>` path checks support `~` expansion:
-- Config: `~/programming`
-- Check: `/home/user/programming/xxx`.startsWith(`/home/user/programming`)
+`checkIfRunning()` is process-based: it asks tmux for the pane's process tree
+and looks for a `claude` process (`configResolver.isClaudeRunning`). Screen
+scraping for prompts/spinners was removed — it was theme-dependent and gave
+false positives.
 
 ## sendKeys Behavior
 

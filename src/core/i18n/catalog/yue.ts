@@ -136,6 +136,7 @@ export const yue: Messages = {
   processing: "處理中",
   failed: "失敗",
   taskStillRunning: (body) => `⏳ 任務仍在進行中，請稍後用 /peek 查看當前結果\n\n${body}`,
+  taskStillRunningNotice: "⏳ 任務仍在進行中，完成後會自動推送結果 · /peek 查看當前畫面",
   voiceDownloadFailed: "語音下載失敗 · 網絡波動,請重試",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time) =>
@@ -192,5 +193,27 @@ export const yue: Messages = {
   cmdExit: "退出",
   cmdStatus: "檢查狀態",
   cmdStart: "啟動 Claude",
+  cmdDoctor: "執行安裝健康檢查",
   cmdHelp: "本說明",
+  cmdWs: "工作區管理（save/use/list/remove）",
+
+  // ── workspaces ──
+  wsSaved: (name, session) => `✅ 已儲存工作區「${name}」→ ${session}`,
+  wsUsed: (name) => `✅ 已切換至工作區「${name}」`,
+  wsRemoved: (name) => `✅ 已刪除工作區「${name}」`,
+  wsNotFound: (name) => `工作區「${name}」不存在`,
+  wsSessionGone: (name) => `工作區「${name}」對應的會話已不存在`,
+  wsNoCurrentProject: "沒有當前項目，請先用 /add_project 新增項目",
+  wsListEmpty: "暫無已儲存的工作區",
+  wsListTitle: "📎 工作區",
+  wsListItem: (name, session) => `• **${name}** → ${session}`,
+  wsInvalidName: "工作區名稱只允許字母、數字、連字符和底線（1-32 位）",
+  wsUsage: "用法：/ws <save <name> | use <name> | list | remove <name>>",
+
+  // ── sessions ──
+  noSessions: "暫無已儲存的會話記錄",
+  sessionsTitle: (n) => `${n} 個會話記錄，點擊恢復`,
+  sessionsLabel: (id, ago) => `${id} · ${ago}`,
+  resumeStarted: (id) => `✅ 已恢復會話 ${id}`,
+  cmdSessions: "瀏覽並恢復歷史會話",
 };

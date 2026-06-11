@@ -27,22 +27,22 @@ describe("redactSecrets", () => {
   });
 });
 
-describe("logger argsToString branches", () => {
-  it("passes Error objects through with message+stack", () => {
-    expect(() => logger.info(new Error("boom"))).not.toThrow();
+describe("logger write", () => {
+  it("writes info without throwing", () => {
+    expect(() => logger.info("test message")).not.toThrow();
   });
 
-  it("JSON-stringifies plain objects", () => {
-    expect(() => logger.info({ key: "value" })).not.toThrow();
+  it("writes with context fields without throwing", () => {
+    expect(() =>
+      logger.info("ctx test", { session: "s1", chatId: "c1", channel: "lark" }),
+    ).not.toThrow();
   });
 
-  it("falls back to String() for circular (non-serializable) objects", () => {
-    const circular: Record<string, unknown> = {};
-    circular["self"] = circular;
-    expect(() => logger.warn(circular)).not.toThrow();
+  it("writes warn without throwing", () => {
+    expect(() => logger.warn("warn message")).not.toThrow();
   });
 
-  it("calls debug without throwing (exercises the debug log level path)", () => {
+  it("calls debug without throwing", () => {
     expect(() => logger.debug("debug message")).not.toThrow();
   });
 });

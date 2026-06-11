@@ -1,3 +1,6 @@
+import { accessSync, constants } from "node:fs";
+import * as nodePath from "node:path";
+import { claudeBinFromStartCommand } from "../shared/config.js";
 import { normalizeError } from "../shared/utils/error.js";
 import { logger } from "../shared/utils/logger.js";
 import type { HandlerDeps } from "./deps.js";
@@ -5,6 +8,28 @@ import { getLatestAssistantReply } from "./history.js";
 import { messages } from "./i18n/index.js";
 import type { QueuedMessage } from "./queue.js";
 import { getPathBySession } from "./sessionPathMap.js";
+
+export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
+  const bin = claudeBinFromStartCommand(claudeStartCommand);
+  if (nodePath.isAbsolute(bin)) {
+    try {
+      accessSync(bin, constants.X_OK);
+      return;
+    } catch {
+      throw new Error(`Claude binary not found or not executable: ${bin}`);
+    }
+  }
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (!dir) continue;
+    try {
+      accessSync(nodePath.join(dir, bin), constants.X_OK);
+      return;
+    } catch {
+      // continue searching
+    }
+  }
+  throw new Error(`Claude binary "${bin}" not found in PATH`);
+}
 
 /**
  * The protocol-agnostic command layer. Given a queued message (an action + the
@@ -58,9 +83,32 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       await deps.bridge.sendKeys(msg.text, session);
       logger.info(`[executor] keys sent, waiting for done session=${session}`);
 
+      // Wait in maxWaitDoneMs rounds up to maxWaitDoneTotalMs total. The first
+      // expired round sends a one-time "still running" notice (when the adapter
+      // provided a notify channel) and waiting continues — so long tasks resolve
+      // with their real result instead of a partial snapshot, and nothing gets
+      // typed into a still-busy pane. Past the horizon, give up with partials.
       let rawResult: string;
       try {
-        rawResult = await deps.claude.waitUntilDone(session, msg.channel ?? "telegram");
+        let round = await deps.claude.waitUntilDone(session);
+        let waitedMs = deps.config.maxWaitDoneMs;
+        let noticed = false;
+        while (!round.done && waitedMs < deps.config.maxWaitDoneTotalMs) {
+          if (!noticed) {
+            msg.notify?.(m.taskStillRunningNotice);
+            noticed = true;
+          }
+          logger.info(
+            `[executor] still running session=${session} waited=${waitedMs}ms, continuing to wait`,
+          );
+          round = await deps.claude.waitUntilDone(session);
+          waitedMs += deps.config.maxWaitDoneMs;
+        }
+        if (!round.done) {
+          logger.warn(`[executor] gave up waiting session=${session} after ${waitedMs}ms`);
+          return m.taskStillRunning(deps.output.process(round.output));
+        }
+        rawResult = round.output;
       } catch (err) {
         logger.error(
           `[executor] waitUntilDone failed: ${err instanceof Error ? err.message : err}`,
@@ -103,6 +151,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     }
     case "start": {
       logger.info(`[executor] starting claude session=${session}`);
+      assertClaudeBinaryAccessible(deps.config.claudeStartCommand);
       await deps.claude.start(session);
       deps.configResolver.invalidate(session); // new process → re-detect config dir
       return m.claudeStarted;

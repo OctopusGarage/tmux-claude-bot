@@ -151,6 +151,7 @@ export const zh = {
   processing: "处理中",
   failed: "失败",
   taskStillRunning: (body: string) => `⏳ 任务仍在进行中，请稍后通过 /peek 查看当前结果\n\n${body}`,
+  taskStillRunningNotice: "⏳ 任务仍在进行中，完成后会自动推送结果 · /peek 查看当前画面",
   voiceDownloadFailed: "语音下载失败 · 网络波动,请重试",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time: string) =>
@@ -212,7 +213,29 @@ export const zh = {
   cmdExit: "退出",
   cmdStatus: "检查状态",
   cmdStart: "启动 Claude",
+  cmdDoctor: "运行安装健康检查",
   cmdHelp: "本帮助",
+  cmdWs: "工作区管理（save/use/list/remove）",
+
+  // ── workspaces ──
+  wsSaved: (name: string, session: string) => `✅ 已保存工作区「${name}」→ ${session}`,
+  wsUsed: (name: string) => `✅ 已切换到工作区「${name}」`,
+  wsRemoved: (name: string) => `✅ 已删除工作区「${name}」`,
+  wsNotFound: (name: string) => `工作区「${name}」不存在`,
+  wsSessionGone: (name: string) => `工作区「${name}」对应的会话已不存在`,
+  wsNoCurrentProject: "无当前项目，请先用 /add_project 新建项目",
+  wsListEmpty: "暂无保存的工作区",
+  wsListTitle: "📎 工作区",
+  wsListItem: (name: string, session: string) => `• **${name}** → ${session}`,
+  wsInvalidName: "工作区名称仅允许字母、数字、连字符和下划线（1-32 位）",
+  wsUsage: "用法：/ws <save <name> | use <name> | list | remove <name>>",
+
+  // ── sessions ──
+  noSessions: "暂无保存的会话记录",
+  sessionsTitle: (n: number) => `${n} 个会话记录，点击恢复`,
+  sessionsLabel: (id: string, ago: string) => `${id} · ${ago}`,
+  resumeStarted: (id: string) => `✅ 已恢复会话 ${id}`,
+  cmdSessions: "浏览并恢复历史会话",
 };
 
 // No `as const`: Messages widens to string / function types so other languages

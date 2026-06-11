@@ -135,6 +135,8 @@ export const en: Messages = {
   processing: "Working",
   failed: "Failed",
   taskStillRunning: (body) => `⏳ Task still running · /peek to see the current result\n\n${body}`,
+  taskStillRunningNotice:
+    "⏳ Still running — the result will be pushed automatically when it finishes · /peek for a live look",
   voiceDownloadFailed: "Voice download failed · network hiccup, please retry",
   historyYou: "🧑‍💻 You",
   crashRecovered: (time) =>
@@ -193,5 +195,27 @@ Send any text → forwarded to Claude → reply`,
   cmdExit: "exit",
   cmdStatus: "check status",
   cmdStart: "start Claude",
+  cmdDoctor: "run install health checks",
   cmdHelp: "this help",
+  cmdWs: "workspace management (save/use/list/remove)",
+
+  // ── workspaces ──
+  wsSaved: (name, session) => `✅ Saved workspace "${name}" → ${session}`,
+  wsUsed: (name) => `✅ Switched to workspace "${name}"`,
+  wsRemoved: (name) => `✅ Removed workspace "${name}"`,
+  wsNotFound: (name) => `Workspace "${name}" not found`,
+  wsSessionGone: (name) => `Workspace "${name}" session no longer exists`,
+  wsNoCurrentProject: "No current project — use /add_project first",
+  wsListEmpty: "No saved workspaces",
+  wsListTitle: "📎 Workspaces",
+  wsListItem: (name, session) => `• **${name}** → ${session}`,
+  wsInvalidName: "Workspace name: letters, digits, hyphens and underscores only (1-32 chars)",
+  wsUsage: "Usage: /ws <save <name> | use <name> | list | remove <name>>",
+
+  // ── sessions ──
+  noSessions: "No saved sessions found",
+  sessionsTitle: (n) => `${n} saved sessions — tap to resume`,
+  sessionsLabel: (id, ago) => `${id} · ${ago}`,
+  resumeStarted: (id) => `✅ Resumed session ${id}`,
+  cmdSessions: "Browse and resume past sessions",
 };

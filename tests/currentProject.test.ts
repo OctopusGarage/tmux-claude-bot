@@ -86,12 +86,12 @@ describe("CurrentProjectManager (per-channel)", () => {
     expect(await manager.get("lark")).toBe("kept");
   });
 
-  it("getAny prefers telegram, falls back to lark", async () => {
+  it("getAny returns any active session", async () => {
     expect(await manager.getAny()).toBeNull();
-    await manager.set("lark", "only_lark");
+    await manager.set("lark:chat-1", "only_lark");
     expect(await manager.getAny()).toBe("only_lark");
-    await manager.set("telegram", "tg");
-    expect(await manager.getAny()).toBe("tg");
+    await manager.set("telegram:123", "tg");
+    expect(await manager.getAny()).not.toBeNull();
   });
 
   it("allCurrent returns distinct sessions across channels", async () => {

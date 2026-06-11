@@ -15,7 +15,10 @@ export type ViewName =
   | "current"
   | "addproject"
   | "voicelang"
-  | "uilang";
+  | "uilang"
+  | "ws"
+  | "sessions"
+  | "doctor";
 
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
  * Lark command surface matches Telegram's. */
@@ -29,6 +32,9 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   add_project: "addproject",
   voice_lang: "voicelang",
   lang: "uilang",
+  ws: "ws",
+  sessions: "sessions",
+  doctor: "doctor",
 };
 
 export type ParsedInput =
