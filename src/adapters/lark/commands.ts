@@ -1,18 +1,8 @@
+import { getLarkImmediate, getLarkQueued } from "../../core/action-registry.js";
 import type { MessageAction } from "../../core/dispatch.js";
 
-export const IMMEDIATE = new Set<MessageAction>([
-  "esc",
-  "interrupt",
-  "status",
-  "up",
-  "down",
-  "tab",
-  "enter",
-  "clear",
-  "compact",
-]);
-
-export const QUEUED = new Set<MessageAction>(["start", "restart", "exit"]);
+export const IMMEDIATE = getLarkImmediate();
+export const QUEUED = getLarkQueued();
 
 /** Read-side / project-management commands that render or mutate project state
  * rather than driving the Claude session. */

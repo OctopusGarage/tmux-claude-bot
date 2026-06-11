@@ -1,5 +1,5 @@
 import type { Bot } from "grammy";
-import { buildHelpBody } from "../../core/command-catalog.js";
+import { buildHelpBody, getTelegramActions } from "../../core/action-registry.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
@@ -61,36 +61,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     await reply(ctx, "help", buildHelpBody("telegram", "telegram"));
   });
 
-  bot.command("status", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "status", undefined, replyTarget),
-  );
-  bot.command("start", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "start", undefined, replyTarget),
-  );
-  bot.command("esc", async (ctx) => handleQueuedCommand(ctx, deps, "esc", undefined, replyTarget));
-  bot.command("restart", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "restart", undefined, replyTarget),
-  );
-  bot.command("exit", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "exit", undefined, replyTarget),
-  );
-  bot.command("interrupt", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "interrupt", undefined, replyTarget),
-  );
-  bot.command("clear", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "clear", undefined, replyTarget),
-  );
-  bot.command("compact", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "compact", undefined, replyTarget),
-  );
-  bot.command("enter", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "enter", undefined, replyTarget),
-  );
-  bot.command("up", async (ctx) => handleQueuedCommand(ctx, deps, "up", undefined, replyTarget));
-  bot.command("down", async (ctx) =>
-    handleQueuedCommand(ctx, deps, "down", undefined, replyTarget),
-  );
-  bot.command("tab", async (ctx) => handleQueuedCommand(ctx, deps, "tab", undefined, replyTarget));
+  for (const action of getTelegramActions()) {
+    const a = action;
+    bot.command(a, async (ctx) => handleQueuedCommand(ctx, deps, a, undefined, replyTarget));
+  }
 
   bot.command("peek", async (ctx) => {
     const session = await resolveSessionFromReply(ctx, replyTarget, deps);

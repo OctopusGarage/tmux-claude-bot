@@ -137,6 +137,7 @@ describe("helpCard", () => {
       "compact",
       "up",
       "down",
+      "tab",
       "status",
       "start",
       "exit",
