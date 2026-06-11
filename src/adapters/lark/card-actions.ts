@@ -17,6 +17,7 @@ import {
 } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
+import { verifyValue } from "./card-signing.js";
 import { helpCard, langCard, voiceLangCard } from "./cards.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
@@ -46,7 +47,13 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       return;
     }
 
-    const value = evt.action?.value as
+    const rawValue = evt.action?.value;
+    if (!verifyValue(rawValue)) {
+      logger.warn(`[lark] drop cardAction: invalid signature chat=${evt.chatId}`);
+      return;
+    }
+
+    const value = rawValue as
       | { cmd?: string; sid?: string; body?: string; title?: string; view?: boolean; lang?: string }
       | undefined;
     const cmd = value?.cmd;
