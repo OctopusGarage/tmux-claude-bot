@@ -35,11 +35,17 @@ export function channelFromScope(scope: string): Channel {
 
 type CurrentMap = Record<string, string>;
 
+/** "telegram:123" → "telegram"; null for bare-channel (already-legacy) scopes. */
+function legacyKey(scope: string): string | null {
+  const sep = scope.indexOf(":");
+  return sep > 0 ? scope.slice(0, sep) : null;
+}
+
 /**
  * Per-chat "current project" pointer, stored as JSON in `.current_project`.
  * Keys are scope strings: `"telegram:${chatId}"` or `"lark:${chatId}"`.
- * Legacy files with bare `"telegram"` / `"lark"` keys continue to work on read
- * (they are returned for those exact scope strings).
+ * Legacy files with bare `"telegram"` / `"lark"` keys are honored as a read
+ * fallback for scoped keys and retired on the first scoped set()/clear().
  */
 export class CurrentProjectManager {
   private readonly baseDir: string;
@@ -92,17 +98,32 @@ export class CurrentProjectManager {
   }
 
   async get(scope: string): Promise<string | null> {
-    return (await this.read())[scope] ?? null;
+    const map = await this.read();
+    const hit = map[scope];
+    if (hit) return hit;
+    // Upgrade path: state files written before the per-chat scope refactor
+    // hold bare channel keys ("telegram"). Fall back so a deploy doesn't make
+    // every chat forget its current project. set()/clear() retire the legacy
+    // key, so this fallback only fires until the first scoped write.
+    const legacy = legacyKey(scope);
+    return (legacy ? map[legacy] : undefined) ?? null;
   }
 
   async set(scope: string, sessionName: string): Promise<void> {
-    await this.mutate((map) => ({ ...map, [scope]: sessionName }));
+    await this.mutate((map) => {
+      const next = { ...map, [scope]: sessionName };
+      const legacy = legacyKey(scope);
+      if (legacy) delete next[legacy];
+      return next;
+    });
   }
 
   /** Clear one scope's current project (e.g. it pointed at a removed session). */
   async clear(scope: string): Promise<void> {
     await this.mutate((map) => {
       delete map[scope];
+      const legacy = legacyKey(scope);
+      if (legacy) delete map[legacy];
       return map;
     });
   }
