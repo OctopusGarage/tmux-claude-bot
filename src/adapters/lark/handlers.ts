@@ -1,6 +1,7 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
+import { PendingQueue } from "../../core/pending-queue.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { helpCard } from "./cards.js";
@@ -23,12 +24,40 @@ import {
 } from "./views.js";
 import { handleLarkVoice } from "./voice.js";
 
+/** Quiet window for merging rapid-fire plain-text messages into one prompt. */
+const TEXT_DEBOUNCE_MS = 600;
+
+interface PendingText {
+  chatId: string;
+  messageId: string;
+  text: string;
+  replySession: string | undefined;
+}
+
 /**
  * Build the channel `message` handler. p2p text messages are parsed for
  * slash commands; unknown senders are dropped silently.
  */
 export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
   const allowed = deps.config.lark?.allowedOpenIds ?? new Set<string>();
+
+  // Plain-text messages debounce briefly so a thought split across several
+  // quick sends lands in Claude as ONE prompt. Scope includes the reply
+  // target — replies routed to different sessions must never merge.
+  // Commands and voice bypass this (parsed before reaching the queue).
+  const pendingTexts = new PendingQueue<PendingText>(TEXT_DEBOUNCE_MS, async (_scope, batch) => {
+    const first = batch[0];
+    const text = batch.map((b) => b.text).join("\n");
+    await enqueueLarkAction(
+      channel,
+      deps,
+      first.chatId,
+      first.messageId,
+      "text",
+      text,
+      first.replySession,
+    );
+  });
 
   return async (msg: NormalizedMessage): Promise<void> => {
     if (!isOpenIdAllowed(msg.senderId, allowed)) {
@@ -151,15 +180,12 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         break;
 
       case "text":
-        await enqueueLarkAction(
-          channel,
-          deps,
-          msg.chatId,
-          msg.messageId,
-          "text",
-          parsed.text,
+        pendingTexts.push(`${msg.chatId}:${replySession ?? ""}`, {
+          chatId: msg.chatId,
+          messageId: msg.messageId,
+          text: parsed.text,
           replySession,
-        );
+        });
         break;
     }
   };

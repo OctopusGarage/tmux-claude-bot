@@ -81,17 +81,44 @@ describe("makeMessageHandler", () => {
     expect(channel.texts()).toContain("暂仅支持文本和语音消息");
   });
 
-  it("enqueues plain text as a 'text' action", async () => {
-    const channel = fakeChannel();
-    const deps = fakeDeps();
-    const handler = makeMessageHandler(channel, deps);
+  it("enqueues plain text as a 'text' action after the debounce window", async () => {
+    vi.useFakeTimers();
+    try {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
 
-    await handler(fakeMessage({ content: "do something" }));
+      await handler(fakeMessage({ content: "do something" }));
+      // Inside the quiet window nothing is enqueued yet.
+      expect(deps.queue.enqueued).toHaveLength(0);
 
-    expect(deps.queue.enqueued).toHaveLength(1);
-    expect(deps.queue.enqueued[0]?.action).toBe("text");
-    expect(deps.queue.enqueued[0]?.text).toBe("do something");
-    expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-1");
+      await vi.advanceTimersByTimeAsync(600);
+      expect(deps.queue.enqueued).toHaveLength(1);
+      expect(deps.queue.enqueued[0]?.action).toBe("text");
+      expect(deps.queue.enqueued[0]?.text).toBe("do something");
+      expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("merges rapid-fire texts into a single prompt", async () => {
+    vi.useFakeTimers();
+    try {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "first line" }));
+      await vi.advanceTimersByTimeAsync(200);
+      await handler(fakeMessage({ content: "second line" }));
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect(deps.queue.enqueued).toHaveLength(1);
+      expect(deps.queue.enqueued[0]?.text).toBe("first line\nsecond line");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ignores blank text (no enqueue)", async () => {
@@ -262,16 +289,22 @@ describe("makeMessageHandler", () => {
   });
 
   it("a reply to a session-bound bot message overrides the current session", async () => {
-    const channel = fakeChannel();
-    const deps = fakeDeps({ session: "proj-current" });
-    const handler = makeMessageHandler(channel, deps);
+    vi.useFakeTimers();
+    try {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ session: "proj-current" });
+      const handler = makeMessageHandler(channel, deps);
 
-    recordReplyTarget("bot-msg-77", "proj-target");
-    await handler(fakeMessage({ content: "follow up", replyToMessageId: "bot-msg-77" }));
+      recordReplyTarget("bot-msg-77", "proj-target");
+      await handler(fakeMessage({ content: "follow up", replyToMessageId: "bot-msg-77" }));
+      await vi.advanceTimersByTimeAsync(600);
 
-    expect(deps.queue.enqueued).toHaveLength(1);
-    expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-target");
+      expect(deps.queue.enqueued).toHaveLength(1);
+      expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-target");
 
-    removeReplyTargetSession("proj-target");
+      removeReplyTargetSession("proj-target");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
