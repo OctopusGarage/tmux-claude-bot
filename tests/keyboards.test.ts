@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildControlKeyboard,
   buildExpandedControlKeyboard,
+  buildLangKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
   buildRecentKeyboard,
+  buildSessionsKeyboard,
   encodeControlAction,
   parseCallbackData,
 } from "../src/adapters/telegram/keyboards.js";
@@ -186,5 +188,43 @@ describe("buildProjectDeleteKeyboard", () => {
     expect(datas).toContain("r:bbbbbb"); // active can be deleted too
     expect(datas).toContain("dl"); // back to list
     expect(datas).not.toContain("s:aaaaaa"); // no switch in delete mode
+  });
+});
+
+describe("buildLangKeyboard", () => {
+  it("marks the current language with ✅ and makes it inert; others pick via ul:<code>", () => {
+    const kb = buildLangKeyboard("zh") as unknown as {
+      inline_keyboard: { text: string; callback_data?: string }[][];
+    };
+    const buttons = kb.inline_keyboard.flat();
+    const current = buttons.find((b) => b.text.startsWith("✅"));
+    expect(current?.callback_data).toBe("noop");
+    expect(callbackDatas(kb)).toContain("ul:en");
+    expect(callbackDatas(kb)).not.toContain("ul:zh"); // current isn't re-selectable
+    // one language per row
+    for (const r of rows(kb)) expect(r.length).toBe(1);
+  });
+});
+
+describe("buildSessionsKeyboard", () => {
+  it("renders one row per session: short id + age label, resume via rs:<uuid>", () => {
+    const now = Date.now();
+    const kb = buildSessionsKeyboard([
+      { sessionId: "aaaaaaaa-1111-2222-3333-444444444444", mtime: new Date(now - 5 * 60_000) },
+      { sessionId: "bbbbbbbb-1111-2222-3333-444444444444", mtime: new Date(now - 3 * 3_600_000) },
+      { sessionId: "cccccccc-1111-2222-3333-444444444444", mtime: new Date(now - 2 * 86_400_000) },
+    ]) as unknown as { inline_keyboard: { text: string; callback_data?: string }[][] };
+
+    const buttons = kb.inline_keyboard.flat();
+    expect(buttons.map((b) => b.callback_data)).toEqual([
+      "rs:aaaaaaaa-1111-2222-3333-444444444444",
+      "rs:bbbbbbbb-1111-2222-3333-444444444444",
+      "rs:cccccccc-1111-2222-3333-444444444444",
+    ]);
+    // labels: 8-char id prefix + relative age in m / h / d
+    expect(buttons[0]?.text).toBe("aaaaaaaa · 5m");
+    expect(buttons[1]?.text).toBe("bbbbbbbb · 3h");
+    expect(buttons[2]?.text).toBe("cccccccc · 2d");
+    for (const r of rows(kb)) expect(r.length).toBe(1);
   });
 });

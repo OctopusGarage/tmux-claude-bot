@@ -6,6 +6,7 @@ vi.mock("../src/shared/utils/logger.js", () => ({
 
 import {
   createConfigResolver,
+  createExecProbe,
   findClaudePid,
   parseClaudeConfigDir,
   type ResolverProbe,
@@ -171,5 +172,56 @@ describe("isClaudeRunning (shares the same process-tree scan)", () => {
     await r.resolveConfigRoot("s"); // warms the cache with pid 200 (1 snapshot)
     expect(await r.isClaudeRunning("s")).toBe(true);
     expect(snapshot).toHaveBeenCalledTimes(1); // cheap path → no extra scan
+  });
+});
+
+describe("resolveConfigRoot when the pane can't be queried (tmux gone)", () => {
+  it("keeps the last known root once one was resolved", async () => {
+    let paneGone = false;
+    let alive = true;
+    const r = createConfigResolver(
+      fakeProbe({
+        panePid: async () => (paneGone ? null : 100),
+        isAlive: async () => alive,
+      }),
+      OPTS,
+    );
+    expect(await r.resolveConfigRoot("s")).toBe("/root-A");
+    paneGone = true;
+    alive = false; // cheap path misses → re-scan → pane unqueryable
+    expect(await r.resolveConfigRoot("s")).toBe("/root-A"); // last known, not default
+  });
+
+  it("falls back to the default root when nothing was ever resolved", async () => {
+    const r = createConfigResolver(fakeProbe({ panePid: async () => null }), OPTS);
+    expect(await r.resolveConfigRoot("s")).toBe("/home/.claude");
+  });
+});
+
+describe("createExecProbe (real ps / tmux / kill smoke tests)", () => {
+  it("isAlive: true for our own pid, false for a nonexistent pid", async () => {
+    const probe = createExecProbe();
+    expect(await probe.isAlive(process.pid)).toBe(true);
+    // PID far above any real allocation on macOS/Linux test machines.
+    expect(await probe.isAlive(2 ** 22 + 12345)).toBe(false);
+  });
+
+  it("snapshot: parses real ps output and includes this process", async () => {
+    const probe = createExecProbe();
+    const rows = await probe.snapshot();
+    const self = rows.find((r) => r.pid === process.pid);
+    expect(self).toBeDefined();
+    expect(self?.ppid).toBeGreaterThan(0);
+    expect(self?.command).toContain("node");
+  });
+
+  it("readProcEnv: returns the command line of a live pid", async () => {
+    const probe = createExecProbe();
+    expect(await probe.readProcEnv(process.pid)).toContain("node");
+  });
+
+  it("panePid: null for a session that doesn't exist (or tmux missing)", async () => {
+    const probe = createExecProbe();
+    expect(await probe.panePid("tcb-test-no-such-session-xyz")).toBeNull();
   });
 });
