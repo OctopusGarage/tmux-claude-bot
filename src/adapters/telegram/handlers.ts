@@ -1,4 +1,5 @@
 import type { Bot } from "grammy";
+import { buildHelpBody } from "../../core/command-catalog.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
@@ -57,7 +58,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("help", async (ctx) => {
-    await reply(ctx, "help", messages("telegram").helpBodyTelegram);
+    await reply(ctx, "help", buildHelpBody("telegram", "telegram"));
   });
 
   bot.command("status", async (ctx) =>

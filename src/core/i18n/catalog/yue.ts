@@ -158,56 +158,39 @@ export const yue: Messages = {
     `🎙️ 識別語言已設為 ${lang === "auto" ? "自動偵測" : lang} · 下一條語音生效`,
   voiceLangInvalid: "🎙️ 用法：/voice_lang <en|zh|yue|auto 或 2-3 位語言代碼>",
 
-  helpBodyTelegram: `🤖 tmux-claude-bot
+  helpIntroTelegram: `🤖 tmux-claude-bot
 
 傳送任何文字 → 轉交 Claude → 返回結果
 🎙️ 語音轉寫為可選功能 · /voice_install 啟用（僅 Apple Silicon）· /voice_lang 設定識別語言
 
-提示：訊息會收到 👀（已接收）/👍（完成）回應；處理中即時顯示進度並更新為結果；結果下方有 ⏎/✋/⎋/🔄 快捷按鈕。
+提示：訊息會收到 👀（已接收）/👍（完成）回應；處理中即時顯示進度並更新為結果；結果下方有 ⏎/✋/⎋/🔄 快捷按鈕。`,
 
-━━ 📂 項目 ━━
-/current_project — 當前項目
-/list_alive_projects — 活躍項目（點擊切換/刪除）
-/list_recent_projects — 近期項目
-/add_project <路徑> — 新增項目
-/queue_status — 隊列狀態
-/history [N] — 對話歷史（預設最近一條）
+  helpIntroLark: `🤖 tmux-claude (Lark)
 
-━━ ⚡ Claude 運行中 ━━
-/enter — Enter    /esc — Escape
-/interrupt — Ctrl-C    /restart — 重啟 (--continue)
-/clear — 清空上下文    /compact — 壓縮上下文
-/up · /down — 上下方向鍵    /exit — 退出
+傳送任何文字 → 轉交 Claude → 返回結果`,
 
-━━ 🚀 未運行 ━━
-/start — 啟動 Claude
-/peek — 查看 tmux 畫面
-/status — 檢查狀態
-/help — 本說明`,
+  helpSectionProjects: "📂 項目",
+  helpSectionRunning: "⚡ 運行中",
+  helpSectionIdle: "🚀 未運行",
 
-  helpBodyLark: `🤖 tmux-claude (Lark)
-
-傳送任何文字 → 轉交 Claude → 返回結果
-
-━━ 📂 項目 ━━
-/current_project — 當前項目
-/list_alive_projects — 活躍項目（點擊切換/刪除）
-/list_recent_projects — 近期項目
-/add_project <路徑> — 新增項目
-/queue_status — 隊列狀態
-/history [N] — 對話歷史（預設最近一條）
-/peek — 查看 tmux 畫面
-/voice_lang — 語音識別語言（英/中/粵/自動）
-/lang — 介面語言（英/中/粵）
-
-━━ ⚡ 運行中 ━━
-/enter — Enter   /esc — Escape
-/interrupt — Ctrl-C   /restart — 重啟
-/clear — 清空上下文   /compact — 壓縮
-/up · /down — 方向鍵   /exit — 退出
-/status — 狀態
-
-━━ 🚀 未運行 ━━
-/start — 啟動 Claude
-/help — 本說明`,
+  cmdCurrentProject: "當前項目",
+  cmdListAlive: "活躍項目（點擊切換/刪除）",
+  cmdListRecent: "近期項目",
+  cmdAddProject: "新增項目",
+  cmdQueueStatus: "隊列狀態",
+  cmdHistory: "對話歷史（預設最近一條）",
+  cmdPeek: "查看 tmux 畫面",
+  cmdVoiceLang: "語音識別語言（英/中/粵/自動）",
+  cmdLang: "介面語言（英/中/粵）",
+  cmdEnter: "Enter",
+  cmdEsc: "Escape",
+  cmdInterrupt: "Ctrl-C",
+  cmdRestart: "重啟 (--continue)",
+  cmdClear: "清空上下文",
+  cmdCompact: "壓縮上下文",
+  cmdArrowsTab: "方向鍵 / Tab",
+  cmdExit: "退出",
+  cmdStatus: "檢查狀態",
+  cmdStart: "啟動 Claude",
+  cmdHelp: "本說明",
 };

@@ -1,3 +1,4 @@
+import { buildHelpBody } from "../../core/command-catalog.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 import { VOICE_LANGS } from "../../core/voice-support.js";
@@ -200,7 +201,7 @@ export function recentListCard(projects: RecentButton[]): object {
 export function helpCard(): object {
   const m = messages("lark");
   return shell(m.helpTitle, [
-    md(m.helpBodyLark),
+    md(buildHelpBody("lark", "lark")),
     HR,
     md(m.helpRunning),
     gridRow([

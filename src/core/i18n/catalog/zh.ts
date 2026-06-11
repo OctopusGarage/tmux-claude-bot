@@ -175,59 +175,44 @@ export const zh = {
     `🎙️ 识别语言已设为 ${lang === "auto" ? "自动检测" : lang} · 下条语音生效`,
   voiceLangInvalid: "🎙️ 用法：/voice_lang <en|zh|yue|auto 或 2-3 位语言代码>",
 
-  // ── help body (full command list, per adapter) ──
-  helpBodyTelegram: `🤖 tmux-claude-bot
+  // ── help intro (command-free preamble; command list is generated from command-catalog.ts) ──
+  helpIntroTelegram: `🤖 tmux-claude-bot
 
 发任意文字 → 转给 Claude → 返回结果
 🎙️ 语音转写为可选功能 · /voice_install 启用（仅 Apple Silicon）· /voice_lang 设识别语言
 
-提示：消息会收到 👀（已接收）/👍（完成）回应；处理中就地显示进度并编辑成结果；结果下方有 ⏎/✋/⎋/🔄 快捷按钮。
+提示：消息会收到 👀（已接收）/👍（完成）回应；处理中就地显示进度并编辑成结果；结果下方有 ⏎/✋/⎋/🔄 快捷按钮。`,
 
-━━ 📂 项目 ━━
-/current_project — 当前项目
-/list_alive_projects — 活跃项目（点按切换/删除）
-/list_recent_projects — 近期项目
-/add_project <路径> — 新建项目
-/queue_status — 队列状态
-/history [N] — 对话历史（默认最近一条）
+  helpIntroLark: `🤖 tmux-claude (Lark)
 
-━━ ⚡ Claude 运行中 ━━
-/enter — 回车    /esc — Escape
-/interrupt — Ctrl-C    /restart — 重启 (--continue)
-/clear — 清空上下文    /compact — 压缩上下文
-/up · /down · /tab — 方向键 / Tab    /exit — 退出
+发任意文字 → 转给 Claude → 返回结果`,
 
-━━ 🚀 未运行 ━━
-/start — 启动 Claude
-/peek — 查看 tmux 画面
-/status — 检查状态
-/help — 本帮助`,
+  // ── help section headers ──
+  helpSectionProjects: "📂 项目",
+  helpSectionRunning: "⚡ 运行中",
+  helpSectionIdle: "🚀 未运行",
 
-  helpBodyLark: `🤖 tmux-claude (Lark)
-
-发任意文字 → 转给 Claude → 返回结果
-
-━━ 📂 项目 ━━
-/current_project — 当前项目
-/list_alive_projects — 活跃项目（点按切换/删除）
-/list_recent_projects — 近期项目
-/add_project <路径> — 新建项目
-/queue_status — 队列状态
-/history [N] — 对话历史（默认最近一条）
-/peek — 查看 tmux 画面
-/voice_lang — 语音识别语言（英/中/粤/自动）
-/lang — 界面语言（英/中/粤）
-
-━━ ⚡ 运行中 ━━
-/enter — 回车   /esc — Escape
-/interrupt — Ctrl-C   /restart — 重启
-/clear — 清空上下文   /compact — 压缩
-/up · /down · /tab — 方向键/Tab   /exit — 退出
-/status — 状态
-
-━━ 🚀 未运行 ━━
-/start — 启动 Claude
-/help — 本帮助`,
+  // ── command descriptions (used by command-catalog.ts to build help text) ──
+  cmdCurrentProject: "当前项目",
+  cmdListAlive: "活跃项目（点按切换/删除）",
+  cmdListRecent: "近期项目",
+  cmdAddProject: "新建项目",
+  cmdQueueStatus: "队列状态",
+  cmdHistory: "对话历史（默认最近一条）",
+  cmdPeek: "查看 tmux 画面",
+  cmdVoiceLang: "语音识别语言（英/中/粤/自动）",
+  cmdLang: "界面语言（英/中/粤）",
+  cmdEnter: "回车",
+  cmdEsc: "Escape",
+  cmdInterrupt: "Ctrl-C",
+  cmdRestart: "重启 (--continue)",
+  cmdClear: "清空上下文",
+  cmdCompact: "压缩上下文",
+  cmdArrowsTab: "方向键 / Tab",
+  cmdExit: "退出",
+  cmdStatus: "检查状态",
+  cmdStart: "启动 Claude",
+  cmdHelp: "本帮助",
 };
 
 // No `as const`: Messages widens to string / function types so other languages
