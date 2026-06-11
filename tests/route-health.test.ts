@@ -16,6 +16,7 @@ import {
   recordSuccess,
   routeScore,
 } from "../src/adapters/telegram/transport/route-health.js";
+import { logger } from "../src/shared/utils/logger.js";
 
 describe("recordAlive (success without a latency sample)", () => {
   it("resets the fail streak and bumps lastOkAt but leaves EWMA untouched", () => {
@@ -90,6 +91,25 @@ describe("chooseRoute", () => {
     const health = { direct: initialStats() };
     expect(chooseRoute(health, ["direct"], "direct")).toBe("direct");
   });
+
+  it("handles a defaultRoute not present in the health map via ?? initialStats()", () => {
+    // health only has "proxy"; defaultRoute "ghost" is absent → ?? initialStats() fires
+    const health = { proxy: recordSuccess(initialStats(), 1000, 1) };
+    // "ghost" is not in available, so the tie-break skips it; best = "proxy"
+    const result = chooseRoute(health, ["proxy"], "ghost");
+    expect(result).toBe("proxy");
+  });
+
+  it("returns defaultRoute immediately when available list is empty", () => {
+    expect(chooseRoute({}, [], "proxy")).toBe("proxy");
+  });
+
+  it("uses initialStats() when a route is absent from the health map (lines 65+67)", () => {
+    // health is empty; available has two routes → ?? initialStats() fires on both
+    const result = chooseRoute({}, ["proxy", "direct"], "proxy");
+    // Both have equal (cold) scores, so the tie-break honours the default
+    expect(result).toBe("proxy");
+  });
 });
 
 describe("createRouteHealthStore", () => {
@@ -141,6 +161,39 @@ describe("createRouteHealthStore", () => {
     const snap = store.snapshot();
     expect(snap.proxy?.ewmaMs).toBe(1500);
     expect(snap.proxy?.failStreak).toBe(0);
+  });
+
+  it("logs a warning when persist write fails (filePath is a directory)", () => {
+    // Make the filePath point at a directory so writeFileSync throws EISDIR.
+    const badPath = path.join(dir, "rh.json");
+    fs.mkdirSync(badPath);
+    const store = createRouteHealthStore({
+      filePath: badPath,
+      available: ["proxy"],
+      defaultRoute: "proxy",
+    });
+    store.recordSuccess("proxy", 100);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringMatching(/failed to persist/));
+  });
+
+  it("recordSuccess on an unknown route initialises its stats via ?? initialStats()", () => {
+    const store = createRouteHealthStore({
+      available: ["proxy"],
+      defaultRoute: "proxy",
+    });
+    store.recordSuccess("direct", 500);
+    const snap = store.snapshot();
+    expect(snap.direct?.ewmaMs).toBe(500);
+  });
+
+  it("recordFailure on an unknown route initialises its stats via ?? initialStats()", () => {
+    const store = createRouteHealthStore({
+      available: ["proxy"],
+      defaultRoute: "proxy",
+    });
+    store.recordFailure("direct");
+    const snap = store.snapshot();
+    expect(snap.direct?.failStreak).toBe(1);
   });
 
   it("flips away from a route that starts failing", () => {

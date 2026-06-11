@@ -24,7 +24,7 @@ export default defineConfig({
       thresholds: {
         lines: 80,
         functions: 80,
-        branches: 74, // current ~74%; raise toward 80 as branch coverage improves
+        branches: 80,
         statements: 80,
       },
     },

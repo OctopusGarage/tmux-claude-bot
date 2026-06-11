@@ -155,6 +155,37 @@ describe("OutputProcessor", () => {
       // Should be truncated to last 92 chars (100 - 8 = 92)
       expect(result.length).toBe(92);
     });
+
+    it("filters out lines containing UserPromptSubmit in the middle", () => {
+      // Mid-line occurrence is NOT stripped by the ^UserPromptSubmit regex, so the
+      // filter condition at that line is what removes it.
+      const processor = new OutputProcessor({ maxOutputLines: 100, maxMessageLength: 4000 });
+      const result = processor.process("normal line\nsaw UserPromptSubmit here\nmore output");
+      expect(result).not.toContain("UserPromptSubmit");
+      expect(result).toContain("normal line");
+    });
+
+    it("filters out lines containing hook error in the middle", () => {
+      // Mid-line: '^hook error' regex won't match, so the filter catches it.
+      const processor = new OutputProcessor({ maxOutputLines: 100, maxMessageLength: 4000 });
+      const result = processor.process("output\nsaw hook error here\nmore");
+      expect(result).not.toContain("hook error");
+    });
+
+    it("filters out lines containing english-gate in the middle", () => {
+      const processor = new OutputProcessor({ maxOutputLines: 100, maxMessageLength: 4000 });
+      const result = processor.process("output\nenglish-gate check ran\nmore");
+      expect(result).not.toContain("english-gate");
+    });
+
+    it("slices from the newline after the cut point when one exists", () => {
+      // maxContent = 50 - 8 = 42; input is 61 chars with a newline at index 30
+      // start = 61 - 42 = 19; firstNewline at 30 >= 19 → take slice from 31
+      const processor = new OutputProcessor({ maxOutputLines: 100, maxMessageLength: 50 });
+      const input = "a".repeat(30) + "\n" + "b".repeat(30);
+      const result = processor.process(input);
+      expect(result).toBe("b".repeat(30));
+    });
   });
 
   describe("edge cases", () => {

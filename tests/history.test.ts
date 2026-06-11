@@ -74,6 +74,18 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
     expect(rounds[0]).toMatchObject({ user: "hello world test", assistant: "hi there" });
   });
 
+  it("skips a message whose content is neither string nor array (extractText fallback)", async () => {
+    // content=42 → extractText returns "" → skipped; the following pair forms the round
+    write("a.jsonl", [
+      JSON.stringify({ type: "user", timestamp: "2026-06-10T10:00:00Z", message: { content: 42 } }),
+      line("user", "real prompt"),
+      line("assistant", "real answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("real prompt");
+  });
+
   it("skips malformed JSON lines and isMeta lines", async () => {
     write("a.jsonl", [
       "{ not valid json",
@@ -161,6 +173,95 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
     fs.mkdirSync(nodePath.join(histDir, "unreadable.jsonl"), { recursive: true });
     const reply = await getLatestAssistantReply(projectPath, "anything", configRoot, 0);
     expect(reply).toBeNull();
+  });
+
+  it("skips a user turn that starts with the session-continuation prefix", async () => {
+    write("a.jsonl", [
+      line(
+        "user",
+        "This session is being continued from a previous conversation that ran out of context.",
+      ),
+      line("user", "actual question"),
+      line("assistant", "actual answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("actual question");
+  });
+
+  it("skips a user turn that starts with Summary:", async () => {
+    write("a.jsonl", [
+      line("user", "Summary: context from before"),
+      line("user", "real question"),
+      line("assistant", "real answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("real question");
+  });
+
+  it("extracts slash command from <command-message> content", async () => {
+    write("a.jsonl", [
+      line("user", "<command-message>/simplify</command-message>"),
+      line("assistant", "simplified"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds[0]?.user).toBe("[/simplify]");
+  });
+
+  it("extracts text from <command-message> without slash (returns inner text)", async () => {
+    write("a.jsonl", [
+      line("user", "<command-message>plain text without slash</command-message>"),
+      line("assistant", "ok"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds[0]?.user).toBe("plain text without slash");
+  });
+
+  it("merges consecutive user messages with pipe separator (both plain text)", async () => {
+    write("a.jsonl", [
+      line("user", "first prompt"),
+      line("user", "second prompt"),
+      line("assistant", "answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toContain("first prompt");
+    expect(rounds[0]?.user).toContain("second prompt");
+  });
+
+  it("merges a preceding command with following plain text (command → text)", async () => {
+    write("a.jsonl", [
+      line("user", "<command-name>/clear</command-name>"),
+      line("user", "after clear message"),
+      line("assistant", "cleared and responded"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toContain("[/clear]");
+    expect(rounds[0]?.user).toContain("after clear message");
+  });
+
+  it("replaces a preceding command with a newer command (command → command)", async () => {
+    write("a.jsonl", [
+      line("user", "<command-name>/clear</command-name>"),
+      line("user", "<command-name>/compact</command-name>"),
+      line("assistant", "done"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("[/compact]");
+  });
+
+  it("advances past a non-user-assistant pair (assistant first, then user-assistant)", async () => {
+    write("a.jsonl", [
+      line("assistant", "orphan assistant"),
+      line("user", "question"),
+      line("assistant", "answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("question");
   });
 
   it("getRecentConversations skips unreadable history files", async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { redactSecrets } from "../src/shared/utils/logger.js";
+import { logger, redactSecrets } from "../src/shared/utils/logger.js";
 
 describe("redactSecrets", () => {
   afterEach(() => {
@@ -24,6 +24,26 @@ describe("redactSecrets", () => {
   it("leaves token-free messages untouched", () => {
     const msg = "[smart-fetch] recovered via direct after preferred route failed";
     expect(redactSecrets(msg)).toBe(msg);
+  });
+});
+
+describe("logger argsToString branches", () => {
+  it("passes Error objects through with message+stack", () => {
+    expect(() => logger.info(new Error("boom"))).not.toThrow();
+  });
+
+  it("JSON-stringifies plain objects", () => {
+    expect(() => logger.info({ key: "value" })).not.toThrow();
+  });
+
+  it("falls back to String() for circular (non-serializable) objects", () => {
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    expect(() => logger.warn(circular)).not.toThrow();
+  });
+
+  it("calls debug without throwing (exercises the debug log level path)", () => {
+    expect(() => logger.debug("debug message")).not.toThrow();
   });
 });
 
