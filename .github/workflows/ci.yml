@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  verify:
+  checks:
     strategy:
       fail-fast: false
       # The deploy target is macOS (launchd, mlx_whisper, tmux quirks), so
@@ -33,3 +33,13 @@ jobs:
           fail_ci_if_error: false
       - run: npx knip
       - run: npx depcruise src --config .dependency-cruiser.cjs
+
+  # Stable name for the branch-protection required check: stays "verify"
+  # no matter how the matrix above evolves.
+  verify:
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All matrix checks passed
+        run: test "${{ needs.checks.result }}" = "success"
