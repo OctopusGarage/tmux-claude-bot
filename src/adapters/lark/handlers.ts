@@ -18,6 +18,7 @@ import {
   sendPeek,
   sendQueueStatus,
   sendRecentList,
+  sendSessionsList,
   sendVoiceLangPicker,
 } from "./views.js";
 import { handleLarkVoice } from "./voice.js";
@@ -135,6 +136,9 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             break;
           case "ws":
             await handleWsCommand(channel, deps, msg.chatId, parsed.arg);
+            break;
+          case "sessions":
+            await sendSessionsList(channel, deps, msg.chatId, parsed.arg);
             break;
         }
         break;

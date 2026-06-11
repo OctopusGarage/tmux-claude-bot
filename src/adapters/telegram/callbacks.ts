@@ -2,11 +2,13 @@ import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage } from "../../core/dispatch.js";
 import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
+import { chatScope } from "../../core/project-manager.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { setWhisperLanguage } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
+import { sleep } from "../../shared/utils/sleep.js";
 import { timeApi } from "../../shared/utils/timing.js";
 import { safeAnswerCallback } from "./callback-utils.js";
 import {
@@ -68,7 +70,10 @@ export async function handleCallbackQuery(
     // Toggle the project list between switch mode and delete mode — re-fetch
     // the live project list and swap the keyboard in place.
     if (parsed.kind === "delmode" || parsed.kind === "dellist") {
-      const buttons = await aliveProjectButtons(deps, "telegram");
+      const buttons = await aliveProjectButtons(
+        deps,
+        chatScope("telegram", String(ctx.chat?.id ?? 0)),
+      );
       const kb =
         parsed.kind === "delmode"
           ? buildProjectDeleteKeyboard(buttons)
@@ -131,15 +136,39 @@ export async function handleCallbackQuery(
       await addRecentProjectBySid(deps, ctx, parsed.sid, replyTarget);
       return;
     }
+    // Resume a saved Claude session by UUID — exit the current process and
+    // restart with --resume so context is restored from the JSONL transcript.
+    if (parsed.kind === "resume") {
+      await safeAnswerCallback(ctx, messages("telegram").toastProcessing);
+      const scope = chatScope("telegram", String(ctx.chat?.id ?? 0));
+      const sessionName = await deps.currentProject.get(scope);
+      if (!sessionName) {
+        await reply(ctx, "err", MSG.noSession, { replyTarget });
+        return;
+      }
+      deps.queue.clearSession(sessionName);
+      await deps.bridge.sendExit(sessionName);
+      await sleep(2000);
+      await deps.claude.startWithResume(sessionName, parsed.sessionId);
+      deps.configResolver.invalidate(sessionName);
+      await reply(ctx, "ok", messages("telegram").resumeStarted(parsed.sessionId.slice(0, 8)), {
+        session: sessionName,
+        replyTarget,
+      });
+      return;
+    }
     const sessionName = await resolveAliveSessionByShortId(deps, parsed.sid);
     if (!sessionName) {
       await safeAnswerCallback(ctx, messages("telegram").sessionGone);
       return;
     }
     if (parsed.kind === "switch") {
-      await switchToProject(deps, "telegram", sessionName);
+      await switchToProject(deps, chatScope("telegram", String(ctx.chat?.id ?? 0)), sessionName);
       await safeAnswerCallback(ctx, messages("telegram").toastSwitched);
-      const warn = botSelfRepoWarning(getPathBySession(sessionName), "telegram");
+      const warn = botSelfRepoWarning(
+        getPathBySession(sessionName),
+        chatScope("telegram", String(ctx.chat?.id ?? 0)),
+      );
       await reply(
         ctx,
         "ok",

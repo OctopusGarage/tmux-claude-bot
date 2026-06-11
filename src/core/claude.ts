@@ -64,6 +64,13 @@ export class ClaudeRunner {
     this.running = true;
   }
 
+  async startWithResume(sessionName: string | undefined, sessionId: string): Promise<void> {
+    const alreadyRunning = await this.checkIfRunning(sessionName);
+    if (alreadyRunning) return;
+    await this.bridge.sendKeys(`${this.claudeCommand} --resume ${sessionId}`, sessionName);
+    this.running = true;
+  }
+
   async waitUntilReady(sessionName?: string): Promise<void> {
     const maxIterations = Math.ceil(this.maxWaitReadyMs / this.pollIntervalMs);
     const sess = sessionName ?? "default";

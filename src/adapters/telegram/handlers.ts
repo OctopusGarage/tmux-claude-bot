@@ -1,6 +1,7 @@
 import type { Bot } from "grammy";
 import { buildHelpBody, getTelegramActions } from "../../core/action-registry.js";
 import type { HandlerDeps } from "../../core/deps.js";
+import { listClaudeSessions } from "../../core/history.js";
 import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { chatScope } from "../../core/project-manager.js";
 import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
@@ -21,7 +22,7 @@ import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
-import { buildLangKeyboard, buildRecentKeyboard } from "./keyboards.js";
+import { buildLangKeyboard, buildRecentKeyboard, buildSessionsKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
   addRecentProjectBySid,
@@ -178,6 +179,29 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
   bot.command("queue_status", async (ctx) => {
     await sendQueueStatus(ctx, deps);
+  });
+
+  bot.command("sessions", async (ctx) => {
+    const scope = chatScope("telegram", String(ctx.chat?.id ?? 0));
+    const sessionName = await deps.currentProject.get(scope);
+    if (!sessionName) {
+      await reply(ctx, "err", MSG.noSession);
+      return;
+    }
+    const projectPath = getPathBySession(sessionName);
+    if (!projectPath) {
+      await reply(ctx, "err", messages("telegram").noPathMapping);
+      return;
+    }
+    const configRoot = await deps.configResolver.resolveConfigRoot(sessionName);
+    const sessions = await listClaudeSessions(projectPath, configRoot);
+    if (sessions.length === 0) {
+      await reply(ctx, "list", messages("telegram").noSessions);
+      return;
+    }
+    await reply(ctx, "list", messages("telegram").sessionsTitle(sessions.length), {
+      replyMarkup: buildSessionsKeyboard(sessions),
+    });
   });
 
   bot.command("history", async (ctx) => {

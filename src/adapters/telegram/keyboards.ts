@@ -6,10 +6,12 @@ import {
   TELEGRAM_PRIMARY_ROWS,
 } from "../../core/action-registry.js";
 import { isMessageAction, type MessageAction } from "../../core/dispatch.js";
+import type { SessionEntry } from "../../core/history.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 import { VOICE_LANGS } from "../../core/voice-support.js";
 
+export type { SessionEntry } from "../../core/history.js";
 export type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 
 /**
@@ -33,7 +35,8 @@ export type CallbackAction =
   | { kind: "listalive" }
   | { kind: "queuestatus" }
   | { kind: "voicelang"; lang: string }
-  | { kind: "uilang"; lang: Lang };
+  | { kind: "uilang"; lang: Lang }
+  | { kind: "resume"; sessionId: string };
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
@@ -76,6 +79,11 @@ export function parseCallbackData(data: string): CallbackAction | null {
     const lang = parts[1];
     if (parts.length !== 2 || !lang || !isUiLang(lang)) return null;
     return { kind: "uilang", lang };
+  }
+  if (tag === "rs") {
+    const sessionId = parts[1];
+    if (!sessionId) return null;
+    return { kind: "resume", sessionId };
   }
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
@@ -192,6 +200,25 @@ export function buildProjectDeleteKeyboard(projects: ProjectButton[]): InlineKey
     kb.text(`${m.btnRemove} ${p.label}`, `r:${p.sid}`).row();
   }
   return kb.text(m.btnCancel, "dl");
+}
+
+function formatAgo(date: Date): string {
+  const diffMin = Math.round((Date.now() - date.getTime()) / 60_000);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `${diffH}h`;
+  return `${Math.round(diffH / 24)}d`;
+}
+
+/** Session list: one full-width row per saved session. Tapping sends `rs:<uuid>`. */
+export function buildSessionsKeyboard(sessions: SessionEntry[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  sessions.forEach((s, i) => {
+    const label = `${s.sessionId.slice(0, 8)} · ${formatAgo(s.mtime)}`;
+    kb.text(label, `rs:${s.sessionId}`);
+    if (i < sessions.length - 1) kb.row();
+  });
+  return kb;
 }
 
 /**

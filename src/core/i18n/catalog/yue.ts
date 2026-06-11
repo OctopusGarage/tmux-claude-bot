@@ -207,4 +207,11 @@ export const yue: Messages = {
   wsListItem: (name, session) => `• **${name}** → ${session}`,
   wsInvalidName: "工作區名稱只允許字母、數字、連字符和底線（1-32 位）",
   wsUsage: "用法：/ws <save <name> | use <name> | list | remove <name>>",
+
+  // ── sessions ──
+  noSessions: "暫無已儲存的會話記錄",
+  sessionsTitle: (n) => `${n} 個會話記錄，點擊恢復`,
+  sessionsLabel: (id, ago) => `${id} · ${ago}`,
+  resumeStarted: (id) => `✅ 已恢復會話 ${id}`,
+  cmdSessions: "瀏覽並恢復歷史會話",
 };

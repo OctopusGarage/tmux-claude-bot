@@ -208,4 +208,11 @@ Send any text → forwarded to Claude → reply`,
   wsListItem: (name, session) => `• **${name}** → ${session}`,
   wsInvalidName: "Workspace name: letters, digits, hyphens and underscores only (1-32 chars)",
   wsUsage: "Usage: /ws <save <name> | use <name> | list | remove <name>>",
+
+  // ── sessions ──
+  noSessions: "No saved sessions found",
+  sessionsTitle: (n) => `${n} saved sessions — tap to resume`,
+  sessionsLabel: (id, ago) => `${id} · ${ago}`,
+  resumeStarted: (id) => `✅ Resumed session ${id}`,
+  cmdSessions: "Browse and resume past sessions",
 };

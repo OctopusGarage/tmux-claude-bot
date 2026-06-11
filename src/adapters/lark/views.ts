@@ -1,6 +1,10 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
-import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
+import {
+  formatSingleConversation,
+  getRecentConversations,
+  listClaudeSessions,
+} from "../../core/history.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
@@ -27,6 +31,7 @@ import {
   WORKSPACE_NAME_RE,
 } from "../../core/workspaces.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
+import { sleep } from "../../shared/utils/sleep.js";
 import { langCard, projectListCard, recentListCard, viewCard, voiceLangCard } from "./cards.js";
 import { sendCard, sendError, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
@@ -321,4 +326,64 @@ export async function handleWsCommand(
   }
 
   await sendText(channel, chatId, m.wsUsage);
+}
+
+function formatAgo(date: Date): string {
+  const diffMin = Math.round((Date.now() - date.getTime()) / 60_000);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `${diffH}h`;
+  return `${Math.round(diffH / 24)}d`;
+}
+
+/**
+ * List saved Claude sessions for the current project. If `arg` is a session
+ * ID prefix, exit the current Claude and resume that session.
+ */
+export async function sendSessionsList(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+  arg: string | undefined,
+): Promise<void> {
+  const m = messages("lark");
+  const session = await deps.currentProject.get(chatScope("lark", chatId));
+  if (!session) {
+    await sendText(channel, chatId, m.noCurrentProjectShort);
+    return;
+  }
+  const projectPath = getPathBySession(session);
+  if (!projectPath) {
+    await sendText(channel, chatId, m.noPathMapping);
+    return;
+  }
+  const configRoot = await deps.configResolver.resolveConfigRoot(session);
+
+  if (arg) {
+    const sessions = await listClaudeSessions(projectPath, configRoot);
+    const match = sessions.find((s) => s.sessionId.startsWith(arg));
+    if (!match) {
+      await sendText(channel, chatId, m.noSessions);
+      return;
+    }
+    await deps.bridge.sendExit(session);
+    await sleep(2000);
+    await deps.claude.startWithResume(session, match.sessionId);
+    deps.configResolver.invalidate(session);
+    await sendText(channel, chatId, m.resumeStarted(match.sessionId.slice(0, 8)));
+    return;
+  }
+
+  const sessions = await listClaudeSessions(projectPath, configRoot);
+  if (sessions.length === 0) {
+    await sendText(channel, chatId, m.noSessions);
+    return;
+  }
+  const lines = [
+    m.sessionsTitle(sessions.length),
+    ...sessions.map((s, i) => `${i + 1}. \`${s.sessionId.slice(0, 8)}\` (${formatAgo(s.mtime)})`),
+    "",
+    "用 `/sessions <id前缀>` 恢复",
+  ];
+  await sendText(channel, chatId, lines.join("\n"));
 }

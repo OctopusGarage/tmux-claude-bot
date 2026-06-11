@@ -223,6 +223,40 @@ export async function getRecentConversations(
   return allRounds;
 }
 
+export interface SessionEntry {
+  sessionId: string;
+  mtime: Date;
+}
+
+/** List saved Claude session IDs for a project, newest-first. */
+export async function listClaudeSessions(
+  projectPath: string,
+  configRoot: string = DEFAULT_CONFIG_ROOT,
+  limit = 5,
+): Promise<SessionEntry[]> {
+  const dir = projectPathToHistoryDir(projectPath, configRoot);
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const sessions: SessionEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+    const sessionId = entry.name.slice(0, -6);
+    if (!UUID_RE.test(sessionId)) continue;
+    try {
+      const stat = await fs.stat(nodePath.join(dir, entry.name));
+      sessions.push({ sessionId, mtime: stat.mtime });
+    } catch {
+      // skip unreadable entries
+    }
+  }
+  return sessions.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
+}
+
 export function formatSingleConversation(
   round: ConversationRound,
   index: number,

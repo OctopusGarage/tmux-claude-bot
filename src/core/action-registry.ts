@@ -129,6 +129,7 @@ const PROJECTS: readonly HelpRow[] = [
   [{ cmds: ["add_project"], descKey: "cmdAddProject", argHint: " <path>" }],
   [{ cmds: ["queue_status"], descKey: "cmdQueueStatus" }],
   [{ cmds: ["history"], descKey: "cmdHistory", argHint: " [N]" }],
+  [{ cmds: ["sessions"], descKey: "cmdSessions" }],
 ];
 
 const RUNNING: readonly HelpRow[] = [
