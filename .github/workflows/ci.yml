@@ -7,7 +7,13 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # The deploy target is macOS (launchd, mlx_whisper, tmux quirks), so
+      # verify on both: ubuntu for speed, macos to match production.
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -21,6 +27,7 @@ jobs:
       - run: npx tsc -p tsconfig.tests.json --noEmit
       - run: npx vitest run --coverage
       - uses: codecov/codecov-action@v5
+        if: matrix.os == 'ubuntu-latest'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
