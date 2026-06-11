@@ -178,6 +178,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     projectSessionPrefix: "tmux_proj_",
     sessionWarmupMs: 0,
     maxQueueSize: 30,
+    claudeStartCommand: "bash",
     lark: { allowedOpenIds },
     ...overrides.config,
   } as unknown as HandlerDeps["config"];

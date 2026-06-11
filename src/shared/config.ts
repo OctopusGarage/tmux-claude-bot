@@ -22,6 +22,7 @@ const envSchema = z.object({
   MAX_QUEUE_SIZE: z.coerce.number().int().positive().default(30),
   MAX_WAIT_READY_MS: z.coerce.number().int().positive().default(60000),
   MAX_WAIT_DONE_MS: z.coerce.number().int().positive().default(300000),
+  MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(5),
   TELEGRAM_ALLOWED_USER_IDS: z.string().default(""),
   ALLOWED_USER_IDS: z.string().default(""), // legacy alias
   CD_ALLOWED_DIRS: z.string().default(""),
@@ -101,6 +102,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
     maxQueueSize: parsed.MAX_QUEUE_SIZE,
     maxWaitReadyMs: parsed.MAX_WAIT_READY_MS,
     maxWaitDoneMs: parsed.MAX_WAIT_DONE_MS,
+    maxConcurrentSessions: parsed.MAX_CONCURRENT_SESSIONS,
     telegramAllowedUserIds: new Set(
       telegramAllowedRaw
         .split(",")

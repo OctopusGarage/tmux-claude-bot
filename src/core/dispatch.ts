@@ -1,3 +1,6 @@
+import { accessSync, constants } from "node:fs";
+import * as nodePath from "node:path";
+import { claudeBinFromStartCommand } from "../shared/config.js";
 import { normalizeError } from "../shared/utils/error.js";
 import { logger } from "../shared/utils/logger.js";
 import type { HandlerDeps } from "./deps.js";
@@ -5,6 +8,28 @@ import { getLatestAssistantReply } from "./history.js";
 import { messages } from "./i18n/index.js";
 import type { QueuedMessage } from "./queue.js";
 import { getPathBySession } from "./sessionPathMap.js";
+
+export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
+  const bin = claudeBinFromStartCommand(claudeStartCommand);
+  if (nodePath.isAbsolute(bin)) {
+    try {
+      accessSync(bin, constants.X_OK);
+      return;
+    } catch {
+      throw new Error(`Claude binary not found or not executable: ${bin}`);
+    }
+  }
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (!dir) continue;
+    try {
+      accessSync(nodePath.join(dir, bin), constants.X_OK);
+      return;
+    } catch {
+      // continue searching
+    }
+  }
+  throw new Error(`Claude binary "${bin}" not found in PATH`);
+}
 
 /**
  * The protocol-agnostic command layer. Given a queued message (an action + the
@@ -103,6 +128,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     }
     case "start": {
       logger.info(`[executor] starting claude session=${session}`);
+      assertClaudeBinaryAccessible(deps.config.claudeStartCommand);
       await deps.claude.start(session);
       deps.configResolver.invalidate(session); // new process → re-detect config dir
       return m.claudeStarted;

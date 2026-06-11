@@ -609,4 +609,134 @@ describe("MessageQueue", () => {
       expect(rejections).toContain("Session removed, message cancelled");
     });
   });
+
+  describe("message dedup", () => {
+    const mkTextMsg = (id: string, text: string, chatId: number) => ({
+      action: "text" as const,
+      id,
+      text,
+      chatId,
+      sessionName: "s1",
+      resolve: () => {},
+      reject: () => {},
+    });
+    const mkBlocker = () => ({
+      action: "text" as const,
+      id: "0",
+      text: "blocker",
+      chatId: 99,
+      sessionName: "s1",
+      resolve: () => {},
+      reject: () => {},
+    });
+
+    it("skips identical text when same content is waiting in the session queue", async () => {
+      const queue = new MessageQueue(10);
+      let releaseBlocker!: () => void;
+      queue.setHandler(async (msg) => {
+        if (msg.id === "0")
+          await new Promise<void>((r) => {
+            releaseBlocker = r;
+          });
+        msg.resolve("ok");
+      });
+      queue.enqueue(mkBlocker()); // blocks the session
+      await waitFor(() => queue.isSessionProcessing("s1"));
+
+      queue.enqueue(mkTextMsg("1", "hello", 42)); // waiting in queue
+      expect(queue.size("s1")).toBe(1);
+      queue.enqueue(mkTextMsg("2", "hello", 42)); // duplicate → deduped
+      expect(queue.size("s1")).toBe(1);
+
+      releaseBlocker();
+    });
+
+    it("allows different text from the same chatId through", async () => {
+      const queue = new MessageQueue(10);
+      let releaseBlocker!: () => void;
+      queue.setHandler(async (msg) => {
+        if (msg.id === "0")
+          await new Promise<void>((r) => {
+            releaseBlocker = r;
+          });
+        msg.resolve("ok");
+      });
+      queue.enqueue(mkBlocker());
+      await waitFor(() => queue.isSessionProcessing("s1"));
+
+      queue.enqueue(mkTextMsg("1", "hello", 42));
+      queue.enqueue(mkTextMsg("2", "world", 42)); // different text → not deduped
+      expect(queue.size("s1")).toBe(2);
+
+      releaseBlocker();
+    });
+
+    it("allows non-text actions through even if chatId is the same", async () => {
+      const queue = new MessageQueue(10);
+      let releaseBlocker!: () => void;
+      queue.setHandler(async (msg) => {
+        if (msg.id === "0")
+          await new Promise<void>((r) => {
+            releaseBlocker = r;
+          });
+        msg.resolve("ok");
+      });
+      queue.enqueue(mkBlocker());
+      await waitFor(() => queue.isSessionProcessing("s1"));
+
+      const s1 = {
+        action: "start" as const,
+        id: "1",
+        text: "x",
+        chatId: 42,
+        sessionName: "s1",
+        resolve: () => {},
+        reject: () => {},
+      };
+      const s2 = { ...s1, id: "2" };
+      queue.enqueue(s1);
+      queue.enqueue(s2); // non-text: both should be in queue
+      expect(queue.size("s1")).toBe(2);
+
+      releaseBlocker();
+    });
+  });
+
+  describe("maxConcurrentSessions", () => {
+    it("defers processing of a new session when the limit is reached", async () => {
+      // maxConcurrentSessions = 1 → second session can't start until first finishes
+      const queue = new MessageQueue(10, undefined, 1);
+      let releaseS1!: () => void;
+      let s2Processed = false;
+      queue.setHandler(async (msg) => {
+        if (msg.sessionName === "s1")
+          await new Promise<void>((r) => {
+            releaseS1 = r;
+          });
+        msg.resolve("ok");
+      });
+      queue.enqueue(createTestMessage({ id: "1", text: "a", sessionName: "s1" }));
+      await waitFor(() => queue.isSessionProcessing("s1"));
+
+      // s2 is enqueued; at limit, processSession defers via setTimeout
+      queue.enqueue({
+        action: "test",
+        id: "2",
+        text: "b",
+        chatId: 2,
+        sessionName: "s2",
+        resolve: () => {
+          s2Processed = true;
+        },
+        reject: () => {},
+      });
+      // s2 should not have started yet (deferred)
+      expect(queue.isSessionProcessing("s2")).toBe(false);
+
+      // Release s1 — s2's deferred processSession will fire ~1s later
+      releaseS1();
+      await waitFor(() => s2Processed, { timeout: 3000 });
+      expect(s2Processed).toBe(true);
+    });
+  });
 });

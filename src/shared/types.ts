@@ -18,6 +18,7 @@ export type AppConfig = {
   maxQueueSize: number;
   maxWaitReadyMs: number;
   maxWaitDoneMs: number;
+  maxConcurrentSessions: number;
   telegramAllowedUserIds: Set<string>;
   cdAllowedDirs: string[];
   projectSessionPrefix: string;

@@ -32,6 +32,7 @@ export class MessageQueue {
   private readonly processingSessions = new Set<string>();
   private processingGlobal = false;
   private readonly maxSize: number;
+  private readonly maxConcurrentSessions: number;
   private handler: QueueHandler | undefined;
   private readonly currentSessionMessage = new Map<string, QueuedMessage>();
   private currentGlobalMessage: QueuedMessage | undefined;
@@ -39,8 +40,13 @@ export class MessageQueue {
   private readonly persistPath: string;
   private persistScheduled = false;
 
-  constructor(maxSize: number = 30, persistPath: string = ".queue/pending.json") {
+  constructor(
+    maxSize: number = 30,
+    persistPath: string = ".queue/pending.json",
+    maxConcurrentSessions: number = Infinity,
+  ) {
     this.maxSize = maxSize;
+    this.maxConcurrentSessions = maxConcurrentSessions;
     this.globalQueue = new Queue<QueuedMessage>(maxSize);
     this.persistPath = persistPath;
     this.ensurePersistDir();
@@ -119,7 +125,23 @@ export class MessageQueue {
     }
   }
 
+  private hasDuplicateText(chatId: string | number, text: string): boolean {
+    for (const q of [this.globalQueue, ...this.sessionQueues.values()]) {
+      if (q.toArray().some((m) => m.action === "text" && m.chatId === chatId && m.text === text)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   enqueue(msg: QueuedMessage): boolean {
+    if (msg.action === "text" && this.hasDuplicateText(msg.chatId, msg.text)) {
+      logger.info(
+        `[queue] dedup: skipping identical text from chatId=${msg.chatId} session=${msg.sessionName ?? "global"}`,
+      );
+      return true;
+    }
+
     if (msg.sessionName) {
       let queue = this.sessionQueues.get(msg.sessionName);
       if (!queue) {
@@ -243,6 +265,14 @@ export class MessageQueue {
   private async processSession(sessionName: string): Promise<void> {
     if (this.processingSessions.has(sessionName)) {
       logger.info(`[queue] processSession already processing session=${sessionName}`);
+      return;
+    }
+
+    if (this.processingSessions.size >= this.maxConcurrentSessions) {
+      logger.info(
+        `[queue] concurrent limit reached (${this.processingSessions.size}/${this.maxConcurrentSessions}), deferring session=${sessionName}`,
+      );
+      setTimeout(() => void this.processSession(sessionName), 1000);
       return;
     }
 
