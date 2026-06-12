@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ACTION_META,
   buildHelpBody,
-  getLarkImmediate,
+  getImmediateActions,
   getLarkQueued,
   getTelegramActions,
   LARK_CONTROL_ROWS,
@@ -28,9 +28,9 @@ describe("ACTION_META", () => {
   });
 });
 
-describe("getLarkImmediate", () => {
+describe("getImmediateActions", () => {
   it("includes tab, esc, enter, interrupt, up, down, clear, compact, status", () => {
-    const set = getLarkImmediate();
+    const set = getImmediateActions();
     for (const a of [
       "tab",
       "esc",
@@ -47,7 +47,7 @@ describe("getLarkImmediate", () => {
   });
 
   it("does not include queued actions", () => {
-    const set = getLarkImmediate();
+    const set = getImmediateActions();
     for (const a of ["start", "restart", "exit"] as const) {
       expect(set.has(a), `${a} should not be in IMMEDIATE`).toBe(false);
     }

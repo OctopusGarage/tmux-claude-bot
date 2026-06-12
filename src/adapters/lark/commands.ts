@@ -1,7 +1,7 @@
-import { getLarkImmediate, getLarkQueued } from "../../core/action-registry.js";
+import { getImmediateActions, getLarkQueued } from "../../core/action-registry.js";
 import type { MessageAction } from "../../core/dispatch.js";
 
-export const IMMEDIATE = getLarkImmediate();
+export const IMMEDIATE = getImmediateActions();
 export const QUEUED = getLarkQueued();
 
 /** Read-side / project-management commands that render or mutate project state

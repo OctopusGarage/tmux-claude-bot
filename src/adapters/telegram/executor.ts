@@ -1,4 +1,5 @@
 import type { Bot, Context } from "grammy";
+import { getImmediateActions } from "../../core/action-registry.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage, type MessageAction } from "../../core/dispatch.js";
 import { enqueueMessage } from "../../core/enqueue.js";
@@ -9,16 +10,9 @@ import { MSG } from "./messages.js";
 import { reply, send } from "./replies.js";
 import { requireSession } from "./session.js";
 
-const IMMEDIATE_ACTIONS = new Set([
-  "esc",
-  "interrupt",
-  "status",
-  "up",
-  "down",
-  "enter",
-  "clear",
-  "compact",
-] as const);
+// Single source of truth (core/action-registry) — same set Lark derives, so the
+// two adapters can't drift (telegram used to omit `tab`).
+const IMMEDIATE_ACTIONS = getImmediateActions();
 
 export async function enqueueSessionCommand(
   ctx: Context,
@@ -96,7 +90,7 @@ export async function handleQueuedCommand(
   }
   const replyTo = ctx.message?.message_id;
 
-  if (IMMEDIATE_ACTIONS.has(action as typeof IMMEDIATE_ACTIONS extends Set<infer T> ? T : never)) {
+  if (IMMEDIATE_ACTIONS.has(action)) {
     const result = await executeMessage(
       { sessionName: session, action, text, id: "" } as QueuedMessage,
       deps,
