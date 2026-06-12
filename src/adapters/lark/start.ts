@@ -1,4 +1,10 @@
-import { createLarkChannel, Domain, type LarkChannel, LoggerLevel } from "@larksuiteoapi/node-sdk";
+import {
+  createLarkChannel,
+  Domain,
+  type LarkChannel,
+  type LarkChannelOptions,
+  LoggerLevel,
+} from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -6,6 +12,32 @@ import { makeCardActionHandler } from "./card-actions.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
 import { notifyLarkOwner } from "./resource.js";
+
+/**
+ * Options for the SDK's `createLarkChannel`. Extracted (and exported) so the
+ * critical no-@ guarantee is regression-tested:
+ *
+ * `policy.requireMention: false` — receive ALL group messages, not just
+ * @-mentions. The SDK's PolicyGate otherwise drops non-@ group messages
+ * (requireMention defaults to true) BEFORE our handler runs, so a bound project
+ * group could never work without @bot. Our own handler is the gate (it only acts
+ * on bound project groups from the allow-listed owner), so the SDK-level mention
+ * filter must be off. (Still requires the Feishu `im:message.group_msg` scope so
+ * Feishu delivers the non-@ messages in the first place.)
+ */
+export function larkChannelOptions(
+  cfg: { appId: string; appSecret: string },
+  domain: Domain,
+): LarkChannelOptions {
+  return {
+    appId: cfg.appId,
+    appSecret: cfg.appSecret,
+    domain,
+    source: "tmux-claude-bot",
+    loggerLevel: LoggerLevel.info,
+    policy: { requireMention: false },
+  };
+}
 
 /**
  * Start the Lark adapter on the SDK's higher-level Lark channel (WebSocket
@@ -21,13 +53,7 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
     return;
   }
   const domain = cfg.domain === "lark" ? Domain.Lark : Domain.Feishu;
-  const channel: LarkChannel = createLarkChannel({
-    appId: cfg.appId,
-    appSecret: cfg.appSecret,
-    domain,
-    source: "tmux-claude-bot",
-    loggerLevel: LoggerLevel.info,
-  });
+  const channel: LarkChannel = createLarkChannel(larkChannelOptions(cfg, domain));
   channel.on("message", makeMessageHandler(channel, deps));
   channel.on("cardAction", makeCardActionHandler(channel, deps));
   // App-level WS watchdog — catches half-open sockets after laptop sleep /

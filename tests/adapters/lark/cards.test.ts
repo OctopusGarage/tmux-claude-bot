@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  groupBoundCard,
+  groupPickerCard,
   helpCard,
   projectListCard,
   recentListCard,
@@ -147,8 +149,42 @@ describe("helpCard", () => {
       "listalive",
       "recent",
       "current",
+      "groupmenu",
       "voicelangmenu",
       "uilangmenu",
     ]);
+  });
+});
+
+describe("groupPickerCard", () => {
+  const projects: RecentButton[] = [
+    { sid: "a1", label: "projA", alive: true, active: false },
+    { sid: "b2", label: "projB", alive: false, active: false },
+  ];
+
+  it("make mode: a 'makegroup' button per project carrying its sid", () => {
+    const card = cardOf(groupPickerCard(projects, "make"));
+    const btns = collectButtons(card.body.elements);
+    expect(btns.map((b) => b.behaviors?.[0]?.value?.cmd)).toEqual(["makegroup", "makegroup"]);
+    expect(btns.map((b) => b.behaviors?.[0]?.value?.sid)).toEqual(["a1", "b2"]);
+  });
+
+  it("bind mode: emits 'bindhere' buttons instead", () => {
+    const card = cardOf(groupPickerCard(projects, "bind"));
+    expect(allCmds(card)).toEqual(["bindhere", "bindhere"]);
+  });
+
+  it("empty: shows the no-projects hint and no buttons", () => {
+    const card = cardOf(groupPickerCard([], "make"));
+    expect(collectButtons(card.body.elements)).toHaveLength(0);
+    expect(mds(card).length).toBeGreaterThan(0);
+  });
+});
+
+describe("groupBoundCard", () => {
+  it("shows restore / rebind / unbind buttons and the bound label", () => {
+    const card = cardOf(groupBoundCard("projX"));
+    expect(allCmds(card)).toEqual(["restore", "rebind", "unbind"]);
+    expect(mds(card).some((d) => d.content?.includes("projX"))).toBe(true);
   });
 });

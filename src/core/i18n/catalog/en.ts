@@ -218,4 +218,31 @@ Send any text → forwarded to Claude → reply`,
   sessionsLabel: (id, ago) => `${id} · ${ago}`,
   resumeStarted: (id) => `✅ Resumed session ${id}`,
   cmdSessions: "Browse and resume past sessions",
+
+  // ── group binding (Feishu) ──
+  groupBoundWelcome: (label, path) =>
+    `🎉 Group bound to **${label}**\n\`${path}\`\n\nJust type — no @ needed.`,
+  groupCreateFailed: (msg) =>
+    `❌ Failed to create group: ${msg}\n\nMake sure the bot has the \`im:chat\` scope.`,
+  groupBindOnlyInGroup: "`/bind` only works inside a group. In a private chat use `/newgroup`.",
+  groupUnbindOnlyInGroup: "`/unbind` only works inside a group.",
+  groupNewGroupOnlyInP2p: "`/newgroup` only works in a private chat with the bot.",
+  groupRestored: (label) => `🔄 Restored this group → **${label}**.`,
+  groupMissingPath: (label) =>
+    `⚠️ The workspace for **${label}** is gone from disk. Use \`/rebind <path|name>\` to point this group somewhere else.`,
+  groupUnbound: "🔓 This group is no longer bound to a workspace.",
+  groupNotBound: "This group isn't bound to a workspace. Use `/bind <path|name>`.",
+  groupTargetUsage: "Usage: `<command> <absolute path | ~/path | workspace name>`",
+  btnGroupMenu: "🗂 Project groups",
+  btnMakeGroup: "🆕 New group",
+  btnBindHere: "🔗 Bind",
+  btnRebindGroup: "🔁 Rebind",
+  btnUnbindGroup: "🔓 Unbind",
+  btnRestoreGroup: "🔄 Restore",
+  groupPickerTitle: "🆕 New project group — pick a project",
+  groupBindPickerTitle: "🔗 Bind this group — pick a project",
+  groupBoundCardTitle: (label) => `🗂 This group is bound to: ${label}`,
+  groupMenuNoProjects:
+    "No recent projects yet. Add one in a private chat with `/add_project <path>`.",
+  groupCreatedShort: (label) => `✓ Created project group "${label}" — continue in the new group.`,
 };

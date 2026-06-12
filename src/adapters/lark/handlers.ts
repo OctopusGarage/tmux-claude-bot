@@ -1,12 +1,15 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
+import { reconcileGroupBinding } from "../../core/group-binding-ops.js";
+import { isProjectGroup } from "../../core/group-bindings.js";
 import { messages } from "../../core/i18n/index.js";
 import { PendingQueue } from "../../core/pending-queue.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { helpCard } from "./cards.js";
-import { parseLarkInput } from "./commands.js";
+import { isGroupMgmtCommand, parseLarkInput } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
+import { handleBind, handleNewGroup, handleRestore, handleUnbind } from "./group-commands.js";
 import { sendCard, sendText } from "./replies.js";
 import { resolveReplyTarget } from "./reply-target.js";
 import {
@@ -76,9 +79,25 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       logger.info(`[lark] drop message from non-allowlisted open_id=${msg.senderId || "?"}`);
       return;
     }
-    if (msg.chatType !== "p2p") {
-      logger.info(`[lark] ignore non-p2p chat_type=${msg.chatType}`);
+
+    const isP2p = msg.chatType === "p2p";
+    if (!isP2p && !isProjectGroup(msg.chatId)) {
+      logger.info(`[lark] ignore unbound chat_type=${msg.chatType} chat=${msg.chatId}`);
       return;
+    }
+
+    if (!isP2p) {
+      const mgmt = msg.rawContentType === "text" && isGroupMgmtCommand(msg.content ?? "");
+      if (!mgmt) {
+        const r = await reconcileGroupBinding(deps, msg.chatId);
+        if (r.status === "missing-path") {
+          await sendText(channel, msg.chatId, messages("lark").groupMissingPath(r.label));
+          return;
+        }
+        if (r.status === "restored") {
+          await sendText(channel, msg.chatId, messages("lark").groupRestored(r.label));
+        }
+      }
     }
 
     // If the user replied to a session-bound bot message, route this message
@@ -183,6 +202,19 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             break;
           case "doctor":
             await sendDoctor(channel, msg.chatId);
+            break;
+          case "newgroup":
+            await handleNewGroup(channel, deps, msg.chatId, msg.chatType, msg.senderId, parsed.arg);
+            break;
+          case "bind":
+          case "rebind":
+            await handleBind(channel, deps, msg.chatId, msg.chatType, parsed.arg);
+            break;
+          case "unbind":
+            await handleUnbind(channel, deps, msg.chatId, msg.chatType);
+            break;
+          case "restore":
+            await handleRestore(channel, deps, msg.chatId);
             break;
         }
         break;

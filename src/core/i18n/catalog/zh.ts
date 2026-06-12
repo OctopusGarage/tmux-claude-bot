@@ -236,6 +236,32 @@ export const zh = {
   sessionsLabel: (id: string, ago: string) => `${id} · ${ago}`,
   resumeStarted: (id: string) => `✅ 已恢复会话 ${id}`,
   cmdSessions: "浏览并恢复历史会话",
+
+  // ── group binding (Feishu) ──
+  groupBoundWelcome: (label: string, path: string) =>
+    `🎉 群组已绑定到 **${label}**\n\`${path}\`\n\n直接发消息即可，无需 @ 机器人。`,
+  groupCreateFailed: (msg: string) =>
+    `❌ 创建群组失败：${msg}\n\n请确保机器人已获得 \`im:chat\` 权限。`,
+  groupBindOnlyInGroup: "在私聊中请使用 `/newgroup`，`/bind` 仅在群组内有效。",
+  groupUnbindOnlyInGroup: "在私聊中无法解绑，`/unbind` 仅在群组内有效。",
+  groupNewGroupOnlyInP2p: "`/newgroup` 仅在与机器人的私聊中有效。",
+  groupRestored: (label: string) => `🔄 已恢复此群组 → **${label}**。`,
+  groupMissingPath: (label: string) =>
+    `⚠️ **${label}** 的工作区路径已不存在。请用 \`/rebind <路径|名称>\` 重新绑定。`,
+  groupUnbound: "🔓 此群组已解除与工作区的绑定。",
+  groupNotBound: "此群组尚未绑定工作区。请使用 `/bind <路径|名称>`。",
+  groupTargetUsage: "用法：`<命令> <绝对路径 | ~/路径 | 工作区名称>`",
+  btnGroupMenu: "🗂 项目群",
+  btnMakeGroup: "🆕 建群",
+  btnBindHere: "🔗 绑定",
+  btnRebindGroup: "🔁 改绑",
+  btnUnbindGroup: "🔓 解绑",
+  btnRestoreGroup: "🔄 还原",
+  groupPickerTitle: "🆕 新建项目群 — 选一个项目",
+  groupBindPickerTitle: "🔗 绑定本群 — 选一个项目",
+  groupBoundCardTitle: (label: string) => `🗂 本群已绑定：${label}`,
+  groupMenuNoProjects: "暂无近期项目。先在私聊用 `/add_project <路径>` 添加一个。",
+  groupCreatedShort: (label: string) => `✓ 已新建项目群「${label}」，去新群里继续。`,
 };
 
 // No `as const`: Messages widens to string / function types so other languages

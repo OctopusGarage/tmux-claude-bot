@@ -33,6 +33,25 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `voice_lang` | Set voice recognition language (zh/en/auto) |
 | `lang` | Set interface language (zh/en/yue) |
 
+## Feishu/Lark Group-Binding Commands
+
+These commands manage **project groups** — each Feishu/Lark group is permanently bound
+to one workspace so you can type without `@`-mentioning the bot.
+
+| Command | Where | Description |
+|---------|-------|-------------|
+| `/newgroup <path\|name>` | Private chat (p2p) | Auto-create a private Feishu group bound to the given workspace (path or saved workspace name). Requires the `im:chat` scope; without it a friendly error is shown and `/bind` can be used instead after manually creating the group. |
+| `/bind <path\|name>` | Inside a group | Bind the current group to a workspace (for manually-created groups). |
+| `/rebind <path\|name>` | Inside a group | Change an existing group's binding to a new workspace. |
+| `/unbind` | Inside a group | Remove this group's binding (group messages are ignored afterwards). |
+| `/restore` | Inside a group | Manually trigger re-anchoring: re-asserts the binding's session pointer and recreates the tmux session if it died. |
+
+**Required Feishu app scopes** for group-binding:
+- `im:message.group_msg` — "获取群组中所有消息" (a *sensitive* scope) — receive **all** messages in a bound project group, enabling no-`@` typing. Without it the bot only receives `@`-mentions in groups (`im:message.group_at_msg:readonly`), so a bound group would require `@bot` on every message.
+- `im:chat` — let `/newgroup` auto-create the bound private group. Optional: without it `/newgroup` fails gracefully and you use `/bind` instead.
+
+> Note: after adding a scope in 权限管理 you must publish a new version (版本管理与发布) for it to take effect. `im:message.group_msg` is a sensitive scope and may require an extra approval step.
+
 ## Non-Command Special Handling
 
 | Message | Condition | Implementation |

@@ -22,6 +22,12 @@ import { verifyValue } from "./card-signing.js";
 import { helpCard, langCard, voiceLangCard } from "./cards.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
+import {
+  bindCurrentGroupBySid,
+  handleRestore,
+  handleUnbind,
+  makeBoundGroupBySid,
+} from "./group-commands.js";
 import { sendManagedCard, updateManagedCard } from "./managed-card.js";
 import { sendCard, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
@@ -29,6 +35,8 @@ import {
   addRecentBySid,
   sendAliveList,
   sendCurrentProject,
+  sendGroupBindPicker,
+  sendGroupMenu,
   sendHistory,
   sendPeek,
   sendQueueStatus,
@@ -151,6 +159,32 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     }
     if (cmd === "addrecent" && value?.sid) {
       await addRecentBySid(channel, deps, evt.chatId, value.sid);
+      return;
+    }
+
+    // --- Project-group buttons (no typing needed) ---
+    if (cmd === "groupmenu") {
+      await sendGroupMenu(channel, deps, evt.chatId);
+      return;
+    }
+    if (cmd === "makegroup" && value?.sid) {
+      await makeBoundGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
+      return;
+    }
+    if (cmd === "bindhere" && value?.sid) {
+      await bindCurrentGroupBySid(channel, deps, evt.chatId, value.sid);
+      return;
+    }
+    if (cmd === "rebind") {
+      await sendGroupBindPicker(channel, deps, evt.chatId);
+      return;
+    }
+    if (cmd === "unbind") {
+      await handleUnbind(channel, deps, evt.chatId, "group");
+      return;
+    }
+    if (cmd === "restore") {
+      await handleRestore(channel, deps, evt.chatId);
       return;
     }
 

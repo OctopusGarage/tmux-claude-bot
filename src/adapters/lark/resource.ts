@@ -51,3 +51,33 @@ export async function downloadMessageResource(
   })) as { writeFile: (p: string) => Promise<unknown> };
   await resp.writeFile(destPath);
 }
+
+export interface CreatedChat {
+  chatId: string;
+  name: string;
+}
+
+/**
+ * Create a private group with the bot as owner and the given user invited.
+ * Requires the `im:chat` scope. Returns the new chat_id.
+ */
+export async function createBoundChat(
+  cfg: LarkConfig,
+  opts: { name: string; inviteOpenId: string; description?: string },
+): Promise<CreatedChat> {
+  const result = await clientFor(cfg).im.v1.chat.create({
+    data: {
+      name: opts.name,
+      ...(opts.description !== undefined ? { description: opts.description } : {}),
+      chat_mode: "group",
+      chat_type: "private",
+      user_id_list: [opts.inviteOpenId],
+    },
+    params: { user_id_type: "open_id" },
+  });
+  const chatId = (result as { data?: { chat_id?: string } }).data?.chat_id;
+  if (!chatId) {
+    throw new Error(`chat.create returned no chat_id: ${JSON.stringify(result).slice(0, 200)}`);
+  }
+  return { chatId, name: opts.name };
+}

@@ -1,6 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
+import { getBinding } from "../../core/group-bindings.js";
 import {
   formatSingleConversation,
   getRecentConversations,
@@ -33,7 +34,15 @@ import {
 } from "../../core/workspaces.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
-import { langCard, projectListCard, recentListCard, viewCard, voiceLangCard } from "./cards.js";
+import {
+  groupBoundCard,
+  groupPickerCard,
+  langCard,
+  projectListCard,
+  recentListCard,
+  viewCard,
+  voiceLangCard,
+} from "./cards.js";
 import { sendManagedCard } from "./managed-card.js";
 import { sendCard, sendError, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
@@ -260,6 +269,36 @@ export async function addRecentBySid(
   } catch (err) {
     await sendError(channel, chatId, err);
   }
+}
+
+/**
+ * Context-aware "project groups" menu (the 🗂 button). In a bound group it shows
+ * the binding + restore/rebind/unbind; otherwise it shows recent projects each
+ * with a "new group" button — so creating/managing groups needs no typing.
+ */
+export async function sendGroupMenu(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<void> {
+  const binding = getBinding(chatId);
+  if (binding) {
+    await sendCard(channel, chatId, groupBoundCard(binding.label));
+    return;
+  }
+  const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
+  await sendCard(channel, chatId, groupPickerCard(buttons, "make"));
+}
+
+/** The recent-project picker in "bind" mode — used by the rebind button to pick a
+ * new project for the current group. */
+export async function sendGroupBindPicker(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<void> {
+  const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
+  await sendCard(channel, chatId, groupPickerCard(buttons, "bind"));
 }
 
 /**

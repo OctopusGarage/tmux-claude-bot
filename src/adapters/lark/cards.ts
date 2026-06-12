@@ -206,6 +206,37 @@ export function recentListCard(projects: RecentButton[]): object {
   return shell(messages("lark").recentListTitle, elements);
 }
 
+/** Project-group picker: list recent projects, each with a "new group" (p2p) or
+ * "bind" (in a group) button carrying the project's short id. No typing needed. */
+export function groupPickerCard(projects: RecentButton[], mode: "make" | "bind"): object {
+  const m = messages("lark");
+  const title = mode === "make" ? m.groupPickerTitle : m.groupBindPickerTitle;
+  if (projects.length === 0) {
+    return shell(title, [md(m.groupMenuNoProjects)]);
+  }
+  const text = mode === "make" ? m.btnMakeGroup : m.btnBindHere;
+  const cmd = mode === "make" ? "makegroup" : "bindhere";
+  const elements: object[] = [];
+  for (const p of projects) {
+    elements.push(md(p.label));
+    elements.push(gridRow([{ text, value: { cmd, sid: p.sid } }]));
+  }
+  return shell(title, elements);
+}
+
+/** Bound-group management card: restore / rebind / unbind, no typing needed. */
+export function groupBoundCard(label: string): object {
+  const m = messages("lark");
+  return shell(m.groupBoundCardTitle(label), [
+    md(m.groupBoundCardTitle(label)),
+    gridRow([
+      { text: m.btnRestoreGroup, value: { cmd: "restore" }, style: "primary" },
+      { text: m.btnRebindGroup, value: { cmd: "rebind" } },
+      { text: m.btnUnbindGroup, value: { cmd: "unbind" }, style: "danger" },
+    ]),
+  ]);
+}
+
 /** The interactive /help menu card: a button for every command. */
 export function helpCard(): object {
   const m = messages("lark");
@@ -227,6 +258,7 @@ export function helpCard(): object {
       { text: m.btnCurrent, value: { cmd: "current" } },
     ]),
     gridRow([
+      { text: m.btnGroupMenu, value: { cmd: "groupmenu" } },
       { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
       { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
     ]),

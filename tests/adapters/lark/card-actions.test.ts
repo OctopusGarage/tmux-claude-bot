@@ -1,6 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CardActionEvent } from "@larksuiteoapi/node-sdk";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.js";
+import { bindGroup, getBinding } from "../../../src/core/group-bindings.js";
+import { appendRecentProject } from "../../../src/core/recentProjects.js";
+import { sessionNameFromPath } from "../../../src/core/sessionPathMap.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
@@ -289,5 +295,65 @@ describe("makeCardActionHandler", () => {
     const handle = makeCardActionHandler(channel, fakeDeps());
     await handle(evt({ cmd: "uilang", lang: "klingon" }));
     expect(channel.sent).toHaveLength(0);
+  });
+
+  // --- project-group buttons ---
+  describe("project-group buttons", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "tcb-ca-grp-"));
+      process.env.TCB_STATE_DIR = dir;
+    });
+    afterEach(() => {
+      delete process.env.TCB_STATE_DIR;
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("groupmenu in a non-bound chat → sends the new-group picker", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "groupmenu" }));
+      expect(JSON.stringify(channel.cards())).toContain("新建项目群");
+    });
+
+    it("groupmenu in a bound group → sends the bound-group management card", async () => {
+      bindGroup("chat-1", { workspacePath: dir, sessionName: "s", label: "projZ" });
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "groupmenu" }));
+      expect(JSON.stringify(channel.cards())).toContain("projZ");
+    });
+
+    it("rebind → sends the bind picker", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "rebind" }));
+      expect(JSON.stringify(channel.cards())).toContain("绑定本群");
+    });
+
+    it("unbind → removes the binding and confirms", async () => {
+      bindGroup("chat-1", { workspacePath: dir, sessionName: "s", label: "projZ" });
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "unbind" }));
+      expect(getBinding("chat-1")).toBeNull();
+      expect(channel.texts().some((t) => t.includes("已解除"))).toBe(true);
+    });
+
+    it("restore → re-anchors and confirms", async () => {
+      bindGroup("chat-1", { workspacePath: dir, sessionName: "s", label: "projZ" });
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        bridge: { hasSession: vi.fn(async () => true) },
+        currentProject: { get: vi.fn(async () => "s") },
+      });
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "restore" }));
+      expect(channel.texts().some((t) => t.includes("已恢复"))).toBe(true);
+    });
+
+    it("bindhere with a sid → binds the current group to that recent project", async () => {
+      const deps = fakeDeps();
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sid = sessionShortId(sessionNameFromPath(dir, deps.config.projectSessionPrefix));
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "bindhere", sid }));
+      expect(getBinding("chat-1")?.workspacePath).toBe(dir);
+    });
   });
 });

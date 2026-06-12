@@ -216,4 +216,29 @@ export const yue: Messages = {
   sessionsLabel: (id, ago) => `${id} · ${ago}`,
   resumeStarted: (id) => `✅ 已恢復會話 ${id}`,
   cmdSessions: "瀏覽並恢復歷史會話",
+
+  // ── group binding (Feishu) ──
+  groupBoundWelcome: (label, path) =>
+    `🎉 群組已綁定至 **${label}**\n\`${path}\`\n\n直接傳送訊息即可，無需 @ 機器人。`,
+  groupCreateFailed: (msg) => `❌ 建立群組失敗：${msg}\n\n請確認機器人已取得 \`im:chat\` 授權。`,
+  groupBindOnlyInGroup: "在私聊中請使用 `/newgroup`，`/bind` 僅在群組內有效。",
+  groupUnbindOnlyInGroup: "在私聊中無法解除綁定，`/unbind` 僅在群組內有效。",
+  groupNewGroupOnlyInP2p: "`/newgroup` 僅在與機器人的私聊中有效。",
+  groupRestored: (label) => `🔄 已恢復此群組 → **${label}**。`,
+  groupMissingPath: (label) =>
+    `⚠️ **${label}** 的工作區路徑已不存在。請用 \`/rebind <路徑|名稱>\` 重新綁定。`,
+  groupUnbound: "🔓 此群組已解除與工作區的綁定。",
+  groupNotBound: "此群組尚未綁定工作區。請使用 `/bind <路徑|名稱>`。",
+  groupTargetUsage: "用法：`<命令> <絕對路徑 | ~/路徑 | 工作區名稱>`",
+  btnGroupMenu: "🗂 項目群",
+  btnMakeGroup: "🆕 建群",
+  btnBindHere: "🔗 綁定",
+  btnRebindGroup: "🔁 改綁",
+  btnUnbindGroup: "🔓 解綁",
+  btnRestoreGroup: "🔄 還原",
+  groupPickerTitle: "🆕 新建項目群 — 揀一個項目",
+  groupBindPickerTitle: "🔗 綁定本群 — 揀一個項目",
+  groupBoundCardTitle: (label) => `🗂 本群已綁定：${label}`,
+  groupMenuNoProjects: "暫時冇近期項目。先喺私聊用 `/add_project <路徑>` 加一個。",
+  groupCreatedShort: (label) => `✓ 已新建項目群「${label}」，去新群度繼續。`,
 };
