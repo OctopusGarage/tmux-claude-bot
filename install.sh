@@ -42,6 +42,9 @@ if [ -n "${TCB_MATERIALIZE_FROM:-}" ]; then
   PROJECT_DIR="$INSTALL_DIR"
   info "Materializing managed runtime at $PROJECT_DIR (from $TCB_MATERIALIZE_FROM)..."
   mkdir -p "$PROJECT_DIR"
+  # A materialized install is not a git checkout - drop any stale .git from a
+  # prior `main` clone (rsync --delete can't reliably remove read-only git objects).
+  rm -rf "$PROJECT_DIR/.git"
   if [ "$TCB_MATERIALIZE_FROM" != "$PROJECT_DIR" ]; then
     rsync -a --delete \
       --exclude='.env' --exclude='.current_project' --exclude='recent_projects.txt' \
@@ -86,6 +89,9 @@ else
     # archive with tests/CI/lint/docs.
     info "Installing version $VERSION (release tarball)..."
     mkdir -p "$PROJECT_DIR"
+    # A versioned/tarball install is not a git checkout - drop any stale .git from
+    # a prior `main` clone (rsync --delete can't reliably remove read-only objects).
+    rm -rf "$PROJECT_DIR/.git"
     tmpdir="$(mktemp -d)"
     curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors --max-time 300 \
       "https://github.com/OctopusGarage/tmux-claude-bot/releases/download/$VERSION/tmux-claude-bot-$VERSION.tar.gz" \
@@ -94,10 +100,10 @@ else
         err "  https://github.com/OctopusGarage/tmux-claude-bot/releases"
         rm -rf "$tmpdir"; exit 1
       }
-    # Mirror the lean tree into the install dir, deleting stale files - so a prior
-    # git-clone (.git) or full source-archive install (tests/CI/lint) leaves no
-    # clutter, and removed files don't orphan on update. Runtime state, deps, and
-    # logs are excluded from deletion and preserved.
+    # Mirror the lean tree into the install dir, deleting stale files - so a full
+    # source-archive install (tests/CI/lint) leaves no clutter and removed files
+    # don't orphan on update (.git was already dropped above). Runtime state,
+    # deps, and logs are excluded from deletion and preserved.
     rsync -a --delete \
       --exclude='.env' --exclude='.current_project' --exclude='recent_projects.txt' \
       --exclude='session_path_map.json' --exclude='.queue' --exclude='logs' \
