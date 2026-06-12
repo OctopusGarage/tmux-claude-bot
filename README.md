@@ -142,8 +142,8 @@ By default the installer fetches the **latest stable release** — a lean tarbal
 without `tests/`, `docs/`, or dev-config files. Pin a specific version, or track `main`:
 
 ```bash
-# pin a released version
-TMUX_CLAUDE_BOT_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
+# pin a released version (see github.com/OctopusGarage/tmux-claude-bot/releases)
+TMUX_CLAUDE_BOT_VERSION=v0.1.5 curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
 
 # track the latest main (development)
 TMUX_CLAUDE_BOT_VERSION=main curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
@@ -319,7 +319,7 @@ the install/deploy/release flow. In short:
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22+ (`engines: node >=22`)
 - tmux
 - Claude Code CLI (`claude-yolo` or similar)
 - _Optional, for voice:_ Apple Silicon Mac + [uv](https://docs.astral.sh/uv/) + ffmpeg (see [Voice transcription](#voice-transcription-optional))
