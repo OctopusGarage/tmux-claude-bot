@@ -6,7 +6,7 @@ import { DEFAULT_CONFIG_ROOT } from "./core/history.js";
 import { OutputProcessor } from "./core/output.js";
 import { createProjectManager } from "./core/project-manager.js";
 import { MessageQueue } from "./core/queue.js";
-import { stateDir } from "./core/state-dir.js";
+import { appStateDir } from "./core/state-dir.js";
 import { TmuxBridge } from "./core/tmux.js";
 import { claudeBinFromStartCommand, loadConfig } from "./shared/config.js";
 import { normalizeError } from "./shared/utils/error.js";
@@ -18,7 +18,7 @@ import { normalizeError } from "./shared/utils/error.js";
  */
 export function bootstrap(): HandlerDeps {
   const config = loadConfig();
-  const { currentProject } = createProjectManager(stateDir(process.cwd()));
+  const { currentProject } = createProjectManager(appStateDir());
 
   const bridge = new TmuxBridge({
     getSessionName: () => currentProject.getAny().then((s) => s ?? "claude_bot"),

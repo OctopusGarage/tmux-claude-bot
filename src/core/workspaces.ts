@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
-import { stateFile } from "./state-dir.js";
+import { appStateFile } from "./state-dir.js";
 
 function workspacesFile(): string {
-  return stateFile(process.cwd(), "workspaces.json");
+  return appStateFile("workspaces.json");
 }
 
 /** Workspace name constraints: 1-32 chars, letters/digits/hyphens/underscores. */

@@ -1,17 +1,17 @@
-import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { stateDir, stateRootFromModule } from "../src/core/state-dir.js";
+import { appStateDir, appStateFile, stateDir } from "../src/core/state-dir.js";
 
-describe("stateDir", () => {
-  // The global test setup pins TCB_STATE_DIR to a temp dir; restore it after we
-  // mutate it here so sibling tests keep their isolation.
-  const pinned = process.env.TCB_STATE_DIR;
-  afterEach(() => {
-    if (pinned === undefined) delete process.env.TCB_STATE_DIR;
-    else process.env.TCB_STATE_DIR = pinned;
-  });
+// The global test setup pins TCB_STATE_DIR to a temp dir; restore it after each
+// test that mutates it so sibling tests keep their isolation.
+const pinned = process.env.TCB_STATE_DIR;
+afterEach(() => {
+  if (pinned === undefined) delete process.env.TCB_STATE_DIR;
+  else process.env.TCB_STATE_DIR = pinned;
+});
 
+describe("stateDir (primitive)", () => {
   it("uses the fallback when TCB_STATE_DIR is unset", () => {
     delete process.env.TCB_STATE_DIR;
     expect(stateDir("/fallback")).toBe("/fallback");
@@ -23,11 +23,15 @@ describe("stateDir", () => {
   });
 });
 
-describe("stateRootFromModule", () => {
-  it("walks up to the nearest package.json (repo root in source, install dir in a bundle)", () => {
-    // From this test file it must resolve to an ancestor that has package.json —
-    // never overshoot to $HOME the way a fixed `../..` does once bundled.
-    const root = stateRootFromModule(import.meta.url);
-    expect(existsSync(join(root, "package.json"))).toBe(true);
+describe("appStateDir / appStateFile (single source of truth)", () => {
+  it("uses TCB_STATE_DIR when set", () => {
+    process.env.TCB_STATE_DIR = "/override";
+    expect(appStateDir()).toBe("/override");
+    expect(appStateFile("session_path_map.json")).toBe("/override/session_path_map.json");
+  });
+
+  it("falls back to the conventional ~/.tmux-claude-bot app home (never cwd or $HOME)", () => {
+    delete process.env.TCB_STATE_DIR;
+    expect(appStateDir()).toBe(join(homedir(), ".tmux-claude-bot"));
   });
 });

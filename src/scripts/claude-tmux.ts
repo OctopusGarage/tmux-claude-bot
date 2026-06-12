@@ -13,25 +13,21 @@
  */
 
 import { execFile } from "node:child_process";
-import * as nodePath from "node:path";
 import { promisify } from "node:util";
 import { config as loadEnv } from "dotenv";
 import { createConfigResolver, createExecProbe } from "../core/claude-config-resolver.js";
 import { DEFAULT_CONFIG_ROOT } from "../core/history.js";
 import { sessionNameFromPath, setPathForSession } from "../core/sessionPathMap.js";
+import { appStateFile } from "../core/state-dir.js";
 import { TmuxBridge } from "../core/tmux.js";
 import { claudeBinFromStartCommand, loadScriptConfig } from "../shared/config.js";
 import { sleep } from "../shared/utils/sleep.js";
 
 const execFileAsync = promisify(execFile);
 
-// Load .env from the project root (two levels above this script)
-const projectRoot = nodePath.resolve(
-  nodePath.dirname(new URL(import.meta.url).pathname),
-  "..",
-  "..",
-);
-loadEnv({ override: true, path: nodePath.join(projectRoot, ".env") });
+// Load the bot's .env from the shared app home so `claude` and the bot agree on
+// the start command and write session_path_map.json to the same place.
+loadEnv({ override: true, path: appStateFile(".env") });
 
 const config = loadScriptConfig();
 

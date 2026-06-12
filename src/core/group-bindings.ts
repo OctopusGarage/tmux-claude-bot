@@ -1,11 +1,8 @@
 import * as fs from "node:fs";
 import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
-import { stateFile, stateRootFromModule } from "./state-dir.js";
+import { appStateFile } from "./state-dir.js";
 
-// Same install/repo-root anchoring as sessionPathMap.ts so bot and tooling share
-// one file regardless of cwd; TCB_STATE_DIR overrides it (tests isolate, dev mirrors).
-const projectRoot = stateRootFromModule(import.meta.url);
-const bindingsFile = (): string => stateFile(projectRoot, "group_bindings.json");
+const bindingsFile = (): string => appStateFile("group_bindings.json");
 
 /** A group is permanently associated with one workspace. `workspacePath` is the
  * source of truth for re-anchoring; `sessionName`/`label` are derived snapshots. */

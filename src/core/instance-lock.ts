@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { stateFile } from "./state-dir.js";
+import { appStateFile } from "./state-dir.js";
 
 /**
  * Runtime single-instance lock. Two bot processes polling the same Telegram
@@ -27,7 +27,7 @@ export class InstanceLockHeldError extends Error {
   }
 }
 
-const lockPath = (): string => stateFile(process.cwd(), LOCK_FILE);
+const lockPath = (): string => appStateFile(LOCK_FILE);
 
 function isAlive(pid: number): boolean {
   try {

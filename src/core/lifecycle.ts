@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
-import { stateFile } from "./state-dir.js";
+import { appStateFile } from "./state-dir.js";
 
-const marker = (): string => stateFile(process.cwd(), ".running");
+const marker = (): string => appStateFile(".running");
 
 /**
  * Crash detection via a liveness marker. A clean shutdown (SIGINT/SIGTERM) removes
