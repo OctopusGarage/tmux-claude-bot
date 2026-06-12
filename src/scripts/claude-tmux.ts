@@ -18,9 +18,9 @@ import { config as loadEnv } from "dotenv";
 import { createConfigResolver, createExecProbe } from "../core/claude-config-resolver.js";
 import { DEFAULT_CONFIG_ROOT } from "../core/history.js";
 import { sessionNameFromPath, setPathForSession } from "../core/sessionPathMap.js";
-import { appStateFile } from "../shared/state-dir.js";
 import { TmuxBridge } from "../core/tmux.js";
 import { claudeBinFromStartCommand, loadScriptConfig } from "../shared/config.js";
+import { appStateFile } from "../shared/state-dir.js";
 import { sleep } from "../shared/utils/sleep.js";
 
 const execFileAsync = promisify(execFile);

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
-import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
 import { appStateFile } from "../shared/state-dir.js";
+import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
 
 interface CacheEntry<V> {
   path: string;
