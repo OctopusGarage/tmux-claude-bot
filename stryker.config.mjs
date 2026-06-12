@@ -3,7 +3,6 @@
 // it catches the "executed but unasserted" class (e.g. a dead retry loop whose
 // removal breaks no test). Slow, so it's a periodic / CI-nightly gate, NOT part
 // of `npm test`. Run with `npm run mutation` (optionally `-- --mutate <glob>`).
-/** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 export default {
   packageManager: "npm",
   testRunner: "vitest",
