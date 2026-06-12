@@ -1,6 +1,9 @@
+import * as fs from "node:fs";
 import { basename } from "node:path";
 import type { HandlerDeps } from "./deps.js";
-import { resolveProjectPath } from "./project-ops.js";
+import { getBinding } from "./group-bindings.js";
+import { chatScope } from "./project-manager.js";
+import { createProjectSession, resolveProjectPath, switchToProject } from "./project-ops.js";
 import { getPathBySession, sessionNameFromPath } from "./sessionPathMap.js";
 import { getWorkspace } from "./workspaces.js";
 
@@ -39,4 +42,44 @@ export async function resolveWorkspaceTarget(
     sessionName: sessionNameFromPath(res.resolvedPath, prefix),
     label: basename(res.resolvedPath),
   };
+}
+
+export type ReconcileResult =
+  | { status: "ok"; sessionName: string }
+  | { status: "restored"; sessionName: string; label: string }
+  | { status: "missing-path"; label: string }
+  | { status: "unbound" };
+
+/**
+ * Ensure the group's current-project pointer equals its binding. Re-anchors a
+ * drifted pointer and recreates the tmux session if it died. The binding (not the
+ * volatile .current_project) is the source of truth, so a group can always come
+ * home even after `clearSession` wiped the pointer.
+ */
+export async function reconcileGroupBinding(
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<ReconcileResult> {
+  const binding = getBinding(chatId);
+  if (!binding) return { status: "unbound" };
+
+  if (!fs.existsSync(binding.workspacePath)) {
+    return { status: "missing-path", label: binding.label };
+  }
+
+  const scope = chatScope("lark", chatId);
+  const pointer = await deps.currentProject.get(scope);
+  const alive = await deps.bridge.hasSession(binding.sessionName);
+
+  if (pointer === binding.sessionName && alive) {
+    return { status: "ok", sessionName: binding.sessionName };
+  }
+
+  if (!alive) {
+    // Recreate at the bound path; createProjectSession also sets current + cd.
+    await createProjectSession(deps, scope, binding.sessionName, binding.workspacePath);
+  } else {
+    await switchToProject(deps, scope, binding.sessionName);
+  }
+  return { status: "restored", sessionName: binding.sessionName, label: binding.label };
 }
