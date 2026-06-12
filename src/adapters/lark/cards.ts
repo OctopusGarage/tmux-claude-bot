@@ -146,6 +146,20 @@ export function recoveryCard(body: string, title = "⚠️"): object {
   ]);
 }
 
+/** Pick-a-start card: one button per configured start command (shown when more
+ * than one is configured). Each carries its index back as `startpick`. */
+export function startPickerCard(commands: { label: string; command: string }[]): object {
+  const m = messages("lark");
+  const elements: object[] = [md(m.startPickerPrompt)];
+  commands.forEach((c, i) => {
+    elements.push(md(`**${c.label}**\n\`${c.command}\``));
+    elements.push(
+      gridRow([{ text: m.btnStartThis, value: { cmd: "startpick", idx: i }, style: "primary" }]),
+    );
+  });
+  return shell(m.startPickerTitle, elements);
+}
+
 /** A Claude-result card: the output (or placeholder), the 7 control shortcuts,
  * and a help button. The title carries the 📂 project so the user sees which
  * session answered. */

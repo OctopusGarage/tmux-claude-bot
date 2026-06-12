@@ -7,6 +7,7 @@ import {
   buildProjectKeyboard,
   buildRecentKeyboard,
   buildSessionsKeyboard,
+  buildStartPickerKeyboard,
   encodeControlAction,
   parseCallbackData,
 } from "../src/adapters/telegram/keyboards.js";
@@ -14,6 +15,22 @@ import {
 function callbackDatas(kb: { inline_keyboard: { text: string; callback_data?: string }[][] }) {
   return kb.inline_keyboard.flat().map((b) => b.callback_data);
 }
+
+describe("start-command picker", () => {
+  it("parses sp:<idx>:<sid> into a startpick action", () => {
+    expect(parseCallbackData("sp:1:abc123")).toEqual({ kind: "startpick", idx: 1, sid: "abc123" });
+  });
+
+  it("rejects malformed startpick callbacks", () => {
+    expect(parseCallbackData("sp:x:abc123")).toBeNull(); // non-numeric idx
+    expect(parseCallbackData("sp:1")).toBeNull(); // missing sid
+  });
+
+  it("builds one sp button per command, indexed and sid-tagged", () => {
+    const kb = buildStartPickerKeyboard([{ label: "Stella" }, { label: "Work" }], "abc123");
+    expect(callbackDatas(kb)).toEqual(["sp:0:abc123", "sp:1:abc123"]);
+  });
+});
 
 describe("parseCallbackData", () => {
   it("parses a control action", () => {

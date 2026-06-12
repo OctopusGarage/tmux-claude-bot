@@ -1,6 +1,6 @@
 import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
-import type { MessageAction } from "../../core/dispatch.js";
+import { type MessageAction, performStart } from "../../core/dispatch.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
@@ -19,9 +19,9 @@ import {
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { verifyValue } from "./card-signing.js";
-import { helpCard, langCard, voiceLangCard } from "./cards.js";
+import { helpCard, langCard, startPickerCard, voiceLangCard } from "./cards.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
-import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
+import { enqueueLarkAction, resolveSession, runImmediateLarkAction } from "./executor.js";
 import {
   bindCurrentGroupBySid,
   handleRestore,
@@ -64,7 +64,15 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     }
 
     const value = rawValue as
-      | { cmd?: string; sid?: string; body?: string; title?: string; view?: boolean; lang?: string }
+      | {
+          cmd?: string;
+          sid?: string;
+          body?: string;
+          title?: string;
+          view?: boolean;
+          lang?: string;
+          idx?: number;
+        }
       | undefined;
     const cmd = value?.cmd;
     if (!cmd) return;
@@ -185,6 +193,21 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     }
     if (cmd === "restore") {
       await handleRestore(channel, deps, evt.chatId);
+      return;
+    }
+
+    // Multi-command start: show a picker instead of starting the single default.
+    if (cmd === "start" && deps.config.startCommands.length > 1) {
+      await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands));
+      return;
+    }
+    if (cmd === "startpick" && typeof value?.idx === "number") {
+      const pick = deps.config.startCommands[value.idx];
+      if (!pick) return;
+      const session = await resolveSession(channel, deps, evt.chatId);
+      if (!session) return;
+      await performStart(deps, session, pick.command);
+      await sendText(channel, evt.chatId, messages("lark").claudeStartedWith(pick.label));
       return;
     }
 

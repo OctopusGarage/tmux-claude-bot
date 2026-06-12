@@ -19,7 +19,7 @@ function projectTag(session: string): string {
   return messages("lark").projectTag(projectLabel(session, getPathBySession(session) ?? undefined));
 }
 
-async function resolveSession(
+export async function resolveSession(
   channel: LarkChannel,
   deps: HandlerDeps,
   chatId: string,

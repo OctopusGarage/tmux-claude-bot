@@ -208,6 +208,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
   const claude = {
     checkIfRunning: vi.fn(async () => true),
     waitUntilDone: vi.fn(async () => ({ done: true, output: "done" })),
+    start: vi.fn(async () => {}),
     ...overrides.claude,
   } as unknown as HandlerDeps["claude"];
 
@@ -228,6 +229,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     sessionWarmupMs: 0,
     maxQueueSize: 30,
     claudeStartCommand: "bash",
+    startCommands: [{ label: "claude", command: "bash" }],
     lark: { allowedOpenIds },
     ...overrides.config,
   } as unknown as HandlerDeps["config"];

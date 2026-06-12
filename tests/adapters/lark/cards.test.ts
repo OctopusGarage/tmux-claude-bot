@@ -6,6 +6,7 @@ import {
   projectListCard,
   recentListCard,
   resultCard,
+  startPickerCard,
   viewCard,
 } from "../../../src/adapters/lark/cards.js";
 import type { ProjectButton, RecentButton } from "../../../src/core/project-ops.js";
@@ -18,7 +19,7 @@ interface Card {
 interface Element {
   tag: string;
   content?: string;
-  behaviors?: { value?: { cmd?: string; sid?: string } }[];
+  behaviors?: { value?: { cmd?: string; sid?: string; idx?: number } }[];
   columns?: { elements?: Element[] }[];
 }
 
@@ -186,5 +187,25 @@ describe("groupBoundCard", () => {
     const card = cardOf(groupBoundCard("projX"));
     expect(allCmds(card)).toEqual(["restore", "rebind", "unbind"]);
     expect(mds(card).some((d) => d.content?.includes("projX"))).toBe(true);
+  });
+});
+
+describe("startPickerCard", () => {
+  it("renders one 'startpick' button per command, carrying its index", () => {
+    const card = cardOf(
+      startPickerCard([
+        { label: "Stella", command: "CLAUDE_CONFIG_DIR=~/.claude-stella claude" },
+        { label: "Work", command: "claude-work" },
+      ]),
+    );
+    const btns = collectButtons(card.body.elements);
+    expect(btns.map((b) => b.behaviors?.[0]?.value?.cmd)).toEqual(["startpick", "startpick"]);
+    expect(btns.map((b) => b.behaviors?.[0]?.value?.idx)).toEqual([0, 1]);
+    // the command labels + raw commands are shown so the user can tell them apart
+    const text = mds(card)
+      .map((d) => d.content)
+      .join("\n");
+    expect(text).toContain("Stella");
+    expect(text).toContain("claude-work");
   });
 });

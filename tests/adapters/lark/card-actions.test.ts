@@ -356,4 +356,32 @@ describe("makeCardActionHandler", () => {
       expect(getBinding("chat-1")?.workspacePath).toBe(dir);
     });
   });
+
+  // --- multi-command start picker ---
+  describe("start picker", () => {
+    const multi = {
+      config: {
+        startCommands: [
+          { label: "A", command: "echo" },
+          { label: "B", command: "bash" },
+        ],
+      },
+    };
+
+    it("start with >1 command → sends the picker instead of starting", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps(multi);
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "start" }));
+      expect(JSON.stringify(channel.cards())).toContain("选择启动方式");
+      expect(deps.claude.start).not.toHaveBeenCalled();
+    });
+
+    it("startpick → starts the chosen command and confirms", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps(multi);
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "startpick", idx: 1 }));
+      expect(deps.claude.start).toHaveBeenCalledWith("proj-1", "bash");
+      expect(channel.texts().some((t) => t.includes("B"))).toBe(true);
+    });
+  });
 });

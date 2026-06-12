@@ -66,7 +66,8 @@ describe("executeMessage — control actions", () => {
   it("start launches Claude and invalidates the config cache", async () => {
     const d = deps();
     expect(await executeMessage(msg("start"), d)).toBe("✅ Claude 已启动");
-    expect(d.claude.start).toHaveBeenCalledWith("proj-1");
+    // The default start passes no command override (uses the primary).
+    expect(d.claude.start).toHaveBeenCalledWith("proj-1", undefined);
     expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
   });
 

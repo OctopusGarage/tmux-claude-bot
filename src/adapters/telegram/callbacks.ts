@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
-import { executeMessage } from "../../core/dispatch.js";
+import { executeMessage, performStart } from "../../core/dispatch.js";
 import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { chatScope } from "../../core/project-manager.js";
 import type { QueuedMessage } from "../../core/queue.js";
@@ -17,6 +17,7 @@ import {
   buildLangKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
+  buildStartPickerKeyboard,
   buildVoiceLangKeyboard,
   parseCallbackData,
 } from "./keyboards.js";
@@ -195,6 +196,30 @@ export async function handleCallbackQuery(
     if (parsed.kind === "history") {
       await safeAnswerCallback(ctx);
       await sendHistory(ctx, deps, sessionName, 0, replyTarget);
+      return;
+    }
+    if (parsed.kind === "startpick") {
+      const pick = deps.config.startCommands[parsed.idx];
+      if (!pick) {
+        await safeAnswerCallback(ctx);
+        return;
+      }
+      await safeAnswerCallback(ctx, messages("telegram").toastSent("start"));
+      await performStart(deps, sessionName, pick.command);
+      await reply(ctx, "ok", messages("telegram").claudeStartedWith(pick.label), {
+        session: sessionName,
+        replyTarget,
+      });
+      return;
+    }
+    // Multi-command start: show a picker instead of starting the single default.
+    if (parsed.action === "start" && deps.config.startCommands.length > 1) {
+      await safeAnswerCallback(ctx);
+      await reply(ctx, "info", messages("telegram").startPickerPrompt, {
+        session: sessionName,
+        replyMarkup: buildStartPickerKeyboard(deps.config.startCommands, parsed.sid),
+        replyTarget,
+      });
       return;
     }
     // Control action — verb already validated as a safe MessageAction.

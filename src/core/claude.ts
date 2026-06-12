@@ -51,13 +51,15 @@ export class ClaudeRunner {
     return running;
   }
 
-  async start(sessionName?: string): Promise<void> {
+  /** Start Claude. `command` overrides the default start command (used by the
+   * multi-command picker); falls back to the configured primary command. */
+  async start(sessionName?: string, command?: string): Promise<void> {
     const alreadyRunning = await this.checkIfRunning(sessionName);
     if (alreadyRunning) {
       this.running = true;
       return;
     }
-    await this.bridge.sendKeys(this.claudeCommand, sessionName);
+    await this.bridge.sendKeys(command ?? this.claudeCommand, sessionName);
     // Don't wait - user will confirm when ready
     this.running = true;
   }

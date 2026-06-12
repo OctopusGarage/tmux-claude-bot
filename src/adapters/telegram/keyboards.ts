@@ -36,7 +36,8 @@ export type CallbackAction =
   | { kind: "queuestatus" }
   | { kind: "voicelang"; lang: string }
   | { kind: "uilang"; lang: Lang }
-  | { kind: "resume"; sessionId: string };
+  | { kind: "resume"; sessionId: string }
+  | { kind: "startpick"; idx: number; sid: string };
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
@@ -85,6 +86,12 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (!sessionId) return null;
     return { kind: "resume", sessionId };
   }
+  if (tag === "sp") {
+    const idx = Number(parts[1]);
+    const sid = parts[2];
+    if (parts.length !== 3 || !Number.isInteger(idx) || idx < 0 || !sid) return null;
+    return { kind: "startpick", idx, sid };
+  }
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
@@ -119,6 +126,20 @@ export function buildLangKeyboard(current: Lang): InlineKeyboard {
     if (l.code === current) kb.text(`✅ ${l.label}`, "noop");
     else kb.text(l.label, `ul:${l.code}`);
     if (i < UI_LANGS.length - 1) kb.row();
+  });
+  return kb;
+}
+
+/** Pick-a-start keyboard: one button per configured start command (shown when
+ * more than one is configured). Tapping sends `sp:<idx>:<sid>`. */
+export function buildStartPickerKeyboard(
+  commands: { label: string }[],
+  sid: string,
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  commands.forEach((c, i) => {
+    kb.text(`🚀 ${c.label}`, `sp:${i}:${sid}`);
+    if (i < commands.length - 1) kb.row();
   });
   return kb;
 }

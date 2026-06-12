@@ -58,6 +58,53 @@ export function claudeBinFromStartCommand(cmd: string): string {
 }
 
 /**
+ * Derive a short button label for a start command when no explicit
+ * `CLAUDE_START_LABEL_n` is set. Prefers the `CLAUDE_CONFIG_DIR` folder name,
+ * then `ANTHROPIC_MODEL`, then the binary basename — whichever distinguishes the
+ * options (e.g. `CLAUDE_CONFIG_DIR=~/.claude-stella … claude` → `claude-stella`).
+ */
+export function deriveStartLabel(command: string, idx: number): string {
+  const tokens = command.split(/\s+/).filter(Boolean);
+  const valOf = (name: string): string | undefined =>
+    tokens.find((t) => t.startsWith(`${name}=`))?.slice(name.length + 1);
+  const cfgDir = valOf("CLAUDE_CONFIG_DIR");
+  if (cfgDir) {
+    // basename, with the leading dot of hidden dirs dropped (.claude-stella → claude-stella)
+    const base = cfgDir.replace(/\/+$/, "").split("/").pop()?.replace(/^\.+/, "");
+    if (base) return base;
+  }
+  const model = valOf("ANTHROPIC_MODEL");
+  if (model) return model;
+  const bin = tokens.find((t) => !/^[A-Za-z_]\w*=/.test(t));
+  if (bin) return bin.split("/").pop() ?? bin;
+  return `#${idx}`;
+}
+
+/**
+ * Build the selectable start-command list from the env: `CLAUDE_START_COMMAND`
+ * (primary) plus contiguous `CLAUDE_START_COMMAND_2..N`, each with an optional
+ * friendly `CLAUDE_START_LABEL_n` (falls back to {@link deriveStartLabel}).
+ */
+export function parseStartCommands(
+  env: NodeJS.ProcessEnv,
+  primary: string,
+): { label: string; command: string }[] {
+  const out: { label: string; command: string }[] = [];
+  const add = (command: string | undefined, labelKey: string, idx: number): void => {
+    const cmd = command?.trim();
+    if (!cmd) return;
+    out.push({ label: env[labelKey]?.trim() || deriveStartLabel(cmd, idx), command: cmd });
+  };
+  add(primary, "CLAUDE_START_LABEL", 1);
+  for (let i = 2; ; i++) {
+    const cmd = env[`CLAUDE_START_COMMAND_${i}`];
+    if (cmd === undefined) break; // stop at the first gap
+    add(cmd, `CLAUDE_START_LABEL_${i}`, i);
+  }
+  return out;
+}
+
+/**
  * Load `.env` into process.env. Honors `TCB_ENV_FILE` so `npm run dev` can borrow
  * the deployed (prod) config — develop against the real token/proxy/Feishu with
  * hot reload, with no second `.env` to drift. Defaults to `./.env`.
@@ -98,6 +145,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
   return {
     telegramBotToken,
     claudeStartCommand: parsed.CLAUDE_START_COMMAND,
+    startCommands: parseStartCommands(env, parsed.CLAUDE_START_COMMAND),
     idlePollTicks: parsed.IDLE_POLL_TICKS,
     pollIntervalMs: parsed.POLL_INTERVAL_MS,
     maxOutputLines: parsed.MAX_OUTPUT_LINES,

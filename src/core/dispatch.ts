@@ -32,6 +32,21 @@ export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
 }
 
 /**
+ * Start Claude in `session`, optionally with a specific start command (from the
+ * multi-command picker). Shared by the default `start` action and the adapters'
+ * pick-a-start handlers so the assert/start/invalidate sequence stays in one place.
+ */
+export async function performStart(
+  deps: HandlerDeps,
+  session: string,
+  command?: string,
+): Promise<void> {
+  assertClaudeBinaryAccessible(command ?? deps.config.claudeStartCommand);
+  await deps.claude.start(session, command);
+  deps.configResolver.invalidate(session); // new process → re-detect config dir
+}
+
+/**
  * The protocol-agnostic command layer. Given a queued message (an action + the
  * session it targets) and the core service bundle, perform the work against
  * tmux/Claude and return the plain-text result. Knows nothing about Telegram,
@@ -151,9 +166,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     }
     case "start": {
       logger.info(`[executor] starting claude session=${session}`);
-      assertClaudeBinaryAccessible(deps.config.claudeStartCommand);
-      await deps.claude.start(session);
-      deps.configResolver.invalidate(session); // new process → re-detect config dir
+      await performStart(deps, session);
       return m.claudeStarted;
     }
     case "exit": {
