@@ -18,7 +18,12 @@ export type ViewName =
   | "uilang"
   | "ws"
   | "sessions"
-  | "doctor";
+  | "doctor"
+  | "newgroup"
+  | "bind"
+  | "rebind"
+  | "unbind"
+  | "restore";
 
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
  * Lark command surface matches Telegram's. */
@@ -35,6 +40,11 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   ws: "ws",
   sessions: "sessions",
   doctor: "doctor",
+  newgroup: "newgroup",
+  bind: "bind",
+  rebind: "rebind",
+  unbind: "unbind",
+  restore: "restore",
 };
 
 export type ParsedInput =
@@ -77,4 +87,18 @@ export function parseLarkInput(raw: string): ParsedInput {
   }
 
   return { kind: "unknown", name };
+}
+
+const GROUP_MGMT_VIEWS: ReadonlySet<ViewName> = new Set([
+  "newgroup",
+  "bind",
+  "rebind",
+  "unbind",
+  "restore",
+]);
+
+/** True when `raw` is one of the group binding-management slash commands. */
+export function isGroupMgmtCommand(raw: string): boolean {
+  const parsed = parseLarkInput(raw);
+  return parsed.kind === "view" && GROUP_MGMT_VIEWS.has(parsed.name);
 }
