@@ -232,6 +232,5 @@ Send any text → forwarded to Claude → reply`,
     `⚠️ The workspace for **${label}** is gone from disk. Use \`/rebind <path|name>\` to point this group somewhere else.`,
   groupUnbound: "🔓 This group is no longer bound to a workspace.",
   groupNotBound: "This group isn't bound to a workspace. Use `/bind <path|name>`.",
-  groupAlreadyBound: (label) => `This group is already bound to **${label}**.`,
   groupTargetUsage: "Usage: `<command> <absolute path | ~/path | workspace name>`",
 };

@@ -229,6 +229,5 @@ export const yue: Messages = {
     `⚠️ **${label}** 的工作區路徑已不存在。請用 \`/rebind <路徑|名稱>\` 重新綁定。`,
   groupUnbound: "🔓 此群組已解除與工作區的綁定。",
   groupNotBound: "此群組尚未綁定工作區。請使用 `/bind <路徑|名稱>`。",
-  groupAlreadyBound: (label) => `此群組已綁定至 **${label}**。`,
   groupTargetUsage: "用法：`<命令> <絕對路徑 | ~/路徑 | 工作區名稱>`",
 };

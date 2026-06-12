@@ -69,13 +69,17 @@ export async function handleNewGroup(
     return;
   }
 
+  // Persist the binding BEFORE creating the session: the group gate ignores
+  // unbound groups, so a dangling binding (no session yet) self-heals on the
+  // next message via reconcile, whereas an orphan group with no binding is a
+  // dead end. Mirrors handleBind's order.
+  bindGroup(created.chatId, target);
   await createProjectSession(
     deps,
     chatScope("lark", created.chatId),
     target.sessionName,
     target.workspacePath,
   );
-  bindGroup(created.chatId, target);
   await sendText(
     channel,
     created.chatId,

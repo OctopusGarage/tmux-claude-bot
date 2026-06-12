@@ -250,7 +250,6 @@ export const zh = {
     `⚠️ **${label}** 的工作区路径已不存在。请用 \`/rebind <路径|名称>\` 重新绑定。`,
   groupUnbound: "🔓 此群组已解除与工作区的绑定。",
   groupNotBound: "此群组尚未绑定工作区。请使用 `/bind <路径|名称>`。",
-  groupAlreadyBound: (label: string) => `此群组已绑定到 **${label}**。`,
   groupTargetUsage: "用法：`<命令> <绝对路径 | ~/路径 | 工作区名称>`",
 };
 
