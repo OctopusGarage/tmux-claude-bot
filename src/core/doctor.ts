@@ -62,7 +62,10 @@ export function defaultProbes(root: string = process.cwd()): DoctorProbes {
     },
     botProcessCount: async () => {
       try {
-        const { stdout } = await run("pgrep", ["-f", "tmux-claude-bot.*src/index.ts"]);
+        const { stdout } = await run("pgrep", [
+          "-f",
+          "tmux-claude-bot.*(src/index.ts|dist/cli.js)",
+        ]);
         return stdout.split("\n").filter((l) => l.trim()).length;
       } catch {
         return 0; // pgrep exits 1 when there are no matches

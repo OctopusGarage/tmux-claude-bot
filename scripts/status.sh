@@ -17,7 +17,7 @@ check_pid() {
   fi
 
   # Fallback: search by pattern
-  PID=$(ps aux | grep "$PROJECT_NAME.*src/index.ts" | grep -v grep | awk '{print $2}' | head -1)
+  PID=$(ps aux | grep -E "$PROJECT_NAME.*(src/index.ts|dist/cli.js)" | grep -v grep | awk '{print $2}' | head -1)
   if [ -n "$PID" ]; then
     echo "$PID"
     return 0

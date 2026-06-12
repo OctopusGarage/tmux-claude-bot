@@ -95,11 +95,15 @@ command -v node >/dev/null 2>&1 || { err "node not found - install via nvm: http
 command -v tmux >/dev/null 2>&1 || warn "tmux not found - install with: brew install tmux"
 command -v claude >/dev/null 2>&1 || warn "Claude Code CLI not found - see https://docs.anthropic.com/en/docs/claude-code (or set CLAUDE_START_COMMAND)."
 
-# Runtime dependencies only (--omit=dev: no biome/vitest/typescript/etc.). tsx is
-# a regular dependency, so the bot still runs. Skip husky - end users need no git
-# hooks; tarball installs have no .git anyway.
+# Full install (dev deps included) so the tsup build can run, then build the
+# bundled dist the launchd service runs, then prune dev deps back out. Skip husky
+# - end users need no git hooks; tarball installs have no .git anyway.
 info "Installing dependencies..."
-HUSKY=0 npm ci --omit=dev || HUSKY=0 npm install --omit=dev
+HUSKY=0 npm ci || HUSKY=0 npm install
+info "Building..."
+npm run build
+info "Pruning dev dependencies..."
+HUSKY=0 npm prune --omit=dev
 
 # Guided setup (read prompts from the terminal even when piped via curl).
 if [ ! -f .env ]; then

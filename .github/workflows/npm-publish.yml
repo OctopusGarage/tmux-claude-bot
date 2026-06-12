@@ -1,0 +1,35 @@
+name: Publish to npm
+
+# Manual, explicit publish (not auto-fired on tag) so releasing to the registry
+# is always a deliberate click. Publishes the package version currently in
+# package.json at the chosen ref. Requires repo secret NPM_TOKEN (an npm
+# automation/granular token with publish rights to @octopusgarage).
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or ref to publish (blank = default branch)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write # OIDC: lets `npm publish --provenance` attest the build
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      # `prepublishOnly` builds the dist bundle; `files` ships dist + scripts +
+      # installer only. `access`/scope come from package.json publishConfig.
+      - run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

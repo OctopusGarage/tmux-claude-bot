@@ -1,15 +1,28 @@
 {
-  "name": "tmux-claude-bot",
+  "name": "@octopusgarage/tmux-claude-bot",
   "version": "0.1.4",
   "license": "MIT",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "tmux-claude-bot": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "install.sh",
+    "INSTALL.md"
+  ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "build": "tsup",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/cli.js run",
     "setup": "NODE_NO_WARNINGS=1 tsx src/scripts/setup.ts",
     "setup:reconfigure": "NODE_NO_WARNINGS=1 tsx src/scripts/setup.ts --reconfigure",
     "setup:lark": "NODE_NO_WARNINGS=1 tsx src/scripts/lark-setup.ts",
@@ -38,6 +51,7 @@
   "dependencies": {
     "@grammyjs/files": "^1.2.0",
     "@larksuiteoapi/node-sdk": "^1.66.1",
+    "commander": "^14.0.3",
     "dotenv": "^17.4.0",
     "grammy": "^1.43.0",
     "https-proxy-agent": "^9.1.0",
@@ -62,6 +76,7 @@
     "husky": "^9.1.7",
     "knip": "^6.16.1",
     "lint-staged": "^17.0.7",
+    "tsup": "^8.5.1",
     "typescript": "^6.0.2",
     "vitest": "^4.1.8"
   }
