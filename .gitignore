@@ -17,3 +17,7 @@ logs/
 !.claude/settings.json
 docs/superpowers/
 .running
+
+# Stryker mutation testing artifacts
+reports/
+.stryker-tmp/
