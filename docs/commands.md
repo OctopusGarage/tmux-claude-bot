@@ -46,6 +46,8 @@ to one workspace so you can type without `@`-mentioning the bot.
 | `/unbind` | Inside a group | Remove this group's binding (group messages are ignored afterwards). |
 | `/restore` | Inside a group | Manually trigger re-anchoring: re-asserts the binding's session pointer and recreates the tmux session if it died. |
 
+No typing needed: the help card's **🗂 Project groups** button opens a context-aware menu — in a private chat it lists recent projects (tap to create a bound group); inside a bound group it offers **Restore / Rebind / Unbind**.
+
 **Required Feishu app scopes** for group-binding:
 - `im:message.group_msg` — "获取群组中所有消息" (a *sensitive* scope) — receive **all** messages in a bound project group, enabling no-`@` typing. Without it the bot only receives `@`-mentions in groups (`im:message.group_at_msg:readonly`), so a bound group would require `@bot` on every message.
 - `im:chat` — let `/newgroup` auto-create the bound private group. Optional: without it `/newgroup` fails gracefully and you use `/bind` instead.

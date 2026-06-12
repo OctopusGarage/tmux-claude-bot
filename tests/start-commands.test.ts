@@ -13,7 +13,7 @@ describe("deriveStartLabel", () => {
   });
 
   it("falls back to the binary basename", () => {
-    expect(deriveStartLabel("/Users/me/.local/bin/claude --dangerously-skip-permissions", 1)).toBe(
+    expect(deriveStartLabel("/home/user/.local/bin/claude --dangerously-skip-permissions", 1)).toBe(
       "claude",
     );
   });

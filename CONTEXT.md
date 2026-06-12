@@ -3,15 +3,15 @@
 ## Core job
 
 Remote control Claude Code from a chat app — send commands, get results back.
-Telegram is the current adapter; Feishu is planned. The platform-independent
-logic lives in `src/core/`; each chat app is an adapter under `src/adapters/`.
-See ADR-0002 for the layering.
+Telegram and Feishu/Lark are both implemented adapters (run either or both).
+The platform-independent logic lives in `src/core/`; each chat app is an adapter
+under `src/adapters/`. See ADR-0002 for the layering.
 
 ## Layers (adapter → core → shared)
 
 | Layer | Path | Responsibility |
 |-------|------|----------------|
-| **Adapter** | `src/adapters/telegram/` | Ingest platform messages, render results, keyboards/reactions/typing, network transport. One package per chat app. |
+| **Adapter** | `src/adapters/telegram/`, `src/adapters/lark/` | Ingest platform messages, render results, keyboards/reactions/typing, network transport. One package per chat app. |
 | **Core** | `src/core/` | Protocol-agnostic: tmux management, Claude lifecycle, command dispatch (`dispatch.ts`), queue, project management, history. Reusable by any adapter. |
 | **Shared** | `src/shared/` | Leaf primitives: config, types, utils. No internal dependencies. |
 

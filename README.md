@@ -31,8 +31,10 @@ A chat bot that drives [Claude Code](https://docs.anthropic.com/en/docs/claude-c
 ## Features
 
 - **Multi-project tmux sessions** — each project gets its own tmux session (`tmux_proj_<path>`)
-- **Project switching** — create, switch, and remove projects via Telegram commands
-- **Real-time output streaming** — captures tmux pane and streams output to Telegram
+- **Project switching** — create, switch, and remove projects via Telegram/Feishu commands & buttons
+- **Feishu/Lark project groups** — bind a Feishu group to one workspace, so you switch projects by switching groups (no `/cd`); works without `@bot`. See [docs/commands.md](docs/commands.md)
+- **Multiple start commands** — configure several Claude launch commands (different env/model/API key) and pick which to start from a button
+- **Real-time output streaming** — captures tmux pane and streams output to the chat
 - **Queue-based execution** — prevents concurrent commands from interleaving
 - **Idle detection** — polls tmux pane to detect when Claude is idle vs. running
 - **Directory guard** — operations restricted to configured allowed directories
@@ -190,8 +192,8 @@ All settings via `.env`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | *(optional)* | Telegram bot token from @BotFather. Blank = Telegram off (Feishu-only) |
-| `LARK_ENABLED` / `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_ALLOWED_OPEN_IDS` / `LARK_DOMAIN` | *(optional)* | Feishu/Lark adapter — set by `npm run setup:lark`. At least one of Telegram/Feishu must be configured |
-| `CLAUDE_START_COMMAND` | `claude-yolo` | Command to launch Claude |
+| `LARK_ENABLED` / `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_ALLOWED_OPEN_IDS` / `LARK_DOMAIN` | *(optional)* | Feishu/Lark adapter — set by `npm run setup:lark`. At least one of Telegram/Feishu must be configured. Feishu *project groups* need the `im:chat` and `im:message.group_msg` scopes (see [docs/commands.md](docs/commands.md)) |
+| `CLAUDE_START_COMMAND` | `claude-yolo` | Command to launch Claude (a full line; may carry leading `VAR=value` env). Add `CLAUDE_START_COMMAND_2..N` (+ optional `CLAUDE_START_LABEL_n`) for a pick-on-start menu — see `.env.example` |
 | `IDLE_POLL_TICKS` | `3` | Consecutive idle polls before considered idle |
 | `POLL_INTERVAL_MS` | `1000` | Milliseconds between idle polls |
 | `MAX_OUTPUT_LINES` | `200` | Max tmux pane lines to capture |
