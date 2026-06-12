@@ -57,7 +57,7 @@ On this machine the bot is installed as a launchd service (`~/Library/LaunchAgen
 
 - **`scripts/stop.sh` does NOT stop it** — launchd immediately respawns the process. Running `start.sh` on top of that spawns a *second* lineage, so you end up with multiple instances fighting over the Telegram long-poll (409). This is a real trap; don't fall into it.
 - Since the runtime instance lock (`src/core/instance-lock.ts`), a second instance sharing the same state dir refuses to start with an `InstanceLockHeldError` naming the holder pid — the trap now fails fast instead of 409-ing. Instances with different `TCB_STATE_DIR`s are not protected.
-- The launchd wrapper runs `node src/index.ts` directly via the tsx loader (no `tsx watch`), so a restart recompiles the latest source — no `npm run build` needed for it to pick up changes.
+- The launchd wrapper runs the bundled CLI: `node dist/cli.js run`. A restart runs whatever `dist/` was **last built** — so to pick up source changes the managed copy must be rebuilt (`install.sh` runs `npm run build` on every deploy). This is the deploy path; a bare `kickstart` alone will NOT pick up un-built source edits.
 
 **To restart (the correct way):**
 
@@ -78,14 +78,13 @@ If duplicate instances already exist (e.g. from an accidental `start.sh`), kill 
 
 ### How to identify the correct process
 
-The process runs under `tsx src/index.ts` with `tmux-claude-bot` in its working directory path. Identification uses both:
-1. `tsx` command
-2. `src/index.ts` argument
-3. `tmux-claude-bot` directory path
+The managed (launchd) instance runs `node dist/cli.js run`; a dev instance (`npm run dev`) runs `tsx src/index.ts`. Both carry `tmux-claude-bot` in the path. Identification uses two parts:
+1. `tmux-claude-bot` directory path
+2. the entrypoint argument — `dist/cli.js` (managed) or `src/index.ts` (dev)
 
 **NEVER use broad patterns** like `node`, `tsx` alone, or bare process names — they match unrelated processes.
 
-**Rule:** `kill -9 $(pgrep -f "tmux-claude-bot.*src/index.ts")` — always include `tmux-claude-bot` in the pattern.
+**Rule:** `kill -9 $(pgrep -f "tmux-claude-bot.*(src/index.ts|dist/cli.js)")` — always include `tmux-claude-bot` in the pattern; the alternation catches both the managed and dev forms.
 
 ### Implementation
 
@@ -93,7 +92,7 @@ The project root directory name `tmux-claude-bot` is used as the process identit
 
 ## Development Conventions
 
-- `npm run build` - Compile TypeScript
+- `npm run build` - Bundle to `dist/` via tsup (what the launchd service runs)
 - `npm run dev` or `tsx src/index.ts` - Start development
 - Commands exposed via Telegram Bot menu
 

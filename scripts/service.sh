@@ -17,7 +17,7 @@ cmd="${1:-status}"
 case "$cmd" in
   status)
     launchctl list | grep "$LABEL" || echo "service: not loaded"
-    pgrep -fl "tmux-claude-bot.*src/index.ts" || echo "process: none running"
+    pgrep -fl "tmux-claude-bot.*(src/index.ts|dist/cli.js)" || echo "process: none running"
     ;;
   pause)
     if launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null; then

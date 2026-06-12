@@ -18,7 +18,7 @@ fi
 
 # Fallback: search by pattern
 if [ -z "$PID" ]; then
-  PID=$(ps aux | grep "$PROJECT_NAME.*src/index.ts" | grep -v grep | awk '{print $2}' | head -1)
+  PID=$(ps aux | grep -E "$PROJECT_NAME.*(src/index.ts|dist/cli.js)" | grep -v grep | awk '{print $2}' | head -1)
 fi
 
 if [ -z "$PID" ]; then
