@@ -16,6 +16,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0 # full history so a secret in any commit is caught
-      - uses: gitleaks/gitleaks-action@v2
+      # Run the gitleaks CLI directly (MIT, free). The gitleaks-action@v2 wrapper
+      # refuses to run on organization repos without a paid GITLEAKS_LICENSE, so
+      # it never actually scanned here — the CLI has no such gate.
+      - name: Run gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks git . --config .gitleaks.toml --redact -v
