@@ -2,6 +2,17 @@ import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 import type { AppConfig, ScriptConfig } from "./types.js";
 
+/**
+ * A positive-integer env var that tolerates a *blank* value. A stray `KEY=`
+ * line makes dotenv inject `""`, which counts as present — so a plain
+ * `.default()` is skipped, `coerce("")` becomes `0`, and `.positive()` throws,
+ * taking down startup with a cryptic ZodError. Treating `""` as unset lets the
+ * default apply (same rationale as `LARK_DOMAIN.catch` below). A non-empty but
+ * non-numeric value still throws — that's a real typo worth surfacing.
+ */
+const blankTolerantPositiveInt = (def: number): z.ZodType<number> =>
+  z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(def));
+
 // Exported so the docs contract test can assert every supported key is
 // documented in .env.example (legacy aliases excepted).
 export const envSchema = z.object({
@@ -10,25 +21,25 @@ export const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().default(""),
   BOT_TOKEN: z.string().default(""), // legacy alias (pre-multi-protocol); read as fallback
   CLAUDE_START_COMMAND: z.string().min(1).default("claude-yolo"),
-  IDLE_POLL_TICKS: z.coerce.number().int().positive().default(5),
-  POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
-  MAX_OUTPUT_LINES: z.coerce.number().int().positive().default(200),
-  MAX_MESSAGE_LENGTH: z.coerce.number().int().positive().default(3500),
+  IDLE_POLL_TICKS: blankTolerantPositiveInt(5),
+  POLL_INTERVAL_MS: blankTolerantPositiveInt(1000),
+  MAX_OUTPUT_LINES: blankTolerantPositiveInt(200),
+  MAX_MESSAGE_LENGTH: blankTolerantPositiveInt(3500),
   // Inbound cap is the size of a prompt we accept FROM the user and forward TO
   // Claude. It is decoupled from MAX_MESSAGE_LENGTH (which only truncates
   // replies). Telegram never delivers a single message over 4096 chars, so the
   // default effectively never rejects a legitimate prompt.
-  MAX_INBOUND_LENGTH: z.coerce.number().int().positive().default(4096),
-  RATE_LIMIT_MS: z.coerce.number().int().positive().default(2000),
-  SESSION_WARMUP_MS: z.coerce.number().int().positive().default(500),
-  MAX_QUEUE_SIZE: z.coerce.number().int().positive().default(30),
-  MAX_WAIT_READY_MS: z.coerce.number().int().positive().default(60000),
-  MAX_WAIT_DONE_MS: z.coerce.number().int().positive().default(300000),
+  MAX_INBOUND_LENGTH: blankTolerantPositiveInt(4096),
+  RATE_LIMIT_MS: blankTolerantPositiveInt(2000),
+  SESSION_WARMUP_MS: blankTolerantPositiveInt(500),
+  MAX_QUEUE_SIZE: blankTolerantPositiveInt(30),
+  MAX_WAIT_READY_MS: blankTolerantPositiveInt(60000),
+  MAX_WAIT_DONE_MS: blankTolerantPositiveInt(300000),
   // Absolute cap on one prompt's wall-clock wait. Each MAX_WAIT_DONE_MS round
   // that expires sends a one-time "still running" notice and keeps waiting,
   // until this total is exhausted — then the run resolves with partial output.
-  MAX_WAIT_DONE_TOTAL_MS: z.coerce.number().int().positive().default(3600000),
-  MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(5),
+  MAX_WAIT_DONE_TOTAL_MS: blankTolerantPositiveInt(3600000),
+  MAX_CONCURRENT_SESSIONS: blankTolerantPositiveInt(5),
   TELEGRAM_ALLOWED_USER_IDS: z.string().default(""),
   ALLOWED_USER_IDS: z.string().default(""), // legacy alias
   CD_ALLOWED_DIRS: z.string().default(""),
@@ -175,7 +186,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
 
 const scriptEnvSchema = z.object({
   CLAUDE_START_COMMAND: z.string().min(1).default("claude-yolo"),
-  SESSION_WARMUP_MS: z.coerce.number().int().positive().default(500),
+  SESSION_WARMUP_MS: blankTolerantPositiveInt(500),
   PROJECT_SESSION_PREFIX: z.string().min(1).default("tmux_proj_"),
 });
 
