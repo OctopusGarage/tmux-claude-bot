@@ -175,49 +175,46 @@ export function viewCard(title: string, body: string): object {
   return shell(title, [md(content), HR, ...controlActions()]);
 }
 
-/** Alive-project list: one labelled row per project with switch/remove buttons
- * (the active one shows an inert "current" marker). */
-export function projectListCard(projects: ProjectButton[]): object {
-  if (projects.length === 0) {
-    return shell(messages("lark").aliveListTitle(0), [md(messages("lark").aliveListEmpty)]);
-  }
-  const m = messages("lark");
+/** Shared skeleton for the tappable project lists: an empty-state message, or a
+ * labelled row + a `rowFor(p)` button row per project, under one title. */
+function listCard<P extends { label: string }>(
+  title: string,
+  emptyMsg: string,
+  projects: readonly P[],
+  rowFor: (p: P) => object,
+): object {
+  if (projects.length === 0) return shell(title, [md(emptyMsg)]);
   const elements: object[] = [];
   for (const p of projects) {
     elements.push(md(p.label));
-    if (p.active) {
-      elements.push(gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]));
-    } else {
-      elements.push(
-        gridRow([
+    elements.push(rowFor(p));
+  }
+  return shell(title, elements);
+}
+
+/** Alive-project list: one labelled row per project with switch/remove buttons
+ * (the active one shows an inert "current" marker). */
+export function projectListCard(projects: ProjectButton[]): object {
+  const m = messages("lark");
+  return listCard(m.aliveListTitle(projects.length), m.aliveListEmpty, projects, (p) =>
+    p.active
+      ? gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }])
+      : gridRow([
           { text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } },
           { text: m.btnRemove, value: { cmd: "remove", sid: p.sid }, style: "danger" },
         ]),
-      );
-    }
-  }
-  return shell(messages("lark").aliveListTitle(projects.length), elements);
+  );
 }
 
 /** Recent-project list: per project, tap an alive one to switch, a stopped one
  * to (re)create it; the active one is inert. */
 export function recentListCard(projects: RecentButton[]): object {
-  if (projects.length === 0) {
-    return shell(messages("lark").recentListTitle, [md(messages("lark").recentListEmpty)]);
-  }
   const m = messages("lark");
-  const elements: object[] = [];
-  for (const p of projects) {
-    elements.push(md(p.label));
-    if (p.active) {
-      elements.push(gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]));
-    } else if (p.alive) {
-      elements.push(gridRow([{ text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } }]));
-    } else {
-      elements.push(gridRow([{ text: m.btnCreate, value: { cmd: "addrecent", sid: p.sid } }]));
-    }
-  }
-  return shell(messages("lark").recentListTitle, elements);
+  return listCard(m.recentListTitle, m.recentListEmpty, projects, (p) => {
+    if (p.active) return gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]);
+    if (p.alive) return gridRow([{ text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } }]);
+    return gridRow([{ text: m.btnCreate, value: { cmd: "addrecent", sid: p.sid } }]);
+  });
 }
 
 /** Project-group picker: list recent projects, each with a "new group" (p2p) or
@@ -225,17 +222,11 @@ export function recentListCard(projects: RecentButton[]): object {
 export function groupPickerCard(projects: RecentButton[], mode: "make" | "bind"): object {
   const m = messages("lark");
   const title = mode === "make" ? m.groupPickerTitle : m.groupBindPickerTitle;
-  if (projects.length === 0) {
-    return shell(title, [md(m.groupMenuNoProjects)]);
-  }
   const text = mode === "make" ? m.btnMakeGroup : m.btnBindHere;
   const cmd = mode === "make" ? "makegroup" : "bindhere";
-  const elements: object[] = [];
-  for (const p of projects) {
-    elements.push(md(p.label));
-    elements.push(gridRow([{ text, value: { cmd, sid: p.sid } }]));
-  }
-  return shell(title, elements);
+  return listCard(title, m.groupMenuNoProjects, projects, (p) =>
+    gridRow([{ text, value: { cmd, sid: p.sid } }]),
+  );
 }
 
 /** Bound-group management card: restore / rebind / unbind, no typing needed. */
