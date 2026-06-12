@@ -39,6 +39,17 @@ module.exports = {
       to: { path: "^src/adapters" },
     },
     {
+      name: "adapters-isolated",
+      severity: "error",
+      comment:
+        "Adapters must not import each other — that is how logic gets copied between Telegram and Lark and then drifts (the /tab and dedup bugs). Shared behavior belongs in core, consumed by both.",
+      from: { path: "^src/adapters/([^/]+)/" },
+      to: {
+        path: "^src/adapters/([^/]+)/",
+        pathNot: ["^src/adapters/$1/"], // same adapter is fine; a different one is not
+      },
+    },
+    {
       name: "no-orphans",
       severity: "warn",
       comment: "Orphan modules are usually dead code (Knip also tracks this).",
