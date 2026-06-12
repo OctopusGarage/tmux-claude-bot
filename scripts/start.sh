@@ -6,7 +6,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PROJECT_NAME="tmux-claude-bot"
 
 # Stop any existing instance first
-PID=$(ps aux | grep "$PROJECT_NAME.*src/index.ts" | grep -v grep | awk '{print $2}' | head -1)
+PID=$(ps aux | grep -E "$PROJECT_NAME.*(src/index.ts|dist/cli.js)" | grep -v grep | awk '{print $2}' | head -1)
 if [ -n "$PID" ]; then
   echo "[start] Stopping existing instance (PID: $PID)..."
   kill -9 "$PID" 2>/dev/null

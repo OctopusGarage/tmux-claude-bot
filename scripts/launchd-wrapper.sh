@@ -23,7 +23,6 @@ fi
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 cd "$PROJECT_DIR"
 
-exec "$NODE_BIN" \
-  --require "$PROJECT_DIR/node_modules/tsx/dist/preflight.cjs" \
-  --import "file://$PROJECT_DIR/node_modules/tsx/dist/loader.mjs" \
-  "$PROJECT_DIR/src/index.ts"
+# Run the bundled CLI (built by install.sh via `npm run build`). No tsx loader:
+# the dist is plain node ESM, so a restart runs whatever was last built.
+exec "$NODE_BIN" "$PROJECT_DIR/dist/cli.js" run

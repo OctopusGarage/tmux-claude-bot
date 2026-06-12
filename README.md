@@ -45,20 +45,56 @@ A chat bot that drives [Claude Code](https://docs.anthropic.com/en/docs/claude-c
 ## Architecture
 
 ```
-Telegram Bot (grammy)
-    │
-    ├── bot/
-    │   └── handlers.ts  — command routing, middleware, session validation
-    │
-    ├── services/
-    │   ├── tmux.ts              — tmux pane capture, send-keys, session management
-    │   ├── claude.ts            — start/stop Claude, idle poll, queue orchestration
-    │   ├── queue.ts             — FIFO command queue with mutex
-    │   ├── output.ts            — tmux output → Telegram message chunking
-    │   └── currentProject.ts    — .current_project file lifecycle + session cache
-    │
-    └── config.ts    — env loading via dotenv + Zod validation
+   ┌──────────────┐                        ┌──────────────┐
+   │   Telegram   │                        │  Feishu/Lark │
+   │  app (user)  │                        │  app (user)  │
+   └──────┬───────┘                        └──────┬───────┘
+          │                                       │
+   HTTPS long-poll                         WebSocket (persistent)
+   getUpdates / sendMessage                events + Open API reply
+          │                                       │
+   ┌──────▼───────────────────────────────────────▼──────┐
+   │      tmux-claude-bot   (node dist/cli.js run)        │  launchd service
+   │                                                      │  (single instance)
+   │  ┌─────────────────┐         ┌─────────────────┐     │
+   │  │ adapters/telegram│        │  adapters/lark  │     │  protocol glue:
+   │  │     (grammY)     │        │ (@larksuite sdk)│     │  receive / render /
+   │  └───────┬─────────┘         └────────┬────────┘     │  buttons & cards
+   │          └─────────────┬──────────────┘              │
+   │                 ┌──────▼───────┐                     │
+   │                 │     core/    │  dispatch  — meaning │  protocol-agnostic
+   │                 │   dispatch   │  queue     — serial  │  (no platform code;
+   │                 │   queue      │  claude.ts — Claude  │   reused by any
+   │                 │   claude.ts  │              lifecycle│   adapter)
+   │                 │   tmux.ts    │  tmux.ts   — sessions │
+   │                 └──────┬───────┘                     │
+   └────────────────────────┼─────────────────────────────┘
+                            │
+             tmux send-keys │ ▲ capture-pane
+              (inject cmd)  │ │ (scrape output)
+                            ▼ │
+                  ┌──────────────────────┐
+                  │     tmux session      │  one per project
+                  │  ┌────────────────┐   │
+                  │  │  Claude Code    │   │  interactive CLI,
+                  │  │     CLI         │   │  foreground in the pane
+                  │  └────────────────┘   │
+                  └──────────────────────┘
 ```
+
+**Message round-trip:**
+
+1. User sends a message in **Telegram / Feishu**.
+2. The matching **adapter** receives it (long-poll / WebSocket) and normalizes it to a core command.
+3. **`core/dispatch`** routes it; **`tmux.ts`** injects it into the project's tmux session via `send-keys`.
+4. **Claude Code** processes it in the pane; the bot reads the result with `capture-pane`.
+5. The adapter **renders the reply back** to the originating platform.
+
+**Key points:**
+
+- **Two inbound transports** — Telegram *polls* (HTTPS long-poll), Feishu *pushes* (persistent WebSocket); each reply goes back out its own platform.
+- **One-way layering `adapters/ → core/ → shared/`** — `core/` knows nothing about any chat platform, so adding Feishu was just another adapter; the tmux + Claude machinery is fully reused.
+- The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + screen-scrape), rather than calling an LLM API — which is why tmux sits in the middle.
 
 ## Quick Start
 

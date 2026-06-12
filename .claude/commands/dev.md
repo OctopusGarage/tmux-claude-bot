@@ -19,7 +19,7 @@ Constants: launchd label `com.octopusgarage.tmux-claude-bot` · deploy dir
 ## status
 
 - `npm run service:status` — managed service + bot process.
-- `pgrep -fl "tmux-claude-bot.*src/index.ts"` — instance count (>1 ⇒ 409 risk).
+- `pgrep -fl "tmux-claude-bot.*(src/index.ts|dist/cli.js)"` — instance count (>1 ⇒ 409 risk). Managed runs `dist/cli.js`; a `./dev.sh` clone runs `src/index.ts`.
 - Whether `./dev.sh` is currently running (paused prod + clone in hot-reload).
 
 ## start
