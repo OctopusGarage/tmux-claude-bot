@@ -1,0 +1,15 @@
+# Gitleaks config — extends the default ruleset, adds a narrow allowlist.
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Known, retired Telegram bot token that appears in git history (tests/logger.test.ts
+before it was replaced with a synthetic fixture). The owner has confirmed this
+token is revoked; HEAD no longer contains it. Allowlisted by exact value so any
+OTHER credential-shaped string still fails the scan. Rewriting public history to
+purge it was judged not worth the cost.
+"""
+regexes = [
+  '''8539533731:AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U''',
+]

@@ -1,0 +1,21 @@
+name: Gitleaks
+
+# Secret scanning — fails the build if a credential-shaped string lands in the
+# tree or history (bot tokens, app secrets, keys). Complements the runtime
+# redaction in src/shared/utils/logger.ts.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history so a secret in any commit is caught
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
