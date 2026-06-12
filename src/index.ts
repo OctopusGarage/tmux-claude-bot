@@ -1,12 +1,33 @@
 import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
+import {
+  acquireInstanceLock,
+  InstanceLockHeldError,
+  releaseInstanceLock,
+} from "./core/instance-lock.js";
 import { detectUncleanRestart, markCleanShutdown } from "./core/lifecycle.js";
 import { getPathBySession } from "./core/sessionPathMap.js";
 import { logger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 
 const AUTO_START_DELAY_MS = 1000;
+
+// Refuse to start beside another running instance — two pollers on one
+// Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
+// ("Process Management") for the launchd KeepAlive trap this guards against.
+try {
+  acquireInstanceLock();
+} catch (err) {
+  if (err instanceof InstanceLockHeldError) {
+    console.error(
+      `[bot] ${err.message}. If that instance is launchd-managed, restart it with ` +
+        `\`launchctl kickstart -k\` instead of starting a second copy.`,
+    );
+    process.exit(1);
+  }
+  throw err;
+}
 
 const deps = bootstrap();
 const { config, currentProject, bridge } = deps;
@@ -47,6 +68,8 @@ async function init(): Promise<void> {
 const recoveredFromCrash = detectUncleanRestart();
 process.once("SIGINT", markCleanShutdown);
 process.once("SIGTERM", markCleanShutdown);
+process.once("SIGINT", releaseInstanceLock);
+process.once("SIGTERM", releaseInstanceLock);
 
 process.on("uncaughtException", (err) => {
   logger.error(`[fatal] uncaughtException: ${err.stack ?? err.message}`);

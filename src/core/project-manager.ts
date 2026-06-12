@@ -12,17 +12,40 @@ const CURRENT_PROJECT_FILE = ".current_project";
 
 // ─── current_project ───────────────────────────────────────────────────────────
 
-/** Chat channel — each keeps its OWN current project so switching on one does not
- * affect the other. */
+/** Named chat channels. Kept for use in `chatScope()` and `messages()`. */
 export type Channel = "telegram" | "lark";
 
-type CurrentMap = Partial<Record<Channel, string>>;
+/**
+ * Build a per-chat scope key: `"telegram:${chatId}"` or `"lark:${chatId}"`.
+ * Pass this wherever a `Channel` was previously used so that each chat gets its
+ * own current-project pointer rather than sharing one per channel.
+ */
+export function chatScope(channel: Channel, chatId: string | number): string {
+  return `${channel}:${chatId}`;
+}
 
 /**
- * Per-channel "current project" pointer, stored as JSON in `.current_project`:
- * `{ "telegram": "<session>", "lark": "<session>" }`. A legacy plain-string file
- * (one shared current project) is migrated on read by seeding both channels with
- * it, so an existing install keeps working until each channel diverges.
+ * Extract the base channel from a scope key like `"telegram:123"` → `"telegram"`.
+ * Falls back to the full string for legacy bare-channel keys.
+ */
+export function channelFromScope(scope: string): Channel {
+  if (scope.startsWith("telegram")) return "telegram";
+  return "lark";
+}
+
+type CurrentMap = Record<string, string>;
+
+/** "telegram:123" → "telegram"; null for bare-channel (already-legacy) scopes. */
+function legacyKey(scope: string): string | null {
+  const sep = scope.indexOf(":");
+  return sep > 0 ? scope.slice(0, sep) : null;
+}
+
+/**
+ * Per-chat "current project" pointer, stored as JSON in `.current_project`.
+ * Keys are scope strings: `"telegram:${chatId}"` or `"lark:${chatId}"`.
+ * Legacy files with bare `"telegram"` / `"lark"` keys are honored as a read
+ * fallback for scoped keys and retired on the first scoped set()/clear().
  */
 export class CurrentProjectManager {
   private readonly baseDir: string;
@@ -33,12 +56,6 @@ export class CurrentProjectManager {
     this.baseDir = baseDir;
   }
 
-  /**
-   * Serialize the read-modify-write so two concurrent mutations (e.g. Telegram
-   * and Feishu both switching project in the same async window) can't clobber
-   * each other — the in-memory cache makes a bare RMW non-atomic, dropping one
-   * channel's update.
-   */
   private async mutate(fn: (map: CurrentMap) => CurrentMap): Promise<void> {
     const prev = this.lock;
     let release!: () => void;
@@ -66,7 +83,7 @@ export class CurrentProjectManager {
       } else if (raw.startsWith("{")) {
         this.cache = JSON.parse(raw) as CurrentMap;
       } else {
-        // Legacy single-string format → seed both channels with the old value.
+        // Legacy single-string format → seed bare channel keys.
         this.cache = { telegram: raw, lark: raw };
       }
     } catch {
@@ -80,43 +97,57 @@ export class CurrentProjectManager {
     this.cache = map;
   }
 
-  async get(channel: Channel): Promise<string | null> {
-    return (await this.read())[channel] ?? null;
+  async get(scope: string): Promise<string | null> {
+    const map = await this.read();
+    const hit = map[scope];
+    if (hit) return hit;
+    // Upgrade path: state files written before the per-chat scope refactor
+    // hold bare channel keys ("telegram"). Fall back so a deploy doesn't make
+    // every chat forget its current project. set()/clear() retire the legacy
+    // key, so this fallback only fires until the first scoped write.
+    const legacy = legacyKey(scope);
+    return (legacy ? map[legacy] : undefined) ?? null;
   }
 
-  async set(channel: Channel, sessionName: string): Promise<void> {
-    await this.mutate((map) => ({ ...map, [channel]: sessionName }));
-  }
-
-  /** Clear one channel's current project (e.g. it pointed at a removed session). */
-  async clear(channel: Channel): Promise<void> {
+  async set(scope: string, sessionName: string): Promise<void> {
     await this.mutate((map) => {
-      delete map[channel];
+      const next = { ...map, [scope]: sessionName };
+      const legacy = legacyKey(scope);
+      if (legacy) delete next[legacy];
+      return next;
+    });
+  }
+
+  /** Clear one scope's current project (e.g. it pointed at a removed session). */
+  async clear(scope: string): Promise<void> {
+    await this.mutate((map) => {
+      delete map[scope];
+      const legacy = legacyKey(scope);
+      if (legacy) delete map[legacy];
       return map;
     });
   }
 
-  /** Drop `sessionName` from EVERY channel that points at it — used when the
-   * session is torn down, so no channel is left pointing at a dead session. */
+  /** Drop `sessionName` from every scope that points at it. */
   async clearSession(sessionName: string): Promise<void> {
     await this.mutate((map) => {
-      for (const ch of ["telegram", "lark"] as Channel[]) {
-        if (map[ch] === sessionName) delete map[ch];
+      for (const key of Object.keys(map)) {
+        if (map[key] === sessionName) delete map[key];
       }
       return map;
     });
   }
 
-  /** Any channel's current project — for the bridge's default-session fallback. */
+  /** Any scope's current project — for the bridge's default-session fallback. */
   async getAny(): Promise<string | null> {
     const map = await this.read();
-    return map.telegram ?? map.lark ?? null;
+    return Object.values(map).find((v): v is string => Boolean(v)) ?? null;
   }
 
-  /** Distinct current sessions across channels — for boot-time session restore. */
+  /** Distinct current sessions across all scopes — for boot-time session restore. */
   async allCurrent(): Promise<string[]> {
     const map = await this.read();
-    return [...new Set([map.telegram, map.lark].filter((s): s is string => Boolean(s)))];
+    return [...new Set(Object.values(map).filter((s): s is string => Boolean(s)))];
   }
 }
 

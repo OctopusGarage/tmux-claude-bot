@@ -2,7 +2,9 @@ import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 import type { AppConfig, ScriptConfig } from "./types.js";
 
-const envSchema = z.object({
+// Exported so the docs contract test can assert every supported key is
+// documented in .env.example (legacy aliases excepted).
+export const envSchema = z.object({
   // Optional: Telegram is enabled only when a token is present. A Feishu/Lark-only
   // install (LARK_* configured) needs no Telegram token.
   TELEGRAM_BOT_TOKEN: z.string().default(""),
@@ -22,6 +24,11 @@ const envSchema = z.object({
   MAX_QUEUE_SIZE: z.coerce.number().int().positive().default(30),
   MAX_WAIT_READY_MS: z.coerce.number().int().positive().default(60000),
   MAX_WAIT_DONE_MS: z.coerce.number().int().positive().default(300000),
+  // Absolute cap on one prompt's wall-clock wait. Each MAX_WAIT_DONE_MS round
+  // that expires sends a one-time "still running" notice and keeps waiting,
+  // until this total is exhausted — then the run resolves with partial output.
+  MAX_WAIT_DONE_TOTAL_MS: z.coerce.number().int().positive().default(3600000),
+  MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(5),
   TELEGRAM_ALLOWED_USER_IDS: z.string().default(""),
   ALLOWED_USER_IDS: z.string().default(""), // legacy alias
   CD_ALLOWED_DIRS: z.string().default(""),
@@ -101,6 +108,8 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
     maxQueueSize: parsed.MAX_QUEUE_SIZE,
     maxWaitReadyMs: parsed.MAX_WAIT_READY_MS,
     maxWaitDoneMs: parsed.MAX_WAIT_DONE_MS,
+    maxWaitDoneTotalMs: parsed.MAX_WAIT_DONE_TOTAL_MS,
+    maxConcurrentSessions: parsed.MAX_CONCURRENT_SESSIONS,
     telegramAllowedUserIds: new Set(
       telegramAllowedRaw
         .split(",")

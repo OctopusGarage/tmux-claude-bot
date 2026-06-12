@@ -6,7 +6,7 @@ import { sleep } from "../shared/utils/sleep.js";
 import type { HandlerDeps } from "./deps.js";
 import { messages } from "./i18n/index.js";
 import { projectLabel } from "./project-label.js";
-import type { Channel } from "./project-manager.js";
+import { channelFromScope } from "./project-manager.js";
 import { appendRecentProject, readRecentProjectLines } from "./recentProjects.js";
 import {
   getPathBySession,
@@ -85,7 +85,7 @@ export async function resolveAliveSessionByShortId(
  */
 export async function createProjectSession(
   deps: HandlerDeps,
-  channel: Channel,
+  channel: string,
   sessionName: string,
   projectPath: string,
 ): Promise<void> {
@@ -102,7 +102,7 @@ export async function createProjectSession(
  * (shared) recents list. */
 export async function switchToProject(
   deps: HandlerDeps,
-  channel: Channel,
+  channel: string,
   sessionName: string,
 ): Promise<void> {
   await deps.currentProject.set(channel, sessionName);
@@ -121,13 +121,13 @@ export async function switchToProject(
  */
 export function botSelfRepoWarning(
   projectPath: string | null | undefined,
-  channel: Channel = "telegram",
+  scope: string = "telegram",
 ): string | null {
   if (!projectPath) return null;
   try {
     const pkg = JSON.parse(fs.readFileSync(join(projectPath, "package.json"), "utf8"));
     if (pkg?.name === "tmux-claude-bot") {
-      return messages(channel).nestingWarning;
+      return messages(channelFromScope(scope)).nestingWarning;
     }
   } catch {
     /* no/unreadable package.json -> not a checkout */
@@ -176,7 +176,7 @@ export async function removeProjectBySession(
  */
 export async function aliveProjectButtons(
   deps: HandlerDeps,
-  channel: Channel,
+  channel: string,
 ): Promise<ProjectButton[]> {
   const sessions = await deps.bridge.listProjectSessions();
   const valid = sessions.filter((session) => {
@@ -197,7 +197,7 @@ export async function aliveProjectButtons(
 /** Recent projects (existing dirs) as keyboard buttons, with alive/active flags. */
 export async function recentProjectButtons(
   deps: HandlerDeps,
-  channel: Channel,
+  channel: string,
 ): Promise<RecentButton[]> {
   const paths = (await readRecentProjectLines()).filter((p) => fs.existsSync(p));
   const currentSession = await deps.currentProject.get(channel);

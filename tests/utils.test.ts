@@ -1,7 +1,9 @@
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { stateDir } from "../src/core/state-dir.js";
 import { normalizeError } from "../src/shared/utils/error.js";
 import { Queue } from "../src/shared/utils/queue.js";
+import { truncate } from "../src/shared/utils/string.js";
 
 function isPathAllowed(targetPath: string, allowedRoots: string[]): boolean {
   return allowedRoots.some((root) => {
@@ -113,5 +115,32 @@ describe("normalizeError", () => {
     const result = normalizeError(null);
     expect(result).toBeInstanceOf(Error);
     expect(result.message).toBe("null");
+  });
+});
+
+describe("truncate", () => {
+  it("truncates strings longer than maxLen", () => {
+    expect(truncate("hello world", 5)).toBe("hello...");
+  });
+
+  it("returns the original string when it is within the limit", () => {
+    expect(truncate("hi", 10)).toBe("hi");
+  });
+});
+
+describe("stateDir", () => {
+  it("returns TCB_STATE_DIR when set (test isolation override)", () => {
+    const result = stateDir("/fallback");
+    expect(result).toBe(process.env.TCB_STATE_DIR);
+  });
+
+  it("falls back to the provided path when TCB_STATE_DIR is not set", () => {
+    const saved = process.env.TCB_STATE_DIR;
+    delete process.env.TCB_STATE_DIR;
+    try {
+      expect(stateDir("/my/fallback")).toBe("/my/fallback");
+    } finally {
+      process.env.TCB_STATE_DIR = saved;
+    }
   });
 });

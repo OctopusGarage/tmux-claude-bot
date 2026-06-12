@@ -51,6 +51,7 @@ export const zh = {
   btnCompact: "🗜 compact",
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
+  btnTab: "⇥ Tab",
   btnStatus: "📊 状态",
   btnStart: "🚀 启动",
   btnExit: "🚪 退出",
@@ -87,6 +88,7 @@ export const zh = {
   sentEnter: "✅ 已回车",
   sentUp: "✅ 已发送 ↑",
   sentDown: "✅ 已发送 ↓",
+  sentTab: "✅ 已发送 Tab",
   statusRunning: "🟢 Claude 运行中",
   statusNotRunning: "🔴 Claude 未运行",
 
@@ -149,6 +151,7 @@ export const zh = {
   processing: "处理中",
   failed: "失败",
   taskStillRunning: (body: string) => `⏳ 任务仍在进行中，请稍后通过 /peek 查看当前结果\n\n${body}`,
+  taskStillRunningNotice: "⏳ 任务仍在进行中，完成后会自动推送结果 · /peek 查看当前画面",
   voiceDownloadFailed: "语音下载失败 · 网络波动,请重试",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time: string) =>
@@ -173,59 +176,66 @@ export const zh = {
     `🎙️ 识别语言已设为 ${lang === "auto" ? "自动检测" : lang} · 下条语音生效`,
   voiceLangInvalid: "🎙️ 用法：/voice_lang <en|zh|yue|auto 或 2-3 位语言代码>",
 
-  // ── help body (full command list, per adapter) ──
-  helpBodyTelegram: `🤖 tmux-claude-bot
+  // ── help intro (command-free preamble; command list is generated from command-catalog.ts) ──
+  helpIntroTelegram: `🤖 tmux-claude-bot
 
 发任意文字 → 转给 Claude → 返回结果
 🎙️ 语音转写为可选功能 · /voice_install 启用（仅 Apple Silicon）· /voice_lang 设识别语言
 
-提示：消息会收到 👀（已接收）/👍（完成）回应；处理中就地显示进度并编辑成结果；结果下方有 ⏎/✋/⎋/🔄 快捷按钮。
+提示：消息会收到 👀（已接收）/👍（完成）回应；处理中就地显示进度并编辑成结果；结果下方有 ⏎/✋/⎋/🔄 快捷按钮。`,
 
-━━ 📂 项目 ━━
-/current_project — 当前项目
-/list_alive_projects — 活跃项目（点按切换/删除）
-/list_recent_projects — 近期项目
-/add_project <路径> — 新建项目
-/queue_status — 队列状态
-/history [N] — 对话历史（默认最近一条）
+  helpIntroLark: `🤖 tmux-claude (Lark)
 
-━━ ⚡ Claude 运行中 ━━
-/enter — 回车    /esc — Escape
-/interrupt — Ctrl-C    /restart — 重启 (--continue)
-/clear — 清空上下文    /compact — 压缩上下文
-/up · /down — 上下方向键    /exit — 退出
+发任意文字 → 转给 Claude → 返回结果`,
 
-━━ 🚀 未运行 ━━
-/start — 启动 Claude
-/peek — 查看 tmux 画面
-/status — 检查状态
-/help — 本帮助`,
+  // ── help section headers ──
+  helpSectionProjects: "📂 项目",
+  helpSectionRunning: "⚡ 运行中",
+  helpSectionIdle: "🚀 未运行",
 
-  helpBodyLark: `🤖 tmux-claude (Lark)
+  // ── command descriptions (used by command-catalog.ts to build help text) ──
+  cmdCurrentProject: "当前项目",
+  cmdListAlive: "活跃项目（点按切换/删除）",
+  cmdListRecent: "近期项目",
+  cmdAddProject: "新建项目",
+  cmdQueueStatus: "队列状态",
+  cmdHistory: "对话历史（默认最近一条）",
+  cmdPeek: "查看 tmux 画面",
+  cmdVoiceLang: "语音识别语言（英/中/粤/自动）",
+  cmdLang: "界面语言（英/中/粤）",
+  cmdEnter: "回车",
+  cmdEsc: "Escape",
+  cmdInterrupt: "Ctrl-C",
+  cmdRestart: "重启 (--continue)",
+  cmdClear: "清空上下文",
+  cmdCompact: "压缩上下文",
+  cmdArrowsTab: "方向键 / Tab",
+  cmdExit: "退出",
+  cmdStatus: "检查状态",
+  cmdStart: "启动 Claude",
+  cmdDoctor: "运行安装健康检查",
+  cmdHelp: "本帮助",
+  cmdWs: "工作区管理（save/use/list/remove）",
 
-发任意文字 → 转给 Claude → 返回结果
+  // ── workspaces ──
+  wsSaved: (name: string, session: string) => `✅ 已保存工作区「${name}」→ ${session}`,
+  wsUsed: (name: string) => `✅ 已切换到工作区「${name}」`,
+  wsRemoved: (name: string) => `✅ 已删除工作区「${name}」`,
+  wsNotFound: (name: string) => `工作区「${name}」不存在`,
+  wsSessionGone: (name: string) => `工作区「${name}」对应的会话已不存在`,
+  wsNoCurrentProject: "无当前项目，请先用 /add_project 新建项目",
+  wsListEmpty: "暂无保存的工作区",
+  wsListTitle: "📎 工作区",
+  wsListItem: (name: string, session: string) => `• **${name}** → ${session}`,
+  wsInvalidName: "工作区名称仅允许字母、数字、连字符和下划线（1-32 位）",
+  wsUsage: "用法：/ws <save <name> | use <name> | list | remove <name>>",
 
-━━ 📂 项目 ━━
-/current_project — 当前项目
-/list_alive_projects — 活跃项目（点按切换/删除）
-/list_recent_projects — 近期项目
-/add_project <路径> — 新建项目
-/queue_status — 队列状态
-/history [N] — 对话历史（默认最近一条）
-/peek — 查看 tmux 画面
-/voice_lang — 语音识别语言（英/中/粤/自动）
-/lang — 界面语言（英/中/粤）
-
-━━ ⚡ 运行中 ━━
-/enter — 回车   /esc — Escape
-/interrupt — Ctrl-C   /restart — 重启
-/clear — 清空上下文   /compact — 压缩
-/up · /down — 方向键   /exit — 退出
-/status — 状态
-
-━━ 🚀 未运行 ━━
-/start — 启动 Claude
-/help — 本帮助`,
+  // ── sessions ──
+  noSessions: "暂无保存的会话记录",
+  sessionsTitle: (n: number) => `${n} 个会话记录，点击恢复`,
+  sessionsLabel: (id: string, ago: string) => `${id} · ${ago}`,
+  resumeStarted: (id: string) => `✅ 已恢复会话 ${id}`,
+  cmdSessions: "浏览并恢复历史会话",
 };
 
 // No `as const`: Messages widens to string / function types so other languages

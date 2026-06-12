@@ -109,7 +109,7 @@ describe("handleCallbackQuery", () => {
 
     await handleCallbackQuery(ctx, deps, replyTarget);
 
-    expect(setCurrent).toHaveBeenCalledWith("telegram", SESSION);
+    expect(setCurrent).toHaveBeenCalledWith("telegram:100", SESSION);
     expect(ctx.answered.some((t) => typeof t === "string" && t.includes("已切换"))).toBe(true);
     expect(ctx.texts().some((t) => t.includes("已切换"))).toBe(true);
   });

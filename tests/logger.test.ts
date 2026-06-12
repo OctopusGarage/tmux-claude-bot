@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { redactSecrets } from "../src/shared/utils/logger.js";
+import { logger, redactSecrets } from "../src/shared/utils/logger.js";
 
 describe("redactSecrets", () => {
   afterEach(() => {
@@ -24,6 +24,26 @@ describe("redactSecrets", () => {
   it("leaves token-free messages untouched", () => {
     const msg = "[smart-fetch] recovered via direct after preferred route failed";
     expect(redactSecrets(msg)).toBe(msg);
+  });
+});
+
+describe("logger write", () => {
+  it("writes info without throwing", () => {
+    expect(() => logger.info("test message")).not.toThrow();
+  });
+
+  it("writes with context fields without throwing", () => {
+    expect(() =>
+      logger.info("ctx test", { session: "s1", chatId: "c1", channel: "lark" }),
+    ).not.toThrow();
+  });
+
+  it("writes warn without throwing", () => {
+    expect(() => logger.warn("warn message")).not.toThrow();
+  });
+
+  it("calls debug without throwing", () => {
+    expect(() => logger.debug("debug message")).not.toThrow();
   });
 });
 

@@ -28,7 +28,7 @@ export function bootstrap(): HandlerDeps {
     maxOutputLines: config.maxOutputLines,
     maxMessageLength: config.maxMessageLength,
   });
-  const queue = new MessageQueue(config.maxQueueSize);
+  const queue = new MessageQueue(config.maxQueueSize, undefined, config.maxConcurrentSessions);
   const configResolver = createConfigResolver(createExecProbe(), {
     defaultRoot: DEFAULT_CONFIG_ROOT,
     claudeBin: claudeBinFromStartCommand(config.claudeStartCommand),

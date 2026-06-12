@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-target.js";
 import {
   sendAliveList,
@@ -9,6 +9,7 @@ import {
   sendPeek,
   sendQueueStatus,
 } from "../../../src/adapters/telegram/views.js";
+import { projectPathToHistoryDir } from "../../../src/core/history.js";
 import type { QueuedMessage } from "../../../src/core/queue.js";
 import { setPathForSession } from "../../../src/core/sessionPathMap.js";
 import { fakeCtx, fakeDeps } from "./_fakes.js";
@@ -149,15 +150,68 @@ describe("sendPeek", () => {
 });
 
 describe("sendHistory", () => {
-  beforeEach(() => vi.clearAllMocks());
+  let configRoot: string;
+  let projectPath: string;
+  const session = "tmux_proj_hist_tg";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tg-hist-"));
+    projectPath = nodePath.join(configRoot, "proj");
+    fs.mkdirSync(projectPath);
+    setPathForSession(session, projectPath);
+  });
+  afterEach(() => fs.rmSync(configRoot, { recursive: true, force: true }));
+
+  const makeConfigResolver = () => ({
+    resolveConfigRoot: vi.fn(async () => configRoot),
+    invalidate: vi.fn(),
+  });
+
+  const jsonlLine = (type: "user" | "assistant", content: string): string =>
+    JSON.stringify({ type, timestamp: "2026-01-01T00:00:00Z", message: { content } });
 
   it("warns when there is no project-path mapping", async () => {
     const ctx = fakeCtx();
     const deps = fakeDeps();
-
     await sendHistory(ctx, deps, "proj-no-path", 0, replyTarget);
-
     expect(ctx.texts().some((t) => t.includes("缺少项目路径映射"))).toBe(true);
+  });
+
+  it("warns 'no history' when the project has no conversation files", async () => {
+    const ctx = fakeCtx();
+    const deps = fakeDeps({ configResolver: makeConfigResolver() });
+    await sendHistory(ctx, deps, session, 0, replyTarget);
+    expect(ctx.texts().some((t) => t.includes("没有找到对话历史"))).toBe(true);
+  });
+
+  it("warns 'only N rounds' when the requested index is out of range", async () => {
+    const histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(histDir, { recursive: true });
+    fs.writeFileSync(
+      nodePath.join(histDir, "a.jsonl"),
+      [jsonlLine("user", "hello"), jsonlLine("assistant", "world")].join("\n") + "\n",
+    );
+    const ctx = fakeCtx();
+    const deps = fakeDeps({ configResolver: makeConfigResolver() });
+    await sendHistory(ctx, deps, session, 5, replyTarget);
+    expect(ctx.texts().some((t) => t.includes("只有"))).toBe(true);
+  });
+
+  it("sends the formatted round with a control keyboard on success", async () => {
+    const histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(histDir, { recursive: true });
+    fs.writeFileSync(
+      nodePath.join(histDir, "a.jsonl"),
+      [jsonlLine("user", "my question"), jsonlLine("assistant", "my answer")].join("\n") + "\n",
+    );
+    const ctx = fakeCtx();
+    const deps = fakeDeps({ configResolver: makeConfigResolver() });
+    await sendHistory(ctx, deps, session, 0, replyTarget);
+    const text = ctx.texts().join("\n");
+    expect(text).toContain("my question");
+    expect(text).toContain("my answer");
+    expect(ctx.replies[0]?.extra.reply_markup).toBeDefined();
   });
 });
 
