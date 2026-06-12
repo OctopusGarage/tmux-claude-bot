@@ -13,20 +13,19 @@ import { chatScope } from "../../core/project-manager.js";
 import {
   aliveProjectButtons,
   createProjectSession,
+  openRecentProjectBySid,
   recentProjectButtons,
   resolveProjectPath,
 } from "../../core/project-ops.js";
 import { buildQueueStatusLines } from "../../core/queue-status.js";
-import { appendRecentProject, readRecentProjectLines } from "../../core/recentProjects.js";
+import { appendRecentProject } from "../../core/recentProjects.js";
 import {
   getPathBySession,
-  isCdAllowed,
   sessionNameFromPath,
   setPathForSession,
 } from "../../core/sessionPathMap.js";
 import { resolveWhisperLanguage } from "../../core/voice-support.js";
 import { runWorkspaceCommand } from "../../core/workspace-command.js";
-import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
   groupBoundCard,
@@ -240,28 +239,24 @@ export async function addRecentBySid(
   chatId: string,
   sid: string,
 ): Promise<void> {
-  const prefix = deps.config.projectSessionPrefix;
-  const lines = await readRecentProjectLines();
-  const projectPath = lines.find((p) => sessionShortId(sessionNameFromPath(p, prefix)) === sid);
-  if (!projectPath) {
-    await sendText(channel, chatId, messages("lark").shortIdNotFound(sid));
-    return;
-  }
-  const sessionName = sessionNameFromPath(projectPath, prefix);
-  try {
-    if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set(chatScope("lark", chatId), sessionName);
-      await sendText(channel, chatId, messages("lark").switched);
+  const m = messages("lark");
+  const r = await openRecentProjectBySid(deps, chatScope("lark", chatId), sid);
+  switch (r.status) {
+    case "not-found":
+      await sendText(channel, chatId, m.shortIdNotFound(sid));
       return;
-    }
-    if (!isCdAllowed(projectPath, deps.config.cdAllowedDirs)) {
-      await sendText(channel, chatId, messages("lark").pathNotAllowedPath(projectPath));
+    case "switched":
+      await sendText(channel, chatId, m.switched);
       return;
-    }
-    await createProjectSession(deps, chatScope("lark", chatId), sessionName, projectPath);
-    await sendText(channel, chatId, messages("lark").projectCreatedPath(projectPath));
-  } catch (err) {
-    await sendError(channel, chatId, err);
+    case "not-allowed":
+      await sendText(channel, chatId, m.pathNotAllowedPath(r.projectPath));
+      return;
+    case "created":
+      await sendText(channel, chatId, m.projectCreatedPath(r.projectPath));
+      return;
+    case "error":
+      await sendError(channel, chatId, new Error(r.message));
+      return;
   }
 }
 

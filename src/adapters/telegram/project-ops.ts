@@ -1,10 +1,7 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { readRecentProjectLines } from "../../core/recentProjects.js";
-import { isCdAllowed, sessionNameFromPath } from "../../core/sessionPathMap.js";
-import { normalizeError } from "../../shared/utils/error.js";
-import { sessionShortId } from "../../shared/utils/hash.js";
+import { openRecentProjectBySid } from "../../core/project-ops.js";
 import { MSG } from "./messages.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
@@ -15,8 +12,6 @@ import { tgScope } from "./scope.js";
  * `core/project-ops.js` and are re-exported here so existing telegram importers
  * keep working; this file only keeps the entry point that needs ctx/reply.
  */
-
-import { createProjectSession } from "../../core/project-ops.js";
 
 export {
   aliveProjectButtons,
@@ -38,33 +33,27 @@ export async function addRecentProjectBySid(
   sid: string,
   replyTarget: ReplyTargetMap,
 ): Promise<void> {
-  const prefix = deps.config.projectSessionPrefix;
-  const lines = await readRecentProjectLines();
-  const projectPath = lines.find((p) => sessionShortId(sessionNameFromPath(p, prefix)) === sid);
-  if (!projectPath) {
-    await reply(ctx, "err", MSG.noShortId(sid), { replyTarget });
-    return;
-  }
-  const sessionName = sessionNameFromPath(projectPath, prefix);
-  try {
-    if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set(tgScope(ctx), sessionName);
-      await reply(ctx, "ok", messages("telegram").switched, { session: sessionName, replyTarget });
+  const tm = messages("telegram");
+  const r = await openRecentProjectBySid(deps, tgScope(ctx), sid);
+  switch (r.status) {
+    case "not-found":
+      await reply(ctx, "err", MSG.noShortId(sid), { replyTarget });
       return;
-    }
-    if (!isCdAllowed(projectPath, deps.config.cdAllowedDirs)) {
-      await reply(ctx, "err", MSG.pathNotAllowed(deps.config.cdAllowedDirs), {
+    case "switched":
+      await reply(ctx, "ok", tm.switched, { session: r.sessionName, replyTarget });
+      return;
+    case "not-allowed":
+      await reply(ctx, "err", MSG.pathNotAllowed(deps.config.cdAllowedDirs), { replyTarget });
+      return;
+    case "created":
+      await reply(ctx, "ok", tm.projectCreated, {
+        session: r.sessionName,
+        body: r.projectPath,
         replyTarget,
       });
       return;
-    }
-    await createProjectSession(deps, tgScope(ctx), sessionName, projectPath);
-    await reply(ctx, "ok", messages("telegram").projectCreated, {
-      session: sessionName,
-      body: projectPath,
-      replyTarget,
-    });
-  } catch (err) {
-    await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
+    case "error":
+      await reply(ctx, "err", r.message, { replyTarget });
+      return;
   }
 }
