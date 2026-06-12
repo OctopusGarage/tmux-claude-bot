@@ -3,6 +3,7 @@
 [![CI](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/OctopusGarage/tmux-claude-bot/branch/main/graph/badge.svg)](https://codecov.io/gh/OctopusGarage/tmux-claude-bot)
 [![version](https://img.shields.io/github/package-json/v/OctopusGarage/tmux-claude-bot)](https://github.com/OctopusGarage/tmux-claude-bot/releases/latest)
+[![npm](https://img.shields.io/npm/v/@octopusgarage/tmux-claude-bot?logo=npm)](https://www.npmjs.com/package/@octopusgarage/tmux-claude-bot)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -142,6 +143,22 @@ TMUX_CLAUDE_BOT_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/Octo
 # track the latest main (development)
 TMUX_CLAUDE_BOT_VERSION=main curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
 ```
+
+### Install via npm
+
+Published as **[`@octopusgarage/tmux-claude-bot`](https://www.npmjs.com/package/@octopusgarage/tmux-claude-bot)** with build [provenance](https://docs.npmjs.com/generating-provenance-statements). Run the CLI without installing:
+
+```bash
+npx @octopusgarage/tmux-claude-bot --help
+```
+
+…or install the `tmux-claude-bot` command globally (`run` / `setup` / `setup:lark` / `doctor` / `service …`):
+
+```bash
+npm i -g @octopusgarage/tmux-claude-bot
+```
+
+> For the full **managed install** on macOS — the self-updating copy in `~/.tmux-claude-bot`, the launchd service, and the guided wizard — the **`curl … | bash`** one-liner above is the recommended path. The npm route gives you the same CLI for ad-hoc use.
 
 ### Manage
 
