@@ -165,7 +165,7 @@ describe("recentProjectButtons", () => {
     vi.mocked(readRecentProjectLines).mockResolvedValueOnce([dir]);
     const sessionName = `tmux_proj_${dir.replace(/\//g, "-")}`;
     const deps = fakeDeps({
-      bridge: { hasSession: vi.fn(async () => true) },
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
       currentProject: { get: vi.fn(async () => sessionName) },
       session: sessionName,
     });

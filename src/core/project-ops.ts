@@ -202,15 +202,16 @@ export async function recentProjectButtons(
   const paths = (await readRecentProjectLines()).filter((p) => fs.existsSync(p));
   const currentSession = await deps.currentProject.get(channel);
   const prefix = deps.config.projectSessionPrefix;
-  return Promise.all(
-    paths.map(async (projectPath) => {
-      const sessionName = sessionNameFromPath(projectPath, prefix);
-      return {
-        sid: sessionShortId(sessionName),
-        label: projectLabel(sessionName, projectPath),
-        alive: await deps.bridge.hasSession(sessionName),
-        active: currentSession === sessionName,
-      };
-    }),
-  );
+  // One `tmux list-sessions` for the liveness lookup, instead of spawning a
+  // `tmux has-session` subprocess per recent path (up to 15).
+  const live = new Set(await deps.bridge.listProjectSessions());
+  return paths.map((projectPath) => {
+    const sessionName = sessionNameFromPath(projectPath, prefix);
+    return {
+      sid: sessionShortId(sessionName),
+      label: projectLabel(sessionName, projectPath),
+      alive: live.has(sessionName),
+      active: currentSession === sessionName,
+    };
+  });
 }
