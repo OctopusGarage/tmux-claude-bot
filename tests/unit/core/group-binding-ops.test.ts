@@ -88,21 +88,21 @@ describe("reconcileGroupBinding", () => {
 
   it("status=ok when pointer already matches a live session", async () => {
     const { deps, set } = reconcileDeps({ hasSession: true, pointer: "claude_s" });
-    const r = await reconcileGroupBinding(deps, "oc_g");
+    const r = await reconcileGroupBinding(deps, "lark", "oc_g");
     expect(r).toMatchObject({ status: "ok", sessionName: "claude_s" });
     expect(set).not.toHaveBeenCalled();
   });
 
   it("status=restored when the pointer drifted but the session is alive", async () => {
     const { deps, set } = reconcileDeps({ hasSession: true, pointer: "claude_other" });
-    const r = await reconcileGroupBinding(deps, "oc_g");
+    const r = await reconcileGroupBinding(deps, "lark", "oc_g");
     expect(r).toMatchObject({ status: "restored", sessionName: "claude_s", label: "p" });
     expect(set).toHaveBeenCalledWith("lark:oc_g", "claude_s");
   });
 
   it("status=restored and recreates the session when it is gone", async () => {
     const { deps } = reconcileDeps({ hasSession: false, pointer: null });
-    const r = await reconcileGroupBinding(deps, "oc_g");
+    const r = await reconcileGroupBinding(deps, "lark", "oc_g");
     expect(r).toMatchObject({ status: "restored" });
     expect(deps.bridge.createSession).toHaveBeenCalledWith("claude_s");
   });
@@ -110,7 +110,7 @@ describe("reconcileGroupBinding", () => {
   it("status=missing-path when the bound directory no longer exists", async () => {
     bindGroup("oc_g", { workspacePath: join(dir, "gone"), sessionName: "claude_s", label: "p" });
     const { deps } = reconcileDeps({ hasSession: true, pointer: "claude_s" });
-    const r = await reconcileGroupBinding(deps, "oc_g");
+    const r = await reconcileGroupBinding(deps, "lark", "oc_g");
     expect(r).toMatchObject({ status: "missing-path", label: "p" });
   });
 });
