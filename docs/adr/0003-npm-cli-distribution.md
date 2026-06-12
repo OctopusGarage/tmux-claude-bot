@@ -65,8 +65,10 @@ mature developer daemons use (PM2, wrangler, vercel). Concretely:
   `scripts/launchd-wrapper.sh` and `install.sh` at `node dist/cli.js run` instead
   of `tsx src/index.ts`; build during install. Gated on explicit confirmation
   because it changes the running production instance.
-- **Stage 3 — publish:** name/scope decision, CI `npm publish --provenance`,
-  docs. Gated on the name decision (an npm name is permanent).
+- **Stage 3 — publish:** name/scope decided (`@octopusgarage/tmux-claude-bot`);
+  added the manual `Publish to npm` workflow (`npm-publish.yml`,
+  `npm publish --provenance` over OIDC). Publishing stays a deliberate
+  `workflow_dispatch` click and needs the `NPM_TOKEN` repo secret.
 - **Stage 4 (deferred):** Homebrew tap; optional `npm i -g` as a first-class
   local tool.
 
