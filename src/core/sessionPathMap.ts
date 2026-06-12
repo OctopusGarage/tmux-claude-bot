@@ -2,16 +2,11 @@ import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
-import { stateFile } from "./state-dir.js";
+import { stateFile, stateRootFromModule } from "./state-dir.js";
 
-// Resolve to project root so bot and claude-tmux.ts share the same file regardless
-// of cwd; TCB_STATE_DIR overrides it (tests isolate, dev mirrors prod). Resolved
-// per call so the override applies even when set after this module loads.
-const projectRoot = nodePath.resolve(
-  nodePath.dirname(new URL(import.meta.url).pathname),
-  "..",
-  "..",
-);
+// Resolve to the install/repo root so bot and claude-tmux.ts share the same file
+// regardless of cwd; TCB_STATE_DIR overrides it (tests isolate, dev mirrors prod).
+const projectRoot = stateRootFromModule(import.meta.url);
 const sessionPathMapFile = (): string => stateFile(projectRoot, "session_path_map.json");
 
 export function loadSessionPathMap(): Record<string, string> {
