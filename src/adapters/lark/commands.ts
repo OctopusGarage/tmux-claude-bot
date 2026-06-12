@@ -1,17 +1,8 @@
+import { getLarkImmediate, getLarkQueued } from "../../core/action-registry.js";
 import type { MessageAction } from "../../core/dispatch.js";
 
-export const IMMEDIATE = new Set<MessageAction>([
-  "esc",
-  "interrupt",
-  "status",
-  "up",
-  "down",
-  "enter",
-  "clear",
-  "compact",
-]);
-
-export const QUEUED = new Set<MessageAction>(["start", "restart", "exit"]);
+export const IMMEDIATE = getLarkImmediate();
+export const QUEUED = getLarkQueued();
 
 /** Read-side / project-management commands that render or mutate project state
  * rather than driving the Claude session. */
@@ -24,7 +15,10 @@ export type ViewName =
   | "current"
   | "addproject"
   | "voicelang"
-  | "uilang";
+  | "uilang"
+  | "ws"
+  | "sessions"
+  | "doctor";
 
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
  * Lark command surface matches Telegram's. */
@@ -38,6 +32,9 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   add_project: "addproject",
   voice_lang: "voicelang",
   lang: "uilang",
+  ws: "ws",
+  sessions: "sessions",
+  doctor: "doctor",
 };
 
 export type ParsedInput =

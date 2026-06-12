@@ -1,0 +1,64 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+// Use a temp dir for all cache operations — avoids touching ~/.tmux-claude-bot
+let cacheDir: string;
+let origEnv: string | undefined;
+
+beforeEach(() => {
+  cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-media-cache-"));
+  origEnv = process.env.TCB_MEDIA_DIR;
+  process.env.TCB_MEDIA_DIR = cacheDir;
+});
+
+afterEach(() => {
+  fs.rmSync(cacheDir, { recursive: true, force: true });
+  if (origEnv === undefined) delete process.env.TCB_MEDIA_DIR;
+  else process.env.TCB_MEDIA_DIR = origEnv;
+});
+
+// Import after env is set — but since TCB_MEDIA_DIR is module-level, we use
+// dynamic imports inside each test. Simpler: let the module read the env at
+// call time via a getter (which is what CACHE_DIR does as a const at module
+// load). So we need to reimport per test-run or test in a single worker where
+// the env is already set via beforeEach. Since vitest runs tests sequentially
+// in the same worker, the module is loaded once with the FIRST value of
+// TCB_MEDIA_DIR. To work around this, we pass cacheDir at call time through
+// the env and re-import with vi.resetModules().
+
+describe("media-cache", () => {
+  it("getFromCache returns null when the file is not cached", async () => {
+    // The module reads CACHE_DIR at import time, so we isolate via resetModules.
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    const { getFromCache } = await import("../src/shared/utils/media-cache.js");
+    expect(getFromCache("no-such-key")).toBeNull();
+  });
+
+  it("getFromCache returns the path when the file exists", async () => {
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    const { getFromCache, saveToCache } = await import("../src/shared/utils/media-cache.js");
+
+    // Write a source file and cache it.
+    const src = path.join(cacheDir, "src.opus");
+    fs.writeFileSync(src, "audio-data");
+    const cachedPath = saveToCache("mykey", src);
+
+    expect(typeof cachedPath).toBe("string");
+    expect(cachedPath).not.toBe(src); // should be a different path (the cache path)
+    expect(getFromCache("mykey")).toBe(cachedPath);
+  });
+
+  it("saveToCache returns source path when copy fails (e.g. source does not exist)", async () => {
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    const { saveToCache } = await import("../src/shared/utils/media-cache.js");
+
+    const nonexistent = "/tmp/does-not-exist-xyz-1234.opus";
+    const result = saveToCache("failkey", nonexistent);
+    expect(result).toBe(nonexistent);
+  });
+});
