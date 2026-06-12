@@ -135,10 +135,15 @@ export class MessageQueue {
   }
 
   private hasDuplicateText(chatId: string | number, text: string): boolean {
-    for (const q of [this.globalQueue, ...this.sessionQueues.values()]) {
-      if (q.toArray().some((m) => m.action === "text" && m.chatId === chatId && m.text === text)) {
-        return true;
-      }
+    const isDup = (q: Queue<QueuedMessage>): boolean =>
+      q.toArray().some((m) => m.action === "text" && m.chatId === chatId && m.text === text);
+    // Iterate the queues directly instead of spreading them into a fresh array
+    // on every enqueue. (A side index keyed by chatId+text would be faster still,
+    // but keeping it in sync across enqueue/dequeue/clear isn't worth it for a
+    // per-session queue bounded at maxSize.)
+    if (isDup(this.globalQueue)) return true;
+    for (const q of this.sessionQueues.values()) {
+      if (isDup(q)) return true;
     }
     return false;
   }
