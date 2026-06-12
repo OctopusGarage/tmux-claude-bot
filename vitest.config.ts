@@ -14,6 +14,7 @@ export default defineConfig({
       // keeps the coverage number honest rather than inflated by untested glue.
       exclude: [
         "src/index.ts",
+        "src/cli.ts",
         "src/scripts/**",
         "src/adapters/*/start.ts",
         "**/*.d.ts",
