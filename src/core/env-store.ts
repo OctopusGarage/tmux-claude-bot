@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { serializeEnv } from "./onboarding.js";
-import { appStateFile } from "./state-dir.js";
+import { appStateFile } from "../shared/state-dir.js";
 
 const envPath = (): string => appStateFile(".env");
 

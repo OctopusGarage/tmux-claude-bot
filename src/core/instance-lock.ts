@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { appStateFile } from "./state-dir.js";
+import { appStateFile } from "../shared/state-dir.js";
 
 /**
  * Runtime single-instance lock. Two bot processes polling the same Telegram

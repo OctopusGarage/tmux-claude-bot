@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import { writeFileAtomic } from "../shared/utils/atomic-write.js";
 import { sessionNameFromPath } from "./sessionPathMap.js";
-import { appStateFile } from "./state-dir.js";
+import { appStateFile } from "../shared/state-dir.js";
 
 const MAX_RECENT_PROJECTS = 15;
 const recentProjectsFile = (): string => appStateFile("recent_projects.txt");
