@@ -109,7 +109,7 @@ TMUX_CLAUDE_BOT_VERSION="vX.Y.Z" bash /tmp/tcb-install.sh
 ## Phase 5 — Verify the deploy (skip if `no-deploy`)
 
 1. Exactly one instance, launchd-managed, running from the install dir:
-   `pgrep -fl "tmux-claude-bot.*src/index.ts"` → one PID; `ps -o ppid= -p <pid>`
+   `pgrep -fl "tmux-claude-bot.*(src/index.ts|dist/cli.js)"` → one PID; `ps -o ppid= -p <pid>`
    is `1`; `launchctl list | grep com.octopusgarage.tmux-claude-bot` shows it with
    exit code `0`.
 2. Healthy startup, no conflict:

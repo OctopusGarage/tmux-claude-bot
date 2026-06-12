@@ -37,7 +37,7 @@ Constants: repo `OctopusGarage/tmux-claude-bot` · launchd label
    Stale-CDN note: `raw.githubusercontent.com` caches `install.sh` ~5 min; if you
    just pushed an installer change, see `/release` Phase 4's checksum-poll first.
 3. **Verify** (all must hold):
-   - Single instance, launchd-managed: `pgrep -fl "tmux-claude-bot.*src/index.ts"`
+   - Single instance, launchd-managed: `pgrep -fl "tmux-claude-bot.*(src/index.ts|dist/cli.js)"`
      shows one PID with PPID `1`; `launchctl list | grep com.octopusgarage.tmux-claude-bot`
      shows exit code `0`.
    - Healthy log: `tail -n 20 ~/.tmux-claude-bot/logs/launchd.out.log` shows
