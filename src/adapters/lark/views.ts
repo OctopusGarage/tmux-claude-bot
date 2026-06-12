@@ -25,13 +25,7 @@ import {
   setPathForSession,
 } from "../../core/sessionPathMap.js";
 import { resolveWhisperLanguage } from "../../core/voice-support.js";
-import {
-  getWorkspace,
-  listWorkspaces,
-  removeWorkspace,
-  saveWorkspace,
-  WORKSPACE_NAME_RE,
-} from "../../core/workspaces.js";
+import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
@@ -311,70 +305,10 @@ export async function handleWsCommand(
   chatId: string,
   arg: string | undefined,
 ): Promise<void> {
-  const m = messages("lark");
-  const parts = (arg ?? "").trim().split(/\s+/).filter(Boolean);
-  const sub = parts[0]?.toLowerCase();
-  const name = parts[1];
-
-  if (sub === "list") {
-    const all = listWorkspaces();
-    if (all.length === 0) {
-      await sendText(channel, chatId, m.wsListEmpty);
-      return;
-    }
-    const lines = [m.wsListTitle, ...all.map((w) => m.wsListItem(w.name, w.session))];
-    await sendText(channel, chatId, lines.join("\n"));
-    return;
-  }
-
-  if (sub === "save") {
-    if (!name || !WORKSPACE_NAME_RE.test(name)) {
-      await sendText(channel, chatId, name ? m.wsInvalidName : m.wsUsage);
-      return;
-    }
-    const session = await deps.currentProject.get(chatScope("lark", chatId));
-    if (!session) {
-      await sendText(channel, chatId, m.wsNoCurrentProject);
-      return;
-    }
-    saveWorkspace(name, session);
-    await sendText(channel, chatId, m.wsSaved(name, session));
-    return;
-  }
-
-  if (sub === "use") {
-    if (!name || !WORKSPACE_NAME_RE.test(name)) {
-      await sendText(channel, chatId, name ? m.wsInvalidName : m.wsUsage);
-      return;
-    }
-    const session = getWorkspace(name);
-    if (!session) {
-      await sendText(channel, chatId, m.wsNotFound(name));
-      return;
-    }
-    if (!(await deps.bridge.hasSession(session))) {
-      await sendText(channel, chatId, m.wsSessionGone(name));
-      return;
-    }
-    await deps.currentProject.set(chatScope("lark", chatId), session);
-    await sendText(channel, chatId, m.wsUsed(name));
-    return;
-  }
-
-  if (sub === "remove") {
-    if (!name || !WORKSPACE_NAME_RE.test(name)) {
-      await sendText(channel, chatId, name ? m.wsInvalidName : m.wsUsage);
-      return;
-    }
-    if (!removeWorkspace(name)) {
-      await sendText(channel, chatId, m.wsNotFound(name));
-      return;
-    }
-    await sendText(channel, chatId, m.wsRemoved(name));
-    return;
-  }
-
-  await sendText(channel, chatId, m.wsUsage);
+  // Lark has no tone layer, so the reply kind is ignored — just send the text.
+  await runWorkspaceCommand(deps, "lark", chatId, arg, (_kind, text) =>
+    sendText(channel, chatId, text),
+  );
 }
 
 function formatAgo(date: Date): string {

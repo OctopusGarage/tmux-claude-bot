@@ -3,9 +3,12 @@ import * as nodePath from "node:path";
 import { normalizeError } from "../shared/utils/error.js";
 import { logger } from "../shared/utils/logger.js";
 import { Queue } from "../shared/utils/queue.js";
+import type { Channel } from "./project-manager.js";
 
-/** The chat protocols a queued message can originate from / reply to. */
-export type Channel = "telegram" | "lark";
+// Re-exported from its canonical home (project-manager) so there is a single
+// Channel type across core; QueuedMessage carries it, so queue consumers import
+// it from here too.
+export type { Channel };
 
 export type QueuedMessage = {
   id: string;

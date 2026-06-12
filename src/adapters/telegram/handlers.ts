@@ -12,13 +12,7 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "../../core/sessionPathMap.js";
-import {
-  getWorkspace,
-  listWorkspaces,
-  removeWorkspace,
-  saveWorkspace,
-  WORKSPACE_NAME_RE,
-} from "../../core/workspaces.js";
+import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
@@ -230,73 +224,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("ws", async (ctx) => {
-    const tm = messages("telegram");
     const raw = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
-    const parts = raw.split(/\s+/).filter(Boolean);
-    const sub = parts[0]?.toLowerCase();
-    const name = parts[1];
-
-    if (sub === "list") {
-      const all = listWorkspaces();
-      if (all.length === 0) {
-        await reply(ctx, "list", tm.wsListEmpty);
-        return;
-      }
-      const lines = [tm.wsListTitle, ...all.map((w) => tm.wsListItem(w.name, w.session))];
-      await reply(ctx, "list", lines.join("\n"));
-      return;
-    }
-
-    if (sub === "save") {
-      if (!name || !WORKSPACE_NAME_RE.test(name)) {
-        await reply(ctx, "err", name ? tm.wsInvalidName : tm.wsUsage);
-        return;
-      }
-      const session = await deps.currentProject.get(
-        chatScope("telegram", String(ctx.chat?.id ?? 0)),
-      );
-      if (!session) {
-        await reply(ctx, "err", tm.wsNoCurrentProject);
-        return;
-      }
-      saveWorkspace(name, session);
-      await reply(ctx, "ok", tm.wsSaved(name, session));
-      return;
-    }
-
-    if (sub === "use") {
-      if (!name || !WORKSPACE_NAME_RE.test(name)) {
-        await reply(ctx, "err", name ? tm.wsInvalidName : tm.wsUsage);
-        return;
-      }
-      const session = getWorkspace(name);
-      if (!session) {
-        await reply(ctx, "err", tm.wsNotFound(name));
-        return;
-      }
-      if (!(await deps.bridge.hasSession(session))) {
-        await reply(ctx, "err", tm.wsSessionGone(name));
-        return;
-      }
-      await deps.currentProject.set(chatScope("telegram", String(ctx.chat?.id ?? 0)), session);
-      await reply(ctx, "ok", tm.wsUsed(name));
-      return;
-    }
-
-    if (sub === "remove") {
-      if (!name || !WORKSPACE_NAME_RE.test(name)) {
-        await reply(ctx, "err", name ? tm.wsInvalidName : tm.wsUsage);
-        return;
-      }
-      if (!removeWorkspace(name)) {
-        await reply(ctx, "err", tm.wsNotFound(name));
-        return;
-      }
-      await reply(ctx, "ok", tm.wsRemoved(name));
-      return;
-    }
-
-    await reply(ctx, "info", tm.wsUsage);
+    await runWorkspaceCommand(deps, "telegram", String(ctx.chat?.id ?? 0), raw, (kind, text) =>
+      reply(ctx, kind, text),
+    );
   });
 
   // Inline-button taps: control panel (esc/interrupt/enter/restart) and the
