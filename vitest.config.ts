@@ -14,10 +14,20 @@ export default defineConfig({
       // keeps the coverage number honest rather than inflated by untested glue.
       exclude: [
         "src/index.ts",
+        "src/cli.ts",
         "src/scripts/**",
         "src/adapters/*/start.ts",
         "**/*.d.ts",
+        // Pure data catalogs and interactive wizard — no executable logic to cover.
+        "src/core/i18n/catalog/**",
+        "src/core/i18n/setup.ts",
       ],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 80,
+        statements: 80,
+      },
     },
   },
 });
