@@ -3,6 +3,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import type { MessageAction } from "../../core/dispatch.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
+import { chatScope } from "../../core/project-manager.js";
 import {
   botSelfRepoWarning,
   removeProjectBySession,
@@ -17,9 +18,11 @@ import {
 } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
+import { verifyValue } from "./card-signing.js";
 import { helpCard, langCard, voiceLangCard } from "./cards.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
+import { sendManagedCard, updateManagedCard } from "./managed-card.js";
 import { sendCard, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
 import {
@@ -46,7 +49,13 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       return;
     }
 
-    const value = evt.action?.value as
+    const rawValue = evt.action?.value;
+    if (!verifyValue(rawValue)) {
+      logger.warn(`[lark] drop cardAction: invalid signature chat=${evt.chatId}`);
+      return;
+    }
+
+    const value = rawValue as
       | { cmd?: string; sid?: string; body?: string; title?: string; view?: boolean; lang?: string }
       | undefined;
     const cmd = value?.cmd;
@@ -87,20 +96,22 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     }
     // Voice recognition-language picker (mirrors Telegram /voice_lang).
     if (cmd === "voicelangmenu") {
-      await sendCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
+      await sendManagedCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
       return;
     }
     if (cmd === "voicelang" && value?.lang && VOICE_LANGS.some((l) => l.code === value.lang)) {
       setWhisperLanguage("lark", value.lang);
       logger.info(`[lark] voice recognition language set to ${value.lang} via card`);
-      // Re-send the picker so the ✅ moves to the new selection (updateCard is
-      // unreliable for 2.0 cards).
-      await sendCard(channel, evt.chatId, voiceLangCard(value.lang));
+      // Move the ✅ on the clicked card itself; fall back to a fresh picker
+      // when the card isn't managed (e.g. it predates a restart).
+      if (!(await updateManagedCard(channel, evt.messageId, voiceLangCard(value.lang)))) {
+        await sendManagedCard(channel, evt.chatId, voiceLangCard(value.lang));
+      }
       return;
     }
     // UI-language picker (/lang).
     if (cmd === "uilangmenu") {
-      await sendCard(channel, evt.chatId, langCard(resolveUiLang("lark")));
+      await sendManagedCard(channel, evt.chatId, langCard(resolveUiLang("lark")));
       return;
     }
     if (cmd === "uilang" && value?.lang) {
@@ -108,7 +119,9 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       if (isUiLang(lang)) {
         setUiLang("lark", lang);
         logger.info(`[lark] ui language set to ${lang} via card`);
-        await sendCard(channel, evt.chatId, langCard(lang));
+        if (!(await updateManagedCard(channel, evt.messageId, langCard(lang)))) {
+          await sendManagedCard(channel, evt.chatId, langCard(lang));
+        }
       }
       return;
     }
@@ -116,9 +129,9 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     if (cmd === "switch" && value?.sid) {
       const session = await resolveAliveSessionByShortId(deps, value.sid);
       if (session) {
-        await switchToProject(deps, "lark", session);
+        await switchToProject(deps, chatScope("lark", evt.chatId), session);
         const path = getPathBySession(session) ?? undefined;
-        const warn = botSelfRepoWarning(path, "lark");
+        const warn = botSelfRepoWarning(path, chatScope("lark", evt.chatId));
         await sendText(
           channel,
           evt.chatId,

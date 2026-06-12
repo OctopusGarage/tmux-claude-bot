@@ -25,21 +25,50 @@ describe("makeCardActionHandler", () => {
     vi.clearAllMocks();
   });
 
-  it("voicelangmenu → sends the voice-language picker card", async () => {
+  it("voicelangmenu → sends the voice-language picker as a managed card", async () => {
     const channel = fakeChannel();
     const handle = makeCardActionHandler(channel, fakeDeps());
     await handle(evt({ cmd: "voicelangmenu" }));
-    expect(channel.cards().some((c) => JSON.stringify(c).includes("语音识别语言"))).toBe(true);
+    expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
+    expect(channel.imCreates).toHaveLength(1);
   });
 
-  it("voicelang → sets WHISPER_LANGUAGE and re-sends the picker", async () => {
+  it("voicelang on a managed picker → sets WHISPER_LANGUAGE and updates the card in place", async () => {
     const prev = process.env.LARK_WHISPER_LANGUAGE;
     try {
       const channel = fakeChannel();
       const handle = makeCardActionHandler(channel, fakeDeps());
-      await handle(evt({ cmd: "voicelang", lang: "yue" }));
+      await handle(evt({ cmd: "voicelangmenu" }));
+      const pickerMessageId = "im-m1";
+
+      await handle(evt({ cmd: "voicelang", lang: "yue" }, { messageId: pickerMessageId }));
+
       expect(process.env.LARK_WHISPER_LANGUAGE).toBe("yue");
-      expect(channel.cards().some((c) => JSON.stringify(c).includes("语音识别语言"))).toBe(true);
+      expect(channel.cardkitUpdates).toHaveLength(1);
+      expect(channel.cardkitUpdates.some((u) => u.data.card.data.includes("语音识别语言"))).toBe(
+        true,
+      );
+      // In place: no second message was sent.
+      expect(channel.imCreates).toHaveLength(1);
+      expect(channel.sent).toHaveLength(0);
+    } finally {
+      if (prev === undefined) delete process.env.LARK_WHISPER_LANGUAGE;
+      else process.env.LARK_WHISPER_LANGUAGE = prev;
+    }
+  });
+
+  it("voicelang on an unmanaged message → falls back to sending a fresh picker", async () => {
+    const prev = process.env.LARK_WHISPER_LANGUAGE;
+    try {
+      const channel = fakeChannel();
+      const handle = makeCardActionHandler(channel, fakeDeps());
+
+      await handle(evt({ cmd: "voicelang", lang: "yue" }, { messageId: "msg-pre-restart" }));
+
+      expect(process.env.LARK_WHISPER_LANGUAGE).toBe("yue");
+      expect(channel.cardkitUpdates).toHaveLength(0);
+      expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
+      expect(channel.imCreates).toHaveLength(1);
     } finally {
       if (prev === undefined) delete process.env.LARK_WHISPER_LANGUAGE;
       else process.env.LARK_WHISPER_LANGUAGE = prev;
@@ -131,7 +160,7 @@ describe("makeCardActionHandler", () => {
 
     await handler(evt({ cmd: "switch", sid }));
 
-    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", session);
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark:chat-1", session);
     expect(channel.texts().some((t) => t.includes("已切换"))).toBe(true);
   });
 
@@ -208,5 +237,57 @@ describe("makeCardActionHandler", () => {
 
     expect(channel.sent).toHaveLength(0);
     expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("uilangmenu → sends the UI-language picker as a managed card", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+    await handle(evt({ cmd: "uilangmenu" }));
+    expect(channel.cardkitCreates).toHaveLength(1);
+    expect(channel.imCreates).toHaveLength(1);
+  });
+
+  it("uilang with a valid lang on a managed picker → sets UI language and updates in place", async () => {
+    const prev = process.env.LARK_UI_LANG;
+    try {
+      const channel = fakeChannel();
+      const handle = makeCardActionHandler(channel, fakeDeps());
+      await handle(evt({ cmd: "uilangmenu" }));
+
+      await handle(evt({ cmd: "uilang", lang: "en" }, { messageId: "im-m1" }));
+
+      expect(process.env.LARK_UI_LANG).toBe("en");
+      expect(channel.cardkitUpdates).toHaveLength(1);
+      expect(channel.imCreates).toHaveLength(1);
+      expect(channel.sent).toHaveLength(0);
+    } finally {
+      if (prev === undefined) delete process.env.LARK_UI_LANG;
+      else process.env.LARK_UI_LANG = prev;
+    }
+  });
+
+  it("uilang on an unmanaged message → falls back to sending a fresh picker", async () => {
+    const prev = process.env.LARK_UI_LANG;
+    try {
+      const channel = fakeChannel();
+      const handle = makeCardActionHandler(channel, fakeDeps());
+
+      await handle(evt({ cmd: "uilang", lang: "en" }, { messageId: "msg-pre-restart" }));
+
+      expect(process.env.LARK_UI_LANG).toBe("en");
+      expect(channel.cardkitUpdates).toHaveLength(0);
+      expect(channel.cardkitCreates).toHaveLength(1);
+      expect(channel.imCreates).toHaveLength(1);
+    } finally {
+      if (prev === undefined) delete process.env.LARK_UI_LANG;
+      else process.env.LARK_UI_LANG = prev;
+    }
+  });
+
+  it("uilang with an unrecognised lang → no-op (isUiLang returns false)", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+    await handle(evt({ cmd: "uilang", lang: "klingon" }));
+    expect(channel.sent).toHaveLength(0);
   });
 });

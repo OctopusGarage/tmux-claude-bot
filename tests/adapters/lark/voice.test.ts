@@ -8,6 +8,8 @@ const checkVoiceSupport = vi.fn();
 const resolveWhisperLanguage = vi.fn(() => "en");
 const transcribeOgg = vi.fn();
 const downloadMessageResource = vi.fn();
+const getFromCache = vi.fn((_key: string) => null as string | null);
+const saveToCache = vi.fn((_key: string, src: string) => src);
 
 vi.mock("../../../src/core/voice-support.js", () => ({
   checkVoiceSupport: () => checkVoiceSupport(),
@@ -18,6 +20,10 @@ vi.mock("../../../src/core/transcriber.js", () => ({
 }));
 vi.mock("../../../src/adapters/lark/resource.js", () => ({
   downloadMessageResource: (...args: unknown[]) => downloadMessageResource(...args),
+}));
+vi.mock("../../../src/shared/utils/media-cache.js", () => ({
+  getFromCache: (key: string) => getFromCache(key),
+  saveToCache: (key: string, src: string) => saveToCache(key, src),
 }));
 
 // Imported AFTER the mocks are registered.
@@ -32,6 +38,8 @@ describe("handleLarkVoice", () => {
     vi.clearAllMocks();
     resolveWhisperLanguage.mockReturnValue("en");
     downloadMessageResource.mockResolvedValue(undefined);
+    getFromCache.mockReturnValue(null);
+    saveToCache.mockImplementation((_k: string, src: string) => src);
   });
 
   it("voice support not ready → hint reply, no transcription", async () => {
@@ -144,5 +152,51 @@ describe("handleLarkVoice", () => {
 
     expect(channel.texts().some((t) => t.includes("没听清"))).toBe(true);
     expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("no lark config → download-failed reply without attempting download", async () => {
+    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
+    const channel = fakeChannel();
+    const deps = fakeDeps({ config: { lark: undefined as never } });
+
+    await handleLarkVoice(channel, deps, msg(), audio);
+
+    expect(downloadMessageResource).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("下载失败"))).toBe(true);
+  });
+
+  it("cache write succeeds → tmp cleaned up, transcription uses cached path", async () => {
+    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
+    saveToCache.mockReturnValue("/cache/audio.opus");
+    transcribeOgg.mockResolvedValue("cached text");
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await handleLarkVoice(channel, deps, msg(), audio);
+
+    expect(transcribeOgg).toHaveBeenCalledWith(
+      "/cache/audio.opus",
+      "/bin/whisper",
+      expect.anything(),
+    );
+    expect(deps.queue.enqueued[0]?.text).toBe("cached text");
+  });
+
+  it("cache hit → skips download and transcribes from cached path", async () => {
+    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
+    getFromCache.mockReturnValue("/cache/hit-audio.opus");
+    transcribeOgg.mockResolvedValue("cached text");
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await handleLarkVoice(channel, deps, msg(), audio);
+
+    expect(downloadMessageResource).not.toHaveBeenCalled();
+    expect(transcribeOgg).toHaveBeenCalledWith(
+      "/cache/hit-audio.opus",
+      "/bin/whisper",
+      expect.anything(),
+    );
+    expect(deps.queue.enqueued[0]?.text).toBe("cached text");
   });
 });

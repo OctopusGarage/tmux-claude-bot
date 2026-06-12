@@ -4,6 +4,7 @@ import { messages } from "../../core/i18n/index.js";
 import { logger } from "../../shared/utils/logger.js";
 import { makeCardActionHandler } from "./card-actions.js";
 import { makeMessageHandler } from "./handlers.js";
+import { startKeepalive } from "./keepalive.js";
 import { notifyLarkOwner } from "./resource.js";
 
 /**
@@ -29,6 +30,17 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
   });
   channel.on("message", makeMessageHandler(channel, deps));
   channel.on("cardAction", makeCardActionHandler(channel, deps));
+  // App-level WS watchdog — catches half-open sockets after laptop sleep /
+  // network flaps that the SDK's own reconnect loop can miss. Ticks are
+  // no-ops until connect() initializes the WS client.
+  startKeepalive({
+    getStatus: () => channel.getConnectionStatus(),
+    probeUrl: cfg.domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn",
+    forceReconnect: async () => {
+      await channel.disconnect();
+      await channel.connect();
+    },
+  });
   channel
     .connect()
     .then(() => {

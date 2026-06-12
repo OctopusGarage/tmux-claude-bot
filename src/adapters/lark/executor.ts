@@ -4,6 +4,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage, type MessageAction } from "../../core/dispatch.js";
 import { messages } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
+import { chatScope } from "../../core/project-manager.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -24,7 +25,7 @@ async function resolveSession(
   chatId: string,
   sessionOverride?: string,
 ): Promise<string | null> {
-  const session = sessionOverride ?? (await deps.currentProject.get("lark"));
+  const session = sessionOverride ?? (await deps.currentProject.get(chatScope("lark", chatId)));
   if (!session) {
     // No "/" discovery on Feishu — give buttons (projects/recent via the panel)
     // instead of a text hint pointing at commands they'd have to type.
@@ -38,6 +39,11 @@ async function resolveSession(
  * Enqueue any action (text, start, restart, exit) with acks.
  * Resolves the current session, enqueues the message, and sends
  * "received" / "queued" / queue-full replies.
+ *
+ * `onSettled` fires exactly once when the message can no longer produce a
+ * result: run completed (resolve), run failed (reject), or it never entered
+ * the queue (no session / queue full / deduped). Used by the text debounce
+ * to unblock its scope.
  */
 export async function enqueueLarkAction(
   channel: LarkChannel,
@@ -47,9 +53,13 @@ export async function enqueueLarkAction(
   action: MessageAction,
   text: string,
   sessionOverride?: string,
+  onSettled?: () => void,
 ): Promise<void> {
   const session = await resolveSession(channel, deps, chatId, sessionOverride);
-  if (!session) return;
+  if (!session) {
+    onSettled?.();
+    return;
+  }
 
   const queueSizeBefore = deps.queue.size(session);
 
@@ -62,6 +72,7 @@ export async function enqueueLarkAction(
     action,
     resolve: (output) => {
       logger.info(`[lark] resolve session=${session} output_len=${output.length}`);
+      onSettled?.();
       void markDone(channel, messageId);
       void (async () => {
         // Only natural-language Claude results carry the control buttons; every
@@ -77,8 +88,12 @@ export async function enqueueLarkAction(
         }
       })();
     },
+    notify: (text) => {
+      void sendText(channel, chatId, `${text}\n\n${projectTag(session)}`);
+    },
     reject: (err) => {
       logger.error(`[lark] reject session=${session} err=${err.message}`);
+      onSettled?.();
       // Errors often mean Claude died / isn't running — surface start/restart.
       void sendCard(
         channel,
@@ -92,8 +107,15 @@ export async function enqueueLarkAction(
   const tag = projectTag(session);
   if (!queued) {
     logger.warn(`[lark] queue full session=${session} max=${deps.queue.getMaxSize()}`);
+    onSettled?.();
     await sendText(channel, chatId, `⚠️ ${m.queueFull(deps.queue.getMaxSize())}\n${tag}`);
     return;
+  }
+  if (queued === "duplicate") {
+    // Dropped without ever firing resolve/reject — settle now so a blocked
+    // debounce scope can't be jammed forever. The ack below still goes out
+    // (dedup has always pretended success to the sender).
+    onSettled?.();
   }
 
   logger.info(

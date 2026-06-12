@@ -1,6 +1,14 @@
+import {
+  ACTION_META,
+  buildHelpBody,
+  LARK_CONTROL_ROWS,
+  LARK_HELP_RUNNING_ROWS,
+} from "../../core/action-registry.js";
+import type { MessageAction } from "../../core/dispatch.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 import { VOICE_LANGS } from "../../core/voice-support.js";
+import { signValue } from "./card-signing.js";
 
 /** A card button spec. `value` is echoed back in cardAction.action.value. */
 interface ButtonSpec {
@@ -20,7 +28,7 @@ const button = ({ text, value, style }: ButtonSpec): object => ({
   tag: "button",
   text: { tag: "plain_text", content: text },
   type: style ?? "default",
-  behaviors: [{ type: "callback", value }],
+  behaviors: [{ type: "callback", value: signValue(value) }],
 });
 
 /** One row of buttons as a column_set — each button in its own auto-width column
@@ -88,28 +96,30 @@ export function langCard(current: Lang): object {
  * `start` lives on the recovery card; `up`/`down`/`exit` + the language pickers
  * stay in /help.
  */
-function controlRows(): ButtonSpec[][] {
+function actionRow(actions: MessageAction[]): ButtonSpec[] {
   const m = messages("lark");
+  return actions.map((action) => {
+    const meta = ACTION_META[action]!;
+    return {
+      text: m[meta.btnKey] as string,
+      value: { cmd: action },
+      ...(meta.larkStyle ? { style: meta.larkStyle } : {}),
+    };
+  });
+}
+
+function controlRows(): ButtonSpec[][] {
   return [
+    ...LARK_CONTROL_ROWS.map(actionRow),
     [
-      { text: m.btnEsc, value: { cmd: "esc" } },
-      { text: m.btnEnter, value: { cmd: "enter" } },
-      { text: m.btnInterrupt, value: { cmd: "interrupt" }, style: "danger" },
+      { text: messages("lark").btnPeek, value: { cmd: "peek" } },
+      { text: messages("lark").btnHistory, value: { cmd: "history" } },
+      { text: messages("lark").btnQueue, value: { cmd: "queuestatus" } },
     ],
     [
-      { text: m.btnClear, value: { cmd: "clear" } },
-      { text: m.btnCompact, value: { cmd: "compact" } },
-      { text: m.btnRestart, value: { cmd: "restart" } },
-    ],
-    [
-      { text: m.btnPeek, value: { cmd: "peek" } },
-      { text: m.btnHistory, value: { cmd: "history" } },
-      { text: m.btnQueue, value: { cmd: "queuestatus" } },
-    ],
-    [
-      { text: m.btnProjects, value: { cmd: "listalive" } },
-      { text: m.btnCurrent, value: { cmd: "current" } },
-      { text: m.btnHelp, value: { cmd: "help" } },
+      { text: messages("lark").btnProjects, value: { cmd: "listalive" } },
+      { text: messages("lark").btnCurrent, value: { cmd: "current" } },
+      { text: messages("lark").btnHelp, value: { cmd: "help" } },
     ],
   ];
 }
@@ -200,28 +210,10 @@ export function recentListCard(projects: RecentButton[]): object {
 export function helpCard(): object {
   const m = messages("lark");
   return shell(m.helpTitle, [
-    md(m.helpBodyLark),
+    md(buildHelpBody("lark", "lark")),
     HR,
     md(m.helpRunning),
-    gridRow([
-      { text: m.btnEnter, value: { cmd: "enter" } },
-      { text: m.btnEsc, value: { cmd: "esc" } },
-      { text: m.btnInterrupt, value: { cmd: "interrupt" }, style: "danger" },
-    ]),
-    gridRow([
-      { text: m.btnRestart, value: { cmd: "restart" } },
-      { text: m.btnClear, value: { cmd: "clear" } },
-      { text: m.btnCompact, value: { cmd: "compact" } },
-    ]),
-    gridRow([
-      { text: m.btnUp, value: { cmd: "up" } },
-      { text: m.btnDown, value: { cmd: "down" } },
-      { text: m.btnStatus, value: { cmd: "status" } },
-    ]),
-    gridRow([
-      { text: m.btnStart, value: { cmd: "start" }, style: "primary" },
-      { text: m.btnExit, value: { cmd: "exit" } },
-    ]),
+    ...LARK_HELP_RUNNING_ROWS.map((row) => gridRow(actionRow(row))),
     HR,
     md(m.helpProjects),
     gridRow([
