@@ -21,7 +21,8 @@
     "scripts",
     "install.sh",
     "INSTALL.md",
-    "requirements.txt"
+    "requirements.txt",
+    ".env.example"
   ],
   "engines": {
     "node": ">=22"

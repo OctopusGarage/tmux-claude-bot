@@ -146,19 +146,24 @@ TMUX_CLAUDE_BOT_VERSION=main curl -fsSL https://raw.githubusercontent.com/Octopu
 
 ### Install via npm
 
-Published as **[`@octopusgarage/tmux-claude-bot`](https://www.npmjs.com/package/@octopusgarage/tmux-claude-bot)** with build [provenance](https://docs.npmjs.com/generating-provenance-statements). Run the CLI without installing:
+Published as **[`@octopusgarage/tmux-claude-bot`](https://www.npmjs.com/package/@octopusgarage/tmux-claude-bot)** with build [provenance](https://docs.npmjs.com/generating-provenance-statements). A **full managed install** (equivalent to the `curl … | bash` above — provisions `~/.tmux-claude-bot`, runs the wizard, registers the launchd service):
+
+```bash
+npm i -g @octopusgarage/tmux-claude-bot
+tmux-claude-bot install
+```
+
+`tmux-claude-bot install` materializes the prebuilt package into the stable `~/.tmux-claude-bot` and runs the service from there — so the launchd daemon never depends on the volatile global npm path (which moves with node versions / `npm update`). Update later with:
+
+```bash
+npm i -g @octopusgarage/tmux-claude-bot@latest && tmux-claude-bot install
+```
+
+Or run the CLI ad-hoc without a managed service (`run` / `setup` / `doctor` / `service …`):
 
 ```bash
 npx @octopusgarage/tmux-claude-bot --help
 ```
-
-…or install the `tmux-claude-bot` command globally (`run` / `setup` / `setup:lark` / `doctor` / `service …`):
-
-```bash
-npm i -g @octopusgarage/tmux-claude-bot
-```
-
-> For the full **managed install** on macOS — the self-updating copy in `~/.tmux-claude-bot`, the launchd service, and the guided wizard — the **`curl … | bash`** one-liner above is the recommended path. The npm route gives you the same CLI for ad-hoc use.
 
 ### Manage
 

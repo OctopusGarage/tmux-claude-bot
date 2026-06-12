@@ -69,8 +69,20 @@ mature developer daemons use (PM2, wrangler, vercel). Concretely:
   added the manual `Publish to npm` workflow (`npm-publish.yml`,
   `npm publish --provenance` over OIDC). Publishing stays a deliberate
   `workflow_dispatch` click and needs the `NPM_TOKEN` repo secret.
-- **Stage 4 (deferred):** Homebrew tap; optional `npm i -g` as a first-class
-  local tool.
+- **Stage 4 — npm as a first-class full install (done):** `tmux-claude-bot
+  install` **materializes** the prebuilt package into the stable
+  `~/.tmux-claude-bot` (a new `TCB_MATERIALIZE_FROM` mode in `install.sh`: rsync
+  the package's prebuilt `dist`/`scripts`/manifests, `npm install --omit=dev`, no
+  rebuild) and registers launchd there. This is the daemon convention (à la
+  Homebrew's Cellar): the launchd service runs from a stable managed runtime, not
+  from the volatile global `node_modules` path (which moves with node versions /
+  `npm update`). `npm i -g … && tmux-claude-bot install` thus converges on the
+  exact same managed runtime as `curl … | bash`. `service install` refuses to run
+  from a non-managed location and points at `install`. `TCB_SKIP_SERVICE` allows
+  materializing without touching launchd (used by tests). `.env.example` is now
+  shipped so the wizard works in the materialized dir.
+- **Deferred:** Homebrew tap (`brew install` + `brew services`) — same philosophy
+  as Stage 4, different package manager.
 
 ## Open decisions (require the maintainer)
 
