@@ -216,4 +216,18 @@ export const yue: Messages = {
   sessionsLabel: (id, ago) => `${id} · ${ago}`,
   resumeStarted: (id) => `✅ 已恢復會話 ${id}`,
   cmdSessions: "瀏覽並恢復歷史會話",
+
+  // ── group binding (Feishu) ──
+  groupBoundWelcome: (label, path) =>
+    `🎉 群組已綁定至 **${label}**\n\`${path}\`\n\n直接傳送訊息即可，無需 @ 機器人。`,
+  groupCreateFailed: (msg) => `❌ 建立群組失敗：${msg}\n\n請確認機器人已取得 \`im:chat\` 授權。`,
+  groupBindOnlyInGroup: "在私聊中請使用 `/newgroup`，`/bind` 僅在群組內有效。",
+  groupNewGroupOnlyInP2p: "`/newgroup` 僅在與機器人的私聊中有效。",
+  groupRestored: (label) => `🔄 已恢復此群組 → **${label}**。`,
+  groupMissingPath: (label) =>
+    `⚠️ **${label}** 的工作區路徑已不存在。請用 \`/rebind <路徑|名稱>\` 重新綁定。`,
+  groupUnbound: "🔓 此群組已解除與工作區的綁定。",
+  groupNotBound: "此群組尚未綁定工作區。請使用 `/bind <路徑|名稱>`。",
+  groupAlreadyBound: (label) => `此群組已綁定至 **${label}**。`,
+  groupTargetUsage: "用法：`<命令> <絕對路徑 | ~/路徑 | 工作區名稱>`",
 };

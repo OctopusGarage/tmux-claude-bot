@@ -218,4 +218,19 @@ Send any text → forwarded to Claude → reply`,
   sessionsLabel: (id, ago) => `${id} · ${ago}`,
   resumeStarted: (id) => `✅ Resumed session ${id}`,
   cmdSessions: "Browse and resume past sessions",
+
+  // ── group binding (Feishu) ──
+  groupBoundWelcome: (label, path) =>
+    `🎉 Group bound to **${label}**\n\`${path}\`\n\nJust type — no @ needed.`,
+  groupCreateFailed: (msg) =>
+    `❌ Failed to create group: ${msg}\n\nMake sure the bot has the \`im:chat\` scope.`,
+  groupBindOnlyInGroup: "`/bind` only works inside a group. In a private chat use `/newgroup`.",
+  groupNewGroupOnlyInP2p: "`/newgroup` only works in a private chat with the bot.",
+  groupRestored: (label) => `🔄 Restored this group → **${label}**.`,
+  groupMissingPath: (label) =>
+    `⚠️ The workspace for **${label}** is gone from disk. Use \`/rebind <path|name>\` to point this group somewhere else.`,
+  groupUnbound: "🔓 This group is no longer bound to a workspace.",
+  groupNotBound: "This group isn't bound to a workspace. Use `/bind <path|name>`.",
+  groupAlreadyBound: (label) => `This group is already bound to **${label}**.`,
+  groupTargetUsage: "Usage: `<command> <absolute path | ~/path | workspace name>`",
 };

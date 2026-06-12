@@ -236,6 +236,21 @@ export const zh = {
   sessionsLabel: (id: string, ago: string) => `${id} · ${ago}`,
   resumeStarted: (id: string) => `✅ 已恢复会话 ${id}`,
   cmdSessions: "浏览并恢复历史会话",
+
+  // ── group binding (Feishu) ──
+  groupBoundWelcome: (label: string, path: string) =>
+    `🎉 群组已绑定到 **${label}**\n\`${path}\`\n\n直接发消息即可，无需 @ 机器人。`,
+  groupCreateFailed: (msg: string) =>
+    `❌ 创建群组失败：${msg}\n\n请确保机器人已获得 \`im:chat\` 权限。`,
+  groupBindOnlyInGroup: "在私聊中请使用 `/newgroup`，`/bind` 仅在群组内有效。",
+  groupNewGroupOnlyInP2p: "`/newgroup` 仅在与机器人的私聊中有效。",
+  groupRestored: (label: string) => `🔄 已恢复此群组 → **${label}**。`,
+  groupMissingPath: (label: string) =>
+    `⚠️ **${label}** 的工作区路径已不存在。请用 \`/rebind <路径|名称>\` 重新绑定。`,
+  groupUnbound: "🔓 此群组已解除与工作区的绑定。",
+  groupNotBound: "此群组尚未绑定工作区。请使用 `/bind <路径|名称>`。",
+  groupAlreadyBound: (label: string) => `此群组已绑定到 **${label}**。`,
+  groupTargetUsage: "用法：`<命令> <绝对路径 | ~/路径 | 工作区名称>`",
 };
 
 // No `as const`: Messages widens to string / function types so other languages
