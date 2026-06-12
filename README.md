@@ -99,7 +99,12 @@ A chat bot that drives [Claude Code](https://docs.anthropic.com/en/docs/claude-c
 
 ## Quick Start
 
-### Install (macOS)
+**Two first-class install methods — both stand up the same managed launchd service** (guided wizard + auto-restart at `~/.tmux-claude-bot`). Pick either:
+
+- **`curl … | bash`** (below) — the one-liner installer; nothing to install first beyond `node`/`tmux`.
+- **[npm](#install-via-npm)** — `npm i -g @octopusgarage/tmux-claude-bot && tmux-claude-bot install`, with build provenance.
+
+### Install (macOS) — `curl | bash`
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
