@@ -1,8 +1,4 @@
-import * as fs from "node:fs";
-import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
-import { appStateFile } from "./state-dir.js";
-
-const bindingsFile = (): string => appStateFile("group_bindings.json");
+import { JsonMapStore } from "./json-map-store.js";
 
 /** A group is permanently associated with one workspace. `workspacePath` is the
  * source of truth for re-anchoring; `sessionName`/`label` are derived snapshots. */
@@ -12,44 +8,24 @@ export interface GroupBinding {
   label: string;
 }
 
-type BindingMap = Record<string, GroupBinding>;
-
-function readMap(): BindingMap {
-  try {
-    return JSON.parse(fs.readFileSync(bindingsFile(), "utf-8")) as BindingMap;
-  } catch {
-    return {};
-  }
-}
-
-function writeMap(map: BindingMap): void {
-  writeFileAtomicSync(bindingsFile(), `${JSON.stringify(map, null, 2)}\n`);
-}
+const store = new JsonMapStore<GroupBinding>("group_bindings.json");
 
 export function bindGroup(chatId: string, binding: GroupBinding): void {
-  const map = readMap();
-  map[chatId] = binding;
-  writeMap(map);
+  store.set(chatId, binding);
 }
 
 export function getBinding(chatId: string): GroupBinding | null {
-  return readMap()[chatId] ?? null;
+  return store.get(chatId) ?? null;
 }
 
 export function isProjectGroup(chatId: string): boolean {
-  return chatId in readMap();
+  return store.has(chatId);
 }
 
 export function unbindGroup(chatId: string): boolean {
-  const map = readMap();
-  if (!(chatId in map)) return false;
-  delete map[chatId];
-  writeMap(map);
-  return true;
+  return store.delete(chatId);
 }
 
 export function listBindings(): Array<{ chatId: string; binding: GroupBinding }> {
-  return Object.entries(readMap())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([chatId, binding]) => ({ chatId, binding }));
+  return store.sortedEntries().map(([chatId, binding]) => ({ chatId, binding }));
 }

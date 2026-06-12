@@ -1,33 +1,17 @@
-import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
-import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
-import { appStateFile } from "./state-dir.js";
+import { JsonMapStore } from "./json-map-store.js";
 
-const sessionPathMapFile = (): string => appStateFile("session_path_map.json");
-
-export function loadSessionPathMap(): Record<string, string> {
-  try {
-    const raw = fs.readFileSync(sessionPathMapFile(), "utf-8");
-    return JSON.parse(raw) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-export function saveSessionPathMap(map: Record<string, string>): void {
-  writeFileAtomicSync(sessionPathMapFile(), JSON.stringify(map, null, 2));
-}
+// Shared with the `claude-tmux` helper, which writes this file from the user's
+// project dir — the store's mtime-keyed cache picks up those foreign writes.
+const store = new JsonMapStore<string>("session_path_map.json");
 
 export function getPathBySession(sessionName: string): string | null {
-  const map = loadSessionPathMap();
-  return map[sessionName] ?? null;
+  return store.get(sessionName) ?? null;
 }
 
 export function setPathForSession(sessionName: string, projectPath: string): void {
-  const map = loadSessionPathMap();
-  map[sessionName] = projectPath;
-  saveSessionPathMap(map);
+  store.set(sessionName, projectPath);
 }
 
 export function sessionNameFromPath(projectPath: string, prefix: string): string {
