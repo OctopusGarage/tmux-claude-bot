@@ -4,11 +4,14 @@ import { normalizeError } from "../shared/utils/error.js";
 import { logger } from "../shared/utils/logger.js";
 import { Queue } from "../shared/utils/queue.js";
 
+/** The chat protocols a queued message can originate from / reply to. */
+export type Channel = "telegram" | "lark";
+
 export type QueuedMessage = {
   id: string;
   text: string;
   chatId: string | number;
-  channel?: "telegram" | "lark" | undefined;
+  channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
   resolve: (output: string) => void;
@@ -22,7 +25,7 @@ export type PersistedMessage = {
   id: string;
   text: string;
   chatId: string | number;
-  channel?: "telegram" | "lark" | undefined;
+  channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
 };
