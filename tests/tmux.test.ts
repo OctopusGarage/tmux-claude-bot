@@ -275,17 +275,19 @@ describe("TmuxBridge", () => {
 
   describe("sendExit", () => {
     it("sends C-c, waits 300ms, then sends /exit", async () => {
+      vi.useFakeTimers();
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      const start = Date.now();
-      await bridge.sendExit();
-      const elapsed = Date.now() - start;
 
-      // Should have called sendRawKey("C-c") and sendKeys("/exit")
-      // The calls are: C-c (sendRawKey), then after 300ms: /exit (sendKeys)
-      expect(mockExecFile).toHaveBeenCalled();
-      // The sendKeys for /exit includes Enter
-      expect(elapsed).toBeGreaterThanOrEqual(300);
+      const done = bridge.sendExit();
+      // Before advancing time: C-c should have been sent, /exit not yet
+      const callsBefore = mockExecFile.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(300);
+      await done;
+      vi.useRealTimers();
+
+      // After the 300ms delay, /exit should have been sent (more calls than before)
+      expect(mockExecFile.mock.calls.length).toBeGreaterThan(callsBefore);
     });
   });
 

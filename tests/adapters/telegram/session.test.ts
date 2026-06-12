@@ -8,12 +8,12 @@ describe("requireSession", () => {
 
   it("returns null when there is no current project", async () => {
     const deps = fakeDeps({ session: null });
-    expect(await requireSession(deps)).toBeNull();
+    expect(await requireSession(deps, 0)).toBeNull();
   });
 
   it("returns null when the session has no tmux session", async () => {
     const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => false) } });
-    expect(await requireSession(deps)).toBeNull();
+    expect(await requireSession(deps, 0)).toBeNull();
   });
 
   it("returns null when the pane is not alive", async () => {
@@ -21,7 +21,7 @@ describe("requireSession", () => {
       bridge: { hasSession: vi.fn(async () => true) },
       paneAlive: false,
     });
-    expect(await requireSession(deps)).toBeNull();
+    expect(await requireSession(deps, 0)).toBeNull();
   });
 
   it("returns the session when present and the pane is alive", async () => {
@@ -30,7 +30,7 @@ describe("requireSession", () => {
       bridge: { hasSession: vi.fn(async () => true) },
       paneAlive: true,
     });
-    expect(await requireSession(deps)).toBe("proj-1");
+    expect(await requireSession(deps, 0)).toBe("proj-1");
   });
 });
 

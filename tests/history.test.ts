@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  formatSingleConversation,
   getLatestAssistantReply,
   getRecentConversations,
   projectPathToHistoryDir,
@@ -73,6 +74,18 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
     expect(rounds[0]).toMatchObject({ user: "hello world test", assistant: "hi there" });
   });
 
+  it("skips a message whose content is neither string nor array (extractText fallback)", async () => {
+    // content=42 → extractText returns "" → skipped; the following pair forms the round
+    write("a.jsonl", [
+      JSON.stringify({ type: "user", timestamp: "2026-06-10T10:00:00Z", message: { content: 42 } }),
+      line("user", "real prompt"),
+      line("assistant", "real answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("real prompt");
+  });
+
   it("skips malformed JSON lines and isMeta lines", async () => {
     write("a.jsonl", [
       "{ not valid json",
@@ -136,5 +149,146 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
     write("a.jsonl", [line("user", "unrelated prompt"), line("assistant", "x")]);
     const reply = await getLatestAssistantReply(projectPath, "totally different", configRoot, 0);
     expect(reply).toBeNull();
+  });
+
+  it("getLatestAssistantReply fuzzy-matches when the stored prompt contains the sent text", async () => {
+    // Second fuzzy branch: userText.includes(normalizedSent), not the other way around.
+    // Store a long prompt; sent text is a substring of the stored prompt.
+    write("a.jsonl", [
+      line("user", "please summarize the entire long document for me"),
+      line("assistant", "summary here"),
+    ]);
+    const reply = await getLatestAssistantReply(
+      projectPath,
+      "summarize the entire long document",
+      configRoot,
+      0,
+    );
+    expect(reply).toBe("summary here");
+  });
+
+  it("getLatestAssistantReply returns null when the history file cannot be read", async () => {
+    // Write a directory with the .jsonl name so fs.readFile fails.
+    const histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(nodePath.join(histDir, "unreadable.jsonl"), { recursive: true });
+    const reply = await getLatestAssistantReply(projectPath, "anything", configRoot, 0);
+    expect(reply).toBeNull();
+  });
+
+  it("skips a user turn that starts with the session-continuation prefix", async () => {
+    write("a.jsonl", [
+      line(
+        "user",
+        "This session is being continued from a previous conversation that ran out of context.",
+      ),
+      line("user", "actual question"),
+      line("assistant", "actual answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("actual question");
+  });
+
+  it("skips a user turn that starts with Summary:", async () => {
+    write("a.jsonl", [
+      line("user", "Summary: context from before"),
+      line("user", "real question"),
+      line("assistant", "real answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("real question");
+  });
+
+  it("extracts slash command from <command-message> content", async () => {
+    write("a.jsonl", [
+      line("user", "<command-message>/simplify</command-message>"),
+      line("assistant", "simplified"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds[0]?.user).toBe("[/simplify]");
+  });
+
+  it("extracts text from <command-message> without slash (returns inner text)", async () => {
+    write("a.jsonl", [
+      line("user", "<command-message>plain text without slash</command-message>"),
+      line("assistant", "ok"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds[0]?.user).toBe("plain text without slash");
+  });
+
+  it("merges consecutive user messages with pipe separator (both plain text)", async () => {
+    write("a.jsonl", [
+      line("user", "first prompt"),
+      line("user", "second prompt"),
+      line("assistant", "answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toContain("first prompt");
+    expect(rounds[0]?.user).toContain("second prompt");
+  });
+
+  it("merges a preceding command with following plain text (command → text)", async () => {
+    write("a.jsonl", [
+      line("user", "<command-name>/clear</command-name>"),
+      line("user", "after clear message"),
+      line("assistant", "cleared and responded"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toContain("[/clear]");
+    expect(rounds[0]?.user).toContain("after clear message");
+  });
+
+  it("replaces a preceding command with a newer command (command → command)", async () => {
+    write("a.jsonl", [
+      line("user", "<command-name>/clear</command-name>"),
+      line("user", "<command-name>/compact</command-name>"),
+      line("assistant", "done"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("[/compact]");
+  });
+
+  it("advances past a non-user-assistant pair (assistant first, then user-assistant)", async () => {
+    write("a.jsonl", [
+      line("assistant", "orphan assistant"),
+      line("user", "question"),
+      line("assistant", "answer"),
+    ]);
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("question");
+  });
+
+  it("getRecentConversations skips unreadable history files", async () => {
+    // One readable file and one that's actually a directory (read will throw).
+    write("readable.jsonl", [line("user", "real question"), line("assistant", "real answer")]);
+    const histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(nodePath.join(histDir, "unreadable.jsonl"), { recursive: true });
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    // readable.jsonl produces one round; unreadable.jsonl is skipped.
+    expect(rounds.length).toBeGreaterThanOrEqual(1);
+    expect(rounds.some((r) => r.user === "real question")).toBe(true);
+  });
+});
+
+describe("formatSingleConversation", () => {
+  it("formats a round with index and totals for telegram", () => {
+    const round = { user: "hello", assistant: "world", time: "10:00", file: "a.jsonl" };
+    const text = formatSingleConversation(round, 0, 3, "telegram");
+    expect(text).toContain("[1/3]");
+    expect(text).toContain("hello");
+    expect(text).toContain("world");
+    expect(text).toContain("🤖 Claude");
+  });
+
+  it("defaults to telegram channel", () => {
+    const round = { user: "q", assistant: "a", time: "10:00", file: "b.jsonl" };
+    const text = formatSingleConversation(round, 1, 2);
+    expect(text).toContain("[2/2]");
   });
 });

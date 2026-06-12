@@ -1,9 +1,17 @@
 import { InlineKeyboard } from "grammy";
-import { isMessageAction } from "../../core/dispatch.js";
+import {
+  ACTION_META,
+  TELEGRAM_COLLAPSED_ROW,
+  TELEGRAM_EXPANDED_ROWS,
+  TELEGRAM_PRIMARY_ROWS,
+} from "../../core/action-registry.js";
+import { isMessageAction, type MessageAction } from "../../core/dispatch.js";
+import type { SessionEntry } from "../../core/history.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 import { VOICE_LANGS } from "../../core/voice-support.js";
 
+export type { SessionEntry } from "../../core/history.js";
 export type { ProjectButton, RecentButton } from "../../core/project-ops.js";
 
 /**
@@ -27,7 +35,8 @@ export type CallbackAction =
   | { kind: "listalive" }
   | { kind: "queuestatus" }
   | { kind: "voicelang"; lang: string }
-  | { kind: "uilang"; lang: Lang };
+  | { kind: "uilang"; lang: Lang }
+  | { kind: "resume"; sessionId: string };
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
@@ -71,6 +80,11 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (parts.length !== 2 || !lang || !isUiLang(lang)) return null;
     return { kind: "uilang", lang };
   }
+  if (tag === "rs") {
+    const sessionId = parts[1];
+    if (!sessionId) return null;
+    return { kind: "resume", sessionId };
+  }
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
@@ -109,25 +123,32 @@ export function buildLangKeyboard(current: Lang): InlineKeyboard {
   return kb;
 }
 
+function addActionRows(kb: InlineKeyboard, rows: MessageAction[][], sid: string): InlineKeyboard {
+  const m = messages("telegram");
+  for (const row of rows) {
+    for (const action of row) {
+      const meta = ACTION_META[action];
+      if (meta) kb.text(m[meta.btnKey] as string, encodeControlAction(action, sid));
+    }
+    kb.row();
+  }
+  return kb;
+}
+
 // The primary control rows, shared by the collapsed and expanded keyboards.
 function primaryRows(kb: InlineKeyboard, sid: string): InlineKeyboard {
-  const m = messages("telegram");
-  return kb
-    .text(m.btnEnter, encodeControlAction("enter", sid))
-    .text(m.btnInterrupt, encodeControlAction("interrupt", sid))
-    .row()
-    .text(m.btnEsc, encodeControlAction("esc", sid))
-    .text(m.btnRestart, encodeControlAction("restart", sid))
-    .row();
+  return addActionRows(kb, TELEGRAM_PRIMARY_ROWS, sid);
 }
 
 /** Collapsed control panel: the most-used controls + views, then a "more" toggle. */
 export function buildControlKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
-  return new InlineKeyboard()
-    .text(m.btnEsc, encodeControlAction("esc", sid))
-    .text(m.btnClear, encodeControlAction("clear", sid))
-    .text(m.btnCompact, encodeControlAction("compact", sid))
+  const kb = new InlineKeyboard();
+  for (const action of TELEGRAM_COLLAPSED_ROW) {
+    const meta = ACTION_META[action];
+    if (meta) kb.text(m[meta.btnKey] as string, encodeControlAction(action, sid));
+  }
+  return kb
     .row()
     .text(m.btnPeek, `pk:${sid}`)
     .text(m.btnHistory, `hi:${sid}`)
@@ -141,16 +162,9 @@ export function buildControlKeyboard(sid: string): InlineKeyboard {
 /** Expanded control panel: primary + secondary controls + a "collapse" toggle. */
 export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
-  return primaryRows(new InlineKeyboard(), sid)
-    .text(m.btnClear, encodeControlAction("clear", sid))
-    .text(m.btnCompact, encodeControlAction("compact", sid))
-    .row()
-    .text(m.btnUp, encodeControlAction("up", sid))
-    .text(m.btnDown, encodeControlAction("down", sid))
-    .row()
-    .text(m.btnExit, encodeControlAction("exit", sid))
-    .text(m.btnStatus, encodeControlAction("status", sid))
-    .row()
+  const kb = primaryRows(new InlineKeyboard(), sid);
+  addActionRows(kb, TELEGRAM_EXPANDED_ROWS, sid);
+  return kb
     .text(m.btnPeek, `pk:${sid}`)
     .text(m.btnHistory, `hi:${sid}`)
     .row()
@@ -186,6 +200,25 @@ export function buildProjectDeleteKeyboard(projects: ProjectButton[]): InlineKey
     kb.text(`${m.btnRemove} ${p.label}`, `r:${p.sid}`).row();
   }
   return kb.text(m.btnCancel, "dl");
+}
+
+function formatAgo(date: Date): string {
+  const diffMin = Math.round((Date.now() - date.getTime()) / 60_000);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `${diffH}h`;
+  return `${Math.round(diffH / 24)}d`;
+}
+
+/** Session list: one full-width row per saved session. Tapping sends `rs:<uuid>`. */
+export function buildSessionsKeyboard(sessions: SessionEntry[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  sessions.forEach((s, i) => {
+    const label = `${s.sessionId.slice(0, 8)} · ${formatAgo(s.mtime)}`;
+    kb.text(label, `rs:${s.sessionId}`);
+    if (i < sessions.length - 1) kb.row();
+  });
+  return kb;
 }
 
 /**

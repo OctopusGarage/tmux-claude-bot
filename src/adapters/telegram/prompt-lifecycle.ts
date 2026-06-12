@@ -103,6 +103,11 @@ export async function runPromptWithProgress(
       }
       void deliverResult(ctx, session, output, elapsedSeconds(startedAt), progress, replyTarget);
     },
+    // Interim notice for long runs (e.g. "still running"). A NEW message, not
+    // a progress edit — edits don't trigger a push notification.
+    notify: (text: string) => {
+      void reply(ctx, "info", text, { session, replyTarget });
+    },
     reject: (err: Error) => {
       cleanup();
       if (userMsgId !== undefined) {

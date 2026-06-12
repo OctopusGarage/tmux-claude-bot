@@ -1,10 +1,14 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
+import { chatScope } from "../../core/project-manager.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 
-/** The current project's session, but only if its tmux pane is actually alive. */
-export async function requireSession(deps: HandlerDeps): Promise<string | null> {
-  const session = await deps.currentProject.get("telegram");
+/** The current project's session for a specific chat, but only if its tmux pane is alive. */
+export async function requireSession(
+  deps: HandlerDeps,
+  chatId: string | number,
+): Promise<string | null> {
+  const session = await deps.currentProject.get(chatScope("telegram", String(chatId)));
   if (!session) return null;
   const exists = await deps.bridge.hasSession(session);
   if (!exists) return null;
@@ -15,7 +19,7 @@ export async function requireSession(deps: HandlerDeps): Promise<string | null> 
 
 /**
  * Resolve which session a command targets: the session of the bot message it
- * replies to, otherwise the (alive) current project.
+ * replies to, otherwise the (alive) current project for this chat.
  */
 export async function resolveSessionFromReply(
   ctx: Context,
@@ -24,5 +28,5 @@ export async function resolveSessionFromReply(
 ): Promise<string | null> {
   const replyToId = ctx.message?.reply_to_message?.message_id;
   const fromReply = replyToId !== undefined ? replyTarget.resolveReplyTarget(replyToId) : null;
-  return fromReply ?? requireSession(deps);
+  return fromReply ?? requireSession(deps, ctx.chat?.id ?? 0);
 }
