@@ -6,7 +6,7 @@ import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { chatScope } from "../../core/project-manager.js";
-import { transcribeOgg } from "../../core/transcriber.js";
+import { transcribeWithCache } from "../../core/transcriber.js";
 import {
   checkVoiceSupport,
   INSTALL_SCRIPT,
@@ -17,8 +17,6 @@ import {
 } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
-import { getFromCache, saveToCache } from "../../shared/utils/media-cache.js";
-import { withRetry } from "../../shared/utils/retry.js";
 import { buildVoiceLangKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
@@ -122,74 +120,38 @@ export function registerVoiceHandler<TContext extends Context>(
       return;
     }
 
-    const language = resolveWhisperLanguage("telegram");
     const filePath = file.file_path;
-    const cacheKey = `telegram:${voice.file_id}`;
-    const cachedPath = getFromCache(cacheKey);
-    let audioPath: string;
-    let tmpToDelete: string | null = null;
-
-    if (cachedPath) {
-      logger.info(`[voice-handler] cache hit file_id=${voice.file_id}`);
-      audioPath = cachedPath;
-    } else {
-      const tmpPath = `/tmp/voice_${randomUUID()}.ogg`;
-      // 1) Download — retried, because a proxy/network drop here is transient and a
-      // single retry usually rides it out. Reported distinctly from a transcribe error.
-      try {
-        await withRetry(async () => {
-          if (filePath.startsWith("http")) {
-            // Local Bot API server: file_path is a direct HTTP URL.
-            const res = await fetch(filePath);
-            if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-            fs.writeFileSync(tmpPath, Buffer.from(await res.arrayBuffer()));
-          } else {
-            // Standard Bot API: download via hydrateFiles' file.download().
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (file as any).download(tmpPath);
-          }
-        });
-      } catch (err) {
-        logger.error(`[voice-handler] download failed: ${err}`);
-        await reply(ctx, "err", messages("telegram").voiceDownloadFailed, { replyTarget });
-        return;
-      }
-      audioPath = saveToCache(cacheKey, tmpPath);
-      if (audioPath === tmpPath) {
-        tmpToDelete = tmpPath;
-      } else {
-        try {
-          fs.unlinkSync(tmpPath);
-        } catch {
-          /* best-effort */
+    const outcome = await transcribeWithCache({
+      label: "voice-handler",
+      cacheKey: `telegram:${voice.file_id}`,
+      tmpPath: `/tmp/voice_${randomUUID()}.ogg`,
+      bin: support.bin,
+      language: resolveWhisperLanguage("telegram"),
+      download: async (tmpPath) => {
+        if (filePath.startsWith("http")) {
+          // Local Bot API server: file_path is a direct HTTP URL.
+          const res = await fetch(filePath);
+          if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+          fs.writeFileSync(tmpPath, Buffer.from(await res.arrayBuffer()));
+        } else {
+          // Standard Bot API: download via hydrateFiles' file.download().
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (file as any).download(tmpPath);
         }
-      }
-    }
-
-    // 2) Transcribe — a distinct error so the user knows it downloaded fine but
-    // whisper failed (vs a network problem they'd handle differently).
-    let transcribed: string;
-    try {
-      transcribed = await transcribeOgg(audioPath, support.bin, language);
-    } catch (err) {
-      logger.error(`[voice-handler] transcription failed: ${err}`);
-      await reply(ctx, "err", messages("telegram").voiceTranscribeFailed, { replyTarget });
-      return;
-    } finally {
-      if (tmpToDelete) {
-        try {
-          fs.unlinkSync(tmpToDelete);
-        } catch {
-          /* cleanup best-effort */
-        }
-      }
-    }
-
-    // 3) Empty result (too short / silence) → ask the user to speak up, not a generic fail.
-    if (!transcribed.trim()) {
-      await reply(ctx, "err", messages("telegram").voiceEmpty, { replyTarget });
+      },
+    });
+    if (!outcome.ok) {
+      const m = messages("telegram");
+      const hint =
+        outcome.reason === "download"
+          ? m.voiceDownloadFailed
+          : outcome.reason === "transcribe"
+            ? m.voiceTranscribeFailed
+            : m.voiceEmpty;
+      await reply(ctx, "err", hint, { replyTarget });
       return;
     }
+    const transcribed = outcome.text;
 
     logger.info(`[voice-handler] transcribed len=${transcribed.length}`);
 
