@@ -222,6 +222,7 @@ export const yue: Messages = {
     `🎉 群組已綁定至 **${label}**\n\`${path}\`\n\n直接傳送訊息即可，無需 @ 機器人。`,
   groupCreateFailed: (msg) => `❌ 建立群組失敗：${msg}\n\n請確認機器人已取得 \`im:chat\` 授權。`,
   groupBindOnlyInGroup: "在私聊中請使用 `/newgroup`，`/bind` 僅在群組內有效。",
+  groupUnbindOnlyInGroup: "在私聊中無法解除綁定，`/unbind` 僅在群組內有效。",
   groupNewGroupOnlyInP2p: "`/newgroup` 僅在與機器人的私聊中有效。",
   groupRestored: (label) => `🔄 已恢復此群組 → **${label}**。`,
   groupMissingPath: (label) =>

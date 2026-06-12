@@ -243,6 +243,7 @@ export const zh = {
   groupCreateFailed: (msg: string) =>
     `❌ 创建群组失败：${msg}\n\n请确保机器人已获得 \`im:chat\` 权限。`,
   groupBindOnlyInGroup: "在私聊中请使用 `/newgroup`，`/bind` 仅在群组内有效。",
+  groupUnbindOnlyInGroup: "在私聊中无法解绑，`/unbind` 仅在群组内有效。",
   groupNewGroupOnlyInP2p: "`/newgroup` 仅在与机器人的私聊中有效。",
   groupRestored: (label: string) => `🔄 已恢复此群组 → **${label}**。`,
   groupMissingPath: (label: string) =>

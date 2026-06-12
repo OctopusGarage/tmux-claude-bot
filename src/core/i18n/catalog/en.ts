@@ -225,6 +225,7 @@ Send any text → forwarded to Claude → reply`,
   groupCreateFailed: (msg) =>
     `❌ Failed to create group: ${msg}\n\nMake sure the bot has the \`im:chat\` scope.`,
   groupBindOnlyInGroup: "`/bind` only works inside a group. In a private chat use `/newgroup`.",
+  groupUnbindOnlyInGroup: "`/unbind` only works inside a group.",
   groupNewGroupOnlyInP2p: "`/newgroup` only works in a private chat with the bot.",
   groupRestored: (label) => `🔄 Restored this group → **${label}**.`,
   groupMissingPath: (label) =>

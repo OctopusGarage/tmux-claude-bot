@@ -49,7 +49,10 @@ export async function handleNewGroup(
   }
   const target = await resolveOrReply(channel, deps, chatId, arg);
   if (!target) return;
-  if (!deps.config.lark) return;
+  if (!deps.config.lark) {
+    logger.warn("[lark] /newgroup with no lark config (unreachable)");
+    return;
+  }
 
   let created: { chatId: string; name: string };
   try {
@@ -66,13 +69,13 @@ export async function handleNewGroup(
     return;
   }
 
-  bindGroup(created.chatId, target);
   await createProjectSession(
     deps,
     chatScope("lark", created.chatId),
     target.sessionName,
     target.workspacePath,
   );
+  bindGroup(created.chatId, target);
   await sendText(
     channel,
     created.chatId,
@@ -114,7 +117,7 @@ export async function handleUnbind(
   chatType: string,
 ): Promise<void> {
   if (chatType === "p2p") {
-    await sendText(channel, chatId, m().groupBindOnlyInGroup);
+    await sendText(channel, chatId, m().groupUnbindOnlyInGroup);
     return;
   }
   await sendText(channel, chatId, unbindGroup(chatId) ? m().groupUnbound : m().groupNotBound);
