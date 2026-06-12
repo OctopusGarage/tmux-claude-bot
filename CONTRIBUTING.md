@@ -108,6 +108,19 @@ tag, and pushes with `--follow-tags`. The `Release` workflow then publishes the
 GitHub Release from the tag. Add `no-deploy` to `/release` to skip the local
 redeploy.
 
+### Publishing to npm
+
+The package (`@octopusgarage/tmux-claude-bot`) ships separately from the GitHub
+Release, via the **manual** `Publish to npm` workflow (`npm-publish.yml`) — not
+auto-fired on tag, so a registry publish is always a deliberate click. After a
+release tag exists, run that workflow from the Actions tab (leave `ref` blank for
+the default branch, or enter the tag). It runs `npm publish --provenance` (OIDC
+build attestation → provenance badge on npmjs.com); `prepublishOnly` builds the
+`tsup` bundle and `files` ships `dist/` + `scripts/` + the installer only.
+
+One-time setup: add a repo secret **`NPM_TOKEN`** (an npm automation or granular
+token with publish rights to the `@octopusgarage` scope).
+
 ## Reporting issues
 
 Issues live in GitHub Issues. See `docs/agents/issue-tracker.md` and the triage

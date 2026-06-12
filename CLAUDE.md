@@ -56,7 +56,8 @@ If any matches are found, refactor to use `process.env`, `os.homedir()`, or gene
 On this machine the bot is installed as a launchd service (`~/Library/LaunchAgents/com.octopusgarage.tmux-claude-bot.plist`, label `com.octopusgarage.tmux-claude-bot`) with **`KeepAlive=true`**. That means:
 
 - **`scripts/stop.sh` does NOT stop it** — launchd immediately respawns the process. Running `start.sh` on top of that spawns a *second* lineage, so you end up with multiple instances fighting over the Telegram long-poll (409). This is a real trap; don't fall into it.
-- The launchd wrapper runs `node src/index.ts` directly via the tsx loader (no `tsx watch`), so a restart recompiles the latest source — no `npm run build` needed for it to pick up changes.
+- Since the runtime instance lock (`src/core/instance-lock.ts`), a second instance sharing the same state dir refuses to start with an `InstanceLockHeldError` naming the holder pid — the trap now fails fast instead of 409-ing. Instances with different `TCB_STATE_DIR`s are not protected.
+- The launchd wrapper runs the bundled CLI: `node dist/cli.js run`. A restart runs whatever `dist/` was **last built** — so to pick up source changes the managed copy must be rebuilt (`install.sh` runs `npm run build` on every deploy). This is the deploy path; a bare `kickstart` alone will NOT pick up un-built source edits.
 
 **To restart (the correct way):**
 
@@ -77,14 +78,13 @@ If duplicate instances already exist (e.g. from an accidental `start.sh`), kill 
 
 ### How to identify the correct process
 
-The process runs under `tsx src/index.ts` with `tmux-claude-bot` in its working directory path. Identification uses both:
-1. `tsx` command
-2. `src/index.ts` argument
-3. `tmux-claude-bot` directory path
+The managed (launchd) instance runs `node dist/cli.js run`; a dev instance (`npm run dev`) runs `tsx src/index.ts`. Both carry `tmux-claude-bot` in the path. Identification uses two parts:
+1. `tmux-claude-bot` directory path
+2. the entrypoint argument — `dist/cli.js` (managed) or `src/index.ts` (dev)
 
 **NEVER use broad patterns** like `node`, `tsx` alone, or bare process names — they match unrelated processes.
 
-**Rule:** `kill -9 $(pgrep -f "tmux-claude-bot.*src/index.ts")` — always include `tmux-claude-bot` in the pattern.
+**Rule:** `kill -9 $(pgrep -f "tmux-claude-bot.*(src/index.ts|dist/cli.js)")` — always include `tmux-claude-bot` in the pattern; the alternation catches both the managed and dev forms.
 
 ### Implementation
 
@@ -92,9 +92,28 @@ The project root directory name `tmux-claude-bot` is used as the process identit
 
 ## Development Conventions
 
-- `npm run build` - Compile TypeScript
+- `npm run build` - Bundle to `dist/` via tsup (what the launchd service runs)
 - `npm run dev` or `tsx src/index.ts` - Start development
 - Commands exposed via Telegram Bot menu
+
+## Coverage Threshold Protocol
+
+When the branch coverage threshold blocks a commit, follow this diagnostic order — don't jump straight to writing tests.
+
+**Step 1 — Is coverage simply missing?**
+Check the uncovered lines. If they're reachable logic (happy paths, error paths, conditional branches) with no corresponding test, write the test. This is the normal case.
+
+**Step 2 — Is the code itself the problem?**
+If a branch can only be covered by contorting the test setup, ask why. Common root causes:
+
+- **Dead defensive code**: a `?? fallback` on a value that's structurally always defined, or an `if (!x) return` guarding something the type system already guarantees. Remove the guard or simplify the expression.
+- **Over-coupled code**: a function that does too much, making individual branches hard to isolate. Extract the branch into a named function and test it directly.
+- **Untestable boundary**: a file that's mostly wiring (e.g. a bot framework's top-level handler registrations). Consider extracting the logic into a separately testable layer and leaving the wiring thin.
+
+**Step 3 — Is the threshold the problem?**
+If a file is genuinely an integration boundary (pure framework glue with no extractable logic), and force-covering it would produce meaningless tests, consult before adjusting the threshold — document the reasoning inline in `vitest.config.ts`.
+
+**The rule**: never write a test whose only purpose is to hit a line. Tests must assert behavior. If you can't assert anything meaningful, the test doesn't belong — the code does.
 
 ## Agent skills
 

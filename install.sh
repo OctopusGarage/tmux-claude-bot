@@ -31,7 +31,28 @@ SELF_DIR=""
 if [ -n "${BASH_SOURCE[0]:-}" ]; then
   SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 fi
-if [ -z "${TMUX_CLAUDE_BOT_VERSION:-}" ] && [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && grep -q '"tmux-claude-bot"' "$SELF_DIR/package.json" 2>/dev/null; then
+MATERIALIZE=0
+if [ -n "${TCB_MATERIALIZE_FROM:-}" ]; then
+  # Materialize mode: provision the managed runtime from an already-built copy
+  # (the installed npm package) instead of downloading. Used by `tmux-claude-bot
+  # install` so an `npm i -g` install can stand up the launchd service from a
+  # stable ~/.tmux-claude-bot, without re-downloading or rebuilding. dist is
+  # prebuilt in the package, so the deps step below only installs runtime deps.
+  MATERIALIZE=1
+  PROJECT_DIR="$INSTALL_DIR"
+  info "Materializing managed runtime at $PROJECT_DIR (from $TCB_MATERIALIZE_FROM)..."
+  mkdir -p "$PROJECT_DIR"
+  # A materialized install is not a git checkout - drop any stale .git from a
+  # prior `main` clone (rsync --delete can't reliably remove read-only git objects).
+  rm -rf "$PROJECT_DIR/.git"
+  if [ "$TCB_MATERIALIZE_FROM" != "$PROJECT_DIR" ]; then
+    rsync -a --delete \
+      --exclude='.env' --exclude='.current_project' --exclude='recent_projects.txt' \
+      --exclude='session_path_map.json' --exclude='.queue' --exclude='logs' \
+      --exclude='.bot.pid' --exclude='node_modules' \
+      "$TCB_MATERIALIZE_FROM/" "$PROJECT_DIR/"
+  fi
+elif [ -z "${TMUX_CLAUDE_BOT_VERSION:-}" ] && [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && grep -qE '"(@[^"/]+/)?tmux-claude-bot"' "$SELF_DIR/package.json" 2>/dev/null; then
   PROJECT_DIR="$SELF_DIR"
   info "Local install at $PROJECT_DIR"
 else
@@ -68,6 +89,9 @@ else
     # archive with tests/CI/lint/docs.
     info "Installing version $VERSION (release tarball)..."
     mkdir -p "$PROJECT_DIR"
+    # A versioned/tarball install is not a git checkout - drop any stale .git from
+    # a prior `main` clone (rsync --delete can't reliably remove read-only objects).
+    rm -rf "$PROJECT_DIR/.git"
     tmpdir="$(mktemp -d)"
     curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors --max-time 300 \
       "https://github.com/OctopusGarage/tmux-claude-bot/releases/download/$VERSION/tmux-claude-bot-$VERSION.tar.gz" \
@@ -76,10 +100,10 @@ else
         err "  https://github.com/OctopusGarage/tmux-claude-bot/releases"
         rm -rf "$tmpdir"; exit 1
       }
-    # Mirror the lean tree into the install dir, deleting stale files - so a prior
-    # git-clone (.git) or full source-archive install (tests/CI/lint) leaves no
-    # clutter, and removed files don't orphan on update. Runtime state, deps, and
-    # logs are excluded from deletion and preserved.
+    # Mirror the lean tree into the install dir, deleting stale files - so a full
+    # source-archive install (tests/CI/lint) leaves no clutter and removed files
+    # don't orphan on update (.git was already dropped above). Runtime state,
+    # deps, and logs are excluded from deletion and preserved.
     rsync -a --delete \
       --exclude='.env' --exclude='.current_project' --exclude='recent_projects.txt' \
       --exclude='session_path_map.json' --exclude='.queue' --exclude='logs' \
@@ -95,28 +119,44 @@ command -v node >/dev/null 2>&1 || { err "node not found - install via nvm: http
 command -v tmux >/dev/null 2>&1 || warn "tmux not found - install with: brew install tmux"
 command -v claude >/dev/null 2>&1 || warn "Claude Code CLI not found - see https://docs.anthropic.com/en/docs/claude-code (or set CLAUDE_START_COMMAND)."
 
-# Runtime dependencies only (--omit=dev: no biome/vitest/typescript/etc.). tsx is
-# a regular dependency, so the bot still runs. Skip husky - end users need no git
-# hooks; tarball installs have no .git anyway.
-info "Installing dependencies..."
-HUSKY=0 npm ci --omit=dev || HUSKY=0 npm install --omit=dev
+if [ "$MATERIALIZE" = 1 ]; then
+  # Materialize mode ships a prebuilt dist - only runtime deps are needed.
+  info "Installing runtime dependencies..."
+  HUSKY=0 npm install --omit=dev
+else
+  # Full install (dev deps included) so the tsup build can run, then build the
+  # bundled dist the launchd service runs, then prune dev deps back out. Skip
+  # husky - end users need no git hooks; tarball installs have no .git anyway.
+  info "Installing dependencies..."
+  HUSKY=0 npm ci || HUSKY=0 npm install
+  info "Building..."
+  npm run build
+  info "Pruning dev dependencies..."
+  HUSKY=0 npm prune --omit=dev
+fi
 
-# Guided setup (read prompts from the terminal even when piped via curl).
+# Guided setup (read prompts from the terminal even when piped via curl). Driven
+# through the built CLI, not `npm run setup` (= tsx src/...): the materialized npm
+# package ships dist only, no src.
 if [ ! -f .env ]; then
   info "Starting guided setup..."
-  if [ -e /dev/tty ]; then npm run setup < /dev/tty; else npm run setup -- --yes; fi
+  if [ -e /dev/tty ]; then node dist/cli.js setup < /dev/tty; else node dist/cli.js setup --yes; fi
 else
-  info ".env already present - skipping setup (run 'npm run setup:reconfigure' to change it)."
+  info ".env already present - skipping setup (run 'node dist/cli.js setup --reconfigure' to change it)."
 fi
 
 # Service.
-info "Installing launchd service..."
-scripts/install-launchd.sh
+if [ -z "${TCB_SKIP_SERVICE:-}" ]; then
+  info "Installing launchd service..."
+  scripts/install-launchd.sh
+else
+  info "TCB_SKIP_SERVICE set - skipping launchd registration."
+fi
 
 info "Done. Installed at $PROJECT_DIR"
-info "These npm commands must run from the install dir (cd shown):"
-info "  Health check:  cd $PROJECT_DIR && npm run doctor"
-info "  Reconfigure:   cd $PROJECT_DIR && npm run setup:reconfigure"
-info "  Add Feishu:    cd $PROJECT_DIR && npm run setup:lark   (scan a QR; works with or instead of Telegram)"
-info "  Uninstall:     cd $PROJECT_DIR && npm run service:uninstall"
+info "These commands must run from the install dir (cd shown):"
+info "  Health check:  cd $PROJECT_DIR && node dist/cli.js doctor"
+info "  Reconfigure:   cd $PROJECT_DIR && node dist/cli.js setup --reconfigure"
+info "  Add Feishu:    cd $PROJECT_DIR && node dist/cli.js setup:lark   (scan a QR; works with or instead of Telegram)"
+info "  Uninstall:     cd $PROJECT_DIR && node dist/cli.js service uninstall"
 info "  Live logs:     tail -f $PROJECT_DIR/logs/launchd.err.log   (absolute path; runs from anywhere)"
