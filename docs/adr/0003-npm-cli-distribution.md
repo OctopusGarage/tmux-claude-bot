@@ -85,8 +85,12 @@ mature developer daemons use (PM2, wrangler, vercel). Concretely:
 - Operations converge behind one discoverable command with `--help`/`--version`
   for free; the `scripts/*.sh` + `npm run service:*` surface can shrink to thin
   shims (or be removed) once the CLI covers them.
-- Production runtime drops the `tsx` dependency; faster cold start, smaller
-  shipped surface, runtime decoupled from the dev toolchain.
+- The launchd **service runtime** no longer loads `tsx` (it runs the prebuilt
+  `dist/` bundle): faster cold start, runtime decoupled from the dev toolchain.
+  `tsx` stays a dependency only because the source-run management scripts
+  (`npm run setup`/`doctor`/`setup:lark`) still execute TypeScript directly in
+  the pruned prod install; routing those through the dist CLI to fully drop `tsx`
+  is a possible follow-up.
 - A new maintenance surface appears (the published package + release pipeline);
   mitigated by automating publish in CI and keeping a single bundler config.
 - Pure ESM only — no CJS/ESM dual build (that is a *library* concern; this is a
