@@ -8,6 +8,7 @@ import {
 } from "../../../src/core/group-binding-ops.js";
 import { bindGroup } from "../../../src/core/group-bindings.js";
 import { setPathForSession } from "../../../src/core/sessionPathMap.js";
+import { saveWorkspace } from "../../../src/core/workspaces.js";
 
 function depsWith(cdAllowedDirs: string[]) {
   return {
@@ -43,6 +44,19 @@ describe("resolveWorkspaceTarget", () => {
   it("rejects a non-existent path", async () => {
     const out = await resolveWorkspaceTarget(depsWith([]), join(dir, "nope"));
     expect("error" in out && out.error).toBe("not-found");
+  });
+
+  it("resolves a saved workspace NAME to its session + path", async () => {
+    saveWorkspace("myws", "sess-1");
+    setPathForSession("sess-1", dir);
+    const out = await resolveWorkspaceTarget(depsWith([]), "myws");
+    expect(out).toEqual({ workspacePath: dir, sessionName: "sess-1", label: "myws" });
+  });
+
+  it("returns unknown-workspace when a saved name has no path mapping", async () => {
+    saveWorkspace("ws2", "sess-no-path");
+    const out = await resolveWorkspaceTarget(depsWith([]), "ws2");
+    expect(out).toEqual({ error: "unknown-workspace" });
   });
 });
 
