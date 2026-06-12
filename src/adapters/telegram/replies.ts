@@ -174,6 +174,44 @@ function describe(err: unknown): string {
   return `[unknown] ${normalizeError(err).message}`;
 }
 
+/** The telegram message id of a send result, or null when absent. */
+function messageIdOf(sentMsg: unknown): number | null {
+  return sentMsg && typeof sentMsg === "object" && "message_id" in sentMsg
+    ? (sentMsg as { message_id: number }).message_id
+    : null;
+}
+
+/**
+ * Send with up to 3 attempts, retrying only transient network / rate-limit
+ * errors (with backoff). `onSent` records the result on success; `onFinalError`
+ * handles a non-retryable error or exhausted retries (its own logging and any
+ * fallback). Shared by {@link reply} and {@link send}.
+ */
+async function withSendRetry(
+  label: string,
+  attempt: () => Promise<unknown>,
+  onSent: (sentMsg: unknown) => void,
+  onFinalError: (err: unknown) => Promise<void>,
+): Promise<void> {
+  const MAX_RETRIES = 3;
+  for (let n = 1; n <= MAX_RETRIES; n++) {
+    try {
+      onSent(await timeApi(label, attempt));
+      return;
+    } catch (err) {
+      if (isRetryableError(err) && n < MAX_RETRIES) {
+        logger.warn(
+          `[replies] ${label} network error on attempt ${n}/${MAX_RETRIES}, retrying in 1s: ${describe(err)}`,
+        );
+        await sleep(retryDelayMs(err));
+        continue;
+      }
+      await onFinalError(err);
+      return;
+    }
+  }
+}
+
 export async function reply(
   ctx: Context,
   tone: Tone,
@@ -186,32 +224,21 @@ export async function reply(
   const msgId = replyTo ?? "none";
   const sendExtra = replyTo !== undefined ? { ...extra, reply_to_message_id: replyTo } : extra;
 
-  const MAX_RETRIES = 3;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const sentMsg = await timeApi("reply", () => ctx.reply(text, sendExtra));
-      const telegramMsgId =
-        "message_id" in sentMsg ? (sentMsg as { message_id: number }).message_id : null;
+  await withSendRetry(
+    "reply",
+    () => ctx.reply(text, sendExtra),
+    (sentMsg) => {
+      const telegramMsgId = messageIdOf(sentMsg);
       logger.info(
         `[replies] sent to chat=${chatId} replyTo=${msgId} telegramMsgId=${telegramMsgId} len=${text.length}`,
       );
       if (telegramMsgId !== null && opts.replyTarget && opts.session) {
         opts.replyTarget.record(telegramMsgId, opts.session);
       }
-      return;
-    } catch (err) {
-      const desc = describe(err);
-
-      // Retry on transient network errors
-      if (isRetryableError(err) && attempt < MAX_RETRIES) {
-        logger.warn(
-          `[replies] network error on attempt ${attempt}/${MAX_RETRIES}, retrying in 1s: ${desc}`,
-        );
-        await sleep(retryDelayMs(err));
-        continue;
-      }
-
-      // If Markdown parse failed (error_code 400), retry without parse_mode so user still gets the content
+    },
+    async (err) => {
+      // If Markdown parse failed (error_code 400), retry without parse_mode so
+      // the user still gets the content.
       const isParseError =
         (opts.code || opts.markdown) &&
         err !== null &&
@@ -235,13 +262,11 @@ export async function reply(
           logger.error(`[replies] fallback reply failed ${describe(fallbackErr)} chat=${chatId}`);
         }
       }
-
       logger.error(
-        `[replies] reply failed ${desc} chat=${chatId} replyTo=${msgId} text_len=${text.length}`,
+        `[replies] reply failed ${describe(err)} chat=${chatId} replyTo=${msgId} text_len=${text.length}`,
       );
-      return;
-    }
-  }
+    },
+  );
 }
 
 export async function send(
@@ -255,26 +280,17 @@ export async function send(
   const sendExtra =
     opts.replyTo !== undefined ? { ...extra, reply_to_message_id: opts.replyTo } : extra;
 
-  const MAX_RETRIES = 3;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const sentMsg = await timeApi("send", () => bot.api.sendMessage(chatId, text, sendExtra));
-      const telegramMsgId =
-        "message_id" in sentMsg ? (sentMsg as { message_id: number }).message_id : null;
+  await withSendRetry(
+    "send",
+    () => bot.api.sendMessage(chatId, text, sendExtra),
+    (sentMsg) => {
+      const telegramMsgId = messageIdOf(sentMsg);
       if (telegramMsgId !== null && opts.replyTarget && opts.session) {
         opts.replyTarget.record(telegramMsgId, opts.session);
       }
-      return;
-    } catch (err) {
-      if (isRetryableError(err) && attempt < MAX_RETRIES) {
-        logger.warn(
-          `[replies] send network error on attempt ${attempt}/${MAX_RETRIES}, retrying in 1s: ${describe(err)}`,
-        );
-        await sleep(retryDelayMs(err));
-        continue;
-      }
+    },
+    async (err) => {
       logger.error(`[replies] send failed ${describe(err)}`);
-      return;
-    }
-  }
+    },
+  );
 }

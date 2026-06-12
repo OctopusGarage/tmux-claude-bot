@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { appStateFile } from "./state-dir.js";
+import { appStateFile } from "../shared/state-dir.js";
 
 const marker = (): string => appStateFile(".running");
 

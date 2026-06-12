@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { appStateDir, appStateFile, stateDir } from "../src/core/state-dir.js";
+import { appStateDir, appStateFile, stateDir } from "../src/shared/state-dir.js";
 
 // The global test setup pins TCB_STATE_DIR to a temp dir; restore it after each
 // test that mutates it so sibling tests keep their isolation.

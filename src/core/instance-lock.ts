@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { appStateFile } from "./state-dir.js";
+import { appStateFile } from "../shared/state-dir.js";
 
 /**
  * Runtime single-instance lock. Two bot processes polling the same Telegram
@@ -72,9 +72,29 @@ export function acquireInstanceLock(): void {
     if (holder && holder.pid !== process.pid && isAlive(holder.pid)) {
       throw new InstanceLockHeldError(holder);
     }
-    fs.rmSync(lockPath(), { force: true });
+    // Compare-and-delete: only remove the file if it STILL holds the exact
+    // stale/corrupt holder we just inspected. An unconditional rmSync here races
+    // a concurrent starter — between our readHolder and this line it may have
+    // taken the lock cleanly, and a blind delete would wipe its fresh, valid lock
+    // and let both processes proceed (the 409 this lock exists to prevent).
+    if (!removeIfHolder(holder)) return; // someone else won the race → leave their lock be
   }
   throw new Error(`failed to acquire instance lock at ${lockPath()}`);
+}
+
+/**
+ * Remove the lock only if it still names `expected` (or is already gone/corrupt).
+ * Returns false when a *different* holder now owns the file — a concurrent starter
+ * won the race, so we leave their lock be. Re-reads immediately before deleting,
+ * which narrows but does not fully close the window (POSIX has no compare-and-swap
+ * on file content); that residual gap is microseconds with no intervening syscall,
+ * versus the previous unconditional delete that raced across the whole liveness check.
+ */
+function removeIfHolder(expected: InstanceLockHolder | undefined): boolean {
+  const current = readHolder();
+  if (current && current.pid !== expected?.pid) return false;
+  fs.rmSync(lockPath(), { force: true });
+  return true;
 }
 
 /** Remove the lock only if this process holds it. */
