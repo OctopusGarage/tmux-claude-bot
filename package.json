@@ -13,7 +13,8 @@
     "dist",
     "scripts",
     "install.sh",
-    "INSTALL.md"
+    "INSTALL.md",
+    "requirements.txt"
   ],
   "engines": {
     "node": ">=22"

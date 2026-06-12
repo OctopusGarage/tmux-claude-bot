@@ -59,6 +59,6 @@ jobs:
           # full source archive) and installs with --omit=dev.
           STAGE="tmux-claude-bot-${TAG}"
           git archive --format=tar.gz --prefix="${STAGE}/" "$TAG" \
-            src scripts package.json package-lock.json .env.example tsconfig.json README.md INSTALL.md install.sh requirements.txt \
+            src scripts package.json package-lock.json .env.example tsconfig.json tsup.config.ts README.md INSTALL.md install.sh requirements.txt \
             -o "${STAGE}.tar.gz"
           gh release upload "$TAG" "${STAGE}.tar.gz"
