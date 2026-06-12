@@ -1,7 +1,6 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { chatScope } from "../../core/project-manager.js";
 import { readRecentProjectLines } from "../../core/recentProjects.js";
 import { isCdAllowed, sessionNameFromPath } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
@@ -9,6 +8,7 @@ import { sessionShortId } from "../../shared/utils/hash.js";
 import { MSG } from "./messages.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
+import { tgScope } from "./scope.js";
 
 /**
  * Telegram-specific project lifecycle. The protocol-agnostic helpers live in
@@ -48,7 +48,7 @@ export async function addRecentProjectBySid(
   const sessionName = sessionNameFromPath(projectPath, prefix);
   try {
     if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set(chatScope("telegram", String(ctx.chat?.id ?? 0)), sessionName);
+      await deps.currentProject.set(tgScope(ctx), sessionName);
       await reply(ctx, "ok", messages("telegram").switched, { session: sessionName, replyTarget });
       return;
     }
@@ -58,12 +58,7 @@ export async function addRecentProjectBySid(
       });
       return;
     }
-    await createProjectSession(
-      deps,
-      chatScope("telegram", String(ctx.chat?.id ?? 0)),
-      sessionName,
-      projectPath,
-    );
+    await createProjectSession(deps, tgScope(ctx), sessionName, projectPath);
     await reply(ctx, "ok", messages("telegram").projectCreated, {
       session: sessionName,
       body: projectPath,

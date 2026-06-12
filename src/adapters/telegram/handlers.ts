@@ -4,7 +4,6 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import { listClaudeSessions } from "../../core/history.js";
 import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
-import { chatScope } from "../../core/project-manager.js";
 import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
 import { appendRecentProject } from "../../core/recentProjects.js";
 import {
@@ -29,6 +28,7 @@ import {
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
+import { tgScope } from "./scope.js";
 import { resolveSessionFromReply } from "./session.js";
 import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
 
@@ -108,10 +108,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     try {
       const exists = await deps.bridge.hasSession(sessionName);
       if (exists) {
-        await deps.currentProject.set(
-          chatScope("telegram", String(ctx.chat?.id ?? 0)),
-          sessionName,
-        );
+        await deps.currentProject.set(tgScope(ctx), sessionName);
         setPathForSession(sessionName, resolvedPath);
         await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
         await reply(ctx, "warn", messages("telegram").alreadySwitched, {
@@ -120,12 +117,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
         });
         return;
       }
-      await createProjectSession(
-        deps,
-        chatScope("telegram", String(ctx.chat?.id ?? 0)),
-        sessionName,
-        resolvedPath,
-      );
+      await createProjectSession(deps, tgScope(ctx), sessionName, resolvedPath);
       await reply(ctx, "ok", messages("telegram").projectCreated, {
         session: sessionName,
         body: resolvedPath,
@@ -137,7 +129,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("current_project", async (ctx) => {
-    const session = await deps.currentProject.get(chatScope("telegram", String(ctx.chat?.id ?? 0)));
+    const session = await deps.currentProject.get(tgScope(ctx));
     if (!session) {
       await reply(ctx, "err", messages("telegram").noCurrentProjectSet);
       return;
@@ -158,10 +150,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("list_recent_projects", async (ctx) => {
-    const buttons = await recentProjectButtons(
-      deps,
-      chatScope("telegram", String(ctx.chat?.id ?? 0)),
-    );
+    const buttons = await recentProjectButtons(deps, tgScope(ctx));
     if (buttons.length === 0) {
       await reply(ctx, "list", messages("telegram").noRecentProjects);
       return;
@@ -182,7 +171,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("sessions", async (ctx) => {
-    const scope = chatScope("telegram", String(ctx.chat?.id ?? 0));
+    const scope = tgScope(ctx);
     const sessionName = await deps.currentProject.get(scope);
     if (!sessionName) {
       await reply(ctx, "err", MSG.noSession);
@@ -270,7 +259,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
           await reply(ctx, "err", MSG.noShortId(id), { replyTarget });
           return;
         }
-        await switchToProject(deps, chatScope("telegram", String(ctx.chat?.id ?? 0)), sessionName);
+        await switchToProject(deps, tgScope(ctx), sessionName);
         await reply(ctx, "ok", messages("telegram").switched, {
           session: sessionName,
           replyTarget,
@@ -305,9 +294,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
 
-    const currentSessionName =
-      targetSession ??
-      (await deps.currentProject.get(chatScope("telegram", String(ctx.chat?.id ?? 0))));
+    const currentSessionName = targetSession ?? (await deps.currentProject.get(tgScope(ctx)));
     if (!currentSessionName) {
       logger.warn(`[handlers] no current session chat=${chatId}`);
       await reply(ctx, "err", MSG.noSession);
