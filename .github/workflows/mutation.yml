@@ -1,0 +1,28 @@
+name: Mutation
+
+# Mutation testing is slow (it re-runs the covering tests per mutant), so it is
+# NOT in the per-push CI. It runs weekly and on demand to surface "executed but
+# unasserted" gaps (tests that run a line without asserting its behaviour).
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run mutation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: ignore

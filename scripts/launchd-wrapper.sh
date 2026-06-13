@@ -21,6 +21,9 @@ if [[ -z "$NODE_BIN" ]] || [[ ! -x "$NODE_BIN" ]]; then
 fi
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+# Pin the state-file home to this install dir explicitly (covers a non-default
+# install location and never depends on cwd or the bundle's file layout).
+export TCB_STATE_DIR="$PROJECT_DIR"
 cd "$PROJECT_DIR"
 
 # Run the bundled CLI (built by install.sh via `npm run build`). No tsx loader:
