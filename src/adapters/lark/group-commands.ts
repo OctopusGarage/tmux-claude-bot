@@ -209,7 +209,7 @@ export async function handleRestore(
     await sendText(channel, chatId, m().groupNotBound);
     return;
   }
-  const r = await reconcileGroupBinding(deps, chatId);
+  const r = await reconcileGroupBinding(deps, "lark", chatId);
   if (r.status === "missing-path") {
     await sendText(channel, chatId, m().groupMissingPath(r.label));
   } else {

@@ -2,7 +2,6 @@ import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
 import { messages } from "../../core/i18n/index.js";
-import { chatScope } from "../../core/project-manager.js";
 import { buildQueueStatusLines } from "../../core/queue-status.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
@@ -11,6 +10,7 @@ import { buildControlKeyboard, buildProjectKeyboard } from "./keyboards.js";
 import { aliveProjectButtons } from "./project-ops.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
+import { tgScope } from "./scope.js";
 
 /**
  * Read-side renderers: fetch state (tmux pane, conversation history, queue) and
@@ -21,10 +21,7 @@ import type { ReplyTargetMap } from "./reply-target.js";
 /** The alive-projects list (tappable switch/delete keyboard, no body text). */
 export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<void> {
   try {
-    const buttons = await aliveProjectButtons(
-      deps,
-      chatScope("telegram", String(ctx.chat?.id ?? 0)),
-    );
+    const buttons = await aliveProjectButtons(deps, tgScope(ctx));
     if (buttons.length === 0) {
       await reply(ctx, "list", messages("telegram").aliveListEmpty);
       return;

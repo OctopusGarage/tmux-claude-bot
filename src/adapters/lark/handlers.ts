@@ -89,7 +89,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
     if (!isP2p) {
       const mgmt = msg.rawContentType === "text" && isGroupMgmtCommand(msg.content ?? "");
       if (!mgmt) {
-        const r = await reconcileGroupBinding(deps, msg.chatId);
+        const r = await reconcileGroupBinding(deps, "lark", msg.chatId);
         if (r.status === "missing-path") {
           await sendText(channel, msg.chatId, messages("lark").groupMissingPath(r.label));
           return;

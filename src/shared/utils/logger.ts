@@ -1,9 +1,10 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as nodePath from "node:path";
+import { appStateFile } from "../state-dir.js";
 
-// Override with TCB_LOG_DIR for test isolation.
-const LOG_DIR = process.env.TCB_LOG_DIR ?? nodePath.join(os.homedir(), ".tmux-claude-bot", "logs");
+// Logs live under the app state home so they follow TCB_STATE_DIR like every
+// other state dir; TCB_LOG_DIR still overrides for explicit redirection / tests.
+const LOG_DIR = process.env.TCB_LOG_DIR ?? appStateFile("logs");
 const MAX_ARCHIVE_DAYS = 30;
 
 export type LogCtx = {

@@ -120,4 +120,9 @@ for (const action of ["status", "pause", "resume", "restart", "logs"] as const) 
     .action(() => runScript("service.sh", [action]));
 }
 
-program.parseAsync();
+program.parseAsync().catch((err) => {
+  // An async action (e.g. `run`) rejecting would otherwise be an unhandled
+  // rejection — surface it cleanly and exit non-zero instead.
+  console.error(err instanceof Error ? err.message : err);
+  process.exit(1);
+});

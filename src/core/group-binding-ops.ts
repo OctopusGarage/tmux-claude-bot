@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { basename } from "node:path";
 import type { HandlerDeps } from "./deps.js";
 import { getBinding } from "./group-bindings.js";
-import { chatScope } from "./project-manager.js";
+import { type Channel, chatScope } from "./project-manager.js";
 import { createProjectSession, resolveProjectPath, switchToProject } from "./project-ops.js";
 import { getPathBySession, sessionNameFromPath } from "./sessionPathMap.js";
 import { getWorkspace } from "./workspaces.js";
@@ -58,6 +58,7 @@ export type ReconcileResult =
  */
 export async function reconcileGroupBinding(
   deps: HandlerDeps,
+  channel: Channel,
   chatId: string,
 ): Promise<ReconcileResult> {
   const binding = getBinding(chatId);
@@ -67,7 +68,7 @@ export async function reconcileGroupBinding(
     return { status: "missing-path", label: binding.label };
   }
 
-  const scope = chatScope("lark", chatId);
+  const scope = chatScope(channel, chatId);
   const pointer = await deps.currentProject.get(scope);
   const alive = await deps.bridge.hasSession(binding.sessionName);
 
