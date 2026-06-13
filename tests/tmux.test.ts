@@ -292,20 +292,34 @@ describe("TmuxBridge", () => {
   });
 
   describe("createSession", () => {
-    it("creates a new tmux session", async () => {
+    it("creates a new tmux session and returns true", async () => {
       mockExecFile = createMockExecFile({ newSession: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      await bridge.createSession("my_session");
+      await expect(bridge.createSession("my_session")).resolves.toBe(true);
       expect(mockExecFile).toHaveBeenCalledWith("tmux", ["new-session", "-d", "-s", "my_session"], {
         timeout: 10000,
       });
     });
 
-    it("throws when session creation fails", async () => {
-      mockExecFile = createMockExecFile({});
-      mockExecFile.mockRejectedValueOnce(new Error("session exists"));
-      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      await expect(bridge.createSession("existing_session")).rejects.toThrow("session exists");
+    it("returns false (no throw) when the session already exists — race-safe", async () => {
+      // new-session loses the race ("duplicate session"), but has-session confirms
+      // it exists, so the goal ("session exists") is met.
+      const exec = vi.fn(async (_cmd: string, args: string[]) => {
+        if (args[0] === "new-session") throw new Error("duplicate session: existing_session");
+        return { stdout: "", stderr: "" }; // has-session succeeds → exists
+      }) as unknown as MockExecFile;
+      const bridge = new TmuxBridge({ execFile: exec, getSessionName });
+      await expect(bridge.createSession("existing_session")).resolves.toBe(false);
+    });
+
+    it("rethrows when creation fails and the session does not exist", async () => {
+      const exec = vi.fn(async (_cmd: string, args: string[]) => {
+        if (args[0] === "new-session") throw new Error("tmux server died");
+        if (args[0] === "has-session") throw new Error("no such session"); // not exists
+        return { stdout: "", stderr: "" };
+      }) as unknown as MockExecFile;
+      const bridge = new TmuxBridge({ execFile: exec, getSessionName });
+      await expect(bridge.createSession("x")).rejects.toThrow("tmux server died");
     });
   });
 

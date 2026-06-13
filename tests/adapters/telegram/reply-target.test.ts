@@ -22,14 +22,18 @@ describe("createReplyTargetMap", () => {
     expect(m.resolveReplyTarget(999)).toBeNull();
   });
 
-  it("evicts the oldest 20 once it reaches 100 entries", () => {
+  it("evicts the oldest entry once it exceeds the 100-entry cap (drop-oldest)", () => {
     const m = createReplyTargetMap(dir);
-    for (let i = 1; i <= 100; i++) m.record(i, `s${i}`);
-    // The 100th record triggers eviction of the 20 lowest ids (1..20).
-    expect(m.resolveReplyTarget(1)).toBeNull();
-    expect(m.resolveReplyTarget(20)).toBeNull();
-    expect(m.resolveReplyTarget(21)).toBe("s21");
-    expect(m.resolveReplyTarget(100)).toBe("s100");
+    for (let i = 1; i <= 101; i++) m.record(i, `s${i}`); // one over the cap
+    expect(m.resolveReplyTarget(1)).toBeNull(); // oldest dropped
+    expect(m.resolveReplyTarget(2)).toBe("s2");
+    expect(m.resolveReplyTarget(101)).toBe("s101");
+  });
+
+  it("persists across instances backed by the same dir (survives a restart)", () => {
+    createReplyTargetMap(dir).record(55, "sess_persist");
+    // A fresh map over the same dir loads what the previous one wrote.
+    expect(createReplyTargetMap(dir).resolveReplyTarget(55)).toBe("sess_persist");
   });
 
   it("removeSession drops every entry pointing at that session", () => {

@@ -69,6 +69,17 @@ describe("createProjectSession", () => {
     await createProjectSession(deps, "telegram", "tmux_proj_y", "/path/y");
     expect(deps.currentProject.set).toHaveBeenCalledWith("telegram", "tmux_proj_y");
   });
+
+  it("does NOT cd when the session already existed (createSession → false)", async () => {
+    // A race or the `claude` helper already made the session — it may have Claude
+    // running, so a stray `cd` would be typed into its prompt. Skip it.
+    const deps = fakeDeps({ bridge: { createSession: vi.fn(async () => false) } });
+    await createProjectSession(deps, "lark", "tmux_proj_z", "/path/z");
+
+    expect(deps.bridge.createSession).toHaveBeenCalledWith("tmux_proj_z");
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", "tmux_proj_z");
+    expect(deps.bridge.sendKeys).not.toHaveBeenCalled();
+  });
 });
 
 describe("removeProjectBySession", () => {
@@ -165,7 +176,7 @@ describe("recentProjectButtons", () => {
     vi.mocked(readRecentProjectLines).mockResolvedValueOnce([dir]);
     const sessionName = `tmux_proj_${dir.replace(/\//g, "-")}`;
     const deps = fakeDeps({
-      bridge: { hasSession: vi.fn(async () => true) },
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
       currentProject: { get: vi.fn(async () => sessionName) },
       session: sessionName,
     });

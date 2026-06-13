@@ -52,6 +52,40 @@ describe("MessageQueue", () => {
       expect(results).toEqual(["a", "b"]);
     });
 
+    it("rejects the message if the handler throws without settling (no hang)", async () => {
+      // The handler contract is to settle the message itself; a handler that
+      // throws without doing so must not leave the caller awaiting forever.
+      const queue = new MessageQueue(10);
+      queue.setHandler(async () => {
+        throw new Error("boom");
+      });
+
+      let rejected: Error | undefined;
+      queue.enqueue(createTestMessage({ id: "1", text: "a", reject: (e) => (rejected = e) }));
+
+      await waitFor(() => rejected !== undefined);
+      expect(rejected?.message).toBe("boom");
+    });
+
+    it("does not re-run the handler (tmux sends are not idempotent)", async () => {
+      // The old retry loop would re-run a throwing handler up to 3x → triple
+      // sendKeys. A throwing handler must run exactly once.
+      const queue = new MessageQueue(10);
+      let runs = 0;
+      queue.setHandler(async () => {
+        runs += 1;
+        throw new Error("boom");
+      });
+
+      let rejected = false;
+      queue.enqueue(createTestMessage({ id: "1", text: "a", reject: () => (rejected = true) }));
+
+      await waitFor(() => rejected);
+      // Give any stray retry a chance to fire before asserting it did not.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(runs).toBe(1);
+    });
+
     it("handles multiple messages in sequence", async () => {
       const queue = new MessageQueue(10);
       const results: string[] = [];

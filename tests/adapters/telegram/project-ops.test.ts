@@ -75,7 +75,7 @@ describe("addRecentProjectBySid", () => {
     const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tg-recent-create-"));
     recentLines.push(dir);
     const ctx = fakeCtx();
-    const createSession = vi.fn(async () => {});
+    const createSession = vi.fn(async () => true); // created a new session
     const setCurrent = vi.fn(async () => {});
     const deps = fakeDeps({
       config: { cdAllowedDirs: [dir], projectSessionPrefix: PREFIX, sessionWarmupMs: 0 },

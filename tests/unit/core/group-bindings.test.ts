@@ -41,4 +41,13 @@ describe("group-bindings registry", () => {
     expect(m.unbindGroup("oc_1")).toBe(false);
     expect(m.isProjectGroup("oc_1")).toBe(false);
   });
+
+  it("bindingForSession finds the group bound to a session (one workspace ↔ one group)", async () => {
+    const m = await import("../../../src/core/group-bindings.js");
+    expect(m.bindingForSession("claude_-x")).toBeNull();
+
+    m.bindGroup("oc_a", { workspacePath: "/p/x", sessionName: "claude_-x", label: "x" });
+    expect(m.bindingForSession("claude_-x")?.chatId).toBe("oc_a");
+    expect(m.bindingForSession("claude_-other")).toBeNull();
+  });
 });
