@@ -21,6 +21,7 @@ import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { verifyValue } from "./card-signing.js";
 import { helpCard, langCard, startPickerCard, voiceLangCard } from "./cards.js";
+import { type ChatKind, checkAction, type ProjectAction, serviceableChat } from "./chat-policy.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, resolveSession, runImmediateLarkAction } from "./executor.js";
 import {
@@ -61,6 +62,9 @@ interface CardCtx {
   deps: HandlerDeps;
   evt: CardActionEvent;
   value: CardValue;
+  /** The serviced chat kind, resolved once by the dispatcher's eligibility gate
+   *  (the card callback carries no chat type). Drives the action policy. */
+  chatKind: ChatKind;
 }
 
 type CardHandler = (ctx: CardCtx) => Promise<void>;
@@ -100,18 +104,26 @@ async function isP2pChat(channel: LarkChannel, chatId: string): Promise<boolean>
   }
 }
 
-/** A bound group is pinned to its workspace (reconcile re-anchors it on every
- *  message), so switching it to another project is disabled — rebind instead. */
-function pinnedReply(ctx: CardCtx): Promise<void> | null {
-  const bound = getBinding(ctx.evt.chatId);
-  if (!bound) return null;
-  return sendText(ctx.channel, ctx.evt.chatId, messages("lark").groupPinnedNoSwitch(bound.label));
+/** Enforce the chat-type policy (chat-policy.ts) for a project/group action.
+ *  Returns true when allowed; on refusal it surfaces the policy's message — a
+ *  static refusal, or the "pinned, rebind instead" redirect for a group — and
+ *  returns false. Single source: both surfaces consult ACTION_POLICY. */
+async function gateAction(ctx: CardCtx, action: ProjectAction): Promise<boolean> {
+  const verdict = checkAction(action, ctx.chatKind);
+  if (verdict.ok) return true;
+  if (verdict.deny.kind === "pinned") {
+    const label = getBinding(ctx.evt.chatId)?.label ?? "";
+    await sendText(ctx.channel, ctx.evt.chatId, messages("lark").groupPinnedNoSwitch(label));
+  } else {
+    await sendText(ctx.channel, ctx.evt.chatId, messages("lark")[verdict.deny.key]);
+  }
+  return false;
 }
 
-async function handleSwitch({ channel, deps, evt, value }: CardCtx): Promise<void> {
+async function handleSwitch(ctx: CardCtx): Promise<void> {
+  const { channel, deps, evt, value } = ctx;
   if (!value?.sid) return;
-  const pinned = pinnedReply({ channel, deps, evt, value });
-  if (pinned) return pinned;
+  if (!(await gateAction(ctx, "switch"))) return;
   const session = await resolveAliveSessionByShortId(deps, value.sid);
   if (!session) return;
   await switchToProject(deps, chatScope("lark", evt.chatId), session);
@@ -124,16 +136,12 @@ async function handleSwitch({ channel, deps, evt, value }: CardCtx): Promise<voi
   );
 }
 
-async function handleRemove({ channel, deps, evt, value }: CardCtx): Promise<void> {
+async function handleRemove(ctx: CardCtx): Promise<void> {
+  const { channel, deps, evt, value } = ctx;
   if (!value?.sid) return;
-  // The handler's top-level gate already dropped unbound groups (incl. ones
-  // whose binding was lost), so any group reaching here is a bound project
-  // group. Removing a project kills its tmux session — too destructive for a
-  // shared group (it could be someone else's project); private chat only.
-  if (isProjectGroup(evt.chatId)) {
-    await sendText(channel, evt.chatId, messages("lark").groupNoRemoveInGroup);
-    return;
-  }
+  // Removing a project kills its tmux session — too destructive for a shared
+  // group (it could be someone else's project); private chat only per policy.
+  if (!(await gateAction(ctx, "remove"))) return;
   const session = await resolveAliveSessionByShortId(deps, value.sid);
   if (!session) return;
   await removeProjectBySession(deps, session);
@@ -143,32 +151,23 @@ async function handleRemove({ channel, deps, evt, value }: CardCtx): Promise<voi
 
 async function handleAddRecent(ctx: CardCtx): Promise<void> {
   if (!ctx.value?.sid) return;
-  const pinned = pinnedReply(ctx);
-  if (pinned) return pinned;
+  if (!(await gateAction(ctx, "addRecent"))) return;
   await addRecentBySid(ctx.channel, ctx.deps, ctx.evt.chatId, ctx.value.sid);
 }
 
-/** Create a bound group — private chat only, mirroring the `/newgroup` text
- *  command. The handler gate guarantees p2p or a bound group reaches here, so a
- *  bound group (isProjectGroup) means "not p2p" → refuse. */
-async function handleMakeGroup({ channel, deps, evt, value }: CardCtx): Promise<void> {
+/** Create a bound group — private chat only per policy, mirroring `/newgroup`. */
+async function handleMakeGroup(ctx: CardCtx): Promise<void> {
+  const { channel, deps, evt, value } = ctx;
   if (!value?.sid) return;
-  if (isProjectGroup(evt.chatId)) {
-    await sendText(channel, evt.chatId, messages("lark").groupNewGroupOnlyInP2p);
-    return;
-  }
+  if (!(await gateAction(ctx, "createGroup"))) return;
   await makeBoundGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
 }
 
-/** Bind the current chat to a project — group only, mirroring `/bind`. In p2p
- *  (not a project group) refuse, so a stray button can't write a p2p chat id
- *  into the group bindings. */
-async function handleBindHere({ channel, deps, evt, value }: CardCtx): Promise<void> {
+/** Bind the current chat to a project — group only per policy, mirroring `/bind`. */
+async function handleBindHere(ctx: CardCtx): Promise<void> {
+  const { channel, deps, evt, value } = ctx;
   if (!value?.sid) return;
-  if (!isProjectGroup(evt.chatId)) {
-    await sendText(channel, evt.chatId, messages("lark").groupBindOnlyInGroup);
-    return;
-  }
+  if (!(await gateAction(ctx, "bind"))) return;
   await bindCurrentGroupBySid(channel, deps, evt.chatId, value.sid);
 }
 
@@ -217,7 +216,7 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   makegroup: handleMakeGroup,
   bindhere: handleBindHere,
   rebind: ({ channel, deps, evt }) => sendGroupBindPicker(channel, deps, evt.chatId),
-  unbind: ({ channel, deps, evt }) => handleUnbind(channel, deps, evt.chatId, "group"),
+  unbind: ({ channel, deps, evt, chatKind }) => handleUnbind(channel, deps, evt.chatId, chatKind),
   restore: ({ channel, deps, evt }) => handleRestore(channel, deps, evt.chatId),
   startpick: handleStartPick,
 };
@@ -249,14 +248,17 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     logger.info(`[lark] cardAction cmd=${cmd} chat=${evt.chatId}`);
 
     // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
-    // groups are serviced. An unbound group — including one whose binding was
-    // lost — is ignored, so its (possibly stale) buttons do nothing instead of
-    // exposing project management. Bound is a cheap local check; only hit the
-    // chat API when it isn't a known bound group.
-    if (!isProjectGroup(evt.chatId) && !(await isP2pChat(channel, evt.chatId))) {
+    // groups are serviced (serviceableChat). An unbound group — including one
+    // whose binding was lost — is ignored, so its (possibly stale) buttons do
+    // nothing. Bound is a cheap local check; only hit the chat API otherwise.
+    // Resolve the chat kind ONCE here and thread it into the handlers so the
+    // per-action policy (chat-policy.ts) is enforced symmetrically with text.
+    const isP2p = isProjectGroup(evt.chatId) ? false : await isP2pChat(channel, evt.chatId);
+    if (!serviceableChat(isP2p, evt.chatId)) {
       logger.info(`[lark] ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
       return;
     }
+    const chatKind: ChatKind = isP2p ? "p2p" : "group";
 
     // Multi-command start: show a picker instead of starting the single default.
     // With a single start command, fall through to the queued-action routing.
@@ -267,7 +269,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
 
     const handler = CARD_HANDLERS[cmd];
     if (handler) {
-      await handler({ channel, deps, evt, value });
+      await handler({ channel, deps, evt, value, chatKind });
       return;
     }
 

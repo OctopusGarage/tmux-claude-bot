@@ -16,10 +16,30 @@ import { readRecentProjectLines } from "../../core/recentProjects.js";
 import { sessionNameFromPath } from "../../core/sessionPathMap.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
+import { chatKindOf, checkAction, type ProjectAction } from "./chat-policy.js";
 import { sendText } from "./replies.js";
 import { createBoundChat } from "./resource.js";
 
 const m = () => messages("lark");
+
+/** Enforce the shared chat-type policy (chat-policy.ts) for a typed command:
+ *  reply with the policy's refusal and return true when denied. Keeps the text
+ *  surface in lock-step with the card surface — both read ACTION_POLICY. */
+async function deniedByPolicy(
+  channel: LarkChannel,
+  chatId: string,
+  action: ProjectAction,
+  chatType: string,
+): Promise<boolean> {
+  const verdict = checkAction(action, chatKindOf(chatType));
+  if (verdict.ok) return false;
+  const text =
+    verdict.deny.kind === "pinned"
+      ? m().groupPinnedNoSwitch(getBinding(chatId)?.label ?? "")
+      : m()[verdict.deny.key];
+  await sendText(channel, chatId, text);
+  return true;
+}
 
 /** Resolve a recent-project short id back to its absolute path (mirrors the
  * recent-list create button's resolution). */
@@ -144,10 +164,7 @@ export async function handleNewGroup(
   senderId: string,
   arg: string | undefined,
 ): Promise<void> {
-  if (chatType !== "p2p") {
-    await sendText(channel, chatId, m().groupNewGroupOnlyInP2p);
-    return;
-  }
+  if (await deniedByPolicy(channel, chatId, "createGroup", chatType)) return;
   const target = await resolveOrReply(channel, deps, chatId, arg);
   if (!target) return;
   if (!deps.config.lark) {
@@ -205,10 +222,7 @@ export async function handleBind(
   chatType: string,
   arg: string | undefined,
 ): Promise<void> {
-  if (chatType === "p2p") {
-    await sendText(channel, chatId, m().groupBindOnlyInGroup);
-    return;
-  }
+  if (await deniedByPolicy(channel, chatId, "bind", chatType)) return;
   const target = await resolveOrReply(channel, deps, chatId, arg);
   if (!target) return;
 
@@ -235,10 +249,7 @@ export async function handleUnbind(
   chatId: string,
   chatType: string,
 ): Promise<void> {
-  if (chatType === "p2p") {
-    await sendText(channel, chatId, m().groupUnbindOnlyInGroup);
-    return;
-  }
+  if (await deniedByPolicy(channel, chatId, "unbind", chatType)) return;
   await sendText(channel, chatId, unbindGroup(chatId) ? m().groupUnbound : m().groupNotBound);
 }
 
