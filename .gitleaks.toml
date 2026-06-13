@@ -4,11 +4,12 @@ useDefault = true
 
 [allowlist]
 description = """
-Known, retired Telegram bot token that appears in git history (tests/logger.test.ts
-before it was replaced with a synthetic fixture). The owner has confirmed this
-token is revoked; HEAD no longer contains it. Allowlisted by exact value so any
-OTHER credential-shaped string still fails the scan. Rewriting public history to
-purge it was judged not worth the cost.
+Known, retired Telegram bot token that appears only in git history (it lived in
+tests/logger.test.ts until HEAD replaced it with a synthetic fixture). The owner
+has confirmed this token is revoked, and the GitHub secret-scanning alert was
+resolved as revoked. Allowlisted by exact value so any OTHER credential-shaped
+string still fails the scan. Rewriting public history to purge it was judged not
+worth the cost.
 """
 regexes = [
   '''8539533731:AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U''',
