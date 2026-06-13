@@ -65,6 +65,8 @@ export const MESSAGE_ACTIONS = [
   "enter",
   "up",
   "down",
+  "left",
+  "right",
   "tab",
   "status",
 ] as const;
@@ -216,6 +218,16 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       logger.info(`[executor] sending down session=${session}`);
       await deps.bridge.sendRawKey("Down", session);
       return m.sentDown;
+    }
+    case "left": {
+      logger.info(`[executor] sending left session=${session}`);
+      await deps.bridge.sendRawKey("Left", session);
+      return m.sentLeft;
+    }
+    case "right": {
+      logger.info(`[executor] sending right session=${session}`);
+      await deps.bridge.sendRawKey("Right", session);
+      return m.sentRight;
     }
     case "tab": {
       logger.info(`[executor] sending tab session=${session}`);

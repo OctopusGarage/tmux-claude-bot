@@ -19,6 +19,8 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `enter` | Send Enter key |
 | `up` | Send Up arrow |
 | `down` | Send Down arrow |
+| `left` | Send Left arrow |
+| `right` | Send Right arrow |
 | `tab` | Send Tab key |
 | `exit` | Exit Claude |
 | `restart` | Restart Claude with --continue |
