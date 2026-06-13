@@ -137,6 +137,19 @@ describe("group-commands", () => {
       expect(deps.bridge.createSession).toHaveBeenCalled();
       expect(channel.texts().some((t) => t.includes("群组已绑定到"))).toBe(true);
     });
+
+    it("rejects binding to a project ANOTHER group already owns", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      const sessionName = sessionNameFromPath(dir, deps.config.projectSessionPrefix);
+      bindGroup("oc_other", { workspacePath: dir, sessionName, label: "x" });
+
+      await handleBind(channel, deps, "oc_bind2", "group", dir);
+
+      expect(getBinding("oc_bind2")).toBeNull();
+      expect(deps.bridge.createSession).not.toHaveBeenCalled();
+      expect(channel.texts().some((t) => t.includes("已经有绑定群"))).toBe(true);
+    });
   });
 
   // ── handleUnbind ────────────────────────────────────────────────────────────
@@ -245,6 +258,33 @@ describe("group-commands", () => {
       const channel = fakeChannel();
 
       await bindCurrentGroupBySid(channel, deps, "oc_grp", sid);
+
+      expect(getBinding("oc_grp")?.workspacePath).toBe(dir);
+      expect(channel.texts().some((t) => t.includes("群组已绑定到"))).toBe(true);
+    });
+
+    it("rejects rebinding to a project ANOTHER group already owns", async () => {
+      const deps = fakeDeps();
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sessionName = sessionNameFromPath(dir, deps.config.projectSessionPrefix);
+      bindGroup("oc_other", { workspacePath: dir, sessionName, label: "x" });
+      const channel = fakeChannel();
+
+      await bindCurrentGroupBySid(channel, deps, "oc_grp", sessionShortId(sessionName));
+
+      expect(getBinding("oc_grp")).toBeNull(); // not bound
+      expect(deps.bridge.createSession).not.toHaveBeenCalled();
+      expect(channel.texts().some((t) => t.includes("已经有绑定群"))).toBe(true);
+    });
+
+    it("lets a group re-anchor to its OWN project (self is not a conflict)", async () => {
+      const deps = fakeDeps();
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sessionName = sessionNameFromPath(dir, deps.config.projectSessionPrefix);
+      bindGroup("oc_grp", { workspacePath: dir, sessionName, label: "x" });
+      const channel = fakeChannel();
+
+      await bindCurrentGroupBySid(channel, deps, "oc_grp", sessionShortId(sessionName));
 
       expect(getBinding("oc_grp")?.workspacePath).toBe(dir);
       expect(channel.texts().some((t) => t.includes("群组已绑定到"))).toBe(true);

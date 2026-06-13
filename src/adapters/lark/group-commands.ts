@@ -5,6 +5,7 @@ import { reconcileGroupBinding, resolveWorkspaceTarget } from "../../core/group-
 import {
   bindGroup,
   bindingForSession,
+  type GroupBinding,
   getBinding,
   unbindGroup,
 } from "../../core/group-bindings.js";
@@ -26,6 +27,17 @@ async function recentPathByShortId(deps: HandlerDeps, sid: string): Promise<stri
   const prefix = deps.config.projectSessionPrefix;
   const lines = await readRecentProjectLines();
   return lines.find((p) => sessionShortId(sessionNameFromPath(p, prefix)) === sid) ?? null;
+}
+
+/** The OTHER group already bound to `sessionName` (excluding `chatId`), if any.
+ * Enforces one workspace ↔ one group on the (re)bind paths while still letting a
+ * group re-anchor to its OWN project. */
+function otherGroupForSession(
+  sessionName: string,
+  chatId: string,
+): { chatId: string; binding: GroupBinding } | null {
+  const existing = bindingForSession(sessionName);
+  return existing && existing.chatId !== chatId ? existing : null;
 }
 
 /** Button-driven `/newgroup`: create a bound group for the picked recent project
@@ -90,6 +102,11 @@ export async function bindCurrentGroupBySid(
   }
   const label = basename(path);
   const sessionName = sessionNameFromPath(path, deps.config.projectSessionPrefix);
+  const other = otherGroupForSession(sessionName, chatId);
+  if (other) {
+    await sendText(channel, chatId, m().groupAlreadyExists(other.binding.label));
+    return;
+  }
   bindGroup(chatId, { workspacePath: path, sessionName, label });
   await createProjectSession(deps, chatScope("lark", chatId), sessionName, path);
   await sendText(channel, chatId, m().groupBoundWelcome(label, path));
@@ -194,6 +211,12 @@ export async function handleBind(
   }
   const target = await resolveOrReply(channel, deps, chatId, arg);
   if (!target) return;
+
+  const other = otherGroupForSession(target.sessionName, chatId);
+  if (other) {
+    await sendText(channel, chatId, m().groupAlreadyExists(other.binding.label));
+    return;
+  }
 
   bindGroup(chatId, target);
   await createProjectSession(
