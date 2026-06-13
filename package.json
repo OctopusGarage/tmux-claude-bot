@@ -54,6 +54,7 @@
     "test:watch": "vitest",
     "knip": "knip",
     "depcruise": "depcruise src --config .dependency-cruiser.cjs",
+    "lint:deep": "eslint src",
     "mutation": "stryker run",
     "audit": "npm audit --audit-level=high",
     "prepare": "husky 2>/dev/null || true"
@@ -87,11 +88,13 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@vitest/coverage-v8": "^4.1.8",
     "dependency-cruiser": "^17.4.3",
+    "eslint": "^10.5.0",
     "husky": "^9.1.7",
     "knip": "^6.16.1",
     "lint-staged": "^17.0.7",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2",
+    "typescript-eslint": "^8.61.0",
     "vitest": "^4.1.8"
   }
 }

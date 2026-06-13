@@ -85,8 +85,16 @@ npm test                       # full suite (vitest run)
 npm run lint:sh                # shellcheck the scripts
 npx vitest run path/to.test.ts # a single file
 npx vitest run --coverage      # coverage report (v8)
+npm run lint:deep              # type-aware lint (floating promises, dead conditions) — warns, non-blocking
 npm run mutation               # mutation testing (slow; core only) — see table above
 ```
+
+`lint:deep` is type-aware ESLint with three behavioural rules biome and tsc
+can't express — `no-floating-promises`, `no-misused-promises`,
+`no-unnecessary-condition` (dead guards). It runs in CI as **non-blocking**
+(`continue-on-error`): it surfaces warnings to triage, it does not gate. Fix the
+real ones (a floating promise on an entrypoint), leave the merely-defensive `??`/
+`?.` warnings unless they signal a wrong type.
 
 ## Rule
 
