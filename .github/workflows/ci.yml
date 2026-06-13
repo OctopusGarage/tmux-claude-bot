@@ -5,6 +5,12 @@ on:
     branches: ["**"]
   pull_request:
 
+# Read-only: every job here just checks out and runs tooling — nothing writes
+# back to the repo. Least-privilege GITHUB_TOKEN (codecov uploads via its own
+# secret, not the workflow token).
+permissions:
+  contents: read
+
 jobs:
   checks:
     strategy:
