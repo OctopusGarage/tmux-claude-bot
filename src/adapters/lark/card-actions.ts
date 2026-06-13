@@ -1,7 +1,7 @@
 import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { type MessageAction, performStart } from "../../core/dispatch.js";
-import { getBinding } from "../../core/group-bindings.js";
+import { getBinding, isProjectGroup } from "../../core/group-bindings.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
@@ -88,6 +88,18 @@ async function handleUiLang({ channel, evt, value }: CardCtx): Promise<void> {
   }
 }
 
+/** True for a 1:1 chat. Resolved via the chat API (the card-action callback
+ *  carries no chat type). Fail safe: an unresolved chat is treated as not-p2p
+ *  so it gets ignored like an unbound group rather than serviced. */
+async function isP2pChat(channel: LarkChannel, chatId: string): Promise<boolean> {
+  try {
+    return (await channel.getChatInfo(chatId)).chatType === "p2p";
+  } catch (err) {
+    logger.warn(`[lark] getChatInfo failed chat=${chatId}: ${String(err)}`);
+    return false;
+  }
+}
+
 /** A bound group is pinned to its workspace (reconcile re-anchors it on every
  *  message), so switching it to another project is disabled — rebind instead. */
 function pinnedReply(ctx: CardCtx): Promise<void> | null {
@@ -114,11 +126,11 @@ async function handleSwitch({ channel, deps, evt, value }: CardCtx): Promise<voi
 
 async function handleRemove({ channel, deps, evt, value }: CardCtx): Promise<void> {
   if (!value?.sid) return;
-  // Removing a project kills its tmux session — too destructive for a shared
-  // group (it could be someone else's project). Only in a 1:1 chat with the bot.
-  // A card action only reaches a group when that group is bound, so getBinding
-  // set ⟺ this is a group, not a private chat.
-  if (getBinding(evt.chatId)) {
+  // The handler's top-level gate already dropped unbound groups (incl. ones
+  // whose binding was lost), so any group reaching here is a bound project
+  // group. Removing a project kills its tmux session — too destructive for a
+  // shared group (it could be someone else's project); private chat only.
+  if (isProjectGroup(evt.chatId)) {
     await sendText(channel, evt.chatId, messages("lark").groupNoRemoveInGroup);
     return;
   }
@@ -215,6 +227,16 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     if (!cmd) return;
 
     logger.info(`[lark] cardAction cmd=${cmd} chat=${evt.chatId}`);
+
+    // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
+    // groups are serviced. An unbound group — including one whose binding was
+    // lost — is ignored, so its (possibly stale) buttons do nothing instead of
+    // exposing project management. Bound is a cheap local check; only hit the
+    // chat API when it isn't a known bound group.
+    if (!isProjectGroup(evt.chatId) && !(await isP2pChat(channel, evt.chatId))) {
+      logger.info(`[lark] ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
+      return;
+    }
 
     // Multi-command start: show a picker instead of starting the single default.
     // With a single start command, fall through to the queued-action routing.

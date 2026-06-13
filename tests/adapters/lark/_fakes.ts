@@ -41,6 +41,8 @@ export type FakeChannel = LarkChannel & {
   texts: () => string[];
   /** The `card` object of every `{ card }` send. */
   cards: () => unknown[];
+  /** Test helper: set what getChatInfo reports (defaults to "p2p"). */
+  setChatType: (t: "p2p" | "group") => void;
 };
 
 export function fakeChannel(): FakeChannel {
@@ -54,6 +56,7 @@ export function fakeChannel(): FakeChannel {
   let n = 0;
   let entityN = 0;
   let imN = 0;
+  let chatType: "p2p" | "group" = "p2p";
 
   const channel = {
     sent,
@@ -112,6 +115,10 @@ export function fakeChannel(): FakeChannel {
     updateCard: vi.fn(async (messageId: string, card: unknown) => {
       updatedCards.push({ messageId, card });
     }),
+    getChatInfo: vi.fn(async (chatId: string) => ({ chatId, chatType })),
+    setChatType: (t: "p2p" | "group") => {
+      chatType = t;
+    },
   };
 
   return channel as unknown as FakeChannel;

@@ -187,10 +187,30 @@ describe("makeCardActionHandler", () => {
     expect(channel.texts().some((t) => t.includes("已移除"))).toBe(true);
   });
 
-  it("'remove' in a group is refused — delete only in a private chat", async () => {
-    bindGroup("oc_grp_rm", { workspacePath: "/p/g", sessionName: "tmux_proj_g", label: "g" });
+  it("'remove' in a bound group is refused with a hint — manage projects in private chat", async () => {
+    bindGroup("oc_grp_bound", { workspacePath: "/p/g", sessionName: "tmux_proj_g", label: "g" });
     const session = "tmux_proj_beta";
     const channel = fakeChannel();
+    channel.setChatType("group");
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      claude: { checkIfRunning: vi.fn(async () => false) },
+    });
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "remove", sid: sessionShortId(session) }, { chatId: "oc_grp_bound" }));
+
+    expect(deps.bridge.killSession).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("不能删除项目"))).toBe(true);
+    unbindGroup("oc_grp_bound");
+  });
+
+  it("a card action in an unbound (lost-binding) group is ignored — buttons do nothing", async () => {
+    const session = "tmux_proj_beta";
+    const channel = fakeChannel();
+    // No binding for this group, and it's a real group chat. Mirrors how text
+    // is ignored in unbound groups — stale buttons must not act either.
+    channel.setChatType("group");
     const deps = fakeDeps({
       bridge: { listProjectSessions: vi.fn(async () => [session]) },
       claude: { checkIfRunning: vi.fn(async () => false) },
@@ -200,8 +220,25 @@ describe("makeCardActionHandler", () => {
     await handler(evt({ cmd: "remove", sid: sessionShortId(session) }, { chatId: "oc_grp_rm" }));
 
     expect(deps.bridge.killSession).not.toHaveBeenCalled();
-    expect(channel.texts().some((t) => t.includes("不能删除项目"))).toBe(true);
-    unbindGroup("oc_grp_rm");
+    expect(channel.sent).toHaveLength(0); // silent, like an ignored text message
+  });
+
+  it("a card action is ignored when the chat type can't be resolved (fail safe)", async () => {
+    const session = "tmux_proj_beta";
+    const channel = fakeChannel();
+    channel.getChatInfo = vi.fn(async () => {
+      throw new Error("network");
+    });
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      claude: { checkIfRunning: vi.fn(async () => false) },
+    });
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "remove", sid: sessionShortId(session) }, { chatId: "oc_unknown" }));
+
+    expect(deps.bridge.killSession).not.toHaveBeenCalled();
+    expect(channel.sent).toHaveLength(0);
   });
 
   it("'switch' in a bound group is pinned — refuses and does not change project", async () => {
