@@ -57,6 +57,36 @@ grouped recommit**:
 
 Confirm with the user before any force-related rewrite of already-pushed history.
 
+## Phase 0.6 — Doc alignment (does the documentation still match what shipped?)
+
+Code drifts the docs that describe it — a renamed command, a new env var, a
+changed flow — and a release that ships stale instructions is worse than no
+docs. Before bumping, reconcile the **user-facing docs against the change set**.
+This is a targeted reconcile, not a full doc audit: let the diff point you at
+the docs that could have gone stale.
+
+1. See what changed since the last tag:
+   `git diff --stat $(git describe --tags --abbrev=0)..HEAD`.
+2. For each changed area, open the doc that documents it and fix any drift:
+   - **Commands / buttons** added, removed, or renamed → `README.md`,
+     `docs/commands.md`, the command tables in `CLAUDE.md`.
+   - **Config / env vars / flags / paths** → `README.md`, `INSTALL.md`, `.env`
+     examples, `CLAUDE.md`.
+   - **Behavior / architecture** (new feature or changed flow) → the `README.md`
+     feature list, `CONTEXT.md` domain model, and `docs/adr/` if a documented
+     decision changed.
+   - **Dev / release process, gates, scripts** → `CONTRIBUTING.md`,
+     `docs/TESTING.md`.
+   - **Security-relevant** (auth, allowlist, data handling) → `SECURITY.md`.
+3. Fix drift in place: correct stale facts, and tighten the wording while you're
+   there — concise, accurate, no marketing. Don't document trivial internals;
+   only what a user, operator, or contributor actually relies on.
+4. Commit doc fixes as a `docs:` commit — fold it into the Phase 0.5
+   consolidation if you haven't bumped yet — then re-run the Phase 0 gate (its
+   secret/path scan already covers `*.md`).
+
+If nothing drifted, say so and move on.
+
 ## Phase 1 — Bump, tag, push
 
 `npm run release -- <bump>` does it all: it runs on `main`, requires a clean tree,
@@ -118,6 +148,7 @@ TMUX_CLAUDE_BOT_VERSION="vX.Y.Z" bash /tmp/tcb-install.sh
 
 ## Report
 
-Summarize: new version, bump commit SHA, tag, release URL, redeploy PID, and the
-gate/verify results. If you stopped early, say exactly which gate failed and what's
-needed to proceed.
+Summarize: new version, bump commit SHA, tag, release URL, redeploy PID, the
+gate/verify results, and any docs reconciled in Phase 0.6 (or "docs already
+aligned"). If you stopped early, say exactly which gate failed and what's needed
+to proceed.
