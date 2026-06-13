@@ -2,7 +2,12 @@ import { basename } from "node:path";
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { reconcileGroupBinding, resolveWorkspaceTarget } from "../../core/group-binding-ops.js";
-import { bindGroup, getBinding, unbindGroup } from "../../core/group-bindings.js";
+import {
+  bindGroup,
+  bindingForSession,
+  getBinding,
+  unbindGroup,
+} from "../../core/group-bindings.js";
 import { messages } from "../../core/i18n/index.js";
 import { chatScope } from "../../core/project-manager.js";
 import { createProjectSession } from "../../core/project-ops.js";
@@ -43,6 +48,14 @@ export async function makeBoundGroupBySid(
   }
   const label = basename(path);
   const sessionName = sessionNameFromPath(path, deps.config.projectSessionPrefix);
+
+  // One workspace ↔ one group: don't create a second group for a project that
+  // already has one.
+  const existing = bindingForSession(sessionName);
+  if (existing) {
+    await sendText(channel, originChatId, m().groupAlreadyExists(existing.binding.label));
+    return;
+  }
 
   let created: { chatId: string; name: string };
   try {
@@ -122,6 +135,14 @@ export async function handleNewGroup(
   if (!target) return;
   if (!deps.config.lark) {
     logger.warn("[lark] /newgroup with no lark config (unreachable)");
+    return;
+  }
+
+  // One workspace ↔ one group: don't create a second group for a project that
+  // already has one.
+  const existing = bindingForSession(target.sessionName);
+  if (existing) {
+    await sendText(channel, chatId, m().groupAlreadyExists(existing.binding.label));
     return;
   }
 

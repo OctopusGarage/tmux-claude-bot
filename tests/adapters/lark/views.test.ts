@@ -9,6 +9,7 @@ import {
   handleWsCommand,
   sendAliveList,
   sendCurrentProject,
+  sendGroupMenu,
   sendHistory,
   sendLangPicker,
   sendPeek,
@@ -541,5 +542,40 @@ describe("handleWsCommand", () => {
     const channel = fakeChannel();
     await handleWsCommand(channel, fakeDeps(), "chat-1", "list");
     expect(channel.texts().some((t) => t.includes("proj-a"))).toBe(true);
+  });
+});
+
+describe("sendGroupMenu", () => {
+  it("omits projects that already have a group from the new-group picker", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-gm-"));
+    const pathA = nodePath.join(root, "alpha");
+    const pathB = nodePath.join(root, "beta");
+    fs.mkdirSync(pathA);
+    fs.mkdirSync(pathB);
+    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+    const { sessionNameFromPath } = await import("../../../src/core/sessionPathMap.js");
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const { bindGroup } = await import("../../../src/core/group-bindings.js");
+
+    const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => []) } });
+    const prefix = deps.config.projectSessionPrefix;
+    await appendRecentProject(pathA, prefix);
+    await appendRecentProject(pathB, prefix);
+    const sidA = sessionShortId(sessionNameFromPath(pathA, prefix));
+    const sidB = sessionShortId(sessionNameFromPath(pathB, prefix));
+    // alpha already has a group; beta does not.
+    bindGroup("oc_alpha", {
+      workspacePath: pathA,
+      sessionName: sessionNameFromPath(pathA, prefix),
+      label: "alpha",
+    });
+
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, deps, "oc_fresh"); // an unbound chat → the picker
+
+    const card = JSON.stringify(channel.cards());
+    expect(card).toContain(sidB); // beta is still offered
+    expect(card).not.toContain(sidA); // alpha already has a group → hidden
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });

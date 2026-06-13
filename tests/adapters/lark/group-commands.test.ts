@@ -105,6 +105,16 @@ describe("group-commands", () => {
       // No binding should have been persisted under any id
       expect(getBinding("oc_new")).toBeNull();
     });
+
+    it("rejects creating a second group when the workspace already has one", async () => {
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      const sessionName = sessionNameFromPath(dir, deps.config.projectSessionPrefix);
+      bindGroup("oc_existing", { workspacePath: dir, sessionName, label: "x" });
+      const channel = fakeChannel();
+      await handleNewGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+      expect(createBoundChat).not.toHaveBeenCalled();
+      expect(channel.texts().some((t) => t.includes("已经有绑定群"))).toBe(true);
+    });
   });
 
   // ── handleBind ──────────────────────────────────────────────────────────────
@@ -213,6 +223,17 @@ describe("group-commands", () => {
       const channel = fakeChannel();
       await makeBoundGroupBySid(channel, deps, "oc_p2p", "nope", "ou_me");
       expect(createBoundChat).not.toHaveBeenCalled();
+    });
+
+    it("rejects a second group for an already-grouped recent project", async () => {
+      const deps = fakeDeps();
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sessionName = sessionNameFromPath(dir, deps.config.projectSessionPrefix);
+      bindGroup("oc_existing", { workspacePath: dir, sessionName, label: "x" });
+      const channel = fakeChannel();
+      await makeBoundGroupBySid(channel, deps, "oc_p2p", sessionShortId(sessionName), "ou_me");
+      expect(createBoundChat).not.toHaveBeenCalled();
+      expect(channel.texts().some((t) => t.includes("已经有绑定群"))).toBe(true);
     });
   });
 

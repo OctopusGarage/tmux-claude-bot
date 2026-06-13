@@ -1,7 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
-import { getBinding } from "../../core/group-bindings.js";
+import { getBinding, listBindings } from "../../core/group-bindings.js";
 import {
   formatSingleConversation,
   getRecentConversations,
@@ -26,6 +26,7 @@ import {
 } from "../../core/sessionPathMap.js";
 import { resolveWhisperLanguage } from "../../core/voice-support.js";
 import { runWorkspaceCommand } from "../../core/workspace-command.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
   groupBoundCard,
@@ -275,7 +276,12 @@ export async function sendGroupMenu(
     await sendCard(channel, chatId, groupBoundCard(binding.label));
     return;
   }
-  const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
+  // Hide "new group" for projects that already have a group (one workspace ↔ one
+  // group); the handler also rejects it, but don't even offer the button.
+  const grouped = new Set(listBindings().map(({ binding: b }) => sessionShortId(b.sessionName)));
+  const buttons = (await recentProjectButtons(deps, chatScope("lark", chatId))).filter(
+    (b) => !grouped.has(b.sid),
+  );
   await sendCard(channel, chatId, groupPickerCard(buttons, "make"));
 }
 

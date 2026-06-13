@@ -29,3 +29,11 @@ export function unbindGroup(chatId: string): boolean {
 export function listBindings(): Array<{ chatId: string; binding: GroupBinding }> {
   return store.sortedEntries().map(([chatId, binding]) => ({ chatId, binding }));
 }
+
+/** The group already bound to `sessionName`, if any — enforces one workspace ↔
+ *  one group, so a second group isn't created/bound for a project that has one. */
+export function bindingForSession(
+  sessionName: string,
+): { chatId: string; binding: GroupBinding } | null {
+  return listBindings().find(({ binding }) => binding.sessionName === sessionName) ?? null;
+}

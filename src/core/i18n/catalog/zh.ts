@@ -266,6 +266,8 @@ export const zh = {
   groupBoundCardTitle: (label: string) => `🗂 本群已绑定：${label}`,
   groupMenuNoProjects: "暂无近期项目。先在私聊用 `/add_project <路径>` 添加一个。",
   groupCreatedShort: (label: string) => `✓ 已新建项目群「${label}」，去新群里继续。`,
+  groupAlreadyExists: (label: string) =>
+    `⚠️ 项目「${label}」已经有绑定群了，去那个群里用即可，无需重复创建。`,
 };
 
 // No `as const`: Messages widens to string / function types so other languages

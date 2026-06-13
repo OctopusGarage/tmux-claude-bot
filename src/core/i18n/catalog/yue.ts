@@ -245,4 +245,6 @@ export const yue: Messages = {
   groupBoundCardTitle: (label) => `🗂 本群已綁定：${label}`,
   groupMenuNoProjects: "暫時冇近期項目。先喺私聊用 `/add_project <路徑>` 加一個。",
   groupCreatedShort: (label) => `✓ 已新建項目群「${label}」，去新群度繼續。`,
+  groupAlreadyExists: (label) =>
+    `⚠️ 項目「${label}」已經有綁定群喇，去嗰個群度用就得，唔使重複創建。`,
 };
