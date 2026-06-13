@@ -36,12 +36,16 @@ function isExecutable(p: string): boolean {
 }
 
 /**
- * Resolve the mlx_whisper binary: an explicit MLX_WHISPER_BIN wins, otherwise
- * fall back to the project-managed venv. The fallback lets voice work even if
- * the operator ran the install but never set .env.
+ * Resolve the mlx_whisper binary: an explicit MLX_WHISPER_BIN wins, but ONLY
+ * when it points at a file that actually exists — otherwise a stale path (dev
+ * borrowing prod's .env, or a moved install) would mask a working project venv
+ * and make voice look uninstalled. Falling back to the venv lets `/voice_install`
+ * (which builds the venv at cwd) work even when .env points elsewhere.
  */
 export function resolveWhisperBin(): string {
-  return process.env.MLX_WHISPER_BIN || WHISPER_VENV_BIN;
+  const explicit = process.env.MLX_WHISPER_BIN;
+  if (explicit && existsSync(explicit)) return explicit;
+  return WHISPER_VENV_BIN;
 }
 
 /** Default recognition language: Chinese — whisper auto-detect often misreads it as Japanese. */
