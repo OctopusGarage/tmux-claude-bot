@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { stateDir } from "../src/core/state-dir.js";
+import { stateDir } from "../src/shared/state-dir.js";
 import { normalizeError } from "../src/shared/utils/error.js";
 import { Queue } from "../src/shared/utils/queue.js";
 import { truncate } from "../src/shared/utils/string.js";

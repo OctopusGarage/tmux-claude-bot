@@ -259,15 +259,15 @@ describe("alive/recent error branches", () => {
 
   it("sendRecentList reports the error when listing fails", async () => {
     const channel = fakeChannel();
-    // mock recentProjectButtons to throw by making bridge.hasSession throw
+    // mock recentProjectButtons to throw by making the session listing throw
     const deps = fakeDeps({
       bridge: {
-        hasSession: vi.fn(async () => {
+        listProjectSessions: vi.fn(async () => {
           throw new Error("recent fail");
         }),
       },
     });
-    // populate recents so the path hits bridge.hasSession
+    // populate recents so the path reaches the session listing
     const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
     const tmpDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-rl-err-"));
     await appendRecentProject(tmpDir, "tmux_proj_");

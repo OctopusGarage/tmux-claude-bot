@@ -131,6 +131,17 @@ describe("handleQueuedCommand", () => {
     expect(ctx.texts().some((t) => t.includes("运行中"))).toBe(true);
   });
 
+  it("runs 'tab' inline too (regression: telegram's immediate set once omitted tab)", async () => {
+    // tab is larkKind:"immediate" in the registry; telegram now derives its
+    // immediate set from there instead of a hardcoded list that had drifted.
+    const ctx = fakeCtx();
+    const deps = fakeDeps({ claude: { checkIfRunning: vi.fn(async () => true) } });
+
+    await handleQueuedCommand(ctx, deps, "tab");
+
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
   it("resolves the session from a reply-to message via the reply-target map", async () => {
     const replyTarget = createReplyTargetMap(`/tmp/rt-${Date.now()}-${Math.random()}`);
     replyTarget.record(42, "proj-from-reply");
