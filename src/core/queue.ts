@@ -3,12 +3,18 @@ import * as nodePath from "node:path";
 import { normalizeError } from "../shared/utils/error.js";
 import { logger } from "../shared/utils/logger.js";
 import { Queue } from "../shared/utils/queue.js";
+import type { Channel } from "./project-manager.js";
+
+// Re-exported from its canonical home (project-manager) so there is a single
+// Channel type across core; QueuedMessage carries it, so queue consumers import
+// it from here too.
+export type { Channel };
 
 export type QueuedMessage = {
   id: string;
   text: string;
   chatId: string | number;
-  channel?: "telegram" | "lark" | undefined;
+  channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
   resolve: (output: string) => void;
@@ -22,7 +28,7 @@ export type PersistedMessage = {
   id: string;
   text: string;
   chatId: string | number;
-  channel?: "telegram" | "lark" | undefined;
+  channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
 };
@@ -129,10 +135,15 @@ export class MessageQueue {
   }
 
   private hasDuplicateText(chatId: string | number, text: string): boolean {
-    for (const q of [this.globalQueue, ...this.sessionQueues.values()]) {
-      if (q.toArray().some((m) => m.action === "text" && m.chatId === chatId && m.text === text)) {
-        return true;
-      }
+    const isDup = (q: Queue<QueuedMessage>): boolean =>
+      q.toArray().some((m) => m.action === "text" && m.chatId === chatId && m.text === text);
+    // Iterate the queues directly instead of spreading them into a fresh array
+    // on every enqueue. (A side index keyed by chatId+text would be faster still,
+    // but keeping it in sync across enqueue/dequeue/clear isn't worth it for a
+    // per-session queue bounded at maxSize.)
+    if (isDup(this.globalQueue)) return true;
+    for (const q of this.sessionQueues.values()) {
+      if (isDup(q)) return true;
     }
     return false;
   }
@@ -242,31 +253,24 @@ export class MessageQueue {
     this.clearPersisted();
   }
 
-  private async runWithRetry(msg: QueuedMessage, sessionName: string): Promise<void> {
-    const maxRetries = 3;
-    let lastErr: Error | undefined;
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        await this.handler?.(msg);
-        logger.info(
-          `[queue] handler completed session=${sessionName} msgId=${msg.id} attempt=${attempt + 1}`,
-        );
-        return;
-      } catch (err) {
-        lastErr = normalizeError(err);
-        if (attempt < maxRetries - 1) {
-          const delayMs = 1000 * (attempt + 1);
-          logger.warn(
-            `[queue] handler failed session=${sessionName} msgId=${msg.id} attempt=${attempt + 1}/${maxRetries}, retrying in ${delayMs}ms: ${lastErr.message}`,
-          );
-          await new Promise((r) => setTimeout(r, delayMs));
-        }
-      }
+  /**
+   * Run the handler for one message. The handler owns settling the message —
+   * resolve/reject is its one-shot finale (see {@link QueuedMessage}) — so it
+   * is not expected to throw. This is only a contract safety net: if it throws
+   * *without* settling, reject so the awaiting caller doesn't hang forever.
+   *
+   * No retry: the handler drives tmux (`sendKeys`), which is not idempotent to
+   * replay — re-running it would type the same prompt into the pane again.
+   */
+  private async runHandler(msg: QueuedMessage, sessionName: string): Promise<void> {
+    try {
+      await this.handler?.(msg);
+      logger.info(`[queue] handler completed session=${sessionName} msgId=${msg.id}`);
+    } catch (err) {
+      const e = normalizeError(err);
+      logger.error(`[queue] handler threw session=${sessionName} msgId=${msg.id}: ${e.message}`);
+      msg.reject(e); // one-shot: a no-op if the handler already settled
     }
-    logger.error(
-      `[queue] handler threw session=${sessionName} msgId=${msg.id} after ${maxRetries} attempts: ${lastErr?.message}`,
-    );
-    msg.reject(lastErr!);
   }
 
   private async processSession(sessionName: string): Promise<void> {
@@ -303,7 +307,7 @@ export class MessageQueue {
       return;
     }
 
-    await this.runWithRetry(msg, sessionName);
+    await this.runHandler(msg, sessionName);
 
     this.processingSessions.delete(sessionName);
     this.currentSessionMessage.delete(sessionName);
@@ -333,7 +337,7 @@ export class MessageQueue {
           continue;
         }
 
-        await this.runWithRetry(msg, "global");
+        await this.runHandler(msg, "global");
         this.currentGlobalMessage = undefined;
       }
     } finally {

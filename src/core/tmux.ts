@@ -96,8 +96,22 @@ export class TmuxBridge {
     await this.sendKeys("/exit", sessionName);
   }
 
-  async createSession(sessionName: string): Promise<void> {
-    await this.execFile("tmux", ["new-session", "-d", "-s", sessionName], { timeout: 10000 });
+  /**
+   * Ensure a detached session named `sessionName` exists. Returns true if it
+   * created one, false if it already existed. Race-safe: a bare `new-session`
+   * throws "duplicate session" when the session appears between a caller's
+   * hasSession check and this call (the `claude` helper, or two near-simultaneous
+   * messages) — so an already-existing session is treated as success, not an
+   * error. Only a genuine failure (tmux server down, bad name) rethrows.
+   */
+  async createSession(sessionName: string): Promise<boolean> {
+    try {
+      await this.execFile("tmux", ["new-session", "-d", "-s", sessionName], { timeout: 10000 });
+      return true;
+    } catch (err) {
+      if (await this.hasSession(sessionName)) return false;
+      throw err;
+    }
   }
 
   async hasSession(sessionName: string): Promise<boolean> {

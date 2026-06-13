@@ -57,6 +57,7 @@ export const en: Messages = {
   btnCreate: "➕ Create",
   btnHelp: "💡 Help",
   btnVoiceLang: "🎙️ Voice",
+  btnVoiceInstall: "🎙️ Install voice",
   btnUiLang: "🌐 Language",
   btnActiveMarker: "✅ Current",
   btnMore: "⌨️ More ▾",
@@ -249,4 +250,10 @@ Send any text → forwarded to Claude → reply`,
   groupMenuNoProjects:
     "No recent projects yet. Add one in a private chat with `/add_project <path>`.",
   groupCreatedShort: (label) => `✓ Created project group "${label}" — continue in the new group.`,
+  groupAlreadyExists: (label) =>
+    `⚠️ Project "${label}" already has a bound group — use that one; no need to create another.`,
+  groupPinnedNoSwitch: (label) =>
+    `🔒 This group is pinned to "${label}" — switching projects is disabled here. Use 🗂 → Rebind to change it.`,
+  groupNoRemoveInGroup:
+    "🔒 Removing projects isn't allowed in a group (it affects others). Do it in a private chat with the bot.",
 };

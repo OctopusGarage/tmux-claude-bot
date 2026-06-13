@@ -1,41 +1,17 @@
-import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
-import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
-import { stateFile } from "./state-dir.js";
+import { JsonMapStore } from "./json-map-store.js";
 
-// Resolve to project root so bot and claude-tmux.ts share the same file regardless
-// of cwd; TCB_STATE_DIR overrides it (tests isolate, dev mirrors prod). Resolved
-// per call so the override applies even when set after this module loads.
-const projectRoot = nodePath.resolve(
-  nodePath.dirname(new URL(import.meta.url).pathname),
-  "..",
-  "..",
-);
-const sessionPathMapFile = (): string => stateFile(projectRoot, "session_path_map.json");
-
-export function loadSessionPathMap(): Record<string, string> {
-  try {
-    const raw = fs.readFileSync(sessionPathMapFile(), "utf-8");
-    return JSON.parse(raw) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-export function saveSessionPathMap(map: Record<string, string>): void {
-  writeFileAtomicSync(sessionPathMapFile(), JSON.stringify(map, null, 2));
-}
+// Shared with the `claude-tmux` helper, which writes this file from the user's
+// project dir — the store's mtime-keyed cache picks up those foreign writes.
+const store = new JsonMapStore<string>("session_path_map.json");
 
 export function getPathBySession(sessionName: string): string | null {
-  const map = loadSessionPathMap();
-  return map[sessionName] ?? null;
+  return store.get(sessionName) ?? null;
 }
 
 export function setPathForSession(sessionName: string, projectPath: string): void {
-  const map = loadSessionPathMap();
-  map[sessionName] = projectPath;
-  saveSessionPathMap(map);
+  store.set(sessionName, projectPath);
 }
 
 export function sessionNameFromPath(projectPath: string, prefix: string): string {

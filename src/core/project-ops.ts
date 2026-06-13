@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
+import { normalizeError } from "../shared/utils/error.js";
 import { sessionShortId } from "../shared/utils/hash.js";
 import { sleep } from "../shared/utils/sleep.js";
 import type { HandlerDeps } from "./deps.js";
@@ -89,12 +90,17 @@ export async function createProjectSession(
   sessionName: string,
   projectPath: string,
 ): Promise<void> {
-  await deps.bridge.createSession(sessionName);
+  const createdNew = await deps.bridge.createSession(sessionName);
   setPathForSession(sessionName, projectPath); // record before cd so it survives a cd failure
   await deps.currentProject.set(channel, sessionName);
-  await sleep(deps.config.sessionWarmupMs);
-  await deps.bridge.sendKeys(`cd "${projectPath}"`, sessionName);
-  await sleep(deps.config.sessionWarmupMs);
+  // Only cd a session we actually created. If it already existed (a race took
+  // it, or the `claude` helper made it), it may already have Claude running, and
+  // a stray `cd "…"` would be typed into Claude's prompt instead of a shell.
+  if (createdNew !== false) {
+    await sleep(deps.config.sessionWarmupMs);
+    await deps.bridge.sendKeys(`cd "${projectPath}"`, sessionName);
+    await sleep(deps.config.sessionWarmupMs);
+  }
   await appendRecentProject(projectPath, deps.config.projectSessionPrefix);
 }
 
@@ -194,6 +200,48 @@ export async function aliveProjectButtons(
     }));
 }
 
+/** Outcome of opening a recent project by short id — the adapter maps each
+ *  status to its own reply surface. */
+export type OpenRecentResult =
+  | { status: "not-found" }
+  | { status: "switched"; sessionName: string }
+  | { status: "not-allowed"; projectPath: string }
+  | { status: "created"; sessionName: string; projectPath: string }
+  | { status: "error"; message: string };
+
+/**
+ * Resolve a recent project by its short id, then open it: switch to its live
+ * session, or (re)create one at its path (allow-list permitting). Shared
+ * decision logic behind the Telegram `/add_project_<sid>` command and the Lark
+ * recent-list "create" button — only the replies differed, so each adapter now
+ * maps this result to its own surface.
+ */
+export async function openRecentProjectBySid(
+  deps: HandlerDeps,
+  scope: string,
+  sid: string,
+): Promise<OpenRecentResult> {
+  const prefix = deps.config.projectSessionPrefix;
+  const lines = await readRecentProjectLines();
+  const projectPath = lines.find((p) => sessionShortId(sessionNameFromPath(p, prefix)) === sid);
+  if (!projectPath) return { status: "not-found" };
+  const sessionName = sessionNameFromPath(projectPath, prefix);
+  try {
+    if (await deps.bridge.hasSession(sessionName)) {
+      await deps.currentProject.set(scope, sessionName);
+      await appendRecentProject(projectPath, prefix); // keep recents ordering like switchToProject
+      return { status: "switched", sessionName };
+    }
+    if (!isCdAllowed(projectPath, deps.config.cdAllowedDirs)) {
+      return { status: "not-allowed", projectPath };
+    }
+    await createProjectSession(deps, scope, sessionName, projectPath);
+    return { status: "created", sessionName, projectPath };
+  } catch (err) {
+    return { status: "error", message: normalizeError(err).message };
+  }
+}
+
 /** Recent projects (existing dirs) as keyboard buttons, with alive/active flags. */
 export async function recentProjectButtons(
   deps: HandlerDeps,
@@ -202,15 +250,16 @@ export async function recentProjectButtons(
   const paths = (await readRecentProjectLines()).filter((p) => fs.existsSync(p));
   const currentSession = await deps.currentProject.get(channel);
   const prefix = deps.config.projectSessionPrefix;
-  return Promise.all(
-    paths.map(async (projectPath) => {
-      const sessionName = sessionNameFromPath(projectPath, prefix);
-      return {
-        sid: sessionShortId(sessionName),
-        label: projectLabel(sessionName, projectPath),
-        alive: await deps.bridge.hasSession(sessionName),
-        active: currentSession === sessionName,
-      };
-    }),
-  );
+  // One `tmux list-sessions` for the liveness lookup, instead of spawning a
+  // `tmux has-session` subprocess per recent path (up to 15).
+  const live = new Set(await deps.bridge.listProjectSessions());
+  return paths.map((projectPath) => {
+    const sessionName = sessionNameFromPath(projectPath, prefix);
+    return {
+      sid: sessionShortId(sessionName),
+      label: projectLabel(sessionName, projectPath),
+      alive: live.has(sessionName),
+      active: currentSession === sessionName,
+    };
+  });
 }

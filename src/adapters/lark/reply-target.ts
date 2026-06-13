@@ -1,27 +1,31 @@
+import { BoundedSessionMap } from "../../core/bounded-session-map.js";
+import { appStateFile } from "../../shared/state-dir.js";
+
 /**
- * Bounded in-memory map of bot-message-id -> session, so a user reply to a
- * session-bound bot message routes back to that session instead of the current
- * project. Mirrors the Telegram reply-target map (here kept in-memory only:
- * Lark message ids are opaque strings and don't need cross-restart persistence).
+ * Lark reply-target map: lark message id → session, so a reply to a
+ * session-bound bot message routes back to that session. Same mechanism as
+ * Telegram (Lark delivers `replyToMessageId`); the difference from Telegram is
+ * one of *priority*, not capability: on Lark the primary way to target a session
+ * is per-group workspace binding, so reply-routing is a secondary path here. It
+ * is still persisted (see {@link BoundedSessionMap}) so it survives a restart
+ * for parity — the tmux sessions outlive the bot, and this is independent of
+ * Lark's not-yet-built queue restore.
  */
 const MAX = 500;
-const map = new Map<string, string>();
+const store = new BoundedSessionMap<string>({
+  max: MAX,
+  file: appStateFile("lark_reply_target_map.json"),
+});
 
-/** Remember that bot message `messageId` belongs to `session`, so a user reply
- * to it routes back to that session. Bounded (drops oldest) to avoid growth. */
 export function recordReplyTarget(messageId: string, session: string): void {
-  map.set(messageId, session);
-  if (map.size > MAX) {
-    const first = map.keys().next().value;
-    if (first !== undefined) map.delete(first);
-  }
+  store.record(messageId, session);
 }
 
 export function resolveReplyTarget(messageId: string): string | undefined {
-  return map.get(messageId);
+  return store.resolve(messageId);
 }
 
 /** Forget all entries for a session (e.g. when its project is removed). */
 export function removeReplyTargetSession(session: string): void {
-  for (const [k, v] of map) if (v === session) map.delete(k);
+  store.removeSession(session);
 }

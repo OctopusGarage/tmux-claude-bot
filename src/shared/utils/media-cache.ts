@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as nodePath from "node:path";
+import { appStateFile } from "../state-dir.js";
 
-const CACHE_DIR =
-  process.env.TCB_MEDIA_DIR ?? nodePath.join(os.homedir(), ".tmux-claude-bot", "media");
+// Media cache lives under the app state home so it follows TCB_STATE_DIR;
+// TCB_MEDIA_DIR still overrides for explicit redirection / tests.
+const CACHE_DIR = process.env.TCB_MEDIA_DIR ?? appStateFile("media");
 
 function cachePathFor(key: string): string {
   const hash = createHash("sha256").update(key).digest("hex");

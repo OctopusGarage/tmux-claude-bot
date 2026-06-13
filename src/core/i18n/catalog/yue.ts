@@ -59,6 +59,7 @@ export const yue: Messages = {
   btnCreate: "➕ 新增",
   btnHelp: "💡 說明",
   btnVoiceLang: "🎙️ 語音語言",
+  btnVoiceInstall: "🎙️ 安裝語音",
   btnUiLang: "🌐 介面語言",
   btnActiveMarker: "✅ 當前",
   btnMore: "⌨️ 更多控制 ▾",
@@ -245,4 +246,9 @@ export const yue: Messages = {
   groupBoundCardTitle: (label) => `🗂 本群已綁定：${label}`,
   groupMenuNoProjects: "暫時冇近期項目。先喺私聊用 `/add_project <路徑>` 加一個。",
   groupCreatedShort: (label) => `✓ 已新建項目群「${label}」，去新群度繼續。`,
+  groupAlreadyExists: (label) =>
+    `⚠️ 項目「${label}」已經有綁定群喇，去嗰個群度用就得，唔使重複創建。`,
+  groupPinnedNoSwitch: (label) =>
+    `🔒 本群已經固定綁定「${label}」，唔可以切換去第個項目。要換就用 🗂 → 改綁。`,
+  groupNoRemoveInGroup: "🔒 喺群度唔可以刪除項目（會影響其他人）。請去同機械人嘅私聊度刪。",
 };

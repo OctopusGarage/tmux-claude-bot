@@ -66,6 +66,7 @@ export const zh = {
   btnCreate: "➕ 创建",
   btnHelp: "💡 帮助",
   btnVoiceLang: "🎙️ 语音语言",
+  btnVoiceInstall: "🎙️ 安装语音",
   btnUiLang: "🌐 界面语言",
   btnActiveMarker: "✅ 当前",
   btnMore: "⌨️ 更多控制 ▾",
@@ -266,6 +267,11 @@ export const zh = {
   groupBoundCardTitle: (label: string) => `🗂 本群已绑定：${label}`,
   groupMenuNoProjects: "暂无近期项目。先在私聊用 `/add_project <路径>` 添加一个。",
   groupCreatedShort: (label: string) => `✓ 已新建项目群「${label}」，去新群里继续。`,
+  groupAlreadyExists: (label: string) =>
+    `⚠️ 项目「${label}」已经有绑定群了，去那个群里用即可，无需重复创建。`,
+  groupPinnedNoSwitch: (label: string) =>
+    `🔒 本群已固定绑定「${label}」，不能切换到其他项目。如需更换，请用 🗂 → 改绑。`,
+  groupNoRemoveInGroup: "🔒 在群里不能删除项目（会影响他人）。请到与机器人的私聊里删除。",
 };
 
 // No `as const`: Messages widens to string / function types so other languages

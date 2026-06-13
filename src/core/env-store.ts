@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import * as nodePath from "node:path";
+import { appStateFile } from "../shared/state-dir.js";
 import { serializeEnv } from "./onboarding.js";
 
-const ENV_PATH = nodePath.join(process.cwd(), ".env");
+const envPath = (): string => appStateFile(".env");
 
 /**
  * Persist a single var into `.env` so a runtime preference (voice language, UI
@@ -12,11 +12,12 @@ const ENV_PATH = nodePath.join(process.cwd(), ".env");
  * one line (or appends it) and leaves every other line untouched. Atomic + 0600.
  */
 export function persistEnvVar(key: string, value: string): void {
-  if (!existsSync(ENV_PATH)) return;
-  const current = readFileSync(ENV_PATH, "utf8");
+  const path = envPath();
+  if (!existsSync(path)) return;
+  const current = readFileSync(path, "utf8");
   const next = serializeEnv(current, { [key]: value });
-  const tmp = `${ENV_PATH}.tmp`;
+  const tmp = `${path}.tmp`;
   writeFileSync(tmp, next, "utf8");
   chmodSync(tmp, 0o600);
-  renameSync(tmp, ENV_PATH);
+  renameSync(tmp, path);
 }
