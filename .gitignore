@@ -15,5 +15,12 @@ logs/
 .claude/*
 !.claude/commands/
 !.claude/settings.json
+# Project-shared agent automation (the /audit engine + its methodology).
+!.claude/workflows/
+!.claude/skills/
 docs/superpowers/
 .running
+
+# Stryker mutation testing artifacts
+reports/
+.stryker-tmp/
