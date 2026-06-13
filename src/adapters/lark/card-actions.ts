@@ -148,6 +148,30 @@ async function handleAddRecent(ctx: CardCtx): Promise<void> {
   await addRecentBySid(ctx.channel, ctx.deps, ctx.evt.chatId, ctx.value.sid);
 }
 
+/** Create a bound group — private chat only, mirroring the `/newgroup` text
+ *  command. The handler gate guarantees p2p or a bound group reaches here, so a
+ *  bound group (isProjectGroup) means "not p2p" → refuse. */
+async function handleMakeGroup({ channel, deps, evt, value }: CardCtx): Promise<void> {
+  if (!value?.sid) return;
+  if (isProjectGroup(evt.chatId)) {
+    await sendText(channel, evt.chatId, messages("lark").groupNewGroupOnlyInP2p);
+    return;
+  }
+  await makeBoundGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
+}
+
+/** Bind the current chat to a project — group only, mirroring `/bind`. In p2p
+ *  (not a project group) refuse, so a stray button can't write a p2p chat id
+ *  into the group bindings. */
+async function handleBindHere({ channel, deps, evt, value }: CardCtx): Promise<void> {
+  if (!value?.sid) return;
+  if (!isProjectGroup(evt.chatId)) {
+    await sendText(channel, evt.chatId, messages("lark").groupBindOnlyInGroup);
+    return;
+  }
+  await bindCurrentGroupBySid(channel, deps, evt.chatId, value.sid);
+}
+
 async function handleStartPick({ channel, deps, evt, value }: CardCtx): Promise<void> {
   if (typeof value?.idx !== "number") return;
   const pick = deps.config.startCommands[value.idx];
@@ -190,12 +214,8 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   addrecent: handleAddRecent,
   // --- Project-group buttons (no typing needed) ---
   groupmenu: ({ channel, deps, evt }) => sendGroupMenu(channel, deps, evt.chatId),
-  makegroup: ({ channel, deps, evt, value }) =>
-    value?.sid
-      ? makeBoundGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId)
-      : Promise.resolve(),
-  bindhere: ({ channel, deps, evt, value }) =>
-    value?.sid ? bindCurrentGroupBySid(channel, deps, evt.chatId, value.sid) : Promise.resolve(),
+  makegroup: handleMakeGroup,
+  bindhere: handleBindHere,
   rebind: ({ channel, deps, evt }) => sendGroupBindPicker(channel, deps, evt.chatId),
   unbind: ({ channel, deps, evt }) => handleUnbind(channel, deps, evt.chatId, "group"),
   restore: ({ channel, deps, evt }) => handleRestore(channel, deps, evt.chatId),

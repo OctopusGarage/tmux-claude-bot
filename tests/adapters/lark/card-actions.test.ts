@@ -432,13 +432,26 @@ describe("makeCardActionHandler", () => {
       expect(channel.texts().some((t) => t.includes("已恢复"))).toBe(true);
     });
 
-    it("bindhere with a sid → binds the current group to that recent project", async () => {
+    it("bindhere in a bound group → rebinds the current group to that recent project", async () => {
+      // bindhere is reached only from a bound group's rebind picker, so the
+      // chat is already a project group; bindhere re-anchors it elsewhere.
+      bindGroup("chat-1", { workspacePath: "/old", sessionName: "s-old", label: "old" });
       const deps = fakeDeps();
       await appendRecentProject(dir, deps.config.projectSessionPrefix);
       const sid = sessionShortId(sessionNameFromPath(dir, deps.config.projectSessionPrefix));
       const channel = fakeChannel();
       await makeCardActionHandler(channel, deps)(evt({ cmd: "bindhere", sid }));
       expect(getBinding("chat-1")?.workspacePath).toBe(dir);
+    });
+
+    it("bindhere in a private chat → refused (group only), no binding written", async () => {
+      const deps = fakeDeps();
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sid = sessionShortId(sessionNameFromPath(dir, deps.config.projectSessionPrefix));
+      const channel = fakeChannel(); // default chat type p2p, chat-1 not bound
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "bindhere", sid }));
+      expect(getBinding("chat-1")).toBeNull();
+      expect(channel.texts().some((t) => t.includes("群"))).toBe(true);
     });
   });
 

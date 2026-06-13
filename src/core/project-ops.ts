@@ -229,6 +229,7 @@ export async function openRecentProjectBySid(
   try {
     if (await deps.bridge.hasSession(sessionName)) {
       await deps.currentProject.set(scope, sessionName);
+      await appendRecentProject(projectPath, prefix); // keep recents ordering like switchToProject
       return { status: "switched", sessionName };
     }
     if (!isCdAllowed(projectPath, deps.config.cdAllowedDirs)) {
