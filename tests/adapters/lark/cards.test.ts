@@ -194,6 +194,11 @@ describe("helpCard", () => {
     ]);
   });
 
+  it("surfaces a voice-install button only when voice is installable", () => {
+    expect(allCmds(cardOf(helpCard()))).not.toContain("voiceinstall");
+    expect(allCmds(cardOf(helpCard(false, true)))).toContain("voiceinstall");
+  });
+
   it("in a group: drops list-all / recent / make-group management entries", () => {
     const card = cardOf(helpCard(true));
     const cmds = allCmds(card);

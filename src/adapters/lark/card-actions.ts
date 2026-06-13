@@ -15,6 +15,7 @@ import { getPathBySession } from "../../core/sessionPathMap.js";
 import {
   checkVoiceSupport,
   installVoice,
+  isVoiceInstallable,
   isVoicePlatformSupported,
   resolveWhisperLanguage,
   setWhisperLanguage,
@@ -229,7 +230,7 @@ async function handleStartPick({ channel, deps, evt, value }: CardCtx): Promise<
  */
 const CARD_HANDLERS: Record<string, CardHandler> = {
   help: async ({ channel, evt }) => {
-    await sendCard(channel, evt.chatId, helpCard(isProjectGroup(evt.chatId)));
+    await sendCard(channel, evt.chatId, helpCard(isProjectGroup(evt.chatId), isVoiceInstallable()));
   },
   noop: async () => {},
   peek: ({ channel, deps, evt }) => sendPeek(channel, deps, evt.chatId),

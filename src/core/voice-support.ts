@@ -106,6 +106,12 @@ export function persistWhisperBin(bin: string): void {
   persistEnvVar("MLX_WHISPER_BIN", bin);
 }
 
+/** True when voice CAN be installed here: a supported host that isn't set up
+ *  yet. Drives whether to surface the in-chat install affordance. */
+export function isVoiceInstallable(): boolean {
+  return !checkVoiceSupport().ready && isVoicePlatformSupported();
+}
+
 /** Outcome of an in-bot voice install. Adapters map each to their own reply. */
 export type VoiceInstallResult =
   | { status: "already-ready" }

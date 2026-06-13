@@ -267,8 +267,10 @@ export function groupBoundCard(label: string): object {
   ]);
 }
 
-/** The interactive /help menu card: a button for every command. */
-export function helpCard(group = false): object {
+/** The interactive /help menu card: a button for every command. When voice is
+ *  installable (supported host, not yet installed) a one-tap install button is
+ *  surfaced — the discoverable counterpart of Telegram's `/voice_install`. */
+export function helpCard(group = false, voiceInstallable = false): object {
   const m = messages("lark");
   // In a bound group, drop cross-project management (list-all / recent / make
   // group); a group is pinned to one project. Keep the work-surface views.
@@ -302,6 +304,9 @@ export function helpCard(group = false): object {
       { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ]),
     gridRow(projectRow),
+    ...(voiceInstallable
+      ? [gridRow([{ text: m.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }])]
+      : []),
     gridRow(prefsRow),
   ]);
 }

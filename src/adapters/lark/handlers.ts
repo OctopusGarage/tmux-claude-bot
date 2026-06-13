@@ -4,6 +4,7 @@ import { reconcileGroupBinding } from "../../core/group-binding-ops.js";
 import { isProjectGroup } from "../../core/group-bindings.js";
 import { messages } from "../../core/i18n/index.js";
 import { PendingQueue } from "../../core/pending-queue.js";
+import { isVoiceInstallable } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { helpCard } from "./cards.js";
@@ -127,7 +128,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
 
     switch (parsed.kind) {
       case "help":
-        await sendCard(channel, msg.chatId, helpCard(isProjectGroup(msg.chatId)));
+        await sendCard(
+          channel,
+          msg.chatId,
+          helpCard(isProjectGroup(msg.chatId), isVoiceInstallable()),
+        );
         break;
 
       case "command":
@@ -223,7 +228,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         // No "/" command discovery on Feishu — show the full button menu so an
         // unknown command isn't a dead end.
         await sendText(channel, msg.chatId, messages("lark").unknownCommand(parsed.name));
-        await sendCard(channel, msg.chatId, helpCard(isProjectGroup(msg.chatId)));
+        await sendCard(
+          channel,
+          msg.chatId,
+          helpCard(isProjectGroup(msg.chatId), isVoiceInstallable()),
+        );
         break;
 
       case "text":
