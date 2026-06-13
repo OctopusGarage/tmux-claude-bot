@@ -1,0 +1,33 @@
+name: Scorecard
+
+# OpenSSF Scorecard — audits the repo's security posture (branch protection,
+# pinned deps, dangerous workflow patterns, token permissions, ...) and scores
+# it 0-10. Results upload to the Security tab and feed the README badge via the
+# public api.securityscorecards.dev endpoint.
+on:
+  branch_protection_rule:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "31 5 * * 1"
+
+permissions: read-all
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload results to the Security tab
+      id-token: write # publish results so the public badge can read them
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@v2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true # required for the README badge to resolve
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
