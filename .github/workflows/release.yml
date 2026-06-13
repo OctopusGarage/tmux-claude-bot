@@ -5,6 +5,7 @@ on:
       - "v*"
 permissions:
   contents: write
+  id-token: write # keyless cosign signing of release artifacts (Sigstore OIDC)
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -12,6 +13,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0 # full history + tags so the changelog can diff against the previous tag
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -38,6 +40,18 @@ jobs:
             echo
             echo "Pin this version with \`TMUX_CLAUDE_BOT_VERSION=${TAG}\`. See [CONTRIBUTING.md](https://github.com/${REPO}/blob/main/CONTRIBUTING.md) for dev, deploy, and release."
             echo
+            echo "## Verify the signature (optional)"
+            echo
+            echo "The runtime tarball is keyless-signed with [Sigstore](https://docs.sigstore.dev/). Verify it with [cosign](https://github.com/sigstore/cosign):"
+            echo
+            echo '```bash'
+            echo "cosign verify-blob tmux-claude-bot-${TAG}.tar.gz \\"
+            echo "  --signature tmux-claude-bot-${TAG}.tar.gz.sig \\"
+            echo "  --certificate tmux-claude-bot-${TAG}.tar.gz.pem \\"
+            echo "  --certificate-identity-regexp 'https://github.com/${REPO}/.github/workflows/release.yml@.*' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+            echo
             echo "Prefer an AI assistant? Paste this to ChatGPT / Claude / Gemini (or a shell agent):"
             echo
             echo '```text'
@@ -62,3 +76,12 @@ jobs:
             src scripts package.json package-lock.json .env.example tsconfig.json tsup.config.ts README.md INSTALL.md install.sh requirements.txt \
             -o "${STAGE}.tar.gz"
           gh release upload "$TAG" "${STAGE}.tar.gz"
+
+          # Keyless-sign the tarball with Sigstore (Fulcio short-lived cert +
+          # Rekor transparency log; signer identity = this workflow's OIDC
+          # token). Attaching the .sig + .pem lets consumers run
+          # `cosign verify-blob` and satisfies Scorecard's Signed-Releases check.
+          cosign sign-blob --yes "${STAGE}.tar.gz" \
+            --output-signature "${STAGE}.tar.gz.sig" \
+            --output-certificate "${STAGE}.tar.gz.pem"
+          gh release upload "$TAG" "${STAGE}.tar.gz.sig" "${STAGE}.tar.gz.pem"
