@@ -90,11 +90,19 @@ npm run mutation               # mutation testing (slow; core only) — see tabl
 ```
 
 `lint:deep` is type-aware ESLint with three behavioural rules biome and tsc
-can't express — `no-floating-promises`, `no-misused-promises`,
-`no-unnecessary-condition` (dead guards). It runs in CI as **non-blocking**
-(`continue-on-error`): it surfaces warnings to triage, it does not gate. Fix the
-real ones (a floating promise on an entrypoint), leave the merely-defensive `??`/
-`?.` warnings unless they signal a wrong type.
+can't express, at **mixed severity**:
+
+- `no-floating-promises` and `no-misused-promises` → **error, and they gate CI**.
+  A floating/misused promise is almost always a real bug, and the escape hatch is
+  explicit and self-documenting (`void x()` for intentional fire-and-forget).
+- `no-unnecessary-condition` → **warn only, never gates**. It's type-based, and
+  types lie (parsed JSON, SDK payloads, `as` casts), so a defensive `?.`/`??` is
+  often correct even when the rule calls it "unnecessary" — gating it would force
+  deleting real safety nets. Triage these periodically; fix the dead ones, keep
+  the defensive ones.
+
+So `eslint src` exits non-zero only on the async-hygiene errors; a tree with only
+`no-unnecessary-condition` warnings still passes.
 
 ## Rule
 

@@ -1,9 +1,12 @@
-// Deep, type-aware lint — a NARROW complement to biome (style) and tsc (types).
-// It enables only three behavioural rules that need type information and that
-// neither biome nor tsc can express: floating promises, async-where-void-is-
-// expected, and conditions that are always/never true (dead guards). Warn-level
-// and non-blocking by design (`npm run lint:deep`) — triage, don't gate, until
-// the noise is understood. See docs/TESTING.md.
+// Deep, type-aware lint — a NARROW complement to biome (style) and tsc (types):
+// three behavioural rules needing type info that neither can express. Mixed
+// severity on purpose (`npm run lint:deep`):
+//  - the async-hygiene rules ERROR (and gate CI): a floating / misused promise is
+//    almost always a real bug, with an explicit escape hatch (`void x()`).
+//  - no-unnecessary-condition WARNS only: it's type-based, and types lie (parsed
+//    JSON, SDK payloads, `as` casts), so defensive `?.`/`??` is often correct
+//    even when "unnecessary" — gating it would force deleting real safety nets.
+// See docs/TESTING.md.
 import tseslint from "typescript-eslint";
 
 export default tseslint.config({
@@ -19,8 +22,8 @@ export default tseslint.config({
     },
   },
   rules: {
-    "@typescript-eslint/no-floating-promises": "warn",
-    "@typescript-eslint/no-misused-promises": "warn",
+    "@typescript-eslint/no-floating-promises": "error",
+    "@typescript-eslint/no-misused-promises": "error",
     "@typescript-eslint/no-unnecessary-condition": "warn",
   },
 });

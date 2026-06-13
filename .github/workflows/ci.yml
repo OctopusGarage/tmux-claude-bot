@@ -39,11 +39,11 @@ jobs:
           fail_ci_if_error: false
       - run: npx knip
       - run: npx depcruise src --config .dependency-cruiser.cjs
-      # Deep type-aware lint (floating promises, async-in-void, dead conditions).
-      # Non-blocking on purpose — surfaces warnings to triage without gating CI.
+      # Deep type-aware lint. Gates on the async-hygiene errors (floating /
+      # misused promises); the dead-condition rule is warn-only, so a codebase
+      # with only warnings still exits 0 and passes. Platform-independent.
       - run: npm run lint:deep
         if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true
 
   # Stable name for the branch-protection required check: stays "verify"
   # no matter how the matrix above evolves.
