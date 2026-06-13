@@ -1,6 +1,7 @@
 import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { type MessageAction, performStart } from "../../core/dispatch.js";
+import { getBinding } from "../../core/group-bindings.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
@@ -87,8 +88,18 @@ async function handleUiLang({ channel, evt, value }: CardCtx): Promise<void> {
   }
 }
 
+/** A bound group is pinned to its workspace (reconcile re-anchors it on every
+ *  message), so switching it to another project is disabled — rebind instead. */
+function pinnedReply(ctx: CardCtx): Promise<void> | null {
+  const bound = getBinding(ctx.evt.chatId);
+  if (!bound) return null;
+  return sendText(ctx.channel, ctx.evt.chatId, messages("lark").groupPinnedNoSwitch(bound.label));
+}
+
 async function handleSwitch({ channel, deps, evt, value }: CardCtx): Promise<void> {
   if (!value?.sid) return;
+  const pinned = pinnedReply({ channel, deps, evt, value });
+  if (pinned) return pinned;
   const session = await resolveAliveSessionByShortId(deps, value.sid);
   if (!session) return;
   await switchToProject(deps, chatScope("lark", evt.chatId), session);
@@ -108,6 +119,13 @@ async function handleRemove({ channel, deps, evt, value }: CardCtx): Promise<voi
   await removeProjectBySession(deps, session);
   removeReplyTargetSession(session);
   await sendText(channel, evt.chatId, messages("lark").removed);
+}
+
+async function handleAddRecent(ctx: CardCtx): Promise<void> {
+  if (!ctx.value?.sid) return;
+  const pinned = pinnedReply(ctx);
+  if (pinned) return pinned;
+  await addRecentBySid(ctx.channel, ctx.deps, ctx.evt.chatId, ctx.value.sid);
 }
 
 async function handleStartPick({ channel, deps, evt, value }: CardCtx): Promise<void> {
@@ -149,8 +167,7 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   uilang: handleUiLang,
   switch: handleSwitch,
   remove: handleRemove,
-  addrecent: ({ channel, deps, evt, value }) =>
-    value?.sid ? addRecentBySid(channel, deps, evt.chatId, value.sid) : Promise.resolve(),
+  addrecent: handleAddRecent,
   // --- Project-group buttons (no typing needed) ---
   groupmenu: ({ channel, deps, evt }) => sendGroupMenu(channel, deps, evt.chatId),
   makegroup: ({ channel, deps, evt, value }) =>

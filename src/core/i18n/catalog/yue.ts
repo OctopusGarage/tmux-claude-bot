@@ -247,4 +247,6 @@ export const yue: Messages = {
   groupCreatedShort: (label) => `✓ 已新建項目群「${label}」，去新群度繼續。`,
   groupAlreadyExists: (label) =>
     `⚠️ 項目「${label}」已經有綁定群喇，去嗰個群度用就得，唔使重複創建。`,
+  groupPinnedNoSwitch: (label) =>
+    `🔒 本群已經固定綁定「${label}」，唔可以切換去第個項目。要換就用 🗂 → 改綁。`,
 };

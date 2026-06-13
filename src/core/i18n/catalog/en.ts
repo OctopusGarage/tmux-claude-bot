@@ -251,4 +251,6 @@ Send any text → forwarded to Claude → reply`,
   groupCreatedShort: (label) => `✓ Created project group "${label}" — continue in the new group.`,
   groupAlreadyExists: (label) =>
     `⚠️ Project "${label}" already has a bound group — use that one; no need to create another.`,
+  groupPinnedNoSwitch: (label) =>
+    `🔒 This group is pinned to "${label}" — switching projects is disabled here. Use 🗂 → Rebind to change it.`,
 };

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { CardActionEvent } from "@larksuiteoapi/node-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.js";
-import { bindGroup, getBinding } from "../../../src/core/group-bindings.js";
+import { bindGroup, getBinding, unbindGroup } from "../../../src/core/group-bindings.js";
 import { appendRecentProject } from "../../../src/core/recentProjects.js";
 import { sessionNameFromPath } from "../../../src/core/sessionPathMap.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
@@ -185,6 +185,37 @@ describe("makeCardActionHandler", () => {
 
     expect(deps.bridge.killSession).toHaveBeenCalledWith(session);
     expect(channel.texts().some((t) => t.includes("已移除"))).toBe(true);
+  });
+
+  it("'switch' in a bound group is pinned — refuses and does not change project", async () => {
+    bindGroup("oc_pinned", { workspacePath: "/p/pin", sessionName: "tmux_proj_pin", label: "pin" });
+    const session = "tmux_proj_alpha";
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => [session]) } });
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "switch", sid: sessionShortId(session) }, { chatId: "oc_pinned" }));
+
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("已固定绑定"))).toBe(true);
+    unbindGroup("oc_pinned"); // bindings are a module singleton over the shared temp dir
+  });
+
+  it("'addrecent' in a bound group is pinned — refuses, no project change", async () => {
+    bindGroup("oc_pinned2", {
+      workspacePath: "/p/pin",
+      sessionName: "tmux_proj_pin",
+      label: "pin",
+    });
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "addrecent", sid: "whatever" }, { chatId: "oc_pinned2" }));
+
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("已固定绑定"))).toBe(true);
+    unbindGroup("oc_pinned2");
   });
 
   it("'switch' with an unmatched sid does nothing observable", async () => {
