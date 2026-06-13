@@ -10,6 +10,7 @@ on:
     branches: [main]
   schedule:
     - cron: "31 5 * * 1"
+  workflow_dispatch: # allow on-demand re-scans
 
 permissions: read-all
 
@@ -19,6 +20,10 @@ jobs:
     permissions:
       security-events: write # upload results to the Security tab
       id-token: write # publish results so the public badge can read them
+      contents: read # read repo files — needed by Dangerous-Workflow
+      actions: read # read workflow files — needed by Token-Permissions
+      # NOTE: a job-level permissions block replaces (does not merge with) the
+      # top-level read-all, so contents/actions read must be listed explicitly.
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
