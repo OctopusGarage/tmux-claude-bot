@@ -80,7 +80,7 @@ jobs:
           # Keyless-sign the tarball with Sigstore (Fulcio short-lived cert +
           # Rekor transparency log; signer identity = this workflow's OIDC
           # token). Attaching the .sig + .pem lets consumers run
-          # `cosign verify-blob` and satisfies Scorecard's Signed-Releases check.
+          # `cosign verify-blob` to verify the release tarball's provenance.
           cosign sign-blob --yes "${STAGE}.tar.gz" \
             --output-signature "${STAGE}.tar.gz.sig" \
             --output-certificate "${STAGE}.tar.gz.pem"

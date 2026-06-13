@@ -2,8 +2,6 @@
 
 [![CI](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml)
 [![CodeQL](https://img.shields.io/badge/CodeQL-enabled-2088FF?logo=github)](https://github.com/OctopusGarage/tmux-claude-bot/security/code-scanning)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/OctopusGarage/tmux-claude-bot/badge)](https://securityscorecards.dev/viewer/?uri=github.com/OctopusGarage/tmux-claude-bot)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13193/badge)](https://www.bestpractices.dev/projects/13193)
 [![Coverage](https://codecov.io/gh/OctopusGarage/tmux-claude-bot/branch/main/graph/badge.svg)](https://codecov.io/gh/OctopusGarage/tmux-claude-bot)
 [![version](https://img.shields.io/github/package-json/v/OctopusGarage/tmux-claude-bot)](https://github.com/OctopusGarage/tmux-claude-bot/releases/latest)
 [![npm](https://img.shields.io/npm/v/@octopusgarage/tmux-claude-bot?logo=npm)](https://www.npmjs.com/package/@octopusgarage/tmux-claude-bot)
