@@ -1,0 +1,104 @@
+name: Auto-fix CodeQL
+
+# Unattended remediation pipeline for CodeQL code-scanning alerts:
+#   open alert -> Copilot Autofix generates a fix -> commit it to a branch ->
+#   open a PR -> enable auto-merge (squash). The PR merges itself once the
+#   required `verify` check passes; main has no required reviews, so no human
+#   gate. Risk is accepted deliberately: machine-generated security fixes land
+#   on main without review. Audit the merged PRs periodically.
+#
+# REQUIRES a `AUTOFIX_TOKEN` repo secret — a fine-grained PAT (or GitHub App
+# token) with Contents: write, Pull requests: write, Workflows: write on this
+# repo. The default GITHUB_TOKEN cannot be used: PRs it opens do NOT trigger
+# the `verify` workflow, so auto-merge would wait forever on a check that never
+# runs. With no AUTOFIX_TOKEN set the job still runs but the PRs will stall.
+on:
+  schedule:
+    - cron: "0 7 * * *" # daily 07:00 UTC, after the weekly CodeQL scan
+  workflow_dispatch:
+
+# Read-only at the top; the job that mutates requests its own writes.
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-codeql-fix
+  cancel-in-progress: false
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create branches + commit autofixes
+      pull-requests: write # open PRs + enable auto-merge
+      security-events: write # generate/read Copilot Autofix
+    steps:
+      - name: Generate, commit, and auto-merge autofixes
+        env:
+          # PAT so the opened PRs trigger `verify`; falls back to the default
+          # token (PRs will stall on CI) so a missing secret fails loudly in logs.
+          GH_TOKEN: ${{ secrets.AUTOFIX_TOKEN || github.token }}
+          REPO: ${{ github.repository }}
+          USING_PAT: ${{ secrets.AUTOFIX_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$USING_PAT" != "true" ]; then
+            echo "::warning::AUTOFIX_TOKEN not set — opened PRs will NOT run CI, so auto-merge will stall. Add the secret to enable end-to-end automation."
+          fi
+
+          mapfile -t alerts < <(gh api "repos/$REPO/code-scanning/alerts?state=open&tool_name=CodeQL&per_page=100" --jq '.[].number')
+          if [ "${#alerts[@]}" -eq 0 ]; then
+            echo "No open CodeQL alerts. Nothing to do."
+            exit 0
+          fi
+          echo "Open CodeQL alerts: ${alerts[*]}"
+
+          main_sha="$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')"
+
+          for n in "${alerts[@]}"; do
+            echo "::group::alert #$n"
+
+            # Kick off autofix generation (idempotent — no-op if already generated).
+            gh api --method POST "repos/$REPO/code-scanning/alerts/$n/autofix" --silent || true
+
+            # Poll until the fix is ready (or the model declines).
+            status=""
+            for _ in $(seq 1 20); do
+              status="$(gh api "repos/$REPO/code-scanning/alerts/$n/autofix" --jq '.status' 2>/dev/null || echo error)"
+              case "$status" in
+                success|error|outdated) break ;;
+              esac
+              sleep 10
+            done
+            if [ "$status" != "success" ]; then
+              echo "alert #$n: autofix status=$status — skipping"
+              echo "::endgroup::"
+              continue
+            fi
+
+            branch="autofix/alert-$n"
+            # Fresh branch off the current main tip (delete a stale one first).
+            gh api --method DELETE "repos/$REPO/git/refs/heads/$branch" --silent 2>/dev/null || true
+            gh api --method POST "repos/$REPO/git/refs" \
+              -f ref="refs/heads/$branch" -f sha="$main_sha" --silent
+
+            # Apply the generated fix as a commit on that branch.
+            if ! gh api --method POST "repos/$REPO/code-scanning/alerts/$n/autofix/commits" \
+                  -f target_ref="refs/heads/$branch" \
+                  -f message="fix(security): apply Copilot Autofix for code scanning alert #$n" --silent; then
+              echo "alert #$n: commit failed — cleaning up branch"
+              gh api --method DELETE "repos/$REPO/git/refs/heads/$branch" --silent 2>/dev/null || true
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Open the PR (skip if one already exists for this branch) and queue auto-merge.
+            if ! gh pr view "$branch" --json number --jq '.number' >/dev/null 2>&1; then
+              gh pr create --base main --head "$branch" \
+                --title "fix(security): autofix CodeQL alert #$n" \
+                --body "Automated [Copilot Autofix](https://github.com/$REPO/security/code-scanning/$n) for code scanning alert #$n. Auto-merges once \`verify\` passes. Review retroactively if needed." \
+                --label "automated-security-fix" || true
+            fi
+            gh pr merge "$branch" --auto --squash --delete-branch || true
+            echo "::endgroup::"
+          done
