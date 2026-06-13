@@ -5,6 +5,7 @@ on:
       - "v*"
 permissions:
   contents: write
+  id-token: write # keyless cosign signing of release artifacts (OIDC)
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -12,6 +13,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0 # full history + tags so the changelog can diff against the previous tag
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.1
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -62,3 +64,14 @@ jobs:
             src scripts package.json package-lock.json .env.example tsconfig.json tsup.config.ts README.md INSTALL.md install.sh requirements.txt \
             -o "${STAGE}.tar.gz"
           gh release upload "$TAG" "${STAGE}.tar.gz"
+
+          # Keyless-sign the tarball with sigstore/cosign (OIDC identity of this
+          # workflow — no long-lived keys) and attach the signature + certificate.
+          # Verifiable with: cosign verify-blob --certificate <pem> --signature <sig>
+          #   --certificate-identity-regexp '^https://github.com/OctopusGarage/tmux-claude-bot/'
+          #   --certificate-oidc-issuer https://token.actions.githubusercontent.com <tarball>
+          cosign sign-blob --yes \
+            --output-signature "${STAGE}.tar.gz.sig" \
+            --output-certificate "${STAGE}.tar.gz.pem" \
+            "${STAGE}.tar.gz"
+          gh release upload "$TAG" "${STAGE}.tar.gz.sig" "${STAGE}.tar.gz.pem"
