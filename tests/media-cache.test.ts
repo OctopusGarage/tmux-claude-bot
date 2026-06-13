@@ -61,4 +61,46 @@ describe("media-cache", () => {
     const result = saveToCache("failkey", nonexistent);
     expect(result).toBe(nonexistent);
   });
+
+  it("evicts oldest entries so the cache stays bounded (no unbounded disk growth)", async () => {
+    // Regression: saveToCache used to be write-only with no eviction, so every
+    // distinct voice/audio blob accumulated forever until the disk filled and
+    // real state writes (locks, session map) started failing.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-media-bound-"));
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-media-src-"));
+    process.env.TCB_MEDIA_DIR = dir;
+    process.env.TCB_MEDIA_CACHE_MAX = "2";
+    try {
+      const { saveToCache } = await import("../src/shared/utils/media-cache.js");
+      for (const k of ["k1", "k2", "k3", "k4"]) {
+        const src = path.join(srcDir, `${k}.opus`);
+        fs.writeFileSync(src, k);
+        saveToCache(k, src);
+      }
+      // Sources live in srcDir, so everything in `dir` is a cached blob.
+      expect(fs.readdirSync(dir).length).toBe(2);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(srcDir, { recursive: true, force: true });
+      delete process.env.TCB_MEDIA_CACHE_MAX;
+    }
+  });
+
+  it("resolves the cache dir on every call so a TCB_MEDIA_DIR change takes effect", async () => {
+    // Regression: CACHE_DIR was captured at module load, so a later env change
+    // (tests, dev-borrow) silently read/wrote the previous home.
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-media-src2-"));
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-media-redir-"));
+    try {
+      const { saveToCache } = await import("../src/shared/utils/media-cache.js");
+      process.env.TCB_MEDIA_DIR = dir2; // change AFTER the module is already imported
+      const src = path.join(srcDir, "s.opus");
+      fs.writeFileSync(src, "x");
+      const cached = saveToCache("redir", src);
+      expect(cached.startsWith(dir2)).toBe(true);
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true });
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
+  });
 });

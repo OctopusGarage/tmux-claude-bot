@@ -1,24 +1,18 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
-import { promisify } from "node:util";
 import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { chatScope } from "../../core/project-manager.js";
-import { transcribeOgg } from "../../core/transcriber.js";
+import { transcribeWithCache } from "../../core/transcriber.js";
 import {
   checkVoiceSupport,
-  INSTALL_SCRIPT,
+  installVoice,
   isVoicePlatformSupported,
-  persistWhisperBin,
   resolveWhisperLanguage,
   setWhisperLanguage,
 } from "../../core/voice-support.js";
-import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
-import { getFromCache, saveToCache } from "../../shared/utils/media-cache.js";
-import { withRetry } from "../../shared/utils/retry.js";
 import { buildVoiceLangKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
@@ -26,18 +20,17 @@ import { reply } from "./replies.js";
 import { resolveSessionForMessage } from "./reply-routing.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 
-const execFileAsync = promisify(execFile);
-const INSTALL_TIMEOUT_MS = 300_000;
-
 export function registerVoiceHandler<TContext extends Context>(
   bot: Bot<TContext>,
   deps: HandlerDeps,
   replyTarget: ReplyTargetMap,
 ): void {
   // In-bot trigger to install the optional voice feature (Apple Silicon only).
-  // `installing` guards against a double-tap kicking off two installs at once.
-  let installing = false;
+  // The install orchestration + single-flight guard live in core (installVoice),
+  // shared with the Feishu adapter so the two can't drift.
   bot.command("voice_install", async (ctx: Context) => {
+    // Cheap pre-checks just to drive the "installing…" ack (the slow path can
+    // take minutes); installVoice() re-checks these authoritatively.
     if (checkVoiceSupport().ready) {
       await reply(ctx, "info", MSG.voiceAlreadyInstalled, { replyTarget });
       return;
@@ -46,30 +39,26 @@ export function registerVoiceHandler<TContext extends Context>(
       await reply(ctx, "err", MSG.voiceUnsupported, { replyTarget });
       return;
     }
-    if (installing) {
-      await reply(ctx, "info", MSG.voiceInstalling, { replyTarget });
-      return;
-    }
-    installing = true;
     await reply(ctx, "info", MSG.voiceInstalling, { replyTarget });
-    try {
-      // Fixed bundled script, no user-controlled args — not arbitrary exec.
-      await execFileAsync(INSTALL_SCRIPT, [], {
-        timeout: INSTALL_TIMEOUT_MS,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      const status = checkVoiceSupport();
-      if (!status.ready) throw new Error("binary still missing after install");
-      // Live process reads process.env at transcribe time; persist for restarts.
-      process.env.MLX_WHISPER_BIN = status.bin;
-      persistWhisperBin(status.bin);
-      logger.info("[voice-install] voice feature installed and enabled");
-      await reply(ctx, "info", MSG.voiceInstallOk, { replyTarget });
-    } catch (err) {
-      logger.error(`[voice-install] failed: ${err}`);
-      await reply(ctx, "err", MSG.voiceInstallFailed(normalizeError(err).message), { replyTarget });
-    } finally {
-      installing = false;
+    const result = await installVoice();
+    switch (result.status) {
+      case "ok":
+        logger.info("[voice-install] voice feature installed and enabled");
+        await reply(ctx, "info", MSG.voiceInstallOk, { replyTarget });
+        break;
+      case "failed":
+        logger.error(`[voice-install] failed: ${result.message}`);
+        await reply(ctx, "err", MSG.voiceInstallFailed(result.message), { replyTarget });
+        break;
+      case "already-ready":
+        await reply(ctx, "info", MSG.voiceAlreadyInstalled, { replyTarget });
+        break;
+      case "unsupported":
+        await reply(ctx, "err", MSG.voiceUnsupported, { replyTarget });
+        break;
+      case "in-progress":
+        await reply(ctx, "info", MSG.voiceInstalling, { replyTarget });
+        break;
     }
   });
 
@@ -122,74 +111,38 @@ export function registerVoiceHandler<TContext extends Context>(
       return;
     }
 
-    const language = resolveWhisperLanguage("telegram");
     const filePath = file.file_path;
-    const cacheKey = `telegram:${voice.file_id}`;
-    const cachedPath = getFromCache(cacheKey);
-    let audioPath: string;
-    let tmpToDelete: string | null = null;
-
-    if (cachedPath) {
-      logger.info(`[voice-handler] cache hit file_id=${voice.file_id}`);
-      audioPath = cachedPath;
-    } else {
-      const tmpPath = `/tmp/voice_${randomUUID()}.ogg`;
-      // 1) Download — retried, because a proxy/network drop here is transient and a
-      // single retry usually rides it out. Reported distinctly from a transcribe error.
-      try {
-        await withRetry(async () => {
-          if (filePath.startsWith("http")) {
-            // Local Bot API server: file_path is a direct HTTP URL.
-            const res = await fetch(filePath);
-            if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-            fs.writeFileSync(tmpPath, Buffer.from(await res.arrayBuffer()));
-          } else {
-            // Standard Bot API: download via hydrateFiles' file.download().
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (file as any).download(tmpPath);
-          }
-        });
-      } catch (err) {
-        logger.error(`[voice-handler] download failed: ${err}`);
-        await reply(ctx, "err", messages("telegram").voiceDownloadFailed, { replyTarget });
-        return;
-      }
-      audioPath = saveToCache(cacheKey, tmpPath);
-      if (audioPath === tmpPath) {
-        tmpToDelete = tmpPath;
-      } else {
-        try {
-          fs.unlinkSync(tmpPath);
-        } catch {
-          /* best-effort */
+    const outcome = await transcribeWithCache({
+      label: "voice-handler",
+      cacheKey: `telegram:${voice.file_id}`,
+      tmpPath: `/tmp/voice_${randomUUID()}.ogg`,
+      bin: support.bin,
+      language: resolveWhisperLanguage("telegram"),
+      download: async (tmpPath) => {
+        if (filePath.startsWith("http")) {
+          // Local Bot API server: file_path is a direct HTTP URL.
+          const res = await fetch(filePath);
+          if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+          fs.writeFileSync(tmpPath, Buffer.from(await res.arrayBuffer()));
+        } else {
+          // Standard Bot API: download via hydrateFiles' file.download().
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (file as any).download(tmpPath);
         }
-      }
-    }
-
-    // 2) Transcribe — a distinct error so the user knows it downloaded fine but
-    // whisper failed (vs a network problem they'd handle differently).
-    let transcribed: string;
-    try {
-      transcribed = await transcribeOgg(audioPath, support.bin, language);
-    } catch (err) {
-      logger.error(`[voice-handler] transcription failed: ${err}`);
-      await reply(ctx, "err", messages("telegram").voiceTranscribeFailed, { replyTarget });
-      return;
-    } finally {
-      if (tmpToDelete) {
-        try {
-          fs.unlinkSync(tmpToDelete);
-        } catch {
-          /* cleanup best-effort */
-        }
-      }
-    }
-
-    // 3) Empty result (too short / silence) → ask the user to speak up, not a generic fail.
-    if (!transcribed.trim()) {
-      await reply(ctx, "err", messages("telegram").voiceEmpty, { replyTarget });
+      },
+    });
+    if (!outcome.ok) {
+      const m = messages("telegram");
+      const hint =
+        outcome.reason === "download"
+          ? m.voiceDownloadFailed
+          : outcome.reason === "transcribe"
+            ? m.voiceTranscribeFailed
+            : m.voiceEmpty;
+      await reply(ctx, "err", hint, { replyTarget });
       return;
     }
+    const transcribed = outcome.text;
 
     logger.info(`[voice-handler] transcribed len=${transcribed.length}`);
 

@@ -58,6 +58,26 @@ were untested and could only be exercised by releasing and running them in a rea
   stdin cleanly — so dry-run is for *manual* local verification, automation relies
   on the unit tests above.
 
+## Beyond coverage: defenses by bug class
+
+Coverage measures whether a line **ran**, not whether a test would **notice** it
+being wrong, and not which **inputs / timing / processes** ran it. A whole-project
+review found a batch of bugs that sailed past a high-coverage suite because they
+lived in dimensions coverage is blind to. Each got a dedicated, cheap guard —
+when you touch the relevant area, keep these green:
+
+| Bug class (what escaped) | Why coverage missed it | Guard |
+|---|---|---|
+| **Startup from a real env** — a blank `KEY=` line (dotenv → `""`) crashed `loadConfig` | unit tests build config from an object, bypassing dotenv | `tests/startup-smoke.test.ts` (real `.env` via `TCB_ENV_FILE`) + `tests/config-boundary.test.ts` (schema-introspecting: **every** env var must tolerate blank — auto-covers new vars) |
+| **Cross-adapter drift** — Telegram's immediate-action set dropped `tab`; dedup handling diverged | each copy was individually tested and passed | `tests/adapters/action-parity.test.ts` (routing pinned to the single registry) + the `adapters-isolated` dependency-cruiser rule (adapters can't import each other) |
+| **Cross-process concurrency** — instance-lock TOCTOU | unit tests are single-threaded | `tests/instance-lock-race.test.ts` (deterministic mocked-fs interleave) + `tests/instance-lock-multiprocess.test.ts` (two real processes) |
+| **Cross-restart persistence** — Lark reply-target lost on restart | no test restarts the process | per-store "survives a restart" tests (a fresh instance reads what the prior wrote) — see `bounded-session-map` / `json-map-store` / reply-target tests |
+| **Executed but unasserted** — the dead queue-retry loop (removing it broke no test) | the line ran; nothing asserted its effect | **mutation testing**: `npm run mutation` (Stryker, core only; weekly CI in `.github/workflows/mutation.yml`) |
+
+The throughline: most of these were **logic duplicated across adapters that
+drifted**. The durable fix is structural — keep logic in `core/`, adapters thin —
+which the `adapters-isolated` rule now enforces.
+
 ## Running
 
 ```bash
@@ -65,7 +85,24 @@ npm test                       # full suite (vitest run)
 npm run lint:sh                # shellcheck the scripts
 npx vitest run path/to.test.ts # a single file
 npx vitest run --coverage      # coverage report (v8)
+npm run lint:deep              # type-aware lint (floating promises, dead conditions) — warns, non-blocking
+npm run mutation               # mutation testing (slow; core only) — see table above
 ```
+
+`lint:deep` is type-aware ESLint with three behavioural rules biome and tsc
+can't express, at **mixed severity**:
+
+- `no-floating-promises` and `no-misused-promises` → **error, and they gate CI**.
+  A floating/misused promise is almost always a real bug, and the escape hatch is
+  explicit and self-documenting (`void x()` for intentional fire-and-forget).
+- `no-unnecessary-condition` → **warn only, never gates**. It's type-based, and
+  types lie (parsed JSON, SDK payloads, `as` casts), so a defensive `?.`/`??` is
+  often correct even when the rule calls it "unnecessary" — gating it would force
+  deleting real safety nets. Triage these periodically; fix the dead ones, keep
+  the defensive ones.
+
+So `eslint src` exits non-zero only on the async-hygiene errors; a tree with only
+`no-unnecessary-condition` warnings still passes.
 
 ## Rule
 

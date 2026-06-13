@@ -24,7 +24,23 @@ import { notifyLarkOwner } from "./resource.js";
  * on bound project groups from the allow-listed owner), so the SDK-level mention
  * filter must be off. (Still requires the Feishu `im:message.group_msg` scope so
  * Feishu delivers the non-@ messages in the first place.)
+ *
+ * `safety.dedup.ttl` — the SDK's default is 12h, and the SAME dedup cache gates
+ * card-action re-clicks (keyed on messageId+openId+value), so a user can't
+ * re-press the same button on the same card for 12h. Message-redelivery dedup
+ * only needs to outlast the SDK's 30-min stale-message window (older events are
+ * dropped before dedup), so we cap the TTL to that window: message dedup stays
+ * correct while button re-clicks free up after 30 min. Override with
+ * LARK_DEDUP_TTL_MS (lowering it further trades message-redelivery safety for
+ * snappier re-clicks).
  */
+const DEFAULT_DEDUP_TTL_MS = 30 * 60_000; // matches the SDK's stale-message window
+
+function dedupTtlMs(): number {
+  const raw = Number(process.env.LARK_DEDUP_TTL_MS);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_DEDUP_TTL_MS;
+}
+
 export function larkChannelOptions(
   cfg: { appId: string; appSecret: string },
   domain: Domain,
@@ -36,6 +52,7 @@ export function larkChannelOptions(
     source: "tmux-claude-bot",
     loggerLevel: LoggerLevel.info,
     policy: { requireMention: false },
+    safety: { dedup: { ttl: dedupTtlMs() } },
   };
 }
 

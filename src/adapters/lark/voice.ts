@@ -1,15 +1,13 @@
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
 import type { LarkChannel, NormalizedMessage, ResourceDescriptor } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { transcribeOgg } from "../../core/transcriber.js";
+import { transcribeWithCache } from "../../core/transcriber.js";
 import { checkVoiceSupport, resolveWhisperLanguage } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
-import { getFromCache, saveToCache } from "../../shared/utils/media-cache.js";
-import { withRetry } from "../../shared/utils/retry.js";
+import { voiceInstallCard } from "./cards.js";
 import { enqueueLarkAction } from "./executor.js";
-import { sendText } from "./replies.js";
+import { sendCard, sendText } from "./replies.js";
 import { downloadMessageResource } from "./resource.js";
 
 /**
@@ -26,10 +24,12 @@ export async function handleLarkVoice(
 ): Promise<void> {
   const support = checkVoiceSupport();
   if (!support.ready) {
-    const m = messages("lark");
-    const hint =
-      support.reason === "unsupported-platform" ? m.voiceUnsupported : m.voiceNotInstalled;
-    await sendText(channel, msg.chatId, hint);
+    if (support.reason === "unsupported-platform") {
+      await sendText(channel, msg.chatId, messages("lark").voiceUnsupported);
+    } else {
+      // Installable: offer a one-tap install button (Feishu has no "/" command).
+      await sendCard(channel, msg.chatId, voiceInstallCard());
+    }
     return;
   }
 
@@ -41,64 +41,30 @@ export async function handleLarkVoice(
     await sendText(channel, msg.chatId, messages("lark").voiceDownloadFailed);
     return;
   }
-  const cacheKey = `lark:${audio.fileKey}`;
-  const cached = getFromCache(cacheKey);
-  let audioPath: string;
-  let tmpToDelete: string | null = null;
-
-  if (cached) {
-    logger.info(`[lark] voice cache hit fileKey=${audio.fileKey}`);
-    audioPath = cached;
-  } else {
-    const tmpPath = `/tmp/lark_voice_${randomUUID()}.opus`;
-    // 1) Download the message resource — retried, because Feishu can return 400 for
-    // a beat right after the message arrives, before the resource is fetchable.
-    // Reported distinctly from a transcribe failure.
-    try {
-      await withRetry(() =>
-        downloadMessageResource(larkCfg, msg.messageId, audio.fileKey, tmpPath),
-      );
-    } catch (err) {
-      logger.error(`[lark] voice download failed: ${err instanceof Error ? err.message : err}`);
-      await sendText(channel, msg.chatId, messages("lark").voiceDownloadFailed);
-      return;
-    }
-    audioPath = saveToCache(cacheKey, tmpPath);
-    if (audioPath === tmpPath) {
-      // cache write failed — transcribe from tmp, clean it up afterward
-      tmpToDelete = tmpPath;
-    } else {
-      // cached successfully — clean up the tmp file now
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch {
-        /* best-effort */
-      }
-    }
-  }
-
-  // 2) Transcribe.
-  let transcribed: string;
-  try {
-    transcribed = await transcribeOgg(audioPath, support.bin, resolveWhisperLanguage("lark"));
-  } catch (err) {
-    logger.error(`[lark] voice transcription failed: ${err instanceof Error ? err.message : err}`);
-    await sendText(channel, msg.chatId, messages("lark").voiceTranscribeFailed);
-    return;
-  } finally {
-    if (tmpToDelete) {
-      try {
-        fs.unlinkSync(tmpToDelete);
-      } catch {
-        /* best-effort cleanup */
-      }
-    }
-  }
-
-  if (!transcribed.trim()) {
-    await sendText(channel, msg.chatId, messages("lark").voiceEmpty);
+  const outcome = await transcribeWithCache({
+    label: "lark",
+    cacheKey: `lark:${audio.fileKey}`,
+    // Feishu voice is a MESSAGE resource: download via im.v1.messageResource.get
+    // (needs the message_id), NOT the channel's downloadResource.
+    tmpPath: `/tmp/lark_voice_${randomUUID()}.opus`,
+    bin: support.bin,
+    language: resolveWhisperLanguage("lark"),
+    download: (tmpPath) => downloadMessageResource(larkCfg, msg.messageId, audio.fileKey, tmpPath),
+  });
+  if (!outcome.ok) {
+    const m = messages("lark");
+    await sendText(
+      channel,
+      msg.chatId,
+      outcome.reason === "download"
+        ? m.voiceDownloadFailed
+        : outcome.reason === "transcribe"
+          ? m.voiceTranscribeFailed
+          : m.voiceEmpty,
+    );
     return;
   }
+  const transcribed = outcome.text;
 
   logger.info(`[lark] voice transcribed chat=${msg.chatId} len=${transcribed.length}`);
   // Echo the transcription (like Telegram), then process it as a normal prompt.

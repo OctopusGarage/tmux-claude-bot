@@ -36,6 +36,21 @@ npm run service:logs       # tail the launchd stdout log
 npm run service:install    # (re)install the launchd plist
 ```
 
+### Editor / Claude Code feedback
+
+Code-quality feedback in this repo is **tool-agnostic and committed**, so you get
+it on clone without configuring an editor:
+
+- A `PostToolUse` hook in `.claude/settings.json` runs **Biome** on every file
+  Claude Code edits — lint/format issues surface immediately, in any clone.
+- Types and dead code are gated by `npm run lint:types` / `lint:deep` / `knip`
+  (and CI), independent of any editor or language server.
+
+Claude Code's built-in **TypeScript LSP** (live go-to-def / diagnostics while
+editing) is a nice extra, but it's a **per-user Claude Code feature**, not
+something the repo can enable for you — turn it on in your own Claude Code if you
+want it. Nothing here depends on it.
+
 ## Before you open a PR
 
 Everything must be green — these are the same gates `/release` enforces:

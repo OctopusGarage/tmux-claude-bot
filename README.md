@@ -259,8 +259,10 @@ off until you install it** — if you never use voice, you can ignore this entir
 **What gets installed** (project-managed, reproducible — nothing global):
 
 - A project-local `.venv` created by [uv](https://docs.astral.sh/uv/), with
-  `mlx-whisper` pinned in [`requirements.txt`](requirements.txt). Model weights are
-  downloaded from HuggingFace on first transcription.
+  `mlx-whisper` pinned in [`requirements.txt`](requirements.txt). Model weights
+  (default `whisper-large-v3-turbo`, ~1.5GB — the only family that supports every
+  offered language incl. Cantonese) download from HuggingFace on first
+  transcription; override with `WHISPER_MODEL` in `.env`.
 - **ffmpeg** is required to decode audio (`brew install ffmpeg`). The installer and
   `npm run doctor` both check for it.
 

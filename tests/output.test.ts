@@ -100,6 +100,18 @@ describe("OutputProcessor", () => {
       expect(result).toBe("line1\nline2");
     });
 
+    it("does NOT mangle plain text without ESC (capital letters and their neighbours survive)", () => {
+      // Regression: the ANSI regex must be anchored on the ESC byte. An unanchored
+      // /[@-_].../ pattern matches ordinary capitalised prose ("He" in "Hello"),
+      // silently eating uppercase letters from real output (peek / pane fallback).
+      const processor = new OutputProcessor({ maxOutputLines: 100, maxMessageLength: 4000 });
+      expect(processor.process("The DEPLOY succeeded: 3 OK, 0 FAIL")).toBe(
+        "The DEPLOY succeeded: 3 OK, 0 FAIL",
+      );
+      expect(processor.process("PR #25 merged into main")).toBe("PR #25 merged into main");
+      expect(processor.process("Done. Result OK.")).toBe("Done. Result OK.");
+    });
+
     it("handles all ANSI escape code patterns", () => {
       const processor = new OutputProcessor({ maxOutputLines: 100, maxMessageLength: 4000 });
       // Various ANSI escape sequences

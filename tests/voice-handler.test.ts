@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { HandlerDeps } from "../src/core/deps.js";
 
 vi.mock("../src/core/transcriber.js", () => ({
-  transcribeOgg: vi.fn(),
+  transcribeWithCache: vi.fn(),
 }));
 
 // Voice is "ready" in tests so the handler proceeds to download + transcribe;
@@ -14,6 +14,7 @@ vi.mock("../src/core/voice-support.js", () => ({
   resolveWhisperLanguage: vi.fn(() => "zh"),
   persistWhisperBin: vi.fn(),
   persistEnvVar: vi.fn(),
+  installVoice: vi.fn(async () => ({ status: "ok", bin: "mlx_whisper" })),
   INSTALL_SCRIPT: "/repo/scripts/install-whisper.sh",
 }));
 
@@ -23,7 +24,7 @@ vi.mock("../src/shared/utils/logger.js", () => ({
 
 import { createReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
 import { registerVoiceHandler } from "../src/adapters/telegram/voice-handler.js";
-import { transcribeOgg } from "../src/core/transcriber.js";
+import { transcribeWithCache } from "../src/core/transcriber.js";
 
 function createMockVoiceContext(): Context {
   return {
@@ -75,17 +76,24 @@ describe("registerVoiceHandler", () => {
       if (event === "message:voice") capturedHandler = handler;
     });
 
-    (transcribeOgg as ReturnType<typeof vi.fn>).mockResolvedValue("hello world");
+    (transcribeWithCache as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      text: "hello world",
+    });
 
     registerVoiceHandler(mockBot, deps, rt);
     await capturedHandler(mockCtx);
 
     expect(mockCtx.getFile).toHaveBeenCalled();
-    // download(tmpPath) writes to the bot-generated tmp path; that's what we transcribe.
-    expect(transcribeOgg).toHaveBeenCalledWith(
-      expect.stringContaining("/tmp/voice_"),
-      "mlx_whisper",
-      "zh",
+    // The handler hands a telegram-scoped cache key, the resolved language/bin and
+    // a bot-generated tmp path to the shared cache-aware transcriber.
+    expect(transcribeWithCache).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cacheKey: "telegram:voice123",
+        bin: "mlx_whisper",
+        language: "zh",
+        tmpPath: expect.stringContaining("/tmp/voice_"),
+      }),
     );
     const replyTexts = (mockCtx.reply as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(
@@ -98,6 +106,36 @@ describe("registerVoiceHandler", () => {
         action: "text",
       }),
     );
+  });
+
+  it("its download callback fetches the voice file via the Bot API file.download", async () => {
+    const deps = {
+      currentProject: { get: vi.fn().mockResolvedValue("tmux_proj_test") },
+      bridge: { hasSession: vi.fn().mockResolvedValue(true) },
+      claude: { checkIfRunning: vi.fn().mockResolvedValue(true) },
+      queue: { enqueue: vi.fn().mockReturnValue(true), size: vi.fn().mockReturnValue(0) },
+      config: { projectSessionPrefix: "tmux_proj_" },
+    } as unknown as HandlerDeps;
+    const mockBot = { on: vi.fn(), command: vi.fn() } as unknown as Bot;
+    const mockCtx = createMockVoiceContext();
+    const fileDownload = vi.fn().mockResolvedValue("/tmp/test.ogg");
+    (mockCtx.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      file_path: "voice/file_0.ogg", // not http → callback uses file.download
+      download: fileDownload,
+    });
+    let capturedHandler: any;
+    (mockBot.on as ReturnType<typeof vi.fn>).mockImplementation((event: string, handler: any) => {
+      if (event === "message:voice") capturedHandler = handler;
+    });
+    (transcribeWithCache as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, text: "hi" });
+
+    registerVoiceHandler(mockBot, deps, createReplyTargetMap());
+    await capturedHandler(mockCtx);
+
+    const calls = (transcribeWithCache as ReturnType<typeof vi.fn>).mock.calls;
+    const opts = calls[calls.length - 1]?.[0] as { download: (tmp: string) => Promise<void> };
+    await opts.download("/tmp/voice_abc.ogg");
+    expect(fileDownload).toHaveBeenCalledWith("/tmp/voice_abc.ogg");
   });
 
   it("records replyTarget on transcription confirmation", async () => {
@@ -125,7 +163,10 @@ describe("registerVoiceHandler", () => {
       if (event === "message:voice") capturedHandler = handler;
     });
 
-    (transcribeOgg as ReturnType<typeof vi.fn>).mockResolvedValue("hello world");
+    (transcribeWithCache as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      text: "hello world",
+    });
 
     registerVoiceHandler(mockBot, deps, rt);
     await capturedHandler(mockCtx);

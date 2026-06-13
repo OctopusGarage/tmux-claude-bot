@@ -71,6 +71,17 @@ export function voiceLangCard(current: string): object {
   ]);
 }
 
+/** Voice-not-installed prompt with a one-tap install button. Feishu has no "/"
+ * command discovery, so the in-chat install is a button (mirrors Telegram's
+ * `/voice_install`). Sent when a voice message arrives but whisper isn't ready. */
+export function voiceInstallCard(): object {
+  const mv = messages("lark");
+  return shell("🎙️", [
+    md(mv.voiceNotInstalled),
+    gridRow([{ text: mv.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }]),
+  ]);
+}
+
 /** UI-language picker — mirrors voiceLangCard. Tapping sends `uilang` with the
  * chosen Lang; the title/prompt render in the channel's CURRENT language. */
 export function langCard(current: Lang): object {
@@ -108,24 +119,34 @@ function actionRow(actions: MessageAction[]): ButtonSpec[] {
   });
 }
 
-function controlRows(): ButtonSpec[][] {
+function controlRows(group = false): ButtonSpec[][] {
+  const m = messages("lark");
+  // A bound project group is pinned to one workspace, so cross-project
+  // management (list-all/switch/remove) doesn't belong there — only the work
+  // surface for the pinned project. Drop the "Projects" entry in groups.
+  const lastRow: ButtonSpec[] = group
+    ? [
+        { text: m.btnCurrent, value: { cmd: "current" } },
+        { text: m.btnHelp, value: { cmd: "help" } },
+      ]
+    : [
+        { text: m.btnProjects, value: { cmd: "listalive" } },
+        { text: m.btnCurrent, value: { cmd: "current" } },
+        { text: m.btnHelp, value: { cmd: "help" } },
+      ];
   return [
     ...LARK_CONTROL_ROWS.map(actionRow),
     [
-      { text: messages("lark").btnPeek, value: { cmd: "peek" } },
-      { text: messages("lark").btnHistory, value: { cmd: "history" } },
-      { text: messages("lark").btnQueue, value: { cmd: "queuestatus" } },
+      { text: m.btnPeek, value: { cmd: "peek" } },
+      { text: m.btnHistory, value: { cmd: "history" } },
+      { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ],
-    [
-      { text: messages("lark").btnProjects, value: { cmd: "listalive" } },
-      { text: messages("lark").btnCurrent, value: { cmd: "current" } },
-      { text: messages("lark").btnHelp, value: { cmd: "help" } },
-    ],
+    lastRow,
   ];
 }
 
-export function controlActions(): object[] {
-  return controlRows().map(gridRow);
+export function controlActions(group = false): object[] {
+  return controlRows(group).map(gridRow);
 }
 
 /**
@@ -133,7 +154,7 @@ export function controlActions(): object[] {
  * (start/exit) on top of the normal controls, so a "not running" / error reply
  * stays actionable in Feishu without having to type a command.
  */
-export function recoveryCard(body: string, title = "⚠️"): object {
+export function recoveryCard(body: string, group = false, title = "⚠️"): object {
   const m = messages("lark");
   return shell(title, [
     md(body),
@@ -142,7 +163,7 @@ export function recoveryCard(body: string, title = "⚠️"): object {
       { text: m.btnStart, value: { cmd: "start" }, style: "primary" },
       { text: m.btnExit, value: { cmd: "exit" } },
     ]),
-    ...controlActions(),
+    ...controlActions(group),
   ]);
 }
 
@@ -163,61 +184,62 @@ export function startPickerCard(commands: { label: string; command: string }[]):
 /** A Claude-result card: the output (or placeholder), the 7 control shortcuts,
  * and a help button. The title carries the 📂 project so the user sees which
  * session answered. */
-export function resultCard(output: string, title = "Claude"): object {
+export function resultCard(output: string, title = "Claude", group = false): object {
   const body = output && output.trim() ? output : messages("lark").emptyOutput;
-  return shell(title, [md(body), HR, ...controlActions()]);
+  return shell(title, [md(body), HR, ...controlActions(group)]);
 }
 
 /** A read-only view card (peek / history): a title, the body, then the same
  * control buttons the result card carries. */
-export function viewCard(title: string, body: string): object {
+export function viewCard(title: string, body: string, group = false): object {
   const content = body && body.trim() ? body : messages("lark").emptyPane;
-  return shell(title, [md(content), HR, ...controlActions()]);
+  return shell(title, [md(content), HR, ...controlActions(group)]);
 }
 
-/** Alive-project list: one labelled row per project with switch/remove buttons
- * (the active one shows an inert "current" marker). */
-export function projectListCard(projects: ProjectButton[]): object {
-  if (projects.length === 0) {
-    return shell(messages("lark").aliveListTitle(0), [md(messages("lark").aliveListEmpty)]);
-  }
-  const m = messages("lark");
+/** Shared skeleton for the tappable project lists: an empty-state message, or a
+ * labelled row + a `rowFor(p)` button row per project, under one title. */
+function listCard<P extends { label: string }>(
+  title: string,
+  emptyMsg: string,
+  projects: readonly P[],
+  rowFor: (p: P) => object | null,
+): object {
+  if (projects.length === 0) return shell(title, [md(emptyMsg)]);
   const elements: object[] = [];
   for (const p of projects) {
     elements.push(md(p.label));
-    if (p.active) {
-      elements.push(gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]));
-    } else {
-      elements.push(
-        gridRow([
-          { text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } },
-          { text: m.btnRemove, value: { cmd: "remove", sid: p.sid }, style: "danger" },
-        ]),
-      );
-    }
+    const row = rowFor(p);
+    if (row) elements.push(row);
   }
-  return shell(messages("lark").aliveListTitle(projects.length), elements);
+  return shell(title, elements);
+}
+
+/** Alive-project list: one labelled row per project with switch/remove buttons
+ * (the active one shows an inert "current" marker). In a bound group the list
+ * is read-only — switch/remove are private-chat-only, so non-active rows carry
+ * no buttons and the delete button can never be rendered there. */
+export function projectListCard(projects: ProjectButton[], group = false): object {
+  const m = messages("lark");
+  return listCard(m.aliveListTitle(projects.length), m.aliveListEmpty, projects, (p) => {
+    if (p.active) return gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]);
+    if (group) return null;
+    return gridRow([
+      { text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } },
+      { text: m.btnRemove, value: { cmd: "remove", sid: p.sid }, style: "danger" },
+    ]);
+  });
 }
 
 /** Recent-project list: per project, tap an alive one to switch, a stopped one
  * to (re)create it; the active one is inert. */
-export function recentListCard(projects: RecentButton[]): object {
-  if (projects.length === 0) {
-    return shell(messages("lark").recentListTitle, [md(messages("lark").recentListEmpty)]);
-  }
+export function recentListCard(projects: RecentButton[], group = false): object {
   const m = messages("lark");
-  const elements: object[] = [];
-  for (const p of projects) {
-    elements.push(md(p.label));
-    if (p.active) {
-      elements.push(gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]));
-    } else if (p.alive) {
-      elements.push(gridRow([{ text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } }]));
-    } else {
-      elements.push(gridRow([{ text: m.btnCreate, value: { cmd: "addrecent", sid: p.sid } }]));
-    }
-  }
-  return shell(messages("lark").recentListTitle, elements);
+  return listCard(m.recentListTitle, m.recentListEmpty, projects, (p) => {
+    if (p.active) return gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]);
+    if (group) return null; // read-only in a group: switching/creating is private-chat-only
+    if (p.alive) return gridRow([{ text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } }]);
+    return gridRow([{ text: m.btnCreate, value: { cmd: "addrecent", sid: p.sid } }]);
+  });
 }
 
 /** Project-group picker: list recent projects, each with a "new group" (p2p) or
@@ -225,17 +247,11 @@ export function recentListCard(projects: RecentButton[]): object {
 export function groupPickerCard(projects: RecentButton[], mode: "make" | "bind"): object {
   const m = messages("lark");
   const title = mode === "make" ? m.groupPickerTitle : m.groupBindPickerTitle;
-  if (projects.length === 0) {
-    return shell(title, [md(m.groupMenuNoProjects)]);
-  }
   const text = mode === "make" ? m.btnMakeGroup : m.btnBindHere;
   const cmd = mode === "make" ? "makegroup" : "bindhere";
-  const elements: object[] = [];
-  for (const p of projects) {
-    elements.push(md(p.label));
-    elements.push(gridRow([{ text, value: { cmd, sid: p.sid } }]));
-  }
-  return shell(title, elements);
+  return listCard(title, m.groupMenuNoProjects, projects, (p) =>
+    gridRow([{ text, value: { cmd, sid: p.sid } }]),
+  );
 }
 
 /** Bound-group management card: restore / rebind / unbind, no typing needed. */
@@ -251,9 +267,30 @@ export function groupBoundCard(label: string): object {
   ]);
 }
 
-/** The interactive /help menu card: a button for every command. */
-export function helpCard(): object {
+/** The interactive /help menu card: a button for every command. When voice is
+ *  installable (supported host, not yet installed) a one-tap install button is
+ *  surfaced — the discoverable counterpart of Telegram's `/voice_install`. */
+export function helpCard(group = false, voiceInstallable = false): object {
   const m = messages("lark");
+  // In a bound group, drop cross-project management (list-all / recent / make
+  // group); a group is pinned to one project. Keep the work-surface views.
+  const projectRow: ButtonSpec[] = group
+    ? [{ text: m.btnCurrent, value: { cmd: "current" } }]
+    : [
+        { text: m.btnProjects, value: { cmd: "listalive" } },
+        { text: m.btnRecent, value: { cmd: "recent" } },
+        { text: m.btnCurrent, value: { cmd: "current" } },
+      ];
+  const prefsRow: ButtonSpec[] = group
+    ? [
+        { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
+        { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
+      ]
+    : [
+        { text: m.btnGroupMenu, value: { cmd: "groupmenu" } },
+        { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
+        { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
+      ];
   return shell(m.helpTitle, [
     md(buildHelpBody("lark", "lark")),
     HR,
@@ -266,15 +303,10 @@ export function helpCard(): object {
       { text: m.btnHistory, value: { cmd: "history" } },
       { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ]),
-    gridRow([
-      { text: m.btnProjects, value: { cmd: "listalive" } },
-      { text: m.btnRecent, value: { cmd: "recent" } },
-      { text: m.btnCurrent, value: { cmd: "current" } },
-    ]),
-    gridRow([
-      { text: m.btnGroupMenu, value: { cmd: "groupmenu" } },
-      { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
-      { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
-    ]),
+    gridRow(projectRow),
+    ...(voiceInstallable
+      ? [gridRow([{ text: m.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }])]
+      : []),
+    gridRow(prefsRow),
   ]);
 }

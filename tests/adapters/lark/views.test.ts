@@ -9,6 +9,7 @@ import {
   handleWsCommand,
   sendAliveList,
   sendCurrentProject,
+  sendGroupMenu,
   sendHistory,
   sendLangPicker,
   sendPeek,
@@ -259,15 +260,15 @@ describe("alive/recent error branches", () => {
 
   it("sendRecentList reports the error when listing fails", async () => {
     const channel = fakeChannel();
-    // mock recentProjectButtons to throw by making bridge.hasSession throw
+    // mock recentProjectButtons to throw by making the session listing throw
     const deps = fakeDeps({
       bridge: {
-        hasSession: vi.fn(async () => {
+        listProjectSessions: vi.fn(async () => {
           throw new Error("recent fail");
         }),
       },
     });
-    // populate recents so the path hits bridge.hasSession
+    // populate recents so the path reaches the session listing
     const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
     const tmpDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-rl-err-"));
     await appendRecentProject(tmpDir, "tmux_proj_");
@@ -348,6 +349,16 @@ describe("sendCurrentProject", () => {
     await sendCurrentProject(channel, deps, "chat-1");
 
     expect(channel.texts()).toContain("无当前项目");
+  });
+
+  it("also shows the mapped workspace directory", async () => {
+    setPathForSession("proj-cur", "/Users/me/work/proj-cur");
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: "proj-cur" });
+
+    await sendCurrentProject(channel, deps, "chat-1");
+
+    expect(channel.texts().some((t) => t.includes("/Users/me/work/proj-cur"))).toBe(true);
   });
 });
 
@@ -541,5 +552,40 @@ describe("handleWsCommand", () => {
     const channel = fakeChannel();
     await handleWsCommand(channel, fakeDeps(), "chat-1", "list");
     expect(channel.texts().some((t) => t.includes("proj-a"))).toBe(true);
+  });
+});
+
+describe("sendGroupMenu", () => {
+  it("omits projects that already have a group from the new-group picker", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-gm-"));
+    const pathA = nodePath.join(root, "alpha");
+    const pathB = nodePath.join(root, "beta");
+    fs.mkdirSync(pathA);
+    fs.mkdirSync(pathB);
+    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+    const { sessionNameFromPath } = await import("../../../src/core/sessionPathMap.js");
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const { bindGroup } = await import("../../../src/core/group-bindings.js");
+
+    const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => []) } });
+    const prefix = deps.config.projectSessionPrefix;
+    await appendRecentProject(pathA, prefix);
+    await appendRecentProject(pathB, prefix);
+    const sidA = sessionShortId(sessionNameFromPath(pathA, prefix));
+    const sidB = sessionShortId(sessionNameFromPath(pathB, prefix));
+    // alpha already has a group; beta does not.
+    bindGroup("oc_alpha", {
+      workspacePath: pathA,
+      sessionName: sessionNameFromPath(pathA, prefix),
+      label: "alpha",
+    });
+
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, deps, "oc_fresh"); // an unbound chat → the picker
+
+    const card = JSON.stringify(channel.cards());
+    expect(card).toContain(sidB); // beta is still offered
+    expect(card).not.toContain(sidA); // alpha already has a group → hidden
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });

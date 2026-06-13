@@ -117,13 +117,28 @@ export async function runPromptWithProgress(
     },
   });
 
-  if (!queued) {
+  if (queued === false) {
     cleanup();
     logger.warn(`[lifecycle] queue full session=${session}`);
     await reply(ctx, "err", MSG.queueFull(deps.queue.getMaxSize()), {
       session,
       replyTarget,
     });
+    return;
+  }
+  if (queued === "duplicate") {
+    // The identical prompt is already queued/running; THIS copy was dropped and
+    // its resolve/reject will NEVER fire. Tear down this lifecycle's UI (typing
+    // indicator + elapsed-time ticker) so they don't leak forever, and replace the
+    // "processing…" placeholder with a short notice — the original copy still answers.
+    cleanup();
+    logger.info(`[lifecycle] duplicate prompt ignored session=${session}`);
+    const note = messages("telegram").duplicateIgnored;
+    if (progress) {
+      await progress.finalize(note);
+    } else {
+      await reply(ctx, "info", note, { session, replyTarget });
+    }
   }
 }
 

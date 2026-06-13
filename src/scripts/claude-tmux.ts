@@ -13,7 +13,6 @@
  */
 
 import { execFile } from "node:child_process";
-import * as nodePath from "node:path";
 import { promisify } from "node:util";
 import { config as loadEnv } from "dotenv";
 import { createConfigResolver, createExecProbe } from "../core/claude-config-resolver.js";
@@ -21,17 +20,14 @@ import { DEFAULT_CONFIG_ROOT } from "../core/history.js";
 import { sessionNameFromPath, setPathForSession } from "../core/sessionPathMap.js";
 import { TmuxBridge } from "../core/tmux.js";
 import { claudeBinFromStartCommand, loadScriptConfig } from "../shared/config.js";
+import { appStateFile } from "../shared/state-dir.js";
 import { sleep } from "../shared/utils/sleep.js";
 
 const execFileAsync = promisify(execFile);
 
-// Load .env from the project root (two levels above this script)
-const projectRoot = nodePath.resolve(
-  nodePath.dirname(new URL(import.meta.url).pathname),
-  "..",
-  "..",
-);
-loadEnv({ override: true, path: nodePath.join(projectRoot, ".env") });
+// Load the bot's .env from the shared app home so `claude` and the bot agree on
+// the start command and write session_path_map.json to the same place.
+loadEnv({ override: true, path: appStateFile(".env") });
 
 const config = loadScriptConfig();
 
@@ -69,9 +65,8 @@ async function main() {
 
   if (!exists) {
     console.log("🆕 Creating new tmux session...");
-    await bridge.createSession(sessionName);
-    await sleep(config.sessionWarmupMs);
-    await bridge.sendKeys(`cd "${cwd}"`, sessionName);
+    // Start the pane directly in `cwd` (-c) — no typed `cd "..."` to shell-inject.
+    await bridge.createSession(sessionName, cwd);
     await sleep(config.sessionWarmupMs);
     setPathForSession(sessionName, cwd);
     console.log("🚀 Starting Claude...");

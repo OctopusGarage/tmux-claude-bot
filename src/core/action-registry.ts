@@ -84,7 +84,14 @@ export const LARK_HELP_RUNNING_ROWS: MessageAction[][] = [
 
 // ── Derived sets / lists ─────────────────────────────────────────────────────
 
-export function getLarkImmediate(): Set<MessageAction> {
+/**
+ * Actions that bypass the queue and run immediately (keypresses, status).
+ * Channel-neutral: both adapters share the same immediate/queued split, so the
+ * Telegram executor and the Lark command router both derive from this — neither
+ * hardcodes its own list (which drifted historically: telegram once omitted
+ * `tab`). Modeled under `larkKind` for legacy reasons; the concept is universal.
+ */
+export function getImmediateActions(): Set<MessageAction> {
   return new Set(
     (Object.entries(ACTION_META) as [MessageAction, ActionMeta][])
       .filter(([, m]) => m.larkKind === "immediate")

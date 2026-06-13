@@ -1,29 +1,26 @@
 import type { NormalizedMessage, ResourceDescriptor } from "@larksuiteoapi/node-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { TranscribeOutcome } from "../../../src/core/transcriber.js";
 import { fakeChannel, fakeDeps, fakeMessage } from "./_fakes.js";
 
-// Control the whisper core: voice readiness, language, and the transcription;
-// and the Feishu message-resource download (no real network).
+// Voice readiness + language, the shared cache-aware transcriber, and the Feishu
+// message-resource download are all mocked. The cache/download/retry orchestration
+// itself lives in transcribeWithCache and is covered by tests/transcriber.test.ts;
+// here we only assert handler gating, outcome mapping, and download-callback wiring.
 const checkVoiceSupport = vi.fn();
 const resolveWhisperLanguage = vi.fn(() => "en");
-const transcribeOgg = vi.fn();
+const transcribeWithCache = vi.fn();
 const downloadMessageResource = vi.fn();
-const getFromCache = vi.fn((_key: string) => null as string | null);
-const saveToCache = vi.fn((_key: string, src: string) => src);
 
 vi.mock("../../../src/core/voice-support.js", () => ({
   checkVoiceSupport: () => checkVoiceSupport(),
   resolveWhisperLanguage: () => resolveWhisperLanguage(),
 }));
 vi.mock("../../../src/core/transcriber.js", () => ({
-  transcribeOgg: (...args: unknown[]) => transcribeOgg(...args),
+  transcribeWithCache: (opts: unknown) => transcribeWithCache(opts),
 }));
 vi.mock("../../../src/adapters/lark/resource.js", () => ({
   downloadMessageResource: (...args: unknown[]) => downloadMessageResource(...args),
-}));
-vi.mock("../../../src/shared/utils/media-cache.js", () => ({
-  getFromCache: (key: string) => getFromCache(key),
-  saveToCache: (key: string, src: string) => saveToCache(key, src),
 }));
 
 // Imported AFTER the mocks are registered.
@@ -33,13 +30,14 @@ const audio: ResourceDescriptor = { type: "audio", fileKey: "fk-1" };
 const msg = (): NormalizedMessage =>
   fakeMessage({ rawContentType: "audio", content: "", resources: [audio] });
 
+const outcome = (o: TranscribeOutcome) => transcribeWithCache.mockResolvedValue(o);
+
 describe("handleLarkVoice", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resolveWhisperLanguage.mockReturnValue("en");
     downloadMessageResource.mockResolvedValue(undefined);
-    getFromCache.mockReturnValue(null);
-    saveToCache.mockImplementation((_k: string, src: string) => src);
+    outcome({ ok: true, text: "hello world" });
   });
 
   it("voice support not ready → hint reply, no transcription", async () => {
@@ -49,8 +47,9 @@ describe("handleLarkVoice", () => {
 
     await handleLarkVoice(channel, deps, msg(), audio);
 
-    expect(transcribeOgg).not.toHaveBeenCalled();
-    expect(channel.texts().some((t) => t.includes("语音转写未安装"))).toBe(true);
+    expect(transcribeWithCache).not.toHaveBeenCalled();
+    // Installable → a card with the one-tap install button (not plain text).
+    expect(JSON.stringify(channel.cards())).toContain("voiceinstall");
     expect(deps.queue.enqueued).toHaveLength(0);
   });
 
@@ -64,9 +63,20 @@ describe("handleLarkVoice", () => {
     expect(channel.texts().some((t) => t.includes("Apple Silicon"))).toBe(true);
   });
 
+  it("no lark config → download-failed reply without transcribing", async () => {
+    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
+    const channel = fakeChannel();
+    const deps = fakeDeps({ config: { lark: undefined as never } });
+
+    await handleLarkVoice(channel, deps, msg(), audio);
+
+    expect(transcribeWithCache).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("下载失败"))).toBe(true);
+  });
+
   it("success → echoes the transcription then enqueues the text", async () => {
     checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    transcribeOgg.mockResolvedValue("hello world");
+    outcome({ ok: true, text: "hello world" });
     const channel = fakeChannel();
     const deps = fakeDeps();
 
@@ -79,39 +89,26 @@ describe("handleLarkVoice", () => {
     expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-override");
   });
 
-  it("download keeps failing (after retry) → distinct download-failed reply, no transcribe", async () => {
+  it("passes a lark-scoped cache key, bin/language and tmp path to transcribeWithCache", async () => {
     checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    downloadMessageResource.mockRejectedValue(new Error("Request failed with status code 400"));
     const channel = fakeChannel();
     const deps = fakeDeps();
 
     await handleLarkVoice(channel, deps, msg(), audio);
 
-    expect(downloadMessageResource).toHaveBeenCalledTimes(2); // retried once
-    expect(transcribeOgg).not.toHaveBeenCalled();
-    expect(channel.texts().some((t) => t.includes("下载失败"))).toBe(true);
-    expect(deps.queue.enqueued).toHaveLength(0);
+    expect(transcribeWithCache).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "lark",
+        cacheKey: "lark:fk-1",
+        bin: "/bin/whisper",
+        language: "en",
+        tmpPath: expect.stringContaining("/tmp/lark_voice_"),
+      }),
+    );
   });
 
-  it("download fails once then succeeds (retry) → transcribes and enqueues", async () => {
+  it("its download callback fetches the message resource by message_id (not file.get)", async () => {
     checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    downloadMessageResource
-      .mockRejectedValueOnce(new Error("transient 400"))
-      .mockResolvedValue(undefined);
-    transcribeOgg.mockResolvedValue("recovered");
-    const channel = fakeChannel();
-    const deps = fakeDeps();
-
-    await handleLarkVoice(channel, deps, msg(), audio);
-
-    expect(downloadMessageResource).toHaveBeenCalledTimes(2);
-    expect(deps.queue.enqueued).toHaveLength(1);
-    expect(deps.queue.enqueued[0]?.text).toBe("recovered");
-  });
-
-  it("downloads via messageResource with the message_id (not file.get)", async () => {
-    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    transcribeOgg.mockResolvedValue("ok");
     const channel = fakeChannel();
     const deps = fakeDeps();
 
@@ -122,17 +119,34 @@ describe("handleLarkVoice", () => {
       audio,
     );
 
+    // Invoke the captured download callback to prove its wiring.
+    const opts = transcribeWithCache.mock.calls[0]?.[0] as {
+      download: (tmp: string) => Promise<void>;
+    };
+    await opts.download("/tmp/lark_voice_x.opus");
     expect(downloadMessageResource).toHaveBeenCalledWith(
       expect.anything(),
       "om_123",
       "fk-1",
-      expect.stringContaining("/tmp/lark_voice_"),
+      "/tmp/lark_voice_x.opus",
     );
   });
 
-  it("transcription error → 转写失败 reply, no enqueue", async () => {
+  it("download outcome → distinct download-failed reply, no enqueue", async () => {
     checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    transcribeOgg.mockRejectedValue(new Error("whisper boom"));
+    outcome({ ok: false, reason: "download" });
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await handleLarkVoice(channel, deps, msg(), audio);
+
+    expect(channel.texts().some((t) => t.includes("下载失败"))).toBe(true);
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("transcribe outcome → 转写失败 reply, no enqueue", async () => {
+    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
+    outcome({ ok: false, reason: "transcribe" });
     const channel = fakeChannel();
     const deps = fakeDeps();
 
@@ -142,9 +156,9 @@ describe("handleLarkVoice", () => {
     expect(deps.queue.enqueued).toHaveLength(0);
   });
 
-  it("empty transcription → didn't-catch reply, no enqueue", async () => {
+  it("empty outcome → didn't-catch reply, no enqueue", async () => {
     checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    transcribeOgg.mockResolvedValue("   ");
+    outcome({ ok: false, reason: "empty" });
     const channel = fakeChannel();
     const deps = fakeDeps();
 
@@ -152,51 +166,5 @@ describe("handleLarkVoice", () => {
 
     expect(channel.texts().some((t) => t.includes("没听清"))).toBe(true);
     expect(deps.queue.enqueued).toHaveLength(0);
-  });
-
-  it("no lark config → download-failed reply without attempting download", async () => {
-    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    const channel = fakeChannel();
-    const deps = fakeDeps({ config: { lark: undefined as never } });
-
-    await handleLarkVoice(channel, deps, msg(), audio);
-
-    expect(downloadMessageResource).not.toHaveBeenCalled();
-    expect(channel.texts().some((t) => t.includes("下载失败"))).toBe(true);
-  });
-
-  it("cache write succeeds → tmp cleaned up, transcription uses cached path", async () => {
-    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    saveToCache.mockReturnValue("/cache/audio.opus");
-    transcribeOgg.mockResolvedValue("cached text");
-    const channel = fakeChannel();
-    const deps = fakeDeps();
-
-    await handleLarkVoice(channel, deps, msg(), audio);
-
-    expect(transcribeOgg).toHaveBeenCalledWith(
-      "/cache/audio.opus",
-      "/bin/whisper",
-      expect.anything(),
-    );
-    expect(deps.queue.enqueued[0]?.text).toBe("cached text");
-  });
-
-  it("cache hit → skips download and transcribes from cached path", async () => {
-    checkVoiceSupport.mockReturnValue({ ready: true, bin: "/bin/whisper" });
-    getFromCache.mockReturnValue("/cache/hit-audio.opus");
-    transcribeOgg.mockResolvedValue("cached text");
-    const channel = fakeChannel();
-    const deps = fakeDeps();
-
-    await handleLarkVoice(channel, deps, msg(), audio);
-
-    expect(downloadMessageResource).not.toHaveBeenCalled();
-    expect(transcribeOgg).toHaveBeenCalledWith(
-      "/cache/hit-audio.opus",
-      "/bin/whisper",
-      expect.anything(),
-    );
-    expect(deps.queue.enqueued[0]?.text).toBe("cached text");
   });
 });

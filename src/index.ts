@@ -44,13 +44,11 @@ async function init(): Promise<void> {
       const alive = await bridge.isPaneAlive(session);
       if (!alive) {
         console.log(`[init] Session ${session} not alive, creating...`);
-        await bridge.createSession(session);
-        await sleep(AUTO_START_DELAY_MS);
-        // Restore working directory if mapped
+        // Start the pane directly in the mapped directory (-c) — no typed `cd`.
         const projectPath = getPathBySession(session);
+        await bridge.createSession(session, projectPath ?? undefined);
+        await sleep(AUTO_START_DELAY_MS);
         if (projectPath) {
-          await bridge.sendKeys(`cd "${projectPath}"`, session);
-          await sleep(AUTO_START_DELAY_MS);
           console.log(`[init] Restored directory: ${projectPath}`);
         }
       }

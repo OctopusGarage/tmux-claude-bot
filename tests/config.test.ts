@@ -114,4 +114,23 @@ describe("loadConfig (real schema)", () => {
       loadConfig({ TELEGRAM_BOT_TOKEN: "t", LARK_ENABLED: "false", LARK_DOMAIN: "garbage" }),
     ).not.toThrow();
   });
+
+  it("a blank numeric env var falls back to its default instead of crashing", () => {
+    // `POLL_INTERVAL_MS=` (empty) makes dotenv inject "", which is *present* — a
+    // plain `.default()` would be skipped and `.positive()` would reject the
+    // coerced 0, taking down startup with a cryptic ZodError.
+    const cfg = loadConfig({
+      TELEGRAM_BOT_TOKEN: "t",
+      POLL_INTERVAL_MS: "",
+      IDLE_POLL_TICKS: "",
+      MAX_WAIT_DONE_TOTAL_MS: "",
+    });
+    expect(cfg.pollIntervalMs).toBe(1000);
+    expect(cfg.idlePollTicks).toBe(5);
+    expect(cfg.maxWaitDoneTotalMs).toBe(3600000);
+  });
+
+  it("a non-empty but non-numeric env var still throws (a real typo)", () => {
+    expect(() => loadConfig({ TELEGRAM_BOT_TOKEN: "t", POLL_INTERVAL_MS: "abc" })).toThrow();
+  });
 });

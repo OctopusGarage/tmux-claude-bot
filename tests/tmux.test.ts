@@ -123,7 +123,7 @@ describe("TmuxBridge", () => {
   });
 
   describe("sendKeys", () => {
-    it("sends single line with Enter", async () => {
+    it("sends single line literally (-l) with Enter", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("echo hello");
@@ -131,7 +131,28 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         1,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "echo hello"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "echo hello"],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        2,
+        "tmux",
+        ["send-keys", "-t", "tmux_proj_test:0.0", "Enter"],
+        { timeout: 10000 },
+      );
+    });
+
+    it("types text literally with -l so a line equal to a tmux key name is not interpreted", async () => {
+      // Regression: without -l, `send-keys -t target Up` presses the Up ARROW key
+      // instead of typing the word "Up". A user prompt line that happens to equal a
+      // key name (Up/Enter/Tab/C-c) would be silently swallowed/misinterpreted.
+      mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+      await bridge.sendKeys("Up");
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        1,
+        "tmux",
+        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "Up"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
@@ -151,7 +172,7 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         1,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "line1"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "line1"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
@@ -163,7 +184,7 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         3,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "line2"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "line2"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
@@ -175,7 +196,7 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         5,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "line3"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "line3"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
@@ -292,20 +313,49 @@ describe("TmuxBridge", () => {
   });
 
   describe("createSession", () => {
-    it("creates a new tmux session", async () => {
+    it("creates a new tmux session and returns true", async () => {
       mockExecFile = createMockExecFile({ newSession: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      await bridge.createSession("my_session");
+      await expect(bridge.createSession("my_session")).resolves.toBe(true);
       expect(mockExecFile).toHaveBeenCalledWith("tmux", ["new-session", "-d", "-s", "my_session"], {
         timeout: 10000,
       });
     });
 
-    it("throws when session creation fails", async () => {
-      mockExecFile = createMockExecFile({});
-      mockExecFile.mockRejectedValueOnce(new Error("session exists"));
+    it("passes -c <cwd> to new-session so the pane starts there (no shell `cd`, no injection)", async () => {
+      // B3 fix: the working directory reaches tmux as a single argv element — execFile
+      // never spawns a shell — so a path containing spaces, $, backticks, quotes or `;`
+      // cannot break out of a typed `cd "..."` command.
+      mockExecFile = createMockExecFile({ newSession: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      await expect(bridge.createSession("existing_session")).rejects.toThrow("session exists");
+      const evilPath = '/home/user/foo"; rm -rf ~ #';
+      await expect(bridge.createSession("my_session", evilPath)).resolves.toBe(true);
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "tmux",
+        ["new-session", "-d", "-s", "my_session", "-c", evilPath],
+        { timeout: 10000 },
+      );
+    });
+
+    it("returns false (no throw) when the session already exists — race-safe", async () => {
+      // new-session loses the race ("duplicate session"), but has-session confirms
+      // it exists, so the goal ("session exists") is met.
+      const exec = vi.fn(async (_cmd: string, args: string[]) => {
+        if (args[0] === "new-session") throw new Error("duplicate session: existing_session");
+        return { stdout: "", stderr: "" }; // has-session succeeds → exists
+      }) as unknown as MockExecFile;
+      const bridge = new TmuxBridge({ execFile: exec, getSessionName });
+      await expect(bridge.createSession("existing_session")).resolves.toBe(false);
+    });
+
+    it("rethrows when creation fails and the session does not exist", async () => {
+      const exec = vi.fn(async (_cmd: string, args: string[]) => {
+        if (args[0] === "new-session") throw new Error("tmux server died");
+        if (args[0] === "has-session") throw new Error("no such session"); // not exists
+        return { stdout: "", stderr: "" };
+      }) as unknown as MockExecFile;
+      const bridge = new TmuxBridge({ execFile: exec, getSessionName });
+      await expect(bridge.createSession("x")).rejects.toThrow("tmux server died");
     });
   });
 

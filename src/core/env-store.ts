@@ -1,22 +1,23 @@
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import * as nodePath from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { appStateFile } from "../shared/state-dir.js";
+import { writeFileAtomicSync } from "../shared/utils/atomic-write.js";
 import { serializeEnv } from "./onboarding.js";
 
-const ENV_PATH = nodePath.join(process.cwd(), ".env");
+const envPath = (): string => appStateFile(".env");
 
 /**
  * Persist a single var into `.env` so a runtime preference (voice language, UI
  * language, …) survives a restart — the running process already has it via
  * process.env; this is for next boot. No-op when there is no `.env` to write
  * into. Uses the existing file as the template: serializeEnv replaces only that
- * one line (or appends it) and leaves every other line untouched. Atomic + 0600.
+ * one line (or appends it) and leaves every other line untouched. The write goes
+ * through the shared atomic writer (temp + fsync + rename, 0600) so a crash
+ * mid-write can't truncate `.env` and lose the bot token.
  */
 export function persistEnvVar(key: string, value: string): void {
-  if (!existsSync(ENV_PATH)) return;
-  const current = readFileSync(ENV_PATH, "utf8");
+  const path = envPath();
+  if (!existsSync(path)) return;
+  const current = readFileSync(path, "utf8");
   const next = serializeEnv(current, { [key]: value });
-  const tmp = `${ENV_PATH}.tmp`;
-  writeFileSync(tmp, next, "utf8");
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, ENV_PATH);
+  writeFileAtomicSync(path, next, { mode: 0o600 });
 }

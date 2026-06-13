@@ -75,7 +75,7 @@ describe("addRecentProjectBySid", () => {
     const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tg-recent-create-"));
     recentLines.push(dir);
     const ctx = fakeCtx();
-    const createSession = vi.fn(async () => {});
+    const createSession = vi.fn(async () => true); // created a new session
     const setCurrent = vi.fn(async () => {});
     const deps = fakeDeps({
       config: { cdAllowedDirs: [dir], projectSessionPrefix: PREFIX, sessionWarmupMs: 0 },
@@ -85,9 +85,10 @@ describe("addRecentProjectBySid", () => {
 
     await addRecentProjectBySid(deps, ctx, sidFor(dir), replyTarget);
 
-    expect(createSession).toHaveBeenCalled();
+    // The pane is created directly in the project dir (-c); no shell `cd` is typed.
+    expect(createSession).toHaveBeenCalledWith(expect.any(String), dir);
     expect(setCurrent).toHaveBeenCalled();
-    expect(deps.bridge.sendKeys).toHaveBeenCalled();
+    expect(deps.bridge.sendKeys).not.toHaveBeenCalled();
     expect(ctx.texts().some((t) => t.includes("项目已创建"))).toBe(true);
   });
 

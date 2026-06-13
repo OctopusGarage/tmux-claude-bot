@@ -52,6 +52,40 @@ describe("MessageQueue", () => {
       expect(results).toEqual(["a", "b"]);
     });
 
+    it("rejects the message if the handler throws without settling (no hang)", async () => {
+      // The handler contract is to settle the message itself; a handler that
+      // throws without doing so must not leave the caller awaiting forever.
+      const queue = new MessageQueue(10);
+      queue.setHandler(async () => {
+        throw new Error("boom");
+      });
+
+      let rejected: Error | undefined;
+      queue.enqueue(createTestMessage({ id: "1", text: "a", reject: (e) => (rejected = e) }));
+
+      await waitFor(() => rejected !== undefined);
+      expect(rejected?.message).toBe("boom");
+    });
+
+    it("does not re-run the handler (tmux sends are not idempotent)", async () => {
+      // The old retry loop would re-run a throwing handler up to 3x → triple
+      // sendKeys. A throwing handler must run exactly once.
+      const queue = new MessageQueue(10);
+      let runs = 0;
+      queue.setHandler(async () => {
+        runs += 1;
+        throw new Error("boom");
+      });
+
+      let rejected = false;
+      queue.enqueue(createTestMessage({ id: "1", text: "a", reject: () => (rejected = true) }));
+
+      await waitFor(() => rejected);
+      // Give any stray retry a chance to fire before asserting it did not.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(runs).toBe(1);
+    });
+
     it("handles multiple messages in sequence", async () => {
       const queue = new MessageQueue(10);
       const results: string[] = [];
@@ -649,6 +683,55 @@ describe("MessageQueue", () => {
       expect(queue.size("s1")).toBe(1);
 
       releaseBlocker();
+    });
+
+    it("skips identical text matching the message currently being processed (in-flight)", async () => {
+      const queue = new MessageQueue(10);
+      let releaseBlocker!: () => void;
+      queue.setHandler(async (msg) => {
+        if (msg.id === "0")
+          await new Promise<void>((r) => {
+            releaseBlocker = r;
+          });
+        msg.resolve("ok");
+      });
+      queue.enqueue(mkBlocker()); // text "blocker", chatId 99 — gets dequeued, now in-flight
+      await waitFor(() => queue.isSessionProcessing("s1"));
+      expect(queue.size("s1")).toBe(0); // no longer waiting — it's being processed
+
+      // Re-sending the identical text WHILE it is still processing must dedup, not
+      // enqueue a second copy that would be typed into the pane a second time.
+      expect(queue.enqueue(mkTextMsg("dup", "blocker", 99))).toBe("duplicate");
+      expect(queue.size("s1")).toBe(0);
+
+      releaseBlocker();
+    });
+
+    it("skips identical text matching the in-flight GLOBAL message (not just session)", async () => {
+      const queue = new MessageQueue(10);
+      let release!: () => void;
+      queue.setHandler(async (msg) => {
+        if (msg.text === "gblock")
+          await new Promise<void>((r) => {
+            release = r;
+          });
+        msg.resolve("ok");
+      });
+      // A global message (no sessionName) — dequeued into currentGlobalMessage.
+      const gmsg = (id: string) => ({
+        action: "text" as const,
+        id,
+        text: "gblock",
+        chatId: 7,
+        resolve() {},
+        reject() {},
+      });
+      queue.enqueue(gmsg("g0"));
+      await waitFor(() => queue.isGlobalProcessing());
+
+      expect(queue.enqueue(gmsg("g1"))).toBe("duplicate");
+
+      release();
     });
 
     it("reports dedup distinctly: 'queued' vs 'duplicate' (both truthy)", async () => {

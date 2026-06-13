@@ -4,16 +4,26 @@ import { join } from "node:path";
 import type { CardActionEvent } from "@larksuiteoapi/node-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.js";
-import { bindGroup, getBinding } from "../../../src/core/group-bindings.js";
+import { bindGroup, getBinding, unbindGroup } from "../../../src/core/group-bindings.js";
 import { appendRecentProject } from "../../../src/core/recentProjects.js";
 import { sessionNameFromPath } from "../../../src/core/sessionPathMap.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
-// Keep the real VOICE_LANGS/resolveWhisperLanguage; stub the .env writer.
+// Keep the real VOICE_LANGS/resolveWhisperLanguage; stub the .env writer and the
+// host-mutating install so `voiceinstall` is exercisable without a real install.
+const installVoiceMock = vi.fn(
+  async (): Promise<{ status: string; bin?: string; message?: string }> => ({
+    status: "ok",
+    bin: "/x/mlx_whisper",
+  }),
+);
 vi.mock("../../../src/core/voice-support.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../src/core/voice-support.js")>()),
   persistEnvVar: vi.fn(),
+  checkVoiceSupport: vi.fn(() => ({ ready: false, reason: "not-installed" })),
+  isVoicePlatformSupported: vi.fn(() => true),
+  installVoice: () => installVoiceMock(),
 }));
 
 function evt(value: unknown, over: Partial<CardActionEvent> = {}): CardActionEvent {
@@ -37,6 +47,23 @@ describe("makeCardActionHandler", () => {
     await handle(evt({ cmd: "voicelangmenu" }));
     expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
     expect(channel.imCreates).toHaveLength(1);
+  });
+
+  it("voiceinstall → runs the core install and replies the result (Feishu parity with Telegram)", async () => {
+    installVoiceMock.mockResolvedValueOnce({ status: "ok", bin: "/x/mlx_whisper" });
+    const channel = fakeChannel();
+    await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "voiceinstall" }));
+    expect(installVoiceMock).toHaveBeenCalled();
+    // acks "installing…" then reports success
+    expect(channel.texts().some((t) => t.includes("正在安装"))).toBe(true);
+    expect(channel.texts().some((t) => t.includes("已就绪"))).toBe(true);
+  });
+
+  it("voiceinstall → surfaces a failure result", async () => {
+    installVoiceMock.mockResolvedValueOnce({ status: "failed", message: "boom" });
+    const channel = fakeChannel();
+    await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "voiceinstall" }));
+    expect(channel.texts().some((t) => t.includes("boom"))).toBe(true);
   });
 
   it("voicelang on a managed picker → sets WHISPER_LANGUAGE and updates the card in place", async () => {
@@ -185,6 +212,91 @@ describe("makeCardActionHandler", () => {
 
     expect(deps.bridge.killSession).toHaveBeenCalledWith(session);
     expect(channel.texts().some((t) => t.includes("已移除"))).toBe(true);
+  });
+
+  it("'remove' in a bound group is refused with a hint — manage projects in private chat", async () => {
+    bindGroup("oc_grp_bound", { workspacePath: "/p/g", sessionName: "tmux_proj_g", label: "g" });
+    const session = "tmux_proj_beta";
+    const channel = fakeChannel();
+    channel.setChatType("group");
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      claude: { checkIfRunning: vi.fn(async () => false) },
+    });
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "remove", sid: sessionShortId(session) }, { chatId: "oc_grp_bound" }));
+
+    expect(deps.bridge.killSession).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("不能删除项目"))).toBe(true);
+    unbindGroup("oc_grp_bound");
+  });
+
+  it("a card action in an unbound (lost-binding) group is ignored — buttons do nothing", async () => {
+    const session = "tmux_proj_beta";
+    const channel = fakeChannel();
+    // No binding for this group, and it's a real group chat. Mirrors how text
+    // is ignored in unbound groups — stale buttons must not act either.
+    channel.setChatType("group");
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      claude: { checkIfRunning: vi.fn(async () => false) },
+    });
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "remove", sid: sessionShortId(session) }, { chatId: "oc_grp_rm" }));
+
+    expect(deps.bridge.killSession).not.toHaveBeenCalled();
+    expect(channel.sent).toHaveLength(0); // silent, like an ignored text message
+  });
+
+  it("a card action is ignored when the chat type can't be resolved (fail safe)", async () => {
+    const session = "tmux_proj_beta";
+    const channel = fakeChannel();
+    channel.getChatInfo = vi.fn(async () => {
+      throw new Error("network");
+    });
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      claude: { checkIfRunning: vi.fn(async () => false) },
+    });
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "remove", sid: sessionShortId(session) }, { chatId: "oc_unknown" }));
+
+    expect(deps.bridge.killSession).not.toHaveBeenCalled();
+    expect(channel.sent).toHaveLength(0);
+  });
+
+  it("'switch' in a bound group is pinned — refuses and does not change project", async () => {
+    bindGroup("oc_pinned", { workspacePath: "/p/pin", sessionName: "tmux_proj_pin", label: "pin" });
+    const session = "tmux_proj_alpha";
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => [session]) } });
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "switch", sid: sessionShortId(session) }, { chatId: "oc_pinned" }));
+
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("已固定绑定"))).toBe(true);
+    unbindGroup("oc_pinned"); // bindings are a module singleton over the shared temp dir
+  });
+
+  it("'addrecent' in a bound group is pinned — refuses, no project change", async () => {
+    bindGroup("oc_pinned2", {
+      workspacePath: "/p/pin",
+      sessionName: "tmux_proj_pin",
+      label: "pin",
+    });
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "addrecent", sid: "whatever" }, { chatId: "oc_pinned2" }));
+
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("已固定绑定"))).toBe(true);
+    unbindGroup("oc_pinned2");
   });
 
   it("'switch' with an unmatched sid does nothing observable", async () => {
@@ -347,13 +459,26 @@ describe("makeCardActionHandler", () => {
       expect(channel.texts().some((t) => t.includes("已恢复"))).toBe(true);
     });
 
-    it("bindhere with a sid → binds the current group to that recent project", async () => {
+    it("bindhere in a bound group → rebinds the current group to that recent project", async () => {
+      // bindhere is reached only from a bound group's rebind picker, so the
+      // chat is already a project group; bindhere re-anchors it elsewhere.
+      bindGroup("chat-1", { workspacePath: "/old", sessionName: "s-old", label: "old" });
       const deps = fakeDeps();
       await appendRecentProject(dir, deps.config.projectSessionPrefix);
       const sid = sessionShortId(sessionNameFromPath(dir, deps.config.projectSessionPrefix));
       const channel = fakeChannel();
       await makeCardActionHandler(channel, deps)(evt({ cmd: "bindhere", sid }));
       expect(getBinding("chat-1")?.workspacePath).toBe(dir);
+    });
+
+    it("bindhere in a private chat → refused (group only), no binding written", async () => {
+      const deps = fakeDeps();
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sid = sessionShortId(sessionNameFromPath(dir, deps.config.projectSessionPrefix));
+      const channel = fakeChannel(); // default chat type p2p, chat-1 not bound
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "bindhere", sid }));
+      expect(getBinding("chat-1")).toBeNull();
+      expect(channel.texts().some((t) => t.includes("群"))).toBe(true);
     });
   });
 

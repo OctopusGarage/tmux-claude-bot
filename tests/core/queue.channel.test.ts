@@ -29,7 +29,8 @@ describe("queue persistence with channel", () => {
       reject: () => {},
     };
     q.enqueue({ id: "1", ...base }); // dequeued immediately, blocks in handler
-    q.enqueue({ id: "2", ...base }); // stays in the session queue (backlog)
+    // Distinct text so it's a genuine backlog, not a dedup of the in-flight "hi".
+    q.enqueue({ id: "2", ...base, text: "bye" }); // stays in the session queue (backlog)
     q.flushPending();
 
     const reloaded = q.loadPersisted();

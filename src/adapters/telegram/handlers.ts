@@ -4,7 +4,6 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import { listClaudeSessions } from "../../core/history.js";
 import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
-import { chatScope } from "../../core/project-manager.js";
 import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
 import { appendRecentProject } from "../../core/recentProjects.js";
 import {
@@ -12,13 +11,7 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "../../core/sessionPathMap.js";
-import {
-  getWorkspace,
-  listWorkspaces,
-  removeWorkspace,
-  saveWorkspace,
-  WORKSPACE_NAME_RE,
-} from "../../core/workspaces.js";
+import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
@@ -35,6 +28,7 @@ import {
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
+import { tgScope } from "./scope.js";
 import { resolveSessionFromReply } from "./session.js";
 import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
 
@@ -114,10 +108,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     try {
       const exists = await deps.bridge.hasSession(sessionName);
       if (exists) {
-        await deps.currentProject.set(
-          chatScope("telegram", String(ctx.chat?.id ?? 0)),
-          sessionName,
-        );
+        await deps.currentProject.set(tgScope(ctx), sessionName);
         setPathForSession(sessionName, resolvedPath);
         await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
         await reply(ctx, "warn", messages("telegram").alreadySwitched, {
@@ -126,12 +117,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
         });
         return;
       }
-      await createProjectSession(
-        deps,
-        chatScope("telegram", String(ctx.chat?.id ?? 0)),
-        sessionName,
-        resolvedPath,
-      );
+      await createProjectSession(deps, tgScope(ctx), sessionName, resolvedPath);
       await reply(ctx, "ok", messages("telegram").projectCreated, {
         session: sessionName,
         body: resolvedPath,
@@ -143,7 +129,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("current_project", async (ctx) => {
-    const session = await deps.currentProject.get(chatScope("telegram", String(ctx.chat?.id ?? 0)));
+    const session = await deps.currentProject.get(tgScope(ctx));
     if (!session) {
       await reply(ctx, "err", messages("telegram").noCurrentProjectSet);
       return;
@@ -164,10 +150,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("list_recent_projects", async (ctx) => {
-    const buttons = await recentProjectButtons(
-      deps,
-      chatScope("telegram", String(ctx.chat?.id ?? 0)),
-    );
+    const buttons = await recentProjectButtons(deps, tgScope(ctx));
     if (buttons.length === 0) {
       await reply(ctx, "list", messages("telegram").noRecentProjects);
       return;
@@ -188,7 +171,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("sessions", async (ctx) => {
-    const scope = chatScope("telegram", String(ctx.chat?.id ?? 0));
+    const scope = tgScope(ctx);
     const sessionName = await deps.currentProject.get(scope);
     if (!sessionName) {
       await reply(ctx, "err", MSG.noSession);
@@ -230,73 +213,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("ws", async (ctx) => {
-    const tm = messages("telegram");
     const raw = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
-    const parts = raw.split(/\s+/).filter(Boolean);
-    const sub = parts[0]?.toLowerCase();
-    const name = parts[1];
-
-    if (sub === "list") {
-      const all = listWorkspaces();
-      if (all.length === 0) {
-        await reply(ctx, "list", tm.wsListEmpty);
-        return;
-      }
-      const lines = [tm.wsListTitle, ...all.map((w) => tm.wsListItem(w.name, w.session))];
-      await reply(ctx, "list", lines.join("\n"));
-      return;
-    }
-
-    if (sub === "save") {
-      if (!name || !WORKSPACE_NAME_RE.test(name)) {
-        await reply(ctx, "err", name ? tm.wsInvalidName : tm.wsUsage);
-        return;
-      }
-      const session = await deps.currentProject.get(
-        chatScope("telegram", String(ctx.chat?.id ?? 0)),
-      );
-      if (!session) {
-        await reply(ctx, "err", tm.wsNoCurrentProject);
-        return;
-      }
-      saveWorkspace(name, session);
-      await reply(ctx, "ok", tm.wsSaved(name, session));
-      return;
-    }
-
-    if (sub === "use") {
-      if (!name || !WORKSPACE_NAME_RE.test(name)) {
-        await reply(ctx, "err", name ? tm.wsInvalidName : tm.wsUsage);
-        return;
-      }
-      const session = getWorkspace(name);
-      if (!session) {
-        await reply(ctx, "err", tm.wsNotFound(name));
-        return;
-      }
-      if (!(await deps.bridge.hasSession(session))) {
-        await reply(ctx, "err", tm.wsSessionGone(name));
-        return;
-      }
-      await deps.currentProject.set(chatScope("telegram", String(ctx.chat?.id ?? 0)), session);
-      await reply(ctx, "ok", tm.wsUsed(name));
-      return;
-    }
-
-    if (sub === "remove") {
-      if (!name || !WORKSPACE_NAME_RE.test(name)) {
-        await reply(ctx, "err", name ? tm.wsInvalidName : tm.wsUsage);
-        return;
-      }
-      if (!removeWorkspace(name)) {
-        await reply(ctx, "err", tm.wsNotFound(name));
-        return;
-      }
-      await reply(ctx, "ok", tm.wsRemoved(name));
-      return;
-    }
-
-    await reply(ctx, "info", tm.wsUsage);
+    await runWorkspaceCommand(deps, "telegram", String(ctx.chat?.id ?? 0), raw, (kind, text) =>
+      reply(ctx, kind, text),
+    );
   });
 
   // Inline-button taps: control panel (esc/interrupt/enter/restart) and the
@@ -339,7 +259,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
           await reply(ctx, "err", MSG.noShortId(id), { replyTarget });
           return;
         }
-        await switchToProject(deps, chatScope("telegram", String(ctx.chat?.id ?? 0)), sessionName);
+        await switchToProject(deps, tgScope(ctx), sessionName);
         await reply(ctx, "ok", messages("telegram").switched, {
           session: sessionName,
           replyTarget,
@@ -374,9 +294,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
 
-    const currentSessionName =
-      targetSession ??
-      (await deps.currentProject.get(chatScope("telegram", String(ctx.chat?.id ?? 0))));
+    const currentSessionName = targetSession ?? (await deps.currentProject.get(tgScope(ctx)));
     if (!currentSessionName) {
       logger.warn(`[handlers] no current session chat=${chatId}`);
       await reply(ctx, "err", MSG.noSession);

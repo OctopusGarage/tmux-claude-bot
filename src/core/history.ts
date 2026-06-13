@@ -293,6 +293,19 @@ async function getLatestAssistantReplyInternal(
   }
   if (files.length === 0) return null;
 
+  // INTENTIONAL: only the newest transcript is scanned, not the newest N.
+  // Considered scanning more files (the active reply could, in theory, land in a
+  // file that isn't files[0] — e.g. a concurrent session in the same project dir,
+  // or a turn split across files mid-stream). Rejected because: (1) the trigger is
+  // very rare — the active session's file gets the newest mtime the moment it
+  // writes the reply, so it IS files[0] in the normal case; (2) when this lookup
+  // returns null the executor degrades gracefully to the pane snapshot, so the
+  // user still gets an answer; (3) the safe multi-file variant (exact-match
+  // fallback over older files) has a stale-reply window for RE-SENT identical
+  // prompts — before Claude echoes the new user line into the transcript, the
+  // fallback can match an older identical prompt and return its stale reply
+  // instead of waiting for the current one. The marginal coverage isn't worth
+  // that regression. Do NOT "fix" this to scan more files without solving (3).
   // files.length >= 1 is guaranteed by the check above
   const latestFile = files[0];
   if (latestFile === undefined) return null;

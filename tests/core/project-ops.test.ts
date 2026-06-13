@@ -53,21 +53,33 @@ describe("resolveProjectPath", () => {
 });
 
 describe("createProjectSession", () => {
-  it("creates the session, sets it current, and cds into the EXPLICIT session", async () => {
+  it("creates the session in the project dir (-c) and sets it current — no shell cd typed", async () => {
     const deps = fakeDeps();
     await createProjectSession(deps, "lark", "tmux_proj_x", "/path/x");
 
-    expect(deps.bridge.createSession).toHaveBeenCalledWith("tmux_proj_x");
+    // The working dir is handed to tmux as new-session -c <path>, so the pane starts
+    // there with no shell evaluation of the path (no injection on exotic paths).
+    expect(deps.bridge.createSession).toHaveBeenCalledWith("tmux_proj_x", "/path/x");
     expect(deps.currentProject.set).toHaveBeenCalledWith("lark", "tmux_proj_x");
-    // The cd MUST target the named session, not the channel default — otherwise a
-    // Feishu create could land its cd in Telegram's current session.
-    expect(deps.bridge.sendKeys).toHaveBeenCalledWith('cd "/path/x"', "tmux_proj_x");
+    expect(deps.bridge.sendKeys).not.toHaveBeenCalled();
   });
 
   it("passes the channel through to currentProject.set", async () => {
     const deps = fakeDeps();
     await createProjectSession(deps, "telegram", "tmux_proj_y", "/path/y");
     expect(deps.currentProject.set).toHaveBeenCalledWith("telegram", "tmux_proj_y");
+  });
+
+  it("never types keys, even when the session already existed (createSession → false)", async () => {
+    // A race or the `claude` helper already made the session — it may have Claude
+    // running, so we must not type anything into its prompt. The -c only applies to
+    // a freshly created pane; an existing one is left untouched.
+    const deps = fakeDeps({ bridge: { createSession: vi.fn(async () => false) } });
+    await createProjectSession(deps, "lark", "tmux_proj_z", "/path/z");
+
+    expect(deps.bridge.createSession).toHaveBeenCalledWith("tmux_proj_z", "/path/z");
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark", "tmux_proj_z");
+    expect(deps.bridge.sendKeys).not.toHaveBeenCalled();
   });
 });
 
@@ -165,7 +177,7 @@ describe("recentProjectButtons", () => {
     vi.mocked(readRecentProjectLines).mockResolvedValueOnce([dir]);
     const sessionName = `tmux_proj_${dir.replace(/\//g, "-")}`;
     const deps = fakeDeps({
-      bridge: { hasSession: vi.fn(async () => true) },
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
       currentProject: { get: vi.fn(async () => sessionName) },
       session: sessionName,
     });

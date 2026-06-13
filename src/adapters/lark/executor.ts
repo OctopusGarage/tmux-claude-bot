@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage, type MessageAction } from "../../core/dispatch.js";
+import { enqueueMessage } from "../../core/enqueue.js";
+import { isProjectGroup } from "../../core/group-bindings.js";
 import { messages } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
@@ -29,7 +30,11 @@ export async function resolveSession(
   if (!session) {
     // No "/" discovery on Feishu — give buttons (projects/recent via the panel)
     // instead of a text hint pointing at commands they'd have to type.
-    await sendCard(channel, chatId, recoveryCard(messages("lark").noCurrentProject));
+    await sendCard(
+      channel,
+      chatId,
+      recoveryCard(messages("lark").noCurrentProject, isProjectGroup(chatId)),
+    );
     return null;
   }
   return session;
@@ -61,71 +66,82 @@ export async function enqueueLarkAction(
     return;
   }
 
-  const queueSizeBefore = deps.queue.size(session);
-
-  const queued = deps.queue.enqueue({
-    id: `${Date.now()}-${randomUUID().slice(0, 8)}`,
-    text,
-    chatId,
-    channel: "lark",
-    sessionName: session,
-    action,
-    resolve: (output) => {
-      logger.info(`[lark] resolve session=${session} output_len=${output.length}`);
-      onSettled?.();
-      void markDone(channel, messageId);
-      void (async () => {
-        // Only natural-language Claude results carry the control buttons; every
-        // other action (start/restart/exit) replies as plain text. Mirrors
-        // Telegram, where the control keyboard rides only on the NL result.
-        if (action === "text") {
-          const mid = await sendCard(channel, chatId, resultCard(output, projectTag(session)));
-          if (mid) {
-            recordReplyTarget(mid, session);
-          }
-        } else {
-          await sendText(channel, chatId, `${output}\n\n${projectTag(session)}`);
-        }
-      })();
-    },
-    notify: (text) => {
-      void sendText(channel, chatId, `${text}\n\n${projectTag(session)}`);
-    },
-    reject: (err) => {
-      logger.error(`[lark] reject session=${session} err=${err.message}`);
-      onSettled?.();
-      // Errors often mean Claude died / isn't running — surface start/restart.
-      void sendCard(
-        channel,
-        chatId,
-        recoveryCard(`${messages("lark").errorPrefix(err.message)}\n${projectTag(session)}`),
-      );
-    },
-  });
-
   const m = messages("lark");
   const tag = projectTag(session);
-  if (!queued) {
-    logger.warn(`[lark] queue full session=${session} max=${deps.queue.getMaxSize()}`);
-    onSettled?.();
-    await sendText(channel, chatId, `⚠️ ${m.queueFull(deps.queue.getMaxSize())}\n${tag}`);
-    return;
-  }
-  if (queued === "duplicate") {
-    // Dropped without ever firing resolve/reject — settle now so a blocked
-    // debounce scope can't be jammed forever. The ack below still goes out
-    // (dedup has always pretended success to the sender).
-    onSettled?.();
-  }
-
-  logger.info(
-    `[lark] enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`,
+  await enqueueMessage(
+    {
+      queue: deps.queue,
+      session,
+      chatId,
+      channel: "lark",
+      action,
+      text,
+      callbacks: {
+        resolve: (output) => {
+          logger.info(`[lark] resolve session=${session} output_len=${output.length}`);
+          onSettled?.();
+          void markDone(channel, messageId);
+          void (async () => {
+            // Only natural-language Claude results carry the control buttons; every
+            // other action (start/restart/exit) replies as plain text. Mirrors
+            // Telegram, where the control keyboard rides only on the NL result.
+            if (action === "text") {
+              const mid = await sendCard(
+                channel,
+                chatId,
+                resultCard(output, projectTag(session), isProjectGroup(chatId)),
+              );
+              if (mid) {
+                recordReplyTarget(mid, session);
+              }
+            } else {
+              await sendText(channel, chatId, `${output}\n\n${projectTag(session)}`);
+            }
+          })();
+        },
+        notify: (text) => {
+          void sendText(channel, chatId, `${text}\n\n${projectTag(session)}`);
+        },
+        reject: (err) => {
+          logger.error(`[lark] reject session=${session} err=${err.message}`);
+          onSettled?.();
+          // Errors often mean Claude died / isn't running — surface start/restart.
+          void sendCard(
+            channel,
+            chatId,
+            recoveryCard(
+              `${messages("lark").errorPrefix(err.message)}\n${projectTag(session)}`,
+              isProjectGroup(chatId),
+            ),
+          );
+        },
+      },
+    },
+    {
+      accepted: async (queueSizeBefore) => {
+        logger.info(
+          `[lark] enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`,
+        );
+        void markWorking(channel, messageId);
+        // Mirror Telegram's tone emoji (✅ received / ⏳ queued) so both channels
+        // read the same — Feishu has no tone layer, so it's stamped here.
+        const ack =
+          queueSizeBefore === 0 ? `✅ ${m.ackReceived}` : `⏳ ${m.queuedAt(queueSizeBefore)}`;
+        await sendText(channel, chatId, `${ack}\n${tag}`);
+      },
+      full: async () => {
+        logger.warn(`[lark] queue full session=${session} max=${deps.queue.getMaxSize()}`);
+        onSettled?.();
+        await sendText(channel, chatId, `⚠️ ${m.queueFull(deps.queue.getMaxSize())}\n${tag}`);
+      },
+      // Dropped without ever firing resolve/reject — settle now so a blocked
+      // debounce scope can't be jammed forever. The accepted ack still goes out
+      // (dedup has always pretended success to the sender).
+      duplicate: () => {
+        onSettled?.();
+      },
+    },
   );
-  void markWorking(channel, messageId);
-  // Mirror Telegram's tone emoji (✅ received / ⏳ queued) so both channels read
-  // the same — Feishu has no tone layer, so it's stamped here.
-  const ack = queueSizeBefore === 0 ? `✅ ${m.ackReceived}` : `⏳ ${m.queuedAt(queueSizeBefore)}`;
-  await sendText(channel, chatId, `${ack}\n${tag}`);
 }
 
 /**
@@ -168,7 +184,10 @@ export async function runImmediateLarkAction(
     await sendCard(
       channel,
       chatId,
-      recoveryCard(`${messages("lark").errorPrefix(errMsg)}\n${projectTag(session)}`),
+      recoveryCard(
+        `${messages("lark").errorPrefix(errMsg)}\n${projectTag(session)}`,
+        isProjectGroup(chatId),
+      ),
     );
   }
 }

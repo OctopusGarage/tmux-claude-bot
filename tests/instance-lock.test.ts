@@ -7,10 +7,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   acquireInstanceLock,
   InstanceLockHeldError,
+  type ProcessProbe,
   releaseInstanceLock,
 } from "../src/core/instance-lock.js";
 
 const lockPath = (): string => path.join(process.env.TCB_STATE_DIR ?? "", ".instance.lock");
+
+/** Holder pid is alive AND is a real bot process → a genuine conflict. */
+const botAlive: ProcessProbe = { isAlive: () => true, isBotProcess: () => true };
+/** Holder pid is alive but is NOT our bot → a recycled pid → stale, take over. */
+const aliveNotBot: ProcessProbe = { isAlive: () => true, isBotProcess: () => false };
 
 /** A pid that is guaranteed dead: spawn a short-lived child and let it exit. */
 function deadPid(): number {
@@ -37,17 +43,31 @@ describe("instance lock", () => {
     expect(typeof holder.startedAt).toBe("string");
   });
 
-  it("throws InstanceLockHeldError when another live process holds the lock", () => {
+  it("throws InstanceLockHeldError when another live bot process holds the lock", () => {
     fs.writeFileSync(
       lockPath(),
       JSON.stringify({ pid: alivePid(), startedAt: new Date().toISOString() }),
     );
-    expect(() => acquireInstanceLock()).toThrow(InstanceLockHeldError);
+    expect(() => acquireInstanceLock(botAlive)).toThrow(InstanceLockHeldError);
     try {
-      acquireInstanceLock();
+      acquireInstanceLock(botAlive);
     } catch (err) {
       expect((err as InstanceLockHeldError).holder.pid).toBe(alivePid());
     }
+  });
+
+  it("takes over a lock whose pid is alive but is NOT a bot process (recycled pid)", () => {
+    // B5: after a crash (SIGKILL) the OS can recycle the bot's pid for an unrelated
+    // process. A liveness-only check would see it 'alive' and refuse to start
+    // forever under launchd KeepAlive — the exact crash-loop the lock should
+    // survive. The holder must be confirmed to actually be a bot instance.
+    fs.writeFileSync(
+      lockPath(),
+      JSON.stringify({ pid: alivePid(), startedAt: new Date().toISOString() }),
+    );
+    acquireInstanceLock(aliveNotBot);
+    const holder = JSON.parse(fs.readFileSync(lockPath(), "utf8"));
+    expect(holder.pid).toBe(process.pid);
   });
 
   it("takes over a stale lock whose holder is dead", () => {
@@ -65,6 +85,25 @@ describe("instance lock", () => {
     acquireInstanceLock();
     const holder = JSON.parse(fs.readFileSync(lockPath(), "utf8"));
     expect(holder.pid).toBe(process.pid);
+  });
+
+  it("takes over a partially-written holder (valid pid but missing startedAt) even with a live-bot probe", () => {
+    // A half-written lock — valid number pid, but startedAt absent — is not a
+    // usable holder; it must be reclaimed, NOT trusted as a live conflict. The
+    // valid pid + live-bot probe prove it's the FIELD validation (each field
+    // checked independently), not the liveness check, that rejects it.
+    fs.writeFileSync(lockPath(), JSON.stringify({ pid: 4242 })); // startedAt missing
+    acquireInstanceLock(botAlive);
+    expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(process.pid);
+  });
+
+  it("takes over a holder whose pid is the wrong type", () => {
+    fs.writeFileSync(
+      lockPath(),
+      JSON.stringify({ pid: "nope", startedAt: new Date().toISOString() }),
+    );
+    acquireInstanceLock(botAlive);
+    expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(process.pid);
   });
 
   it("release removes the lock file we hold", () => {

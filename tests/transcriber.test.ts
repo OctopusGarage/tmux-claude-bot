@@ -14,11 +14,25 @@ vi.mock("node:child_process", () => ({
   ),
 }));
 
+// transcribeWithCache's cache layer — mocked so the orchestration is driven by
+// the test (the disk cache itself is media-cache's own concern).
+vi.mock("../src/shared/utils/media-cache.js", () => ({
+  getFromCache: vi.fn(),
+  saveToCache: vi.fn(),
+}));
+
 import { execFile } from "node:child_process";
-import { transcribeOgg } from "../src/core/transcriber.js";
+import {
+  DEFAULT_WHISPER_MODEL,
+  transcribeOgg,
+  transcribeWithCache,
+} from "../src/core/transcriber.js";
+import { getFromCache, saveToCache } from "../src/shared/utils/media-cache.js";
 
 const TMP = os.tmpdir();
 const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+const mockGetFromCache = getFromCache as unknown as ReturnType<typeof vi.fn>;
+const mockSaveToCache = saveToCache as unknown as ReturnType<typeof vi.fn>;
 
 describe("transcribeOgg", () => {
   beforeEach(() => {
@@ -48,7 +62,7 @@ describe("transcribeOgg", () => {
 
     expect(mockExecFile).toHaveBeenCalledWith(
       "mlx_whisper",
-      [ogg, "--output-format", "txt", "--output-dir", TMP],
+      [ogg, "--model", DEFAULT_WHISPER_MODEL, "--output-format", "txt", "--output-dir", TMP],
       expect.any(Function),
     );
     expect(result).toBe("test transcription output");
@@ -62,7 +76,17 @@ describe("transcribeOgg", () => {
     await transcribeOgg(ogg, "mlx_whisper", "zh");
 
     const args = mockExecFile.mock.calls[0]?.[1] as string[];
-    expect(args).toEqual([ogg, "--output-format", "txt", "--output-dir", TMP, "--language", "zh"]);
+    expect(args).toEqual([
+      ogg,
+      "--model",
+      DEFAULT_WHISPER_MODEL,
+      "--output-format",
+      "txt",
+      "--output-dir",
+      TMP,
+      "--language",
+      "zh",
+    ]);
   });
 
   it("omits --language for auto", async () => {
@@ -96,5 +120,152 @@ describe("transcribeOgg", () => {
         cb(new Error("whisper failed")),
     );
     await expect(transcribeOgg(ogg)).rejects.toThrow("whisper failed");
+  });
+
+  it("retries with auto-detect when a forced language yields no output (model lacks e.g. yue)", async () => {
+    // mlx_whisper exits 0 but writes no txt when the forced --language is
+    // unsupported by the installed model (tiny has no "yue" → ValueError). The
+    // bad language code must degrade to auto-detect, not hard-fail.
+    const ogg = nodePath.join(TMP, "twc_yue_retry.ogg");
+    fs.writeFileSync(ogg, "fake ogg data");
+    const txt = nodePath.join(TMP, "twc_yue_retry.txt");
+    if (fs.existsSync(txt)) fs.unlinkSync(txt);
+    mockExecFile.mockImplementation(
+      (_bin: string, args: string[], cb: (e: Error | null, o: unknown) => void) => {
+        if (args.includes("--language")) {
+          // forced language → model can't honor it: exit 0, no txt, ValueError in stderr
+          cb(null, { stdout: "", stderr: "ValueError: tuple.index(x): x not in tuple\nSkipping" });
+        } else {
+          fs.writeFileSync(txt, "你好"); // auto-detect retry succeeds
+          cb(null, { stdout: "", stderr: "" });
+        }
+      },
+    );
+
+    const result = await transcribeOgg(ogg, "mlx_whisper", "yue");
+
+    expect(result).toBe("你好");
+    expect(mockExecFile.mock.calls[0]?.[1]).toContain("--language"); // first: forced yue
+    expect(mockExecFile.mock.calls[1]?.[1]).not.toContain("--language"); // retry: auto
+  });
+
+  it("with noFallback, a forced-language failure throws immediately — no auto-detect retry", async () => {
+    // The install smoke test relies on this strict mode: a model that can't do the
+    // forced language must be REPORTED, not silently downgraded to auto.
+    const ogg = nodePath.join(TMP, "twc_nofb.ogg");
+    fs.writeFileSync(ogg, "fake ogg data");
+    const txt = nodePath.join(TMP, "twc_nofb.txt");
+    if (fs.existsSync(txt)) fs.unlinkSync(txt);
+    mockExecFile.mockImplementation(
+      (_b: string, _a: string[], cb: (e: Error | null, o: unknown) => void) =>
+        cb(null, { stdout: "", stderr: "ValueError: tuple.index" }),
+    );
+
+    await expect(transcribeOgg(ogg, "mlx_whisper", "yue", { noFallback: true })).rejects.toThrow(
+      /no output/,
+    );
+    expect(mockExecFile).toHaveBeenCalledTimes(1); // NOT retried — strict verdict
+  });
+
+  it("throws with whisper's own error text when no output is produced at all", async () => {
+    // Regression: this used to throw a bare "output not found", discarding the
+    // stderr that explains WHY — which is exactly why the yue failure was
+    // un-diagnosable in the logs.
+    const ogg = nodePath.join(TMP, "twc_noout.ogg");
+    fs.writeFileSync(ogg, "fake ogg data");
+    const txt = nodePath.join(TMP, "twc_noout.txt");
+    if (fs.existsSync(txt)) fs.unlinkSync(txt);
+    mockExecFile.mockImplementation(
+      (_bin: string, _args: string[], cb: (e: Error | null, o: unknown) => void) =>
+        cb(null, { stdout: "", stderr: "Skipping /x due to ValueError: boom-detail" }),
+    );
+
+    await expect(transcribeOgg(ogg, "mlx_whisper", "auto")).rejects.toThrow(/boom-detail/);
+  });
+});
+
+describe("transcribeWithCache", () => {
+  // Stage a real .ogg + its mlx_whisper .txt output so the (real, in-module)
+  // transcribeOgg succeeds; execFile is the no-op mock above.
+  const stageAudio = (name: string, text: string): string => {
+    const ogg = nodePath.join(TMP, `${name}.ogg`);
+    fs.writeFileSync(ogg, "fake ogg data");
+    fs.writeFileSync(nodePath.join(TMP, `${name}.txt`), text);
+    return ogg;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExecFile.mockImplementation(
+      (_bin: string, _args: string[], cb: (e: Error | null, o: unknown) => void) =>
+        cb(null, { stdout: "", stderr: "" }),
+    );
+    mockSaveToCache.mockImplementation((_k: string, src: string) => src);
+  });
+
+  const base = { label: "t", cacheKey: "k", bin: "mlx_whisper", language: "auto" as const };
+
+  it("cache hit → skips download, transcribes the cached path", async () => {
+    const cached = stageAudio("twc_hit", "from cache");
+    mockGetFromCache.mockReturnValue(cached);
+    const download = vi.fn();
+
+    const res = await transcribeWithCache({ ...base, tmpPath: "/tmp/unused.ogg", download });
+
+    expect(download).not.toHaveBeenCalled();
+    expect(res).toEqual({ ok: true, text: "from cache" });
+  });
+
+  it("cache miss → downloads, caches, transcribes the cached path", async () => {
+    mockGetFromCache.mockReturnValue(null);
+    const cached = stageAudio("twc_cached", "hello");
+    mockSaveToCache.mockReturnValue(cached);
+    const tmpPath = nodePath.join(TMP, "twc_tmp.ogg");
+    const download = vi.fn(async (p: string) => fs.writeFileSync(p, "dl"));
+
+    const res = await transcribeWithCache({ ...base, tmpPath, download });
+
+    expect(download).toHaveBeenCalledWith(tmpPath);
+    expect(mockSaveToCache).toHaveBeenCalledWith("k", tmpPath);
+    expect(res).toEqual({ ok: true, text: "hello" });
+  });
+
+  it("download keeps failing → retried (2x), returns reason 'download'", async () => {
+    mockGetFromCache.mockReturnValue(null);
+    const download = vi.fn().mockRejectedValue(new Error("net"));
+
+    const res = await transcribeWithCache({ ...base, tmpPath: "/tmp/twc_x.ogg", download });
+
+    expect(download).toHaveBeenCalledTimes(2); // withRetry: 1 retry
+    expect(res).toEqual({ ok: false, reason: "download" });
+  });
+
+  it("transcription throws → returns reason 'transcribe'", async () => {
+    mockGetFromCache.mockReturnValue(null);
+    const tmpPath = nodePath.join(TMP, "twc_tfail.ogg");
+    mockSaveToCache.mockReturnValue(tmpPath);
+    const download = vi.fn(async (p: string) => fs.writeFileSync(p, "dl"));
+    mockExecFile.mockImplementationOnce((_b: string, _a: string[], cb: (e: Error | null) => void) =>
+      cb(new Error("whisper boom")),
+    );
+
+    const res = await transcribeWithCache({ ...base, tmpPath, download });
+
+    expect(res).toEqual({ ok: false, reason: "transcribe" });
+  });
+
+  it("blank transcription → returns reason 'empty'", async () => {
+    mockGetFromCache.mockReturnValue(null);
+    const cached = stageAudio("twc_empty", "   ");
+    mockSaveToCache.mockReturnValue(cached);
+    const download = vi.fn(async (p: string) => fs.writeFileSync(p, "dl"));
+
+    const res = await transcribeWithCache({
+      ...base,
+      tmpPath: nodePath.join(TMP, "twc_empty_tmp.ogg"),
+      download,
+    });
+
+    expect(res).toEqual({ ok: false, reason: "empty" });
   });
 });

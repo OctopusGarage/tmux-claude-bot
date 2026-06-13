@@ -43,6 +43,12 @@ describe("atomic-write", () => {
       const leftovers = fs.readdirSync(dir).filter((f) => f.includes(".tmp-"));
       expect(leftovers).toEqual([]);
     });
+
+    it("applies the requested file mode (for secret files like .env)", () => {
+      const file = nodePath.join(dir, "secret.env");
+      writeFileAtomicSync(file, "TOKEN=abc", { mode: 0o600 });
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    });
   });
 
   describe("writeFileAtomic (async)", () => {

@@ -15,13 +15,19 @@ function tmpPath(file: string): string {
   return `${file}.tmp-${process.pid}-${randomBytes(3).toString("hex")}`;
 }
 
-export function writeFileAtomicSync(file: string, data: string): void {
+export interface AtomicWriteOptions {
+  /** chmod the file to this mode before it is renamed into place (e.g. 0o600 for secrets). */
+  mode?: number;
+}
+
+export function writeFileAtomicSync(file: string, data: string, opts?: AtomicWriteOptions): void {
   fs.mkdirSync(nodePath.dirname(file), { recursive: true });
   const tmp = tmpPath(file);
   try {
     const fd = fs.openSync(tmp, "w");
     try {
       fs.writeFileSync(fd, data, "utf-8");
+      if (opts?.mode !== undefined) fs.fchmodSync(fd, opts.mode);
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);

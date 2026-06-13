@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import fc from "fast-check";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   getPathBySession,
@@ -181,5 +182,48 @@ describe("isCdAllowed", () => {
   it("requires trailing slash prefix match (not partial)", () => {
     // /Users/test/project should NOT match /Users/test/proj
     expect(isCdAllowed("/Users/test/projects", ["/Users/test/proj"])).toBe(false);
+  });
+
+  it("rejects a path that escapes the allowed dir via .. (must normalize before matching)", () => {
+    // Raw prefix-matching would accept this (it textually starts with the allowed
+    // dir) even though it resolves OUTSIDE it — a traversal bypass of the gate.
+    expect(isCdAllowed("/Users/test/projects/../secret", ["/Users/test/projects"])).toBe(false);
+    expect(isCdAllowed("/Users/test/projects/../projects/app", ["/Users/test/projects"])).toBe(
+      true,
+    );
+  });
+});
+
+describe("isCdAllowed (property-based)", () => {
+  // Reference oracle = the SECURITY SPEC stated independently: the allow check
+  // must hold on the RESOLVED target (so `..` can't traverse out), prefix-matched
+  // on a path-segment boundary. The property pins the gate to this spec and would
+  // catch any regression that compares the raw (un-normalized) target.
+  const reference = (target: string, allowed: readonly string[]): boolean => {
+    if (allowed.length === 0) return true;
+    const t = path.resolve(target);
+    return allowed.some((d) => {
+      const r = path.resolve(d);
+      return t === r || t.startsWith(`${r}${path.sep}`);
+    });
+  };
+
+  const ROOTS = ["/allow/root", "/srv/data", "/home/u/work"];
+  // Segments deliberately include `..`/`.` and names that collide with the roots,
+  // so generated targets both escape and re-enter the allowed dirs.
+  const seg = fc.constantFrom("a", "b", "root", "work", "data", "..", ".", "secret", "x");
+
+  it("matches the resolve-then-prefix spec for adversarial paths (incl. .. traversal)", () => {
+    const targetArb = fc
+      .tuple(fc.constantFrom(...ROOTS), fc.array(seg, { maxLength: 6 }))
+      .map(([base, segs]) => (segs.length ? `${base}/${segs.join("/")}` : base));
+    const allowedArb = fc.uniqueArray(fc.constantFrom(...ROOTS), { minLength: 0, maxLength: 3 });
+
+    fc.assert(
+      fc.property(targetArb, allowedArb, (target, allowed) => {
+        expect(isCdAllowed(target, allowed)).toBe(reference(target, allowed));
+      }),
+      { numRuns: 300 },
+    );
   });
 });

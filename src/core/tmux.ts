@@ -62,6 +62,14 @@ export class TmuxBridge {
     }
   }
 
+  /**
+   * Type `text` into the pane line by line, pressing Enter after each line.
+   *
+   * The text content is sent with `-l` (literal) so tmux types it verbatim instead
+   * of interpreting a token as a key name — a line that happens to equal "Up",
+   * "Enter", "Tab" or "C-c" must be typed, not pressed. The newline is a separate
+   * un-flagged `Enter` (the key). For named keys use `sendRawKey`.
+   */
   async sendKeys(text: string, sessionName?: string): Promise<void> {
     const target = await this.formatTarget(sessionName);
     const lines = text.split("\n");
@@ -69,7 +77,7 @@ export class TmuxBridge {
       const isLastLine = i === lines.length - 1;
       const line = lines[i];
       if (line) {
-        await this.execFile("tmux", ["send-keys", "-t", target, line], { timeout: 10000 });
+        await this.execFile("tmux", ["send-keys", "-t", target, "-l", line], { timeout: 10000 });
       }
       if (line || isLastLine) {
         await this.execFile("tmux", ["send-keys", "-t", target, "Enter"], { timeout: 10000 });
@@ -96,8 +104,29 @@ export class TmuxBridge {
     await this.sendKeys("/exit", sessionName);
   }
 
-  async createSession(sessionName: string): Promise<void> {
-    await this.execFile("tmux", ["new-session", "-d", "-s", sessionName], { timeout: 10000 });
+  /**
+   * Ensure a detached session named `sessionName` exists. Returns true if it
+   * created one, false if it already existed. Race-safe: a bare `new-session`
+   * throws "duplicate session" when the session appears between a caller's
+   * hasSession check and this call (the `claude` helper, or two near-simultaneous
+   * messages) — so an already-existing session is treated as success, not an
+   * error. Only a genuine failure (tmux server down, bad name) rethrows.
+   *
+   * When `cwd` is given the new pane starts in that directory (`-c`). The path is
+   * an argv element handed to tmux, never evaluated by a shell, so callers must
+   * NOT also type a `cd "<path>"` (which would be shell-injectable on paths with
+   * spaces, $, backticks, quotes or `;`).
+   */
+  async createSession(sessionName: string, cwd?: string): Promise<boolean> {
+    const args = ["new-session", "-d", "-s", sessionName];
+    if (cwd !== undefined) args.push("-c", cwd);
+    try {
+      await this.execFile("tmux", args, { timeout: 10000 });
+      return true;
+    } catch (err) {
+      if (await this.hasSession(sessionName)) return false;
+      throw err;
+    }
   }
 
   async hasSession(sessionName: string): Promise<boolean> {

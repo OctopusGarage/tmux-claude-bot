@@ -1,4 +1,9 @@
-// ANSI escape code regex
+// ANSI escape code regex. The literal FIRST character below is an ESC byte (0x1B)
+// — it renders invisibly in most editors/viewers, so the literal looks like it
+// starts with `/[@-_]` but is actually `/\x1b[@-_].../`, i.e. PROPERLY ANCHORED on
+// ESC. Without that anchor the class `[@-_]` would match ordinary capital letters
+// and eat plain text ("Hello" → "llo"). Do NOT "simplify" by removing the leading
+// ESC; output.test.ts guards that plain capitalised text survives unchanged.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI ESC sequence
 const ANSI_REGEX = /[@-_][0-?]*[ -/]*[@-~]/g;
 

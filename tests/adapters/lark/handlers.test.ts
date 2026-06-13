@@ -59,9 +59,9 @@ describe("makeMessageHandler", () => {
       }),
     );
 
-    // The voice handler ran (replied the not-installed hint) — NOT the
+    // The voice handler ran (offered the one-tap install card) — NOT the
     // unsupported-media message.
-    expect(channel.texts().some((t) => t.includes("语音转写未安装"))).toBe(true);
+    expect(JSON.stringify(channel.cards())).toContain("voiceinstall");
     expect(channel.texts().join("\n")).not.toContain("暂仅支持文本和语音消息");
   });
 
