@@ -1,22 +1,28 @@
 import { persistEnvVar } from "../env-store.js";
 import type { Channel } from "../project-manager.js";
 import { en } from "./catalog/en.js";
+import { es } from "./catalog/es.js";
+import { ja } from "./catalog/ja.js";
 import { yue } from "./catalog/yue.js";
 import { type Messages, zh } from "./catalog/zh.js";
+import { zhTW } from "./catalog/zh-TW.js";
 
 export type { Messages };
 
-/** Supported UI languages (display order: English, Chinese, Cantonese). `zh` stays the
- * canonical catalog shape + default. */
-export type Lang = "en" | "zh" | "yue";
+/** Supported UI languages (display order: English, Simplified/Traditional Chinese,
+ * Cantonese, Japanese, Spanish). `zh` stays the canonical catalog shape + default. */
+export type Lang = "en" | "zh" | "zh-TW" | "yue" | "ja" | "es";
 
-const CATALOGS: Record<Lang, Messages> = { en, zh, yue };
+const CATALOGS: Record<Lang, Messages> = { en, zh, "zh-TW": zhTW, yue, ja, es };
 
 /** UI languages offered in the /lang picker (code + native label). */
 export const UI_LANGS: ReadonlyArray<{ code: Lang; label: string }> = [
   { code: "en", label: "English" },
   { code: "zh", label: "中文" },
+  { code: "zh-TW", label: "繁體中文" },
   { code: "yue", label: "粵語" },
+  { code: "ja", label: "日本語" },
+  { code: "es", label: "Español" },
 ];
 
 export const DEFAULT_UI_LANG: Lang = "zh";
@@ -26,7 +32,9 @@ function uiLangEnvKey(channel: Channel): string {
 }
 
 function asLang(v: string | undefined): Lang | null {
-  return v === "en" || v === "zh" || v === "yue" ? v : null;
+  return v === "en" || v === "zh" || v === "zh-TW" || v === "yue" || v === "ja" || v === "es"
+    ? v
+    : null;
 }
 
 export function isUiLang(v: string): v is Lang {

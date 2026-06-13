@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // setUiLang persists to .env — stub the writer so tests don't touch the real file.
 vi.mock("../../src/core/env-store.js", () => ({ persistEnvVar: vi.fn() }));
 
-import { messages, resolveUiLang, setUiLang } from "../../src/core/i18n/index.js";
+import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../src/core/i18n/index.js";
+import { parseSetupLang, setupMessages } from "../../src/core/i18n/setup.js";
 
 const saved: Record<string, string | undefined> = {};
 function snap(...keys: string[]): void {
@@ -63,5 +64,49 @@ describe("i18n", () => {
     process.env.TELEGRAM_UI_LANG = "zh";
     expect(messages("telegram").queuedAt(3)).toBe("已排队 · 第 3 位");
     expect(messages("telegram").queueFull(30)).toContain("30");
+  });
+
+  // Passing a string array as every positional arg renders all entries (works for
+  // both `${n}` interpolation and the lone `dirs.join(...)` call) so each catalog's
+  // function bodies are exercised, not just its static strings.
+  const renderAll = (catalog: Record<string, unknown>): string[] =>
+    Object.values(catalog).map((v) =>
+      typeof v === "function" ? String(v(["a", "b"], ["a", "b"])) : String(v),
+    );
+
+  it("every UI language is complete and renders non-empty copy", () => {
+    snap("TELEGRAM_UI_LANG");
+    process.env.TELEGRAM_UI_LANG = "zh";
+    const referenceKeys = Object.keys(messages("telegram")).sort();
+    for (const { code } of UI_LANGS) {
+      process.env.TELEGRAM_UI_LANG = code;
+      const catalog = messages("telegram") as unknown as Record<string, unknown>;
+      expect(Object.keys(catalog).sort(), `${code} key set`).toEqual(referenceKeys);
+      for (const rendered of renderAll(catalog)) {
+        expect(rendered.length, `${code} non-empty`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("every UI language has a complete setup-wizard catalog", () => {
+    const referenceKeys = Object.keys(setupMessages("en")).sort();
+    for (const { code } of UI_LANGS) {
+      const catalog = setupMessages(code) as unknown as Record<string, unknown>;
+      expect(Object.keys(catalog).sort(), `${code} setup key set`).toEqual(referenceKeys);
+      for (const rendered of renderAll(catalog)) {
+        expect(rendered.length, `${code} setup non-empty`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("parseSetupLang recognizes every UI language by number, code, and native label", () => {
+    expect(parseSetupLang("3")).toBe("zh-TW");
+    expect(parseSetupLang("zh-TW")).toBe("zh-TW");
+    expect(parseSetupLang("繁體中文")).toBe("zh-TW");
+    expect(parseSetupLang("5")).toBe("ja");
+    expect(parseSetupLang("日本語")).toBe("ja");
+    expect(parseSetupLang("6")).toBe("es");
+    expect(parseSetupLang("Español")).toBe("es");
+    expect(parseSetupLang("nope")).toBeNull();
   });
 });

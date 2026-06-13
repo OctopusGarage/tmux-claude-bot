@@ -7,17 +7,21 @@ describe("redactSecrets", () => {
     delete process.env.BOT_TOKEN;
   });
 
+  // Synthetic, non-functional fixture: token-shaped enough for the redaction
+  // regex (botID:secret) but deliberately not a real Telegram token pattern
+  // (secret part is not the 35-char shape secret scanners match on).
+  const FAKE_TOKEN = "123456789:THIS_IS_A_FAKE_TEST_TOKEN_NOT_REAL";
+
   it("redacts a Bot API token embedded in a fetch error URL", () => {
-    const msg =
-      "request to https://api.telegram.org/bot8539533731:AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U/getUpdates failed";
+    const msg = `request to https://api.telegram.org/bot${FAKE_TOKEN}/getUpdates failed`;
     const out = redactSecrets(msg);
-    expect(out).not.toContain("AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U");
+    expect(out).not.toContain("THIS_IS_A_FAKE_TEST_TOKEN_NOT_REAL");
     expect(out).toContain("bot<redacted-token>");
   });
 
   it("redacts the exact configured token wherever it appears", () => {
-    process.env.TELEGRAM_BOT_TOKEN = "8539533731:AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U";
-    const out = redactSecrets("token leaked: 8539533731:AAFWBBIGehnl7oevUjrQwjJ1ir5IBdijq_U end");
+    process.env.TELEGRAM_BOT_TOKEN = FAKE_TOKEN;
+    const out = redactSecrets(`token leaked: ${FAKE_TOKEN} end`);
     expect(out).toBe("token leaked: <redacted-token> end");
   });
 

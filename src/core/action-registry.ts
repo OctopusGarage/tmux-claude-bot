@@ -4,7 +4,8 @@
  * To add a new command:
  *   1. dispatch.ts   — add to MESSAGE_ACTIONS + add a case (execution logic)
  *   2. action-registry.ts — add to ACTION_META + relevant button row group(s)
- *   3. zh/en/yue.ts  — add btnXxx + cmdXxx description keys (translations)
+ *   3. catalog/*.ts  — add btnXxx + cmdXxx keys to zh.ts (canonical), then every
+ *                      other language (en/zh-TW/yue/ja/es) — a missing key fails the build
  *   Everything else updates automatically:
  *     • lark/commands.ts  IMMEDIATE / QUEUED sets
  *     • telegram/handlers.ts  bot.command() registrations
@@ -42,6 +43,8 @@ export const ACTION_META: Partial<Record<MessageAction, ActionMeta>> = {
   compact: { btnKey: "btnCompact", larkKind: "immediate", telegram: true },
   up: { btnKey: "btnUp", larkKind: "immediate", telegram: true },
   down: { btnKey: "btnDown", larkKind: "immediate", telegram: true },
+  left: { btnKey: "btnLeft", larkKind: "immediate", telegram: true },
+  right: { btnKey: "btnRight", larkKind: "immediate", telegram: true },
   tab: { btnKey: "btnTab", larkKind: "immediate", telegram: true },
   exit: { btnKey: "btnExit", larkKind: "queued", telegram: true },
   status: { btnKey: "btnStatus", larkKind: "immediate", telegram: true },
@@ -64,7 +67,7 @@ export const TELEGRAM_COLLAPSED_ROW: MessageAction[] = ["esc", "clear", "compact
 /** Additional rows shown in the expanded Telegram control keyboard. */
 export const TELEGRAM_EXPANDED_ROWS: MessageAction[][] = [
   ["clear", "compact"],
-  ["up", "down", "tab"],
+  ["up", "down", "left", "right", "tab"],
   ["exit", "status"],
 ];
 
@@ -78,7 +81,7 @@ export const LARK_CONTROL_ROWS: MessageAction[][] = [
 export const LARK_HELP_RUNNING_ROWS: MessageAction[][] = [
   ["enter", "esc", "interrupt"],
   ["restart", "clear", "compact"],
-  ["up", "down", "tab", "status"],
+  ["up", "down", "left", "right", "tab", "status"],
   ["start", "exit"],
 ];
 
@@ -153,7 +156,7 @@ const RUNNING: readonly HelpRow[] = [
     { cmds: ["compact"], descKey: "cmdCompact" },
   ],
   [
-    { cmds: ["up", "down", "tab"], descKey: "cmdArrowsTab" },
+    { cmds: ["up", "down", "left", "right", "tab"], descKey: "cmdArrowsTab" },
     { cmds: ["exit"], descKey: "cmdExit" },
   ],
 ];
@@ -238,6 +241,8 @@ export const BOT_COMMANDS: BotCommand[] = [
   { command: "enter", description: "Send Enter key" },
   { command: "up", description: "Send Up arrow" },
   { command: "down", description: "Send Down arrow" },
+  { command: "left", description: "Send Left arrow" },
+  { command: "right", description: "Send Right arrow" },
   { command: "tab", description: "Send Tab key" },
   { command: "exit", description: "Exit Claude" },
   { command: "restart", description: "Restart Claude with --continue" },
@@ -252,6 +257,6 @@ export const BOT_COMMANDS: BotCommand[] = [
   },
   { command: "doctor", description: "Run install health checks" },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
-  { command: "voice_lang", description: "Set voice recognition language (zh/en/auto)" },
-  { command: "lang", description: "Set interface language (zh/en)" },
+  { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },
+  { command: "lang", description: "Set interface language (en/zh/zh-TW/yue/ja/es)" },
 ];

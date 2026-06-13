@@ -9,11 +9,15 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only: the scan only checks out history and runs the gitleaks CLI.
+permissions:
+  contents: read
+
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0 # full history so a secret in any commit is caught
       # Run the gitleaks CLI directly (MIT, free). The gitleaks-action@v2 wrapper
