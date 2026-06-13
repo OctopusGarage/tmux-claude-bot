@@ -4,7 +4,8 @@
  * To add a new command:
  *   1. dispatch.ts   — add to MESSAGE_ACTIONS + add a case (execution logic)
  *   2. action-registry.ts — add to ACTION_META + relevant button row group(s)
- *   3. zh/en/yue.ts  — add btnXxx + cmdXxx description keys (translations)
+ *   3. catalog/*.ts  — add btnXxx + cmdXxx keys to zh.ts (canonical), then every
+ *                      other language (en/zh-TW/yue/ja/es) — a missing key fails the build
  *   Everything else updates automatically:
  *     • lark/commands.ts  IMMEDIATE / QUEUED sets
  *     • telegram/handlers.ts  bot.command() registrations
@@ -252,6 +253,6 @@ export const BOT_COMMANDS: BotCommand[] = [
   },
   { command: "doctor", description: "Run install health checks" },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
-  { command: "voice_lang", description: "Set voice recognition language (zh/en/auto)" },
-  { command: "lang", description: "Set interface language (zh/en)" },
+  { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },
+  { command: "lang", description: "Set interface language (en/zh/zh-TW/yue/ja/es)" },
 ];

@@ -165,7 +165,7 @@ export const en: Messages = {
     `🎙️ Recognition language: ${lang === "auto" ? "auto-detect" : lang} · tap below to switch`,
   voiceLangSet: (lang) =>
     `🎙️ Recognition language set to ${lang === "auto" ? "auto-detect" : lang} · next voice message`,
-  voiceLangInvalid: "🎙️ Usage: /voice_lang <en|zh|yue|auto or a 2-3 letter code>",
+  voiceLangInvalid: "🎙️ Usage: /voice_lang <en|zh|yue|ja|es|auto or a 2-3 letter code>",
 
   helpIntroTelegram: `🤖 tmux-claude-bot
 
@@ -189,8 +189,8 @@ Send any text → forwarded to Claude → reply`,
   cmdQueueStatus: "queue status",
   cmdHistory: "conversation history (latest by default)",
   cmdPeek: "view the tmux pane",
-  cmdVoiceLang: "voice recognition language (en/zh/yue/auto)",
-  cmdLang: "interface language (en/zh/yue)",
+  cmdVoiceLang: "voice recognition language (en/zh/yue/ja/es/auto)",
+  cmdLang: "interface language (en/zh/zh-TW/yue/ja/es)",
   cmdEnter: "Enter",
   cmdEsc: "Escape",
   cmdInterrupt: "Ctrl-C",

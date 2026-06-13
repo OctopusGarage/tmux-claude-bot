@@ -30,8 +30,8 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `history` | Show recent conversation history (`/history N` for the Nth recent round) |
 | `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |
 | `voice_install` | Install voice transcription (Apple Silicon) |
-| `voice_lang` | Set voice recognition language (zh/en/auto) |
-| `lang` | Set interface language (zh/en/yue) |
+| `voice_lang` | Set voice recognition language (zh/en/yue/ja/es/auto) |
+| `lang` | Set interface language (en/zh/zh-TW/yue/ja/es) |
 
 ## Feishu/Lark Group-Binding Commands
 

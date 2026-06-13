@@ -163,7 +163,7 @@ export const yue: Messages = {
     `🎙️ 目前識別語言：${lang === "auto" ? "自動偵測" : lang} · 點擊下方按鈕切換`,
   voiceLangSet: (lang) =>
     `🎙️ 識別語言已設為 ${lang === "auto" ? "自動偵測" : lang} · 下一條語音生效`,
-  voiceLangInvalid: "🎙️ 用法：/voice_lang <en|zh|yue|auto 或 2-3 位語言代碼>",
+  voiceLangInvalid: "🎙️ 用法：/voice_lang <en|zh|yue|ja|es|auto 或 2-3 位語言代碼>",
 
   helpIntroTelegram: `🤖 tmux-claude-bot
 
@@ -187,8 +187,8 @@ export const yue: Messages = {
   cmdQueueStatus: "隊列狀態",
   cmdHistory: "對話歷史（預設最近一條）",
   cmdPeek: "查看 tmux 畫面",
-  cmdVoiceLang: "語音識別語言（英/中/粵/自動）",
-  cmdLang: "介面語言（英/中/粵）",
+  cmdVoiceLang: "語音識別語言（英/中/粵/日/西/自動）",
+  cmdLang: "介面語言（英/簡/繁/粵/日/西）",
   cmdEnter: "Enter",
   cmdEsc: "Escape",
   cmdInterrupt: "Ctrl-C",

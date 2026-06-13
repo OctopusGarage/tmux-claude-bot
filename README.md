@@ -1,6 +1,8 @@
 # tmux-claude-bot
 
 [![CI](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml)
+[![CodeQL](https://img.shields.io/badge/CodeQL-enabled-2088FF?logo=github)](https://github.com/OctopusGarage/tmux-claude-bot/security/code-scanning)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/OctopusGarage/tmux-claude-bot/badge)](https://securityscorecards.dev/viewer/?uri=github.com/OctopusGarage/tmux-claude-bot)
 [![Coverage](https://codecov.io/gh/OctopusGarage/tmux-claude-bot/branch/main/graph/badge.svg)](https://codecov.io/gh/OctopusGarage/tmux-claude-bot)
 [![version](https://img.shields.io/github/package-json/v/OctopusGarage/tmux-claude-bot)](https://github.com/OctopusGarage/tmux-claude-bot/releases/latest)
 [![npm](https://img.shields.io/npm/v/@octopusgarage/tmux-claude-bot?logo=npm)](https://www.npmjs.com/package/@octopusgarage/tmux-claude-bot)
@@ -271,7 +273,7 @@ short note telling you how to turn it on — it never fails silently.
 
 **Recognition language.** whisper's auto-detect often misreads Chinese as
 Japanese, so transcription forces a language — **`zh` by default**. Switch any
-time from Telegram with `/voice_lang <zh|en|auto>` (`auto` re-enables detection);
+time from Telegram with `/voice_lang <zh|en|yue|ja|es|auto>` (`auto` re-enables detection);
 it persists to `.env`. Override the default with `WHISPER_LANGUAGE` in `.env`.
 
 ## Claude Running Detection
