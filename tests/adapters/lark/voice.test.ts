@@ -48,7 +48,8 @@ describe("handleLarkVoice", () => {
     await handleLarkVoice(channel, deps, msg(), audio);
 
     expect(transcribeWithCache).not.toHaveBeenCalled();
-    expect(channel.texts().some((t) => t.includes("语音转写未安装"))).toBe(true);
+    // Installable → a card with the one-tap install button (not plain text).
+    expect(JSON.stringify(channel.cards())).toContain("voiceinstall");
     expect(deps.queue.enqueued).toHaveLength(0);
   });
 

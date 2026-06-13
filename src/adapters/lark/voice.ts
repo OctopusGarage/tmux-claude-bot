@@ -5,8 +5,9 @@ import { messages } from "../../core/i18n/index.js";
 import { transcribeWithCache } from "../../core/transcriber.js";
 import { checkVoiceSupport, resolveWhisperLanguage } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
+import { voiceInstallCard } from "./cards.js";
 import { enqueueLarkAction } from "./executor.js";
-import { sendText } from "./replies.js";
+import { sendCard, sendText } from "./replies.js";
 import { downloadMessageResource } from "./resource.js";
 
 /**
@@ -23,10 +24,12 @@ export async function handleLarkVoice(
 ): Promise<void> {
   const support = checkVoiceSupport();
   if (!support.ready) {
-    const m = messages("lark");
-    const hint =
-      support.reason === "unsupported-platform" ? m.voiceUnsupported : m.voiceNotInstalled;
-    await sendText(channel, msg.chatId, hint);
+    if (support.reason === "unsupported-platform") {
+      await sendText(channel, msg.chatId, messages("lark").voiceUnsupported);
+    } else {
+      // Installable: offer a one-tap install button (Feishu has no "/" command).
+      await sendCard(channel, msg.chatId, voiceInstallCard());
+    }
     return;
   }
 

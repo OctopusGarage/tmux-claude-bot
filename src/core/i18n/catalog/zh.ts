@@ -66,6 +66,7 @@ export const zh = {
   btnCreate: "➕ 创建",
   btnHelp: "💡 帮助",
   btnVoiceLang: "🎙️ 语音语言",
+  btnVoiceInstall: "🎙️ 安装语音",
   btnUiLang: "🌐 界面语言",
   btnActiveMarker: "✅ 当前",
   btnMore: "⌨️ 更多控制 ▾",

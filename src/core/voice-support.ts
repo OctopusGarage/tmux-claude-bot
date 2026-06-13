@@ -4,11 +4,17 @@
  * persist the resolved path. Keeps all the "is voice usable?" environment logic
  * out of the Telegram adapter so the handler just maps a status to a message.
  */
+import { execFile } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
+import { promisify } from "node:util";
+import { normalizeError } from "../shared/utils/error.js";
 import { persistEnvVar } from "./env-store.js";
 import type { Channel } from "./project-manager.js";
+
+const execFileAsync = promisify(execFile);
+const INSTALL_TIMEOUT_MS = 300_000;
 
 const ROOT = process.cwd();
 
@@ -98,4 +104,46 @@ export function checkVoiceSupport(): VoiceSupport {
 
 export function persistWhisperBin(bin: string): void {
   persistEnvVar("MLX_WHISPER_BIN", bin);
+}
+
+/** Outcome of an in-bot voice install. Adapters map each to their own reply. */
+export type VoiceInstallResult =
+  | { status: "already-ready" }
+  | { status: "unsupported" }
+  | { status: "in-progress" }
+  | { status: "ok"; bin: string }
+  | { status: "failed"; message: string };
+
+// Single-flight guard so a double-tap (across either adapter) can't kick off two
+// concurrent installs into the same venv.
+let voiceInstalling = false;
+
+/**
+ * Run the project-managed voice install, then re-check and persist the resolved
+ * binary. The single home for the install orchestration so both adapters drive
+ * the same flow (no per-adapter drift). Never throws — failures come back as a
+ * `failed` result for the caller to render.
+ */
+export async function installVoice(): Promise<VoiceInstallResult> {
+  if (checkVoiceSupport().ready) return { status: "already-ready" };
+  if (!isVoicePlatformSupported()) return { status: "unsupported" };
+  if (voiceInstalling) return { status: "in-progress" };
+  voiceInstalling = true;
+  try {
+    // Fixed bundled script, no user-controlled args — not arbitrary exec.
+    await execFileAsync(INSTALL_SCRIPT, [], {
+      timeout: INSTALL_TIMEOUT_MS,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    const status = checkVoiceSupport();
+    if (!status.ready) throw new Error("binary still missing after install");
+    // Live process reads process.env at transcribe time; persist for restarts.
+    process.env.MLX_WHISPER_BIN = status.bin;
+    persistWhisperBin(status.bin);
+    return { status: "ok", bin: status.bin };
+  } catch (err) {
+    return { status: "failed", message: normalizeError(err).message };
+  } finally {
+    voiceInstalling = false;
+  }
 }

@@ -71,6 +71,17 @@ export function voiceLangCard(current: string): object {
   ]);
 }
 
+/** Voice-not-installed prompt with a one-tap install button. Feishu has no "/"
+ * command discovery, so the in-chat install is a button (mirrors Telegram's
+ * `/voice_install`). Sent when a voice message arrives but whisper isn't ready. */
+export function voiceInstallCard(): object {
+  const mv = messages("lark");
+  return shell("🎙️", [
+    md(mv.voiceNotInstalled),
+    gridRow([{ text: mv.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }]),
+  ]);
+}
+
 /** UI-language picker — mirrors voiceLangCard. Tapping sends `uilang` with the
  * chosen Lang; the title/prompt render in the channel's CURRENT language. */
 export function langCard(current: Lang): object {

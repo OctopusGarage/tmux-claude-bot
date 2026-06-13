@@ -59,6 +59,7 @@ export const yue: Messages = {
   btnCreate: "➕ 新增",
   btnHelp: "💡 說明",
   btnVoiceLang: "🎙️ 語音語言",
+  btnVoiceInstall: "🎙️ 安裝語音",
   btnUiLang: "🌐 介面語言",
   btnActiveMarker: "✅ 當前",
   btnMore: "⌨️ 更多控制 ▾",

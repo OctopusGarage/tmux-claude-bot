@@ -13,6 +13,9 @@ import {
 } from "../../core/project-ops.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import {
+  checkVoiceSupport,
+  installVoice,
+  isVoicePlatformSupported,
   resolveWhisperLanguage,
   setWhisperLanguage,
   VOICE_LANGS,
@@ -79,6 +82,43 @@ async function handleVoiceLang({ channel, evt, value }: CardCtx): Promise<void> 
   // card isn't managed (e.g. it predates a restart).
   if (!(await updateManagedCard(channel, evt.messageId, voiceLangCard(value.lang)))) {
     await sendManagedCard(channel, evt.chatId, voiceLangCard(value.lang));
+  }
+}
+
+/** Install the optional voice feature in-chat — the Feishu counterpart of
+ *  Telegram's `/voice_install`. Shares the core install orchestration so the two
+ *  surfaces can't drift. Allowed in any serviced chat (a host setup, not a
+ *  project op). */
+async function handleVoiceInstall({ channel, evt }: CardCtx): Promise<void> {
+  const m = messages("lark");
+  if (checkVoiceSupport().ready) {
+    await sendText(channel, evt.chatId, m.voiceAlreadyInstalled);
+    return;
+  }
+  if (!isVoicePlatformSupported()) {
+    await sendText(channel, evt.chatId, m.voiceUnsupported);
+    return;
+  }
+  await sendText(channel, evt.chatId, m.voiceInstalling); // ack; the install can take minutes
+  const result = await installVoice();
+  switch (result.status) {
+    case "ok":
+      logger.info("[lark] voice feature installed and enabled");
+      await sendText(channel, evt.chatId, m.voiceInstallOk);
+      break;
+    case "failed":
+      logger.error(`[lark] voice-install failed: ${result.message}`);
+      await sendText(channel, evt.chatId, m.voiceInstallFailed(result.message));
+      break;
+    case "already-ready":
+      await sendText(channel, evt.chatId, m.voiceAlreadyInstalled);
+      break;
+    case "unsupported":
+      await sendText(channel, evt.chatId, m.voiceUnsupported);
+      break;
+    case "in-progress":
+      await sendText(channel, evt.chatId, m.voiceInstalling);
+      break;
   }
 }
 
@@ -203,6 +243,7 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
     await sendManagedCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
   },
   voicelang: handleVoiceLang,
+  voiceinstall: handleVoiceInstall,
   // UI-language picker (/lang).
   uilangmenu: async ({ channel, evt }) => {
     await sendManagedCard(channel, evt.chatId, langCard(resolveUiLang("lark")));

@@ -14,6 +14,7 @@ vi.mock("../src/core/voice-support.js", () => ({
   resolveWhisperLanguage: vi.fn(() => "zh"),
   persistWhisperBin: vi.fn(),
   persistEnvVar: vi.fn(),
+  installVoice: vi.fn(async () => ({ status: "ok", bin: "mlx_whisper" })),
   INSTALL_SCRIPT: "/repo/scripts/install-whisper.sh",
 }));
 

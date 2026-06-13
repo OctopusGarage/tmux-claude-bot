@@ -57,6 +57,7 @@ export const en: Messages = {
   btnCreate: "➕ Create",
   btnHelp: "💡 Help",
   btnVoiceLang: "🎙️ Voice",
+  btnVoiceInstall: "🎙️ Install voice",
   btnUiLang: "🌐 Language",
   btnActiveMarker: "✅ Current",
   btnMore: "⌨️ More ▾",

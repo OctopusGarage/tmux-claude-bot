@@ -10,10 +10,20 @@ import { sessionNameFromPath } from "../../../src/core/sessionPathMap.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
-// Keep the real VOICE_LANGS/resolveWhisperLanguage; stub the .env writer.
+// Keep the real VOICE_LANGS/resolveWhisperLanguage; stub the .env writer and the
+// host-mutating install so `voiceinstall` is exercisable without a real install.
+const installVoiceMock = vi.fn(
+  async (): Promise<{ status: string; bin?: string; message?: string }> => ({
+    status: "ok",
+    bin: "/x/mlx_whisper",
+  }),
+);
 vi.mock("../../../src/core/voice-support.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../src/core/voice-support.js")>()),
   persistEnvVar: vi.fn(),
+  checkVoiceSupport: vi.fn(() => ({ ready: false, reason: "not-installed" })),
+  isVoicePlatformSupported: vi.fn(() => true),
+  installVoice: () => installVoiceMock(),
 }));
 
 function evt(value: unknown, over: Partial<CardActionEvent> = {}): CardActionEvent {
@@ -37,6 +47,23 @@ describe("makeCardActionHandler", () => {
     await handle(evt({ cmd: "voicelangmenu" }));
     expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
     expect(channel.imCreates).toHaveLength(1);
+  });
+
+  it("voiceinstall → runs the core install and replies the result (Feishu parity with Telegram)", async () => {
+    installVoiceMock.mockResolvedValueOnce({ status: "ok", bin: "/x/mlx_whisper" });
+    const channel = fakeChannel();
+    await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "voiceinstall" }));
+    expect(installVoiceMock).toHaveBeenCalled();
+    // acks "installing…" then reports success
+    expect(channel.texts().some((t) => t.includes("正在安装"))).toBe(true);
+    expect(channel.texts().some((t) => t.includes("已就绪"))).toBe(true);
+  });
+
+  it("voiceinstall → surfaces a failure result", async () => {
+    installVoiceMock.mockResolvedValueOnce({ status: "failed", message: "boom" });
+    const channel = fakeChannel();
+    await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "voiceinstall" }));
+    expect(channel.texts().some((t) => t.includes("boom"))).toBe(true);
   });
 
   it("voicelang on a managed picker → sets WHISPER_LANGUAGE and updates the card in place", async () => {
