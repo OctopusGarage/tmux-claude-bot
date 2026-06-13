@@ -350,6 +350,16 @@ describe("sendCurrentProject", () => {
 
     expect(channel.texts()).toContain("无当前项目");
   });
+
+  it("also shows the mapped workspace directory", async () => {
+    setPathForSession("proj-cur", "/Users/me/work/proj-cur");
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: "proj-cur" });
+
+    await sendCurrentProject(channel, deps, "chat-1");
+
+    expect(channel.texts().some((t) => t.includes("/Users/me/work/proj-cur"))).toBe(true);
+  });
 });
 
 describe("addProject path allow-listing", () => {

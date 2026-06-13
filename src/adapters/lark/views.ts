@@ -178,13 +178,11 @@ export async function sendCurrentProject(
     await sendText(channel, chatId, messages("lark").noCurrentProjectShort);
     return;
   }
-  await sendText(
-    channel,
-    chatId,
-    messages("lark").currentProjectIs(
-      projectLabel(session, getPathBySession(session) ?? undefined),
-    ),
-  );
+  // Show the friendly label AND the full workspace directory underneath, so it's
+  // clear which path the current project maps to (mirrors Telegram).
+  const path = getPathBySession(session);
+  const line = messages("lark").currentProjectIs(projectLabel(session, path ?? undefined));
+  await sendText(channel, chatId, path ? `${line}\n${path}` : line);
 }
 
 /**
