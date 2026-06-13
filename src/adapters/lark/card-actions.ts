@@ -166,7 +166,7 @@ async function handleStartPick({ channel, deps, evt, value }: CardCtx): Promise<
  */
 const CARD_HANDLERS: Record<string, CardHandler> = {
   help: async ({ channel, evt }) => {
-    await sendCard(channel, evt.chatId, helpCard());
+    await sendCard(channel, evt.chatId, helpCard(isProjectGroup(evt.chatId)));
   },
   noop: async () => {},
   peek: ({ channel, deps, evt }) => sendPeek(channel, deps, evt.chatId),

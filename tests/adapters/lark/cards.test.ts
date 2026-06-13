@@ -66,6 +66,24 @@ describe("resultCard", () => {
     const card = cardOf(resultCard(""));
     expect(mds(card).some((d) => d.content === "(无输出)")).toBe(true);
   });
+
+  it("in a group: drops the 'listalive' project-management entry", () => {
+    const card = cardOf(resultCard("hi", "Claude", true));
+    expect(allCmds(card)).toEqual([
+      "esc",
+      "enter",
+      "interrupt",
+      "clear",
+      "compact",
+      "restart",
+      "peek",
+      "history",
+      "queuestatus",
+      "current",
+      "help",
+    ]);
+    expect(allCmds(card)).not.toContain("listalive");
+  });
 });
 
 describe("viewCard", () => {
@@ -111,6 +129,16 @@ describe("projectListCard", () => {
     expect(card.header?.title?.content).toBe("活跃项目 (0)");
     expect(mds(card).some((d) => d.content?.includes("没有活跃项目"))).toBe(true);
   });
+
+  it("in a group: read-only — no switch/remove, just the active marker", () => {
+    const projects: ProjectButton[] = [
+      { sid: "aaaaaa", label: "proj-a", active: false },
+      { sid: "bbbbbb", label: "proj-b", active: true },
+    ];
+    const card = cardOf(projectListCard(projects, true));
+    expect(allCmds(card)).toEqual(["noop"]); // active marker only; no remove button
+    expect(allCmds(card)).not.toContain("remove");
+  });
 });
 
 describe("recentListCard", () => {
@@ -122,6 +150,16 @@ describe("recentListCard", () => {
     ];
     const card = cardOf(recentListCard(projects));
     expect(allCmds(card)).toEqual(["switch", "addrecent", "noop"]);
+  });
+
+  it("in a group: read-only — no switch/create, just the active marker", () => {
+    const projects: RecentButton[] = [
+      { sid: "aaaaaa", label: "alive", alive: true, active: false },
+      { sid: "bbbbbb", label: "stopped", alive: false, active: false },
+      { sid: "cccccc", label: "current", alive: true, active: true },
+    ];
+    const card = cardOf(recentListCard(projects, true));
+    expect(allCmds(card)).toEqual(["noop"]);
   });
 });
 
@@ -154,6 +192,18 @@ describe("helpCard", () => {
       "voicelangmenu",
       "uilangmenu",
     ]);
+  });
+
+  it("in a group: drops list-all / recent / make-group management entries", () => {
+    const card = cardOf(helpCard(true));
+    const cmds = allCmds(card);
+    expect(cmds).not.toContain("listalive");
+    expect(cmds).not.toContain("recent");
+    expect(cmds).not.toContain("groupmenu");
+    // work surface stays
+    expect(cmds).toEqual(
+      expect.arrayContaining(["peek", "history", "queuestatus", "current", "uilangmenu"]),
+    );
   });
 });
 

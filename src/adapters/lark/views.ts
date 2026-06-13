@@ -1,7 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
-import { getBinding, listBindings } from "../../core/group-bindings.js";
+import { getBinding, isProjectGroup, listBindings } from "../../core/group-bindings.js";
 import {
   formatSingleConversation,
   getRecentConversations,
@@ -74,7 +74,7 @@ export async function sendAliveList(
 ): Promise<void> {
   try {
     const buttons = await aliveProjectButtons(deps, chatScope("lark", chatId));
-    await sendCard(channel, chatId, projectListCard(buttons));
+    await sendCard(channel, chatId, projectListCard(buttons, isProjectGroup(chatId)));
   } catch (err) {
     await sendError(channel, chatId, err);
   }
@@ -88,7 +88,7 @@ export async function sendRecentList(
 ): Promise<void> {
   try {
     const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
-    await sendCard(channel, chatId, recentListCard(buttons));
+    await sendCard(channel, chatId, recentListCard(buttons, isProjectGroup(chatId)));
   } catch (err) {
     await sendError(channel, chatId, err);
   }
@@ -111,7 +111,11 @@ export async function sendPeek(
     const mid = await sendCard(
       channel,
       chatId,
-      viewCard(messages("lark").paneTitle, processed || messages("lark").emptyPane),
+      viewCard(
+        messages("lark").paneTitle,
+        processed || messages("lark").emptyPane,
+        isProjectGroup(chatId),
+      ),
     );
     if (mid) recordReplyTarget(mid, session);
   } catch (err) {
@@ -150,7 +154,11 @@ export async function sendHistory(
     const round = rounds[index];
     if (round === undefined) return;
     const body = formatSingleConversation(round, index, rounds.length, "lark");
-    const mid = await sendCard(channel, chatId, viewCard(messages("lark").historyTitle, body));
+    const mid = await sendCard(
+      channel,
+      chatId,
+      viewCard(messages("lark").historyTitle, body, isProjectGroup(chatId)),
+    );
     if (mid) recordReplyTarget(mid, session);
   } catch (err) {
     await sendError(channel, chatId, err);

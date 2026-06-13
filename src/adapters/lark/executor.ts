@@ -2,6 +2,7 @@ import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { executeMessage, type MessageAction } from "../../core/dispatch.js";
 import { enqueueMessage } from "../../core/enqueue.js";
+import { isProjectGroup } from "../../core/group-bindings.js";
 import { messages } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
@@ -29,7 +30,11 @@ export async function resolveSession(
   if (!session) {
     // No "/" discovery on Feishu — give buttons (projects/recent via the panel)
     // instead of a text hint pointing at commands they'd have to type.
-    await sendCard(channel, chatId, recoveryCard(messages("lark").noCurrentProject));
+    await sendCard(
+      channel,
+      chatId,
+      recoveryCard(messages("lark").noCurrentProject, isProjectGroup(chatId)),
+    );
     return null;
   }
   return session;
@@ -81,7 +86,11 @@ export async function enqueueLarkAction(
             // other action (start/restart/exit) replies as plain text. Mirrors
             // Telegram, where the control keyboard rides only on the NL result.
             if (action === "text") {
-              const mid = await sendCard(channel, chatId, resultCard(output, projectTag(session)));
+              const mid = await sendCard(
+                channel,
+                chatId,
+                resultCard(output, projectTag(session), isProjectGroup(chatId)),
+              );
               if (mid) {
                 recordReplyTarget(mid, session);
               }
@@ -100,7 +109,10 @@ export async function enqueueLarkAction(
           void sendCard(
             channel,
             chatId,
-            recoveryCard(`${messages("lark").errorPrefix(err.message)}\n${projectTag(session)}`),
+            recoveryCard(
+              `${messages("lark").errorPrefix(err.message)}\n${projectTag(session)}`,
+              isProjectGroup(chatId),
+            ),
           );
         },
       },
@@ -172,7 +184,10 @@ export async function runImmediateLarkAction(
     await sendCard(
       channel,
       chatId,
-      recoveryCard(`${messages("lark").errorPrefix(errMsg)}\n${projectTag(session)}`),
+      recoveryCard(
+        `${messages("lark").errorPrefix(errMsg)}\n${projectTag(session)}`,
+        isProjectGroup(chatId),
+      ),
     );
   }
 }

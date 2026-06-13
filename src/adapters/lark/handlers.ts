@@ -127,7 +127,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
 
     switch (parsed.kind) {
       case "help":
-        await sendCard(channel, msg.chatId, helpCard());
+        await sendCard(channel, msg.chatId, helpCard(isProjectGroup(msg.chatId)));
         break;
 
       case "command":
@@ -223,7 +223,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         // No "/" command discovery on Feishu — show the full button menu so an
         // unknown command isn't a dead end.
         await sendText(channel, msg.chatId, messages("lark").unknownCommand(parsed.name));
-        await sendCard(channel, msg.chatId, helpCard());
+        await sendCard(channel, msg.chatId, helpCard(isProjectGroup(msg.chatId)));
         break;
 
       case "text":
