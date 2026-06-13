@@ -23,7 +23,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: ossf/scorecard-action@v2
+      # No floating @v2 tag exists; pin to a released commit SHA (Scorecard's
+      # own recommendation, and it scores Pinned-Dependencies on itself).
+      - uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
         with:
           results_file: results.sarif
           results_format: sarif
