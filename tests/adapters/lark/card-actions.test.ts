@@ -187,6 +187,23 @@ describe("makeCardActionHandler", () => {
     expect(channel.texts().some((t) => t.includes("已移除"))).toBe(true);
   });
 
+  it("'remove' in a group is refused — delete only in a private chat", async () => {
+    bindGroup("oc_grp_rm", { workspacePath: "/p/g", sessionName: "tmux_proj_g", label: "g" });
+    const session = "tmux_proj_beta";
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      claude: { checkIfRunning: vi.fn(async () => false) },
+    });
+    const handler = makeCardActionHandler(channel, deps);
+
+    await handler(evt({ cmd: "remove", sid: sessionShortId(session) }, { chatId: "oc_grp_rm" }));
+
+    expect(deps.bridge.killSession).not.toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("不能删除项目"))).toBe(true);
+    unbindGroup("oc_grp_rm");
+  });
+
   it("'switch' in a bound group is pinned — refuses and does not change project", async () => {
     bindGroup("oc_pinned", { workspacePath: "/p/pin", sessionName: "tmux_proj_pin", label: "pin" });
     const session = "tmux_proj_alpha";

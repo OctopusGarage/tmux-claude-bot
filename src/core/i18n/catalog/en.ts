@@ -253,4 +253,6 @@ Send any text → forwarded to Claude → reply`,
     `⚠️ Project "${label}" already has a bound group — use that one; no need to create another.`,
   groupPinnedNoSwitch: (label) =>
     `🔒 This group is pinned to "${label}" — switching projects is disabled here. Use 🗂 → Rebind to change it.`,
+  groupNoRemoveInGroup:
+    "🔒 Removing projects isn't allowed in a group (it affects others). Do it in a private chat with the bot.",
 };

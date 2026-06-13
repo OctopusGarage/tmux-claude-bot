@@ -114,6 +114,14 @@ async function handleSwitch({ channel, deps, evt, value }: CardCtx): Promise<voi
 
 async function handleRemove({ channel, deps, evt, value }: CardCtx): Promise<void> {
   if (!value?.sid) return;
+  // Removing a project kills its tmux session — too destructive for a shared
+  // group (it could be someone else's project). Only in a 1:1 chat with the bot.
+  // A card action only reaches a group when that group is bound, so getBinding
+  // set ⟺ this is a group, not a private chat.
+  if (getBinding(evt.chatId)) {
+    await sendText(channel, evt.chatId, messages("lark").groupNoRemoveInGroup);
+    return;
+  }
   const session = await resolveAliveSessionByShortId(deps, value.sid);
   if (!session) return;
   await removeProjectBySession(deps, session);

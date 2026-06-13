@@ -249,4 +249,5 @@ export const yue: Messages = {
     `⚠️ 項目「${label}」已經有綁定群喇，去嗰個群度用就得，唔使重複創建。`,
   groupPinnedNoSwitch: (label) =>
     `🔒 本群已經固定綁定「${label}」，唔可以切換去第個項目。要換就用 🗂 → 改綁。`,
+  groupNoRemoveInGroup: "🔒 喺群度唔可以刪除項目（會影響其他人）。請去同機械人嘅私聊度刪。",
 };
