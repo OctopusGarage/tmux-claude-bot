@@ -271,7 +271,7 @@ short note telling you how to turn it on — it never fails silently.
 
 **Recognition language.** whisper's auto-detect often misreads Chinese as
 Japanese, so transcription forces a language — **`zh` by default**. Switch any
-time from Telegram with `/voice_lang <zh|en|auto>` (`auto` re-enables detection);
+time from Telegram with `/voice_lang <zh|en|yue|ja|es|auto>` (`auto` re-enables detection);
 it persists to `.env`. Override the default with `WHISPER_LANGUAGE` in `.env`.
 
 ## Claude Running Detection

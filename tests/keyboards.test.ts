@@ -74,12 +74,18 @@ describe("parseCallbackData", () => {
     expect(parseCallbackData("vl:zh")).toEqual({ kind: "voicelang", lang: "zh" });
     expect(parseCallbackData("vl:yue")).toEqual({ kind: "voicelang", lang: "yue" });
     expect(parseCallbackData("vl:en")).toEqual({ kind: "voicelang", lang: "en" });
+    expect(parseCallbackData("vl:ja")).toEqual({ kind: "voicelang", lang: "ja" });
+    expect(parseCallbackData("vl:es")).toEqual({ kind: "voicelang", lang: "es" });
     expect(parseCallbackData("vl:auto")).toEqual({ kind: "voicelang", lang: "auto" });
-    expect(parseCallbackData("vl:ja")).toBeNull();
+    expect(parseCallbackData("vl:xx")).toBeNull();
     // UI-language picks (ul:) accept only supported UI langs.
     expect(parseCallbackData("ul:en")).toEqual({ kind: "uilang", lang: "en" });
     expect(parseCallbackData("ul:zh")).toEqual({ kind: "uilang", lang: "zh" });
+    expect(parseCallbackData("ul:zh-TW")).toEqual({ kind: "uilang", lang: "zh-TW" });
     expect(parseCallbackData("ul:yue")).toEqual({ kind: "uilang", lang: "yue" });
+    expect(parseCallbackData("ul:ja")).toEqual({ kind: "uilang", lang: "ja" });
+    expect(parseCallbackData("ul:es")).toEqual({ kind: "uilang", lang: "es" });
+    expect(parseCallbackData("ul:xx")).toBeNull();
     expect(parseCallbackData("ul:")).toBeNull();
     expect(parseCallbackData("vl:")).toBeNull();
   });

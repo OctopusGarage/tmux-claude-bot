@@ -180,7 +180,7 @@ export const zh = {
     `🎙️ 当前识别语言：${lang === "auto" ? "自动检测" : lang} · 点下方按钮切换`,
   voiceLangSet: (lang: string) =>
     `🎙️ 识别语言已设为 ${lang === "auto" ? "自动检测" : lang} · 下条语音生效`,
-  voiceLangInvalid: "🎙️ 用法：/voice_lang <en|zh|yue|auto 或 2-3 位语言代码>",
+  voiceLangInvalid: "🎙️ 用法：/voice_lang <en|zh|yue|ja|es|auto 或 2-3 位语言代码>",
 
   // ── help intro (command-free preamble; command list is generated from command-catalog.ts) ──
   helpIntroTelegram: `🤖 tmux-claude-bot
@@ -207,8 +207,8 @@ export const zh = {
   cmdQueueStatus: "队列状态",
   cmdHistory: "对话历史（默认最近一条）",
   cmdPeek: "查看 tmux 画面",
-  cmdVoiceLang: "语音识别语言（英/中/粤/自动）",
-  cmdLang: "界面语言（英/中/粤）",
+  cmdVoiceLang: "语音识别语言（英/中/粤/日/西/自动）",
+  cmdLang: "界面语言（英/简/繁/粤/日/西）",
   cmdEnter: "回车",
   cmdEsc: "Escape",
   cmdInterrupt: "Ctrl-C",

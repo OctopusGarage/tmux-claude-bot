@@ -3,7 +3,7 @@ import { buildHelpBody, getTelegramActions } from "../../core/action-registry.js
 import type { HandlerDeps } from "../../core/deps.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import { listClaudeSessions } from "../../core/history.js";
-import { isUiLang, messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
+import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
 import { appendRecentProject } from "../../core/recentProjects.js";
 import {
@@ -43,7 +43,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   }
 
   bot.command("lang", async (ctx) => {
-    const arg = (ctx.message?.text ?? "").split(/\s+/)[1]?.trim().toLowerCase();
+    const arg = (ctx.message?.text ?? "").split(/\s+/)[1]?.trim();
     const labelOf = (l: string): string => UI_LANGS.find((x) => x.code === l)?.label ?? l;
     if (!arg) {
       const current = resolveUiLang("telegram");
@@ -53,12 +53,14 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       });
       return;
     }
-    if (!isUiLang(arg)) {
-      await reply(ctx, "err", "用法 / Usage: /lang <en|zh|yue>", { replyTarget });
+    // Match case-insensitively so a typed `/lang zh-TW` resolves despite the hyphen/case.
+    const code = UI_LANGS.find((x) => x.code.toLowerCase() === arg.toLowerCase())?.code;
+    if (!code) {
+      await reply(ctx, "err", "用法 / Usage: /lang <en|zh|zh-TW|yue|ja|es>", { replyTarget });
       return;
     }
-    setUiLang("telegram", arg);
-    await reply(ctx, "info", messages("telegram").uiLangSet(labelOf(arg)), { replyTarget });
+    setUiLang("telegram", code);
+    await reply(ctx, "info", messages("telegram").uiLangSet(labelOf(code)), { replyTarget });
   });
 
   bot.command("help", async (ctx) => {
