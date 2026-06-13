@@ -90,12 +90,17 @@ export async function createProjectSession(
   sessionName: string,
   projectPath: string,
 ): Promise<void> {
-  await deps.bridge.createSession(sessionName);
+  const createdNew = await deps.bridge.createSession(sessionName);
   setPathForSession(sessionName, projectPath); // record before cd so it survives a cd failure
   await deps.currentProject.set(channel, sessionName);
-  await sleep(deps.config.sessionWarmupMs);
-  await deps.bridge.sendKeys(`cd "${projectPath}"`, sessionName);
-  await sleep(deps.config.sessionWarmupMs);
+  // Only cd a session we actually created. If it already existed (a race took
+  // it, or the `claude` helper made it), it may already have Claude running, and
+  // a stray `cd "…"` would be typed into Claude's prompt instead of a shell.
+  if (createdNew !== false) {
+    await sleep(deps.config.sessionWarmupMs);
+    await deps.bridge.sendKeys(`cd "${projectPath}"`, sessionName);
+    await sleep(deps.config.sessionWarmupMs);
+  }
   await appendRecentProject(projectPath, deps.config.projectSessionPrefix);
 }
 
