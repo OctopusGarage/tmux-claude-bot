@@ -178,6 +178,8 @@ describe("helpCard", () => {
       "compact",
       "up",
       "down",
+      "left",
+      "right",
       "tab",
       "status",
       "start",
