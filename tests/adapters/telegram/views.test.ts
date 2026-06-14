@@ -80,14 +80,18 @@ describe("sendQueueStatus", () => {
 describe("sendAliveList", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("sends a hint with no keyboard when there are no alive projects", async () => {
+  it("sends a hint with a lone 'new free project' button when there are no alive projects", async () => {
     const ctx = fakeCtx();
     const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => []) } });
 
     await sendAliveList(ctx, deps);
 
     expect(ctx.texts().some((t) => t.includes("没有活跃项目"))).toBe(true);
-    expect(ctx.replies[0]?.extra.reply_markup).toBeUndefined();
+    // the empty list still offers the 🆓 button so the first parallel project is one tap away
+    const kb = ctx.replies[0]?.extra.reply_markup as {
+      inline_keyboard: { callback_data: string }[][];
+    };
+    expect(kb.inline_keyboard.flat().map((b) => b.callback_data)).toEqual(["nf"]);
   });
 
   it("sends the alive count with an inline project keyboard", async () => {

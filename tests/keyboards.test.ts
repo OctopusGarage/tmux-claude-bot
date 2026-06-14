@@ -38,6 +38,11 @@ describe("directory browser keyboard", () => {
     expect(parseCallbackData("br:x")).toEqual({ kind: "browsecancel" });
   });
 
+  it("parses the 'new free project' toggle and its cancel", () => {
+    expect(parseCallbackData("nf")).toEqual({ kind: "newfree" });
+    expect(parseCallbackData("nfx")).toEqual({ kind: "newfreecancel" });
+  });
+
   it("rejects malformed br:* callbacks", () => {
     expect(parseCallbackData("br:cd:x")).toBeNull(); // non-numeric index
     expect(parseCallbackData("br:cd:-1")).toBeNull(); // negative index

@@ -348,6 +348,18 @@ export async function sendGroupBindPicker(
   await sendCard(channel, chatId, groupPickerCard(buttons, "bind"));
 }
 
+/** Private-chat picker for "free parallel group": every recent project (including
+ * ones that already have a group) gets a 🆓 button that creates a NEW group on a
+ * fresh free session in that directory. */
+export async function sendFreeGroupPicker(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<void> {
+  const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
+  await sendCard(channel, chatId, groupPickerCard(buttons, "free"));
+}
+
 /**
  * Handle `/ws <subcommand> [name]` — workspace save/use/list/remove.
  * `arg` is everything after `/ws` (e.g. "save my-project").

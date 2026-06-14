@@ -14,6 +14,7 @@ import { sessionShortId } from "../../shared/utils/hash.js";
 import {
   buildBrowseKeyboard,
   buildControlKeyboard,
+  buildNewFreeKeyboard,
   buildProjectKeyboard,
   buildStatusInstallChoiceKeyboard,
 } from "./keyboards.js";
@@ -34,7 +35,9 @@ export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<vo
   try {
     const buttons = await aliveProjectButtons(deps, tgScope(ctx));
     if (buttons.length === 0) {
-      await reply(ctx, "list", messages("telegram").aliveListEmpty);
+      await reply(ctx, "list", messages("telegram").aliveListEmpty, {
+        replyMarkup: buildNewFreeKeyboard(),
+      });
       return;
     }
     await reply(ctx, "list", messages("telegram").aliveListTitle(buttons.length), {

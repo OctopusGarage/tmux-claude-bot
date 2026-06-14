@@ -243,6 +243,13 @@ export const yue: Messages = {
   cmdListAlive: "活躍項目（點擊切換/刪除）",
   cmdListRecent: "近期項目",
   cmdAddProject: "新增項目",
+  cmdNewFree: "新增自由項目（同目錄可並行）",
+  freeProjectLimit: (max) => `自由項目已達上限 ${max} 個，請先刪除一個再試。`,
+  freeProjectCreated: (slot, label) =>
+    `🆓 已建立自由項目 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目錄並自行啟動 Claude；/list_alive_projects 可切回。`,
+  btnNewFree: "🆓 新增自由項目",
+  freeLabelPrompt: "請輸入自由項目名稱（傳送 - 略過命名）",
+  freeLabelCancelled: "已取消",
   cmdAdopt: "接管 tmux 以外的 Claude",
   cmdQueueStatus: "隊列狀態",
   cmdHistory: "對話歷史（預設最近一條）",
@@ -311,4 +318,7 @@ export const yue: Messages = {
   groupPinnedNoSwitch: (label) =>
     `🔒 本群已固定綁定「${label}」，無法切換至其他項目。如需更換,請用 🗂 → 改綁。`,
   groupNoRemoveInGroup: "🔒 群組中無法刪除項目（會影響其他人）。請至與機器人的私聊中刪除。",
+  groupFreePickerTitle: "🆓 新增自由項目群組（可與現有群組同目錄）",
+  btnFreeGroup: "🆓 平行群組",
+  freeGroupCreated: (label) => `🆓 已建立平行群組「${label}」`,
 };

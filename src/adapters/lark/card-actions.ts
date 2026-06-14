@@ -59,6 +59,7 @@ import {
   handleRestore,
   handleUnbind,
   makeBoundGroupBySid,
+  makeFreeGroupBySid,
 } from "./group-commands.js";
 import { sendCard, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
@@ -68,6 +69,7 @@ import {
   sendAliveList,
   sendBrowse,
   sendCurrentProject,
+  sendFreeGroupPicker,
   sendGroupBindPicker,
   sendGroupMenu,
   sendHistory,
@@ -228,6 +230,14 @@ async function handleMakeGroup(ctx: CardCtx): Promise<void> {
   if (!value?.sid) return;
   if (!(await gateAction(ctx, "createGroup"))) return;
   await makeBoundGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
+}
+
+/** Create a free parallel group — private chat only, mirroring makegroup's gate. */
+async function handleMakeFreeGroup(ctx: CardCtx): Promise<void> {
+  const { channel, deps, evt, value } = ctx;
+  if (!value?.sid) return;
+  if (!(await gateAction(ctx, "createGroup"))) return;
+  await makeFreeGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
 }
 
 /** Bind the current chat to a project — group only per policy, mirroring `/bind`. */
@@ -403,7 +413,9 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   adoptattach: handleAdoptAttach,
   // --- Project-group buttons (no typing needed) ---
   groupmenu: ({ channel, deps, evt }) => sendGroupMenu(channel, deps, evt.chatId),
+  freegroupmenu: ({ channel, deps, evt }) => sendFreeGroupPicker(channel, deps, evt.chatId),
   makegroup: handleMakeGroup,
+  makefreegroup: handleMakeFreeGroup,
   bindhere: handleBindHere,
   rebind: ({ channel, deps, evt }) => sendGroupBindPicker(channel, deps, evt.chatId),
   unbind: ({ channel, deps, evt, chatKind }) => handleUnbind(channel, deps, evt.chatId, chatKind),

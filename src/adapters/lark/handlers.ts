@@ -12,7 +12,13 @@ import { isOpenIdAllowed } from "./auth.js";
 import { browseCard, helpCard } from "./cards.js";
 import { isGroupMgmtCommand, parseLarkInput } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
-import { handleBind, handleNewGroup, handleRestore, handleUnbind } from "./group-commands.js";
+import {
+  handleBind,
+  handleNewFreeGroup,
+  handleNewGroup,
+  handleRestore,
+  handleUnbind,
+} from "./group-commands.js";
 import { sendCard, sendText } from "./replies.js";
 import { resolveReplyTarget } from "./reply-target.js";
 import {
@@ -248,6 +254,16 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             break;
           case "newgroup":
             await handleNewGroup(channel, deps, msg.chatId, msg.chatType, msg.senderId, parsed.arg);
+            break;
+          case "newfreegroup":
+            await handleNewFreeGroup(
+              channel,
+              deps,
+              msg.chatId,
+              msg.chatType,
+              msg.senderId,
+              parsed.arg,
+            );
             break;
           case "bind":
           case "rebind":

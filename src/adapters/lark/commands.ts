@@ -22,6 +22,7 @@ export type ViewName =
   | "sessions"
   | "doctor"
   | "newgroup"
+  | "newfreegroup"
   | "bind"
   | "rebind"
   | "unbind"
@@ -45,6 +46,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   sessions: "sessions",
   doctor: "doctor",
   newgroup: "newgroup",
+  newfreegroup: "newfreegroup",
   bind: "bind",
   rebind: "rebind",
   unbind: "unbind",
@@ -95,6 +97,7 @@ export function parseLarkInput(raw: string): ParsedInput {
 
 const GROUP_MGMT_VIEWS: ReadonlySet<ViewName> = new Set([
   "newgroup",
+  "newfreegroup",
   "bind",
   "rebind",
   "unbind",

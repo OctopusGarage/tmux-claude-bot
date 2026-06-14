@@ -269,6 +269,13 @@ export const zh = {
   cmdListAlive: "活跃项目（点按切换/删除）",
   cmdListRecent: "近期项目",
   cmdAddProject: "新建项目",
+  cmdNewFree: "新建自由项目（同目录可并行）",
+  freeProjectLimit: (max: number) => `自由项目已达上限 ${max} 个，请先删除一个再试。`,
+  freeProjectCreated: (slot: number, label: string | null) =>
+    `🆓 已创建自由项目 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目录并自行启动 Claude；/list_alive_projects 可切回。`,
+  btnNewFree: "🆓 新建自由项目",
+  freeLabelPrompt: "请输入自由项目名称（发送 - 跳过命名）",
+  freeLabelCancelled: "已取消",
   cmdAdopt: "接管 tmux 外的 Claude",
   cmdQueueStatus: "队列状态",
   cmdHistory: "对话历史（默认最近一条）",
@@ -339,6 +346,9 @@ export const zh = {
   groupPinnedNoSwitch: (label: string) =>
     `🔒 本群已固定绑定「${label}」，不能切换到其他项目。如需更换，请用 🗂 → 改绑。`,
   groupNoRemoveInGroup: "🔒 在群里不能删除项目（会影响他人）。请到与机器人的私聊里删除。",
+  groupFreePickerTitle: "🆓 新建自由项目群（可与现有群同目录）",
+  btnFreeGroup: "🆓 平行群",
+  freeGroupCreated: (label: string) => `🆓 已创建平行群「${label}」`,
 };
 
 // No `as const`: Messages widens to string / function types so other languages

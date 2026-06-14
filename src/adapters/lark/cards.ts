@@ -345,11 +345,16 @@ export function recentListCard(projects: RecentButton[], group = false): object 
 
 /** Project-group picker: list recent projects, each with a "new group" (p2p) or
  * "bind" (in a group) button carrying the project's short id. No typing needed. */
-export function groupPickerCard(projects: RecentButton[], mode: "make" | "bind"): object {
+export function groupPickerCard(projects: RecentButton[], mode: "make" | "bind" | "free"): object {
   const m = messages("lark");
-  const title = mode === "make" ? m.groupPickerTitle : m.groupBindPickerTitle;
-  const text = mode === "make" ? m.btnMakeGroup : m.btnBindHere;
-  const cmd = mode === "make" ? "makegroup" : "bindhere";
+  const title =
+    mode === "make"
+      ? m.groupPickerTitle
+      : mode === "bind"
+        ? m.groupBindPickerTitle
+        : m.groupFreePickerTitle;
+  const text = mode === "make" ? m.btnMakeGroup : mode === "bind" ? m.btnBindHere : m.btnFreeGroup;
+  const cmd = mode === "make" ? "makegroup" : mode === "bind" ? "bindhere" : "makefreegroup";
   return listCard(title, m.groupMenuNoProjects, projects, (p) =>
     gridRow([{ text, value: { cmd, sid: p.sid } }]),
   );
@@ -391,6 +396,7 @@ export function helpCard(group = false, voiceInstallable = false): object {
       ]
     : [
         { text: m.btnGroupMenu, value: { cmd: "groupmenu" } },
+        { text: m.btnFreeGroup, value: { cmd: "freegroupmenu" } },
         { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
         { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
       ];

@@ -196,6 +196,7 @@ describe("helpCard", () => {
       "current",
       "statusinstall",
       "groupmenu",
+      "freegroupmenu",
       "voicelangmenu",
       "uilangmenu",
     ]);

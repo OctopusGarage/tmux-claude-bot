@@ -5,6 +5,17 @@ import { sessionShortId } from "../shared/utils/hash.js";
 import { expandTilde } from "../shared/utils/path.js";
 import { sleep } from "../shared/utils/sleep.js";
 import type { HandlerDeps } from "./deps.js";
+import {
+  allocateFreeSlot,
+  freeLabel,
+  freeSessionName,
+  freeSlotOf,
+  getFreeProject,
+  listFreeSlots,
+  releaseFreeSlot,
+  setFreeProject,
+} from "./free-projects.js";
+import { bindingForSession, unbindGroup } from "./group-bindings.js";
 import { messages } from "./i18n/index.js";
 import { projectLabel } from "./project-label.js";
 import { channelFromScope } from "./project-manager.js";
@@ -75,6 +86,63 @@ export async function createProjectFromPath(
     }
     await createProjectSession(deps, scope, sessionName, resolvedPath);
     return { status: "created", sessionName, projectPath: resolvedPath };
+  } catch (err) {
+    return { status: "error", message: normalizeError(err).message };
+  }
+}
+
+/** Outcome of `/new_free` — adapters map each status to their own reply. */
+export type CreateFreeResult =
+  | { status: "created"; sessionName: string; slot: number }
+  | { status: "limit" }
+  | { status: "error"; message: string };
+
+/**
+ * Reconcile the free registry against live tmux, then return the lowest free slot
+ * (or null when genuinely full). The SINGLE allocation entry point — folding the
+ * prune in means no caller can allocate without it.
+ *
+ * Prune drops slots whose tmux session is no longer alive — UNLESS a group is
+ * still bound to it (the group owns the slot; its next message revives the session
+ * via reconcile). Without this, a free session killed outside removeProjectBySession
+ * (tmux/server/machine restart, manual kill) leaves its slot "used" forever, so the
+ * cap would falsely read as full while /list_alive_projects shows nothing.
+ */
+export async function allocateFreeSlotPruned(deps: HandlerDeps): Promise<number | null> {
+  const live = new Set(await deps.bridge.listProjectSessions());
+  const prefix = deps.config.projectSessionPrefix;
+  for (const slot of listFreeSlots()) {
+    const name = freeSessionName(prefix, slot);
+    if (live.has(name) || bindingForSession(name)) continue;
+    releaseFreeSlot(slot);
+  }
+  return allocateFreeSlot();
+}
+
+/**
+ * Create a "free project": a bare tmux session named `…_free_<n>` (decoupled from
+ * any path, so multiple can coexist on the same directory), recorded in the free
+ * registry and set as this scope's current project. No cwd and no Claude launch —
+ * the user drives it (cd / start) themselves.
+ *
+ * No lock around allocate→create: the bot is single-process, and the worst a rapid
+ * double-tap can do is hand out two distinct slots (two harmless free projects) —
+ * never a corrupt registry. The registry write lands AFTER createSession, so a
+ * failed create leaves no orphan slot to leak.
+ */
+export async function createFreeProject(
+  deps: HandlerDeps,
+  scope: string,
+  label: string,
+): Promise<CreateFreeResult> {
+  const slot = await allocateFreeSlotPruned(deps);
+  if (slot === null) return { status: "limit" };
+  const sessionName = freeSessionName(deps.config.projectSessionPrefix, slot);
+  try {
+    await deps.bridge.createSession(sessionName); // bare: no cwd argv
+    setFreeProject(slot, { label: label.trim() || null }); // after createSession: no orphan slot on failure
+    await deps.currentProject.set(scope, sessionName);
+    return { status: "created", sessionName, slot };
   } catch (err) {
     return { status: "error", message: normalizeError(err).message };
   }
@@ -202,6 +270,17 @@ export async function removeProjectBySession(
   deps.configResolver.invalidate(sessionName);
   // The session is gone — drop it from any channel that had it as current.
   await deps.currentProject.clearSession(sessionName);
+  // A free project owns a registry slot — free it so the number can be reused.
+  const freeSlot = freeSlotOf(sessionName, deps.config.projectSessionPrefix);
+  if (freeSlot !== null) {
+    // A free session has no path to re-anchor to, so a group bound to it cannot
+    // self-heal via reconcile. Unbind it BEFORE recycling the slot — otherwise a
+    // later /new_free could re-allocate free_<n> while the old group still points
+    // at that name, and reconcile would recreate it as a shared session.
+    const bound = bindingForSession(sessionName);
+    if (bound) unbindGroup(bound.chatId);
+    releaseFreeSlot(freeSlot);
+  }
 }
 
 /**
@@ -213,8 +292,10 @@ export async function aliveProjectButtons(
   deps: HandlerDeps,
   channel: string,
 ): Promise<ProjectButton[]> {
+  const prefix = deps.config.projectSessionPrefix;
   const sessions = await deps.bridge.listProjectSessions();
   const valid = sessions.filter((session) => {
+    if (freeSlotOf(session, prefix) !== null) return true; // free sessions always listed
     const projectPath = getPathBySession(session);
     return projectPath && fs.existsSync(projectPath);
   });
@@ -222,11 +303,15 @@ export async function aliveProjectButtons(
   return valid
     .slice()
     .sort()
-    .map((session) => ({
-      sid: sessionShortId(session),
-      label: projectLabel(session, getPathBySession(session) ?? undefined),
-      active: session === currentSession,
-    }));
+    .map((session) => {
+      const slot = freeSlotOf(session, prefix);
+      const path = getPathBySession(session);
+      const label =
+        slot !== null
+          ? freeLabel(slot, getFreeProject(slot), path)
+          : projectLabel(session, path ?? undefined);
+      return { sid: sessionShortId(session), label, active: session === currentSession };
+    });
 }
 
 /** Outcome of opening a recent project by short id — the adapter maps each

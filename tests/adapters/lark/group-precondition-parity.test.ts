@@ -1,7 +1,11 @@
 import type { CardActionEvent } from "@larksuiteoapi/node-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.js";
-import { handleBind, handleNewGroup } from "../../../src/adapters/lark/group-commands.js";
+import {
+  handleBind,
+  handleNewFreeGroup,
+  handleNewGroup,
+} from "../../../src/adapters/lark/group-commands.js";
 import { bindGroup, getBinding, unbindGroup } from "../../../src/core/group-bindings.js";
 import { messages } from "../../../src/core/i18n/index.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
@@ -54,6 +58,22 @@ describe("group-op precondition parity (card surface == text surface)", () => {
     expect(tChannel.texts()).toContain(m.groupNewGroupOnlyInP2p);
     expect(cChannel.texts()).toContain(m.groupNewGroupOnlyInP2p);
     expect(createBoundChat).not.toHaveBeenCalled(); // neither surface created a group
+  });
+
+  it("creating a FREE parallel group is private-chat only on BOTH surfaces (refused in a group, same message)", async () => {
+    // text surface: /newfreegroup in a group
+    const tChannel = fakeChannel();
+    await handleNewFreeGroup(tChannel, fakeDeps(), "oc_grp", "group", "ou_me", "/some/path");
+
+    // card surface: makefreegroup tapped in a bound group
+    bindGroup("chat-1", { workspacePath: "/p", sessionName: "s", label: "L" });
+    const cChannel = fakeChannel();
+    await makeCardActionHandler(cChannel, fakeDeps())(evt({ cmd: "makefreegroup", sid: "x" }));
+
+    // same verdict + same message on both surfaces — and neither created a group
+    expect(tChannel.texts()).toContain(m.groupNewGroupOnlyInP2p);
+    expect(cChannel.texts()).toContain(m.groupNewGroupOnlyInP2p);
+    expect(createBoundChat).not.toHaveBeenCalled();
   });
 
   it("binding the current chat is group-only on BOTH surfaces (refused in p2p, same message)", async () => {

@@ -250,6 +250,14 @@ export const ja: Messages = {
   cmdListAlive: "アクティブなプロジェクト（タップで切替/削除）",
   cmdListRecent: "最近のプロジェクト",
   cmdAddProject: "プロジェクトを作成",
+  cmdNewFree: "フリープロジェクトを作成（同一ディレクトリで並行可）",
+  freeProjectLimit: (max) =>
+    `フリープロジェクトは上限 ${max} 件です。1件削除してから再試行してください。`,
+  freeProjectCreated: (slot, label) =>
+    `🆓 フリープロジェクト #${slot}${label ? `（${label}）` : ""} を作成しました。\n任意のディレクトリへ /cd し、Claude をご自身で起動してください。/list_alive_projects で戻れます。`,
+  btnNewFree: "🆓 フリープロジェクト作成",
+  freeLabelPrompt: "フリープロジェクトの名前を送信してください（- で命名をスキップ）",
+  freeLabelCancelled: "キャンセルしました",
   cmdAdopt: "tmux 外の Claude を引き継ぐ",
   cmdQueueStatus: "キューの状態",
   cmdHistory: "会話履歴（既定は最新の1件）",
@@ -325,4 +333,7 @@ export const ja: Messages = {
     `🔒 このグループは「${label}」に固定されています。プロジェクトの切替は無効です。変更は 🗂 → 紐付け直す から。`,
   groupNoRemoveInGroup:
     "🔒 グループ内ではプロジェクトを削除できません（他のメンバーに影響します）。bot とのプライベートチャットで行ってください。",
+  groupFreePickerTitle: "🆓 フリープロジェクトのグループを作成（同一ディレクトリ可）",
+  btnFreeGroup: "🆓 並行グループ",
+  freeGroupCreated: (label) => `🆓 並行グループ「${label}」を作成しました`,
 };

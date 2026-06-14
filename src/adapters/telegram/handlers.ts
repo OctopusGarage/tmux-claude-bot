@@ -3,9 +3,11 @@ import { buildHelpBody, getTelegramActions } from "../../core/action-registry.js
 import type { HandlerDeps } from "../../core/deps.js";
 import { createSubfolder, isAwaitingFolderName, startBrowse } from "../../core/dir-browser.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
+import { consumeFreeLabel, isAwaitingFreeLabel } from "../../core/free-label-prompt.js";
+import { FREE_PROJECT_LIMIT } from "../../core/free-projects.js";
 import { listClaudeSessions } from "../../core/history.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
-import { createProjectFromPath } from "../../core/project-ops.js";
+import { createFreeProject, createProjectFromPath } from "../../core/project-ops.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { orphanLabel } from "../../core/takeover.js";
 import { findAdoptableOrphans } from "../../core/takeover-service.js";
@@ -29,6 +31,7 @@ import {
   switchToProject,
 } from "./project-ops.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
+import type { Tone } from "./replies.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
@@ -125,6 +128,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       await createProjectFromPath(deps, tgScope(ctx), arg),
       replyTarget,
     );
+  });
+
+  bot.command("new_free", async (ctx) => {
+    await handleNewFreeCommand(ctx, deps, tgScope(ctx), (kind, text) => reply(ctx, kind, text));
   });
 
   bot.command("current_project", async (ctx) => {
@@ -237,6 +244,16 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
 
+    // Free-project naming: if a "🆓 new free project" label is awaited for this
+    // chat, this message IS the label — create the free project ("-" = skip name).
+    if (isAwaitingFreeLabel(tgScope(ctx))) {
+      const scope = tgScope(ctx);
+      consumeFreeLabel(scope);
+      const label = text.trim() === "-" ? "" : text.trim();
+      await createFreeAndReply(deps, scope, label, (kind, body) => reply(ctx, kind, body));
+      return;
+    }
+
     // Directory browser: if a "new folder" name is awaited for this chat, this
     // message IS that name — create it and re-open the browser in the new folder.
     if (isAwaitingFolderName(tgScope(ctx))) {
@@ -332,4 +349,37 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     logger.warn(`[handlers] claude not running session=${currentSessionName} chat=${chatId}`);
     await reply(ctx, "err", MSG.notRunning);
   });
+}
+
+/**
+ * Shared `/new_free [label]` logic, decoupled from grammY so it can be tested with
+ * a plain reply sink. Creates a bare free project and reports the outcome.
+ */
+export async function handleNewFreeCommand(
+  ctx: { message?: { text?: string | undefined } | undefined },
+  deps: HandlerDeps,
+  scope: string,
+  send: (tone: Tone, text: string) => void | Promise<void>,
+): Promise<void> {
+  const label = (ctx.message?.text ?? "").split(" ").slice(1).join(" ").trim();
+  await createFreeAndReply(deps, scope, label, send);
+}
+
+/** Create a free project for `label` (empty = unnamed) and report via `send`.
+ * Shared by the `/new_free` command and the button-driven label-capture flow. */
+export async function createFreeAndReply(
+  deps: HandlerDeps,
+  scope: string,
+  label: string,
+  send: (tone: Tone, text: string) => void | Promise<void>,
+): Promise<void> {
+  const m = messages("telegram");
+  const res = await createFreeProject(deps, scope, label);
+  if (res.status === "created") {
+    await send("info", m.freeProjectCreated(res.slot, label || null));
+  } else if (res.status === "limit") {
+    await send("err", m.freeProjectLimit(FREE_PROJECT_LIMIT));
+  } else {
+    await send("err", m.errorPrefix(res.message));
+  }
 }

@@ -137,6 +137,7 @@ const PROJECTS: readonly HelpRow[] = [
   [{ cmds: ["list_alive_projects"], descKey: "cmdListAlive" }],
   [{ cmds: ["list_recent_projects"], descKey: "cmdListRecent" }],
   [{ cmds: ["add_project"], descKey: "cmdAddProject", argHint: " <path>" }],
+  [{ cmds: ["new_free"], descKey: "cmdNewFree", argHint: " [label]" }],
   [{ cmds: ["adopt"], descKey: "cmdAdopt" }],
   [{ cmds: ["queue_status"], descKey: "cmdQueueStatus" }],
   [{ cmds: ["history"], descKey: "cmdHistory", argHint: " [N]" }],
@@ -251,6 +252,7 @@ export const BOT_COMMANDS: BotCommand[] = [
   { command: "list_recent_projects", description: "List recent projects" },
   { command: "current_project", description: "Show current project" },
   { command: "add_project", description: "Add a new project" },
+  { command: "new_free", description: "Create a free (parallel) project" },
   { command: "adopt", description: "Take over a Claude running outside tmux" },
   {
     command: "status_install",

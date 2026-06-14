@@ -240,6 +240,13 @@ export const zhTW: Messages = {
   cmdListAlive: "活躍專案（點按切換/刪除）",
   cmdListRecent: "近期專案",
   cmdAddProject: "新增專案",
+  cmdNewFree: "新增自由專案（同目錄可並行）",
+  freeProjectLimit: (max) => `自由專案已達上限 ${max} 個，請先刪除一個再試。`,
+  freeProjectCreated: (slot, label) =>
+    `🆓 已建立自由專案 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目錄並自行啟動 Claude；/list_alive_projects 可切回。`,
+  btnNewFree: "🆓 新增自由專案",
+  freeLabelPrompt: "請輸入自由專案名稱（傳送 - 略過命名）",
+  freeLabelCancelled: "已取消",
   cmdAdopt: "接管 tmux 外的 Claude",
   cmdQueueStatus: "佇列狀態",
   cmdHistory: "對話歷史（預設最近一筆）",
@@ -309,4 +316,7 @@ export const zhTW: Messages = {
   groupPinnedNoSwitch: (label) =>
     `🔒 本群已固定綁定「${label}」，不能切換到其他專案。如需更換，請用 🗂 → 改綁。`,
   groupNoRemoveInGroup: "🔒 在群裡不能刪除專案（會影響他人）。請到與機器人的私訊裡刪除。",
+  groupFreePickerTitle: "🆓 新增自由專案群組（可與現有群組同目錄）",
+  btnFreeGroup: "🆓 平行群組",
+  freeGroupCreated: (label) => `🆓 已建立平行群組「${label}」`,
 };

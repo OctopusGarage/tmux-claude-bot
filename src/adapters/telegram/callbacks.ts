@@ -8,6 +8,7 @@ import {
   resolveBrowseAction,
 } from "../../core/dir-browser.js";
 import { executeMessage, performStart } from "../../core/dispatch.js";
+import { clearFreeLabel, requestFreeLabel } from "../../core/free-label-prompt.js";
 import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { createProjectFromPath } from "../../core/project-ops.js";
 import type { QueuedMessage } from "../../core/queue.js";
@@ -32,6 +33,7 @@ import {
   buildBrowseKeyboard,
   buildControlKeyboard,
   buildExpandedControlKeyboard,
+  buildFreeLabelKeyboard,
   buildLangKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
@@ -117,6 +119,27 @@ export async function handleCallbackQuery(
     if (parsed.kind === "listalive") {
       await safeAnswerCallback(ctx);
       await sendAliveList(ctx, deps);
+      return;
+    }
+    // "🆓 new free project" tap: arm the label capture, then prompt. The next
+    // text message is taken as the label (see the message handler).
+    if (parsed.kind === "newfree") {
+      requestFreeLabel(tgScope(ctx));
+      await safeAnswerCallback(ctx);
+      await reply(ctx, "info", messages("telegram").freeLabelPrompt, {
+        replyMarkup: buildFreeLabelKeyboard(),
+      });
+      return;
+    }
+    // Cancel an armed label capture (the prompt's cancel button).
+    if (parsed.kind === "newfreecancel") {
+      clearFreeLabel(tgScope(ctx));
+      await safeAnswerCallback(ctx, messages("telegram").freeLabelCancelled);
+      try {
+        await timeApi("editMessageReplyMarkup", () => ctx.editMessageReplyMarkup());
+      } catch {
+        /* message may be gone or unchanged */
+      }
       return;
     }
     if (parsed.kind === "queuestatus") {

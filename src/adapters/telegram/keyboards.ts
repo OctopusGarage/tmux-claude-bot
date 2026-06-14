@@ -34,6 +34,8 @@ export type CallbackAction =
   | { kind: "delmode" }
   | { kind: "dellist" }
   | { kind: "listalive" }
+  | { kind: "newfree" }
+  | { kind: "newfreecancel" }
   | { kind: "queuestatus" }
   | { kind: "voicelang"; lang: string }
   | { kind: "uilang"; lang: Lang }
@@ -73,6 +75,8 @@ export function parseCallbackData(data: string): CallbackAction | null {
   if (data === "dm") return { kind: "delmode" };
   if (data === "dl") return { kind: "dellist" };
   if (data === "la") return { kind: "listalive" };
+  if (data === "nf") return { kind: "newfree" };
+  if (data === "nfx") return { kind: "newfreecancel" };
   if (data === "qs") return { kind: "queuestatus" };
   if (data === "ac") return { kind: "adoptcancel" };
   const parts = data.split(":");
@@ -297,7 +301,20 @@ export function buildProjectKeyboard(projects: ProjectButton[]): InlineKeyboard 
       kb.text(`🔀 ${p.label}`, `s:${p.sid}`).row();
     }
   }
+  kb.text(messages("telegram").btnNewFree, "nf").row();
   return kb.text(messages("telegram").btnDeleteMode, "dm");
+}
+
+/** Lone "🆓 new free project" button — shown when the alive list is empty so the
+ * first parallel project is still one tap away. */
+export function buildNewFreeKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text(messages("telegram").btnNewFree, "nf");
+}
+
+/** Lone "cancel" button shown under the "name your free project" prompt, so the
+ * armed label capture can be dropped without sending a throwaway message. */
+export function buildFreeLabelKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text(messages("telegram").btnCancel, "nfx");
 }
 
 /** Delete mode: one full-width "delete <project>" row each, plus a cancel toggle. */
