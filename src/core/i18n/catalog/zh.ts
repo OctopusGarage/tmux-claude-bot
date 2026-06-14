@@ -76,6 +76,25 @@ export const zh = {
   btnCancel: "✕ 取消",
   btnDeleteMode: "🗑 删除…",
 
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 可接管的 Claude 进程（不在 tmux 中）",
+  adoptEmpty: "没有发现可接管的 Claude 进程",
+  adoptConfirmPrompt: (label: string) =>
+    `确认接管？将先中断并结束原进程，再在 tmux 中续接：\n${label}`,
+  btnAdoptConfirm: "🧲 接管",
+  btnAdoptCancel: "✕ 取消",
+  adoptCancelled: "已取消接管",
+  adoptWorking: "正在接管…",
+  adoptGone: "该进程已不在可接管列表（已退出或已在 tmux 中）",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed ? `✅ 已接管并续接会话：${proj}` : `✅ 已接管并新建会话：${proj}`,
+  adoptFailed: "接管失败：进程无法结束或 Claude 未能启动",
+  adoptBusy:
+    "目标 tmux 会话里已有程序在前台运行（另一个 Claude 或其他程序）。已中止，未动原进程——请先去那边退出，再重新接管。",
+  btnAdoptAttach: "💻 在电脑终端查看（可选）",
+  adoptAttachHint: (cmd: string) =>
+    `✅ 接入命令已经放进「电脑」的剪贴板了（不用在手机上复制）。回到电脑后，在任务终端里直接粘贴回车，就能进去查看——这一步是可选的。\n命令：${cmd}`,
+
   // ── command results (dispatch) ──
   doneShort: "完成",
   claudeNotRunningRestart: "Claude 未运行，请使用 /restart 启动",
@@ -208,6 +227,7 @@ export const zh = {
   cmdListAlive: "活跃项目（点按切换/删除）",
   cmdListRecent: "近期项目",
   cmdAddProject: "新建项目",
+  cmdAdopt: "接管 tmux 外的 Claude",
   cmdQueueStatus: "队列状态",
   cmdHistory: "对话历史（默认最近一条）",
   cmdPeek: "查看 tmux 画面",

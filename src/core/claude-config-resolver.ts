@@ -11,13 +11,17 @@ export interface ProcRow {
 }
 
 /**
- * Extract CLAUDE_CONFIG_DIR from `ps eww -o command= -p <pid>` output (the env
- * is appended to the command line as space-separated KEY=VALUE tokens on macOS,
+ * Extract an env var value from `ps eww -o command= -p <pid>` output (the env is
+ * appended to the command line as space-separated KEY=VALUE tokens on macOS,
  * where /proc/<pid>/environ does not exist).
  */
-export function parseClaudeConfigDir(psEwwOutput: string): string | null {
-  const m = psEwwOutput.match(/(?:^|\s)CLAUDE_CONFIG_DIR=(\S+)/);
+export function parseEnvVar(psEwwOutput: string, key: string): string | null {
+  const m = psEwwOutput.match(new RegExp(`(?:^|\\s)${key}=(\\S+)`));
   return m?.[1] ?? null;
+}
+
+export function parseClaudeConfigDir(psEwwOutput: string): string | null {
+  return parseEnvVar(psEwwOutput, "CLAUDE_CONFIG_DIR");
 }
 
 function basename(p: string): string {

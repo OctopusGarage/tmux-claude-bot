@@ -67,6 +67,27 @@ export const ja: Messages = {
   btnCancel: "✕ キャンセル",
   btnDeleteMode: "🗑 削除…",
 
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 引き継ぎ可能な Claude プロセス（tmux 外）",
+  adoptEmpty: "引き継ぎ可能な Claude プロセスは見つかりません",
+  adoptConfirmPrompt: (label: string) =>
+    `引き継ぎますか？元のプロセスを中断・終了してから tmux で再開します:\n${label}`,
+  btnAdoptConfirm: "🧲 引き継ぐ",
+  btnAdoptCancel: "✕ キャンセル",
+  adoptCancelled: "引き継ぎをキャンセルしました",
+  adoptWorking: "引き継ぎ中…",
+  adoptGone: "このプロセスは引き継ぎ対象ではありません（終了済み、または tmux 内）",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed
+      ? `✅ 引き継ぎ、セッションを再開しました: ${proj}`
+      : `✅ 引き継ぎ、新規開始しました: ${proj}`,
+  adoptFailed: "引き継ぎ失敗: プロセスを終了できないか、Claude が起動しませんでした",
+  adoptBusy:
+    "対象の tmux セッションのフォアグラウンドで既にプログラムが動作中です（別の Claude など）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
+  btnAdoptAttach: "💻 PC のターミナルで見る（任意）",
+  adoptAttachHint: (cmd: string) =>
+    `✅ 接続コマンドは「PC」のクリップボードにコピー済みです（スマホ側でコピーする必要はありません）。PC に戻ったらターミナルに貼り付けて Enter を押すだけで入れます。この手順は任意です。\nコマンド: ${cmd}`,
+
   doneShort: "完了",
   claudeNotRunningRestart: "Claude が実行されていません · /restart で起動してください",
   contentTruncated: "...(内容が長すぎるため省略しました)",
@@ -191,6 +212,7 @@ export const ja: Messages = {
   cmdListAlive: "アクティブなプロジェクト（タップで切替/削除）",
   cmdListRecent: "最近のプロジェクト",
   cmdAddProject: "プロジェクトを作成",
+  cmdAdopt: "tmux 外の Claude を引き継ぐ",
   cmdQueueStatus: "キューの状態",
   cmdHistory: "会話履歴（既定は最新の1件）",
   cmdPeek: "tmux ペインを表示",

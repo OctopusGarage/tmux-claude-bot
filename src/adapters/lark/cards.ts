@@ -131,6 +131,7 @@ function controlRows(group = false): ButtonSpec[][] {
       ]
     : [
         { text: m.btnProjects, value: { cmd: "listalive" } },
+        { text: m.btnAdoptConfirm, value: { cmd: "adoptlist" } },
         { text: m.btnCurrent, value: { cmd: "current" } },
         { text: m.btnHelp, value: { cmd: "help" } },
       ];
@@ -194,6 +195,37 @@ export function resultCard(output: string, title = "Claude", group = false): obj
 export function viewCard(title: string, body: string, group = false): object {
   const content = body && body.trim() ? body : messages("lark").emptyPane;
   return shell(title, [md(content), HR, ...controlActions(group)]);
+}
+
+/** Adopt list: one labelled row per non-tmux claude with a "take over" button
+ * (`adopt` → shows a confirm). Mirrors Telegram's `/adopt` keyboard. */
+export function orphanListCard(orphans: { pid: number; label: string }[]): object {
+  const m = messages("lark");
+  return listCard(m.adoptTitle, m.adoptEmpty, orphans, (o) =>
+    gridRow([{ text: m.btnAdoptConfirm, value: { cmd: "adopt", pid: o.pid }, style: "primary" }]),
+  );
+}
+
+/** Confirm step before adopting: tap to execute (`adoptgo`) or cancel. */
+export function adoptConfirmCard(pid: number, label: string): object {
+  const m = messages("lark");
+  return shell(m.adoptTitle, [
+    md(m.adoptConfirmPrompt(label)),
+    gridRow([
+      { text: m.btnAdoptConfirm, value: { cmd: "adoptgo", pid }, style: "primary" },
+      { text: m.btnAdoptCancel, value: { cmd: "adoptcancel" } },
+    ]),
+  ]);
+}
+
+/** After a successful adopt: the result plus a button that copies the attach
+ * command to the host clipboard on demand (`adoptattach`). */
+export function adoptDoneCard(body: string, sid: string): object {
+  const m = messages("lark");
+  return shell("✅", [
+    md(body),
+    gridRow([{ text: m.btnAdoptAttach, value: { cmd: "adoptattach", sid } }]),
+  ]);
 }
 
 /** Shared skeleton for the tappable project lists: an empty-state message, or a
@@ -279,6 +311,7 @@ export function helpCard(group = false, voiceInstallable = false): object {
     : [
         { text: m.btnProjects, value: { cmd: "listalive" } },
         { text: m.btnRecent, value: { cmd: "recent" } },
+        { text: m.btnAdoptConfirm, value: { cmd: "adoptlist" } },
         { text: m.btnCurrent, value: { cmd: "current" } },
       ];
   const prefsRow: ButtonSpec[] = group

@@ -12,6 +12,13 @@ import {
   switchToProject,
 } from "../../core/project-ops.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
+import { orphanLabel } from "../../core/takeover.js";
+import {
+  adoptOrphan,
+  composeAdoptOutcome,
+  copyAttachCommand,
+  findAdoptableOrphans,
+} from "../../core/takeover-service.js";
 import {
   checkVoiceSupport,
   installVoice,
@@ -21,10 +28,18 @@ import {
   setWhisperLanguage,
   VOICE_LANGS,
 } from "../../core/voice-support.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { verifyValue } from "./card-signing.js";
-import { helpCard, langCard, startPickerCard, voiceLangCard } from "./cards.js";
+import {
+  adoptConfirmCard,
+  adoptDoneCard,
+  helpCard,
+  langCard,
+  startPickerCard,
+  voiceLangCard,
+} from "./cards.js";
 import { type ChatKind, checkAction, type ProjectAction, serviceableChat } from "./chat-policy.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, resolveSession, runImmediateLarkAction } from "./executor.js";
@@ -44,6 +59,7 @@ import {
   sendGroupBindPicker,
   sendGroupMenu,
   sendHistory,
+  sendOrphanList,
   sendPeek,
   sendQueueStatus,
   sendRecentList,
@@ -58,6 +74,7 @@ type CardValue =
       view?: boolean;
       lang?: string;
       idx?: number;
+      pid?: number;
     }
   | undefined;
 
@@ -222,6 +239,52 @@ async function handleStartPick({ channel, deps, evt, value }: CardCtx): Promise<
   await sendText(channel, evt.chatId, messages("lark").claudeStartedWith(pick.label));
 }
 
+/** Tap a candidate → confirm card (interrupting + ending the original is
+ * disruptive, so confirm first). Mirrors Telegram's adoptshow. */
+async function handleAdoptShow({ channel, evt, value, chatKind }: CardCtx): Promise<void> {
+  if (chatKind !== "p2p" || typeof value?.pid !== "number") return;
+  const orphan = (await findAdoptableOrphans()).find((o) => o.pid === value.pid);
+  if (!orphan) {
+    await sendText(channel, evt.chatId, messages("lark").adoptGone);
+    return;
+  }
+  await sendCard(channel, evt.chatId, adoptConfirmCard(orphan.pid, orphanLabel(orphan)));
+}
+
+/** Confirmed adopt: SIGINT→SIGTERM→resume via the shared service, then report. */
+async function handleAdoptExec({ channel, deps, evt, value, chatKind }: CardCtx): Promise<void> {
+  if (chatKind !== "p2p" || typeof value?.pid !== "number") return;
+  const result = await adoptOrphan(value.pid, {
+    bridge: deps.bridge,
+    configResolver: deps.configResolver,
+    projectSessionPrefix: deps.config.projectSessionPrefix,
+    warmupMs: deps.config.sessionWarmupMs,
+  });
+  const outcome = composeAdoptOutcome(result, chatScope("lark", evt.chatId));
+  if (!outcome.ok) {
+    await sendText(channel, evt.chatId, outcome.body);
+    return;
+  }
+  // Point this 1:1 chat at the adopted session (this handler is p2p-only above).
+  await deps.currentProject.set(chatScope("lark", evt.chatId), outcome.sessionName);
+  await sendCard(
+    channel,
+    evt.chatId,
+    adoptDoneCard(outcome.body, sessionShortId(outcome.sessionName)),
+  );
+}
+
+/** "View on computer": copy the attach command to the host clipboard on demand. */
+async function handleAdoptAttach({ channel, deps, evt, value }: CardCtx): Promise<void> {
+  if (!value?.sid) return;
+  const session = await resolveAliveSessionByShortId(deps, value.sid);
+  if (!session) {
+    await sendText(channel, evt.chatId, messages("lark").sessionGone);
+    return;
+  }
+  await sendText(channel, evt.chatId, messages("lark").adoptAttachHint(copyAttachCommand(session)));
+}
+
 /**
  * Button `cmd` → handler. Each returns after doing its work; commands not here
  * fall through to the immediate/queued action routing (and finally a no-op for
@@ -253,6 +316,15 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   switch: handleSwitch,
   remove: handleRemove,
   addrecent: handleAddRecent,
+  // --- Adopt a non-tmux claude (mirrors Telegram /adopt) ---
+  adoptlist: ({ channel, evt, chatKind }) =>
+    chatKind === "p2p" ? sendOrphanList(channel, evt.chatId) : Promise.resolve(),
+  adopt: handleAdoptShow,
+  adoptgo: handleAdoptExec,
+  adoptcancel: async ({ channel, evt }) => {
+    await sendText(channel, evt.chatId, messages("lark").adoptCancelled);
+  },
+  adoptattach: handleAdoptAttach,
   // --- Project-group buttons (no typing needed) ---
   groupmenu: ({ channel, deps, evt }) => sendGroupMenu(channel, deps, evt.chatId),
   makegroup: handleMakeGroup,

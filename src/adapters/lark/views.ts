@@ -25,6 +25,8 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "../../core/sessionPathMap.js";
+import { orphanLabel } from "../../core/takeover.js";
+import { findAdoptableOrphans } from "../../core/takeover-service.js";
 import { resolveWhisperLanguage } from "../../core/voice-support.js";
 import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
@@ -33,6 +35,7 @@ import {
   groupBoundCard,
   groupPickerCard,
   langCard,
+  orphanListCard,
   projectListCard,
   recentListCard,
   viewCard,
@@ -90,6 +93,22 @@ export async function sendRecentList(
   try {
     const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
     await sendCard(channel, chatId, recentListCard(buttons, isProjectGroup(chatId)));
+  } catch (err) {
+    await sendError(channel, chatId, err);
+  }
+}
+
+/** List claude processes running outside tmux; each card row offers a take-over
+ * button. Mirrors Telegram's `/adopt`. */
+export async function sendOrphanList(channel: LarkChannel, chatId: string): Promise<void> {
+  try {
+    const orphans = await findAdoptableOrphans();
+    if (orphans.length === 0) {
+      await sendText(channel, chatId, messages("lark").adoptEmpty);
+      return;
+    }
+    const rows = orphans.map((o) => ({ pid: o.pid, label: orphanLabel(o) }));
+    await sendCard(channel, chatId, orphanListCard(rows));
   } catch (err) {
     await sendError(channel, chatId, err);
   }

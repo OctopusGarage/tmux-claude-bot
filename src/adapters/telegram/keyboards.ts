@@ -37,7 +37,11 @@ export type CallbackAction =
   | { kind: "voicelang"; lang: string }
   | { kind: "uilang"; lang: Lang }
   | { kind: "resume"; sessionId: string }
-  | { kind: "startpick"; idx: number; sid: string };
+  | { kind: "startpick"; idx: number; sid: string }
+  | { kind: "adoptshow"; pid: number }
+  | { kind: "adoptexec"; pid: number }
+  | { kind: "adoptcancel" }
+  | { kind: "adoptattach"; sid: string };
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
@@ -60,6 +64,7 @@ export function parseCallbackData(data: string): CallbackAction | null {
   if (data === "dl") return { kind: "dellist" };
   if (data === "la") return { kind: "listalive" };
   if (data === "qs") return { kind: "queuestatus" };
+  if (data === "ac") return { kind: "adoptcancel" };
   const parts = data.split(":");
   const [tag] = parts;
   if (tag === "a") {
@@ -91,6 +96,16 @@ export function parseCallbackData(data: string): CallbackAction | null {
     const sid = parts[2];
     if (parts.length !== 3 || !Number.isInteger(idx) || idx < 0 || !sid) return null;
     return { kind: "startpick", idx, sid };
+  }
+  if (tag === "as" || tag === "ae") {
+    const pid = Number(parts[1]);
+    if (parts.length !== 2 || !Number.isInteger(pid) || pid <= 0) return null;
+    return tag === "as" ? { kind: "adoptshow", pid } : { kind: "adoptexec", pid };
+  }
+  if (tag === "aa") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    return { kind: "adoptattach", sid };
   }
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
@@ -229,6 +244,32 @@ function formatAgo(date: Date): string {
   const diffH = Math.round(diffMin / 60);
   if (diffH < 24) return `${diffH}h`;
   return `${Math.round(diffH / 24)}d`;
+}
+
+export type OrphanButton = { pid: number; label: string };
+
+/** Orphan-claude list: one full-width row per process. Tapping sends `as:<pid>`
+ * (show a confirm), since the action — interrupting and adopting — is disruptive. */
+export function buildOrphanKeyboard(orphans: OrphanButton[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  orphans.forEach((o, i) => {
+    kb.text(o.label, `as:${o.pid}`);
+    if (i < orphans.length - 1) kb.row();
+  });
+  return kb;
+}
+
+/** Confirm step before adopting: tap to execute (`ae:<pid>`) or cancel. */
+export function buildAdoptConfirmKeyboard(pid: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(messages("telegram").btnAdoptConfirm, `ae:${pid}`)
+    .text(messages("telegram").btnAdoptCancel, "ac");
+}
+
+/** After a successful adopt: a button that copies the attach command to the
+ * computer's clipboard on demand (`aa:<sid>`), for viewing the session there. */
+export function buildAdoptDoneKeyboard(sid: string): InlineKeyboard {
+  return new InlineKeyboard().text(messages("telegram").btnAdoptAttach, `aa:${sid}`);
 }
 
 /** Session list: one full-width row per saved session. Tapping sends `rs:<uuid>`. */

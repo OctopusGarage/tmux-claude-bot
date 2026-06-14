@@ -67,6 +67,27 @@ export const es: Messages = {
   btnCancel: "✕ Cancelar",
   btnDeleteMode: "🗑 Eliminar…",
 
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 Procesos de Claude adoptables (fuera de tmux)",
+  adoptEmpty: "No se encontraron procesos de Claude adoptables",
+  adoptConfirmPrompt: (label: string) =>
+    `¿Tomar el control? Primero se interrumpe y termina el proceso original, luego se reanuda en tmux:\n${label}`,
+  btnAdoptConfirm: "🧲 Adoptar",
+  btnAdoptCancel: "✕ Cancelar",
+  adoptCancelled: "Adopción cancelada",
+  adoptWorking: "Adoptando…",
+  adoptGone: "Ese proceso ya no es adoptable (terminó o ya está en tmux)",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed
+      ? `✅ Adoptado y sesión reanudada: ${proj}`
+      : `✅ Adoptado e iniciado de nuevo: ${proj}`,
+  adoptFailed: "Fallo al adoptar: el proceso no terminó o Claude no se inició",
+  adoptBusy:
+    "La sesión de tmux destino ya tiene un programa en primer plano (otro Claude u otra cosa). Se canceló sin tocar el original — sal de ahí primero y vuelve a adoptar.",
+  btnAdoptAttach: "💻 Ver en la terminal del computador (opcional)",
+  adoptAttachHint: (cmd: string) =>
+    `✅ El comando de conexión ya está en el portapapeles de tu COMPUTADOR (no hace falta copiar nada en el móvil). Al volver, solo pégalo en una terminal y pulsa Enter para entrar — este paso es opcional.\nComando: ${cmd}`,
+
   doneShort: "Listo",
   claudeNotRunningRestart: "Claude no está en ejecución — usa /restart para iniciarlo",
   contentTruncated: "...(contenido demasiado largo, truncado)",
@@ -191,6 +212,7 @@ Envía cualquier texto → se reenvía a Claude → respuesta`,
   cmdListAlive: "proyectos activos (toca para cambiar/eliminar)",
   cmdListRecent: "proyectos recientes",
   cmdAddProject: "crear un proyecto",
+  cmdAdopt: "adoptar un Claude que corre fuera de tmux",
   cmdQueueStatus: "estado de la cola",
   cmdHistory: "historial de conversación (el último por defecto)",
   cmdPeek: "ver el panel de tmux",

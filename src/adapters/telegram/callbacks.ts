@@ -4,13 +4,23 @@ import { executeMessage, performStart } from "../../core/dispatch.js";
 import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
+import { orphanLabel } from "../../core/takeover.js";
+import {
+  adoptOrphan,
+  composeAdoptOutcome,
+  copyAttachCommand,
+  findAdoptableOrphans,
+} from "../../core/takeover-service.js";
 import { setWhisperLanguage } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { timeApi } from "../../shared/utils/timing.js";
 import { safeAnswerCallback } from "./callback-utils.js";
 import {
+  buildAdoptConfirmKeyboard,
+  buildAdoptDoneKeyboard,
   buildControlKeyboard,
   buildExpandedControlKeyboard,
   buildLangKeyboard,
@@ -151,6 +161,61 @@ export async function handleCallbackQuery(
       deps.configResolver.invalidate(sessionName);
       await reply(ctx, "ok", messages("telegram").resumeStarted(parsed.sessionId.slice(0, 8)), {
         session: sessionName,
+        replyTarget,
+      });
+      return;
+    }
+    // Adopt a non-tmux claude: tapping a candidate shows a confirm first, since
+    // the action interrupts and ends the original process.
+    if (parsed.kind === "adoptshow") {
+      await safeAnswerCallback(ctx);
+      const orphan = (await findAdoptableOrphans()).find((o) => o.pid === parsed.pid);
+      if (!orphan) {
+        await reply(ctx, "err", messages("telegram").adoptGone, { replyTarget });
+        return;
+      }
+      await reply(ctx, "info", messages("telegram").adoptConfirmPrompt(orphanLabel(orphan)), {
+        replyMarkup: buildAdoptConfirmKeyboard(parsed.pid),
+        replyTarget,
+      });
+      return;
+    }
+    if (parsed.kind === "adoptexec") {
+      await safeAnswerCallback(ctx, messages("telegram").adoptWorking);
+      const result = await adoptOrphan(parsed.pid, {
+        bridge: deps.bridge,
+        configResolver: deps.configResolver,
+        projectSessionPrefix: deps.config.projectSessionPrefix,
+        warmupMs: deps.config.sessionWarmupMs,
+      });
+      const outcome = composeAdoptOutcome(result, tgScope(ctx));
+      if (!outcome.ok) {
+        await reply(ctx, "err", outcome.body, { replyTarget });
+        return;
+      }
+      await deps.currentProject.set(tgScope(ctx), outcome.sessionName);
+      await reply(ctx, "ok", outcome.body, {
+        session: outcome.sessionName,
+        replyMarkup: buildAdoptDoneKeyboard(sessionShortId(outcome.sessionName)),
+        replyTarget,
+      });
+      return;
+    }
+    if (parsed.kind === "adoptcancel") {
+      await safeAnswerCallback(ctx, messages("telegram").adoptCancelled);
+      return;
+    }
+    // "View on computer": copy the attach command to the host clipboard on demand
+    // (auto-attaching the original terminal isn't possible — see takeover-service).
+    if (parsed.kind === "adoptattach") {
+      const session = await resolveAliveSessionByShortId(deps, parsed.sid);
+      if (!session) {
+        await safeAnswerCallback(ctx, messages("telegram").sessionGone);
+        return;
+      }
+      await safeAnswerCallback(ctx);
+      await reply(ctx, "ok", messages("telegram").adoptAttachHint(copyAttachCommand(session)), {
+        session,
         replyTarget,
       });
       return;

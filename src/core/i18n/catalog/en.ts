@@ -67,6 +67,25 @@ export const en: Messages = {
   btnCancel: "✕ Cancel",
   btnDeleteMode: "🗑 Delete…",
 
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 Adoptable Claude processes (not in tmux)",
+  adoptEmpty: "No adoptable Claude processes found",
+  adoptConfirmPrompt: (label: string) =>
+    `Take over? The original process is interrupted and ended first, then resumed in tmux:\n${label}`,
+  btnAdoptConfirm: "🧲 Take over",
+  btnAdoptCancel: "✕ Cancel",
+  adoptCancelled: "Takeover cancelled",
+  adoptWorking: "Taking over…",
+  adoptGone: "That process is no longer adoptable (exited or now in tmux)",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed ? `✅ Adopted and resumed session: ${proj}` : `✅ Adopted and started fresh: ${proj}`,
+  adoptFailed: "Takeover failed: process would not end, or Claude did not start",
+  adoptBusy:
+    "The target tmux session already has a program in the foreground (another Claude or something else). Aborted without touching the original — please exit it there first, then adopt again.",
+  btnAdoptAttach: "💻 View in computer terminal (optional)",
+  adoptAttachHint: (cmd: string) =>
+    `✅ The attach command is now on your COMPUTER's clipboard (nothing to copy on your phone). Back at the computer, just paste it in a terminal and press Enter to go in — this step is optional.\nCommand: ${cmd}`,
+
   doneShort: "Done",
   claudeNotRunningRestart: "Claude isn't running — use /restart to start it",
   contentTruncated: "...(content too long, truncated)",
@@ -190,6 +209,7 @@ Send any text → forwarded to Claude → reply`,
   cmdListAlive: "active projects (tap to switch/delete)",
   cmdListRecent: "recent projects",
   cmdAddProject: "create a project",
+  cmdAdopt: "take over a Claude running outside tmux",
   cmdQueueStatus: "queue status",
   cmdHistory: "conversation history (latest by default)",
   cmdPeek: "view the tmux pane",

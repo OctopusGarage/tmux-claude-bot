@@ -69,6 +69,25 @@ export const yue: Messages = {
   btnCancel: "✕ 取消",
   btnDeleteMode: "🗑 刪除…",
 
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 可以接管嘅 Claude 進程（唔喺 tmux 度）",
+  adoptEmpty: "搵唔到可以接管嘅 Claude 進程",
+  adoptConfirmPrompt: (label: string) =>
+    `確認接管？會先中斷同埋結束原進程，再喺 tmux 度續接：\n${label}`,
+  btnAdoptConfirm: "🧲 接管",
+  btnAdoptCancel: "✕ 取消",
+  adoptCancelled: "已經取消接管",
+  adoptWorking: "接管緊…",
+  adoptGone: "呢個進程已經唔喺可接管名單（已經結束或者已經喺 tmux 度）",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed ? `✅ 已接管並續接會話：${proj}` : `✅ 已接管並新建會話：${proj}`,
+  adoptFailed: "接管失敗：進程結束唔到或者 Claude 起唔到",
+  adoptBusy:
+    "目標 tmux 會話入面已經有程式喺前台行緊（另一個 Claude 或者第二個程式）。已經中止，冇郁原進程——請先去嗰邊退出，再重新接管。",
+  btnAdoptAttach: "💻 喺電腦終端睇（可選）",
+  adoptAttachHint: (cmd: string) =>
+    `✅ 接入指令已經放咗去「電腦」嘅剪貼簿（唔使喺手機度複製）。返到電腦，喺終端度直接貼上撳 Enter，就入到去睇——呢步係可選嘅。\n指令：${cmd}`,
+
   doneShort: "完成",
   claudeNotRunningRestart: "Claude 未運行，請使用 /restart 啟動",
   contentTruncated: "...(內容過長，已截斷)",
@@ -188,6 +207,7 @@ export const yue: Messages = {
   cmdListAlive: "活躍項目（點擊切換/刪除）",
   cmdListRecent: "近期項目",
   cmdAddProject: "新增項目",
+  cmdAdopt: "接管 tmux 以外嘅 Claude",
   cmdQueueStatus: "隊列狀態",
   cmdHistory: "對話歷史（預設最近一條）",
   cmdPeek: "查看 tmux 畫面",

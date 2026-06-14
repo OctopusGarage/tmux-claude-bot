@@ -67,6 +67,25 @@ export const zhTW: Messages = {
   btnCancel: "✕ 取消",
   btnDeleteMode: "🗑 刪除…",
 
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 可接管的 Claude 程序（不在 tmux 中）",
+  adoptEmpty: "沒有發現可接管的 Claude 程序",
+  adoptConfirmPrompt: (label: string) =>
+    `確認接管？將先中斷並結束原程序，再在 tmux 中續接：\n${label}`,
+  btnAdoptConfirm: "🧲 接管",
+  btnAdoptCancel: "✕ 取消",
+  adoptCancelled: "已取消接管",
+  adoptWorking: "正在接管…",
+  adoptGone: "該程序已不在可接管清單（已結束或已在 tmux 中）",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
+  adoptFailed: "接管失敗：程序無法結束或 Claude 未能啟動",
+  adoptBusy:
+    "目標 tmux 工作階段裡已有程式在前台運行（另一個 Claude 或其他程式）。已中止，未動原程序——請先去那邊退出，再重新接管。",
+  btnAdoptAttach: "💻 在電腦終端查看（可選）",
+  adoptAttachHint: (cmd: string) =>
+    `✅ 接入指令已經放進「電腦」的剪貼簿了（不用在手機上複製）。回到電腦後，在終端裡直接貼上按 Enter，就能進去查看——這一步是可選的。\n指令：${cmd}`,
+
   doneShort: "完成",
   claudeNotRunningRestart: "Claude 未執行，請使用 /restart 啟動",
   contentTruncated: "...(內容過長，已截斷)",
@@ -185,6 +204,7 @@ export const zhTW: Messages = {
   cmdListAlive: "活躍專案（點按切換/刪除）",
   cmdListRecent: "近期專案",
   cmdAddProject: "新增專案",
+  cmdAdopt: "接管 tmux 外的 Claude",
   cmdQueueStatus: "佇列狀態",
   cmdHistory: "對話歷史（預設最近一筆）",
   cmdPeek: "查看 tmux 畫面",

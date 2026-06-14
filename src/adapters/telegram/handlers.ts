@@ -11,12 +11,19 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "../../core/sessionPathMap.js";
+import { orphanLabel } from "../../core/takeover.js";
+import { findAdoptableOrphans } from "../../core/takeover-service.js";
 import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
-import { buildLangKeyboard, buildRecentKeyboard, buildSessionsKeyboard } from "./keyboards.js";
+import {
+  buildLangKeyboard,
+  buildOrphanKeyboard,
+  buildRecentKeyboard,
+  buildSessionsKeyboard,
+} from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
   addRecentProjectBySid,
@@ -79,6 +86,20 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
     await sendPeek(ctx, deps, session, replyTarget);
+  });
+
+  // List claude processes running outside tmux; tap one to take it over.
+  bot.command("adopt", async (ctx) => {
+    const orphans = await findAdoptableOrphans();
+    if (orphans.length === 0) {
+      await reply(ctx, "info", messages("telegram").adoptEmpty, { replyTarget });
+      return;
+    }
+    const buttons = orphans.map((o) => ({ pid: o.pid, label: orphanLabel(o) }));
+    await reply(ctx, "info", messages("telegram").adoptTitle, {
+      replyMarkup: buildOrphanKeyboard(buttons),
+      replyTarget,
+    });
   });
 
   // Project management commands (direct execution)

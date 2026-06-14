@@ -21,6 +21,7 @@ import {
   sendDoctor,
   sendHistory,
   sendLangPicker,
+  sendOrphanList,
   sendPeek,
   sendQueueStatus,
   sendRecentList,
@@ -185,6 +186,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             break;
           case "current":
             await sendCurrentProject(channel, deps, msg.chatId);
+            break;
+          case "adopt":
+            // Global host op — only in 1:1 chats (a bound group is pinned to one
+            // project, so cross-project adoption doesn't belong there).
+            if (msg.chatType === "p2p") await sendOrphanList(channel, msg.chatId);
             break;
           case "voicelang":
             await sendVoiceLangPicker(channel, msg.chatId);

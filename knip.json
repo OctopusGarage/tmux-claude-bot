@@ -9,7 +9,8 @@
     "scripts/service.sh",
     "scripts/install-whisper.sh",
     "shellcheck",
-    "ps"
+    "ps",
+    "pbcopy"
   ],
   "ignoreExportsUsedInFile": true,
   "vitest": {
