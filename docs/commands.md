@@ -27,7 +27,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `list_alive_projects` | List alive projects |
 | `list_recent_projects` | List recent projects |
 | `current_project` | Show current project |
-| `add_project` | Add a new project |
+| `add_project` | Add a new project: `add_project <path>` creates it directly; with no path, opens a tap-to-navigate directory browser |
 | `adopt` | Take over a Claude running outside tmux |
 | `status_install` | Install usage reporting (statusLine snapshot) for /status |
 | `queue_status` | Show message queue status |

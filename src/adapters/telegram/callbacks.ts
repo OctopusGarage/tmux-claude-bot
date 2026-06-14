@@ -1,7 +1,15 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
+import {
+  browseCwd,
+  clearBrowse,
+  displayPath,
+  requestNewFolder,
+  resolveBrowseAction,
+} from "../../core/dir-browser.js";
 import { executeMessage, performStart } from "../../core/dispatch.js";
 import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
+import { createProjectFromPath } from "../../core/project-ops.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { orphanLabel } from "../../core/takeover.js";
@@ -21,6 +29,7 @@ import { safeAnswerCallback } from "./callback-utils.js";
 import {
   buildAdoptConfirmKeyboard,
   buildAdoptDoneKeyboard,
+  buildBrowseKeyboard,
   buildControlKeyboard,
   buildExpandedControlKeyboard,
   buildLangKeyboard,
@@ -43,6 +52,8 @@ import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
 import {
+  browseText,
+  replyCreateProject,
   sendAliveList,
   sendHistory,
   sendPeek,
@@ -230,6 +241,51 @@ export async function handleCallbackQuery(
     if (parsed.kind === "statusinstall") {
       await safeAnswerCallback(ctx);
       await sendStatusInstall(ctx, parsed.action, replyTarget);
+      return;
+    }
+    // Directory browser (`br:*`): navigate in place, or create / cancel.
+    if (parsed.kind === "browsecancel") {
+      clearBrowse(tgScope(ctx));
+      await safeAnswerCallback(ctx);
+      try {
+        await ctx.editMessageText(messages("telegram").browseCancelled);
+      } catch {
+        /* message may be gone or unchanged */
+      }
+      return;
+    }
+    if (parsed.kind === "browseselect") {
+      await safeAnswerCallback(ctx);
+      const cwd = browseCwd(tgScope(ctx));
+      if (!cwd) return; // state expired — nothing to create
+      clearBrowse(tgScope(ctx));
+      await replyCreateProject(
+        ctx,
+        deps,
+        await createProjectFromPath(deps, tgScope(ctx), cwd),
+        replyTarget,
+      );
+      return;
+    }
+    if (parsed.kind === "browsenewfolder") {
+      await safeAnswerCallback(ctx);
+      const cwd = requestNewFolder(tgScope(ctx));
+      if (!cwd) return; // not browsing a directory
+      // force_reply makes the user's next message a reply, which the text handler
+      // recognises as the folder name (no global "expecting input" mode needed).
+      await ctx.reply(messages("telegram").browseNewFolderPrompt(displayPath(cwd)), {
+        reply_markup: { force_reply: true },
+      });
+      return;
+    }
+    if (parsed.kind === "browse") {
+      await safeAnswerCallback(ctx);
+      const view = resolveBrowseAction(tgScope(ctx), parsed.action, deps.config.cdAllowedDirs);
+      try {
+        await ctx.editMessageText(browseText(view), { reply_markup: buildBrowseKeyboard(view) });
+      } catch {
+        /* message may be gone or unchanged */
+      }
       return;
     }
     const sessionName = await resolveAliveSessionByShortId(deps, parsed.sid);

@@ -1,13 +1,15 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
+import { createSubfolder, isAwaitingFolderName } from "../../core/dir-browser.js";
 import { reconcileGroupBinding } from "../../core/group-binding-ops.js";
 import { isProjectGroup } from "../../core/group-bindings.js";
 import { messages } from "../../core/i18n/index.js";
 import { PendingQueue } from "../../core/pending-queue.js";
+import { chatScope } from "../../core/project-manager.js";
 import { isVoiceInstallable } from "../../core/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
-import { helpCard } from "./cards.js";
+import { browseCard, helpCard } from "./cards.js";
 import { isGroupMgmtCommand, parseLarkInput } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
 import { handleBind, handleNewGroup, handleRestore, handleUnbind } from "./group-commands.js";
@@ -17,6 +19,7 @@ import {
   addProject,
   handleWsCommand,
   sendAliveList,
+  sendBrowse,
   sendCurrentProject,
   sendDoctor,
   sendHistory,
@@ -126,6 +129,31 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
 
     logger.info(`[lark] received text chat=${msg.chatId} len=${text.length}`);
 
+    // Directory browser: a pending "new folder" capture takes this text as the
+    // folder name (before command parsing, so a name like "help" isn't a command).
+    if (isAwaitingFolderName(chatScope("lark", msg.chatId))) {
+      const result = createSubfolder(
+        chatScope("lark", msg.chatId),
+        text,
+        deps.config.cdAllowedDirs,
+      );
+      const m = messages("lark");
+      if (result.ok) {
+        await sendCard(channel, msg.chatId, browseCard(result.view));
+      } else if (result.reason !== "expired") {
+        await sendText(
+          channel,
+          msg.chatId,
+          result.reason === "exists"
+            ? m.browseNewFolderExists
+            : result.reason === "invalid"
+              ? m.browseNewFolderInvalid
+              : m.browseNewFolderError,
+        );
+      }
+      return;
+    }
+
     const parsed = parseLarkInput(text);
 
     switch (parsed.kind) {
@@ -204,7 +232,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             break;
           case "addproject":
             if (!parsed.arg) {
-              await sendText(channel, msg.chatId, messages("lark").addProjectUsage);
+              await sendBrowse(channel, deps, msg.chatId);
             } else {
               await addProject(channel, deps, msg.chatId, parsed.arg);
             }

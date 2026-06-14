@@ -1,5 +1,6 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
+import { startBrowse } from "../../core/dir-browser.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import { getBinding, isProjectGroup, listBindings } from "../../core/group-bindings.js";
 import {
@@ -13,18 +14,13 @@ import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
 import {
   aliveProjectButtons,
-  createProjectSession,
+  type CreateProjectResult,
+  createProjectFromPath,
   openRecentProjectBySid,
   recentProjectButtons,
-  resolveProjectPath,
 } from "../../core/project-ops.js";
 import { buildQueueStatusLines } from "../../core/queue-status.js";
-import { appendRecentProject } from "../../core/recentProjects.js";
-import {
-  getPathBySession,
-  sessionNameFromPath,
-  setPathForSession,
-} from "../../core/sessionPathMap.js";
+import { getPathBySession } from "../../core/sessionPathMap.js";
 import { type ForeignAction, runStatusInstall } from "../../core/status-install.js";
 import { orphanLabel } from "../../core/takeover.js";
 import { findAdoptableOrphans } from "../../core/takeover-service.js";
@@ -33,6 +29,7 @@ import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
+  browseCard,
   groupBoundCard,
   groupPickerCard,
   langCard,
@@ -43,20 +40,18 @@ import {
   viewCard,
   voiceLangCard,
 } from "./cards.js";
-import { sendManagedCard } from "./managed-card.js";
 import { sendCard, sendError, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
 
 /** Send the voice recognition-language picker card (current language marked).
- * Managed, so a click moves the ✅ on the card itself instead of re-sending. */
+ * A click re-sends the picker with the ✅ moved (regular interactive card). */
 export async function sendVoiceLangPicker(channel: LarkChannel, chatId: string): Promise<void> {
-  await sendManagedCard(channel, chatId, voiceLangCard(resolveWhisperLanguage("lark")));
+  await sendCard(channel, chatId, voiceLangCard(resolveWhisperLanguage("lark")));
 }
 
-/** Send the UI-language picker card (current language marked). Managed, like
- * the voice picker. */
+/** Send the UI-language picker card (current language marked). */
 export async function sendLangPicker(channel: LarkChannel, chatId: string): Promise<void> {
-  await sendManagedCard(channel, chatId, langCard(resolveUiLang("lark")));
+  await sendCard(channel, chatId, langCard(resolveUiLang("lark")));
 }
 
 /** Run the install health checks and send the redacted report. */
@@ -230,46 +225,60 @@ export async function sendCurrentProject(
   await sendText(channel, chatId, path ? `${line}\n${path}` : line);
 }
 
-/**
- * Validate + create a project from a raw path (mirrors the Telegram
- * `/add_project` handler): expand `~`, resolve abs path, check the directory
- * exists and is allowed, then switch to or create the tmux session.
- */
+/** Validate + create a project from a raw path (the typed `/add_project <path>`). */
 export async function addProject(
   channel: LarkChannel,
   deps: HandlerDeps,
   chatId: string,
   rawPath: string,
 ): Promise<void> {
-  const { resolvedPath, error } = await resolveProjectPath(rawPath, deps.config.cdAllowedDirs);
-  const m = messages("lark");
-  if (error === "not-a-directory") {
-    await sendText(channel, chatId, m.notADir(resolvedPath));
-    return;
-  }
-  if (error === "not-found") {
-    await sendText(channel, chatId, m.dirNotExist(resolvedPath));
-    return;
-  }
-  if (error === "not-allowed") {
-    await sendText(channel, chatId, m.pathNotAllowedPath(resolvedPath));
-    return;
-  }
+  await replyCreateProject(
+    channel,
+    chatId,
+    await createProjectFromPath(deps, chatScope("lark", chatId), rawPath),
+  );
+}
 
-  const sessionName = sessionNameFromPath(resolvedPath, deps.config.projectSessionPrefix);
-  try {
-    if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set(chatScope("lark", chatId), sessionName);
-      setPathForSession(sessionName, resolvedPath);
-      await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
-      await sendText(channel, chatId, messages("lark").alreadySwitched);
+/** Map a `createProjectFromPath` outcome to a Lark reply — shared by the typed
+ * `/add_project <path>` and the directory-browser "create here" button. */
+export async function replyCreateProject(
+  channel: LarkChannel,
+  chatId: string,
+  result: CreateProjectResult,
+): Promise<void> {
+  const m = messages("lark");
+  switch (result.status) {
+    case "invalid":
+      if (result.error === "not-a-directory")
+        await sendText(channel, chatId, m.notADir(result.resolvedPath));
+      else if (result.error === "not-found")
+        await sendText(channel, chatId, m.dirNotExist(result.resolvedPath));
+      else await sendText(channel, chatId, m.pathNotAllowedPath(result.resolvedPath));
       return;
-    }
-    await createProjectSession(deps, chatScope("lark", chatId), sessionName, resolvedPath);
-    await sendText(channel, chatId, messages("lark").projectCreatedPath(resolvedPath));
-  } catch (err) {
-    await sendError(channel, chatId, err);
+    case "switched":
+      await sendText(channel, chatId, m.alreadySwitched);
+      return;
+    case "created":
+      await sendText(channel, chatId, m.projectCreatedPath(result.projectPath));
+      return;
+    case "error":
+      await sendError(channel, chatId, new Error(result.message));
+      return;
   }
+}
+
+/** Open the directory browser as a managed card (so navigation updates it in
+ * place). Mirrors the Telegram `/add_project` no-arg flow. */
+export async function sendBrowse(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<void> {
+  const view = startBrowse(chatScope("lark", chatId), deps.config.cdAllowedDirs);
+  // Regular (not managed/CardKit) card: CardKit-entity button callbacks don't
+  // fire in some Feishu app setups, whereas interactive-message buttons do. Each
+  // navigation re-sends a fresh card rather than updating in place.
+  await sendCard(channel, chatId, browseCard(view));
 }
 
 /**

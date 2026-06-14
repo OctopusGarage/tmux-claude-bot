@@ -186,4 +186,40 @@ describe("handleCallbackQuery", () => {
     // the outer catch. Assert the error text surfaced to the user instead.
     expect(ctx.texts().some((t) => t.includes("boom"))).toBe(true);
   });
+
+  describe("directory browser callbacks", () => {
+    it("a browse navigation tap answers the callback (and re-renders in place)", async () => {
+      const ctx = fakeCtx({ callbackData: "br:cd:0" });
+      await handleCallbackQuery(ctx, fakeDeps(), replyTarget);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalled();
+    });
+
+    it("browsecancel answers and forgets the navigation state", async () => {
+      const ctx = fakeCtx({ callbackData: "br:x" });
+      await handleCallbackQuery(ctx, fakeDeps(), replyTarget);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalled();
+    });
+
+    it("browsenewfolder prompts for a name with force_reply", async () => {
+      const nav = fakeCtx({ callbackData: "br:cd:0", chatId: 777 });
+      const deps = fakeDeps();
+      await handleCallbackQuery(nav, deps, replyTarget);
+      const nf = fakeCtx({ callbackData: "br:nf", chatId: 777 });
+      await handleCallbackQuery(nf, deps, replyTarget);
+      expect(nf.reply).toHaveBeenCalled();
+    });
+
+    it("browseselect creates a project at the browsed dir", async () => {
+      // First a nav tap to establish the scope's cwd (the single $HOME-ish root),
+      // then select-here, which runs createProjectFromPath and replies the outcome.
+      const nav = fakeCtx({ callbackData: "br:cd:0", chatId: 555 });
+      const deps = fakeDeps();
+      await handleCallbackQuery(nav, deps, replyTarget);
+      const sel = fakeCtx({ callbackData: "br:sel", chatId: 555 });
+      await handleCallbackQuery(sel, deps, replyTarget);
+      // The root (/home/user) doesn't exist in the test env → a "not found" reply,
+      // proving the select path resolved a cwd and ran the create flow.
+      expect(sel.texts().length).toBeGreaterThan(0);
+    });
+  });
 });

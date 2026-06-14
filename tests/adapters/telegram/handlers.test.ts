@@ -14,6 +14,9 @@ vi.mock("../../../src/adapters/telegram/views.js", () => ({
   sendHistory: vi.fn(),
   sendPeek: vi.fn(),
   sendQueueStatus: vi.fn(),
+  sendBrowse: vi.fn(),
+  sendStatusInstall: vi.fn(),
+  replyCreateProject: vi.fn(),
 }));
 vi.mock("../../../src/adapters/telegram/callbacks.js", () => ({ handleCallbackQuery: vi.fn() }));
 vi.mock("../../../src/adapters/telegram/executor.js", () => ({
@@ -27,9 +30,13 @@ vi.mock("../../../src/shared/utils/logger.js", () => ({
 import { registerHandlers } from "../../../src/adapters/telegram/handlers.js";
 import { runPromptWithProgress } from "../../../src/adapters/telegram/prompt-lifecycle.js";
 import { reply } from "../../../src/adapters/telegram/replies.js";
+import { sendBrowse } from "../../../src/adapters/telegram/views.js";
+import { clearBrowse, requestNewFolder, startBrowse } from "../../../src/core/dir-browser.js";
+import { chatScope } from "../../../src/core/project-manager.js";
 
 const replyMock = reply as ReturnType<typeof vi.fn>;
 const promptMock = runPromptWithProgress as ReturnType<typeof vi.fn>;
+const sendBrowseMock = sendBrowse as ReturnType<typeof vi.fn>;
 
 // A bot that captures the registered command/event handlers so we can drive them.
 function captureBot() {
@@ -235,5 +242,25 @@ describe("registerHandlers — message:text routing", () => {
     await runText(deps, c);
     expect(replyTarget.resolveReplyTarget).toHaveBeenCalledWith(5);
     expect(promptMock).toHaveBeenCalledWith(c, deps, "proj-reply", "follow up", replyTarget);
+  });
+
+  it("takes a text reply during a new-folder prompt as the folder name", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-tg-nf-"));
+    const scope = chatScope("telegram", "100");
+    try {
+      startBrowse(scope, [dir]); // single root → cwd = dir
+      requestNewFolder(scope); // arm the capture
+      const deps = depsFor({
+        config: { maxInboundLength: 100, projectSessionPrefix: "tmux_proj_", cdAllowedDirs: [dir] },
+      });
+      await runText(deps, ctx("fresh"));
+      // The folder was created and the browser re-opened (not routed to Claude).
+      expect(fs.existsSync(path.join(dir, "fresh"))).toBe(true);
+      expect(sendBrowseMock).toHaveBeenCalled();
+      expect(promptMock).not.toHaveBeenCalled();
+    } finally {
+      clearBrowse(scope);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

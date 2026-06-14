@@ -44,6 +44,42 @@ export async function resolveProjectPath(
   return { resolvedPath };
 }
 
+/** Outcome of creating a project from a raw path — the adapter maps each status
+ *  to its own reply surface (mirrors {@link OpenRecentResult}). */
+export type CreateProjectResult =
+  | { status: "invalid"; error: NonNullable<ResolveProjectResult["error"]>; resolvedPath: string }
+  | { status: "switched"; sessionName: string; projectPath: string }
+  | { status: "created"; sessionName: string; projectPath: string }
+  | { status: "error"; message: string };
+
+/**
+ * Validate a raw path and either switch to its existing session or create one —
+ * the single decision behind `/add_project <path>` (both adapters) and the
+ * directory-browser "create here" button. Adapters map the returned status to
+ * their own replies; only the validation/switch/create logic lives here.
+ */
+export async function createProjectFromPath(
+  deps: HandlerDeps,
+  scope: string,
+  rawPath: string,
+): Promise<CreateProjectResult> {
+  const { resolvedPath, error } = await resolveProjectPath(rawPath, deps.config.cdAllowedDirs);
+  if (error) return { status: "invalid", error, resolvedPath };
+  const sessionName = sessionNameFromPath(resolvedPath, deps.config.projectSessionPrefix);
+  try {
+    if (await deps.bridge.hasSession(sessionName)) {
+      await deps.currentProject.set(scope, sessionName);
+      setPathForSession(sessionName, resolvedPath);
+      await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
+      return { status: "switched", sessionName, projectPath: resolvedPath };
+    }
+    await createProjectSession(deps, scope, sessionName, resolvedPath);
+    return { status: "created", sessionName, projectPath: resolvedPath };
+  } catch (err) {
+    return { status: "error", message: normalizeError(err).message };
+  }
+}
+
 /**
  * Protocol-agnostic project lifecycle: the single home for everything that
  * switches, removes, or lists the Project ⇄ tmux-session mappings, independent

@@ -189,6 +189,7 @@ describe("helpCard", () => {
       "peek",
       "history",
       "queuestatus",
+      "addproject",
       "listalive",
       "recent",
       "adoptlist",

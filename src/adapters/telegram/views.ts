@@ -1,8 +1,10 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
+import type { BrowseView } from "../../core/dir-browser.js";
 import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
 import { messages } from "../../core/i18n/index.js";
 import { markSemantics } from "../../core/output.js";
+import type { CreateProjectResult } from "../../core/project-ops.js";
 import { buildQueueStatusLines } from "../../core/queue-status.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import type { ForeignAction } from "../../core/status-install.js";
@@ -10,10 +12,12 @@ import { runStatusInstall } from "../../core/status-install.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import {
+  buildBrowseKeyboard,
   buildControlKeyboard,
   buildProjectKeyboard,
   buildStatusInstallChoiceKeyboard,
 } from "./keyboards.js";
+import { MSG } from "./messages.js";
 import { aliveProjectButtons } from "./project-ops.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
@@ -88,6 +92,56 @@ export async function sendStatusInstall(
     });
   } catch (err) {
     await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
+  }
+}
+
+/** The directory-browser message body: heading + breadcrumb, plus an empty/
+ * unreadable note. Shared by the initial send and the in-place navigation edit. */
+export function browseText(view: BrowseView): string {
+  const m = messages("telegram");
+  if (view.kind === "roots") return m.browseRootsTitle;
+  const lines = [m.browseTitle, view.displayPath];
+  if (view.error === "unreadable") lines.push(m.browseUnreadable);
+  else if (view.entries.length === 0) lines.push(m.browseEmpty);
+  return lines.join("\n");
+}
+
+/** Send the initial directory-browser message (plain text so the in-place
+ * `editMessageText` updates render identically). */
+export async function sendBrowse(ctx: Context, view: BrowseView): Promise<void> {
+  await ctx.reply(browseText(view), { reply_markup: buildBrowseKeyboard(view) });
+}
+
+/** Map a `createProjectFromPath` outcome to a Telegram reply — shared by the
+ * typed `/add_project <path>` and the directory-browser "create here" button. */
+export async function replyCreateProject(
+  ctx: Context,
+  deps: HandlerDeps,
+  result: CreateProjectResult,
+  replyTarget: ReplyTargetMap,
+): Promise<void> {
+  const m = messages("telegram");
+  switch (result.status) {
+    case "invalid":
+      if (result.error === "not-a-directory")
+        await reply(ctx, "err", m.notADir(result.resolvedPath), { replyTarget });
+      else if (result.error === "not-found")
+        await reply(ctx, "err", m.dirNotExist(result.resolvedPath), { replyTarget });
+      else await reply(ctx, "err", MSG.pathNotAllowed(deps.config.cdAllowedDirs), { replyTarget });
+      return;
+    case "switched":
+      await reply(ctx, "warn", m.alreadySwitched, { session: result.sessionName, replyTarget });
+      return;
+    case "created":
+      await reply(ctx, "ok", m.projectCreated, {
+        session: result.sessionName,
+        body: result.projectPath,
+        replyTarget,
+      });
+      return;
+    case "error":
+      await reply(ctx, "err", result.message, { replyTarget });
+      return;
   }
 }
 

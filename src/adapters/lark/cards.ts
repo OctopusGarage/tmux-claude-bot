@@ -4,6 +4,7 @@ import {
   LARK_CONTROL_ROWS,
   LARK_HELP_RUNNING_ROWS,
 } from "../../core/action-registry.js";
+import type { BrowseView } from "../../core/dir-browser.js";
 import type { MessageAction } from "../../core/dispatch.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
@@ -217,6 +218,54 @@ export function statusInstallCard(body: string, foreignPending: boolean): object
   return shell(m.statusInstallTitle, elements);
 }
 
+/**
+ * Directory browser: one row per subdir (tap to descend, or pick a root on the
+ * roots screen), an up/pagination row, then a create/cancel row. Mirrors the
+ * Telegram browse keyboard; paths never ride in the (signed) button value — only
+ * the action + the entry's absolute index, resolved against the scope's cwd.
+ */
+export function browseCard(view: BrowseView): object {
+  const m = messages("lark");
+  const title = view.kind === "roots" ? m.browseRootsTitle : m.browseTitle;
+  const elements: object[] = [];
+  if (view.kind === "dir") {
+    const note =
+      view.error === "unreadable"
+        ? `\n${m.browseUnreadable}`
+        : view.entries.length === 0
+          ? `\n${m.browseEmpty}`
+          : "";
+    elements.push(md(`\`${view.displayPath}\`${note}`));
+  }
+  const cmd = view.kind === "roots" ? "browseroot" : "browseopen";
+  for (const e of view.entries) {
+    // 📦 marks a git repo (a likely project root); 📁 a plain directory.
+    const icon = e.isRepo ? "📦" : "📁";
+    elements.push(gridRow([{ text: `${icon} ${e.label}`, value: { cmd, idx: e.index } }]));
+  }
+  const nav: ButtonSpec[] = [];
+  if (view.canGoUp) nav.push({ text: m.btnBrowseUp, value: { cmd: "browseup" } });
+  if (view.totalPages > 1) {
+    nav.push({ text: "◀", value: { cmd: "browsepage", idx: Math.max(0, view.page - 1) } });
+    nav.push({ text: `${view.page + 1}/${view.totalPages}`, value: { cmd: "noop" } });
+    nav.push({
+      text: "▶",
+      value: { cmd: "browsepage", idx: Math.min(view.totalPages - 1, view.page + 1) },
+    });
+  }
+  if (nav.length > 0) elements.push(gridRow(nav));
+  if (view.canCreate) {
+    elements.push(
+      gridRow([
+        { text: m.btnBrowseCreate, value: { cmd: "browsecreate" }, style: "primary" },
+        { text: m.btnBrowseNewFolder, value: { cmd: "browsenewfolder" } },
+      ]),
+    );
+  }
+  elements.push(gridRow([{ text: m.btnBrowseCancel, value: { cmd: "browsecancel" } }]));
+  return shell(title, elements);
+}
+
 /** Adopt list: one labelled row per non-tmux claude with a "take over" button
  * (`adopt` → shows a confirm). Mirrors Telegram's `/adopt` keyboard. */
 export function orphanListCard(orphans: { pid: number; label: string }[]): object {
@@ -329,6 +378,7 @@ export function helpCard(group = false, voiceInstallable = false): object {
   const projectRow: ButtonSpec[] = group
     ? [{ text: m.btnCurrent, value: { cmd: "current" } }]
     : [
+        { text: m.btnAddProject, value: { cmd: "addproject" } },
         { text: m.btnProjects, value: { cmd: "listalive" } },
         { text: m.btnRecent, value: { cmd: "recent" } },
         { text: m.btnAdoptConfirm, value: { cmd: "adoptlist" } },

@@ -25,19 +25,17 @@ import { fakeChannel, fakeDeps } from "./_fakes.js";
 const qmsg = (text: string): QueuedMessage =>
   ({ id: "x", text, chatId: "c", action: "text", resolve() {}, reject() {} }) as QueuedMessage;
 
-describe("language pickers go out as managed cards", () => {
-  it("sendVoiceLangPicker sends the picker via cardkit so clicks can update it in place", async () => {
+describe("language pickers go out as regular cards", () => {
+  it("sendVoiceLangPicker sends the voice-language picker card", async () => {
     const channel = fakeChannel();
     await sendVoiceLangPicker(channel, "oc_chat");
-    expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
-    expect(channel.imCreates).toHaveLength(1);
+    expect(JSON.stringify(channel.cards())).toContain("语音识别语言");
   });
 
-  it("sendLangPicker sends the picker via cardkit so clicks can update it in place", async () => {
+  it("sendLangPicker sends the UI-language picker card", async () => {
     const channel = fakeChannel();
     await sendLangPicker(channel, "oc_chat");
-    expect(channel.cardkitCreates).toHaveLength(1);
-    expect(channel.imCreates).toHaveLength(1);
+    expect(channel.cards()).toHaveLength(1);
   });
 });
 

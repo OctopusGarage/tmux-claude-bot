@@ -5,6 +5,7 @@ import {
   TELEGRAM_EXPANDED_ROWS,
   TELEGRAM_PRIMARY_ROWS,
 } from "../../core/action-registry.js";
+import type { BrowseAction, BrowseView } from "../../core/dir-browser.js";
 import { isMessageAction, type MessageAction } from "../../core/dispatch.js";
 import type { SessionEntry } from "../../core/history.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
@@ -42,7 +43,11 @@ export type CallbackAction =
   | { kind: "adoptexec"; pid: number }
   | { kind: "adoptcancel" }
   | { kind: "adoptattach"; sid: string }
-  | { kind: "statusinstall"; action: StatusInstallAction };
+  | { kind: "statusinstall"; action: StatusInstallAction }
+  | { kind: "browse"; action: BrowseAction }
+  | { kind: "browseselect" }
+  | { kind: "browsenewfolder" }
+  | { kind: "browsecancel" };
 
 /** The choices when /status_install hits a foreign statusLine. */
 export const STATUS_INSTALL_ACTIONS = ["overwrite", "wrap", "snippet", "skip"] as const;
@@ -118,6 +123,7 @@ export function parseCallbackData(data: string): CallbackAction | null {
       return null;
     return { kind: "statusinstall", action: a as StatusInstallAction };
   }
+  if (tag === "br") return parseBrowseData(parts);
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
@@ -128,6 +134,61 @@ export function parseCallbackData(data: string): CallbackAction | null {
 
 function isVoiceLang(code: string): boolean {
   return VOICE_LANGS.some((l) => l.code === code);
+}
+
+/** Parse a `br:*` directory-browser callback. `cd`/`rt`/`pg` carry an index; the
+ * argument-less `up`/`sel`/`x` are navigation-up / select-here / cancel. */
+function parseBrowseData(parts: string[]): CallbackAction | null {
+  const sub = parts[1];
+  if (parts.length === 2) {
+    if (sub === "up") return { kind: "browse", action: { kind: "up" } };
+    if (sub === "sel") return { kind: "browseselect" };
+    if (sub === "nf") return { kind: "browsenewfolder" };
+    if (sub === "x") return { kind: "browsecancel" };
+    return null;
+  }
+  if (parts.length !== 3) return null;
+  const n = Number(parts[2]);
+  if (!Number.isInteger(n) || n < 0) return null;
+  if (sub === "cd") return { kind: "browse", action: { kind: "open", index: n } };
+  if (sub === "rt") return { kind: "browse", action: { kind: "root", index: n } };
+  if (sub === "pg") return { kind: "browse", action: { kind: "page", page: n } };
+  return null;
+}
+
+/**
+ * Directory-browser keyboard: one button per subdir (tap to descend, or to pick a
+ * root on the roots screen), then an up/pagination row and a create/cancel row.
+ * Paths never ride in callback_data (64-byte cap) — buttons carry the action +
+ * the entry's absolute index, resolved against the scope's server-side cwd.
+ */
+export function buildBrowseKeyboard(view: BrowseView): InlineKeyboard {
+  const m = messages("telegram");
+  const kb = new InlineKeyboard();
+  const tag = view.kind === "roots" ? "rt" : "cd";
+  for (const e of view.entries) {
+    // 📦 marks a git repo (a likely project root); 📁 a plain directory.
+    kb.text(`${e.isRepo ? "📦" : "📁"} ${e.label}`, `br:${tag}:${e.index}`).row();
+  }
+  let navRow = false;
+  if (view.canGoUp) {
+    kb.text(m.btnBrowseUp, "br:up");
+    navRow = true;
+  }
+  if (view.totalPages > 1) {
+    const prev = Math.max(0, view.page - 1);
+    const next = Math.min(view.totalPages - 1, view.page + 1);
+    kb.text("◀", `br:pg:${prev}`)
+      .text(`${view.page + 1}/${view.totalPages}`, "noop")
+      .text("▶", `br:pg:${next}`);
+    navRow = true;
+  }
+  if (navRow) kb.row();
+  if (view.canCreate) {
+    kb.text(m.btnBrowseCreate, "br:sel").row().text(m.btnBrowseNewFolder, "br:nf");
+  }
+  kb.text(m.btnBrowseCancel, "br:x");
+  return kb;
 }
 
 /**

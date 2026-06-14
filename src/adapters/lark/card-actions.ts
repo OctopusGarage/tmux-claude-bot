@@ -1,5 +1,13 @@
 import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
+import {
+  type BrowseAction,
+  browseCwd,
+  clearBrowse,
+  displayPath,
+  requestNewFolder,
+  resolveBrowseAction,
+} from "../../core/dir-browser.js";
 import { type MessageAction, performStart } from "../../core/dispatch.js";
 import { getBinding, isProjectGroup } from "../../core/group-bindings.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
@@ -7,6 +15,7 @@ import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
 import {
   botSelfRepoWarning,
+  createProjectFromPath,
   removeProjectBySession,
   resolveAliveSessionByShortId,
   switchToProject,
@@ -36,6 +45,7 @@ import { verifyValue } from "./card-signing.js";
 import {
   adoptConfirmCard,
   adoptDoneCard,
+  browseCard,
   helpCard,
   langCard,
   startPickerCard,
@@ -50,12 +60,13 @@ import {
   handleUnbind,
   makeBoundGroupBySid,
 } from "./group-commands.js";
-import { sendManagedCard, updateManagedCard } from "./managed-card.js";
 import { sendCard, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
 import {
   addRecentBySid,
+  replyCreateProject,
   sendAliveList,
+  sendBrowse,
   sendCurrentProject,
   sendGroupBindPicker,
   sendGroupMenu,
@@ -98,11 +109,9 @@ async function handleVoiceLang({ channel, evt, value }: CardCtx): Promise<void> 
   if (!(value?.lang && VOICE_LANGS.some((l) => l.code === value.lang))) return;
   setWhisperLanguage("lark", value.lang);
   logger.info(`[lark] voice recognition language set to ${value.lang} via card`);
-  // Move the ✅ on the clicked card itself; fall back to a fresh picker when the
-  // card isn't managed (e.g. it predates a restart).
-  if (!(await updateManagedCard(channel, evt.messageId, voiceLangCard(value.lang)))) {
-    await sendManagedCard(channel, evt.chatId, voiceLangCard(value.lang));
-  }
+  // Re-send the picker (regular card) with the ✅ moved. CardKit in-place updates
+  // would need entity-card callbacks, which don't fire reliably on Feishu.
+  await sendCard(channel, evt.chatId, voiceLangCard(value.lang));
 }
 
 /** Install the optional voice feature in-chat — the Feishu counterpart of
@@ -147,9 +156,7 @@ async function handleUiLang({ channel, evt, value }: CardCtx): Promise<void> {
   if (!lang || !isUiLang(lang)) return;
   setUiLang("lark", lang);
   logger.info(`[lark] ui language set to ${lang} via card`);
-  if (!(await updateManagedCard(channel, evt.messageId, langCard(lang)))) {
-    await sendManagedCard(channel, evt.chatId, langCard(lang));
-  }
+  await sendCard(channel, evt.chatId, langCard(lang));
 }
 
 /** True for a 1:1 chat. Resolved via the chat API (the card-action callback
@@ -296,6 +303,46 @@ async function handleStatusInstallChoice(
   await sendStatusInstall(channel, evt.chatId, action);
 }
 
+/** Apply a directory-browser navigation tap and send the refreshed card. A fresh
+ * (regular) card per tap — CardKit in-place updates would need entity-card
+ * callbacks, which don't fire reliably in some Feishu setups. */
+async function handleBrowseNav(
+  { channel, deps, evt }: CardCtx,
+  action: BrowseAction,
+): Promise<void> {
+  const view = resolveBrowseAction(
+    chatScope("lark", evt.chatId),
+    action,
+    deps.config.cdAllowedDirs,
+  );
+  await sendCard(channel, evt.chatId, browseCard(view));
+}
+
+/** Create a project at the browser's current dir, then forget the nav state. */
+async function handleBrowseCreate({ channel, deps, evt }: CardCtx): Promise<void> {
+  const scope = chatScope("lark", evt.chatId);
+  const cwd = browseCwd(scope);
+  if (!cwd) return; // state expired
+  clearBrowse(scope);
+  await replyCreateProject(channel, evt.chatId, await createProjectFromPath(deps, scope, cwd));
+}
+
+/** Prompt for a new folder name (Feishu has no force-reply, so a plain prompt —
+ * the next text message is taken as the name by the message handler). */
+async function handleBrowseNewFolder({ channel, evt }: CardCtx): Promise<void> {
+  const cwd = requestNewFolder(chatScope("lark", evt.chatId));
+  if (!cwd) return; // not browsing a directory
+  await sendText(channel, evt.chatId, messages("lark").browseNewFolderPrompt(displayPath(cwd)));
+}
+
+/** Cancel browsing: forget the state and acknowledge. */
+async function handleBrowseCancel({ channel, evt }: CardCtx): Promise<void> {
+  clearBrowse(chatScope("lark", evt.chatId));
+  await sendText(channel, evt.chatId, messages("lark").browseCancelled);
+}
+
+const browseIdx = (ctx: CardCtx): number => ctx.value?.idx ?? 0;
+
 /**
  * Button `cmd` → handler. Each returns after doing its work; commands not here
  * fall through to the immediate/queued action routing (and finally a no-op for
@@ -315,13 +362,13 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   queuestatus: ({ channel, deps, evt }) => sendQueueStatus(channel, deps, evt.chatId),
   // Voice recognition-language picker (mirrors Telegram /voice_lang).
   voicelangmenu: async ({ channel, evt }) => {
-    await sendManagedCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
+    await sendCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
   },
   voicelang: handleVoiceLang,
   voiceinstall: handleVoiceInstall,
   // UI-language picker (/lang).
   uilangmenu: async ({ channel, evt }) => {
-    await sendManagedCard(channel, evt.chatId, langCard(resolveUiLang("lark")));
+    await sendCard(channel, evt.chatId, langCard(resolveUiLang("lark")));
   },
   uilang: handleUiLang,
   switch: handleSwitch,
@@ -334,6 +381,17 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   statuswrap: (ctx) => handleStatusInstallChoice(ctx, "wrap"),
   statussnippet: (ctx) => handleStatusInstallChoice(ctx, "snippet"),
   statusskip: (ctx) => handleStatusInstallChoice(ctx, "skip"),
+  // --- Directory browser (mirrors Telegram /add_project no-arg) ---
+  browseopen: (ctx) => handleBrowseNav(ctx, { kind: "open", index: browseIdx(ctx) }),
+  browseroot: (ctx) => handleBrowseNav(ctx, { kind: "root", index: browseIdx(ctx) }),
+  browseup: (ctx) => handleBrowseNav(ctx, { kind: "up" }),
+  browsepage: (ctx) => handleBrowseNav(ctx, { kind: "page", page: browseIdx(ctx) }),
+  // Open the directory browser from the help-card button (Feishu has no slash menu),
+  // mirroring the typed `/add_project` no-arg flow.
+  addproject: ({ channel, deps, evt }) => sendBrowse(channel, deps, evt.chatId),
+  browsecreate: handleBrowseCreate,
+  browsenewfolder: handleBrowseNewFolder,
+  browsecancel: handleBrowseCancel,
   // --- Adopt a non-tmux claude (mirrors Telegram /adopt) ---
   adoptlist: ({ channel, evt, chatKind }) =>
     chatKind === "p2p" ? sendOrphanList(channel, evt.chatId) : Promise.resolve(),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildBrowseKeyboard,
   buildControlKeyboard,
   buildExpandedControlKeyboard,
   buildLangKeyboard,
@@ -11,10 +12,87 @@ import {
   encodeControlAction,
   parseCallbackData,
 } from "../src/adapters/telegram/keyboards.js";
+import type { BrowseView } from "../src/core/dir-browser.js";
 
 function callbackDatas(kb: { inline_keyboard: { text: string; callback_data?: string }[][] }) {
   return kb.inline_keyboard.flat().map((b) => b.callback_data);
 }
+
+describe("directory browser keyboard", () => {
+  it("parses every br:* callback shape", () => {
+    expect(parseCallbackData("br:cd:3")).toEqual({
+      kind: "browse",
+      action: { kind: "open", index: 3 },
+    });
+    expect(parseCallbackData("br:rt:0")).toEqual({
+      kind: "browse",
+      action: { kind: "root", index: 0 },
+    });
+    expect(parseCallbackData("br:pg:2")).toEqual({
+      kind: "browse",
+      action: { kind: "page", page: 2 },
+    });
+    expect(parseCallbackData("br:up")).toEqual({ kind: "browse", action: { kind: "up" } });
+    expect(parseCallbackData("br:sel")).toEqual({ kind: "browseselect" });
+    expect(parseCallbackData("br:nf")).toEqual({ kind: "browsenewfolder" });
+    expect(parseCallbackData("br:x")).toEqual({ kind: "browsecancel" });
+  });
+
+  it("rejects malformed br:* callbacks", () => {
+    expect(parseCallbackData("br:cd:x")).toBeNull(); // non-numeric index
+    expect(parseCallbackData("br:cd:-1")).toBeNull(); // negative index
+    expect(parseCallbackData("br:cd")).toBeNull(); // missing index
+    expect(parseCallbackData("br:nope")).toBeNull(); // unknown sub
+    expect(parseCallbackData("br:up:1")).toBeNull(); // up takes no arg
+  });
+
+  const dirView: BrowseView = {
+    kind: "dir",
+    displayPath: "~/p",
+    entries: [
+      { label: "a", index: 0, isRepo: false },
+      { label: "b", index: 1, isRepo: true },
+    ],
+    canGoUp: true,
+    canCreate: true,
+    cwd: "/home/u/p",
+    page: 0,
+    totalPages: 2,
+  };
+
+  it("renders subdir / up / pagination / create / cancel buttons for a dir view", () => {
+    const kb = buildBrowseKeyboard(dirView);
+    const data = callbackDatas(kb);
+    expect(data).toContain("br:cd:0");
+    expect(data).toContain("br:cd:1");
+    expect(data).toContain("br:up");
+    expect(data).toContain("br:pg:1"); // next page (page 0 of 2)
+    expect(data).toContain("br:sel");
+    expect(data).toContain("br:nf"); // new-folder button (creatable dir)
+    expect(data).toContain("br:x");
+    // 📦 marks the git-repo entry (b), 📁 the plain one (a).
+    const labels = kb.inline_keyboard.flat().map((btn) => btn.text);
+    expect(labels).toContain("📁 a");
+    expect(labels).toContain("📦 b");
+  });
+
+  it("uses br:rt for roots and omits create when not creatable", () => {
+    const rootsView: BrowseView = {
+      kind: "roots",
+      displayPath: "",
+      entries: [{ label: "~/work", index: 0, isRepo: false }],
+      canGoUp: false,
+      canCreate: false,
+      cwd: null,
+      page: 0,
+      totalPages: 1,
+    };
+    const data = callbackDatas(buildBrowseKeyboard(rootsView));
+    expect(data).toContain("br:rt:0");
+    expect(data).not.toContain("br:sel");
+    expect(data).toContain("br:x");
+  });
+});
 
 describe("start-command picker", () => {
   it("parses sp:<idx>:<sid> into a startpick action", () => {

@@ -16,7 +16,14 @@ const { makeMessageHandler } = await import("../../../src/adapters/lark/handlers
 const { recordReplyTarget, removeReplyTargetSession } = await import(
   "../../../src/adapters/lark/reply-target.js"
 );
+const { requestNewFolder, startBrowse, clearBrowse } = await import(
+  "../../../src/core/dir-browser.js"
+);
+const { chatScope } = await import("../../../src/core/project-manager.js");
 const { fakeChannel, fakeDeps, fakeMessage } = await import("./_fakes.js");
+const nodeFs = await import("node:fs");
+const nodeOs = await import("node:os");
+const nodePath = await import("node:path");
 
 describe("makeMessageHandler", () => {
   beforeEach(() => {
@@ -299,14 +306,16 @@ describe("makeMessageHandler", () => {
       expect(channel.cards()).toHaveLength(1);
     });
 
-    it("/add_project with no arg replies usage", async () => {
+    it("/add_project with no arg opens the directory browser card", async () => {
       const channel = fakeChannel();
       const deps = fakeDeps();
       const handler = makeMessageHandler(channel, deps);
 
       await handler(fakeMessage({ content: "/add_project" }));
 
-      expect(channel.texts().some((t) => t.includes("用法：/add_project"))).toBe(true);
+      // Opens as a regular interactive card (CardKit-entity button callbacks
+      // don't fire reliably on Feishu), so it lands in cards().
+      expect(JSON.stringify(channel.cards())).toContain("browsecancel");
     });
 
     it("/add_project with an arg calls addProject (path validation reply)", async () => {
@@ -317,6 +326,22 @@ describe("makeMessageHandler", () => {
       await handler(fakeMessage({ content: "/add_project /home/user/test-proj" }));
 
       expect(channel.texts().length).toBeGreaterThan(0);
+    });
+
+    it("a text message during a new-folder prompt creates the folder", async () => {
+      const dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "tcb-lk-nf-"));
+      try {
+        const scope = chatScope("lark", "chat-1");
+        startBrowse(scope, [dir]); // single root → cwd = dir
+        requestNewFolder(scope); // arm the capture
+        const channel = fakeChannel();
+        const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+        await makeMessageHandler(channel, deps)(fakeMessage({ content: "fresh" }));
+        expect(nodeFs.existsSync(nodePath.join(dir, "fresh"))).toBe(true);
+      } finally {
+        clearBrowse(chatScope("lark", "chat-1"));
+        nodeFs.rmSync(dir, { recursive: true, force: true });
+      }
     });
 
     it("/doctor sends a redacted health report", async () => {
@@ -333,26 +358,24 @@ describe("makeMessageHandler", () => {
       expect(report).not.toContain("\x1b[");
     });
 
-    it("/lang sends the language picker as a managed card", async () => {
+    it("/lang sends the language picker card", async () => {
       const channel = fakeChannel();
       const deps = fakeDeps();
       const handler = makeMessageHandler(channel, deps);
 
       await handler(fakeMessage({ content: "/lang" }));
 
-      expect(channel.cardkitCreates).toHaveLength(1);
-      expect(channel.imCreates).toHaveLength(1);
+      expect(channel.cards()).toHaveLength(1);
     });
 
-    it("/voice_lang sends the voice language picker as a managed card", async () => {
+    it("/voice_lang sends the voice language picker card", async () => {
       const channel = fakeChannel();
       const deps = fakeDeps();
       const handler = makeMessageHandler(channel, deps);
 
       await handler(fakeMessage({ content: "/voice_lang" }));
 
-      expect(channel.cardkitCreates).toHaveLength(1);
-      expect(channel.imCreates).toHaveLength(1);
+      expect(channel.cards()).toHaveLength(1);
     });
 
     it("/history 2 sends history at index 1", async () => {

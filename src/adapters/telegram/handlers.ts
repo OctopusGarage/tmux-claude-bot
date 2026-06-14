@@ -1,16 +1,12 @@
 import type { Bot } from "grammy";
 import { buildHelpBody, getTelegramActions } from "../../core/action-registry.js";
 import type { HandlerDeps } from "../../core/deps.js";
+import { createSubfolder, isAwaitingFolderName, startBrowse } from "../../core/dir-browser.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import { listClaudeSessions } from "../../core/history.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
-import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
-import { appendRecentProject } from "../../core/recentProjects.js";
-import {
-  getPathBySession,
-  sessionNameFromPath,
-  setPathForSession,
-} from "../../core/sessionPathMap.js";
+import { createProjectFromPath } from "../../core/project-ops.js";
+import { getPathBySession } from "../../core/sessionPathMap.js";
 import { orphanLabel } from "../../core/takeover.js";
 import { findAdoptableOrphans } from "../../core/takeover-service.js";
 import { runWorkspaceCommand } from "../../core/workspace-command.js";
@@ -38,7 +34,9 @@ import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
 import { resolveSessionFromReply } from "./session.js";
 import {
+  replyCreateProject,
   sendAliveList,
+  sendBrowse,
   sendHistory,
   sendPeek,
   sendQueueStatus,
@@ -114,52 +112,19 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   // Project management commands (direct execution)
+  // No path → open the Finder-style directory browser; a path → create directly.
   bot.command("add_project", async (ctx) => {
-    const args = (ctx.message?.text ?? "").split(" ").slice(1);
-    if (args.length === 0) {
-      await reply(ctx, "info", messages("telegram").addProjectUsageExample);
+    const arg = (ctx.message?.text ?? "").split(" ").slice(1).join(" ").trim();
+    if (!arg) {
+      await sendBrowse(ctx, startBrowse(tgScope(ctx), deps.config.cdAllowedDirs));
       return;
     }
-    const { resolvedPath, error } = await resolveProjectPath(
-      args.join(" "),
-      deps.config.cdAllowedDirs,
+    await replyCreateProject(
+      ctx,
+      deps,
+      await createProjectFromPath(deps, tgScope(ctx), arg),
+      replyTarget,
     );
-    const tm = messages("telegram");
-    if (error === "not-a-directory") {
-      await reply(ctx, "err", tm.notADir(resolvedPath));
-      return;
-    }
-    if (error === "not-found") {
-      await reply(ctx, "err", tm.dirNotExist(resolvedPath));
-      return;
-    }
-    if (error === "not-allowed") {
-      await reply(ctx, "err", MSG.pathNotAllowed(deps.config.cdAllowedDirs));
-      return;
-    }
-
-    const sessionName = sessionNameFromPath(resolvedPath, deps.config.projectSessionPrefix);
-    try {
-      const exists = await deps.bridge.hasSession(sessionName);
-      if (exists) {
-        await deps.currentProject.set(tgScope(ctx), sessionName);
-        setPathForSession(sessionName, resolvedPath);
-        await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
-        await reply(ctx, "warn", messages("telegram").alreadySwitched, {
-          session: sessionName,
-          replyTarget,
-        });
-        return;
-      }
-      await createProjectSession(deps, tgScope(ctx), sessionName, resolvedPath);
-      await reply(ctx, "ok", messages("telegram").projectCreated, {
-        session: sessionName,
-        body: resolvedPath,
-        replyTarget,
-      });
-    } catch (err) {
-      await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
-    }
   });
 
   bot.command("current_project", async (ctx) => {
@@ -269,6 +234,25 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
         "err",
         messages("telegram").messageTooLong(text.length, deps.config.maxInboundLength),
       );
+      return;
+    }
+
+    // Directory browser: if a "new folder" name is awaited for this chat, this
+    // message IS that name — create it and re-open the browser in the new folder.
+    if (isAwaitingFolderName(tgScope(ctx))) {
+      const result = createSubfolder(tgScope(ctx), text, deps.config.cdAllowedDirs);
+      const tm = messages("telegram");
+      if (result.ok) {
+        await sendBrowse(ctx, result.view);
+      } else if (result.reason !== "expired") {
+        const msg =
+          result.reason === "exists"
+            ? tm.browseNewFolderExists
+            : result.reason === "invalid"
+              ? tm.browseNewFolderInvalid
+              : tm.browseNewFolderError;
+        await reply(ctx, "err", msg, { replyTarget });
+      }
       return;
     }
 
