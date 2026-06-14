@@ -37,7 +37,13 @@ import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
 import { resolveSessionFromReply } from "./session.js";
-import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
+import {
+  sendAliveList,
+  sendHistory,
+  sendPeek,
+  sendQueueStatus,
+  sendStatusInstall,
+} from "./views.js";
 
 export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: ReplyTargetMap): void {
   const persisted = deps.queue.loadPersisted();
@@ -100,6 +106,11 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       replyMarkup: buildOrphanKeyboard(buttons),
       replyTarget,
     });
+  });
+
+  // Install usage reporting into the running claudes' config dirs.
+  bot.command("status_install", async (ctx) => {
+    await sendStatusInstall(ctx, "scan", replyTarget);
   });
 
   // Project management commands (direct execution)

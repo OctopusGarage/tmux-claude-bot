@@ -41,7 +41,12 @@ export type CallbackAction =
   | { kind: "adoptshow"; pid: number }
   | { kind: "adoptexec"; pid: number }
   | { kind: "adoptcancel" }
-  | { kind: "adoptattach"; sid: string };
+  | { kind: "adoptattach"; sid: string }
+  | { kind: "statusinstall"; action: StatusInstallAction };
+
+/** The choices when /status_install hits a foreign statusLine. */
+export const STATUS_INSTALL_ACTIONS = ["overwrite", "wrap", "snippet", "skip"] as const;
+export type StatusInstallAction = (typeof STATUS_INSTALL_ACTIONS)[number];
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
@@ -106,6 +111,12 @@ export function parseCallbackData(data: string): CallbackAction | null {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
     return { kind: "adoptattach", sid };
+  }
+  if (tag === "si") {
+    const a = parts[1];
+    if (parts.length !== 2 || !STATUS_INSTALL_ACTIONS.includes(a as StatusInstallAction))
+      return null;
+    return { kind: "statusinstall", action: a as StatusInstallAction };
   }
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
@@ -270,6 +281,17 @@ export function buildAdoptConfirmKeyboard(pid: number): InlineKeyboard {
  * computer's clipboard on demand (`aa:<sid>`), for viewing the session there. */
 export function buildAdoptDoneKeyboard(sid: string): InlineKeyboard {
   return new InlineKeyboard().text(messages("telegram").btnAdoptAttach, `aa:${sid}`);
+}
+
+/** Choices when /status_install finds a foreign statusLine (`si:<action>`). */
+export function buildStatusInstallChoiceKeyboard(): InlineKeyboard {
+  const m = messages("telegram");
+  return new InlineKeyboard()
+    .text(m.btnStatusWrap, "si:wrap")
+    .text(m.btnStatusOverwrite, "si:overwrite")
+    .row()
+    .text(m.btnStatusSnippet, "si:snippet")
+    .text(m.btnStatusSkip, "si:skip");
 }
 
 /** Session list: one full-width row per saved session. Tapping sends `rs:<uuid>`. */

@@ -119,8 +119,38 @@ export const zh = {
   sentTab: "✅ 已发送 Tab",
   statusRunning: "🟢 Claude 运行中",
   statusNotRunning: "🔴 Claude 未运行",
+  statusContext: (bar: string, pct: number) => `📊 上下文 ${bar} ${pct}%`,
+  statusFiveHour: (bar: string, pct: number, reset: string) =>
+    `⏱ Session(5h) ${bar} ${pct}%（重置 ${reset}）`,
+  statusSevenDay: (bar: string, pct: number, reset: string) =>
+    `📅 本周 ${bar} ${pct}%（重置 ${reset}）`,
+  statusUsageStale: (mins: number) => `⚠️ 额度数据 ${mins} 分钟未更新（Claude Code 可能已关闭）`,
 
   // ── queue-status view ──
+  // -- status usage install --
+  statusUsageHint:
+    "\u{1F4A1} \u60f3\u770b\u989d\u5ea6\uff1f\u53d1\u9001 /status_install \u4e00\u952e\u5b89\u88c5",
+  statusInstallTitle: "\u{1F4CA} \u989d\u5ea6\u4e0a\u62a5\u5b89\u88c5",
+  statusInstallNoClaude:
+    "\u6ca1\u6709\u68c0\u6d4b\u5230\u8fd0\u884c\u4e2d\u7684 Claude\uff0c\u65e0\u6cd5\u786e\u5b9a\u5b89\u88c5\u4f4d\u7f6e\u3002\u5148\u542f\u52a8\u4e00\u4e2a Claude \u518d\u8bd5\u3002",
+  statusInstallInstalled: (dir: string) =>
+    `\u2705 ${dir} \u5df2\u5b89\u88c5\u989d\u5ea6\u4e0a\u62a5`,
+  statusInstallAlready: (dir: string) => `\u23ED ${dir} \u5df2\u5b89\u88c5\u8fc7`,
+  statusInstallForeignPrompt: (dirs: string[]) =>
+    `\u26A0\uFE0F \u4ee5\u4e0b\u76ee\u5f55\u5df2\u6709\u81ea\u5b9a\u4e49 statusLine\uff0c\u5982\u4f55\u5904\u7406\uff1f\n${dirs.join("\n")}`,
+  statusInstallOverwritten: (dir: string, backup: string) =>
+    `\u{1F501} ${dir} \u5df2\u8986\u76d6\uff08\u5907\u4efd\uff1a${backup}\uff09`,
+  statusInstallWrapped: (dir: string, backup: string) =>
+    `\u{1F4E6} ${dir} \u5df2\u5305\u88f9\uff1a\u4fdd\u7559\u4f60\u539f\u6709\u663e\u793a + \u989d\u5ea6\u4e0a\u62a5\n   \u26A0\uFE0F statusLine \u73b0\u7ecf\u672c bot \u5305\u88f9\u5c42\uff1b\u82e5\u72b6\u6001\u680f\u5f02\u5e38\uff0c\u4ece\u5907\u4efd\u8fd8\u539f\uff1a${backup}`,
+  statusInstallSnippet: (dir: string, snippet: string) =>
+    `\u270D\uFE0F ${dir}\uff1a\u628a\u4e0b\u9762\u8fd9\u6bb5\u52a0\u5230\u4f60\u7684 statusline \u811a\u672c\uff08\u9700\u811a\u672c\u91cc\u5df2\u6709 input=$(cat)\uff09\uff1a\n\`\`\`\n${snippet}\n\`\`\``,
+  statusInstallSkipped: (dir: string) => `\u2716\uFE0F ${dir} \u5df2\u8df3\u8fc7`,
+  statusInstallError: (dir: string, msg: string) => `\u274C ${dir}\uff1a${msg}`,
+  btnStatusInstall: "\u{1F4CA} \u5b89\u88c5\u989d\u5ea6\u4e0a\u62a5",
+  btnStatusOverwrite: "\u{1F501} \u8986\u76d6\u66ff\u6362",
+  btnStatusWrap: "\u{1F4E6} \u5305\u88f9\u4fdd\u7559",
+  btnStatusSnippet: "\u270D\uFE0F \u7ed9\u6211\u7247\u6bb5",
+  btnStatusSkip: "\u2716\uFE0F \u653e\u5f03",
   queueGlobalHeader: "━━ 🌐 全局队列 ━━",
   queueCounts: (queued: number, processing: boolean) =>
     `排队中： ${queued} | 处理中： ${processing ? "🟢" : "🔴"}`,

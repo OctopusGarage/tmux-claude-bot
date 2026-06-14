@@ -12,6 +12,7 @@ import {
   switchToProject,
 } from "../../core/project-ops.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
+import type { ForeignAction } from "../../core/status-install.js";
 import { orphanLabel } from "../../core/takeover.js";
 import {
   adoptOrphan,
@@ -63,6 +64,7 @@ import {
   sendPeek,
   sendQueueStatus,
   sendRecentList,
+  sendStatusInstall,
 } from "./views.js";
 
 type CardValue =
@@ -285,6 +287,15 @@ async function handleAdoptAttach({ channel, deps, evt, value }: CardCtx): Promis
   await sendText(channel, evt.chatId, messages("lark").adoptAttachHint(copyAttachCommand(session)));
 }
 
+/** Apply a usage-install foreign-statusLine choice (p2p only) and re-render. */
+async function handleStatusInstallChoice(
+  { channel, evt, chatKind }: CardCtx,
+  action: ForeignAction,
+): Promise<void> {
+  if (chatKind !== "p2p") return;
+  await sendStatusInstall(channel, evt.chatId, action);
+}
+
 /**
  * Button `cmd` → handler. Each returns after doing its work; commands not here
  * fall through to the immediate/queued action routing (and finally a no-op for
@@ -316,6 +327,13 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   switch: handleSwitch,
   remove: handleRemove,
   addrecent: handleAddRecent,
+  // --- Usage-reporting install (mirrors Telegram /status_install) ---
+  statusinstall: ({ channel, evt, chatKind }) =>
+    chatKind === "p2p" ? sendStatusInstall(channel, evt.chatId) : Promise.resolve(),
+  statusoverwrite: (ctx) => handleStatusInstallChoice(ctx, "overwrite"),
+  statuswrap: (ctx) => handleStatusInstallChoice(ctx, "wrap"),
+  statussnippet: (ctx) => handleStatusInstallChoice(ctx, "snippet"),
+  statusskip: (ctx) => handleStatusInstallChoice(ctx, "skip"),
   // --- Adopt a non-tmux claude (mirrors Telegram /adopt) ---
   adoptlist: ({ channel, evt, chatKind }) =>
     chatKind === "p2p" ? sendOrphanList(channel, evt.chatId) : Promise.resolve(),

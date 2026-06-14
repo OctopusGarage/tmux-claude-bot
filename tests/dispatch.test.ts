@@ -109,10 +109,11 @@ describe("executeMessage — control actions", () => {
   });
 
   it("status reflects whether Claude is running", async () => {
-    expect(await executeMessage(msg("status"), deps())).toBe("🟢 Claude 运行中");
+    // /status leads with the running state (usage figures append when configured).
+    expect(await executeMessage(msg("status"), deps())).toContain("🟢 Claude 运行中");
     expect(
       await executeMessage(msg("status"), deps({ checkIfRunning: vi.fn(async () => false) })),
-    ).toBe("🔴 Claude 未运行");
+    ).toContain("🔴 Claude 未运行");
   });
 
   it("text rejects (throws) when Claude isn't running — no keys sent", async () => {

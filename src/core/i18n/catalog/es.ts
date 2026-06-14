@@ -97,7 +97,7 @@ export const es: Messages = {
   startPickerTitle: "🚀 Elige cómo iniciar",
   startPickerPrompt: "Hay varios comandos de inicio configurados — elige uno:",
   btnStartThis: "🚀 Iniciar este",
-  claudeExited: "✅ Salí de Claude",
+  claudeExited: "✅ Claude cerrado",
   claudeRestarted: "🔄 Claude reiniciado · --continue",
   sentEsc: "✅ Esc enviado",
   interrupted: "✅ Interrumpido · Ctrl-C",
@@ -111,7 +111,33 @@ export const es: Messages = {
   sentTab: "✅ Tab enviado",
   statusRunning: "🟢 Claude en ejecución",
   statusNotRunning: "🔴 Claude detenido",
+  statusContext: (bar, pct) => `📊 Contexto ${bar} ${pct}%`,
+  statusFiveHour: (bar, pct, reset) => `⏱ Sesión (5h) ${bar} ${pct}% (reinicia ${reset})`,
+  statusSevenDay: (bar, pct, reset) => `📅 Semanal ${bar} ${pct}% (reinicia ${reset})`,
+  statusUsageStale: (mins) =>
+    `⚠️ Datos de uso con ${mins} min de antigüedad (Claude Code pudo detenerse)`,
 
+  // -- status usage install --
+  statusUsageHint: "💡 ¿Ver el uso? Envía /status_install para configurarlo",
+  statusInstallTitle: "📊 Instalación de reporte de uso",
+  statusInstallNoClaude:
+    "No se detectó ningún Claude en ejecución, así que no hay dónde instalar. Inicia un Claude primero.",
+  statusInstallInstalled: (dir) => `✅ ${dir} reporte de uso instalado`,
+  statusInstallAlready: (dir) => `⏭ ${dir} ya instalado`,
+  statusInstallForeignPrompt: (dirs) =>
+    `⚠️ Estos directorios ya tienen un statusLine propio — ¿qué hacer?\n${dirs.join("\n")}`,
+  statusInstallOverwritten: (dir, backup) => `🔁 ${dir} sobrescrito (respaldo: ${backup})`,
+  statusInstallWrapped: (dir, backup) =>
+    `📦 ${dir} envuelto: conserva tu visualización + uso\n   ⚠️ Tu statusLine ahora pasa por el envoltorio del bot; si la barra falla, restaura desde: ${backup}`,
+  statusInstallSnippet: (dir, snippet) =>
+    `✍️ ${dir}: añade esto a tu script de statusline (debe hacer input=$(cat)):\n${snippet}`,
+  statusInstallSkipped: (dir) => `✖️ ${dir} omitido`,
+  statusInstallError: (dir, msg) => `❌ ${dir}: ${msg}`,
+  btnStatusInstall: "📊 Instalar uso",
+  btnStatusOverwrite: "🔁 Sobrescribir",
+  btnStatusWrap: "📦 Envolver",
+  btnStatusSnippet: "✍️ Dame el fragmento",
+  btnStatusSkip: "✖️ Omitir",
   queueGlobalHeader: "━━ 🌐 Cola global ━━",
   queueCounts: (queued, processing) =>
     `En cola: ${queued} | Procesando: ${processing ? "🟢" : "🔴"}`,

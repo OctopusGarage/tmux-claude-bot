@@ -109,7 +109,32 @@ export const en: Messages = {
   sentTab: "✅ Sent Tab",
   statusRunning: "🟢 Claude running",
   statusNotRunning: "🔴 Claude not running",
+  statusContext: (bar, pct) => `📊 Context ${bar} ${pct}%`,
+  statusFiveHour: (bar, pct, reset) => `⏱ Session (5h) ${bar} ${pct}% (resets ${reset})`,
+  statusSevenDay: (bar, pct, reset) => `📅 Weekly ${bar} ${pct}% (resets ${reset})`,
+  statusUsageStale: (mins) => `⚠️ Usage data is ${mins} min stale (Claude Code may have stopped)`,
 
+  // -- status usage install --
+  statusUsageHint: "💡 Want to see usage? Send /status_install to set it up",
+  statusInstallTitle: "📊 Usage reporting install",
+  statusInstallNoClaude:
+    "No running Claude detected, so there's nowhere to install. Start a Claude first, then install.",
+  statusInstallInstalled: (dir) => `✅ ${dir} usage reporting installed`,
+  statusInstallAlready: (dir) => `⏭ ${dir} already installed`,
+  statusInstallForeignPrompt: (dirs) =>
+    `⚠️ These dirs already have a custom statusLine — how to handle?\n${dirs.join("\n")}`,
+  statusInstallOverwritten: (dir, backup) => `🔁 ${dir} overwritten (backup: ${backup})`,
+  statusInstallWrapped: (dir, backup) =>
+    `📦 ${dir} wrapped: keeps your display + adds usage\n   ⚠️ Your statusLine now runs through this bot's wrapper; if the bar breaks, restore from: ${backup}`,
+  statusInstallSnippet: (dir, snippet) =>
+    `✍️ ${dir}: add this to your statusline script (it must do input=$(cat)):\n${snippet}`,
+  statusInstallSkipped: (dir) => `✖️ ${dir} skipped`,
+  statusInstallError: (dir, msg) => `❌ ${dir}: ${msg}`,
+  btnStatusInstall: "📊 Install usage",
+  btnStatusOverwrite: "🔁 Overwrite",
+  btnStatusWrap: "📦 Wrap",
+  btnStatusSnippet: "✍️ Give snippet",
+  btnStatusSkip: "✖️ Skip",
   queueGlobalHeader: "━━ 🌐 Global queue ━━",
   queueCounts: (queued, processing) =>
     `Queued: ${queued} | Processing: ${processing ? "🟢" : "🔴"}`,

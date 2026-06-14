@@ -96,6 +96,29 @@ The project root directory name `tmux-claude-bot` is used as the process identit
 - `npm run dev` or `tsx src/index.ts` - Start development
 - Commands exposed via Telegram Bot menu
 
+## Internationalization (i18n) copy style
+
+All user-facing strings live in `src/core/i18n/catalog/*.ts`. `zh.ts` is canonical
+(it defines the `Messages` type); every other locale must implement every key, or
+the build fails. Keep `${...}` placeholders and emoji identical across locales;
+leave code tokens, CLI commands, percentages, and the `tmux-claude-bot` product
+name untranslated.
+
+**Register: this is an app UI. Copy must be concise, neutral, and professional —
+NOT colloquial/spoken.** When adding a feature's copy, write every locale in the
+same app register as the existing strings; do not write casual/spoken phrasing.
+
+Per-locale register:
+
+| Locale | Register |
+|--------|----------|
+| `zh` | Simplified Chinese, neutral written. |
+| `zh-TW` | Traditional Chinese, Taiwan vocabulary (專案/佇列/預設/辨識), written. |
+| `yue` | **書面粵語** — Traditional characters + formal WRITTEN grammar. Do **NOT** use colloquial spoken Cantonese: 嘅→的, 喺→在, 咗→了, 唔→不/沒, 睇→查看, 撳→按, 搵→找, 呢個→這個, 入面→裡, 嗰→那, 啲→些, 揀→選, 畀→給, 喇→了, 仲…緊→仍在…中. |
+| `ja` | Polite/neutral Japanese (です・ます or noun style); kanji used as Japanese; refer to the app as "Lark". |
+| `es` | Neutral Spanish; avoid first-person ("Salí…" → neutral "… cerrado"). |
+| `en` | Concise, neutral English. |
+
 ## Coverage Threshold Protocol
 
 When the branch coverage threshold blocks a commit, follow this diagnostic order — don't jump straight to writing tests.

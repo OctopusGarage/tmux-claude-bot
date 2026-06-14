@@ -5,9 +5,15 @@ import { messages } from "../../core/i18n/index.js";
 import { markSemantics } from "../../core/output.js";
 import { buildQueueStatusLines } from "../../core/queue-status.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
+import type { ForeignAction } from "../../core/status-install.js";
+import { runStatusInstall } from "../../core/status-install.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
-import { buildControlKeyboard, buildProjectKeyboard } from "./keyboards.js";
+import {
+  buildControlKeyboard,
+  buildProjectKeyboard,
+  buildStatusInstallChoiceKeyboard,
+} from "./keyboards.js";
 import { aliveProjectButtons } from "./project-ops.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
@@ -63,6 +69,25 @@ export async function sendPeek(
     }
   } catch (err) {
     await reply(ctx, "err", `${normalizeError(err).message}`, { session, replyTarget });
+  }
+}
+
+/** Run the usage-reporting install and reply with the result, attaching the
+ * foreign-statusLine choice buttons when a choice is pending. Mirrors Lark's
+ * sendStatusInstall so both adapters share the run + render decision. */
+export async function sendStatusInstall(
+  ctx: Context,
+  action: ForeignAction,
+  replyTarget: ReplyTargetMap,
+): Promise<void> {
+  try {
+    const res = await runStatusInstall("telegram", action);
+    await reply(ctx, "info", res.lines.join("\n"), {
+      replyTarget,
+      ...(res.foreignPending ? { replyMarkup: buildStatusInstallChoiceKeyboard() } : {}),
+    });
+  } catch (err) {
+    await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
   }
 }
 

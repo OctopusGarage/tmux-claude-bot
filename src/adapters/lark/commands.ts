@@ -15,6 +15,7 @@ export type ViewName =
   | "current"
   | "addproject"
   | "adopt"
+  | "statusinstall"
   | "voicelang"
   | "uilang"
   | "ws"
@@ -37,6 +38,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   current_project: "current",
   add_project: "addproject",
   adopt: "adopt",
+  status_install: "statusinstall",
   voice_lang: "voicelang",
   lang: "uilang",
   ws: "ws",

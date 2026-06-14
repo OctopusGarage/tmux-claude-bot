@@ -109,7 +109,31 @@ export const zhTW: Messages = {
   sentTab: "✅ 已傳送 Tab",
   statusRunning: "🟢 Claude 執行中",
   statusNotRunning: "🔴 Claude 未執行",
+  statusContext: (bar, pct) => `📊 上下文 ${bar} ${pct}%`,
+  statusFiveHour: (bar, pct, reset) => `⏱ Session(5h) ${bar} ${pct}%（重置 ${reset}）`,
+  statusSevenDay: (bar, pct, reset) => `📅 本週 ${bar} ${pct}%（重置 ${reset}）`,
+  statusUsageStale: (mins) => `⚠️ 額度資料 ${mins} 分鐘未更新（Claude Code 可能已關閉）`,
 
+  // -- status usage install --
+  statusUsageHint: "💡 想看額度?傳送 /status_install 一鍵安裝",
+  statusInstallTitle: "📊 額度上報安裝",
+  statusInstallNoClaude: "沒有偵測到執行中的 Claude,無法確定安裝位置。先啟動一個 Claude 再試。",
+  statusInstallInstalled: (dir) => `✅ ${dir} 已安裝額度上報`,
+  statusInstallAlready: (dir) => `⏭ ${dir} 已安裝過`,
+  statusInstallForeignPrompt: (dirs) =>
+    `⚠️ 以下目錄已有自訂 statusLine,如何處理?\n${dirs.join("\n")}`,
+  statusInstallOverwritten: (dir, backup) => `🔁 ${dir} 已覆蓋(備份:${backup})`,
+  statusInstallWrapped: (dir, backup) =>
+    `📦 ${dir} 已包裹:保留你原有顯示 + 額度上報\n   ⚠️ statusLine 現經本 bot 包裹層;若狀態列異常,從備份還原:${backup}`,
+  statusInstallSnippet: (dir, snippet) =>
+    `✍️ ${dir}:把下面這段加到你的 statusline 指令稿(需指令稿裡已有 input=$(cat)):\n${snippet}`,
+  statusInstallSkipped: (dir) => `✖️ ${dir} 已跳過`,
+  statusInstallError: (dir, msg) => `❌ ${dir}:${msg}`,
+  btnStatusInstall: "📊 安裝額度上報",
+  btnStatusOverwrite: "🔁 覆蓋替換",
+  btnStatusWrap: "📦 包裹保留",
+  btnStatusSnippet: "✍️ 給我片段",
+  btnStatusSkip: "✖️ 放棄",
   queueGlobalHeader: "━━ 🌐 全域佇列 ━━",
   queueCounts: (queued, processing) => `排隊中： ${queued} | 處理中： ${processing ? "🟢" : "🔴"}`,
   queueSessionHeader: "━━ 工作階段佇列 ━━",

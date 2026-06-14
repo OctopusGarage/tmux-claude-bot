@@ -197,6 +197,26 @@ export function viewCard(title: string, body: string, group = false): object {
   return shell(title, [md(content), HR, ...controlActions(group)]);
 }
 
+/** Usage-reporting install result. When a foreign statusLine was found, offers
+ * the wrap / overwrite / snippet / skip choice (mirrors Telegram's si:<action>). */
+export function statusInstallCard(body: string, foreignPending: boolean): object {
+  const m = messages("lark");
+  const elements: object[] = [md(body)];
+  if (foreignPending) {
+    elements.push(
+      gridRow([
+        { text: m.btnStatusWrap, value: { cmd: "statuswrap" }, style: "primary" },
+        { text: m.btnStatusOverwrite, value: { cmd: "statusoverwrite" } },
+      ]),
+      gridRow([
+        { text: m.btnStatusSnippet, value: { cmd: "statussnippet" } },
+        { text: m.btnStatusSkip, value: { cmd: "statusskip" } },
+      ]),
+    );
+  }
+  return shell(m.statusInstallTitle, elements);
+}
+
 /** Adopt list: one labelled row per non-tmux claude with a "take over" button
  * (`adopt` → shows a confirm). Mirrors Telegram's `/adopt` keyboard. */
 export function orphanListCard(orphans: { pid: number; label: string }[]): object {
@@ -337,6 +357,7 @@ export function helpCard(group = false, voiceInstallable = false): object {
       { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ]),
     gridRow(projectRow),
+    ...(group ? [] : [gridRow([{ text: m.btnStatusInstall, value: { cmd: "statusinstall" } }])]),
     ...(voiceInstallable
       ? [gridRow([{ text: m.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }])]
       : []),

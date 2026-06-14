@@ -111,7 +111,33 @@ export const ja: Messages = {
   sentTab: "✅ Tab を送信しました",
   statusRunning: "🟢 Claude 実行中",
   statusNotRunning: "🔴 Claude 停止中",
+  statusContext: (bar, pct) => `📊 コンテキスト ${bar} ${pct}%`,
+  statusFiveHour: (bar, pct, reset) => `⏱ セッション(5h) ${bar} ${pct}%（リセット ${reset}）`,
+  statusSevenDay: (bar, pct, reset) => `📅 週間 ${bar} ${pct}%（リセット ${reset}）`,
+  statusUsageStale: (mins) =>
+    `⚠️ 使用量データが ${mins} 分前から未更新（Claude Code が停止した可能性）`,
 
+  // -- status usage install --
+  statusUsageHint: "💡 使用量を見たい?/status_install で設定できます",
+  statusInstallTitle: "📊 使用量レポートの導入",
+  statusInstallNoClaude:
+    "実行中の Claude が見つからず、導入先を特定できません。Claude を起動してから導入してください。",
+  statusInstallInstalled: (dir) => `✅ ${dir} に使用量レポートを導入`,
+  statusInstallAlready: (dir) => `⏭ ${dir} は導入済み`,
+  statusInstallForeignPrompt: (dirs) =>
+    `⚠️ 次のディレクトリには既にカスタム statusLine があります。どうしますか?\n${dirs.join("\n")}`,
+  statusInstallOverwritten: (dir, backup) => `🔁 ${dir} を上書き(バックアップ: ${backup})`,
+  statusInstallWrapped: (dir, backup) =>
+    `📦 ${dir} をラップ: 既存の表示を保持 + 使用量\n   ⚠️ statusLine は本 bot のラッパー経由になります。表示が崩れたらバックアップから復元: ${backup}`,
+  statusInstallSnippet: (dir, snippet) =>
+    `✍️ ${dir}: 次を statusline スクリプトに追加(input=$(cat) が必要):\n${snippet}`,
+  statusInstallSkipped: (dir) => `✖️ ${dir} はスキップ`,
+  statusInstallError: (dir, msg) => `❌ ${dir}: ${msg}`,
+  btnStatusInstall: "📊 使用量を導入",
+  btnStatusOverwrite: "🔁 上書き",
+  btnStatusWrap: "📦 ラップ",
+  btnStatusSnippet: "✍️ スニペット",
+  btnStatusSkip: "✖️ スキップ",
   queueGlobalHeader: "━━ 🌐 グローバルキュー ━━",
   queueCounts: (queued, processing) => `待機中： ${queued} | 処理中： ${processing ? "🟢" : "🔴"}`,
   queueSessionHeader: "━━ セッションキュー ━━",

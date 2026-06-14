@@ -1,13 +1,15 @@
 import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { sleep } from "../shared/utils/sleep.js";
-import type { ConfigResolver } from "./claude-config-resolver.js";
+import { type ConfigResolver, parseClaudeConfigDir } from "./claude-config-resolver.js";
+import { DEFAULT_CONFIG_ROOT } from "./history.js";
 import { messages } from "./i18n/index.js";
 import { channelFromScope } from "./project-manager.js";
 import { botSelfRepoWarning } from "./project-ops.js";
 import { getPathBySession, sessionNameFromPath, setPathForSession } from "./sessionPathMap.js";
 import {
   createTakeoverProbe,
+  isClaudeProcess,
   isPaneBusy,
   listOrphans,
   type OrphanClaude,
@@ -15,6 +17,19 @@ import {
   takeover,
 } from "./takeover.js";
 import type { TmuxBridge } from "./tmux.js";
+
+/** CLAUDE_CONFIG_DIR of every currently-running claude (deduped) — the accounts /
+ * flavors actually in use. Shared by takeover and the status-usage install. */
+export async function claudeConfigDirsInUse(): Promise<string[]> {
+  const probe = createTakeoverProbe();
+  const claudeRows = (await probe.snapshot()).filter((r) => isClaudeProcess(r.command));
+  const roots = await Promise.all(
+    claudeRows.map(
+      async (r) => parseClaudeConfigDir(await probe.readProcEnv(r.pid)) ?? DEFAULT_CONFIG_ROOT,
+    ),
+  );
+  return [...new Set(roots)];
+}
 
 /** Capabilities a takeover needs from the bot's core — a thin slice of HandlerDeps. */
 export interface AdoptContext {

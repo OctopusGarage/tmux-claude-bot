@@ -42,7 +42,13 @@ import {
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
-import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
+import {
+  sendAliveList,
+  sendHistory,
+  sendPeek,
+  sendQueueStatus,
+  sendStatusInstall,
+} from "./views.js";
 
 /**
  * Dispatch an inline-keyboard tap. The callback data (parsed by
@@ -218,6 +224,12 @@ export async function handleCallbackQuery(
         session,
         replyTarget,
       });
+      return;
+    }
+    // Usage-reporting install: the foreign-statusLine choice buttons (si:<action>).
+    if (parsed.kind === "statusinstall") {
+      await safeAnswerCallback(ctx);
+      await sendStatusInstall(ctx, parsed.action, replyTarget);
       return;
     }
     const sessionName = await resolveAliveSessionByShortId(deps, parsed.sid);

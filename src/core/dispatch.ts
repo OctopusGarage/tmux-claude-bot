@@ -8,6 +8,7 @@ import { getLatestAssistantReply } from "./history.js";
 import { messages } from "./i18n/index.js";
 import type { QueuedMessage } from "./queue.js";
 import { getPathBySession } from "./sessionPathMap.js";
+import { buildStatusReport } from "./usage-status.js";
 
 export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
   const bin = claudeBinFromStartCommand(claudeStartCommand);
@@ -237,7 +238,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     case "status": {
       logger.info(`[executor] checking status session=${session}`);
       const running = await deps.claude.checkIfRunning(session);
-      return running ? m.statusRunning : m.statusNotRunning;
+      return buildStatusReport(deps, session, msg.channel ?? "telegram", running);
     }
     default: {
       const _exhaustive: never = msg.action;

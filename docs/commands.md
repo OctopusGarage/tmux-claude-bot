@@ -29,6 +29,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `current_project` | Show current project |
 | `add_project` | Add a new project |
 | `adopt` | Take over a Claude running outside tmux |
+| `status_install` | Install usage reporting (statusLine snapshot) for /status |
 | `queue_status` | Show message queue status |
 | `history` | Show recent conversation history (`/history N` for the Nth recent round) |
 | `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |

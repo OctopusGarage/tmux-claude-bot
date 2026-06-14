@@ -252,6 +252,10 @@ export const BOT_COMMANDS: BotCommand[] = [
   { command: "current_project", description: "Show current project" },
   { command: "add_project", description: "Add a new project" },
   { command: "adopt", description: "Take over a Claude running outside tmux" },
+  {
+    command: "status_install",
+    description: "Install usage reporting (statusLine snapshot) for /status",
+  },
   { command: "queue_status", description: "Show message queue status" },
   {
     command: "history",

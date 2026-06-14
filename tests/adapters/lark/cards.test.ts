@@ -193,6 +193,7 @@ describe("helpCard", () => {
       "recent",
       "adoptlist",
       "current",
+      "statusinstall",
       "groupmenu",
       "voicelangmenu",
       "uilangmenu",

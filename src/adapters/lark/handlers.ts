@@ -26,6 +26,7 @@ import {
   sendQueueStatus,
   sendRecentList,
   sendSessionsList,
+  sendStatusInstall,
   sendVoiceLangPicker,
 } from "./views.js";
 import { handleLarkVoice } from "./voice.js";
@@ -191,6 +192,9 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             // Global host op — only in 1:1 chats (a bound group is pinned to one
             // project, so cross-project adoption doesn't belong there).
             if (msg.chatType === "p2p") await sendOrphanList(channel, msg.chatId);
+            break;
+          case "statusinstall":
+            if (msg.chatType === "p2p") await sendStatusInstall(channel, msg.chatId);
             break;
           case "voicelang":
             await sendVoiceLangPicker(channel, msg.chatId);

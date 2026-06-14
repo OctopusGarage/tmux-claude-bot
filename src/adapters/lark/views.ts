@@ -25,6 +25,7 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "../../core/sessionPathMap.js";
+import { type ForeignAction, runStatusInstall } from "../../core/status-install.js";
 import { orphanLabel } from "../../core/takeover.js";
 import { findAdoptableOrphans } from "../../core/takeover-service.js";
 import { resolveWhisperLanguage } from "../../core/voice-support.js";
@@ -38,6 +39,7 @@ import {
   orphanListCard,
   projectListCard,
   recentListCard,
+  statusInstallCard,
   viewCard,
   voiceLangCard,
 } from "./cards.js";
@@ -109,6 +111,21 @@ export async function sendOrphanList(channel: LarkChannel, chatId: string): Prom
     }
     const rows = orphans.map((o) => ({ pid: o.pid, label: orphanLabel(o) }));
     await sendCard(channel, chatId, orphanListCard(rows));
+  } catch (err) {
+    await sendError(channel, chatId, err);
+  }
+}
+
+/** Run the usage-reporting install and render the result card (with the
+ * foreign-statusLine choice buttons when needed). Mirrors `/status_install`. */
+export async function sendStatusInstall(
+  channel: LarkChannel,
+  chatId: string,
+  action: ForeignAction = "scan",
+): Promise<void> {
+  try {
+    const res = await runStatusInstall("lark", action);
+    await sendCard(channel, chatId, statusInstallCard(res.lines.join("\n"), res.foreignPending));
   } catch (err) {
     await sendError(channel, chatId, err);
   }
