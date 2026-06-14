@@ -2,6 +2,7 @@ import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
 import { messages } from "../../core/i18n/index.js";
+import { markSemantics } from "../../core/output.js";
 import { buildQueueStatusLines } from "../../core/queue-status.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
@@ -44,7 +45,7 @@ export async function sendPeek(
   const keyboard = buildControlKeyboard(sessionShortId(session));
   try {
     const snapshot = await deps.bridge.capturePane(session);
-    const processed = deps.output.process(snapshot);
+    const processed = markSemantics(deps.output.process(snapshot));
     if (processed) {
       await reply(ctx, "view", "", {
         session,

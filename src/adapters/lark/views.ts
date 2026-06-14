@@ -8,6 +8,7 @@ import {
   listClaudeSessions,
 } from "../../core/history.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
+import { markSemantics } from "../../core/output.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
 import {
@@ -107,7 +108,7 @@ export async function sendPeek(
   }
   try {
     const snapshot = await deps.bridge.capturePane(session);
-    const processed = deps.output.process(snapshot);
+    const processed = markSemantics(deps.output.process(snapshot));
     const mid = await sendCard(
       channel,
       chatId,
