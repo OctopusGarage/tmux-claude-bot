@@ -1,36 +1,53 @@
 import type { Bot } from "grammy";
 import { buildHelpBody, getTelegramActions } from "../../core/action-registry.js";
 import type { HandlerDeps } from "../../core/deps.js";
+import { createSubfolder, isAwaitingFolderName, startBrowse } from "../../core/dir-browser.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
+import { consumeFreeLabel, isAwaitingFreeLabel } from "../../core/free-label-prompt.js";
+import { FREE_PROJECT_LIMIT } from "../../core/free-projects.js";
 import { listClaudeSessions } from "../../core/history.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
-import { createProjectSession, resolveProjectPath } from "../../core/project-ops.js";
-import { appendRecentProject } from "../../core/recentProjects.js";
-import {
-  getPathBySession,
-  sessionNameFromPath,
-  setPathForSession,
-} from "../../core/sessionPathMap.js";
+import { createFreeProject, createProjectFromPath } from "../../core/project-ops.js";
+import { getPathBySession } from "../../core/sessionPathMap.js";
+import { orphanLabel } from "../../core/takeover.js";
+import { findAdoptableOrphans } from "../../core/takeover-service.js";
 import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { normalizeError } from "../../shared/utils/error.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
-import { buildLangKeyboard, buildRecentKeyboard, buildSessionsKeyboard } from "./keyboards.js";
+import {
+  buildLangKeyboard,
+  buildOrphanKeyboard,
+  buildRecentKeyboard,
+  buildSessionsKeyboard,
+  buildStartPickerKeyboard,
+} from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
   addRecentProjectBySid,
   recentProjectButtons,
   removeProjectBySession,
   resolveAliveSessionByShortId,
+  startOrPickAfterCreate,
   switchToProject,
 } from "./project-ops.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
+import type { Tone } from "./replies.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
 import { resolveSessionFromReply } from "./session.js";
-import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
+import {
+  replyCreateProject,
+  sendAliveList,
+  sendBrowse,
+  sendHistory,
+  sendPeek,
+  sendQueueStatus,
+  sendStatusInstall,
+} from "./views.js";
 
 export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: ReplyTargetMap): void {
   const persisted = deps.queue.loadPersisted();
@@ -69,7 +86,28 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
   for (const action of getTelegramActions()) {
     const a = action;
-    bot.command(a, async (ctx) => handleQueuedCommand(ctx, deps, a, undefined, replyTarget));
+    bot.command(a, async (ctx) => {
+      // `/start` and `/restart` with multiple configured launch commands show the
+      // flavor picker (mirroring the inline buttons) instead of silently using the
+      // default. Falls through to the normal queued action when there's only one
+      // command, or no current project.
+      if ((a === "start" || a === "restart") && deps.config.startCommands.length > 1) {
+        const session = await deps.currentProject.get(tgScope(ctx));
+        if (session) {
+          await reply(ctx, "info", messages("telegram").startPickerPrompt, {
+            session,
+            replyMarkup: buildStartPickerKeyboard(
+              deps.config.startCommands,
+              sessionShortId(session),
+              a === "restart" ? "restart" : "start",
+            ),
+            replyTarget,
+          });
+          return;
+        }
+      }
+      await handleQueuedCommand(ctx, deps, a, undefined, replyTarget);
+    });
   }
 
   bot.command("peek", async (ctx) => {
@@ -81,53 +119,46 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     await sendPeek(ctx, deps, session, replyTarget);
   });
 
-  // Project management commands (direct execution)
-  bot.command("add_project", async (ctx) => {
-    const args = (ctx.message?.text ?? "").split(" ").slice(1);
-    if (args.length === 0) {
-      await reply(ctx, "info", messages("telegram").addProjectUsageExample);
+  // List claude processes running outside tmux; tap one to take it over.
+  bot.command("adopt", async (ctx) => {
+    const orphans = await findAdoptableOrphans();
+    if (orphans.length === 0) {
+      await reply(ctx, "info", messages("telegram").adoptEmpty, { replyTarget });
       return;
     }
-    const { resolvedPath, error } = await resolveProjectPath(
-      args.join(" "),
-      deps.config.cdAllowedDirs,
-    );
-    const tm = messages("telegram");
-    if (error === "not-a-directory") {
-      await reply(ctx, "err", tm.notADir(resolvedPath));
-      return;
-    }
-    if (error === "not-found") {
-      await reply(ctx, "err", tm.dirNotExist(resolvedPath));
-      return;
-    }
-    if (error === "not-allowed") {
-      await reply(ctx, "err", MSG.pathNotAllowed(deps.config.cdAllowedDirs));
-      return;
-    }
+    const buttons = orphans.map((o) => ({ pid: o.pid, label: orphanLabel(o) }));
+    await reply(ctx, "info", messages("telegram").adoptTitle, {
+      replyMarkup: buildOrphanKeyboard(buttons),
+      replyTarget,
+    });
+  });
 
-    const sessionName = sessionNameFromPath(resolvedPath, deps.config.projectSessionPrefix);
-    try {
-      const exists = await deps.bridge.hasSession(sessionName);
-      if (exists) {
-        await deps.currentProject.set(tgScope(ctx), sessionName);
-        setPathForSession(sessionName, resolvedPath);
-        await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
-        await reply(ctx, "warn", messages("telegram").alreadySwitched, {
-          session: sessionName,
-          replyTarget,
-        });
-        return;
-      }
-      await createProjectSession(deps, tgScope(ctx), sessionName, resolvedPath);
-      await reply(ctx, "ok", messages("telegram").projectCreated, {
-        session: sessionName,
-        body: resolvedPath,
-        replyTarget,
-      });
-    } catch (err) {
-      await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
+  // Install usage reporting into the running claudes' config dirs.
+  bot.command("status_install", async (ctx) => {
+    await sendStatusInstall(ctx, "scan", replyTarget);
+  });
+
+  // Project management commands (direct execution)
+  // No path → open the Finder-style directory browser; a path → create directly.
+  bot.command("add_project", async (ctx) => {
+    const arg = (ctx.message?.text ?? "").split(" ").slice(1).join(" ").trim();
+    if (!arg) {
+      await sendBrowse(ctx, startBrowse(tgScope(ctx), deps.config.cdAllowedDirs));
+      return;
     }
+    await replyCreateProject(
+      ctx,
+      deps,
+      await createProjectFromPath(deps, tgScope(ctx), arg),
+      replyTarget,
+    );
+  });
+
+  bot.command("new_free", async (ctx) => {
+    const session = await handleNewFreeCommand(ctx, deps, tgScope(ctx), (kind, text) =>
+      reply(ctx, kind, text),
+    );
+    if (session) await startOrPickAfterCreate(deps, ctx, session, replyTarget);
   });
 
   bot.command("current_project", async (ctx) => {
@@ -240,6 +271,38 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
 
+    // Free-project naming: if a "🆓 new free project" label is awaited for this
+    // chat, this message IS the label — create the free project ("-" = skip name).
+    if (isAwaitingFreeLabel(tgScope(ctx))) {
+      const scope = tgScope(ctx);
+      consumeFreeLabel(scope);
+      const label = text.trim() === "-" ? "" : text.trim();
+      const session = await createFreeAndReply(deps, scope, label, (kind, body) =>
+        reply(ctx, kind, body),
+      );
+      if (session) await startOrPickAfterCreate(deps, ctx, session, replyTarget);
+      return;
+    }
+
+    // Directory browser: if a "new folder" name is awaited for this chat, this
+    // message IS that name — create it and re-open the browser in the new folder.
+    if (isAwaitingFolderName(tgScope(ctx))) {
+      const result = createSubfolder(tgScope(ctx), text, deps.config.cdAllowedDirs);
+      const tm = messages("telegram");
+      if (result.ok) {
+        await sendBrowse(ctx, result.view);
+      } else if (result.reason !== "expired") {
+        const msg =
+          result.reason === "exists"
+            ? tm.browseNewFolderExists
+            : result.reason === "invalid"
+              ? tm.browseNewFolderInvalid
+              : tm.browseNewFolderError;
+        await reply(ctx, "err", msg, { replyTarget });
+      }
+      return;
+    }
+
     // Check if this message is a reply to one of our sent messages
     const replyToMsg = ctx.message.reply_to_message;
     let targetSession: string | null = null;
@@ -316,4 +379,41 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     logger.warn(`[handlers] claude not running session=${currentSessionName} chat=${chatId}`);
     await reply(ctx, "err", MSG.notRunning);
   });
+}
+
+/**
+ * Shared `/new_free [label]` logic, decoupled from grammY so it can be tested with
+ * a plain reply sink. Creates a bare free project and reports the outcome.
+ */
+export async function handleNewFreeCommand(
+  ctx: { message?: { text?: string | undefined } | undefined },
+  deps: HandlerDeps,
+  scope: string,
+  send: (tone: Tone, text: string) => void | Promise<void>,
+): Promise<string | null> {
+  const label = (ctx.message?.text ?? "").split(" ").slice(1).join(" ").trim();
+  return createFreeAndReply(deps, scope, label, send);
+}
+
+/** Create a free project for `label` (empty = unnamed) and report via `send`.
+ * Returns the new session name when created (for the caller's start/pick step),
+ * else null. Shared by `/new_free` and the button-driven label-capture flow. */
+export async function createFreeAndReply(
+  deps: HandlerDeps,
+  scope: string,
+  label: string,
+  send: (tone: Tone, text: string) => void | Promise<void>,
+): Promise<string | null> {
+  const m = messages("telegram");
+  const res = await createFreeProject(deps, scope, label);
+  if (res.status === "created") {
+    await send("info", m.freeProjectCreated(res.slot, label || null));
+    return res.sessionName;
+  }
+  if (res.status === "limit") {
+    await send("err", m.freeProjectLimit(FREE_PROJECT_LIMIT));
+  } else {
+    await send("err", m.errorPrefix(res.message));
+  }
+  return null;
 }

@@ -17,6 +17,7 @@ import {
   sendRecentList,
   sendVoiceLangPicker,
 } from "../../../src/adapters/lark/views.js";
+import { bindGroup, unbindGroup } from "../../../src/core/group-bindings.js";
 import { projectPathToHistoryDir } from "../../../src/core/history.js";
 import type { QueuedMessage } from "../../../src/core/queue.js";
 import { setPathForSession } from "../../../src/core/sessionPathMap.js";
@@ -25,19 +26,46 @@ import { fakeChannel, fakeDeps } from "./_fakes.js";
 const qmsg = (text: string): QueuedMessage =>
   ({ id: "x", text, chatId: "c", action: "text", resolve() {}, reject() {} }) as QueuedMessage;
 
-describe("language pickers go out as managed cards", () => {
-  it("sendVoiceLangPicker sends the picker via cardkit so clicks can update it in place", async () => {
+describe("sendGroupMenu — project-group overview (feature C)", () => {
+  const BOUND = "oc_alpha_grp";
+  afterEach(() => unbindGroup(BOUND));
+
+  it("from a private chat, lists existing groups (label + path) plus the create picker", async () => {
+    bindGroup(BOUND, {
+      workspacePath: "/proj/alpha",
+      sessionName: "tmux_proj_alpha",
+      label: "alpha",
+    });
     const channel = fakeChannel();
-    await sendVoiceLangPicker(channel, "oc_chat");
-    expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
-    expect(channel.imCreates).toHaveLength(1);
+    await sendGroupMenu(channel, fakeDeps(), "ou_dm_unbound");
+    const cards = JSON.stringify(channel.cards());
+    expect(cards).toContain("alpha"); // existing group is listed...
+    expect(cards).toContain("/proj/alpha"); // ...with its workspace path
   });
 
-  it("sendLangPicker sends the picker via cardkit so clicks can update it in place", async () => {
+  it("from inside a bound group, still shows the bound-group management card", async () => {
+    bindGroup(BOUND, {
+      workspacePath: "/proj/alpha",
+      sessionName: "tmux_proj_alpha",
+      label: "alpha",
+    });
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, fakeDeps(), BOUND); // the bound chat itself
+    expect(JSON.stringify(channel.cards())).toContain("本群已绑定");
+  });
+});
+
+describe("language pickers go out as regular cards", () => {
+  it("sendVoiceLangPicker sends the voice-language picker card", async () => {
+    const channel = fakeChannel();
+    await sendVoiceLangPicker(channel, "oc_chat");
+    expect(JSON.stringify(channel.cards())).toContain("语音识别语言");
+  });
+
+  it("sendLangPicker sends the UI-language picker card", async () => {
     const channel = fakeChannel();
     await sendLangPicker(channel, "oc_chat");
-    expect(channel.cardkitCreates).toHaveLength(1);
-    expect(channel.imCreates).toHaveLength(1);
+    expect(channel.cards()).toHaveLength(1);
   });
 });
 

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aliveProjectButtons,
+  createProjectFromPath,
   createProjectSession,
   recentProjectButtons,
   removeProjectBySession,
@@ -49,6 +50,41 @@ describe("resolveProjectPath", () => {
     const r = await resolveProjectPath(dir, []);
     expect(r.error).toBeUndefined();
     expect(r.resolvedPath).toBe(dir); // path.resolve of an already-absolute path
+  });
+});
+
+describe("createProjectFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-cfp-"));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("maps a rejected path to an invalid status with the error", async () => {
+    const deps = fakeDeps();
+    const r = await createProjectFromPath(deps, "telegram", path.join(dir, "missing"));
+    expect(r).toMatchObject({ status: "invalid", error: "not-found" });
+  });
+
+  it("switches to an existing session without creating a new one", async () => {
+    const deps = fakeDeps({
+      bridge: { hasSession: vi.fn(async () => true) },
+      config: { cdAllowedDirs: [] },
+    });
+    const r = await createProjectFromPath(deps, "telegram", dir);
+    expect(r.status).toBe("switched");
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(deps.currentProject.set).toHaveBeenCalled();
+  });
+
+  it("creates a session when none exists yet", async () => {
+    const deps = fakeDeps({
+      bridge: { hasSession: vi.fn(async () => false) },
+      config: { cdAllowedDirs: [] },
+    });
+    const r = await createProjectFromPath(deps, "lark", dir);
+    expect(r).toMatchObject({ status: "created", projectPath: dir });
+    expect(deps.bridge.createSession).toHaveBeenCalledWith(expect.any(String), dir);
   });
 });
 

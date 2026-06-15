@@ -57,6 +57,7 @@ describe("resultCard", () => {
       "history",
       "queuestatus",
       "listalive",
+      "adoptlist",
       "current",
       "help",
     ]);
@@ -102,6 +103,7 @@ describe("viewCard", () => {
       "history",
       "queuestatus",
       "listalive",
+      "adoptlist",
       "current",
       "help",
     ]);
@@ -187,10 +189,14 @@ describe("helpCard", () => {
       "peek",
       "history",
       "queuestatus",
+      "addproject",
       "listalive",
       "recent",
+      "adoptlist",
       "current",
+      "statusinstall",
       "groupmenu",
+      "freegroupmenu",
       "voicelangmenu",
       "uilangmenu",
     ]);

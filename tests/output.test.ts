@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OutputProcessor } from "../src/core/output.js";
+import { markSemantics, OutputProcessor } from "../src/core/output.js";
 
 describe("OutputProcessor", () => {
   describe("constructor", () => {
@@ -232,5 +232,72 @@ describe("OutputProcessor", () => {
       expect(result).toContain("line1");
       expect(result).toContain("line2");
     });
+  });
+});
+
+describe("markSemantics", () => {
+  it("returns empty string unchanged", () => {
+    expect(markSemantics("")).toBe("");
+  });
+
+  it("leaves plain lines untouched", () => {
+    const input = "just some normal output\nrunning the build now\nall good here";
+    expect(markSemantics(input)).toBe(input);
+  });
+
+  it("prefixes error lines starting with an error word", () => {
+    expect(markSemantics("Error: something blew up")).toBe("❌ Error: something blew up");
+    expect(markSemantics("Traceback (most recent call last):")).toBe(
+      "❌ Traceback (most recent call last):",
+    );
+  });
+
+  it("prefixes a labelled failure mid-line", () => {
+    expect(markSemantics("npm test FAILED: 2 specs")).toBe("❌ npm test FAILED: 2 specs");
+  });
+
+  it("does NOT flag reassuring prose with a plural", () => {
+    // "errors:" must not match "error\s*:" — plurals are excluded by design.
+    expect(markSemantics("no errors: everything passed cleanly")).not.toContain("❌");
+  });
+
+  it("prefixes success lines", () => {
+    expect(markSemantics("Done. 3 passed, 0 failed")).toBe("✅ Done. 3 passed, 0 failed");
+    expect(markSemantics("Build succeeded")).toBe("✅ Build succeeded");
+  });
+
+  it("prefixes a running/waiting line ending in an ellipsis", () => {
+    expect(markSemantics("Building…")).toBe("⏳ Building…");
+    expect(markSemantics("Installing dependencies ...")).toBe("⏳ Installing dependencies ...");
+  });
+
+  it("prefixes Claude's esc-to-interrupt hint", () => {
+    expect(markSemantics("✻ Thinking (esc to interrupt)")).toBe("⏳ ✻ Thinking (esc to interrupt)");
+  });
+
+  it("marks a real diff hunk (mixed + and -)", () => {
+    const input = "  context\n- old line\n+ new line\n  more context";
+    expect(markSemantics(input)).toBe("  context\n🟥 old line\n🟩 new line\n  more context");
+  });
+
+  it("does NOT mark a plain bullet list (all '- ')", () => {
+    const input = "- first item\n- second item\n- third item";
+    expect(markSemantics(input)).toBe(input);
+  });
+
+  it("does NOT mark a pure-addition block (no removal to pair with)", () => {
+    const input = "+ added one\n+ added two";
+    expect(markSemantics(input)).toBe(input);
+  });
+
+  it("does not double-mark a line already opening with a status glyph", () => {
+    expect(markSemantics("✓ already done")).toBe("✓ already done");
+    expect(markSemantics("✗ already failed")).toBe("✗ already failed");
+  });
+
+  it("applies at most one marker per line, diff taking precedence", () => {
+    // The '-' line also contains 'Error:', but inside a diff hunk it stays a diff marker.
+    const input = "+ ok now\n- Error: was here";
+    expect(markSemantics(input)).toBe("🟩 ok now\n🟥 Error: was here");
   });
 });

@@ -54,6 +54,7 @@ export const ja: Messages = {
   btnProjects: "📁 プロジェクト",
   btnRecent: "🕘 最近",
   btnCurrent: "📌 現在",
+  btnAddProject: "➕ 新規プロジェクト",
   btnSwitch: "🔀 切替",
   btnRemove: "🗑 削除",
   btnCreate: "➕ 作成",
@@ -66,6 +67,27 @@ export const ja: Messages = {
   btnCollapse: "▴ 折りたたむ",
   btnCancel: "✕ キャンセル",
   btnDeleteMode: "🗑 削除…",
+
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 引き継ぎ可能な Claude プロセス（tmux 外）",
+  adoptEmpty: "引き継ぎ可能な Claude プロセスは見つかりません",
+  adoptConfirmPrompt: (label: string) =>
+    `引き継ぎますか？元のプロセスを中断・終了してから tmux で再開します:\n${label}`,
+  btnAdoptConfirm: "🧲 引き継ぐ",
+  btnAdoptCancel: "✕ キャンセル",
+  adoptCancelled: "引き継ぎをキャンセルしました",
+  adoptWorking: "引き継ぎ中…",
+  adoptGone: "このプロセスは引き継ぎ対象ではありません（終了済み、または tmux 内）",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed
+      ? `✅ 引き継ぎ、セッションを再開しました: ${proj}`
+      : `✅ 引き継ぎ、新規開始しました: ${proj}`,
+  adoptFailed: "引き継ぎ失敗: プロセスを終了できないか、Claude が起動しませんでした",
+  adoptBusy:
+    "対象の tmux セッションのフォアグラウンドで既にプログラムが動作中です（別の Claude など）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
+  btnAdoptAttach: "💻 PC のターミナルで見る（任意）",
+  adoptAttachHint: (cmd: string) =>
+    `✅ 接続コマンドは「PC」のクリップボードにコピー済みです（スマホ側でコピーする必要はありません）。PC に戻ったらターミナルに貼り付けて Enter を押すだけで入れます。この手順は任意です。\nコマンド: ${cmd}`,
 
   doneShort: "完了",
   claudeNotRunningRestart: "Claude が実行されていません · /restart で起動してください",
@@ -90,7 +112,37 @@ export const ja: Messages = {
   sentTab: "✅ Tab を送信しました",
   statusRunning: "🟢 Claude 実行中",
   statusNotRunning: "🔴 Claude 停止中",
+  statusContext: (bar, pct) => `📊 コンテキスト ${bar} ${pct}%`,
+  statusFiveHour: (bar, pct, reset) => `⏱ セッション(5h) ${bar} ${pct}%（リセット ${reset}）`,
+  statusSevenDay: (bar, pct, reset) => `📅 週間 ${bar} ${pct}%（リセット ${reset}）`,
+  statusUsageStale: (mins) =>
+    `⚠️ 使用量データが ${mins} 分前から未更新（Claude Code が停止した可能性）`,
 
+  // -- status usage install --
+  statusUsageHint: "💡 使用量を見たい?/status_install で設定できます",
+  statusUsagePending: "📊 使用量データはまだありません——次の Claude API 応答後に表示されます",
+  statusModeApi: "API",
+  statusModeSubscription: "サブスク",
+  statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
+  statusInstallTitle: "📊 使用量レポートの導入",
+  statusInstallNoClaude:
+    "実行中の Claude が見つからず、導入先を特定できません。Claude を起動してから導入してください。",
+  statusInstallInstalled: (dir) => `✅ ${dir} に使用量レポートを導入`,
+  statusInstallAlready: (dir) => `⏭ ${dir} は導入済み`,
+  statusInstallForeignPrompt: (dirs) =>
+    `⚠️ 次のディレクトリには既にカスタム statusLine があります。どうしますか？「ラップ」を推奨します（既存の statusLine を保持し、使用量レポートを追加）。\n${dirs.join("\n")}`,
+  statusInstallOverwritten: (dir, backup) => `🔁 ${dir} を上書き(バックアップ: ${backup})`,
+  statusInstallWrapped: (dir, backup) =>
+    `📦 ${dir} をラップ: 既存の表示を保持 + 使用量\n   ⚠️ statusLine は本 bot のラッパー経由になります。表示が崩れたらバックアップから復元: ${backup}`,
+  statusInstallSnippet: (dir, snippet) =>
+    `✍️ ${dir}: 次を statusline スクリプトに追加(input=$(cat) が必要):\n${snippet}`,
+  statusInstallSkipped: (dir) => `✖️ ${dir} はスキップ`,
+  statusInstallError: (dir, msg) => `❌ ${dir}: ${msg}`,
+  btnStatusInstall: "📊 使用量を導入",
+  btnStatusOverwrite: "🔁 上書き",
+  btnStatusWrap: "📦 ラップ（推奨）",
+  btnStatusSnippet: "✍️ スニペット",
+  btnStatusSkip: "✖️ スキップ",
   queueGlobalHeader: "━━ 🌐 グローバルキュー ━━",
   queueCounts: (queued, processing) => `待機中： ${queued} | 処理中： ${processing ? "🟢" : "🔴"}`,
   queueSessionHeader: "━━ セッションキュー ━━",
@@ -114,14 +166,25 @@ export const ja: Messages = {
   recentListTitleN: (n) => `最近のプロジェクト (${n})`,
   recentListEmpty: "最近のプロジェクトがありません · /add_project <パス> で追加",
 
-  addProjectUsage: "使い方：/add_project <パス>",
-  addProjectUsageExample: "使い方：/add_project <パス>\n\n例：/add_project ~/projects/myapp",
   notADir: (p) => `${p} はディレクトリではありません`,
   dirNotExist: (p) => `ディレクトリが見つかりません：${p}`,
   pathNotAllowedPath: (p) => `許可されていないパスです：${p}`,
   alreadySwitched: "既に存在します · 切り替えました",
   projectCreated: "プロジェクトを作成しました",
   projectCreatedPath: (p) => `プロジェクトを作成しました：${p}`,
+  browseTitle: "📂 プロジェクトの場所を選択",
+  browseRootsTitle: "📂 開始ディレクトリを選択",
+  browseEmpty: "（サブディレクトリなし）",
+  browseUnreadable: "⚠️ このディレクトリを読み取れません",
+  browseCancelled: "キャンセルしました",
+  btnBrowseUp: "⬆️ 上へ",
+  btnBrowseCreate: "✅ ここにプロジェクトを作成",
+  btnBrowseCancel: "✖️ キャンセル",
+  btnBrowseNewFolder: "➕ 新しいフォルダ",
+  browseNewFolderPrompt: (p) => `${p} 内に作成するフォルダ名を返信してください`,
+  browseNewFolderInvalid: "❌ 無効な名前です（空、または「/」を含められません）",
+  browseNewFolderExists: "❌ その名前はすでに存在します",
+  browseNewFolderError: "❌ フォルダの作成に失敗しました",
   shortIdNotFound: (id) => `短縮 id が見つかりません：${id}`,
   noCurrentProjectSet: "現在のプロジェクトが未設定です\n\n/add_project <パス> で設定してください",
   currentActive: "✅ アクティブ",
@@ -191,6 +254,15 @@ export const ja: Messages = {
   cmdListAlive: "アクティブなプロジェクト（タップで切替/削除）",
   cmdListRecent: "最近のプロジェクト",
   cmdAddProject: "プロジェクトを作成",
+  cmdNewFree: "フリープロジェクトを作成（同一ディレクトリで並行可）",
+  freeProjectLimit: (max) =>
+    `フリープロジェクトは上限 ${max} 件です。1件削除してから再試行してください。`,
+  freeProjectCreated: (slot, label) =>
+    `🆓 フリープロジェクト #${slot}${label ? `（${label}）` : ""} を作成しました。\n任意のディレクトリへ /cd し、Claude をご自身で起動してください。/list_alive_projects で戻れます。`,
+  btnNewFree: "🆓 フリープロジェクト作成",
+  freeLabelPrompt: "フリープロジェクトの名前を送信してください（- で命名をスキップ）",
+  freeLabelCancelled: "キャンセルしました",
+  cmdAdopt: "tmux 外の Claude を引き継ぐ",
   cmdQueueStatus: "キューの状態",
   cmdHistory: "会話履歴（既定は最新の1件）",
   cmdPeek: "tmux ペインを表示",
@@ -265,4 +337,11 @@ export const ja: Messages = {
     `🔒 このグループは「${label}」に固定されています。プロジェクトの切替は無効です。変更は 🗂 → 紐付け直す から。`,
   groupNoRemoveInGroup:
     "🔒 グループ内ではプロジェクトを削除できません（他のメンバーに影響します）。bot とのプライベートチャットで行ってください。",
+  groupFreePickerTitle: "🆓 フリープロジェクトのグループを作成（同一ディレクトリ可）",
+  groupOverviewTitle: "🗂 プロジェクトグループ",
+  groupOverviewExisting: "既存のプロジェクトグループ：",
+  groupOverviewNoGroups: "プロジェクトグループはまだありません。",
+  groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
+  btnFreeGroup: "🆓 並行グループ",
+  freeGroupCreated: (label) => `🆓 並行グループ「${label}」を作成しました`,
 };

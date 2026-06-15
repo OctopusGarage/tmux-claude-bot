@@ -80,7 +80,7 @@ program
 
 program
   .command("install")
-  .description(`provision the managed launchd service into ${MANAGED_DIR}`)
+  .description(`provision the managed service (launchd/systemd) into ${MANAGED_DIR}`)
   .action(() => {
     // Materialize the prebuilt package into the stable managed dir and register
     // the service, so `npm i -g … && tmux-claude-bot install` stands up the same
@@ -93,26 +93,28 @@ program
     process.exit(res.status ?? 1);
   });
 
-const service = program.command("service").description("manage the launchd service (macOS)");
+const service = program
+  .command("service")
+  .description("manage the bot service (launchd on macOS, systemd --user on Linux)");
 
 service
   .command("install")
-  .description("register the auto-restarting launchd service")
+  .description("register the auto-restarting service")
   .action(() => {
     if (!IS_MANAGED) {
       console.error(
-        `Refusing to register launchd from a non-managed location:\n  ${PKG_ROOT}\n` +
+        `Refusing to register the service from a non-managed location:\n  ${PKG_ROOT}\n` +
           `That path is volatile (e.g. a global npm dir). Run 'tmux-claude-bot install'\n` +
           `to provision the managed runtime at ${MANAGED_DIR} and register the service.`,
       );
       process.exit(1);
     }
-    runScript("install-launchd.sh");
+    runScript("install-service.sh");
   });
 service
   .command("uninstall")
-  .description("remove the launchd service")
-  .action(() => runScript("uninstall-launchd.sh"));
+  .description("remove the service")
+  .action(() => runScript("uninstall-service.sh"));
 for (const action of ["status", "pause", "resume", "restart", "logs"] as const) {
   service
     .command(action)

@@ -5,6 +5,7 @@ import {
   TELEGRAM_EXPANDED_ROWS,
   TELEGRAM_PRIMARY_ROWS,
 } from "../../core/action-registry.js";
+import type { BrowseAction, BrowseView } from "../../core/dir-browser.js";
 import { isMessageAction, type MessageAction } from "../../core/dispatch.js";
 import type { SessionEntry } from "../../core/history.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
@@ -33,11 +34,27 @@ export type CallbackAction =
   | { kind: "delmode" }
   | { kind: "dellist" }
   | { kind: "listalive" }
+  | { kind: "newfree" }
+  | { kind: "newfreecancel" }
   | { kind: "queuestatus" }
   | { kind: "voicelang"; lang: string }
   | { kind: "uilang"; lang: Lang }
   | { kind: "resume"; sessionId: string }
-  | { kind: "startpick"; idx: number; sid: string };
+  | { kind: "startpick"; idx: number; sid: string }
+  | { kind: "restartpick"; idx: number; sid: string }
+  | { kind: "adoptshow"; pid: number }
+  | { kind: "adoptexec"; pid: number }
+  | { kind: "adoptcancel" }
+  | { kind: "adoptattach"; sid: string }
+  | { kind: "statusinstall"; action: StatusInstallAction }
+  | { kind: "browse"; action: BrowseAction }
+  | { kind: "browseselect" }
+  | { kind: "browsenewfolder" }
+  | { kind: "browsecancel" };
+
+/** The choices when /status_install hits a foreign statusLine. */
+export const STATUS_INSTALL_ACTIONS = ["overwrite", "wrap", "snippet", "skip"] as const;
+export type StatusInstallAction = (typeof STATUS_INSTALL_ACTIONS)[number];
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
@@ -59,7 +76,10 @@ export function parseCallbackData(data: string): CallbackAction | null {
   if (data === "dm") return { kind: "delmode" };
   if (data === "dl") return { kind: "dellist" };
   if (data === "la") return { kind: "listalive" };
+  if (data === "nf") return { kind: "newfree" };
+  if (data === "nfx") return { kind: "newfreecancel" };
   if (data === "qs") return { kind: "queuestatus" };
+  if (data === "ac") return { kind: "adoptcancel" };
   const parts = data.split(":");
   const [tag] = parts;
   if (tag === "a") {
@@ -86,12 +106,29 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (!sessionId) return null;
     return { kind: "resume", sessionId };
   }
-  if (tag === "sp") {
+  if (tag === "sp" || tag === "rp") {
     const idx = Number(parts[1]);
     const sid = parts[2];
     if (parts.length !== 3 || !Number.isInteger(idx) || idx < 0 || !sid) return null;
-    return { kind: "startpick", idx, sid };
+    return { kind: tag === "rp" ? "restartpick" : "startpick", idx, sid };
   }
+  if (tag === "as" || tag === "ae") {
+    const pid = Number(parts[1]);
+    if (parts.length !== 2 || !Number.isInteger(pid) || pid <= 0) return null;
+    return tag === "as" ? { kind: "adoptshow", pid } : { kind: "adoptexec", pid };
+  }
+  if (tag === "aa") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    return { kind: "adoptattach", sid };
+  }
+  if (tag === "si") {
+    const a = parts[1];
+    if (parts.length !== 2 || !STATUS_INSTALL_ACTIONS.includes(a as StatusInstallAction))
+      return null;
+    return { kind: "statusinstall", action: a as StatusInstallAction };
+  }
+  if (tag === "br") return parseBrowseData(parts);
   if (tag !== undefined && tag in SID_TAGS) {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
@@ -102,6 +139,61 @@ export function parseCallbackData(data: string): CallbackAction | null {
 
 function isVoiceLang(code: string): boolean {
   return VOICE_LANGS.some((l) => l.code === code);
+}
+
+/** Parse a `br:*` directory-browser callback. `cd`/`rt`/`pg` carry an index; the
+ * argument-less `up`/`sel`/`x` are navigation-up / select-here / cancel. */
+function parseBrowseData(parts: string[]): CallbackAction | null {
+  const sub = parts[1];
+  if (parts.length === 2) {
+    if (sub === "up") return { kind: "browse", action: { kind: "up" } };
+    if (sub === "sel") return { kind: "browseselect" };
+    if (sub === "nf") return { kind: "browsenewfolder" };
+    if (sub === "x") return { kind: "browsecancel" };
+    return null;
+  }
+  if (parts.length !== 3) return null;
+  const n = Number(parts[2]);
+  if (!Number.isInteger(n) || n < 0) return null;
+  if (sub === "cd") return { kind: "browse", action: { kind: "open", index: n } };
+  if (sub === "rt") return { kind: "browse", action: { kind: "root", index: n } };
+  if (sub === "pg") return { kind: "browse", action: { kind: "page", page: n } };
+  return null;
+}
+
+/**
+ * Directory-browser keyboard: one button per subdir (tap to descend, or to pick a
+ * root on the roots screen), then an up/pagination row and a create/cancel row.
+ * Paths never ride in callback_data (64-byte cap) — buttons carry the action +
+ * the entry's absolute index, resolved against the scope's server-side cwd.
+ */
+export function buildBrowseKeyboard(view: BrowseView): InlineKeyboard {
+  const m = messages("telegram");
+  const kb = new InlineKeyboard();
+  const tag = view.kind === "roots" ? "rt" : "cd";
+  for (const e of view.entries) {
+    // 📦 marks a git repo (a likely project root); 📁 a plain directory.
+    kb.text(`${e.isRepo ? "📦" : "📁"} ${e.label}`, `br:${tag}:${e.index}`).row();
+  }
+  let navRow = false;
+  if (view.canGoUp) {
+    kb.text(m.btnBrowseUp, "br:up");
+    navRow = true;
+  }
+  if (view.totalPages > 1) {
+    const prev = Math.max(0, view.page - 1);
+    const next = Math.min(view.totalPages - 1, view.page + 1);
+    kb.text("◀", `br:pg:${prev}`)
+      .text(`${view.page + 1}/${view.totalPages}`, "noop")
+      .text("▶", `br:pg:${next}`);
+    navRow = true;
+  }
+  if (navRow) kb.row();
+  if (view.canCreate) {
+    kb.text(m.btnBrowseCreate, "br:sel").row().text(m.btnBrowseNewFolder, "br:nf");
+  }
+  kb.text(m.btnBrowseCancel, "br:x");
+  return kb;
 }
 
 /**
@@ -135,10 +227,12 @@ export function buildLangKeyboard(current: Lang): InlineKeyboard {
 export function buildStartPickerKeyboard(
   commands: { label: string }[],
   sid: string,
+  mode: "start" | "restart" = "start",
 ): InlineKeyboard {
+  const prefix = mode === "restart" ? "rp" : "sp";
   const kb = new InlineKeyboard();
   commands.forEach((c, i) => {
-    kb.text(`🚀 ${c.label}`, `sp:${i}:${sid}`);
+    kb.text(`🚀 ${c.label}`, `${prefix}:${i}:${sid}`);
     if (i < commands.length - 1) kb.row();
   });
   return kb;
@@ -210,7 +304,20 @@ export function buildProjectKeyboard(projects: ProjectButton[]): InlineKeyboard 
       kb.text(`🔀 ${p.label}`, `s:${p.sid}`).row();
     }
   }
+  kb.text(messages("telegram").btnNewFree, "nf").row();
   return kb.text(messages("telegram").btnDeleteMode, "dm");
+}
+
+/** Lone "🆓 new free project" button — shown when the alive list is empty so the
+ * first parallel project is still one tap away. */
+export function buildNewFreeKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text(messages("telegram").btnNewFree, "nf");
+}
+
+/** Lone "cancel" button shown under the "name your free project" prompt, so the
+ * armed label capture can be dropped without sending a throwaway message. */
+export function buildFreeLabelKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text(messages("telegram").btnCancel, "nfx");
 }
 
 /** Delete mode: one full-width "delete <project>" row each, plus a cancel toggle. */
@@ -229,6 +336,43 @@ function formatAgo(date: Date): string {
   const diffH = Math.round(diffMin / 60);
   if (diffH < 24) return `${diffH}h`;
   return `${Math.round(diffH / 24)}d`;
+}
+
+export type OrphanButton = { pid: number; label: string };
+
+/** Orphan-claude list: one full-width row per process. Tapping sends `as:<pid>`
+ * (show a confirm), since the action — interrupting and adopting — is disruptive. */
+export function buildOrphanKeyboard(orphans: OrphanButton[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  orphans.forEach((o, i) => {
+    kb.text(o.label, `as:${o.pid}`);
+    if (i < orphans.length - 1) kb.row();
+  });
+  return kb;
+}
+
+/** Confirm step before adopting: tap to execute (`ae:<pid>`) or cancel. */
+export function buildAdoptConfirmKeyboard(pid: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(messages("telegram").btnAdoptConfirm, `ae:${pid}`)
+    .text(messages("telegram").btnAdoptCancel, "ac");
+}
+
+/** After a successful adopt: a button that copies the attach command to the
+ * computer's clipboard on demand (`aa:<sid>`), for viewing the session there. */
+export function buildAdoptDoneKeyboard(sid: string): InlineKeyboard {
+  return new InlineKeyboard().text(messages("telegram").btnAdoptAttach, `aa:${sid}`);
+}
+
+/** Choices when /status_install finds a foreign statusLine (`si:<action>`). */
+export function buildStatusInstallChoiceKeyboard(): InlineKeyboard {
+  const m = messages("telegram");
+  return new InlineKeyboard()
+    .text(m.btnStatusWrap, "si:wrap")
+    .text(m.btnStatusOverwrite, "si:overwrite")
+    .row()
+    .text(m.btnStatusSnippet, "si:snippet")
+    .text(m.btnStatusSkip, "si:skip");
 }
 
 /** Session list: one full-width row per saved session. Tapping sends `rs:<uuid>`. */

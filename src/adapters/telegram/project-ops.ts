@@ -1,11 +1,39 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
+import { performStart } from "../../core/dispatch.js";
 import { messages } from "../../core/i18n/index.js";
 import { openRecentProjectBySid } from "../../core/project-ops.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
+import { buildStartPickerKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
+
+/**
+ * Right after a fresh project session is created: with multiple configured launch
+ * commands, show the flavor picker; with a single one, start it directly (so a
+ * new project lands you in a running Claude without a second step).
+ */
+export async function startOrPickAfterCreate(
+  deps: HandlerDeps,
+  ctx: Context,
+  session: string,
+  replyTarget: ReplyTargetMap,
+): Promise<void> {
+  const tm = messages("telegram");
+  if (deps.config.startCommands.length > 1) {
+    await reply(ctx, "info", tm.startPickerPrompt, {
+      session,
+      replyMarkup: buildStartPickerKeyboard(deps.config.startCommands, sessionShortId(session)),
+      replyTarget,
+    });
+    return;
+  }
+  const only = deps.config.startCommands[0];
+  await performStart(deps, session, only?.command);
+  await reply(ctx, "ok", tm.claudeStartedWith(only?.label ?? "claude"), { session, replyTarget });
+}
 
 /**
  * Telegram-specific project lifecycle. The protocol-agnostic helpers live in
@@ -51,6 +79,7 @@ export async function addRecentProjectBySid(
         body: r.projectPath,
         replyTarget,
       });
+      await startOrPickAfterCreate(deps, ctx, r.sessionName, replyTarget);
       return;
     case "error":
       await reply(ctx, "err", r.message, { replyTarget });

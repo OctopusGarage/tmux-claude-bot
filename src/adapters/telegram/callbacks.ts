@@ -1,18 +1,39 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
-import { executeMessage, performStart } from "../../core/dispatch.js";
+import {
+  browseCwd,
+  clearBrowse,
+  displayPath,
+  requestNewFolder,
+  resolveBrowseAction,
+} from "../../core/dir-browser.js";
+import { executeMessage, performRestart, performStart } from "../../core/dispatch.js";
+import { clearFreeLabel, requestFreeLabel } from "../../core/free-label-prompt.js";
 import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
+import { createProjectFromPath } from "../../core/project-ops.js";
 import type { QueuedMessage } from "../../core/queue.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
+import { orphanLabel } from "../../core/takeover.js";
+import {
+  adoptOrphan,
+  composeAdoptOutcome,
+  copyAttachCommand,
+  findAdoptableOrphans,
+} from "../../core/takeover-service.js";
 import { setWhisperLanguage } from "../../core/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { timeApi } from "../../shared/utils/timing.js";
 import { safeAnswerCallback } from "./callback-utils.js";
 import {
+  buildAdoptConfirmKeyboard,
+  buildAdoptDoneKeyboard,
+  buildBrowseKeyboard,
   buildControlKeyboard,
   buildExpandedControlKeyboard,
+  buildFreeLabelKeyboard,
   buildLangKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
@@ -32,7 +53,15 @@ import {
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
-import { sendAliveList, sendHistory, sendPeek, sendQueueStatus } from "./views.js";
+import {
+  browseText,
+  replyCreateProject,
+  sendAliveList,
+  sendHistory,
+  sendPeek,
+  sendQueueStatus,
+  sendStatusInstall,
+} from "./views.js";
 
 /**
  * Dispatch an inline-keyboard tap. The callback data (parsed by
@@ -90,6 +119,27 @@ export async function handleCallbackQuery(
     if (parsed.kind === "listalive") {
       await safeAnswerCallback(ctx);
       await sendAliveList(ctx, deps);
+      return;
+    }
+    // "🆓 new free project" tap: arm the label capture, then prompt. The next
+    // text message is taken as the label (see the message handler).
+    if (parsed.kind === "newfree") {
+      requestFreeLabel(tgScope(ctx));
+      await safeAnswerCallback(ctx);
+      await reply(ctx, "info", messages("telegram").freeLabelPrompt, {
+        replyMarkup: buildFreeLabelKeyboard(),
+      });
+      return;
+    }
+    // Cancel an armed label capture (the prompt's cancel button).
+    if (parsed.kind === "newfreecancel") {
+      clearFreeLabel(tgScope(ctx));
+      await safeAnswerCallback(ctx, messages("telegram").freeLabelCancelled);
+      try {
+        await timeApi("editMessageReplyMarkup", () => ctx.editMessageReplyMarkup());
+      } catch {
+        /* message may be gone or unchanged */
+      }
       return;
     }
     if (parsed.kind === "queuestatus") {
@@ -155,6 +205,112 @@ export async function handleCallbackQuery(
       });
       return;
     }
+    // Adopt a non-tmux claude: tapping a candidate shows a confirm first, since
+    // the action interrupts and ends the original process.
+    if (parsed.kind === "adoptshow") {
+      await safeAnswerCallback(ctx);
+      const orphan = (await findAdoptableOrphans()).find((o) => o.pid === parsed.pid);
+      if (!orphan) {
+        await reply(ctx, "err", messages("telegram").adoptGone, { replyTarget });
+        return;
+      }
+      await reply(ctx, "info", messages("telegram").adoptConfirmPrompt(orphanLabel(orphan)), {
+        replyMarkup: buildAdoptConfirmKeyboard(parsed.pid),
+        replyTarget,
+      });
+      return;
+    }
+    if (parsed.kind === "adoptexec") {
+      await safeAnswerCallback(ctx, messages("telegram").adoptWorking);
+      const result = await adoptOrphan(parsed.pid, {
+        bridge: deps.bridge,
+        configResolver: deps.configResolver,
+        projectSessionPrefix: deps.config.projectSessionPrefix,
+        warmupMs: deps.config.sessionWarmupMs,
+      });
+      const outcome = composeAdoptOutcome(result, tgScope(ctx));
+      if (!outcome.ok) {
+        await reply(ctx, "err", outcome.body, { replyTarget });
+        return;
+      }
+      await deps.currentProject.set(tgScope(ctx), outcome.sessionName);
+      await reply(ctx, "ok", outcome.body, {
+        session: outcome.sessionName,
+        replyMarkup: buildAdoptDoneKeyboard(sessionShortId(outcome.sessionName)),
+        replyTarget,
+      });
+      return;
+    }
+    if (parsed.kind === "adoptcancel") {
+      await safeAnswerCallback(ctx, messages("telegram").adoptCancelled);
+      return;
+    }
+    // "View on computer": copy the attach command to the host clipboard on demand
+    // (auto-attaching the original terminal isn't possible — see takeover-service).
+    if (parsed.kind === "adoptattach") {
+      const session = await resolveAliveSessionByShortId(deps, parsed.sid);
+      if (!session) {
+        await safeAnswerCallback(ctx, messages("telegram").sessionGone);
+        return;
+      }
+      await safeAnswerCallback(ctx);
+      await reply(ctx, "ok", messages("telegram").adoptAttachHint(copyAttachCommand(session)), {
+        session,
+        replyTarget,
+      });
+      return;
+    }
+    // Usage-reporting install: the foreign-statusLine choice buttons (si:<action>).
+    if (parsed.kind === "statusinstall") {
+      await safeAnswerCallback(ctx);
+      await sendStatusInstall(ctx, parsed.action, replyTarget);
+      return;
+    }
+    // Directory browser (`br:*`): navigate in place, or create / cancel.
+    if (parsed.kind === "browsecancel") {
+      clearBrowse(tgScope(ctx));
+      await safeAnswerCallback(ctx);
+      try {
+        await ctx.editMessageText(messages("telegram").browseCancelled);
+      } catch {
+        /* message may be gone or unchanged */
+      }
+      return;
+    }
+    if (parsed.kind === "browseselect") {
+      await safeAnswerCallback(ctx);
+      const cwd = browseCwd(tgScope(ctx));
+      if (!cwd) return; // state expired — nothing to create
+      clearBrowse(tgScope(ctx));
+      await replyCreateProject(
+        ctx,
+        deps,
+        await createProjectFromPath(deps, tgScope(ctx), cwd),
+        replyTarget,
+      );
+      return;
+    }
+    if (parsed.kind === "browsenewfolder") {
+      await safeAnswerCallback(ctx);
+      const cwd = requestNewFolder(tgScope(ctx));
+      if (!cwd) return; // not browsing a directory
+      // force_reply makes the user's next message a reply, which the text handler
+      // recognises as the folder name (no global "expecting input" mode needed).
+      await ctx.reply(messages("telegram").browseNewFolderPrompt(displayPath(cwd)), {
+        reply_markup: { force_reply: true },
+      });
+      return;
+    }
+    if (parsed.kind === "browse") {
+      await safeAnswerCallback(ctx);
+      const view = resolveBrowseAction(tgScope(ctx), parsed.action, deps.config.cdAllowedDirs);
+      try {
+        await ctx.editMessageText(browseText(view), { reply_markup: buildBrowseKeyboard(view) });
+      } catch {
+        /* message may be gone or unchanged */
+      }
+      return;
+    }
     const sessionName = await resolveAliveSessionByShortId(deps, parsed.sid);
     if (!sessionName) {
       await safeAnswerCallback(ctx, messages("telegram").sessionGone);
@@ -192,26 +348,35 @@ export async function handleCallbackQuery(
       await sendHistory(ctx, deps, sessionName, 0, replyTarget);
       return;
     }
-    if (parsed.kind === "startpick") {
+    if (parsed.kind === "startpick" || parsed.kind === "restartpick") {
       const pick = deps.config.startCommands[parsed.idx];
       if (!pick) {
         await safeAnswerCallback(ctx);
         return;
       }
-      await safeAnswerCallback(ctx, messages("telegram").toastSent("start"));
-      await performStart(deps, sessionName, pick.command);
+      const restart = parsed.kind === "restartpick";
+      await safeAnswerCallback(ctx, messages("telegram").toastSent(restart ? "restart" : "start"));
+      if (restart) await performRestart(deps, sessionName, pick.command);
+      else await performStart(deps, sessionName, pick.command);
       await reply(ctx, "ok", messages("telegram").claudeStartedWith(pick.label), {
         session: sessionName,
         replyTarget,
       });
       return;
     }
-    // Multi-command start: show a picker instead of starting the single default.
-    if (parsed.action === "start" && deps.config.startCommands.length > 1) {
+    // Multi-command start/restart: show a picker instead of using the default.
+    if (
+      (parsed.action === "start" || parsed.action === "restart") &&
+      deps.config.startCommands.length > 1
+    ) {
       await safeAnswerCallback(ctx);
       await reply(ctx, "info", messages("telegram").startPickerPrompt, {
         session: sessionName,
-        replyMarkup: buildStartPickerKeyboard(deps.config.startCommands, parsed.sid),
+        replyMarkup: buildStartPickerKeyboard(
+          deps.config.startCommands,
+          parsed.sid,
+          parsed.action === "restart" ? "restart" : "start",
+        ),
         replyTarget,
       });
       return;

@@ -54,6 +54,7 @@ export const es: Messages = {
   btnProjects: "📁 Proyectos",
   btnRecent: "🕘 Recientes",
   btnCurrent: "📌 Actual",
+  btnAddProject: "➕ Nuevo proyecto",
   btnSwitch: "🔀 Cambiar",
   btnRemove: "🗑 Eliminar",
   btnCreate: "➕ Crear",
@@ -67,6 +68,27 @@ export const es: Messages = {
   btnCancel: "✕ Cancelar",
   btnDeleteMode: "🗑 Eliminar…",
 
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 Procesos de Claude adoptables (fuera de tmux)",
+  adoptEmpty: "No se encontraron procesos de Claude adoptables",
+  adoptConfirmPrompt: (label: string) =>
+    `¿Tomar el control? Primero se interrumpe y termina el proceso original, luego se reanuda en tmux:\n${label}`,
+  btnAdoptConfirm: "🧲 Adoptar",
+  btnAdoptCancel: "✕ Cancelar",
+  adoptCancelled: "Adopción cancelada",
+  adoptWorking: "Adoptando…",
+  adoptGone: "Ese proceso ya no es adoptable (terminó o ya está en tmux)",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed
+      ? `✅ Adoptado y sesión reanudada: ${proj}`
+      : `✅ Adoptado e iniciado de nuevo: ${proj}`,
+  adoptFailed: "Fallo al adoptar: el proceso no terminó o Claude no se inició",
+  adoptBusy:
+    "La sesión de tmux destino ya tiene un programa en primer plano (otro Claude u otra cosa). Se canceló sin tocar el original — sal de ahí primero y vuelve a adoptar.",
+  btnAdoptAttach: "💻 Ver en la terminal del computador (opcional)",
+  adoptAttachHint: (cmd: string) =>
+    `✅ El comando de conexión ya está en el portapapeles de tu COMPUTADOR (no hace falta copiar nada en el móvil). Al volver, solo pégalo en una terminal y pulsa Enter para entrar — este paso es opcional.\nComando: ${cmd}`,
+
   doneShort: "Listo",
   claudeNotRunningRestart: "Claude no está en ejecución — usa /restart para iniciarlo",
   contentTruncated: "...(contenido demasiado largo, truncado)",
@@ -76,7 +98,7 @@ export const es: Messages = {
   startPickerTitle: "🚀 Elige cómo iniciar",
   startPickerPrompt: "Hay varios comandos de inicio configurados — elige uno:",
   btnStartThis: "🚀 Iniciar este",
-  claudeExited: "✅ Salí de Claude",
+  claudeExited: "✅ Claude cerrado",
   claudeRestarted: "🔄 Claude reiniciado · --continue",
   sentEsc: "✅ Esc enviado",
   interrupted: "✅ Interrumpido · Ctrl-C",
@@ -90,7 +112,38 @@ export const es: Messages = {
   sentTab: "✅ Tab enviado",
   statusRunning: "🟢 Claude en ejecución",
   statusNotRunning: "🔴 Claude detenido",
+  statusContext: (bar, pct) => `📊 Contexto ${bar} ${pct}%`,
+  statusFiveHour: (bar, pct, reset) => `⏱ Sesión (5h) ${bar} ${pct}% (reinicia ${reset})`,
+  statusSevenDay: (bar, pct, reset) => `📅 Semanal ${bar} ${pct}% (reinicia ${reset})`,
+  statusUsageStale: (mins) =>
+    `⚠️ Datos de uso con ${mins} min de antigüedad (Claude Code pudo detenerse)`,
 
+  // -- status usage install --
+  statusUsageHint: "💡 ¿Ver el uso? Envía /status_install para configurarlo",
+  statusUsagePending:
+    "📊 Datos de uso aún no disponibles — se mostrarán tras la próxima llamada a la API",
+  statusModeApi: "API",
+  statusModeSubscription: "suscripción",
+  statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
+  statusInstallTitle: "📊 Instalación de reporte de uso",
+  statusInstallNoClaude:
+    "No se detectó ningún Claude en ejecución, así que no hay dónde instalar. Inicia un Claude primero.",
+  statusInstallInstalled: (dir) => `✅ ${dir} reporte de uso instalado`,
+  statusInstallAlready: (dir) => `⏭ ${dir} ya instalado`,
+  statusInstallForeignPrompt: (dirs) =>
+    `⚠️ Estos directorios ya tienen un statusLine propio — ¿qué hacer? Se recomienda «Envolver» (conserva tu statusLine y añade el reporte de uso).\n${dirs.join("\n")}`,
+  statusInstallOverwritten: (dir, backup) => `🔁 ${dir} sobrescrito (respaldo: ${backup})`,
+  statusInstallWrapped: (dir, backup) =>
+    `📦 ${dir} envuelto: conserva tu visualización + uso\n   ⚠️ Tu statusLine ahora pasa por el envoltorio del bot; si la barra falla, restaura desde: ${backup}`,
+  statusInstallSnippet: (dir, snippet) =>
+    `✍️ ${dir}: añade esto a tu script de statusline (debe hacer input=$(cat)):\n${snippet}`,
+  statusInstallSkipped: (dir) => `✖️ ${dir} omitido`,
+  statusInstallError: (dir, msg) => `❌ ${dir}: ${msg}`,
+  btnStatusInstall: "📊 Instalar uso",
+  btnStatusOverwrite: "🔁 Sobrescribir",
+  btnStatusWrap: "📦 Envolver (recom.)",
+  btnStatusSnippet: "✍️ Dame el fragmento",
+  btnStatusSkip: "✖️ Omitir",
   queueGlobalHeader: "━━ 🌐 Cola global ━━",
   queueCounts: (queued, processing) =>
     `En cola: ${queued} | Procesando: ${processing ? "🟢" : "🔴"}`,
@@ -115,14 +168,25 @@ export const es: Messages = {
   recentListTitleN: (n) => `Proyectos recientes (${n})`,
   recentListEmpty: "No hay proyectos recientes — añade uno con /add_project <ruta>",
 
-  addProjectUsage: "Uso: /add_project <ruta>",
-  addProjectUsageExample: "Uso: /add_project <ruta>\n\nEjemplo: /add_project ~/projects/myapp",
   notADir: (p) => `${p} no es un directorio`,
   dirNotExist: (p) => `Directorio no encontrado: ${p}`,
   pathNotAllowedPath: (p) => `Ruta no permitida: ${p}`,
   alreadySwitched: "Ya existe · cambiado",
   projectCreated: "Proyecto creado",
   projectCreatedPath: (p) => `Proyecto creado: ${p}`,
+  browseTitle: "📂 Elige la ubicación del proyecto",
+  browseRootsTitle: "📂 Elige un directorio inicial",
+  browseEmpty: "(sin subdirectorios)",
+  browseUnreadable: "⚠️ No se puede leer este directorio",
+  browseCancelled: "Cancelado",
+  btnBrowseUp: "⬆️ Subir",
+  btnBrowseCreate: "✅ Crear proyecto aquí",
+  btnBrowseCancel: "✖️ Cancelar",
+  btnBrowseNewFolder: "➕ Nueva carpeta",
+  browseNewFolderPrompt: (p) => `Responde con el nombre de la nueva carpeta a crear en ${p}`,
+  browseNewFolderInvalid: "❌ Nombre no válido (no puede estar vacío ni contener «/»)",
+  browseNewFolderExists: "❌ Ese nombre ya existe",
+  browseNewFolderError: "❌ No se pudo crear la carpeta",
   shortIdNotFound: (id) => `ID corto no encontrado: ${id}`,
   noCurrentProjectSet: "No hay proyecto actual definido\n\nDefine uno con /add_project <ruta>",
   currentActive: "✅ activo",
@@ -191,6 +255,14 @@ Envía cualquier texto → se reenvía a Claude → respuesta`,
   cmdListAlive: "proyectos activos (toca para cambiar/eliminar)",
   cmdListRecent: "proyectos recientes",
   cmdAddProject: "crear un proyecto",
+  cmdNewFree: "Nuevo proyecto libre (paralelo, misma ruta)",
+  freeProjectLimit: (max) => `Límite de proyectos libres alcanzado (${max}). Elimina uno primero.`,
+  freeProjectCreated: (slot, label) =>
+    `🆓 Proyecto libre #${slot}${label ? ` (${label})` : ""} creado.\nUsa /cd a cualquier ruta e inicia Claude tú mismo; /list_alive_projects para volver.`,
+  btnNewFree: "🆓 Nuevo proyecto libre",
+  freeLabelPrompt: "Envía un nombre para el proyecto libre (envía - para omitir)",
+  freeLabelCancelled: "Cancelado",
+  cmdAdopt: "adoptar un Claude que corre fuera de tmux",
   cmdQueueStatus: "estado de la cola",
   cmdHistory: "historial de conversación (el último por defecto)",
   cmdPeek: "ver el panel de tmux",
@@ -265,4 +337,11 @@ Envía cualquier texto → se reenvía a Claude → respuesta`,
     `🔒 Este grupo está fijado a «${label}» — cambiar de proyecto está deshabilitado aquí. Usa 🗂 → Revincular para cambiarlo.`,
   groupNoRemoveInGroup:
     "🔒 Eliminar proyectos no se permite en un grupo (afecta a otros). Hazlo en un chat privado con el bot.",
+  groupFreePickerTitle: "🆓 Nuevo grupo de proyecto libre (misma ruta permitida)",
+  groupOverviewTitle: "🗂 Grupos de proyecto",
+  groupOverviewExisting: "Grupos de proyecto existentes:",
+  groupOverviewNoGroups: "Aún no hay grupos de proyecto.",
+  groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
+  btnFreeGroup: "🆓 Grupo paralelo",
+  freeGroupCreated: (label) => `🆓 Grupo paralelo "${label}" creado`,
 };

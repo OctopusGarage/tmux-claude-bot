@@ -5,6 +5,9 @@ dist/
 .current_project
 recent_projects.txt
 session_path_map.json
+group_bindings.json
+workspaces.json
+media-cache/
 coverage/
 .queue/
 .playwright-cli/

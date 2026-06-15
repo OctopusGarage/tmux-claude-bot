@@ -3,6 +3,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { parseEnv, validateTokenShape } from "./onboarding.js";
+import {
+  managedRestartCommand,
+  managedServiceLoadedProbe,
+  managedServiceName,
+  tmuxInstallHint,
+} from "./platform/service-hints.js";
 
 /**
  * Health checks for an installed bot, shared by the `npm run doctor` CLI and
@@ -10,8 +16,6 @@ import { parseEnv, validateTokenShape } from "./onboarding.js";
  * so checks are unit-testable; renderers decide presentation — the chat one
  * is redacted (no app ids), the CLI one keeps full detail.
  */
-
-export const LAUNCHD_LABEL = "com.octopusgarage.tmux-claude-bot";
 
 export interface DoctorCheck {
   status: "ok" | "bad" | "info";
@@ -31,7 +35,8 @@ export interface DoctorProbes {
   /** Parsed .env, or null when the file doesn't exist. */
   readEnv(): Map<string, string> | null;
   onPath(bin: string): Promise<boolean>;
-  launchdLoaded(): Promise<boolean>;
+  /** Whether the managed service (launchd/systemd) is loaded. */
+  serviceLoaded(): Promise<boolean>;
   botProcessCount(): Promise<number>;
   fileExists(path: string): boolean;
 }
@@ -52,9 +57,10 @@ export function defaultProbes(root: string = process.cwd()): DoctorProbes {
         return false;
       }
     },
-    launchdLoaded: async () => {
+    serviceLoaded: async () => {
       try {
-        await run("launchctl", ["print", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`]);
+        const { cmd, args } = managedServiceLoadedProbe();
+        await run(cmd, args);
         return true;
       } catch {
         return false;
@@ -109,23 +115,26 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
 
   // 2. tmux + node on PATH
   if (await probes.onPath("tmux")) ok("tmux is on PATH");
-  else bad("tmux not found", "brew install tmux");
+  else bad("tmux not found", tmuxInstallHint());
   if (await probes.onPath("node")) ok("node is on PATH");
   else bad("node not found", "install Node via nvm: https://github.com/nvm-sh/nvm");
 
-  // 3. launchd agent
-  if (await probes.launchdLoaded()) ok(`launchd agent ${LAUNCHD_LABEL} is loaded`);
-  else bad(`launchd agent ${LAUNCHD_LABEL} not loaded`, "run: npm run service:install");
+  // 3. managed service (launchd on macOS, systemd on Linux). Identity + restart
+  // hint come from the single-source service-hints module.
+  const serviceName = managedServiceName();
+  const restartHint = managedRestartCommand();
+
+  if (await probes.serviceLoaded()) ok(`${serviceName} is loaded`);
+  else bad(`${serviceName} not loaded`, "run: npm run service:install");
 
   // 4. single-instance (the 409 trap)
   const n = await probes.botProcessCount();
   if (n === 1) ok("exactly one bot process is running");
-  else if (n === 0)
-    bad("no bot process running", `launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}`);
+  else if (n === 0) bad("no bot process running", restartHint);
   else
     bad(
       `${n} bot processes running (409 conflict risk)`,
-      `more than one instance (409 risk). Kill the stray non-launchd PIDs (PPID != 1), then: launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}`,
+      `more than one instance (409 risk). Kill the stray PIDs, then: ${restartHint}`,
     );
 
   // 5. optional voice transcription (mlx_whisper). Not configured == not a failure.

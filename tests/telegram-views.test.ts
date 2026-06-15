@@ -3,8 +3,12 @@ import * as os from "node:os";
 import * as nodePath from "node:path";
 import type { Context } from "grammy";
 import { describe, expect, it, vi } from "vitest";
-import { sendAliveList } from "../src/adapters/telegram/views.js";
+import { createReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
+import { browseText, replyCreateProject, sendAliveList } from "../src/adapters/telegram/views.js";
+import type { BrowseView } from "../src/core/dir-browser.js";
+import { messages } from "../src/core/i18n/index.js";
 import { chatScope } from "../src/core/project-manager.js";
+import type { CreateProjectResult } from "../src/core/project-ops.js";
 import { setPathForSession } from "../src/core/sessionPathMap.js";
 import { fakeDeps } from "./adapters/lark/_fakes.js";
 
@@ -56,5 +60,85 @@ describe("sendAliveList (telegram)", () => {
     expect(active[0]?.text).toContain(nodePath.basename(dirB));
     // …and A must stay switchable — with the legacy read it was wrongly inert.
     expect(switchable.map((b) => b.text).join()).toContain(nodePath.basename(dirA));
+  });
+});
+
+describe("browseText (telegram)", () => {
+  const m = messages("telegram");
+  const base = {
+    entries: [] as { label: string; index: number; isRepo: boolean }[],
+    canGoUp: false,
+    canCreate: true,
+    page: 0,
+    totalPages: 1,
+  };
+
+  it("roots screen shows the pick-a-root title", () => {
+    const v: BrowseView = { ...base, kind: "roots", displayPath: "", cwd: null };
+    expect(browseText(v)).toBe(m.browseRootsTitle);
+  });
+
+  it("dir screen shows the breadcrumb, plus an empty/unreadable note", () => {
+    const dir = (over: Partial<BrowseView>): BrowseView => ({
+      ...base,
+      kind: "dir",
+      displayPath: "~/p",
+      cwd: "/home/u/p",
+      ...over,
+    });
+    expect(browseText(dir({ entries: [{ label: "a", index: 0, isRepo: false }] }))).toContain(
+      "~/p",
+    );
+    expect(browseText(dir({ error: "unreadable" }))).toContain(m.browseUnreadable);
+    expect(browseText(dir({ entries: [] }))).toContain(m.browseEmpty);
+  });
+});
+
+describe("replyCreateProject (telegram)", () => {
+  const replyTarget = createReplyTargetMap(`/tmp/tg-rcp-rt-${Date.now()}`);
+  const run = async (result: CreateProjectResult) => {
+    const { ctx, replies } = fakeCtx(7);
+    await replyCreateProject(ctx, fakeDeps(), result, replyTarget);
+    return replies;
+  };
+
+  it("maps each invalid reason to a reply", async () => {
+    expect(
+      await run({ status: "invalid", error: "not-a-directory", resolvedPath: "/p" }),
+    ).toHaveLength(1);
+    expect(await run({ status: "invalid", error: "not-found", resolvedPath: "/p" })).toHaveLength(
+      1,
+    );
+    expect(await run({ status: "invalid", error: "not-allowed", resolvedPath: "/p" })).toHaveLength(
+      1,
+    );
+  });
+
+  it("maps switched / created / error outcomes to a reply", async () => {
+    expect(await run({ status: "switched", sessionName: "s", projectPath: "/p" })).toHaveLength(1);
+    // created → the "created" confirmation PLUS the start/pick step (single
+    // configured command here, so it auto-starts and replies "started").
+    expect(await run({ status: "created", sessionName: "s", projectPath: "/p" })).toHaveLength(2);
+    expect(await run({ status: "error", message: "boom" })).toHaveLength(1);
+  });
+
+  it("created with multiple start commands shows the flavor picker", async () => {
+    const { ctx, replies } = fakeCtx(7);
+    const deps = fakeDeps({
+      config: {
+        startCommands: [
+          { label: "claude-stella", command: "claude-stella" },
+          { label: "claude-yolo", command: "claude-yolo" },
+        ],
+      },
+    });
+    await replyCreateProject(
+      ctx,
+      deps,
+      { status: "created", sessionName: "s", projectPath: "/p" },
+      replyTarget,
+    );
+    expect(replies).toHaveLength(2); // created confirmation + picker
+    expect(replies[1]?.extra?.reply_markup).toBeDefined();
   });
 });

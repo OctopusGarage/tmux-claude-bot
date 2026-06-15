@@ -12,9 +12,10 @@ import { runLarkOnboardingWizard } from "../adapters/lark/onboarding-wizard.js";
 import type { Lang } from "../core/i18n/index.js";
 import { parseSetupLang, SETUP_LANG_PROMPT, setupMessages } from "../core/i18n/setup.js";
 import { serializeEnv } from "../core/onboarding.js";
+import { managedRestartCommand } from "../core/platform/service-hints.js";
 
 const ENV_PATH = join(process.cwd(), ".env");
-const RESTART_CMD = 'launchctl kickstart -k "gui/$(id -u)/com.octopusgarage.tmux-claude-bot"';
+const RESTART_CMD = managedRestartCommand();
 
 const C = {
   info: (s: string) => console.log(`\x1b[1;34m=>\x1b[0m ${s}`),

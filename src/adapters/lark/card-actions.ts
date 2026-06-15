@@ -1,17 +1,34 @@
 import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
-import { type MessageAction, performStart } from "../../core/dispatch.js";
+import {
+  type BrowseAction,
+  browseCwd,
+  clearBrowse,
+  displayPath,
+  requestNewFolder,
+  resolveBrowseAction,
+} from "../../core/dir-browser.js";
+import { type MessageAction, performRestart, performStart } from "../../core/dispatch.js";
 import { getBinding, isProjectGroup } from "../../core/group-bindings.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
 import {
   botSelfRepoWarning,
+  createProjectFromPath,
   removeProjectBySession,
   resolveAliveSessionByShortId,
   switchToProject,
 } from "../../core/project-ops.js";
 import { getPathBySession } from "../../core/sessionPathMap.js";
+import type { ForeignAction } from "../../core/status-install.js";
+import { orphanLabel } from "../../core/takeover.js";
+import {
+  adoptOrphan,
+  composeAdoptOutcome,
+  copyAttachCommand,
+  findAdoptableOrphans,
+} from "../../core/takeover-service.js";
 import {
   checkVoiceSupport,
   installVoice,
@@ -21,10 +38,19 @@ import {
   setWhisperLanguage,
   VOICE_LANGS,
 } from "../../core/voice-support.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { verifyValue } from "./card-signing.js";
-import { helpCard, langCard, startPickerCard, voiceLangCard } from "./cards.js";
+import {
+  adoptConfirmCard,
+  adoptDoneCard,
+  browseCard,
+  helpCard,
+  langCard,
+  startPickerCard,
+  voiceLangCard,
+} from "./cards.js";
 import { type ChatKind, checkAction, type ProjectAction, serviceableChat } from "./chat-policy.js";
 import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, resolveSession, runImmediateLarkAction } from "./executor.js";
@@ -33,20 +59,25 @@ import {
   handleRestore,
   handleUnbind,
   makeBoundGroupBySid,
+  makeFreeGroupBySid,
 } from "./group-commands.js";
-import { sendManagedCard, updateManagedCard } from "./managed-card.js";
 import { sendCard, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
 import {
   addRecentBySid,
+  replyCreateProject,
   sendAliveList,
+  sendBrowse,
   sendCurrentProject,
+  sendFreeGroupPicker,
   sendGroupBindPicker,
   sendGroupMenu,
   sendHistory,
+  sendOrphanList,
   sendPeek,
   sendQueueStatus,
   sendRecentList,
+  sendStatusInstall,
 } from "./views.js";
 
 type CardValue =
@@ -58,6 +89,7 @@ type CardValue =
       view?: boolean;
       lang?: string;
       idx?: number;
+      pid?: number;
     }
   | undefined;
 
@@ -79,11 +111,9 @@ async function handleVoiceLang({ channel, evt, value }: CardCtx): Promise<void> 
   if (!(value?.lang && VOICE_LANGS.some((l) => l.code === value.lang))) return;
   setWhisperLanguage("lark", value.lang);
   logger.info(`[lark] voice recognition language set to ${value.lang} via card`);
-  // Move the ✅ on the clicked card itself; fall back to a fresh picker when the
-  // card isn't managed (e.g. it predates a restart).
-  if (!(await updateManagedCard(channel, evt.messageId, voiceLangCard(value.lang)))) {
-    await sendManagedCard(channel, evt.chatId, voiceLangCard(value.lang));
-  }
+  // Re-send the picker (regular card) with the ✅ moved. CardKit in-place updates
+  // would need entity-card callbacks, which don't fire reliably on Feishu.
+  await sendCard(channel, evt.chatId, voiceLangCard(value.lang));
 }
 
 /** Install the optional voice feature in-chat — the Feishu counterpart of
@@ -128,9 +158,7 @@ async function handleUiLang({ channel, evt, value }: CardCtx): Promise<void> {
   if (!lang || !isUiLang(lang)) return;
   setUiLang("lark", lang);
   logger.info(`[lark] ui language set to ${lang} via card`);
-  if (!(await updateManagedCard(channel, evt.messageId, langCard(lang)))) {
-    await sendManagedCard(channel, evt.chatId, langCard(lang));
-  }
+  await sendCard(channel, evt.chatId, langCard(lang));
 }
 
 /** True for a 1:1 chat. Resolved via the chat API (the card-action callback
@@ -204,6 +232,14 @@ async function handleMakeGroup(ctx: CardCtx): Promise<void> {
   await makeBoundGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
 }
 
+/** Create a free parallel group — private chat only, mirroring makegroup's gate. */
+async function handleMakeFreeGroup(ctx: CardCtx): Promise<void> {
+  const { channel, deps, evt, value } = ctx;
+  if (!value?.sid) return;
+  if (!(await gateAction(ctx, "createGroup"))) return;
+  await makeFreeGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
+}
+
 /** Bind the current chat to a project — group only per policy, mirroring `/bind`. */
 async function handleBindHere(ctx: CardCtx): Promise<void> {
   const { channel, deps, evt, value } = ctx;
@@ -212,15 +248,127 @@ async function handleBindHere(ctx: CardCtx): Promise<void> {
   await bindCurrentGroupBySid(channel, deps, evt.chatId, value.sid);
 }
 
-async function handleStartPick({ channel, deps, evt, value }: CardCtx): Promise<void> {
+async function pickAndLaunch(
+  { channel, deps, evt, value }: CardCtx,
+  restart: boolean,
+): Promise<void> {
   if (typeof value?.idx !== "number") return;
   const pick = deps.config.startCommands[value.idx];
   if (!pick) return;
   const session = await resolveSession(channel, deps, evt.chatId);
   if (!session) return;
-  await performStart(deps, session, pick.command);
+  if (restart) await performRestart(deps, session, pick.command);
+  else await performStart(deps, session, pick.command);
   await sendText(channel, evt.chatId, messages("lark").claudeStartedWith(pick.label));
 }
+
+async function handleStartPick(ctx: CardCtx): Promise<void> {
+  await pickAndLaunch(ctx, false);
+}
+
+async function handleRestartPick(ctx: CardCtx): Promise<void> {
+  await pickAndLaunch(ctx, true);
+}
+
+/** Tap a candidate → confirm card (interrupting + ending the original is
+ * disruptive, so confirm first). Mirrors Telegram's adoptshow. */
+async function handleAdoptShow({ channel, evt, value, chatKind }: CardCtx): Promise<void> {
+  if (chatKind !== "p2p" || typeof value?.pid !== "number") return;
+  const orphan = (await findAdoptableOrphans()).find((o) => o.pid === value.pid);
+  if (!orphan) {
+    await sendText(channel, evt.chatId, messages("lark").adoptGone);
+    return;
+  }
+  await sendCard(channel, evt.chatId, adoptConfirmCard(orphan.pid, orphanLabel(orphan)));
+}
+
+/** Confirmed adopt: SIGINT→SIGTERM→resume via the shared service, then report. */
+async function handleAdoptExec({ channel, deps, evt, value, chatKind }: CardCtx): Promise<void> {
+  if (chatKind !== "p2p" || typeof value?.pid !== "number") return;
+  const result = await adoptOrphan(value.pid, {
+    bridge: deps.bridge,
+    configResolver: deps.configResolver,
+    projectSessionPrefix: deps.config.projectSessionPrefix,
+    warmupMs: deps.config.sessionWarmupMs,
+  });
+  const outcome = composeAdoptOutcome(result, chatScope("lark", evt.chatId));
+  if (!outcome.ok) {
+    await sendText(channel, evt.chatId, outcome.body);
+    return;
+  }
+  // Point this 1:1 chat at the adopted session (this handler is p2p-only above).
+  await deps.currentProject.set(chatScope("lark", evt.chatId), outcome.sessionName);
+  await sendCard(
+    channel,
+    evt.chatId,
+    adoptDoneCard(outcome.body, sessionShortId(outcome.sessionName)),
+  );
+}
+
+/** "View on computer": copy the attach command to the host clipboard on demand. */
+async function handleAdoptAttach({ channel, deps, evt, value }: CardCtx): Promise<void> {
+  if (!value?.sid) return;
+  const session = await resolveAliveSessionByShortId(deps, value.sid);
+  if (!session) {
+    await sendText(channel, evt.chatId, messages("lark").sessionGone);
+    return;
+  }
+  await sendText(channel, evt.chatId, messages("lark").adoptAttachHint(copyAttachCommand(session)));
+}
+
+/** Apply a usage-install foreign-statusLine choice (p2p only) and re-render. */
+async function handleStatusInstallChoice(
+  { channel, evt, chatKind }: CardCtx,
+  action: ForeignAction,
+): Promise<void> {
+  if (chatKind !== "p2p") return;
+  await sendStatusInstall(channel, evt.chatId, action);
+}
+
+/** Apply a directory-browser navigation tap and send the refreshed card. A fresh
+ * (regular) card per tap — CardKit in-place updates would need entity-card
+ * callbacks, which don't fire reliably in some Feishu setups. */
+async function handleBrowseNav(
+  { channel, deps, evt }: CardCtx,
+  action: BrowseAction,
+): Promise<void> {
+  const view = resolveBrowseAction(
+    chatScope("lark", evt.chatId),
+    action,
+    deps.config.cdAllowedDirs,
+  );
+  await sendCard(channel, evt.chatId, browseCard(view));
+}
+
+/** Create a project at the browser's current dir, then forget the nav state. */
+async function handleBrowseCreate({ channel, deps, evt }: CardCtx): Promise<void> {
+  const scope = chatScope("lark", evt.chatId);
+  const cwd = browseCwd(scope);
+  if (!cwd) return; // state expired
+  clearBrowse(scope);
+  await replyCreateProject(
+    channel,
+    deps,
+    evt.chatId,
+    await createProjectFromPath(deps, scope, cwd),
+  );
+}
+
+/** Prompt for a new folder name (Feishu has no force-reply, so a plain prompt —
+ * the next text message is taken as the name by the message handler). */
+async function handleBrowseNewFolder({ channel, evt }: CardCtx): Promise<void> {
+  const cwd = requestNewFolder(chatScope("lark", evt.chatId));
+  if (!cwd) return; // not browsing a directory
+  await sendText(channel, evt.chatId, messages("lark").browseNewFolderPrompt(displayPath(cwd)));
+}
+
+/** Cancel browsing: forget the state and acknowledge. */
+async function handleBrowseCancel({ channel, evt }: CardCtx): Promise<void> {
+  clearBrowse(chatScope("lark", evt.chatId));
+  await sendText(channel, evt.chatId, messages("lark").browseCancelled);
+}
+
+const browseIdx = (ctx: CardCtx): number => ctx.value?.idx ?? 0;
 
 /**
  * Button `cmd` → handler. Each returns after doing its work; commands not here
@@ -241,26 +389,56 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   queuestatus: ({ channel, deps, evt }) => sendQueueStatus(channel, deps, evt.chatId),
   // Voice recognition-language picker (mirrors Telegram /voice_lang).
   voicelangmenu: async ({ channel, evt }) => {
-    await sendManagedCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
+    await sendCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
   },
   voicelang: handleVoiceLang,
   voiceinstall: handleVoiceInstall,
   // UI-language picker (/lang).
   uilangmenu: async ({ channel, evt }) => {
-    await sendManagedCard(channel, evt.chatId, langCard(resolveUiLang("lark")));
+    await sendCard(channel, evt.chatId, langCard(resolveUiLang("lark")));
   },
   uilang: handleUiLang,
   switch: handleSwitch,
   remove: handleRemove,
   addrecent: handleAddRecent,
+  // --- Usage-reporting install (mirrors Telegram /status_install) ---
+  statusinstall: ({ channel, evt, chatKind }) =>
+    chatKind === "p2p" ? sendStatusInstall(channel, evt.chatId) : Promise.resolve(),
+  statusoverwrite: (ctx) => handleStatusInstallChoice(ctx, "overwrite"),
+  statuswrap: (ctx) => handleStatusInstallChoice(ctx, "wrap"),
+  statussnippet: (ctx) => handleStatusInstallChoice(ctx, "snippet"),
+  statusskip: (ctx) => handleStatusInstallChoice(ctx, "skip"),
+  // --- Directory browser (mirrors Telegram /add_project no-arg) ---
+  browseopen: (ctx) => handleBrowseNav(ctx, { kind: "open", index: browseIdx(ctx) }),
+  browseroot: (ctx) => handleBrowseNav(ctx, { kind: "root", index: browseIdx(ctx) }),
+  browseup: (ctx) => handleBrowseNav(ctx, { kind: "up" }),
+  browsepage: (ctx) => handleBrowseNav(ctx, { kind: "page", page: browseIdx(ctx) }),
+  // Open the directory browser from the help-card button (Feishu has no slash menu),
+  // mirroring the typed `/add_project` no-arg flow.
+  addproject: ({ channel, deps, evt }) => sendBrowse(channel, deps, evt.chatId),
+  browsecreate: handleBrowseCreate,
+  browsenewfolder: handleBrowseNewFolder,
+  browsecancel: handleBrowseCancel,
+  // --- Adopt a non-tmux claude (mirrors Telegram /adopt) ---
+  adoptlist: ({ channel, evt, chatKind }) =>
+    chatKind === "p2p" ? sendOrphanList(channel, evt.chatId) : Promise.resolve(),
+  adopt: handleAdoptShow,
+  adoptgo: handleAdoptExec,
+  adoptcancel: async ({ channel, evt }) => {
+    await sendText(channel, evt.chatId, messages("lark").adoptCancelled);
+  },
+  adoptattach: handleAdoptAttach,
   // --- Project-group buttons (no typing needed) ---
   groupmenu: ({ channel, deps, evt }) => sendGroupMenu(channel, deps, evt.chatId),
+  freegroupmenu: ({ channel, deps, evt }) => sendFreeGroupPicker(channel, deps, evt.chatId),
   makegroup: handleMakeGroup,
+  makefreegroup: handleMakeFreeGroup,
   bindhere: handleBindHere,
   rebind: ({ channel, deps, evt }) => sendGroupBindPicker(channel, deps, evt.chatId),
   unbind: ({ channel, deps, evt, chatKind }) => handleUnbind(channel, deps, evt.chatId, chatKind),
   restore: ({ channel, deps, evt }) => handleRestore(channel, deps, evt.chatId),
   startpick: handleStartPick,
+  restartpick: handleRestartPick,
 };
 
 /**
@@ -302,10 +480,11 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     }
     const chatKind: ChatKind = isP2p ? "p2p" : "group";
 
-    // Multi-command start: show a picker instead of starting the single default.
+    // Multi-command start/restart: show a picker instead of using the default.
     // With a single start command, fall through to the queued-action routing.
-    if (cmd === "start" && deps.config.startCommands.length > 1) {
-      await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands));
+    if ((cmd === "start" || cmd === "restart") && deps.config.startCommands.length > 1) {
+      const mode = cmd === "restart" ? "restart" : "start";
+      await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
       return;
     }
 

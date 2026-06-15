@@ -90,6 +90,23 @@ export class TmuxBridge {
     await this.execFile("tmux", ["send-keys", "-t", target, key], { timeout: 10000 });
   }
 
+  /** The command running in the foreground of the session's pane (tmux
+   * `pane_current_command`), e.g. `zsh` for an idle prompt or `claude`/`vim` when
+   * a program is running. Null if the session/pane can't be queried. */
+  async paneCurrentCommand(sessionName?: string): Promise<string | null> {
+    const target = await this.formatTarget(sessionName);
+    try {
+      const result = await this.execFile(
+        "tmux",
+        ["display-message", "-p", "-t", target, "#{pane_current_command}"],
+        { timeout: 5000 },
+      );
+      return result.stdout.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
   async capturePane(sessionName?: string): Promise<string> {
     const target = await this.formatTarget(sessionName);
     const result = await this.execFile("tmux", ["capture-pane", "-p", "-J", "-t", target], {

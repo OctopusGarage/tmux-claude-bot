@@ -6,6 +6,7 @@ import {
   assertClaudeBinaryAccessible,
   executeMessage,
   type MessageAction,
+  performRestart,
 } from "../src/core/dispatch.js";
 import { projectPathToHistoryDir } from "../src/core/history.js";
 import type { QueuedMessage } from "../src/core/queue.js";
@@ -55,6 +56,52 @@ describe("assertClaudeBinaryAccessible", () => {
     expect(() => assertClaudeBinaryAccessible("__no_such_binary_xyz_1234__")).toThrow(
       /not found in PATH/,
     );
+  });
+
+  it("skips empty PATH segments and still finds a named binary in a real dir", () => {
+    // PATH with an empty leading segment ("") and an empty middle segment exercises
+    // the `if (!dir) continue` guard; "sh" then resolves in /bin.
+    const orig = process.env.PATH;
+    process.env.PATH = ":/nonexistent::/bin:";
+    try {
+      expect(() => assertClaudeBinaryAccessible("sh")).not.toThrow();
+    } finally {
+      process.env.PATH = orig;
+    }
+  });
+
+  it("treats an unset PATH as 'binary not found' (process.env.PATH ?? '')", () => {
+    const orig = process.env.PATH;
+    delete process.env.PATH; // exercises the `?? ""` nullish fallback
+    try {
+      expect(() => assertClaudeBinaryAccessible("sh")).toThrow(/not found in PATH/);
+    } finally {
+      process.env.PATH = orig;
+    }
+  });
+});
+
+describe("performRestart", () => {
+  it("asserts the binary, restarts with --continue, and invalidates the config cache", async () => {
+    const d = deps();
+    await performRestart(d, "proj-1");
+    expect(d.claude.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1", undefined);
+    expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
+  });
+
+  it("passes a command override through to the restart and asserts THAT binary", async () => {
+    const d = deps();
+    // "sh" is a valid bin so assertClaudeBinaryAccessible(command) passes.
+    await performRestart(d, "proj-1", "sh --flavor");
+    expect(d.claude.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1", "sh --flavor");
+  });
+
+  it("throws (and does not restart) when the override command's binary is missing", async () => {
+    const d = deps();
+    await expect(performRestart(d, "proj-1", "/no/such/bin/ever --x")).rejects.toThrow(
+      /not found or not executable/,
+    );
+    expect(d.claude.gracefulRestartWithContinue).not.toHaveBeenCalled();
   });
 });
 
@@ -108,11 +155,27 @@ describe("executeMessage — control actions", () => {
     expect(d.bridge.sendKeys).toHaveBeenCalledWith("/compact", "proj-1");
   });
 
+  it("left/right send the raw arrow keys", async () => {
+    const d = deps();
+    expect(await executeMessage(msg("left"), d)).toBe("✅ 已发送 ←");
+    expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Left", "proj-1");
+    expect(await executeMessage(msg("right"), d)).toBe("✅ 已发送 →");
+    expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Right", "proj-1");
+  });
+
+  it("defaults to the telegram catalog when msg.channel is undefined", async () => {
+    // channel undefined → `msg.channel ?? "telegram"` → zh telegram strings.
+    const d = deps();
+    const out = await executeMessage(msg("status", { channel: undefined }), d);
+    expect(out).toContain("🟢 Claude 运行中");
+  });
+
   it("status reflects whether Claude is running", async () => {
-    expect(await executeMessage(msg("status"), deps())).toBe("🟢 Claude 运行中");
+    // /status leads with the running state (usage figures append when configured).
+    expect(await executeMessage(msg("status"), deps())).toContain("🟢 Claude 运行中");
     expect(
       await executeMessage(msg("status"), deps({ checkIfRunning: vi.fn(async () => false) })),
-    ).toBe("🔴 Claude 未运行");
+    ).toContain("🔴 Claude 未运行");
   });
 
   it("text rejects (throws) when Claude isn't running — no keys sent", async () => {
@@ -183,6 +246,44 @@ describe("executeMessage — text action with history", () => {
     const out = await executeMessage(msg("text", { text: "make it long please" }), d);
     expect(out).toContain("...(内容过长，已截断)");
     expect(out.length).toBeLessThan(long.length);
+  });
+
+  it("uses the session name as the history key when no path is mapped (getPathBySession fallback)", async () => {
+    // A session with no setPathForSession entry → getPathBySession returns
+    // undefined → `?? session` uses the raw session name to derive the history dir.
+    // The transcript is stored under that derived dir so the reply still resolves.
+    const unmappedSession = "unmapped-session-xyz";
+    const histDir = projectPathToHistoryDir(unmappedSession, configRoot);
+    fs.mkdirSync(histDir, { recursive: true });
+    const line = (type: string, content: string) =>
+      JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+    fs.writeFileSync(
+      path.join(histDir, "a.jsonl"),
+      `${[line("user", "fallback keyed prompt"), line("assistant", "fallback keyed reply")].join("\n")}\n`,
+    );
+    const d = deps();
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+    const out = await executeMessage(
+      msg("text", { sessionName: unmappedSession, text: "fallback keyed prompt" }),
+      d,
+    );
+    expect(out).toBe("fallback keyed reply");
+  });
+
+  it("handles a text action with undefined text (length defaults to 0, no history match)", async () => {
+    // msg.text undefined exercises `msg.text?.length ?? 0` in the entry log and a
+    // null sent-text lookup; falls back to the pane snapshot.
+    const d = fakeDeps({
+      claude: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE_FOR_UNDEF" })),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+    const noText = msg("text");
+    delete (noText as { text?: string }).text;
+    const out = await executeMessage(noText, d);
+    expect(out).toBe("PANE_FOR_UNDEF");
   });
 
   it("falls back to the processed tmux pane when no history reply matches", async () => {
@@ -287,6 +388,61 @@ describe("executeMessage — text action with history", () => {
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "fallback pane test xyz" }), d);
     expect(out).toBe("PANE_FALLBACK");
+  });
+
+  it("falls back to capturePane when waitUntilDone throws a non-Error value", async () => {
+    // Throwing a string (not an Error) exercises the `: err` branch of the
+    // error-logging ternary; capturePane still salvages the pane.
+    const d = fakeDeps({
+      claude: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilDone: vi.fn(async () => {
+          throw "string failure";
+        }),
+      } as never,
+      bridge: {
+        capturePane: vi.fn(async () => "PANE_AFTER_STRING_THROW"),
+        sendKeys: vi.fn(async () => {}),
+        sendExit: vi.fn(async () => {}),
+        sendRawKey: vi.fn(async () => {}),
+        createSession: vi.fn(async () => {}),
+        killSession: vi.fn(async () => {}),
+        hasSession: vi.fn(async () => false),
+        listProjectSessions: vi.fn(async () => []),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+    const out = await executeMessage(msg("text", { text: "non error throw xyz" }), d);
+    expect(out).toBe("PANE_AFTER_STRING_THROW");
+  });
+
+  it("rethrows a normalized error when both waitUntilDone and capturePane throw non-Errors", async () => {
+    // Both throws are non-Error literals → hits the `: err` and `: paneErr`
+    // branches of both logging ternaries before normalizeError rethrows.
+    const d = fakeDeps({
+      claude: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilDone: vi.fn(async () => {
+          throw "wait literal";
+        }),
+      } as never,
+      bridge: {
+        capturePane: vi.fn(async () => {
+          throw "pane literal";
+        }),
+        sendKeys: vi.fn(async () => {}),
+        sendExit: vi.fn(async () => {}),
+        sendRawKey: vi.fn(async () => {}),
+        createSession: vi.fn(async () => {}),
+        killSession: vi.fn(async () => {}),
+        hasSession: vi.fn(async () => false),
+        listProjectSessions: vi.fn(async () => []),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+    await expect(
+      executeMessage(msg("text", { text: "double literal fail xyz" }), d),
+    ).rejects.toThrow();
   });
 
   it("rethrows when both waitUntilDone and capturePane throw", async () => {

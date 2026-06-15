@@ -8,9 +8,32 @@ import {
   createConfigResolver,
   createExecProbe,
   findClaudePid,
+  parseApiInfo,
   parseClaudeConfigDir,
   type ResolverProbe,
 } from "../src/core/claude-config-resolver.js";
+import { selectIntrospector } from "../src/core/platform/introspector.js";
+
+describe("parseApiInfo", () => {
+  it("reports api mode + base url when an auth token is set (and never the token)", () => {
+    const env =
+      "claude --flag ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic ANTHROPIC_AUTH_TOKEN=sk-secret PWD=/y";
+    const info = parseApiInfo(env);
+    expect(info).toEqual({ baseUrl: "https://api.minimaxi.com/anthropic", mode: "api" });
+    expect(JSON.stringify(info)).not.toContain("sk-secret");
+  });
+
+  it("reports api mode for ANTHROPIC_API_KEY", () => {
+    expect(parseApiInfo("claude ANTHROPIC_API_KEY=sk-x").mode).toBe("api");
+  });
+
+  it("reports subscription mode (no key) with null base url by default", () => {
+    expect(parseApiInfo("claude --dangerously-skip-permissions")).toEqual({
+      baseUrl: null,
+      mode: "subscription",
+    });
+  });
+});
 
 describe("parseClaudeConfigDir", () => {
   it("extracts CLAUDE_CONFIG_DIR from ps eww output", () => {
@@ -72,6 +95,19 @@ describe("findClaudePid", () => {
       { pid: 200, ppid: 100, command: "vim file" },
     ];
     expect(findClaudePid(rows, 100, BIN)).toBeNull();
+  });
+
+  it("does not loop forever on a cyclic process graph (visited guard)", () => {
+    // 100 → 200 → 100 forms a cycle; the seen-set must break it and still find
+    // claude rather than spinning. Multiple children of one ppid also exercise
+    // the sibling-append path.
+    const rows = [
+      { pid: 100, ppid: 200, command: "-zsh" },
+      { pid: 200, ppid: 100, command: "sh" },
+      { pid: 300, ppid: 100, command: "noise" },
+      { pid: 400, ppid: 200, command: `${BIN} --x` },
+    ];
+    expect(findClaudePid(rows, 100, BIN)).toBe(400);
   });
 });
 
@@ -195,6 +231,59 @@ describe("resolveConfigRoot when the pane can't be queried (tmux gone)", () => {
   it("falls back to the default root when nothing was ever resolved", async () => {
     const r = createConfigResolver(fakeProbe({ panePid: async () => null }), OPTS);
     expect(await r.resolveConfigRoot("s")).toBe("/home/.claude");
+  });
+});
+
+describe("resolveApiInfo", () => {
+  it("returns the api info of the running claude (cheap path reuses cached pid)", async () => {
+    const readProcEnv = vi.fn(
+      async () => "claude ANTHROPIC_BASE_URL=https://api.example.com ANTHROPIC_API_KEY=sk-x",
+    );
+    const snapshot = vi.fn(async () => [{ pid: 200, ppid: 100, command: "/bin/claude" }]);
+    const r = createConfigResolver(fakeProbe({ readProcEnv, snapshot }), OPTS);
+    await r.resolveConfigRoot("s"); // warm the cache with the live pid (1 snapshot)
+    const info = await r.resolveApiInfo?.("s");
+    expect(info).toEqual({ baseUrl: "https://api.example.com", mode: "api" });
+    expect(snapshot).toHaveBeenCalledTimes(1); // cheap path: no extra scan
+  });
+
+  it("scans the pane when nothing is cached and reports subscription mode", async () => {
+    const readProcEnv = vi.fn(async () => "claude --dangerously-skip-permissions");
+    const r = createConfigResolver(fakeProbe({ readProcEnv }), OPTS);
+    expect(await r.resolveApiInfo?.("s")).toEqual({ baseUrl: null, mode: "subscription" });
+  });
+
+  it("returns null when no claude runs in the pane", async () => {
+    const r = createConfigResolver(
+      fakeProbe({ snapshot: async () => [{ pid: 200, ppid: 100, command: "-zsh" }] }),
+      OPTS,
+    );
+    expect(await r.resolveApiInfo?.("s")).toBeNull();
+  });
+
+  it("returns null when the pane pid can't be determined", async () => {
+    const r = createConfigResolver(fakeProbe({ panePid: async () => null }), OPTS);
+    expect(await r.resolveApiInfo?.("s")).toBeNull();
+  });
+});
+
+describe("createExecProbe composition", () => {
+  it("delegates snapshot/readProcEnv to the injected introspector", async () => {
+    const intro = {
+      snapshot: async () => [{ pid: 1, ppid: 0, command: "init" }],
+      readProcEnv: async (pid: number) => `PID=${pid} CLAUDE_CONFIG_DIR=/tmp/cfg`,
+      listOpenFiles: async () => [],
+      cwdOf: async () => null,
+    };
+    const probe = createExecProbe(intro);
+    expect(await probe.snapshot()).toEqual([{ pid: 1, ppid: 0, command: "init" }]);
+    expect(await probe.readProcEnv(42)).toContain("CLAUDE_CONFIG_DIR=/tmp/cfg");
+    expect(typeof probe.now()).toBe("number");
+  });
+
+  it("defaults to the platform-selected introspector", () => {
+    expect(selectIntrospector()).toBeDefined();
+    expect(createExecProbe()).toHaveProperty("snapshot");
   });
 });
 

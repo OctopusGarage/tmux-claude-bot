@@ -55,14 +55,16 @@ export const ACTION_META: Partial<Record<MessageAction, ActionMeta>> = {
 // ── Button row groups ────────────────────────────────────────────────────────
 // Inner array = one button row. Edit these to reposition buttons across ALL surfaces.
 
-/** Primary Telegram inline keyboard rows (always visible beneath results). */
+/** Primary control rows for the EXPANDED Telegram control panel. */
 export const TELEGRAM_PRIMARY_ROWS: MessageAction[][] = [
   ["enter", "interrupt"],
   ["esc", "restart"],
 ];
 
-/** Single action row for the collapsed Telegram control keyboard. */
-export const TELEGRAM_COLLAPSED_ROW: MessageAction[] = ["esc", "clear", "compact"];
+/** Single action row for the collapsed Telegram control keyboard (shown beneath
+ * every result). Leads with the most-used mid-task controls — matching Lark's
+ * control panel; clear/compact live in the expanded panel. */
+export const TELEGRAM_COLLAPSED_ROW: MessageAction[] = ["esc", "enter", "interrupt"];
 
 /** Additional rows shown in the expanded Telegram control keyboard. */
 export const TELEGRAM_EXPANDED_ROWS: MessageAction[][] = [
@@ -137,6 +139,8 @@ const PROJECTS: readonly HelpRow[] = [
   [{ cmds: ["list_alive_projects"], descKey: "cmdListAlive" }],
   [{ cmds: ["list_recent_projects"], descKey: "cmdListRecent" }],
   [{ cmds: ["add_project"], descKey: "cmdAddProject", argHint: " <path>" }],
+  [{ cmds: ["new_free"], descKey: "cmdNewFree", argHint: " [label]" }],
+  [{ cmds: ["adopt"], descKey: "cmdAdopt" }],
   [{ cmds: ["queue_status"], descKey: "cmdQueueStatus" }],
   [{ cmds: ["history"], descKey: "cmdHistory", argHint: " [N]" }],
   [{ cmds: ["sessions"], descKey: "cmdSessions" }],
@@ -250,11 +254,18 @@ export const BOT_COMMANDS: BotCommand[] = [
   { command: "list_recent_projects", description: "List recent projects" },
   { command: "current_project", description: "Show current project" },
   { command: "add_project", description: "Add a new project" },
+  { command: "new_free", description: "Create a free (parallel) project" },
+  { command: "adopt", description: "Take over a Claude running outside tmux" },
+  {
+    command: "status_install",
+    description: "Install usage reporting (statusLine snapshot) for /status",
+  },
   { command: "queue_status", description: "Show message queue status" },
   {
     command: "history",
     description: "Show recent conversation history (default: last, /history N for Nth recent)",
   },
+  { command: "sessions", description: "List resumable Claude sessions" },
   { command: "doctor", description: "Run install health checks" },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
   { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },

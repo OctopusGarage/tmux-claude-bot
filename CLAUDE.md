@@ -68,6 +68,23 @@ launchctl list | grep octopusgarage                                        # con
 
 If duplicate instances already exist (e.g. from an accidental `start.sh`), kill the **non-launchd** lineages by PID first (check `ps -o ppid=` — launchd's instance has PPID=1 and matches the PID in `launchctl list`), then `kickstart -k` so launchd's single instance is the only survivor.
 
+### Linux: systemd --user is the manager
+
+On Linux the bot is installed as a systemd `--user` service (unit
+`tmux-claude-bot`, `Restart=always` — the launchd `KeepAlive` analogue), with
+`loginctl enable-linger` so it survives logout on headless servers.
+
+**To restart (the correct way):**
+
+    systemctl --user restart tmux-claude-bot   # reloads the last-built dist/
+    systemctl --user status tmux-claude-bot     # confirm it's running
+    journalctl --user -u tmux-claude-bot -f     # live logs
+
+As with launchd, `Restart=always` means `scripts/stop.sh` won't keep it down;
+manage it via `systemctl --user` (or `npm run service:pause|resume|restart`,
+which dispatch by OS). The instance is identified the same way:
+`tmux-claude-bot.*(src/index.ts|dist/cli.js)`.
+
 ### Scripts (manual/dev only — NOT for the launchd-managed instance)
 
 ```bash
@@ -93,8 +110,41 @@ The project root directory name `tmux-claude-bot` is used as the process identit
 ## Development Conventions
 
 - `npm run build` - Bundle to `dist/` via tsup (what the launchd service runs)
-- `npm run dev` or `tsx src/index.ts` - Start development
+- `npm run dev` - Start development with hot-reload. At launch it resolves which
+  profile to run against: by default, if the deployed prod dir
+  (`~/.tmux-claude-bot`, or `$TMUX_CLAUDE_BOT_DIR`) has a `.env`, it borrows the
+  prod **config and state** so dev mirrors the real projects/sessions. Set
+  `TCB_DEV_LOCAL=1` to switch back to the repo's own `.env` + local state (the
+  dev profile, stored in the repo root, gitignored). With no prod install it
+  falls back to the local repo. An explicit `TCB_STATE_DIR`/`TCB_ENV_FILE` wins
+  over all of this (how `dev.sh` and tests pin their dirs). NOTE: running
+  `npm run dev` against the prod profile shares prod's state dir, so the instance
+  lock blocks it while the managed service is up — use `./dev.sh` (auto
+  pause/resume) or pause the service first.
 - Commands exposed via Telegram Bot menu
+
+## Internationalization (i18n) copy style
+
+All user-facing strings live in `src/core/i18n/catalog/*.ts`. `zh.ts` is canonical
+(it defines the `Messages` type); every other locale must implement every key, or
+the build fails. Keep `${...}` placeholders and emoji identical across locales;
+leave code tokens, CLI commands, percentages, and the `tmux-claude-bot` product
+name untranslated.
+
+**Register: this is an app UI. Copy must be concise, neutral, and professional —
+NOT colloquial/spoken.** When adding a feature's copy, write every locale in the
+same app register as the existing strings; do not write casual/spoken phrasing.
+
+Per-locale register:
+
+| Locale | Register |
+|--------|----------|
+| `zh` | Simplified Chinese, neutral written. |
+| `zh-TW` | Traditional Chinese, Taiwan vocabulary (專案/佇列/預設/辨識), written. |
+| `yue` | **書面粵語** — Traditional characters + formal WRITTEN grammar. Do **NOT** use colloquial spoken Cantonese: 嘅→的, 喺→在, 咗→了, 唔→不/沒, 睇→查看, 撳→按, 搵→找, 呢個→這個, 入面→裡, 嗰→那, 啲→些, 揀→選, 畀→給, 喇→了, 仲…緊→仍在…中. |
+| `ja` | Polite/neutral Japanese (です・ます or noun style); kanji used as Japanese; refer to the app as "Lark". |
+| `es` | Neutral Spanish; avoid first-person ("Salí…" → neutral "… cerrado"). |
+| `en` | Concise, neutral English. |
 
 ## Coverage Threshold Protocol
 

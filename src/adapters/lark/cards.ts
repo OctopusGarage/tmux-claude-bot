@@ -4,6 +4,7 @@ import {
   LARK_CONTROL_ROWS,
   LARK_HELP_RUNNING_ROWS,
 } from "../../core/action-registry.js";
+import type { BrowseView } from "../../core/dir-browser.js";
 import type { MessageAction } from "../../core/dispatch.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
@@ -131,6 +132,7 @@ function controlRows(group = false): ButtonSpec[][] {
       ]
     : [
         { text: m.btnProjects, value: { cmd: "listalive" } },
+        { text: m.btnAdoptConfirm, value: { cmd: "adoptlist" } },
         { text: m.btnCurrent, value: { cmd: "current" } },
         { text: m.btnHelp, value: { cmd: "help" } },
       ];
@@ -169,14 +171,16 @@ export function recoveryCard(body: string, group = false, title = "⚠️"): obj
 
 /** Pick-a-start card: one button per configured start command (shown when more
  * than one is configured). Each carries its index back as `startpick`. */
-export function startPickerCard(commands: { label: string; command: string }[]): object {
+export function startPickerCard(
+  commands: { label: string; command: string }[],
+  mode: "start" | "restart" = "start",
+): object {
   const m = messages("lark");
+  const cmd = mode === "restart" ? "restartpick" : "startpick";
   const elements: object[] = [md(m.startPickerPrompt)];
   commands.forEach((c, i) => {
     elements.push(md(`**${c.label}**\n\`${c.command}\``));
-    elements.push(
-      gridRow([{ text: m.btnStartThis, value: { cmd: "startpick", idx: i }, style: "primary" }]),
-    );
+    elements.push(gridRow([{ text: m.btnStartThis, value: { cmd, idx: i }, style: "primary" }]));
   });
   return shell(m.startPickerTitle, elements);
 }
@@ -196,6 +200,123 @@ export function viewCard(title: string, body: string, group = false): object {
   return shell(title, [md(content), HR, ...controlActions(group)]);
 }
 
+/** Usage-reporting install result. When a foreign statusLine was found, offers
+ * the wrap / overwrite / snippet / skip choice (mirrors Telegram's si:<action>). */
+export function statusInstallCard(body: string, foreignPending: boolean): object {
+  const m = messages("lark");
+  const elements: object[] = [md(body)];
+  if (foreignPending) {
+    elements.push(
+      gridRow([
+        { text: m.btnStatusWrap, value: { cmd: "statuswrap" }, style: "primary" },
+        { text: m.btnStatusOverwrite, value: { cmd: "statusoverwrite" } },
+      ]),
+      gridRow([
+        { text: m.btnStatusSnippet, value: { cmd: "statussnippet" } },
+        { text: m.btnStatusSkip, value: { cmd: "statusskip" } },
+      ]),
+    );
+  }
+  return shell(m.statusInstallTitle, elements);
+}
+
+/**
+ * Directory browser: one row per subdir (tap to descend, or pick a root on the
+ * roots screen), an up/pagination row, then a create/cancel row. Mirrors the
+ * Telegram browse keyboard; paths never ride in the (signed) button value — only
+ * the action + the entry's absolute index, resolved against the scope's cwd.
+ */
+export function browseCard(view: BrowseView): object {
+  const m = messages("lark");
+  const title = view.kind === "roots" ? m.browseRootsTitle : m.browseTitle;
+  const elements: object[] = [];
+  if (view.kind === "dir") {
+    const note =
+      view.error === "unreadable"
+        ? `\n${m.browseUnreadable}`
+        : view.entries.length === 0
+          ? `\n${m.browseEmpty}`
+          : "";
+    elements.push(md(`\`${view.displayPath}\`${note}`));
+  }
+  const cmd = view.kind === "roots" ? "browseroot" : "browseopen";
+  for (const e of view.entries) {
+    // 📦 marks a git repo (a likely project root); 📁 a plain directory.
+    const icon = e.isRepo ? "📦" : "📁";
+    elements.push(gridRow([{ text: `${icon} ${e.label}`, value: { cmd, idx: e.index } }]));
+  }
+  const nav: ButtonSpec[] = [];
+  if (view.canGoUp) nav.push({ text: m.btnBrowseUp, value: { cmd: "browseup" } });
+  if (view.totalPages > 1) {
+    nav.push({ text: "◀", value: { cmd: "browsepage", idx: Math.max(0, view.page - 1) } });
+    nav.push({ text: `${view.page + 1}/${view.totalPages}`, value: { cmd: "noop" } });
+    nav.push({
+      text: "▶",
+      value: { cmd: "browsepage", idx: Math.min(view.totalPages - 1, view.page + 1) },
+    });
+  }
+  if (nav.length > 0) elements.push(gridRow(nav));
+  if (view.canCreate) {
+    elements.push(
+      gridRow([
+        { text: m.btnBrowseCreate, value: { cmd: "browsecreate" }, style: "primary" },
+        { text: m.btnBrowseNewFolder, value: { cmd: "browsenewfolder" } },
+      ]),
+    );
+  }
+  elements.push(gridRow([{ text: m.btnBrowseCancel, value: { cmd: "browsecancel" } }]));
+  return shell(title, elements);
+}
+
+/** Adopt list: one labelled row per non-tmux claude with a "take over" button
+ * (`adopt` → shows a confirm). Mirrors Telegram's `/adopt` keyboard. */
+export function orphanListCard(orphans: { pid: number; label: string }[]): object {
+  const m = messages("lark");
+  return listCard(m.adoptTitle, m.adoptEmpty, orphans, (o) =>
+    gridRow([{ text: m.btnAdoptConfirm, value: { cmd: "adopt", pid: o.pid }, style: "primary" }]),
+  );
+}
+
+/** Confirm step before adopting: tap to execute (`adoptgo`) or cancel. */
+export function adoptConfirmCard(pid: number, label: string): object {
+  const m = messages("lark");
+  return shell(m.adoptTitle, [
+    md(m.adoptConfirmPrompt(label)),
+    gridRow([
+      { text: m.btnAdoptConfirm, value: { cmd: "adoptgo", pid }, style: "primary" },
+      { text: m.btnAdoptCancel, value: { cmd: "adoptcancel" } },
+    ]),
+  ]);
+}
+
+/** After a successful adopt: the result plus a button that copies the attach
+ * command to the host clipboard on demand (`adoptattach`). */
+export function adoptDoneCard(body: string, sid: string): object {
+  const m = messages("lark");
+  return shell("✅", [
+    md(body),
+    gridRow([{ text: m.btnAdoptAttach, value: { cmd: "adoptattach", sid } }]),
+  ]);
+}
+
+/** Elements for a tappable project list: an empty-state message, or a labelled
+ * row + a `rowFor(p)` button row per project. Reused by listCard and the
+ * group-overview card's picker section. */
+function listElements<P extends { label: string }>(
+  emptyMsg: string,
+  projects: readonly P[],
+  rowFor: (p: P) => object | null,
+): object[] {
+  if (projects.length === 0) return [md(emptyMsg)];
+  const elements: object[] = [];
+  for (const p of projects) {
+    elements.push(md(p.label));
+    const row = rowFor(p);
+    if (row) elements.push(row);
+  }
+  return elements;
+}
+
 /** Shared skeleton for the tappable project lists: an empty-state message, or a
  * labelled row + a `rowFor(p)` button row per project, under one title. */
 function listCard<P extends { label: string }>(
@@ -204,14 +325,7 @@ function listCard<P extends { label: string }>(
   projects: readonly P[],
   rowFor: (p: P) => object | null,
 ): object {
-  if (projects.length === 0) return shell(title, [md(emptyMsg)]);
-  const elements: object[] = [];
-  for (const p of projects) {
-    elements.push(md(p.label));
-    const row = rowFor(p);
-    if (row) elements.push(row);
-  }
-  return shell(title, elements);
+  return shell(title, listElements(emptyMsg, projects, rowFor));
 }
 
 /** Alive-project list: one labelled row per project with switch/remove buttons
@@ -244,11 +358,16 @@ export function recentListCard(projects: RecentButton[], group = false): object 
 
 /** Project-group picker: list recent projects, each with a "new group" (p2p) or
  * "bind" (in a group) button carrying the project's short id. No typing needed. */
-export function groupPickerCard(projects: RecentButton[], mode: "make" | "bind"): object {
+export function groupPickerCard(projects: RecentButton[], mode: "make" | "bind" | "free"): object {
   const m = messages("lark");
-  const title = mode === "make" ? m.groupPickerTitle : m.groupBindPickerTitle;
-  const text = mode === "make" ? m.btnMakeGroup : m.btnBindHere;
-  const cmd = mode === "make" ? "makegroup" : "bindhere";
+  const title =
+    mode === "make"
+      ? m.groupPickerTitle
+      : mode === "bind"
+        ? m.groupBindPickerTitle
+        : m.groupFreePickerTitle;
+  const text = mode === "make" ? m.btnMakeGroup : mode === "bind" ? m.btnBindHere : m.btnFreeGroup;
+  const cmd = mode === "make" ? "makegroup" : mode === "bind" ? "bindhere" : "makefreegroup";
   return listCard(title, m.groupMenuNoProjects, projects, (p) =>
     gridRow([{ text, value: { cmd, sid: p.sid } }]),
   );
@@ -267,6 +386,30 @@ export function groupBoundCard(label: string): object {
   ]);
 }
 
+/** From a private chat: the project-group overview — the existing groups (label
+ * + workspace path) plus a picker of recent projects that don't yet have a group
+ * (each with a "new group" button). Lets you SEE your groups, not just create. */
+export function groupOverviewCard(
+  groups: ReadonlyArray<{ label: string; workspacePath: string }>,
+  projects: RecentButton[],
+): object {
+  const m = messages("lark");
+  const elements: object[] = [md(m.groupOverviewExisting)];
+  if (groups.length === 0) {
+    elements.push(md(m.groupOverviewNoGroups));
+  } else {
+    for (const g of groups) elements.push(md(m.groupOverviewItem(g.label, g.workspacePath)));
+  }
+  elements.push(
+    HR,
+    md(m.groupPickerTitle),
+    ...listElements(m.groupMenuNoProjects, projects, (p) =>
+      gridRow([{ text: m.btnMakeGroup, value: { cmd: "makegroup", sid: p.sid } }]),
+    ),
+  );
+  return shell(m.groupOverviewTitle, elements);
+}
+
 /** The interactive /help menu card: a button for every command. When voice is
  *  installable (supported host, not yet installed) a one-tap install button is
  *  surfaced — the discoverable counterpart of Telegram's `/voice_install`. */
@@ -277,19 +420,25 @@ export function helpCard(group = false, voiceInstallable = false): object {
   const projectRow: ButtonSpec[] = group
     ? [{ text: m.btnCurrent, value: { cmd: "current" } }]
     : [
+        { text: m.btnAddProject, value: { cmd: "addproject" } },
         { text: m.btnProjects, value: { cmd: "listalive" } },
         { text: m.btnRecent, value: { cmd: "recent" } },
+        { text: m.btnAdoptConfirm, value: { cmd: "adoptlist" } },
         { text: m.btnCurrent, value: { cmd: "current" } },
       ];
-  const prefsRow: ButtonSpec[] = group
-    ? [
-        { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
-        { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
-      ]
+  // Two buttons per row so the grid doesn't wrap awkwardly on narrow screens.
+  const langRow: ButtonSpec[] = [
+    { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
+    { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
+  ];
+  const prefsRows: ButtonSpec[][] = group
+    ? [langRow]
     : [
-        { text: m.btnGroupMenu, value: { cmd: "groupmenu" } },
-        { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
-        { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
+        [
+          { text: m.btnGroupMenu, value: { cmd: "groupmenu" } },
+          { text: m.btnFreeGroup, value: { cmd: "freegroupmenu" } },
+        ],
+        langRow,
       ];
   return shell(m.helpTitle, [
     md(buildHelpBody("lark", "lark")),
@@ -304,9 +453,10 @@ export function helpCard(group = false, voiceInstallable = false): object {
       { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ]),
     gridRow(projectRow),
+    ...(group ? [] : [gridRow([{ text: m.btnStatusInstall, value: { cmd: "statusinstall" } }])]),
     ...(voiceInstallable
       ? [gridRow([{ text: m.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }])]
       : []),
-    gridRow(prefsRow),
+    ...prefsRows.map((row) => gridRow(row)),
   ]);
 }

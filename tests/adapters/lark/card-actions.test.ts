@@ -41,12 +41,11 @@ describe("makeCardActionHandler", () => {
     vi.clearAllMocks();
   });
 
-  it("voicelangmenu → sends the voice-language picker as a managed card", async () => {
+  it("voicelangmenu → sends the voice-language picker as a regular card", async () => {
     const channel = fakeChannel();
     const handle = makeCardActionHandler(channel, fakeDeps());
     await handle(evt({ cmd: "voicelangmenu" }));
-    expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
-    expect(channel.imCreates).toHaveLength(1);
+    expect(JSON.stringify(channel.cards())).toContain("语音识别语言");
   });
 
   it("voiceinstall → runs the core install and replies the result (Feishu parity with Telegram)", async () => {
@@ -66,42 +65,17 @@ describe("makeCardActionHandler", () => {
     expect(channel.texts().some((t) => t.includes("boom"))).toBe(true);
   });
 
-  it("voicelang on a managed picker → sets WHISPER_LANGUAGE and updates the card in place", async () => {
-    const prev = process.env.LARK_WHISPER_LANGUAGE;
-    try {
-      const channel = fakeChannel();
-      const handle = makeCardActionHandler(channel, fakeDeps());
-      await handle(evt({ cmd: "voicelangmenu" }));
-      const pickerMessageId = "im-m1";
-
-      await handle(evt({ cmd: "voicelang", lang: "yue" }, { messageId: pickerMessageId }));
-
-      expect(process.env.LARK_WHISPER_LANGUAGE).toBe("yue");
-      expect(channel.cardkitUpdates).toHaveLength(1);
-      expect(channel.cardkitUpdates.some((u) => u.data.card.data.includes("语音识别语言"))).toBe(
-        true,
-      );
-      // In place: no second message was sent.
-      expect(channel.imCreates).toHaveLength(1);
-      expect(channel.sent).toHaveLength(0);
-    } finally {
-      if (prev === undefined) delete process.env.LARK_WHISPER_LANGUAGE;
-      else process.env.LARK_WHISPER_LANGUAGE = prev;
-    }
-  });
-
-  it("voicelang on an unmanaged message → falls back to sending a fresh picker", async () => {
+  it("voicelang → sets WHISPER_LANGUAGE and re-sends the picker with the ✅ moved", async () => {
     const prev = process.env.LARK_WHISPER_LANGUAGE;
     try {
       const channel = fakeChannel();
       const handle = makeCardActionHandler(channel, fakeDeps());
 
-      await handle(evt({ cmd: "voicelang", lang: "yue" }, { messageId: "msg-pre-restart" }));
+      await handle(evt({ cmd: "voicelang", lang: "yue" }));
 
       expect(process.env.LARK_WHISPER_LANGUAGE).toBe("yue");
-      expect(channel.cardkitUpdates).toHaveLength(0);
-      expect(channel.cardkitCreates.some((c) => c.data.data.includes("语音识别语言"))).toBe(true);
-      expect(channel.imCreates).toHaveLength(1);
+      // Regular card re-send (no CardKit in-place update).
+      expect(JSON.stringify(channel.cards())).toContain("语音识别语言");
     } finally {
       if (prev === undefined) delete process.env.LARK_WHISPER_LANGUAGE;
       else process.env.LARK_WHISPER_LANGUAGE = prev;
@@ -357,45 +331,23 @@ describe("makeCardActionHandler", () => {
     expect(deps.queue.enqueued).toHaveLength(0);
   });
 
-  it("uilangmenu → sends the UI-language picker as a managed card", async () => {
+  it("uilangmenu → sends the UI-language picker as a regular card", async () => {
     const channel = fakeChannel();
     const handle = makeCardActionHandler(channel, fakeDeps());
     await handle(evt({ cmd: "uilangmenu" }));
-    expect(channel.cardkitCreates).toHaveLength(1);
-    expect(channel.imCreates).toHaveLength(1);
+    expect(channel.cards()).toHaveLength(1);
   });
 
-  it("uilang with a valid lang on a managed picker → sets UI language and updates in place", async () => {
-    const prev = process.env.LARK_UI_LANG;
-    try {
-      const channel = fakeChannel();
-      const handle = makeCardActionHandler(channel, fakeDeps());
-      await handle(evt({ cmd: "uilangmenu" }));
-
-      await handle(evt({ cmd: "uilang", lang: "en" }, { messageId: "im-m1" }));
-
-      expect(process.env.LARK_UI_LANG).toBe("en");
-      expect(channel.cardkitUpdates).toHaveLength(1);
-      expect(channel.imCreates).toHaveLength(1);
-      expect(channel.sent).toHaveLength(0);
-    } finally {
-      if (prev === undefined) delete process.env.LARK_UI_LANG;
-      else process.env.LARK_UI_LANG = prev;
-    }
-  });
-
-  it("uilang on an unmanaged message → falls back to sending a fresh picker", async () => {
+  it("uilang with a valid lang → sets UI language and re-sends the picker", async () => {
     const prev = process.env.LARK_UI_LANG;
     try {
       const channel = fakeChannel();
       const handle = makeCardActionHandler(channel, fakeDeps());
 
-      await handle(evt({ cmd: "uilang", lang: "en" }, { messageId: "msg-pre-restart" }));
+      await handle(evt({ cmd: "uilang", lang: "en" }));
 
       expect(process.env.LARK_UI_LANG).toBe("en");
-      expect(channel.cardkitUpdates).toHaveLength(0);
-      expect(channel.cardkitCreates).toHaveLength(1);
-      expect(channel.imCreates).toHaveLength(1);
+      expect(channel.cards()).toHaveLength(1);
     } finally {
       if (prev === undefined) delete process.env.LARK_UI_LANG;
       else process.env.LARK_UI_LANG = prev;
@@ -507,6 +459,58 @@ describe("makeCardActionHandler", () => {
       await makeCardActionHandler(channel, deps)(evt({ cmd: "startpick", idx: 1 }));
       expect(deps.claude.start).toHaveBeenCalledWith("proj-1", "bash");
       expect(channel.texts().some((t) => t.includes("B"))).toBe(true);
+    });
+  });
+
+  describe("directory browser", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "tcb-lk-browse-"));
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+    it("addproject (help-card button) opens the browser", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "addproject" }));
+      expect(JSON.stringify(channel.cards())).toContain("browsecancel");
+    });
+
+    it("a navigation tap renders a browser card (with the cancel button)", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "browseroot", idx: 0 }));
+      // Regular interactive card, so it lands in cards().
+      expect(JSON.stringify(channel.cards())).toContain("browsecancel");
+    });
+
+    it("browsecreate at the current dir creates the project session", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        config: { cdAllowedDirs: [dir] },
+        bridge: { hasSession: vi.fn(async () => false) },
+      });
+      const handle = makeCardActionHandler(channel, deps);
+      await handle(evt({ cmd: "browseroot", idx: 0 })); // cwd ← the only root (dir)
+      await handle(evt({ cmd: "browsecreate" }));
+      expect(deps.bridge.createSession).toHaveBeenCalledWith(expect.any(String), dir);
+    });
+
+    it("browsecancel forgets the state and acknowledges", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "browsecancel" }));
+      expect(channel.texts().some((t) => t.includes("已取消"))).toBe(true);
+    });
+
+    it("browsenewfolder prompts for a name once a dir is in view", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      const handle = makeCardActionHandler(channel, deps);
+      await handle(evt({ cmd: "browseroot", idx: 0 })); // arm cwd = dir
+      await handle(evt({ cmd: "browsenewfolder" }));
+      // The prompt echoes the breadcrumb (~ or the dir path).
+      expect(channel.texts().length).toBeGreaterThan(0);
     });
   });
 });

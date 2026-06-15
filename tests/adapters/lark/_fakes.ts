@@ -19,24 +19,10 @@ export type SentRecord = {
   opts?: unknown;
 };
 
-export type CardkitCreateRecord = { data: { type: string; data: string } };
-export type CardkitUpdateRecord = {
-  data: { card: { type: string; data: string }; sequence: number };
-  path: { card_id: string };
-};
-export type ImCreateRecord = {
-  params: { receive_id_type: string };
-  data: { receive_id: string; msg_type: string; content: string };
-};
-
 export type FakeChannel = LarkChannel & {
   sent: SentRecord[];
   reactions: { messageId: string; emoji: string }[];
   removedReactions: { messageId: string; emoji: string }[];
-  updatedCards: { messageId: string; card: unknown }[];
-  cardkitCreates: CardkitCreateRecord[];
-  cardkitUpdates: CardkitUpdateRecord[];
-  imCreates: ImCreateRecord[];
   /** Text of every `{ markdown }` send, for quick assertions. */
   texts: () => string[];
   /** The `card` object of every `{ card }` send. */
@@ -49,51 +35,13 @@ export function fakeChannel(): FakeChannel {
   const sent: SentRecord[] = [];
   const reactions: { messageId: string; emoji: string }[] = [];
   const removedReactions: { messageId: string; emoji: string }[] = [];
-  const updatedCards: { messageId: string; card: unknown }[] = [];
-  const cardkitCreates: CardkitCreateRecord[] = [];
-  const cardkitUpdates: CardkitUpdateRecord[] = [];
-  const imCreates: ImCreateRecord[] = [];
   let n = 0;
-  let entityN = 0;
-  let imN = 0;
   let chatType: "p2p" | "group" = "p2p";
 
   const channel = {
     sent,
     reactions,
     removedReactions,
-    updatedCards,
-    cardkitCreates,
-    cardkitUpdates,
-    imCreates,
-    rawClient: {
-      cardkit: {
-        v1: {
-          card: {
-            create: vi.fn(async (payload: CardkitCreateRecord) => {
-              cardkitCreates.push(payload);
-              entityN += 1;
-              return { code: 0, data: { card_id: `card${entityN}` } };
-            }),
-            update: vi.fn(async (payload: CardkitUpdateRecord) => {
-              cardkitUpdates.push(payload);
-              return { code: 0 };
-            }),
-          },
-        },
-      },
-      im: {
-        v1: {
-          message: {
-            create: vi.fn(async (payload: ImCreateRecord) => {
-              imCreates.push(payload);
-              imN += 1;
-              return { code: 0, data: { message_id: `im-m${imN}` } };
-            }),
-          },
-        },
-      },
-    },
     texts: () =>
       sent
         .map((s) => (s.input as { markdown?: string }).markdown)
@@ -112,9 +60,6 @@ export function fakeChannel(): FakeChannel {
       removedReactions.push({ messageId, emoji });
     }),
     downloadResource: vi.fn(async (_fileKey: string, _type: string) => Buffer.from("fake-audio")),
-    updateCard: vi.fn(async (messageId: string, card: unknown) => {
-      updatedCards.push({ messageId, card });
-    }),
     getChatInfo: vi.fn(async (chatId: string) => ({ chatId, chatType })),
     setChatType: (t: "p2p" | "group") => {
       chatType = t;

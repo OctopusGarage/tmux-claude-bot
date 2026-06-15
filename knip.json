@@ -3,8 +3,9 @@
   "entry": ["src/scripts/*.ts"],
   "project": ["src/**/*.ts"],
   "ignoreBinaries": [
-    "scripts/install-launchd.sh",
-    "scripts/uninstall-launchd.sh",
+    "scripts/install-service.sh",
+    "scripts/uninstall-service.sh",
+    "scripts/dev-env.sh",
     "scripts/release.sh",
     "scripts/service.sh",
     "scripts/install-whisper.sh",

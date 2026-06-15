@@ -2,22 +2,43 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { logger } from "../shared/utils/logger.js";
 
+export type { ProcRow } from "./platform/introspector.js";
+
+import type { ProcRow } from "./platform/introspector.js";
+import { type ProcessIntrospector, selectIntrospector } from "./platform/introspector.js";
+
 const execFileAsync = promisify(execFile);
 
-export interface ProcRow {
-  pid: number;
-  ppid: number;
-  command: string;
-}
-
 /**
- * Extract CLAUDE_CONFIG_DIR from `ps eww -o command= -p <pid>` output (the env
- * is appended to the command line as space-separated KEY=VALUE tokens on macOS,
+ * Extract an env var value from `ps eww -o command= -p <pid>` output (the env is
+ * appended to the command line as space-separated KEY=VALUE tokens on macOS,
  * where /proc/<pid>/environ does not exist).
  */
-export function parseClaudeConfigDir(psEwwOutput: string): string | null {
-  const m = psEwwOutput.match(/(?:^|\s)CLAUDE_CONFIG_DIR=(\S+)/);
+export function parseEnvVar(psEwwOutput: string, key: string): string | null {
+  const m = psEwwOutput.match(new RegExp(`(?:^|\\s)${key}=(\\S+)`));
   return m?.[1] ?? null;
+}
+
+export function parseClaudeConfigDir(psEwwOutput: string): string | null {
+  return parseEnvVar(psEwwOutput, "CLAUDE_CONFIG_DIR");
+}
+
+/** What endpoint/auth a running claude is using, mined from its process env.
+ * `baseUrl` is null when ANTHROPIC_BASE_URL is unset (= default api.anthropic.com).
+ * `mode` is "api" when an API key/token is set, else "subscription" (claude.ai
+ * OAuth login). NEVER carries the key itself — only its presence. */
+export interface ClaudeApiInfo {
+  baseUrl: string | null;
+  mode: "api" | "subscription";
+}
+
+/** Derive {@link ClaudeApiInfo} from a process env blob (ps eww / /proc environ). */
+export function parseApiInfo(envBlob: string): ClaudeApiInfo {
+  const baseUrl = parseEnvVar(envBlob, "ANTHROPIC_BASE_URL");
+  const hasKey =
+    parseEnvVar(envBlob, "ANTHROPIC_API_KEY") !== null ||
+    parseEnvVar(envBlob, "ANTHROPIC_AUTH_TOKEN") !== null;
+  return { baseUrl, mode: hasKey ? "api" : "subscription" };
 }
 
 function basename(p: string): string {
@@ -80,6 +101,9 @@ export interface ConfigResolver {
   resolveConfigRoot(session: string): Promise<string>;
   /** Whether a claude process is running in the session's pane (process-based). */
   isClaudeRunning(session: string): Promise<boolean>;
+  /** Endpoint/auth mode of the running claude, or null when none is running.
+   * Optional so existing fakes need not implement it. */
+  resolveApiInfo?(session: string): Promise<ClaudeApiInfo | null>;
   /** Drop the cached entry — call on lifecycle changes (/clear, /compact, switch…). */
   invalidate(session: string): void;
 }
@@ -153,14 +177,23 @@ export function createConfigResolver(
       return scan?.claudePid != null;
     },
 
+    async resolveApiInfo(session: string): Promise<ClaudeApiInfo | null> {
+      const pid = (await cachedPidAlive(session))
+        ? (cache.get(session) as CacheEntry).claudePid
+        : ((await scanPane(session))?.claudePid ?? null);
+      if (pid === null) return null;
+      return parseApiInfo(await probe.readProcEnv(pid));
+    },
+
     invalidate(session: string): void {
       cache.delete(session);
     },
   };
 }
 
-/** Real probe backed by tmux / ps / process.kill. macOS uses `ps eww` (no /proc). */
-export function createExecProbe(): ResolverProbe {
+/** Real probe: tmux for pane pid, an OS introspector for the process table,
+ * process.kill for liveness. */
+export function createExecProbe(intro: ProcessIntrospector = selectIntrospector()): ResolverProbe {
   return {
     async panePid(session: string): Promise<number | null> {
       try {
@@ -175,35 +208,8 @@ export function createExecProbe(): ResolverProbe {
         return null;
       }
     },
-    async snapshot(): Promise<ProcRow[]> {
-      try {
-        const { stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid=,command="], {
-          timeout: 5000,
-          maxBuffer: 8 * 1024 * 1024,
-        });
-        const rows: ProcRow[] = [];
-        for (const line of stdout.split("\n")) {
-          const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
-          if (m?.[1] && m[2]) {
-            rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3] ?? "" });
-          }
-        }
-        return rows;
-      } catch {
-        return [];
-      }
-    },
-    async readProcEnv(pid: number): Promise<string> {
-      try {
-        const { stdout } = await execFileAsync("ps", ["eww", "-o", "command=", "-p", String(pid)], {
-          timeout: 5000,
-          maxBuffer: 4 * 1024 * 1024,
-        });
-        return stdout;
-      } catch {
-        return "";
-      }
-    },
+    snapshot: () => intro.snapshot(),
+    readProcEnv: (pid) => intro.readProcEnv(pid),
     async isAlive(pid: number): Promise<boolean> {
       try {
         process.kill(pid, 0);

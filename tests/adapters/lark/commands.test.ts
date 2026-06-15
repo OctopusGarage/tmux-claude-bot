@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseLarkInput } from "../../../src/adapters/lark/commands.js";
+import { isGroupMgmtCommand, parseLarkInput } from "../../../src/adapters/lark/commands.js";
 
 describe("parseLarkInput", () => {
   it("plain text → text kind", () => {
@@ -147,6 +147,15 @@ describe("parseLarkInput", () => {
       name: "addproject",
       arg: undefined,
     });
+  });
+
+  it("/newfreegroup <path> → view newfreegroup, arg is the path", () => {
+    expect(parseLarkInput("/newfreegroup ~/projects/app")).toEqual({
+      kind: "view",
+      name: "newfreegroup",
+      arg: "~/projects/app",
+    });
+    expect(isGroupMgmtCommand("/newfreegroup ~/x")).toBe(true);
   });
 
   it("/bogus → unknown kind", () => {

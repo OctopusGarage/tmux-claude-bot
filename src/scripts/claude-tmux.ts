@@ -12,18 +12,15 @@
  *   alias claude="npx tsx ~/programming/OctopusGarage/tmux-claude-bot/src/scripts/claude-tmux.ts"
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { config as loadEnv } from "dotenv";
 import { createConfigResolver, createExecProbe } from "../core/claude-config-resolver.js";
 import { DEFAULT_CONFIG_ROOT } from "../core/history.js";
+import { copyToClipboard } from "../core/platform/clipboard.js";
 import { sessionNameFromPath, setPathForSession } from "../core/sessionPathMap.js";
 import { TmuxBridge } from "../core/tmux.js";
 import { claudeBinFromStartCommand, loadScriptConfig } from "../shared/config.js";
 import { appStateFile } from "../shared/state-dir.js";
 import { sleep } from "../shared/utils/sleep.js";
-
-const execFileAsync = promisify(execFile);
 
 // Load the bot's .env from the shared app home so `claude` and the bot agree on
 // the start command and write session_path_map.json to the same place.
@@ -78,8 +75,11 @@ async function main() {
   }
 
   const attachCmd = `tmux attach -t ${sessionName}`;
-  await execFileAsync("sh", ["-c", `printf '%s' "${attachCmd}" | pbcopy`]);
-  console.log(`\n✅ Attach command copied to clipboard!`);
+  if (await copyToClipboard(attachCmd)) {
+    console.log(`\n✅ Attach command copied to clipboard!`);
+  } else {
+    console.log(`\n📋 Attach with: ${attachCmd}`);
+  }
 }
 
 main().catch(console.error);

@@ -63,6 +63,7 @@ export const zh = {
   btnProjects: "📁 项目",
   btnRecent: "🕘 近期",
   btnCurrent: "📌 当前",
+  btnAddProject: "➕ 新建项目",
   btnSwitch: "🔀 切换",
   btnRemove: "🗑 删除",
   btnCreate: "➕ 创建",
@@ -75,6 +76,25 @@ export const zh = {
   btnCollapse: "▴ 收起",
   btnCancel: "✕ 取消",
   btnDeleteMode: "🗑 删除…",
+
+  // ── adopt (take over a non-tmux claude) ──
+  adoptTitle: "🧲 可接管的 Claude 进程（不在 tmux 中）",
+  adoptEmpty: "没有发现可接管的 Claude 进程",
+  adoptConfirmPrompt: (label: string) =>
+    `确认接管？将先中断并结束原进程，再在 tmux 中续接：\n${label}`,
+  btnAdoptConfirm: "🧲 接管",
+  btnAdoptCancel: "✕ 取消",
+  adoptCancelled: "已取消接管",
+  adoptWorking: "正在接管…",
+  adoptGone: "该进程已不在可接管列表（已退出或已在 tmux 中）",
+  adoptDone: (proj: string, resumed: boolean) =>
+    resumed ? `✅ 已接管并续接会话：${proj}` : `✅ 已接管并新建会话：${proj}`,
+  adoptFailed: "接管失败：进程无法结束或 Claude 未能启动",
+  adoptBusy:
+    "目标 tmux 会话里已有程序在前台运行（另一个 Claude 或其他程序）。已中止，未动原进程——请先去那边退出，再重新接管。",
+  btnAdoptAttach: "💻 在电脑终端查看（可选）",
+  adoptAttachHint: (cmd: string) =>
+    `✅ 接入命令已经放进「电脑」的剪贴板了（不用在手机上复制）。回到电脑后，在任务终端里直接粘贴回车，就能进去查看——这一步是可选的。\n命令：${cmd}`,
 
   // ── command results (dispatch) ──
   doneShort: "完成",
@@ -100,8 +120,43 @@ export const zh = {
   sentTab: "✅ 已发送 Tab",
   statusRunning: "🟢 Claude 运行中",
   statusNotRunning: "🔴 Claude 未运行",
+  statusContext: (bar: string, pct: number) => `📊 上下文 ${bar} ${pct}%`,
+  statusFiveHour: (bar: string, pct: number, reset: string) =>
+    `⏱ Session(5h) ${bar} ${pct}%（重置 ${reset}）`,
+  statusSevenDay: (bar: string, pct: number, reset: string) =>
+    `📅 本周 ${bar} ${pct}%（重置 ${reset}）`,
+  statusUsageStale: (mins: number) => `⚠️ 额度数据 ${mins} 分钟未更新（Claude Code 可能已关闭）`,
 
   // ── queue-status view ──
+  // -- status usage install --
+  statusUsageHint:
+    "\u{1F4A1} \u60f3\u770b\u989d\u5ea6\uff1f\u53d1\u9001 /status_install \u4e00\u952e\u5b89\u88c5",
+  statusUsagePending:
+    "\ud83d\udcca \u989d\u5ea6\u6570\u636e\u83b7\u53d6\u4e2d\u2014\u2014\u4e0b\u6b21 Claude \u8c03\u7528\u540e\u663e\u793a",
+  statusModeApi: "API",
+  statusModeSubscription: "订阅",
+  statusApiLine: (mode: string, host: string) => `🔌 ${mode} · ${host}`,
+  statusInstallTitle: "\u{1F4CA} \u989d\u5ea6\u4e0a\u62a5\u5b89\u88c5",
+  statusInstallNoClaude:
+    "\u6ca1\u6709\u68c0\u6d4b\u5230\u8fd0\u884c\u4e2d\u7684 Claude\uff0c\u65e0\u6cd5\u786e\u5b9a\u5b89\u88c5\u4f4d\u7f6e\u3002\u5148\u542f\u52a8\u4e00\u4e2a Claude \u518d\u8bd5\u3002",
+  statusInstallInstalled: (dir: string) =>
+    `\u2705 ${dir} \u5df2\u5b89\u88c5\u989d\u5ea6\u4e0a\u62a5`,
+  statusInstallAlready: (dir: string) => `\u23ED ${dir} \u5df2\u5b89\u88c5\u8fc7`,
+  statusInstallForeignPrompt: (dirs: string[]) =>
+    `⚠️ 以下目录已有自定义 statusLine，如何处理？推荐「包裹保留」（保留你的 statusLine 并附加额度上报）。\n${dirs.join("\n")}`,
+  statusInstallOverwritten: (dir: string, backup: string) =>
+    `\u{1F501} ${dir} \u5df2\u8986\u76d6\uff08\u5907\u4efd\uff1a${backup}\uff09`,
+  statusInstallWrapped: (dir: string, backup: string) =>
+    `\u{1F4E6} ${dir} \u5df2\u5305\u88f9\uff1a\u4fdd\u7559\u4f60\u539f\u6709\u663e\u793a + \u989d\u5ea6\u4e0a\u62a5\n   \u26A0\uFE0F statusLine \u73b0\u7ecf\u672c bot \u5305\u88f9\u5c42\uff1b\u82e5\u72b6\u6001\u680f\u5f02\u5e38\uff0c\u4ece\u5907\u4efd\u8fd8\u539f\uff1a${backup}`,
+  statusInstallSnippet: (dir: string, snippet: string) =>
+    `\u270D\uFE0F ${dir}\uff1a\u628a\u4e0b\u9762\u8fd9\u6bb5\u52a0\u5230\u4f60\u7684 statusline \u811a\u672c\uff08\u9700\u811a\u672c\u91cc\u5df2\u6709 input=$(cat)\uff09\uff1a\n\`\`\`\n${snippet}\n\`\`\``,
+  statusInstallSkipped: (dir: string) => `\u2716\uFE0F ${dir} \u5df2\u8df3\u8fc7`,
+  statusInstallError: (dir: string, msg: string) => `\u274C ${dir}\uff1a${msg}`,
+  btnStatusInstall: "\u{1F4CA} \u5b89\u88c5\u989d\u5ea6\u4e0a\u62a5",
+  btnStatusOverwrite: "\u{1F501} \u8986\u76d6\u66ff\u6362",
+  btnStatusWrap: "📦 包裹保留（推荐）",
+  btnStatusSnippet: "\u270D\uFE0F \u7ed9\u6211\u7247\u6bb5",
+  btnStatusSkip: "\u2716\uFE0F \u653e\u5f03",
   queueGlobalHeader: "━━ 🌐 全局队列 ━━",
   queueCounts: (queued: number, processing: boolean) =>
     `排队中： ${queued} | 处理中： ${processing ? "🟢" : "🔴"}`,
@@ -129,14 +184,25 @@ export const zh = {
   recentListEmpty: "没有近期项目，用 /add_project <路径> 添加",
 
   // ── project ops / add_project ──
-  addProjectUsage: "用法：/add_project <路径>",
-  addProjectUsageExample: "用法：/add_project <路径>\n\n示例：/add_project ~/projects/myapp",
   notADir: (p: string) => `${p} 不是目录`,
   dirNotExist: (p: string) => `目录不存在：${p}`,
   pathNotAllowedPath: (p: string) => `路径不在允许范围内：${p}`,
   alreadySwitched: "已存在 · 已切换",
   projectCreated: "项目已创建",
   projectCreatedPath: (p: string) => `项目已创建：${p}`,
+  browseTitle: "📂 选择项目位置",
+  browseRootsTitle: "📂 选择起始目录",
+  browseEmpty: "（无子目录）",
+  browseUnreadable: "⚠️ 无法读取该目录",
+  browseCancelled: "已取消",
+  btnBrowseUp: "⬆️ 上级",
+  btnBrowseCreate: "✅ 在此创建项目",
+  btnBrowseCancel: "✖️ 取消",
+  btnBrowseNewFolder: "➕ 新建文件夹",
+  browseNewFolderPrompt: (p: string) => `请回复要在 ${p} 内新建的文件夹名称`,
+  browseNewFolderInvalid: "❌ 名称无效（不能为空或包含「/」）",
+  browseNewFolderExists: "❌ 该名称已存在",
+  browseNewFolderError: "❌ 新建文件夹失败",
   shortIdNotFound: (id: string) => `未找到短 id：${id}`,
   noCurrentProjectSet: "未设置当前项目\n\n用 /add_project <路径> 设置一个",
   currentActive: "✅ 当前活跃",
@@ -208,6 +274,14 @@ export const zh = {
   cmdListAlive: "活跃项目（点按切换/删除）",
   cmdListRecent: "近期项目",
   cmdAddProject: "新建项目",
+  cmdNewFree: "新建自由项目（同目录可并行）",
+  freeProjectLimit: (max: number) => `自由项目已达上限 ${max} 个，请先删除一个再试。`,
+  freeProjectCreated: (slot: number, label: string | null) =>
+    `🆓 已创建自由项目 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目录并自行启动 Claude；/list_alive_projects 可切回。`,
+  btnNewFree: "🆓 新建自由项目",
+  freeLabelPrompt: "请输入自由项目名称（发送 - 跳过命名）",
+  freeLabelCancelled: "已取消",
+  cmdAdopt: "接管 tmux 外的 Claude",
   cmdQueueStatus: "队列状态",
   cmdHistory: "对话历史（默认最近一条）",
   cmdPeek: "查看 tmux 画面",
@@ -277,6 +351,13 @@ export const zh = {
   groupPinnedNoSwitch: (label: string) =>
     `🔒 本群已固定绑定「${label}」，不能切换到其他项目。如需更换，请用 🗂 → 改绑。`,
   groupNoRemoveInGroup: "🔒 在群里不能删除项目（会影响他人）。请到与机器人的私聊里删除。",
+  groupFreePickerTitle: "🆓 新建自由项目群（可与现有群同目录）",
+  groupOverviewTitle: "🗂 项目群",
+  groupOverviewExisting: "已有项目群：",
+  groupOverviewNoGroups: "暂无项目群。",
+  groupOverviewItem: (label: string, path: string) => `• **${label}** — \`${path}\``,
+  btnFreeGroup: "🆓 平行群",
+  freeGroupCreated: (label: string) => `🆓 已创建平行群「${label}」`,
 };
 
 // No `as const`: Messages widens to string / function types so other languages

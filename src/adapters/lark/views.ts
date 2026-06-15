@@ -1,5 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
+import { startBrowse } from "../../core/dir-browser.js";
+import { performStart } from "../../core/dispatch.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import { getBinding, isProjectGroup, listBindings } from "../../core/group-bindings.js";
 import {
@@ -8,49 +10,51 @@ import {
   listClaudeSessions,
 } from "../../core/history.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
+import { markSemantics } from "../../core/output.js";
 import { projectLabel } from "../../core/project-label.js";
 import { chatScope } from "../../core/project-manager.js";
 import {
   aliveProjectButtons,
-  createProjectSession,
+  type CreateProjectResult,
+  createProjectFromPath,
   openRecentProjectBySid,
   recentProjectButtons,
-  resolveProjectPath,
 } from "../../core/project-ops.js";
 import { buildQueueStatusLines } from "../../core/queue-status.js";
-import { appendRecentProject } from "../../core/recentProjects.js";
-import {
-  getPathBySession,
-  sessionNameFromPath,
-  setPathForSession,
-} from "../../core/sessionPathMap.js";
+import { getPathBySession } from "../../core/sessionPathMap.js";
+import { type ForeignAction, runStatusInstall } from "../../core/status-install.js";
+import { orphanLabel } from "../../core/takeover.js";
+import { findAdoptableOrphans } from "../../core/takeover-service.js";
 import { resolveWhisperLanguage } from "../../core/voice-support.js";
 import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
+  browseCard,
   groupBoundCard,
+  groupOverviewCard,
   groupPickerCard,
   langCard,
+  orphanListCard,
   projectListCard,
   recentListCard,
+  startPickerCard,
+  statusInstallCard,
   viewCard,
   voiceLangCard,
 } from "./cards.js";
-import { sendManagedCard } from "./managed-card.js";
 import { sendCard, sendError, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
 
 /** Send the voice recognition-language picker card (current language marked).
- * Managed, so a click moves the ✅ on the card itself instead of re-sending. */
+ * A click re-sends the picker with the ✅ moved (regular interactive card). */
 export async function sendVoiceLangPicker(channel: LarkChannel, chatId: string): Promise<void> {
-  await sendManagedCard(channel, chatId, voiceLangCard(resolveWhisperLanguage("lark")));
+  await sendCard(channel, chatId, voiceLangCard(resolveWhisperLanguage("lark")));
 }
 
-/** Send the UI-language picker card (current language marked). Managed, like
- * the voice picker. */
+/** Send the UI-language picker card (current language marked). */
 export async function sendLangPicker(channel: LarkChannel, chatId: string): Promise<void> {
-  await sendManagedCard(channel, chatId, langCard(resolveUiLang("lark")));
+  await sendCard(channel, chatId, langCard(resolveUiLang("lark")));
 }
 
 /** Run the install health checks and send the redacted report. */
@@ -94,6 +98,37 @@ export async function sendRecentList(
   }
 }
 
+/** List claude processes running outside tmux; each card row offers a take-over
+ * button. Mirrors Telegram's `/adopt`. */
+export async function sendOrphanList(channel: LarkChannel, chatId: string): Promise<void> {
+  try {
+    const orphans = await findAdoptableOrphans();
+    if (orphans.length === 0) {
+      await sendText(channel, chatId, messages("lark").adoptEmpty);
+      return;
+    }
+    const rows = orphans.map((o) => ({ pid: o.pid, label: orphanLabel(o) }));
+    await sendCard(channel, chatId, orphanListCard(rows));
+  } catch (err) {
+    await sendError(channel, chatId, err);
+  }
+}
+
+/** Run the usage-reporting install and render the result card (with the
+ * foreign-statusLine choice buttons when needed). Mirrors `/status_install`. */
+export async function sendStatusInstall(
+  channel: LarkChannel,
+  chatId: string,
+  action: ForeignAction = "scan",
+): Promise<void> {
+  try {
+    const res = await runStatusInstall("lark", action);
+    await sendCard(channel, chatId, statusInstallCard(res.lines.join("\n"), res.foreignPending));
+  } catch (err) {
+    await sendError(channel, chatId, err);
+  }
+}
+
 /** Capture and send the current session's tmux pane in a view card. */
 export async function sendPeek(
   channel: LarkChannel,
@@ -107,7 +142,7 @@ export async function sendPeek(
   }
   try {
     const snapshot = await deps.bridge.capturePane(session);
-    const processed = deps.output.process(snapshot);
+    const processed = markSemantics(deps.output.process(snapshot));
     const mid = await sendCard(
       channel,
       chatId,
@@ -193,46 +228,80 @@ export async function sendCurrentProject(
   await sendText(channel, chatId, path ? `${line}\n${path}` : line);
 }
 
-/**
- * Validate + create a project from a raw path (mirrors the Telegram
- * `/add_project` handler): expand `~`, resolve abs path, check the directory
- * exists and is allowed, then switch to or create the tmux session.
- */
+/** Validate + create a project from a raw path (the typed `/add_project <path>`). */
 export async function addProject(
   channel: LarkChannel,
   deps: HandlerDeps,
   chatId: string,
   rawPath: string,
 ): Promise<void> {
-  const { resolvedPath, error } = await resolveProjectPath(rawPath, deps.config.cdAllowedDirs);
-  const m = messages("lark");
-  if (error === "not-a-directory") {
-    await sendText(channel, chatId, m.notADir(resolvedPath));
-    return;
-  }
-  if (error === "not-found") {
-    await sendText(channel, chatId, m.dirNotExist(resolvedPath));
-    return;
-  }
-  if (error === "not-allowed") {
-    await sendText(channel, chatId, m.pathNotAllowedPath(resolvedPath));
-    return;
-  }
+  await replyCreateProject(
+    channel,
+    deps,
+    chatId,
+    await createProjectFromPath(deps, chatScope("lark", chatId), rawPath),
+  );
+}
 
-  const sessionName = sessionNameFromPath(resolvedPath, deps.config.projectSessionPrefix);
-  try {
-    if (await deps.bridge.hasSession(sessionName)) {
-      await deps.currentProject.set(chatScope("lark", chatId), sessionName);
-      setPathForSession(sessionName, resolvedPath);
-      await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);
-      await sendText(channel, chatId, messages("lark").alreadySwitched);
-      return;
-    }
-    await createProjectSession(deps, chatScope("lark", chatId), sessionName, resolvedPath);
-    await sendText(channel, chatId, messages("lark").projectCreatedPath(resolvedPath));
-  } catch (err) {
-    await sendError(channel, chatId, err);
+/** After a fresh project session is created: with multiple configured launch
+ * commands, show the flavor picker card; with a single one, start it directly. */
+export async function startOrPickAfterCreate(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+  session: string,
+): Promise<void> {
+  if (deps.config.startCommands.length > 1) {
+    await sendCard(channel, chatId, startPickerCard(deps.config.startCommands));
+    return;
   }
+  const only = deps.config.startCommands[0];
+  await performStart(deps, session, only?.command);
+  await sendText(channel, chatId, messages("lark").claudeStartedWith(only?.label ?? "claude"));
+}
+
+/** Map a `createProjectFromPath` outcome to a Lark reply — shared by the typed
+ * `/add_project <path>` and the directory-browser "create here" button. */
+export async function replyCreateProject(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+  result: CreateProjectResult,
+): Promise<void> {
+  const m = messages("lark");
+  switch (result.status) {
+    case "invalid":
+      if (result.error === "not-a-directory")
+        await sendText(channel, chatId, m.notADir(result.resolvedPath));
+      else if (result.error === "not-found")
+        await sendText(channel, chatId, m.dirNotExist(result.resolvedPath));
+      else await sendText(channel, chatId, m.pathNotAllowedPath(result.resolvedPath));
+      return;
+    case "switched":
+      await sendText(channel, chatId, m.alreadySwitched);
+      return;
+    case "created":
+      await sendText(channel, chatId, m.projectCreatedPath(result.projectPath));
+      await startOrPickAfterCreate(channel, deps, chatId, result.sessionName);
+      return;
+    case "error":
+      await sendError(channel, chatId, new Error(result.message));
+      return;
+  }
+}
+
+/** Open the directory browser as a managed card (so navigation updates it in
+ * place). Mirrors the Telegram `/add_project` no-arg flow. */
+export async function sendBrowse(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<void> {
+  const view = startBrowse(chatScope("lark", chatId), deps.config.cdAllowedDirs);
+  // Regular (not managed/CardKit) card: CardKit-entity button callbacks don't
+  // fire in some Feishu app setups, whereas interactive-message buttons do. Each
+  // navigation re-sends a fresh card rather than updating in place.
+  await sendCard(channel, chatId, browseCard(view));
 }
 
 /**
@@ -260,6 +329,7 @@ export async function addRecentBySid(
       return;
     case "created":
       await sendText(channel, chatId, m.projectCreatedPath(r.projectPath));
+      await startOrPickAfterCreate(channel, deps, chatId, r.sessionName);
       return;
     case "error":
       await sendError(channel, chatId, new Error(r.message));
@@ -282,13 +352,20 @@ export async function sendGroupMenu(
     await sendCard(channel, chatId, groupBoundCard(binding.label));
     return;
   }
-  // Hide "new group" for projects that already have a group (one workspace ↔ one
-  // group); the handler also rejects it, but don't even offer the button.
-  const grouped = new Set(listBindings().map(({ binding: b }) => sessionShortId(b.sessionName)));
+  // From a private chat: show the EXISTING groups (so you can see what you have)
+  // plus a picker of recent projects that don't yet have a group. Hide "new
+  // group" for already-grouped projects (one workspace ↔ one group); the handler
+  // also rejects it, but don't even offer the button.
+  const bindings = listBindings();
+  const grouped = new Set(bindings.map(({ binding: b }) => sessionShortId(b.sessionName)));
   const buttons = (await recentProjectButtons(deps, chatScope("lark", chatId))).filter(
     (b) => !grouped.has(b.sid),
   );
-  await sendCard(channel, chatId, groupPickerCard(buttons, "make"));
+  const groups = bindings.map(({ binding }) => ({
+    label: binding.label,
+    workspacePath: binding.workspacePath,
+  }));
+  await sendCard(channel, chatId, groupOverviewCard(groups, buttons));
 }
 
 /** The recent-project picker in "bind" mode — used by the rebind button to pick a
@@ -300,6 +377,18 @@ export async function sendGroupBindPicker(
 ): Promise<void> {
   const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
   await sendCard(channel, chatId, groupPickerCard(buttons, "bind"));
+}
+
+/** Private-chat picker for "free parallel group": every recent project (including
+ * ones that already have a group) gets a 🆓 button that creates a NEW group on a
+ * fresh free session in that directory. */
+export async function sendFreeGroupPicker(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<void> {
+  const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
+  await sendCard(channel, chatId, groupPickerCard(buttons, "free"));
 }
 
 /**
