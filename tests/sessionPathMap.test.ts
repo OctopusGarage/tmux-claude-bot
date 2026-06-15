@@ -229,7 +229,14 @@ describe("isCdAllowed (property-based)", () => {
     });
   };
 
-  const ROOTS = ["/allow/root", "/srv/data", "/home/u/work"];
+  // Root under a deep, guaranteed-NONEXISTENT base so isCdAllowed's symlink
+  // canonicalization stays lexical-equivalent here (nothing on these paths exists,
+  // and the padding depth keeps the ≤6 `..` segments from climbing to `/` and into
+  // a real symlinked system dir like /etc → /private/etc on macOS). This pins the
+  // `..`-normalization + segment-boundary logic; the symlink behavior is covered
+  // by the dedicated realpath test above.
+  const PAD = "/__tcb_nonexistent__/p0/p1/p2/p3/p4/p5/p6/p7";
+  const ROOTS = [`${PAD}/allow/root`, `${PAD}/srv/data`, `${PAD}/home/u/work`];
   // Segments deliberately include `..`/`.` and names that collide with the roots,
   // so generated targets both escape and re-enter the allowed dirs.
   const seg = fc.constantFrom("a", "b", "root", "work", "data", "..", ".", "secret", "x");
