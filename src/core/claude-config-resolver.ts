@@ -54,7 +54,13 @@ function basename(p: string): string {
  */
 function isClaudeCommand(command: string, claudeName: string): boolean {
   const argv0 = command.trim().split(/\s+/)[0] ?? "";
-  return basename(argv0) === claudeName;
+  const name = basename(argv0);
+  // Flavored launchers (claude-stella, claude-yolo, …) are aliases/wrappers that
+  // exec the real `claude` binary, so the running process's argv0 is `claude`
+  // (or a `claude-<flavor>` wrapper) — NOT the configured launcher name. Match
+  // the generic claude binary as well as the exact configured name, mirroring
+  // isClaudeProcess in takeover.ts (only argv0 counts — never an argument).
+  return name === claudeName || name === "claude" || name.startsWith("claude-");
 }
 
 /**

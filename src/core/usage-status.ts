@@ -191,6 +191,10 @@ export async function buildStatusReport(
     lastPruneAt = now;
     pruneStaleSnapshots(now);
   }
+  // Usage reporting only makes sense for a running Claude. When it's stopped,
+  // just report the state — no usage lines, no /status_install nudge (the hint
+  // would be noise next to "not running").
+  if (!running) return top.join("\n");
   const snap = await resolveSnapshot(deps, session);
   const lines = snap ? formatUsageLines(snap, channel, now) : [];
   if (lines.length > 0) return [...top, ...lines].join("\n");
