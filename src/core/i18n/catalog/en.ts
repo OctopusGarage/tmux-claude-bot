@@ -326,6 +326,10 @@ Send any text → forwarded to Claude → reply`,
   groupNoRemoveInGroup:
     "🔒 Removing projects isn't allowed in a group (it affects others). Do it in a private chat with the bot.",
   groupFreePickerTitle: "🆓 New free-project group (same dir allowed)",
+  groupOverviewTitle: "🗂 Project groups",
+  groupOverviewExisting: "Existing project groups:",
+  groupOverviewNoGroups: "No project groups yet.",
+  groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
   btnFreeGroup: "🆓 Parallel group",
   freeGroupCreated: (label) => `🆓 Parallel group "${label}" created`,
 };

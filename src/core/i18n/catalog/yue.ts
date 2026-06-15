@@ -319,6 +319,10 @@ export const yue: Messages = {
     `🔒 本群已固定綁定「${label}」，無法切換至其他項目。如需更換,請用 🗂 → 改綁。`,
   groupNoRemoveInGroup: "🔒 群組中無法刪除項目（會影響其他人）。請至與機器人的私聊中刪除。",
   groupFreePickerTitle: "🆓 新增自由項目群組（可與現有群組同目錄）",
+  groupOverviewTitle: "🗂 項目群",
+  groupOverviewExisting: "已有項目群：",
+  groupOverviewNoGroups: "暫無項目群。",
+  groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
   btnFreeGroup: "🆓 平行群組",
   freeGroupCreated: (label) => `🆓 已建立平行群組「${label}」`,
 };

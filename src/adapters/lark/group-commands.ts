@@ -18,8 +18,9 @@ import { readRecentProjectLines } from "../../core/recentProjects.js";
 import { sessionNameFromPath } from "../../core/sessionPathMap.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
+import { groupBoundCard } from "./cards.js";
 import { chatKindOf, checkAction, type ProjectAction } from "./chat-policy.js";
-import { sendText } from "./replies.js";
+import { sendCard, sendText } from "./replies.js";
 import { createBoundChat } from "./resource.js";
 
 const m = () => messages("lark");
@@ -106,6 +107,7 @@ export async function makeBoundGroupBySid(
   bindGroup(created.chatId, { workspacePath: path, sessionName, label });
   await createProjectSession(deps, chatScope("lark", created.chatId), sessionName, path);
   await sendText(channel, created.chatId, m().groupBoundWelcome(label, path));
+  await sendCard(channel, created.chatId, groupBoundCard(label));
   await sendText(channel, originChatId, m().groupCreatedShort(label));
 }
 
@@ -154,6 +156,7 @@ async function createFreeGroupAtPath(
   setFreeProject(slot, { label });
   await createProjectSession(deps, chatScope("lark", created.chatId), sessionName, path);
   await sendText(channel, created.chatId, m().groupBoundWelcome(label, path));
+  await sendCard(channel, created.chatId, groupBoundCard(label));
   await sendText(channel, originChatId, m().freeGroupCreated(label));
 }
 
@@ -296,6 +299,7 @@ export async function handleNewGroup(
     created.chatId,
     m().groupBoundWelcome(target.label, target.workspacePath),
   );
+  await sendCard(channel, created.chatId, groupBoundCard(target.label));
   await sendText(channel, chatId, m().groupBoundWelcome(target.label, target.workspacePath));
 }
 

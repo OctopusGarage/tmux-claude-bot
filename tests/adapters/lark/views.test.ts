@@ -17,6 +17,7 @@ import {
   sendRecentList,
   sendVoiceLangPicker,
 } from "../../../src/adapters/lark/views.js";
+import { bindGroup, unbindGroup } from "../../../src/core/group-bindings.js";
 import { projectPathToHistoryDir } from "../../../src/core/history.js";
 import type { QueuedMessage } from "../../../src/core/queue.js";
 import { setPathForSession } from "../../../src/core/sessionPathMap.js";
@@ -24,6 +25,35 @@ import { fakeChannel, fakeDeps } from "./_fakes.js";
 
 const qmsg = (text: string): QueuedMessage =>
   ({ id: "x", text, chatId: "c", action: "text", resolve() {}, reject() {} }) as QueuedMessage;
+
+describe("sendGroupMenu — project-group overview (feature C)", () => {
+  const BOUND = "oc_alpha_grp";
+  afterEach(() => unbindGroup(BOUND));
+
+  it("from a private chat, lists existing groups (label + path) plus the create picker", async () => {
+    bindGroup(BOUND, {
+      workspacePath: "/proj/alpha",
+      sessionName: "tmux_proj_alpha",
+      label: "alpha",
+    });
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, fakeDeps(), "ou_dm_unbound");
+    const cards = JSON.stringify(channel.cards());
+    expect(cards).toContain("alpha"); // existing group is listed...
+    expect(cards).toContain("/proj/alpha"); // ...with its workspace path
+  });
+
+  it("from inside a bound group, still shows the bound-group management card", async () => {
+    bindGroup(BOUND, {
+      workspacePath: "/proj/alpha",
+      sessionName: "tmux_proj_alpha",
+      label: "alpha",
+    });
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, fakeDeps(), BOUND); // the bound chat itself
+    expect(JSON.stringify(channel.cards())).toContain("本群已绑定");
+  });
+});
 
 describe("language pickers go out as regular cards", () => {
   it("sendVoiceLangPicker sends the voice-language picker card", async () => {

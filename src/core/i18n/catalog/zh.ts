@@ -347,6 +347,10 @@ export const zh = {
     `🔒 本群已固定绑定「${label}」，不能切换到其他项目。如需更换，请用 🗂 → 改绑。`,
   groupNoRemoveInGroup: "🔒 在群里不能删除项目（会影响他人）。请到与机器人的私聊里删除。",
   groupFreePickerTitle: "🆓 新建自由项目群（可与现有群同目录）",
+  groupOverviewTitle: "🗂 项目群",
+  groupOverviewExisting: "已有项目群：",
+  groupOverviewNoGroups: "暂无项目群。",
+  groupOverviewItem: (label: string, path: string) => `• **${label}** — \`${path}\``,
   btnFreeGroup: "🆓 平行群",
   freeGroupCreated: (label: string) => `🆓 已创建平行群「${label}」`,
 };

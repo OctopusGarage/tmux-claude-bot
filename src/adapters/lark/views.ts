@@ -31,6 +31,7 @@ import { sleep } from "../../shared/utils/sleep.js";
 import {
   browseCard,
   groupBoundCard,
+  groupOverviewCard,
   groupPickerCard,
   langCard,
   orphanListCard,
@@ -328,13 +329,20 @@ export async function sendGroupMenu(
     await sendCard(channel, chatId, groupBoundCard(binding.label));
     return;
   }
-  // Hide "new group" for projects that already have a group (one workspace ↔ one
-  // group); the handler also rejects it, but don't even offer the button.
-  const grouped = new Set(listBindings().map(({ binding: b }) => sessionShortId(b.sessionName)));
+  // From a private chat: show the EXISTING groups (so you can see what you have)
+  // plus a picker of recent projects that don't yet have a group. Hide "new
+  // group" for already-grouped projects (one workspace ↔ one group); the handler
+  // also rejects it, but don't even offer the button.
+  const bindings = listBindings();
+  const grouped = new Set(bindings.map(({ binding: b }) => sessionShortId(b.sessionName)));
   const buttons = (await recentProjectButtons(deps, chatScope("lark", chatId))).filter(
     (b) => !grouped.has(b.sid),
   );
-  await sendCard(channel, chatId, groupPickerCard(buttons, "make"));
+  const groups = bindings.map(({ binding }) => ({
+    label: binding.label,
+    workspacePath: binding.workspacePath,
+  }));
+  await sendCard(channel, chatId, groupOverviewCard(groups, buttons));
 }
 
 /** The recent-project picker in "bind" mode — used by the rebind button to pick a

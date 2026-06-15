@@ -10,7 +10,7 @@ vi.mock("../../src/core/recentProjects.js", () => ({
 vi.mock("../../src/adapters/lark/resource.js", () => ({
   createBoundChat: vi.fn().mockResolvedValue({ chatId: "oc_new", name: "app #2" }),
 }));
-vi.mock("../../src/adapters/lark/replies.js", () => ({ sendText: vi.fn() }));
+vi.mock("../../src/adapters/lark/replies.js", () => ({ sendText: vi.fn(), sendCard: vi.fn() }));
 
 import { makeFreeGroupBySid } from "../../src/adapters/lark/group-commands.js";
 import { getFreeProject } from "../../src/core/free-projects.js";

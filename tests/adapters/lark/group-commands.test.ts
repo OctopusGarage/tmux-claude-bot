@@ -93,6 +93,8 @@ describe("group-commands", () => {
       expect(deps.bridge.createSession).toHaveBeenCalled();
       // Two welcome messages: one to the new group, one back to the p2p chat
       expect(channel.texts().filter((t) => t.includes("群组已绑定到")).length).toBe(2);
+      // Feature D: the bound-project card is sent into the new group.
+      expect(JSON.stringify(channel.cards())).toContain("本群已绑定");
     });
 
     it("replies groupCreateFailed and does not persist a binding when createBoundChat rejects", async () => {

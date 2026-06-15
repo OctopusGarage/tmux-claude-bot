@@ -297,6 +297,24 @@ export function adoptDoneCard(body: string, sid: string): object {
   ]);
 }
 
+/** Elements for a tappable project list: an empty-state message, or a labelled
+ * row + a `rowFor(p)` button row per project. Reused by listCard and the
+ * group-overview card's picker section. */
+function listElements<P extends { label: string }>(
+  emptyMsg: string,
+  projects: readonly P[],
+  rowFor: (p: P) => object | null,
+): object[] {
+  if (projects.length === 0) return [md(emptyMsg)];
+  const elements: object[] = [];
+  for (const p of projects) {
+    elements.push(md(p.label));
+    const row = rowFor(p);
+    if (row) elements.push(row);
+  }
+  return elements;
+}
+
 /** Shared skeleton for the tappable project lists: an empty-state message, or a
  * labelled row + a `rowFor(p)` button row per project, under one title. */
 function listCard<P extends { label: string }>(
@@ -305,14 +323,7 @@ function listCard<P extends { label: string }>(
   projects: readonly P[],
   rowFor: (p: P) => object | null,
 ): object {
-  if (projects.length === 0) return shell(title, [md(emptyMsg)]);
-  const elements: object[] = [];
-  for (const p of projects) {
-    elements.push(md(p.label));
-    const row = rowFor(p);
-    if (row) elements.push(row);
-  }
-  return shell(title, elements);
+  return shell(title, listElements(emptyMsg, projects, rowFor));
 }
 
 /** Alive-project list: one labelled row per project with switch/remove buttons
@@ -371,6 +382,30 @@ export function groupBoundCard(label: string): object {
       { text: m.btnUnbindGroup, value: { cmd: "unbind" }, style: "danger" },
     ]),
   ]);
+}
+
+/** From a private chat: the project-group overview — the existing groups (label
+ * + workspace path) plus a picker of recent projects that don't yet have a group
+ * (each with a "new group" button). Lets you SEE your groups, not just create. */
+export function groupOverviewCard(
+  groups: ReadonlyArray<{ label: string; workspacePath: string }>,
+  projects: RecentButton[],
+): object {
+  const m = messages("lark");
+  const elements: object[] = [md(m.groupOverviewExisting)];
+  if (groups.length === 0) {
+    elements.push(md(m.groupOverviewNoGroups));
+  } else {
+    for (const g of groups) elements.push(md(m.groupOverviewItem(g.label, g.workspacePath)));
+  }
+  elements.push(
+    HR,
+    md(m.groupPickerTitle),
+    ...listElements(m.groupMenuNoProjects, projects, (p) =>
+      gridRow([{ text: m.btnMakeGroup, value: { cmd: "makegroup", sid: p.sid } }]),
+    ),
+  );
+  return shell(m.groupOverviewTitle, elements);
 }
 
 /** The interactive /help menu card: a button for every command. When voice is

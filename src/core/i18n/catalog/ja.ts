@@ -334,6 +334,10 @@ export const ja: Messages = {
   groupNoRemoveInGroup:
     "🔒 グループ内ではプロジェクトを削除できません（他のメンバーに影響します）。bot とのプライベートチャットで行ってください。",
   groupFreePickerTitle: "🆓 フリープロジェクトのグループを作成（同一ディレクトリ可）",
+  groupOverviewTitle: "🗂 プロジェクトグループ",
+  groupOverviewExisting: "既存のプロジェクトグループ：",
+  groupOverviewNoGroups: "プロジェクトグループはまだありません。",
+  groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
   btnFreeGroup: "🆓 並行グループ",
   freeGroupCreated: (label) => `🆓 並行グループ「${label}」を作成しました`,
 };

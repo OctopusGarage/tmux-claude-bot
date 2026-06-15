@@ -333,6 +333,10 @@ Envía cualquier texto → se reenvía a Claude → respuesta`,
   groupNoRemoveInGroup:
     "🔒 Eliminar proyectos no se permite en un grupo (afecta a otros). Hazlo en un chat privado con el bot.",
   groupFreePickerTitle: "🆓 Nuevo grupo de proyecto libre (misma ruta permitida)",
+  groupOverviewTitle: "🗂 Grupos de proyecto",
+  groupOverviewExisting: "Grupos de proyecto existentes:",
+  groupOverviewNoGroups: "Aún no hay grupos de proyecto.",
+  groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
   btnFreeGroup: "🆓 Grupo paralelo",
   freeGroupCreated: (label) => `🆓 Grupo paralelo "${label}" creado`,
 };

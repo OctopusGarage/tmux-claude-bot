@@ -317,6 +317,10 @@ export const zhTW: Messages = {
     `🔒 本群已固定綁定「${label}」，不能切換到其他專案。如需更換，請用 🗂 → 改綁。`,
   groupNoRemoveInGroup: "🔒 在群裡不能刪除專案（會影響他人）。請到與機器人的私訊裡刪除。",
   groupFreePickerTitle: "🆓 新增自由專案群組（可與現有群組同目錄）",
+  groupOverviewTitle: "🗂 專案群",
+  groupOverviewExisting: "已有專案群：",
+  groupOverviewNoGroups: "尚無專案群。",
+  groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
   btnFreeGroup: "🆓 平行群組",
   freeGroupCreated: (label) => `🆓 已建立平行群組「${label}」`,
 };
