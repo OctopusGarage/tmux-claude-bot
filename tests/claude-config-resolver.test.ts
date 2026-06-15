@@ -81,6 +81,25 @@ describe("findClaudePid", () => {
     expect(findClaudePid(rows, 100, BIN)).toBe(200);
   });
 
+  it("matches the real `claude` even when the configured launcher is a flavor alias", () => {
+    // CLAUDE_START_COMMAND=claude-stella → claudeBin basename "claude-stella", but
+    // the alias execs the real binary so the running argv0 is "claude". Must still
+    // be found (regression: exact-name match reported a running claude as stopped).
+    const rows = [
+      { pid: 100, ppid: 1, command: "-zsh" },
+      { pid: 200, ppid: 100, command: "claude --dangerously-skip-permissions" },
+    ];
+    expect(findClaudePid(rows, 100, "claude-stella")).toBe(200);
+  });
+
+  it("matches a `claude-<flavor>` wrapper binary too", () => {
+    const rows = [
+      { pid: 100, ppid: 1, command: "-zsh" },
+      { pid: 200, ppid: 100, command: "/usr/local/bin/claude-ollama --x" },
+    ];
+    expect(findClaudePid(rows, 100, "claude-stella")).toBe(200);
+  });
+
   it("does not match an unrelated 'claude'-containing path", () => {
     const rows = [
       { pid: 100, ppid: 1, command: "-zsh" },
