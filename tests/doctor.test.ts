@@ -78,7 +78,8 @@ describe("runDoctorChecks", () => {
     const report = await runDoctorChecks(healthyProbes({ onPath: async (bin) => bin !== "tmux" }));
     const tmux = report.checks.find((c) => c.text.includes("tmux not found"));
     expect(tmux?.status).toBe("bad");
-    expect(tmux?.fix).toContain("brew install tmux");
+    // Platform-aware hint: "brew install tmux" (macOS) / "sudo apt install tmux …" (Linux).
+    expect(tmux?.fix).toContain("install tmux");
   });
 
   it("fails when node is missing from PATH", async () => {
