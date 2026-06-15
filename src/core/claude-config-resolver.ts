@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { logger } from "../shared/utils/logger.js";
+import { isClaudeProcess } from "./claude-process.js";
 
 export type { ProcRow } from "./platform/introspector.js";
 
@@ -53,14 +54,13 @@ function basename(p: string): string {
  * that merely mentions "claude" in an argument is not.
  */
 function isClaudeCommand(command: string, claudeName: string): boolean {
+  // `claudeName` is the configured launcher basename — an escape hatch for a
+  // custom-named binary. Otherwise fall back to the shared generic test, since
+  // flavored launchers (claude-stella, claude-yolo, …) are aliases that exec the
+  // real `claude` binary, so the running process's argv0 is `claude` (or a
+  // `claude-<flavor>` wrapper), NOT the configured launcher name.
   const argv0 = command.trim().split(/\s+/)[0] ?? "";
-  const name = basename(argv0);
-  // Flavored launchers (claude-stella, claude-yolo, …) are aliases/wrappers that
-  // exec the real `claude` binary, so the running process's argv0 is `claude`
-  // (or a `claude-<flavor>` wrapper) — NOT the configured launcher name. Match
-  // the generic claude binary as well as the exact configured name, mirroring
-  // isClaudeProcess in takeover.ts (only argv0 counts — never an argument).
-  return name === claudeName || name === "claude" || name.startsWith("claude-");
+  return basename(argv0) === claudeName || isClaudeProcess(command);
 }
 
 /**

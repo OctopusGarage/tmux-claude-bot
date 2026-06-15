@@ -172,6 +172,8 @@ export const ja: Messages = {
   alreadySwitched: "既に存在します · 切り替えました",
   projectCreated: "プロジェクトを作成しました",
   projectCreatedPath: (p) => `プロジェクトを作成しました：${p}`,
+  projectPathCollision: (p) =>
+    `⚠️ このディレクトリのセッション名が既存プロジェクト（${p}）と衝突します。どちらかをリネームしてください。`,
   browseTitle: "📂 プロジェクトの場所を選択",
   browseRootsTitle: "📂 開始ディレクトリを選択",
   browseEmpty: "（サブディレクトリなし）",

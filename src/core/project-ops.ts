@@ -78,7 +78,19 @@ export async function createProjectFromPath(
   if (error) return { status: "invalid", error, resolvedPath };
   const sessionName = sessionNameFromPath(resolvedPath, deps.config.projectSessionPrefix);
   try {
-    if (await deps.bridge.hasSession(sessionName)) {
+    const live = await deps.bridge.hasSession(sessionName);
+    // Guard the path↔session bijection: sessionNameFromPath maps both `/` and `-`
+    // to `-`, so distinct dirs (e.g. /a/b-c and /a-b/c) can collide on one session
+    // name. If a LIVE session for this name already belongs to a DIFFERENT path,
+    // refuse rather than silently switch the user into the wrong project.
+    const mapped = getPathBySession(sessionName);
+    if (live && mapped !== null && mapped !== resolvedPath) {
+      return {
+        status: "error",
+        message: messages(channelFromScope(scope)).projectPathCollision(mapped),
+      };
+    }
+    if (live) {
       await deps.currentProject.set(scope, sessionName);
       setPathForSession(sessionName, resolvedPath);
       await appendRecentProject(resolvedPath, deps.config.projectSessionPrefix);

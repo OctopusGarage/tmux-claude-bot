@@ -190,6 +190,8 @@ export const zh = {
   alreadySwitched: "已存在 · 已切换",
   projectCreated: "项目已创建",
   projectCreatedPath: (p: string) => `项目已创建：${p}`,
+  projectPathCollision: (p: string) =>
+    `⚠️ 此目录的会话名与已有项目（${p}）冲突，重命名其一后才能同时使用。`,
   browseTitle: "📂 选择项目位置",
   browseRootsTitle: "📂 选择起始目录",
   browseEmpty: "（无子目录）",

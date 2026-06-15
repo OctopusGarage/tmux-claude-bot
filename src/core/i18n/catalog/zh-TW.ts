@@ -168,6 +168,8 @@ export const zhTW: Messages = {
   alreadySwitched: "已存在 · 已切換",
   projectCreated: "專案已建立",
   projectCreatedPath: (p) => `專案已建立：${p}`,
+  projectPathCollision: (p) =>
+    `⚠️ 此目錄的工作階段名稱與既有專案（${p}）衝突，請重新命名其一後再同時使用。`,
   browseTitle: "📂 選擇專案位置",
   browseRootsTitle: "📂 選擇起始目錄",
   browseEmpty: "（無子目錄）",
