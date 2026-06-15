@@ -28,7 +28,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "scripts/dev-env.sh tsx watch src/index.ts",
     "build": "tsup",
     "prepublishOnly": "npm run build",
     "start": "node dist/cli.js run",

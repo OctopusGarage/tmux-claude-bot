@@ -110,7 +110,17 @@ The project root directory name `tmux-claude-bot` is used as the process identit
 ## Development Conventions
 
 - `npm run build` - Bundle to `dist/` via tsup (what the launchd service runs)
-- `npm run dev` or `tsx src/index.ts` - Start development
+- `npm run dev` - Start development with hot-reload. At launch it resolves which
+  profile to run against: by default, if the deployed prod dir
+  (`~/.tmux-claude-bot`, or `$TMUX_CLAUDE_BOT_DIR`) has a `.env`, it borrows the
+  prod **config and state** so dev mirrors the real projects/sessions. Set
+  `TCB_DEV_LOCAL=1` to switch back to the repo's own `.env` + local state (the
+  dev profile, stored in the repo root, gitignored). With no prod install it
+  falls back to the local repo. An explicit `TCB_STATE_DIR`/`TCB_ENV_FILE` wins
+  over all of this (how `dev.sh` and tests pin their dirs). NOTE: running
+  `npm run dev` against the prod profile shares prod's state dir, so the instance
+  lock blocks it while the managed service is up — use `./dev.sh` (auto
+  pause/resume) or pause the service first.
 - Commands exposed via Telegram Bot menu
 
 ## Internationalization (i18n) copy style
