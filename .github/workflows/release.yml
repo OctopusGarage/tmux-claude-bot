@@ -14,6 +14,10 @@ jobs:
         with:
           fetch-depth: 0 # full history + tags so the changelog can diff against the previous tag
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # Pin cosign so its CLI behavior can't drift (v3 defaulting to the new
+          # bundle format silently broke the old --output-signature flags).
+          cosign-release: v3.1.1
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,8 +50,7 @@ jobs:
             echo
             echo '```bash'
             echo "cosign verify-blob tmux-claude-bot-${TAG}.tar.gz \\"
-            echo "  --signature tmux-claude-bot-${TAG}.tar.gz.sig \\"
-            echo "  --certificate tmux-claude-bot-${TAG}.tar.gz.pem \\"
+            echo "  --bundle tmux-claude-bot-${TAG}.tar.gz.cosign.bundle \\"
             echo "  --certificate-identity-regexp 'https://github.com/${REPO}/.github/workflows/release.yml@.*' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
@@ -79,9 +82,9 @@ jobs:
 
           # Keyless-sign the tarball with Sigstore (Fulcio short-lived cert +
           # Rekor transparency log; signer identity = this workflow's OIDC
-          # token). Attaching the .sig + .pem lets consumers run
-          # `cosign verify-blob` to verify the release tarball's provenance.
+          # token). cosign 3.x emits a single Sigstore bundle (signature + cert);
+          # attaching it lets consumers run `cosign verify-blob --bundle …` to
+          # verify the release tarball's provenance.
           cosign sign-blob --yes "${STAGE}.tar.gz" \
-            --output-signature "${STAGE}.tar.gz.sig" \
-            --output-certificate "${STAGE}.tar.gz.pem"
-          gh release upload "$TAG" "${STAGE}.tar.gz.sig" "${STAGE}.tar.gz.pem"
+            --bundle "${STAGE}.tar.gz.cosign.bundle"
+          gh release upload "$TAG" "${STAGE}.tar.gz.cosign.bundle"
