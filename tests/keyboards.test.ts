@@ -200,23 +200,23 @@ describe("encodeControlAction <-> parseCallbackData round-trip", () => {
 });
 
 describe("buildControlKeyboard", () => {
-  it("collapsed shows esc/clear/compact/peek/history/list/queue plus a 'more' toggle", () => {
+  it("collapsed leads with esc/enter/interrupt + peek/history/list/queue plus a 'more' toggle", () => {
     const kb = buildControlKeyboard("abc123") as unknown as {
       inline_keyboard: { text: string; callback_data?: string }[][];
     };
     const datas = callbackDatas(kb);
+    // most-used mid-task controls are one tap (parity with Lark's control panel)
     expect(datas).toContain("a:esc:abc123");
-    expect(datas).toContain("a:clear:abc123");
-    expect(datas).toContain("a:compact:abc123");
+    expect(datas).toContain("a:enter:abc123");
+    expect(datas).toContain("a:interrupt:abc123");
     expect(datas).toContain("pk:abc123"); // peek
     expect(datas).toContain("hi:abc123"); // history
     expect(datas).toContain("la"); // list alive projects
     expect(datas).toContain("qs"); // queue status
     expect(datas).toContain("m:abc123"); // expand toggle
-    // /new is gone; other tmux control keys stay in the expanded view
-    expect(datas).not.toContain("a:new:abc123");
-    expect(datas).not.toContain("a:enter:abc123");
-    expect(datas).not.toContain("a:interrupt:abc123");
+    // clear/compact/restart move to the expanded view
+    expect(datas).not.toContain("a:clear:abc123");
+    expect(datas).not.toContain("a:compact:abc123");
     expect(datas).not.toContain("a:restart:abc123");
   });
 });

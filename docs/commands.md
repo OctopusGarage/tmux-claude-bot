@@ -33,6 +33,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `status_install` | Install usage reporting (statusLine snapshot) for /status |
 | `queue_status` | Show message queue status |
 | `history` | Show recent conversation history (`/history N` for the Nth recent round) |
+| `sessions` | List resumable Claude sessions for the current project (tap one to resume `claude --resume`) |
 | `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |
 | `voice_install` | Install voice transcription (Apple Silicon) |
 | `voice_lang` | Set voice recognition language (zh/en/yue/ja/es/auto) |

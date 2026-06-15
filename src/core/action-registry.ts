@@ -55,14 +55,16 @@ export const ACTION_META: Partial<Record<MessageAction, ActionMeta>> = {
 // ── Button row groups ────────────────────────────────────────────────────────
 // Inner array = one button row. Edit these to reposition buttons across ALL surfaces.
 
-/** Primary Telegram inline keyboard rows (always visible beneath results). */
+/** Primary control rows for the EXPANDED Telegram control panel. */
 export const TELEGRAM_PRIMARY_ROWS: MessageAction[][] = [
   ["enter", "interrupt"],
   ["esc", "restart"],
 ];
 
-/** Single action row for the collapsed Telegram control keyboard. */
-export const TELEGRAM_COLLAPSED_ROW: MessageAction[] = ["esc", "clear", "compact"];
+/** Single action row for the collapsed Telegram control keyboard (shown beneath
+ * every result). Leads with the most-used mid-task controls — matching Lark's
+ * control panel; clear/compact live in the expanded panel. */
+export const TELEGRAM_COLLAPSED_ROW: MessageAction[] = ["esc", "enter", "interrupt"];
 
 /** Additional rows shown in the expanded Telegram control keyboard. */
 export const TELEGRAM_EXPANDED_ROWS: MessageAction[][] = [
@@ -263,6 +265,7 @@ export const BOT_COMMANDS: BotCommand[] = [
     command: "history",
     description: "Show recent conversation history (default: last, /history N for Nth recent)",
   },
+  { command: "sessions", description: "List resumable Claude sessions" },
   { command: "doctor", description: "Run install health checks" },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
   { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },

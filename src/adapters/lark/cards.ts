@@ -426,16 +426,19 @@ export function helpCard(group = false, voiceInstallable = false): object {
         { text: m.btnAdoptConfirm, value: { cmd: "adoptlist" } },
         { text: m.btnCurrent, value: { cmd: "current" } },
       ];
-  const prefsRow: ButtonSpec[] = group
-    ? [
-        { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
-        { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
-      ]
+  // Two buttons per row so the grid doesn't wrap awkwardly on narrow screens.
+  const langRow: ButtonSpec[] = [
+    { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
+    { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
+  ];
+  const prefsRows: ButtonSpec[][] = group
+    ? [langRow]
     : [
-        { text: m.btnGroupMenu, value: { cmd: "groupmenu" } },
-        { text: m.btnFreeGroup, value: { cmd: "freegroupmenu" } },
-        { text: m.btnVoiceLang, value: { cmd: "voicelangmenu" } },
-        { text: m.btnUiLang, value: { cmd: "uilangmenu" } },
+        [
+          { text: m.btnGroupMenu, value: { cmd: "groupmenu" } },
+          { text: m.btnFreeGroup, value: { cmd: "freegroupmenu" } },
+        ],
+        langRow,
       ];
   return shell(m.helpTitle, [
     md(buildHelpBody("lark", "lark")),
@@ -454,6 +457,6 @@ export function helpCard(group = false, voiceInstallable = false): object {
     ...(voiceInstallable
       ? [gridRow([{ text: m.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }])]
       : []),
-    gridRow(prefsRow),
+    ...prefsRows.map((row) => gridRow(row)),
   ]);
 }
