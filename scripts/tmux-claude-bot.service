@@ -1,0 +1,13 @@
+[Unit]
+Description=tmux-claude-bot (drives Claude Code in tmux)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=__PROJECT_DIR__/scripts/systemd-wrapper.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -7,6 +7,7 @@ import {
   releaseInstanceLock,
 } from "./core/instance-lock.js";
 import { detectUncleanRestart, markCleanShutdown } from "./core/lifecycle.js";
+import { managedRestartCommand } from "./core/platform/service-hints.js";
 import { getPathBySession } from "./core/sessionPathMap.js";
 import { logger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
@@ -21,8 +22,8 @@ try {
 } catch (err) {
   if (err instanceof InstanceLockHeldError) {
     console.error(
-      `[bot] ${err.message}. If that instance is launchd-managed, restart it with ` +
-        `\`launchctl kickstart -k\` instead of starting a second copy.`,
+      `[bot] ${err.message}. If that instance is the managed service, restart it with ` +
+        `\`${managedRestartCommand()}\` instead of starting a second copy.`,
     );
     process.exit(1);
   }

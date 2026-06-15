@@ -2,13 +2,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { logger } from "../shared/utils/logger.js";
 
-const execFileAsync = promisify(execFile);
+export type { ProcRow } from "./platform/introspector.js";
 
-export interface ProcRow {
-  pid: number;
-  ppid: number;
-  command: string;
-}
+import type { ProcRow } from "./platform/introspector.js";
+import { type ProcessIntrospector, selectIntrospector } from "./platform/introspector.js";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Extract an env var value from `ps eww -o command= -p <pid>` output (the env is
@@ -163,8 +162,9 @@ export function createConfigResolver(
   };
 }
 
-/** Real probe backed by tmux / ps / process.kill. macOS uses `ps eww` (no /proc). */
-export function createExecProbe(): ResolverProbe {
+/** Real probe: tmux for pane pid, an OS introspector for the process table,
+ * process.kill for liveness. */
+export function createExecProbe(intro: ProcessIntrospector = selectIntrospector()): ResolverProbe {
   return {
     async panePid(session: string): Promise<number | null> {
       try {
@@ -179,35 +179,8 @@ export function createExecProbe(): ResolverProbe {
         return null;
       }
     },
-    async snapshot(): Promise<ProcRow[]> {
-      try {
-        const { stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid=,command="], {
-          timeout: 5000,
-          maxBuffer: 8 * 1024 * 1024,
-        });
-        const rows: ProcRow[] = [];
-        for (const line of stdout.split("\n")) {
-          const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
-          if (m?.[1] && m[2]) {
-            rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3] ?? "" });
-          }
-        }
-        return rows;
-      } catch {
-        return [];
-      }
-    },
-    async readProcEnv(pid: number): Promise<string> {
-      try {
-        const { stdout } = await execFileAsync("ps", ["eww", "-o", "command=", "-p", String(pid)], {
-          timeout: 5000,
-          maxBuffer: 4 * 1024 * 1024,
-        });
-        return stdout;
-      } catch {
-        return "";
-      }
-    },
+    snapshot: () => intro.snapshot(),
+    readProcEnv: (pid) => intro.readProcEnv(pid),
     async isAlive(pid: number): Promise<boolean> {
       try {
         process.kill(pid, 0);

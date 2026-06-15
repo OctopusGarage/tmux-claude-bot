@@ -12,6 +12,7 @@ import {
 } from "./claude-config-resolver.js";
 import { matchFlavorAlias, parseFlavorAliases } from "./flavor-alias.js";
 import { DEFAULT_CONFIG_ROOT, listClaudeSessions } from "./history.js";
+import { type ProcessIntrospector, selectIntrospector } from "./platform/introspector.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -285,9 +286,12 @@ export async function takeover(orphan: OrphanClaude, deps: TakeoverDeps): Promis
   return result;
 }
 
-/** Real probe backed by ps / lsof / tmux / process.kill. macOS-oriented (lsof). */
-export function createTakeoverProbe(): TakeoverProbe {
-  const base = createExecProbe();
+/** Real probe: introspector for the process table / open files / cwd, plus tmux
+ * pane enumeration, signals, and shell-rc reading. */
+export function createTakeoverProbe(
+  intro: ProcessIntrospector = selectIntrospector(),
+): TakeoverProbe {
+  const base = createExecProbe(intro);
   return {
     snapshot: () => base.snapshot(),
     readProcEnv: (pid) => base.readProcEnv(pid),
@@ -314,33 +318,16 @@ export function createTakeoverProbe(): TakeoverProbe {
       }
     },
     async openSessionFile(pid: number): Promise<string | null> {
-      try {
-        const { stdout } = await execFileAsync("lsof", ["-a", "-p", String(pid), "-Fn"], {
-          timeout: 5000,
-        });
-        const m = stdout.match(
+      const files = await intro.listOpenFiles(pid);
+      for (const f of files) {
+        const m = f.match(
           /\/projects\/[^/\n]+\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl/,
         );
-        return m?.[1] ?? null;
-      } catch {
-        return null;
+        if (m?.[1]) return m[1];
       }
+      return null;
     },
-    async cwdOf(pid: number): Promise<string | null> {
-      try {
-        const { stdout } = await execFileAsync(
-          "lsof",
-          ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
-          {
-            timeout: 5000,
-          },
-        );
-        const line = stdout.split("\n").find((l) => l.startsWith("n"));
-        return line ? line.slice(1) : null;
-      } catch {
-        return null;
-      }
-    },
+    cwdOf: (pid) => intro.cwdOf(pid),
     signal(pid: number, sig: Signal): void {
       try {
         process.kill(pid, sig);

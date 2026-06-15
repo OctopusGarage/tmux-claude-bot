@@ -1,9 +1,9 @@
-import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { sleep } from "../shared/utils/sleep.js";
 import { type ConfigResolver, parseClaudeConfigDir } from "./claude-config-resolver.js";
 import { DEFAULT_CONFIG_ROOT } from "./history.js";
 import { messages } from "./i18n/index.js";
+import { copyToClipboard } from "./platform/clipboard.js";
 import { channelFromScope } from "./project-manager.js";
 import { botSelfRepoWarning } from "./project-ops.js";
 import { getPathBySession, sessionNameFromPath, setPathForSession } from "./sessionPathMap.js";
@@ -56,19 +56,17 @@ export function attachCommand(sessionName: string): string {
 }
 
 /**
- * Copy the attach command to the macOS clipboard (best-effort) and return it, so
- * the success reply can show it too. Auto-attaching the *original* terminal isn't
- * reliable on macOS (no input injection into a foreign tty), so we hand the user
- * a one-paste command that works in any terminal. No-op where pbcopy is absent.
+ * Copy the attach command to the system clipboard (best-effort) and return it,
+ * so the success reply can show it too. Auto-attaching the *original* terminal
+ * isn't reliable (no input injection into a foreign tty), so we hand the user a
+ * one-paste command that works in any terminal. Cross-platform (pbcopy / wl-copy
+ * / xclip / xsel); a no-op where no clipboard tool exists (e.g. a headless box).
  */
 export function copyAttachCommand(sessionName: string): string {
   const cmd = attachCommand(sessionName);
-  try {
-    const child = execFile("pbcopy", () => {});
-    child.stdin?.end(cmd);
-  } catch {
-    // No clipboard tool (non-macOS) — the command is still shown in the reply.
-  }
+  // Fire-and-forget: best-effort copy; the command is also shown in the reply,
+  // so a failure (or no clipboard tool) is harmless. copyToClipboard never rejects.
+  void copyToClipboard(cmd);
   return cmd;
 }
 

@@ -68,6 +68,23 @@ launchctl list | grep octopusgarage                                        # con
 
 If duplicate instances already exist (e.g. from an accidental `start.sh`), kill the **non-launchd** lineages by PID first (check `ps -o ppid=` — launchd's instance has PPID=1 and matches the PID in `launchctl list`), then `kickstart -k` so launchd's single instance is the only survivor.
 
+### Linux: systemd --user is the manager
+
+On Linux the bot is installed as a systemd `--user` service (unit
+`tmux-claude-bot`, `Restart=always` — the launchd `KeepAlive` analogue), with
+`loginctl enable-linger` so it survives logout on headless servers.
+
+**To restart (the correct way):**
+
+    systemctl --user restart tmux-claude-bot   # reloads the last-built dist/
+    systemctl --user status tmux-claude-bot     # confirm it's running
+    journalctl --user -u tmux-claude-bot -f     # live logs
+
+As with launchd, `Restart=always` means `scripts/stop.sh` won't keep it down;
+manage it via `systemctl --user` (or `npm run service:pause|resume|restart`,
+which dispatch by OS). The instance is identified the same way:
+`tmux-claude-bot.*(src/index.ts|dist/cli.js)`.
+
 ### Scripts (manual/dev only — NOT for the launchd-managed instance)
 
 ```bash

@@ -9,7 +9,7 @@ function healthyProbes(over: Partial<DoctorProbes> = {}): DoctorProbes {
   return {
     readEnv: () => new Map([["TELEGRAM_BOT_TOKEN", VALID_TOKEN]]),
     onPath: async () => true,
-    launchdLoaded: async () => true,
+    serviceLoaded: async () => true,
     botProcessCount: async () => 1,
     fileExists: () => true,
     ...over,
@@ -88,8 +88,8 @@ describe("runDoctorChecks", () => {
     expect(node?.fix).toContain("nvm");
   });
 
-  it("fails when the launchd agent is not loaded", async () => {
-    const report = await runDoctorChecks(healthyProbes({ launchdLoaded: async () => false }));
+  it("fails when the service is not loaded", async () => {
+    const report = await runDoctorChecks(healthyProbes({ serviceLoaded: async () => false }));
     expect(report.checks.some((c) => c.status === "bad" && c.text.includes("not loaded"))).toBe(
       true,
     );
@@ -150,7 +150,7 @@ describe("renderDoctorReport", () => {
             ["LARK_APP_ID", "cli_secret123"],
             ["LARK_APP_SECRET", "s"],
           ]),
-        launchdLoaded: async () => false,
+        serviceLoaded: async () => false,
       }),
     );
     const text = renderDoctorReport(report, { redacted: true });

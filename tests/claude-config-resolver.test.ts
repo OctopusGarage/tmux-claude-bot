@@ -11,6 +11,7 @@ import {
   parseClaudeConfigDir,
   type ResolverProbe,
 } from "../src/core/claude-config-resolver.js";
+import { selectIntrospector } from "../src/core/platform/introspector.js";
 
 describe("parseClaudeConfigDir", () => {
   it("extracts CLAUDE_CONFIG_DIR from ps eww output", () => {
@@ -195,6 +196,26 @@ describe("resolveConfigRoot when the pane can't be queried (tmux gone)", () => {
   it("falls back to the default root when nothing was ever resolved", async () => {
     const r = createConfigResolver(fakeProbe({ panePid: async () => null }), OPTS);
     expect(await r.resolveConfigRoot("s")).toBe("/home/.claude");
+  });
+});
+
+describe("createExecProbe composition", () => {
+  it("delegates snapshot/readProcEnv to the injected introspector", async () => {
+    const intro = {
+      snapshot: async () => [{ pid: 1, ppid: 0, command: "init" }],
+      readProcEnv: async (pid: number) => `PID=${pid} CLAUDE_CONFIG_DIR=/tmp/cfg`,
+      listOpenFiles: async () => [],
+      cwdOf: async () => null,
+    };
+    const probe = createExecProbe(intro);
+    expect(await probe.snapshot()).toEqual([{ pid: 1, ppid: 0, command: "init" }]);
+    expect(await probe.readProcEnv(42)).toContain("CLAUDE_CONFIG_DIR=/tmp/cfg");
+    expect(typeof probe.now()).toBe("number");
+  });
+
+  it("defaults to the platform-selected introspector", () => {
+    expect(selectIntrospector()).toBeDefined();
+    expect(createExecProbe()).toHaveProperty("snapshot");
   });
 });
 

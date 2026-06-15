@@ -1,12 +1,12 @@
 #!/bin/bash
 # Local dev with hot-reload, borrowing the DEPLOYED (prod) config so code changes
 # take effect immediately against the real token / proxy / Feishu / Claude command
-# -- no second .env to drift. Pauses the managed launchd service first (the same
-# token would 409) and resumes it on exit, for a seamless prod <-> dev switch.
+# -- no second .env to drift. Pauses the managed service first (launchd on macOS,
+# systemd --user on Linux; the same token would 409) and resumes it on exit, for
+# a seamless prod <-> dev switch.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-LABEL="com.octopusgarage.tmux-claude-bot"
 PROD_DIR="${TMUX_CLAUDE_BOT_DIR:-$HOME/.tmux-claude-bot}"
 PROD_ENV="$PROD_DIR/.env"
 
@@ -16,8 +16,10 @@ if [ ! -f "$PROD_ENV" ]; then
   exit 1
 fi
 
+# Pause the managed service (launchd/systemd) only if it's actually up; service.sh
+# owns the per-OS "is it running" check so we don't duplicate the branch here.
 PAUSED=0
-if launchctl list "$LABEL" >/dev/null 2>&1; then
+if scripts/service.sh running; then
   echo "=> Pausing managed service to avoid a 409 (resumes on exit)..."
   npm run service:pause || true
   PAUSED=1

@@ -10,7 +10,7 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![platform: macOS](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)](#prerequisites)
+[![platform: macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-000000?logo=linux&logoColor=white)](#prerequisites)
 [![Checked with Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?logo=biome)](https://biomejs.dev)
 
 <p align="center">
@@ -153,6 +153,8 @@ The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + s
 
 ### Prerequisites
 
+Runs on macOS (managed by launchd) and Linux (managed by a systemd `--user` service; `loginctl enable-linger` keeps it running on headless servers).
+
 - Node.js 22+ (`engines: node >=22`)
 - tmux
 - Claude Code CLI (`claude-yolo` or similar)
@@ -195,7 +197,7 @@ Claude, Gemini, or an agent with shell access) — it downloads the release, rea
 bundled guide, and walks you through it:
 
 ```text
-Install "tmux-claude-bot" on my Mac for me (open-source, macOS-only). Download the latest
+Install "tmux-claude-bot" on my machine for me (open-source; macOS or Linux). Download the latest
 release tarball from https://github.com/OctopusGarage/tmux-claude-bot/releases/latest,
 extract it, read the INSTALL.md inside, and follow it. Guide me step by step and ask me
 for anything it needs (like my Telegram bot token).

@@ -3,6 +3,7 @@ import type { ProcRow } from "../src/core/claude-config-resolver.js";
 import { DEFAULT_CONFIG_ROOT } from "../src/core/history.js";
 import {
   buildResumeCommand,
+  createTakeoverProbe,
   findOrphanClaudes,
   isClaudeProcess,
   isPaneBusy,
@@ -228,5 +229,33 @@ describe("takeover", () => {
     const d = deps(probe);
     await takeover({ ...ORPHAN, startCommand: "claude-stella --resume sess-9" }, d);
     expect(d.startInSession).toHaveBeenCalledWith("tcb-proj", "claude-stella --resume sess-9");
+  });
+});
+
+describe("createTakeoverProbe composition", () => {
+  it("openSessionFile extracts the session id from the introspector's open files", async () => {
+    const intro = {
+      snapshot: async () => [],
+      readProcEnv: async () => "",
+      listOpenFiles: async () => [
+        "/dev/null",
+        "/home/u/.claude/projects/foo/12345678-1234-1234-1234-123456789abc.jsonl",
+      ],
+      cwdOf: async () => "/home/u/project",
+    };
+    const probe = createTakeoverProbe(intro);
+    expect(await probe.openSessionFile(200)).toBe("12345678-1234-1234-1234-123456789abc");
+    expect(await probe.cwdOf(200)).toBe("/home/u/project");
+  });
+
+  it("openSessionFile returns null when no jsonl is open", async () => {
+    const intro = {
+      snapshot: async () => [],
+      readProcEnv: async () => "",
+      listOpenFiles: async () => ["/dev/null", "/tmp/socket"],
+      cwdOf: async () => null,
+    };
+    const probe = createTakeoverProbe(intro);
+    expect(await probe.openSessionFile(200)).toBeNull();
   });
 });

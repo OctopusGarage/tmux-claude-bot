@@ -34,6 +34,11 @@ jobs:
       # platform-independent anyway — once on ubuntu is enough.
       - run: shellcheck --severity=warning install.sh dev.sh scripts/*.sh
         if: matrix.os == 'ubuntu-latest'
+      # systemd is present on the ubuntu runner; validate the unit file. A live
+      # `systemctl --user enable` can't run here (no user session bus) - that's
+      # a manual smoke on a real Linux host.
+      - run: scripts/verify-systemd-unit.sh
+        if: matrix.os == 'ubuntu-latest'
       - run: npx biome check .
       - run: npx tsc --noEmit
       - run: npx tsc -p tsconfig.tests.json --noEmit

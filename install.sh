@@ -1,5 +1,5 @@
 #!/bin/bash
-# One-line installer for tmux-claude-bot (macOS).
+# One-line installer for tmux-claude-bot (macOS / Linux).
 #
 #   curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
 #
@@ -18,7 +18,10 @@ info() { printf '\033[1;34m=>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; }
 
-[ "$(uname)" = "Darwin" ] || { err "tmux-claude-bot is macOS-only (launchd)."; exit 1; }
+case "$(uname)" in
+  Darwin|Linux) ;;
+  *) err "tmux-claude-bot supports macOS and Linux only."; exit 1 ;;
+esac
 command -v git  >/dev/null 2>&1 || { err "git not found - run: xcode-select --install"; exit 1; }
 
 # Determine mode: local clone (run AS a file from a checkout) vs remote curl|bash.
@@ -116,7 +119,7 @@ cd "$PROJECT_DIR"
 
 # Prerequisites.
 command -v node >/dev/null 2>&1 || { err "node not found - install via nvm: https://github.com/nvm-sh/nvm"; exit 1; }
-command -v tmux >/dev/null 2>&1 || warn "tmux not found - install with: brew install tmux"
+command -v tmux >/dev/null 2>&1 || warn "tmux not found - install it (macOS: brew install tmux | Debian/Ubuntu: sudo apt install tmux)"
 command -v claude >/dev/null 2>&1 || warn "Claude Code CLI not found - see https://docs.anthropic.com/en/docs/claude-code (or set CLAUDE_START_COMMAND)."
 
 if [ "$MATERIALIZE" = 1 ]; then
@@ -147,10 +150,10 @@ fi
 
 # Service.
 if [ -z "${TCB_SKIP_SERVICE:-}" ]; then
-  info "Installing launchd service..."
-  scripts/install-launchd.sh
+  info "Installing service..."
+  scripts/install-service.sh
 else
-  info "TCB_SKIP_SERVICE set - skipping launchd registration."
+  info "TCB_SKIP_SERVICE set - skipping service registration."
 fi
 
 info "Done. Installed at $PROJECT_DIR"
@@ -159,4 +162,4 @@ info "  Health check:  cd $PROJECT_DIR && node dist/cli.js doctor"
 info "  Reconfigure:   cd $PROJECT_DIR && node dist/cli.js setup --reconfigure"
 info "  Add Feishu:    cd $PROJECT_DIR && node dist/cli.js setup:lark   (scan a QR; works with or instead of Telegram)"
 info "  Uninstall:     cd $PROJECT_DIR && node dist/cli.js service uninstall"
-info "  Live logs:     tail -f $PROJECT_DIR/logs/launchd.err.log   (absolute path; runs from anywhere)"
+info "  Live logs:     tail -f $PROJECT_DIR/logs/launchd.out.log $PROJECT_DIR/logs/launchd.err.log"

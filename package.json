@@ -2,7 +2,7 @@
   "name": "@octopusgarage/tmux-claude-bot",
   "version": "0.1.7",
   "license": "MIT",
-  "description": "Telegram/Feishu bot that drives Claude Code in tmux sessions on macOS",
+  "description": "Telegram/Feishu bot that drives Claude Code in tmux sessions on macOS and Linux",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/OctopusGarage/tmux-claude-bot.git"
@@ -37,8 +37,8 @@
     "setup:lark": "NODE_NO_WARNINGS=1 tsx src/scripts/lark-setup.ts",
     "doctor": "NODE_NO_WARNINGS=1 tsx src/scripts/doctor.ts",
     "whisper:install": "scripts/install-whisper.sh",
-    "service:install": "scripts/install-launchd.sh",
-    "service:uninstall": "scripts/uninstall-launchd.sh",
+    "service:install": "scripts/install-service.sh",
+    "service:uninstall": "scripts/uninstall-service.sh",
     "service:status": "scripts/service.sh status",
     "service:pause": "scripts/service.sh pause",
     "service:resume": "scripts/service.sh resume",

@@ -55,7 +55,7 @@ jobs:
             echo "Prefer an AI assistant? Paste this to ChatGPT / Claude / Gemini (or a shell agent):"
             echo
             echo '```text'
-            echo 'Install "tmux-claude-bot" on my Mac for me (open-source, macOS-only). Download the latest'
+            echo 'Install "tmux-claude-bot" on my machine for me (open-source; macOS or Linux). Download the latest'
             echo "release tarball from https://github.com/${REPO}/releases/latest, extract it, read the"
             echo 'INSTALL.md inside, and follow it. Guide me step by step and ask me for anything it needs'
             echo '(like my Telegram bot token).'
