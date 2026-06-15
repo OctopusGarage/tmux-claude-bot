@@ -13,6 +13,7 @@ import { orphanLabel } from "../../core/takeover.js";
 import { findAdoptableOrphans } from "../../core/takeover-service.js";
 import { runWorkspaceCommand } from "../../core/workspace-command.js";
 import { normalizeError } from "../../shared/utils/error.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
@@ -21,6 +22,7 @@ import {
   buildOrphanKeyboard,
   buildRecentKeyboard,
   buildSessionsKeyboard,
+  buildStartPickerKeyboard,
 } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
@@ -28,6 +30,7 @@ import {
   recentProjectButtons,
   removeProjectBySession,
   resolveAliveSessionByShortId,
+  startOrPickAfterCreate,
   switchToProject,
 } from "./project-ops.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
@@ -83,7 +86,28 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
   for (const action of getTelegramActions()) {
     const a = action;
-    bot.command(a, async (ctx) => handleQueuedCommand(ctx, deps, a, undefined, replyTarget));
+    bot.command(a, async (ctx) => {
+      // `/start` and `/restart` with multiple configured launch commands show the
+      // flavor picker (mirroring the inline buttons) instead of silently using the
+      // default. Falls through to the normal queued action when there's only one
+      // command, or no current project.
+      if ((a === "start" || a === "restart") && deps.config.startCommands.length > 1) {
+        const session = await deps.currentProject.get(tgScope(ctx));
+        if (session) {
+          await reply(ctx, "info", messages("telegram").startPickerPrompt, {
+            session,
+            replyMarkup: buildStartPickerKeyboard(
+              deps.config.startCommands,
+              sessionShortId(session),
+              a === "restart" ? "restart" : "start",
+            ),
+            replyTarget,
+          });
+          return;
+        }
+      }
+      await handleQueuedCommand(ctx, deps, a, undefined, replyTarget);
+    });
   }
 
   bot.command("peek", async (ctx) => {
@@ -131,7 +155,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("new_free", async (ctx) => {
-    await handleNewFreeCommand(ctx, deps, tgScope(ctx), (kind, text) => reply(ctx, kind, text));
+    const session = await handleNewFreeCommand(ctx, deps, tgScope(ctx), (kind, text) =>
+      reply(ctx, kind, text),
+    );
+    if (session) await startOrPickAfterCreate(deps, ctx, session, replyTarget);
   });
 
   bot.command("current_project", async (ctx) => {
@@ -250,7 +277,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       const scope = tgScope(ctx);
       consumeFreeLabel(scope);
       const label = text.trim() === "-" ? "" : text.trim();
-      await createFreeAndReply(deps, scope, label, (kind, body) => reply(ctx, kind, body));
+      const session = await createFreeAndReply(deps, scope, label, (kind, body) =>
+        reply(ctx, kind, body),
+      );
+      if (session) await startOrPickAfterCreate(deps, ctx, session, replyTarget);
       return;
     }
 
@@ -360,26 +390,30 @@ export async function handleNewFreeCommand(
   deps: HandlerDeps,
   scope: string,
   send: (tone: Tone, text: string) => void | Promise<void>,
-): Promise<void> {
+): Promise<string | null> {
   const label = (ctx.message?.text ?? "").split(" ").slice(1).join(" ").trim();
-  await createFreeAndReply(deps, scope, label, send);
+  return createFreeAndReply(deps, scope, label, send);
 }
 
 /** Create a free project for `label` (empty = unnamed) and report via `send`.
- * Shared by the `/new_free` command and the button-driven label-capture flow. */
+ * Returns the new session name when created (for the caller's start/pick step),
+ * else null. Shared by `/new_free` and the button-driven label-capture flow. */
 export async function createFreeAndReply(
   deps: HandlerDeps,
   scope: string,
   label: string,
   send: (tone: Tone, text: string) => void | Promise<void>,
-): Promise<void> {
+): Promise<string | null> {
   const m = messages("telegram");
   const res = await createFreeProject(deps, scope, label);
   if (res.status === "created") {
     await send("info", m.freeProjectCreated(res.slot, label || null));
-  } else if (res.status === "limit") {
+    return res.sessionName;
+  }
+  if (res.status === "limit") {
     await send("err", m.freeProjectLimit(FREE_PROJECT_LIMIT));
   } else {
     await send("err", m.errorPrefix(res.message));
   }
+  return null;
 }

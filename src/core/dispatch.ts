@@ -47,6 +47,18 @@ export async function performStart(
   deps.configResolver.invalidate(session); // new process → re-detect config dir
 }
 
+/** Restart Claude into `command`'s flavor (default: the primary), resuming the
+ * conversation (`--continue`). Used by the restart-command picker. */
+export async function performRestart(
+  deps: HandlerDeps,
+  session: string,
+  command?: string,
+): Promise<void> {
+  assertClaudeBinaryAccessible(command ?? deps.config.claudeStartCommand);
+  await deps.claude.gracefulRestartWithContinue(session, command);
+  deps.configResolver.invalidate(session); // new process → re-detect config dir
+}
+
 /**
  * The protocol-agnostic command layer. Given a queued message (an action + the
  * session it targets) and the core service bundle, perform the work against

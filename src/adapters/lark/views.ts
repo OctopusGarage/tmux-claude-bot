@@ -1,6 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { startBrowse } from "../../core/dir-browser.js";
+import { performStart } from "../../core/dispatch.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
 import { getBinding, isProjectGroup, listBindings } from "../../core/group-bindings.js";
 import {
@@ -37,6 +38,7 @@ import {
   orphanListCard,
   projectListCard,
   recentListCard,
+  startPickerCard,
   statusInstallCard,
   viewCard,
   voiceLangCard,
@@ -235,15 +237,34 @@ export async function addProject(
 ): Promise<void> {
   await replyCreateProject(
     channel,
+    deps,
     chatId,
     await createProjectFromPath(deps, chatScope("lark", chatId), rawPath),
   );
+}
+
+/** After a fresh project session is created: with multiple configured launch
+ * commands, show the flavor picker card; with a single one, start it directly. */
+export async function startOrPickAfterCreate(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+  session: string,
+): Promise<void> {
+  if (deps.config.startCommands.length > 1) {
+    await sendCard(channel, chatId, startPickerCard(deps.config.startCommands));
+    return;
+  }
+  const only = deps.config.startCommands[0];
+  await performStart(deps, session, only?.command);
+  await sendText(channel, chatId, messages("lark").claudeStartedWith(only?.label ?? "claude"));
 }
 
 /** Map a `createProjectFromPath` outcome to a Lark reply — shared by the typed
  * `/add_project <path>` and the directory-browser "create here" button. */
 export async function replyCreateProject(
   channel: LarkChannel,
+  deps: HandlerDeps,
   chatId: string,
   result: CreateProjectResult,
 ): Promise<void> {
@@ -261,6 +282,7 @@ export async function replyCreateProject(
       return;
     case "created":
       await sendText(channel, chatId, m.projectCreatedPath(result.projectPath));
+      await startOrPickAfterCreate(channel, deps, chatId, result.sessionName);
       return;
     case "error":
       await sendError(channel, chatId, new Error(result.message));
@@ -307,6 +329,7 @@ export async function addRecentBySid(
       return;
     case "created":
       await sendText(channel, chatId, m.projectCreatedPath(r.projectPath));
+      await startOrPickAfterCreate(channel, deps, chatId, r.sessionName);
       return;
     case "error":
       await sendError(channel, chatId, new Error(r.message));

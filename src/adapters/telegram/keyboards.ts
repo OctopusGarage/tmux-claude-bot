@@ -41,6 +41,7 @@ export type CallbackAction =
   | { kind: "uilang"; lang: Lang }
   | { kind: "resume"; sessionId: string }
   | { kind: "startpick"; idx: number; sid: string }
+  | { kind: "restartpick"; idx: number; sid: string }
   | { kind: "adoptshow"; pid: number }
   | { kind: "adoptexec"; pid: number }
   | { kind: "adoptcancel" }
@@ -105,11 +106,11 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (!sessionId) return null;
     return { kind: "resume", sessionId };
   }
-  if (tag === "sp") {
+  if (tag === "sp" || tag === "rp") {
     const idx = Number(parts[1]);
     const sid = parts[2];
     if (parts.length !== 3 || !Number.isInteger(idx) || idx < 0 || !sid) return null;
-    return { kind: "startpick", idx, sid };
+    return { kind: tag === "rp" ? "restartpick" : "startpick", idx, sid };
   }
   if (tag === "as" || tag === "ae") {
     const pid = Number(parts[1]);
@@ -226,10 +227,12 @@ export function buildLangKeyboard(current: Lang): InlineKeyboard {
 export function buildStartPickerKeyboard(
   commands: { label: string }[],
   sid: string,
+  mode: "start" | "restart" = "start",
 ): InlineKeyboard {
+  const prefix = mode === "restart" ? "rp" : "sp";
   const kb = new InlineKeyboard();
   commands.forEach((c, i) => {
-    kb.text(`🚀 ${c.label}`, `sp:${i}:${sid}`);
+    kb.text(`🚀 ${c.label}`, `${prefix}:${i}:${sid}`);
     if (i < commands.length - 1) kb.row();
   });
   return kb;

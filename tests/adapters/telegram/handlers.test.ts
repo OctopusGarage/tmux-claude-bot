@@ -87,6 +87,62 @@ function runCmd(name: string, text: string, deps: ReturnType<typeof depsFor>) {
   return handlers[`cmd:${name}`]?.(ctx(text));
 }
 
+describe("registerHandlers — /start flavor picker", () => {
+  beforeEach(() => replyMock.mockClear());
+
+  it("shows the picker when multiple start commands are configured", async () => {
+    const deps = depsFor({
+      config: {
+        startCommands: [
+          { label: "claude-stella", command: "claude-stella" },
+          { label: "claude-yolo", command: "claude-yolo" },
+        ],
+      },
+      currentProject: { get: vi.fn(async () => "tmux_proj_x") },
+    });
+    await runCmd("start", "/start", deps);
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      expect.any(String),
+      expect.objectContaining({ replyMarkup: expect.anything() }),
+    );
+  });
+
+  it("does not show the picker when only one start command is configured", async () => {
+    const deps = depsFor({
+      config: { startCommands: [{ label: "claude", command: "bash" }] },
+      currentProject: { get: vi.fn(async () => "tmux_proj_x") },
+    });
+    await runCmd("start", "/start", deps);
+    expect(replyMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      expect.any(String),
+      expect.objectContaining({ replyMarkup: expect.anything() }),
+    );
+  });
+
+  it("/restart also shows the picker when multiple commands are configured", async () => {
+    const deps = depsFor({
+      config: {
+        startCommands: [
+          { label: "claude-stella", command: "claude-stella" },
+          { label: "claude-yolo", command: "claude-yolo" },
+        ],
+      },
+      currentProject: { get: vi.fn(async () => "tmux_proj_x") },
+    });
+    await runCmd("restart", "/restart", deps);
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      expect.any(String),
+      expect.objectContaining({ replyMarkup: expect.anything() }),
+    );
+  });
+});
+
 describe("registerHandlers — /ws command", () => {
   let stateDir: string;
   let origEnv: string | undefined;

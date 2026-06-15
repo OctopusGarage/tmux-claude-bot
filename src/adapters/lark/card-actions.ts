@@ -8,7 +8,7 @@ import {
   requestNewFolder,
   resolveBrowseAction,
 } from "../../core/dir-browser.js";
-import { type MessageAction, performStart } from "../../core/dispatch.js";
+import { type MessageAction, performRestart, performStart } from "../../core/dispatch.js";
 import { getBinding, isProjectGroup } from "../../core/group-bindings.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import { projectLabel } from "../../core/project-label.js";
@@ -248,14 +248,26 @@ async function handleBindHere(ctx: CardCtx): Promise<void> {
   await bindCurrentGroupBySid(channel, deps, evt.chatId, value.sid);
 }
 
-async function handleStartPick({ channel, deps, evt, value }: CardCtx): Promise<void> {
+async function pickAndLaunch(
+  { channel, deps, evt, value }: CardCtx,
+  restart: boolean,
+): Promise<void> {
   if (typeof value?.idx !== "number") return;
   const pick = deps.config.startCommands[value.idx];
   if (!pick) return;
   const session = await resolveSession(channel, deps, evt.chatId);
   if (!session) return;
-  await performStart(deps, session, pick.command);
+  if (restart) await performRestart(deps, session, pick.command);
+  else await performStart(deps, session, pick.command);
   await sendText(channel, evt.chatId, messages("lark").claudeStartedWith(pick.label));
+}
+
+async function handleStartPick(ctx: CardCtx): Promise<void> {
+  await pickAndLaunch(ctx, false);
+}
+
+async function handleRestartPick(ctx: CardCtx): Promise<void> {
+  await pickAndLaunch(ctx, true);
 }
 
 /** Tap a candidate → confirm card (interrupting + ending the original is
@@ -334,7 +346,12 @@ async function handleBrowseCreate({ channel, deps, evt }: CardCtx): Promise<void
   const cwd = browseCwd(scope);
   if (!cwd) return; // state expired
   clearBrowse(scope);
-  await replyCreateProject(channel, evt.chatId, await createProjectFromPath(deps, scope, cwd));
+  await replyCreateProject(
+    channel,
+    deps,
+    evt.chatId,
+    await createProjectFromPath(deps, scope, cwd),
+  );
 }
 
 /** Prompt for a new folder name (Feishu has no force-reply, so a plain prompt —
@@ -421,6 +438,7 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   unbind: ({ channel, deps, evt, chatKind }) => handleUnbind(channel, deps, evt.chatId, chatKind),
   restore: ({ channel, deps, evt }) => handleRestore(channel, deps, evt.chatId),
   startpick: handleStartPick,
+  restartpick: handleRestartPick,
 };
 
 /**
@@ -462,10 +480,11 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
     }
     const chatKind: ChatKind = isP2p ? "p2p" : "group";
 
-    // Multi-command start: show a picker instead of starting the single default.
+    // Multi-command start/restart: show a picker instead of using the default.
     // With a single start command, fall through to the queued-action routing.
-    if (cmd === "start" && deps.config.startCommands.length > 1) {
-      await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands));
+    if ((cmd === "start" || cmd === "restart") && deps.config.startCommands.length > 1) {
+      const mode = cmd === "restart" ? "restart" : "start";
+      await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
       return;
     }
 

@@ -184,7 +184,7 @@ export class ClaudeRunner {
     await this.start(sessionName);
   }
 
-  async gracefulRestartWithContinue(sessionName?: string): Promise<void> {
+  async gracefulRestartWithContinue(sessionName?: string, command?: string): Promise<void> {
     this.running = false;
     await this.bridge.sendExit(sessionName);
     await this.sleep(2000);
@@ -192,7 +192,7 @@ export class ClaudeRunner {
       this.running = true;
       return;
     }
-    await this.bridge.sendKeys(`${this.claudeCommand} --continue`, sessionName);
+    await this.bridge.sendKeys(`${command ?? this.claudeCommand} --continue`, sessionName);
     await this.waitUntilReady(sessionName);
     this.running = true;
   }

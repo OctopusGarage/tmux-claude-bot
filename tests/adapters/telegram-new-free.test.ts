@@ -20,6 +20,24 @@ describe("handleNewFreeCommand", () => {
     expect(replies[0]?.text).toContain("#1");
   });
 
+  it("returns the new session name on success (so the caller can start/pick)", async () => {
+    vi.spyOn(ops, "createFreeProject").mockResolvedValue({
+      status: "created",
+      sessionName: "tmux_proj_free_2",
+      slot: 2,
+    });
+    const ctx = { message: { text: "/new_free x" } } as never;
+    const session = await handleNewFreeCommand(ctx, {} as never, "telegram:1", () => {});
+    expect(session).toBe("tmux_proj_free_2");
+  });
+
+  it("returns null when not created", async () => {
+    vi.spyOn(ops, "createFreeProject").mockResolvedValue({ status: "limit" });
+    const ctx = { message: { text: "/new_free" } } as never;
+    const session = await handleNewFreeCommand(ctx, {} as never, "telegram:1", () => {});
+    expect(session).toBeNull();
+  });
+
   it("replies the limit message when full", async () => {
     vi.spyOn(ops, "createFreeProject").mockResolvedValue({ status: "limit" });
     const replies: Array<{ kind: string; text: string }> = [];

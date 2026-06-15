@@ -7,7 +7,7 @@ import {
   requestNewFolder,
   resolveBrowseAction,
 } from "../../core/dir-browser.js";
-import { executeMessage, performStart } from "../../core/dispatch.js";
+import { executeMessage, performRestart, performStart } from "../../core/dispatch.js";
 import { clearFreeLabel, requestFreeLabel } from "../../core/free-label-prompt.js";
 import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { createProjectFromPath } from "../../core/project-ops.js";
@@ -348,26 +348,35 @@ export async function handleCallbackQuery(
       await sendHistory(ctx, deps, sessionName, 0, replyTarget);
       return;
     }
-    if (parsed.kind === "startpick") {
+    if (parsed.kind === "startpick" || parsed.kind === "restartpick") {
       const pick = deps.config.startCommands[parsed.idx];
       if (!pick) {
         await safeAnswerCallback(ctx);
         return;
       }
-      await safeAnswerCallback(ctx, messages("telegram").toastSent("start"));
-      await performStart(deps, sessionName, pick.command);
+      const restart = parsed.kind === "restartpick";
+      await safeAnswerCallback(ctx, messages("telegram").toastSent(restart ? "restart" : "start"));
+      if (restart) await performRestart(deps, sessionName, pick.command);
+      else await performStart(deps, sessionName, pick.command);
       await reply(ctx, "ok", messages("telegram").claudeStartedWith(pick.label), {
         session: sessionName,
         replyTarget,
       });
       return;
     }
-    // Multi-command start: show a picker instead of starting the single default.
-    if (parsed.action === "start" && deps.config.startCommands.length > 1) {
+    // Multi-command start/restart: show a picker instead of using the default.
+    if (
+      (parsed.action === "start" || parsed.action === "restart") &&
+      deps.config.startCommands.length > 1
+    ) {
       await safeAnswerCallback(ctx);
       await reply(ctx, "info", messages("telegram").startPickerPrompt, {
         session: sessionName,
-        replyMarkup: buildStartPickerKeyboard(deps.config.startCommands, parsed.sid),
+        replyMarkup: buildStartPickerKeyboard(
+          deps.config.startCommands,
+          parsed.sid,
+          parsed.action === "restart" ? "restart" : "start",
+        ),
         replyTarget,
       });
       return;

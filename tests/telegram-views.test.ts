@@ -116,7 +116,29 @@ describe("replyCreateProject (telegram)", () => {
 
   it("maps switched / created / error outcomes to a reply", async () => {
     expect(await run({ status: "switched", sessionName: "s", projectPath: "/p" })).toHaveLength(1);
-    expect(await run({ status: "created", sessionName: "s", projectPath: "/p" })).toHaveLength(1);
+    // created → the "created" confirmation PLUS the start/pick step (single
+    // configured command here, so it auto-starts and replies "started").
+    expect(await run({ status: "created", sessionName: "s", projectPath: "/p" })).toHaveLength(2);
     expect(await run({ status: "error", message: "boom" })).toHaveLength(1);
+  });
+
+  it("created with multiple start commands shows the flavor picker", async () => {
+    const { ctx, replies } = fakeCtx(7);
+    const deps = fakeDeps({
+      config: {
+        startCommands: [
+          { label: "claude-stella", command: "claude-stella" },
+          { label: "claude-yolo", command: "claude-yolo" },
+        ],
+      },
+    });
+    await replyCreateProject(
+      ctx,
+      deps,
+      { status: "created", sessionName: "s", projectPath: "/p" },
+      replyTarget,
+    );
+    expect(replies).toHaveLength(2); // created confirmation + picker
+    expect(replies[1]?.extra?.reply_markup).toBeDefined();
   });
 });

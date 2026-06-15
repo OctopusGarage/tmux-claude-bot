@@ -19,7 +19,7 @@ import {
   buildStatusInstallChoiceKeyboard,
 } from "./keyboards.js";
 import { MSG } from "./messages.js";
-import { aliveProjectButtons } from "./project-ops.js";
+import { aliveProjectButtons, startOrPickAfterCreate } from "./project-ops.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
@@ -141,6 +141,7 @@ export async function replyCreateProject(
         body: result.projectPath,
         replyTarget,
       });
+      await startOrPickAfterCreate(deps, ctx, result.sessionName, replyTarget);
       return;
     case "error":
       await reply(ctx, "err", result.message, { replyTarget });
