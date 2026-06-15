@@ -109,6 +109,16 @@ function fmtReset(epochSec: number | null): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** Host of a base URL for display, or the default endpoint when unset. */
+function apiHost(baseUrl: string | null): string {
+  if (!baseUrl) return "api.anthropic.com";
+  try {
+    return new URL(baseUrl).host || baseUrl;
+  } catch {
+    return baseUrl;
+  }
+}
+
 /** Render the usage lines (context / 5h / weekly) present in a snapshot, plus a
  * staleness note when the data is old. Empty when the snapshot carries no figures. */
 export function formatUsageLines(snap: UsageSnapshot, channel: Channel, now: number): string[] {
@@ -167,13 +177,25 @@ export async function buildStatusReport(
   now: number = Date.now(),
 ): Promise<string> {
   const m = messages(channel);
-  const head = running ? m.statusRunning : m.statusNotRunning;
+  const top: string[] = [running ? m.statusRunning : m.statusNotRunning];
+  // Endpoint/auth of the running claude: API (key/token set) vs subscription
+  // (claude.ai login), plus the base URL host. Best-effort; never shows the key.
+  if (running) {
+    const api = await deps.configResolver.resolveApiInfo?.(session);
+    if (api) {
+      const label = api.mode === "api" ? m.statusModeApi : m.statusModeSubscription;
+      top.push(m.statusApiLine(label, apiHost(api.baseUrl)));
+    }
+  }
   if (now - lastPruneAt > PRUNE_THROTTLE_MS) {
     lastPruneAt = now;
     pruneStaleSnapshots(now);
   }
   const snap = await resolveSnapshot(deps, session);
   const lines = snap ? formatUsageLines(snap, channel, now) : [];
-  // No usage figures → nudge the user toward the one-tap install.
-  return lines.length > 0 ? [head, ...lines].join("\n") : [head, m.statusUsageHint].join("\n");
+  if (lines.length > 0) return [...top, ...lines].join("\n");
+  // A snapshot exists (the statusLine IS installed) but carries no figures yet —
+  // they're null until Claude's first API response. Don't re-nudge to install;
+  // only do that when there's no snapshot at all.
+  return [...top, snap ? m.statusUsagePending : m.statusUsageHint].join("\n");
 }

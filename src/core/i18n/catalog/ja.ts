@@ -120,13 +120,17 @@ export const ja: Messages = {
 
   // -- status usage install --
   statusUsageHint: "💡 使用量を見たい?/status_install で設定できます",
+  statusUsagePending: "📊 使用量データはまだありません——次の Claude API 応答後に表示されます",
+  statusModeApi: "API",
+  statusModeSubscription: "サブスク",
+  statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "📊 使用量レポートの導入",
   statusInstallNoClaude:
     "実行中の Claude が見つからず、導入先を特定できません。Claude を起動してから導入してください。",
   statusInstallInstalled: (dir) => `✅ ${dir} に使用量レポートを導入`,
   statusInstallAlready: (dir) => `⏭ ${dir} は導入済み`,
   statusInstallForeignPrompt: (dirs) =>
-    `⚠️ 次のディレクトリには既にカスタム statusLine があります。どうしますか?\n${dirs.join("\n")}`,
+    `⚠️ 次のディレクトリには既にカスタム statusLine があります。どうしますか？「ラップ」を推奨します（既存の statusLine を保持し、使用量レポートを追加）。\n${dirs.join("\n")}`,
   statusInstallOverwritten: (dir, backup) => `🔁 ${dir} を上書き(バックアップ: ${backup})`,
   statusInstallWrapped: (dir, backup) =>
     `📦 ${dir} をラップ: 既存の表示を保持 + 使用量\n   ⚠️ statusLine は本 bot のラッパー経由になります。表示が崩れたらバックアップから復元: ${backup}`,
@@ -136,7 +140,7 @@ export const ja: Messages = {
   statusInstallError: (dir, msg) => `❌ ${dir}: ${msg}`,
   btnStatusInstall: "📊 使用量を導入",
   btnStatusOverwrite: "🔁 上書き",
-  btnStatusWrap: "📦 ラップ",
+  btnStatusWrap: "📦 ラップ（推奨）",
   btnStatusSnippet: "✍️ スニペット",
   btnStatusSkip: "✖️ スキップ",
   queueGlobalHeader: "━━ 🌐 グローバルキュー ━━",

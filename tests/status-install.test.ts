@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   categorizeStatusLine,
@@ -6,6 +10,14 @@ import {
 } from "../src/core/status-install.js";
 
 const OURS = "/state/status-snapshots/statusline.sh";
+
+let hasShellTools = false;
+try {
+  execFileSync("bash", ["-c", "command -v jq >/dev/null && command -v date >/dev/null"]);
+  hasShellTools = true;
+} catch {
+  /* jq/date absent — skip the run-the-script test */
+}
 
 describe("categorizeStatusLine", () => {
   it("is clean when no statusLine is set", () => {
@@ -42,4 +54,27 @@ describe("statuslineScript / manualSnippet", () => {
     expect(snip).toContain("jq -c");
     expect(snip).not.toContain("#!/usr/bin/env bash");
   });
+
+  it.skipIf(!hasShellTools)(
+    "renders a rich two-line statusline (ctx bar + session/weekly + reset) from real input",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "tcb-sl-"));
+      const f = join(dir, "statusline.sh");
+      writeFileSync(f, statuslineScript(dir), { mode: 0o755 });
+      const input = JSON.stringify({
+        model: { display_name: "Opus 4.8" },
+        context_window: { used_percentage: 88 },
+        rate_limits: {
+          five_hour: { used_percentage: 98, resets_at: 1781503200 },
+          seven_day: { used_percentage: 10, resets_at: 1782075600 },
+        },
+      });
+      const out = execFileSync("bash", ["-c", `printf %s '${input}' | '${f}'`]).toString();
+      expect(out).toContain("88% ctx");
+      expect(out).toContain("session 98%");
+      expect(out).toContain("weekly 10%");
+      expect(out).toContain("(reset ");
+      expect(out).toContain("█"); // progress bar rendered
+    },
+  );
 });

@@ -23,6 +23,24 @@ export function parseClaudeConfigDir(psEwwOutput: string): string | null {
   return parseEnvVar(psEwwOutput, "CLAUDE_CONFIG_DIR");
 }
 
+/** What endpoint/auth a running claude is using, mined from its process env.
+ * `baseUrl` is null when ANTHROPIC_BASE_URL is unset (= default api.anthropic.com).
+ * `mode` is "api" when an API key/token is set, else "subscription" (claude.ai
+ * OAuth login). NEVER carries the key itself — only its presence. */
+export interface ClaudeApiInfo {
+  baseUrl: string | null;
+  mode: "api" | "subscription";
+}
+
+/** Derive {@link ClaudeApiInfo} from a process env blob (ps eww / /proc environ). */
+export function parseApiInfo(envBlob: string): ClaudeApiInfo {
+  const baseUrl = parseEnvVar(envBlob, "ANTHROPIC_BASE_URL");
+  const hasKey =
+    parseEnvVar(envBlob, "ANTHROPIC_API_KEY") !== null ||
+    parseEnvVar(envBlob, "ANTHROPIC_AUTH_TOKEN") !== null;
+  return { baseUrl, mode: hasKey ? "api" : "subscription" };
+}
+
 function basename(p: string): string {
   return p.split("/").pop() ?? p;
 }
@@ -83,6 +101,9 @@ export interface ConfigResolver {
   resolveConfigRoot(session: string): Promise<string>;
   /** Whether a claude process is running in the session's pane (process-based). */
   isClaudeRunning(session: string): Promise<boolean>;
+  /** Endpoint/auth mode of the running claude, or null when none is running.
+   * Optional so existing fakes need not implement it. */
+  resolveApiInfo?(session: string): Promise<ClaudeApiInfo | null>;
   /** Drop the cached entry — call on lifecycle changes (/clear, /compact, switch…). */
   invalidate(session: string): void;
 }
@@ -154,6 +175,14 @@ export function createConfigResolver(
       if (await cachedPidAlive(session)) return true; // cheap path
       const scan = await scanPane(session);
       return scan?.claudePid != null;
+    },
+
+    async resolveApiInfo(session: string): Promise<ClaudeApiInfo | null> {
+      const pid = (await cachedPidAlive(session))
+        ? (cache.get(session) as CacheEntry).claudePid
+        : ((await scanPane(session))?.claudePid ?? null);
+      if (pid === null) return null;
+      return parseApiInfo(await probe.readProcEnv(pid));
     },
 
     invalidate(session: string): void {

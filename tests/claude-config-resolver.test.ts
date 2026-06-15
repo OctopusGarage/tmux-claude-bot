@@ -8,10 +8,32 @@ import {
   createConfigResolver,
   createExecProbe,
   findClaudePid,
+  parseApiInfo,
   parseClaudeConfigDir,
   type ResolverProbe,
 } from "../src/core/claude-config-resolver.js";
 import { selectIntrospector } from "../src/core/platform/introspector.js";
+
+describe("parseApiInfo", () => {
+  it("reports api mode + base url when an auth token is set (and never the token)", () => {
+    const env =
+      "claude --flag ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic ANTHROPIC_AUTH_TOKEN=sk-secret PWD=/y";
+    const info = parseApiInfo(env);
+    expect(info).toEqual({ baseUrl: "https://api.minimaxi.com/anthropic", mode: "api" });
+    expect(JSON.stringify(info)).not.toContain("sk-secret");
+  });
+
+  it("reports api mode for ANTHROPIC_API_KEY", () => {
+    expect(parseApiInfo("claude ANTHROPIC_API_KEY=sk-x").mode).toBe("api");
+  });
+
+  it("reports subscription mode (no key) with null base url by default", () => {
+    expect(parseApiInfo("claude --dangerously-skip-permissions")).toEqual({
+      baseUrl: null,
+      mode: "subscription",
+    });
+  });
+});
 
 describe("parseClaudeConfigDir", () => {
   it("extracts CLAUDE_CONFIG_DIR from ps eww output", () => {

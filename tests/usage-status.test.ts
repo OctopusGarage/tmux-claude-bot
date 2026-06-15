@@ -1,7 +1,18 @@
-import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/core/sessionPathMap.js", () => ({ getPathBySession: () => "/proj/x" }));
+vi.mock("../src/core/history.js", () => ({
+  listClaudeSessions: async () => [{ sessionId: "sid-1" }],
+}));
+
 import {
+  buildStatusReport,
   formatUsageLines,
   parseUsageSnapshot,
+  snapshotDir,
   type UsageSnapshot,
 } from "../src/core/usage-status.js";
 
@@ -88,5 +99,66 @@ describe("formatUsageLines", () => {
         now,
       ),
     ).toHaveLength(0);
+  });
+});
+
+describe("buildStatusReport — installed-but-no-data vs not-installed", () => {
+  const deps = { configResolver: { resolveConfigRoot: async () => "/cfg" } } as never;
+  let orig: string | undefined;
+  beforeEach(() => {
+    orig = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = fs.mkdtempSync(join(tmpdir(), "tcb-us-"));
+    fs.mkdirSync(snapshotDir(), { recursive: true });
+  });
+  afterEach(() => {
+    if (orig === undefined) delete process.env.TCB_STATE_DIR;
+    else process.env.TCB_STATE_DIR = orig;
+  });
+
+  it("shows the 'data pending' line (not the install nudge) when a snapshot exists with no figures", async () => {
+    fs.writeFileSync(
+      join(snapshotDir(), "sid-1.json"),
+      JSON.stringify({
+        session_id: "sid-1",
+        context_pct: null,
+        five_hour_pct: null,
+        updated_at: 1,
+      }),
+    );
+    const out = await buildStatusReport(deps, "sess", "telegram", true);
+    expect(out).not.toContain("/status_install"); // already installed → no re-nudge
+    expect(out).toContain("📊");
+  });
+
+  it("shows the API mode + base url host when the resolver reports api mode", async () => {
+    const apiDeps = {
+      configResolver: {
+        resolveConfigRoot: async () => "/cfg",
+        resolveApiInfo: async () => ({
+          baseUrl: "https://api.minimaxi.com/anthropic",
+          mode: "api",
+        }),
+      },
+    } as never;
+    const out = await buildStatusReport(apiDeps, "sess", "telegram", true);
+    expect(out).toContain("🔌");
+    expect(out).toContain("API");
+    expect(out).toContain("api.minimaxi.com");
+  });
+
+  it("falls back to api.anthropic.com host for subscription mode (null base url)", async () => {
+    const subDeps = {
+      configResolver: {
+        resolveConfigRoot: async () => "/cfg",
+        resolveApiInfo: async () => ({ baseUrl: null, mode: "subscription" }),
+      },
+    } as never;
+    const out = await buildStatusReport(subDeps, "sess", "telegram", true);
+    expect(out).toContain("api.anthropic.com");
+  });
+
+  it("shows the install hint when no snapshot exists at all", async () => {
+    const out = await buildStatusReport(deps, "sess", "telegram", true);
+    expect(out).toContain("/status_install");
   });
 });

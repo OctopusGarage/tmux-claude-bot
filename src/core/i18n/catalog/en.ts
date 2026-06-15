@@ -117,13 +117,17 @@ export const en: Messages = {
 
   // -- status usage install --
   statusUsageHint: "💡 Want to see usage? Send /status_install to set it up",
+  statusUsagePending: "📊 Usage data not available yet — shown after the next Claude API call",
+  statusModeApi: "API",
+  statusModeSubscription: "subscription",
+  statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "📊 Usage reporting install",
   statusInstallNoClaude:
     "No running Claude detected, so there's nowhere to install. Start a Claude first, then install.",
   statusInstallInstalled: (dir) => `✅ ${dir} usage reporting installed`,
   statusInstallAlready: (dir) => `⏭ ${dir} already installed`,
   statusInstallForeignPrompt: (dirs) =>
-    `⚠️ These dirs already have a custom statusLine — how to handle?\n${dirs.join("\n")}`,
+    `⚠️ These dirs already have a custom statusLine — how to handle? Wrap is recommended (keeps your statusLine, adds usage reporting).\n${dirs.join("\n")}`,
   statusInstallOverwritten: (dir, backup) => `🔁 ${dir} overwritten (backup: ${backup})`,
   statusInstallWrapped: (dir, backup) =>
     `📦 ${dir} wrapped: keeps your display + adds usage\n   ⚠️ Your statusLine now runs through this bot's wrapper; if the bar breaks, restore from: ${backup}`,
@@ -133,7 +137,7 @@ export const en: Messages = {
   statusInstallError: (dir, msg) => `❌ ${dir}: ${msg}`,
   btnStatusInstall: "📊 Install usage",
   btnStatusOverwrite: "🔁 Overwrite",
-  btnStatusWrap: "📦 Wrap",
+  btnStatusWrap: "📦 Wrap (recommended)",
   btnStatusSnippet: "✍️ Give snippet",
   btnStatusSkip: "✖️ Skip",
   queueGlobalHeader: "━━ 🌐 Global queue ━━",

@@ -131,6 +131,11 @@ export const zh = {
   // -- status usage install --
   statusUsageHint:
     "\u{1F4A1} \u60f3\u770b\u989d\u5ea6\uff1f\u53d1\u9001 /status_install \u4e00\u952e\u5b89\u88c5",
+  statusUsagePending:
+    "\ud83d\udcca \u989d\u5ea6\u6570\u636e\u83b7\u53d6\u4e2d\u2014\u2014\u4e0b\u6b21 Claude \u8c03\u7528\u540e\u663e\u793a",
+  statusModeApi: "API",
+  statusModeSubscription: "订阅",
+  statusApiLine: (mode: string, host: string) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "\u{1F4CA} \u989d\u5ea6\u4e0a\u62a5\u5b89\u88c5",
   statusInstallNoClaude:
     "\u6ca1\u6709\u68c0\u6d4b\u5230\u8fd0\u884c\u4e2d\u7684 Claude\uff0c\u65e0\u6cd5\u786e\u5b9a\u5b89\u88c5\u4f4d\u7f6e\u3002\u5148\u542f\u52a8\u4e00\u4e2a Claude \u518d\u8bd5\u3002",
@@ -138,7 +143,7 @@ export const zh = {
     `\u2705 ${dir} \u5df2\u5b89\u88c5\u989d\u5ea6\u4e0a\u62a5`,
   statusInstallAlready: (dir: string) => `\u23ED ${dir} \u5df2\u5b89\u88c5\u8fc7`,
   statusInstallForeignPrompt: (dirs: string[]) =>
-    `\u26A0\uFE0F \u4ee5\u4e0b\u76ee\u5f55\u5df2\u6709\u81ea\u5b9a\u4e49 statusLine\uff0c\u5982\u4f55\u5904\u7406\uff1f\n${dirs.join("\n")}`,
+    `⚠️ 以下目录已有自定义 statusLine，如何处理？推荐「包裹保留」（保留你的 statusLine 并附加额度上报）。\n${dirs.join("\n")}`,
   statusInstallOverwritten: (dir: string, backup: string) =>
     `\u{1F501} ${dir} \u5df2\u8986\u76d6\uff08\u5907\u4efd\uff1a${backup}\uff09`,
   statusInstallWrapped: (dir: string, backup: string) =>
@@ -149,7 +154,7 @@ export const zh = {
   statusInstallError: (dir: string, msg: string) => `\u274C ${dir}\uff1a${msg}`,
   btnStatusInstall: "\u{1F4CA} \u5b89\u88c5\u989d\u5ea6\u4e0a\u62a5",
   btnStatusOverwrite: "\u{1F501} \u8986\u76d6\u66ff\u6362",
-  btnStatusWrap: "\u{1F4E6} \u5305\u88f9\u4fdd\u7559",
+  btnStatusWrap: "📦 包裹保留（推荐）",
   btnStatusSnippet: "\u270D\uFE0F \u7ed9\u6211\u7247\u6bb5",
   btnStatusSkip: "\u2716\uFE0F \u653e\u5f03",
   queueGlobalHeader: "━━ 🌐 全局队列 ━━",

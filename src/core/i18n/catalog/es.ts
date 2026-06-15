@@ -120,13 +120,18 @@ export const es: Messages = {
 
   // -- status usage install --
   statusUsageHint: "💡 ¿Ver el uso? Envía /status_install para configurarlo",
+  statusUsagePending:
+    "📊 Datos de uso aún no disponibles — se mostrarán tras la próxima llamada a la API",
+  statusModeApi: "API",
+  statusModeSubscription: "suscripción",
+  statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "📊 Instalación de reporte de uso",
   statusInstallNoClaude:
     "No se detectó ningún Claude en ejecución, así que no hay dónde instalar. Inicia un Claude primero.",
   statusInstallInstalled: (dir) => `✅ ${dir} reporte de uso instalado`,
   statusInstallAlready: (dir) => `⏭ ${dir} ya instalado`,
   statusInstallForeignPrompt: (dirs) =>
-    `⚠️ Estos directorios ya tienen un statusLine propio — ¿qué hacer?\n${dirs.join("\n")}`,
+    `⚠️ Estos directorios ya tienen un statusLine propio — ¿qué hacer? Se recomienda «Envolver» (conserva tu statusLine y añade el reporte de uso).\n${dirs.join("\n")}`,
   statusInstallOverwritten: (dir, backup) => `🔁 ${dir} sobrescrito (respaldo: ${backup})`,
   statusInstallWrapped: (dir, backup) =>
     `📦 ${dir} envuelto: conserva tu visualización + uso\n   ⚠️ Tu statusLine ahora pasa por el envoltorio del bot; si la barra falla, restaura desde: ${backup}`,
@@ -136,7 +141,7 @@ export const es: Messages = {
   statusInstallError: (dir, msg) => `❌ ${dir}: ${msg}`,
   btnStatusInstall: "📊 Instalar uso",
   btnStatusOverwrite: "🔁 Sobrescribir",
-  btnStatusWrap: "📦 Envolver",
+  btnStatusWrap: "📦 Envolver (recom.)",
   btnStatusSnippet: "✍️ Dame el fragmento",
   btnStatusSkip: "✖️ Omitir",
   queueGlobalHeader: "━━ 🌐 Cola global ━━",

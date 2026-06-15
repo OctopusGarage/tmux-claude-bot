@@ -119,12 +119,16 @@ export const yue: Messages = {
 
   // -- status usage install --
   statusUsageHint: "💡 想查看額度?傳送 /status_install 一鍵安裝",
+  statusUsagePending: "📊 額度資料擷取中——下次 Claude 呼叫後顯示",
+  statusModeApi: "API",
+  statusModeSubscription: "訂閱",
+  statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "📊 額度上報安裝",
   statusInstallNoClaude: "找不到執行中的 Claude,無法確定安裝位置。請先啟動一個 Claude 再試。",
   statusInstallInstalled: (dir) => `✅ ${dir} 已安裝額度上報`,
   statusInstallAlready: (dir) => `⏭ ${dir} 已安裝`,
   statusInstallForeignPrompt: (dirs) =>
-    `⚠️ 以下目錄已有自訂 statusLine,如何處理?\n${dirs.join("\n")}`,
+    `⚠️ 以下目錄已有自訂 statusLine，如何處理？建議「包裹保留」（保留你的 statusLine 並附加用量上報）。\n${dirs.join("\n")}`,
   statusInstallOverwritten: (dir, backup) => `🔁 ${dir} 已覆蓋(備份:${backup})`,
   statusInstallWrapped: (dir, backup) =>
     `📦 ${dir} 已包裹:保留你原有顯示 + 額度上報\n   ⚠️ statusLine 現經本 bot 包裹層;若狀態列異常,可由備份還原:${backup}`,
@@ -134,7 +138,7 @@ export const yue: Messages = {
   statusInstallError: (dir, msg) => `❌ ${dir}:${msg}`,
   btnStatusInstall: "📊 安裝額度上報",
   btnStatusOverwrite: "🔁 覆蓋替換",
-  btnStatusWrap: "📦 包裹保留",
+  btnStatusWrap: "📦 包裹保留（建議）",
   btnStatusSnippet: "✍️ 給我片段",
   btnStatusSkip: "✖️ 放棄",
   queueGlobalHeader: "━━ 🌐 全域隊列 ━━",
