@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock createBoundChat so no real SDK/network calls happen.
@@ -12,10 +12,12 @@ vi.mock(import("../../../src/adapters/lark/resource.js"), async (importOriginal)
 
 const {
   handleNewGroup,
+  handleNewFreeGroup,
   handleBind,
   handleUnbind,
   handleRestore,
   makeBoundGroupBySid,
+  makeFreeGroupBySid,
   bindCurrentGroupBySid,
 } = await import("../../../src/adapters/lark/group-commands.js");
 const { fakeChannel, fakeDeps } = await import("./_fakes.js");
@@ -23,6 +25,8 @@ const { bindGroup, getBinding } = await import("../../../src/core/group-bindings
 const { setPathForSession, sessionNameFromPath } = await import(
   "../../../src/core/sessionPathMap.js"
 );
+const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+const { setFreeProject, FREE_PROJECT_LIMIT } = await import("../../../src/core/free-projects.js");
 const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
 const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
 
@@ -117,6 +121,39 @@ describe("group-commands", () => {
       expect(createBoundChat).not.toHaveBeenCalled();
       expect(channel.texts().some((t) => t.includes("已经有绑定群"))).toBe(true);
     });
+
+    it("stringifies a non-Error rejection from createBoundChat", async () => {
+      createBoundChat.mockRejectedValue({ weird: "object" }); // not an Error instance
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await handleNewGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+      // String({weird}) → "[object Object]" surfaces in the failure message.
+      expect(channel.texts().some((t) => t.includes("[object Object]"))).toBe(true);
+    });
+
+    it("no-ops after the target resolves when lark config is absent", async () => {
+      // Passes policy + path validation, then the `!deps.config.lark` guard returns
+      // before any group is created. (Defensive: prod always has lark configured.)
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir], lark: undefined } });
+      const channel = fakeChannel();
+      await handleNewGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+      expect(createBoundChat).not.toHaveBeenCalled();
+      expect(getBinding("oc_new")).toBeNull();
+    });
+
+    it("replies the bare error (no resolvedPath) for an unknown workspace name", async () => {
+      // A workspace name mapped to a session with NO path → resolveWorkspaceTarget
+      // returns { error: 'unknown-workspace' } and NO resolvedPath, so the reply
+      // takes the `: ""` branch (no `: <path>` suffix).
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      saveWorkspace("ghostws", "tmux_proj_no_such_path_session");
+      const channel = fakeChannel();
+      await handleNewGroup(channel, deps, "ou_me", "p2p", "ou_me", "ghostws");
+      const errText = channel.texts().find((t) => t.includes("❌"));
+      expect(errText).toBeDefined();
+      expect(errText).not.toContain(":"); // no "<error>: <resolvedPath>" suffix
+      expect(createBoundChat).not.toHaveBeenCalled();
+    });
   });
 
   // ── handleBind ──────────────────────────────────────────────────────────────
@@ -151,6 +188,15 @@ describe("group-commands", () => {
       expect(getBinding("oc_bind2")).toBeNull();
       expect(deps.bridge.createSession).not.toHaveBeenCalled();
       expect(channel.texts().some((t) => t.includes("已经有绑定群"))).toBe(true);
+    });
+
+    it("replies usage and does not bind when arg is undefined (null target)", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await handleBind(channel, deps, "oc_bind_noarg", "group", undefined);
+      expect(channel.texts().some((t) => t.includes("用法"))).toBe(true);
+      expect(getBinding("oc_bind_noarg")).toBeNull();
+      expect(deps.bridge.createSession).not.toHaveBeenCalled();
     });
   });
 
@@ -240,6 +286,39 @@ describe("group-commands", () => {
       expect(createBoundChat).not.toHaveBeenCalled();
     });
 
+    it("no-ops (warns) when lark config is absent", async () => {
+      const deps = fakeDeps({ config: { lark: undefined } });
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sid = sessionShortId(sessionNameFromPath(dir, deps.config.projectSessionPrefix));
+      const channel = fakeChannel();
+      await makeBoundGroupBySid(channel, deps, "oc_p2p", sid, "ou_me");
+      // The no-lark guard returns before resolving the path or creating anything.
+      expect(createBoundChat).not.toHaveBeenCalled();
+      expect(channel.texts()).toHaveLength(0);
+    });
+
+    it("replies groupCreateFailed with a stringified non-Error when createBoundChat throws a literal", async () => {
+      const deps = fakeDeps();
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sid = sessionShortId(sessionNameFromPath(dir, deps.config.projectSessionPrefix));
+      createBoundChat.mockRejectedValue("plain string boom"); // not an Error instance
+      const channel = fakeChannel();
+      await makeBoundGroupBySid(channel, deps, "oc_p2p", sid, "ou_me");
+      expect(channel.texts().some((t) => t.includes("plain string boom"))).toBe(true);
+      expect(getBinding("oc_new")).toBeNull();
+    });
+
+    it("uses err.message when createBoundChat rejects with an Error", async () => {
+      const deps = fakeDeps();
+      await appendRecentProject(dir, deps.config.projectSessionPrefix);
+      const sid = sessionShortId(sessionNameFromPath(dir, deps.config.projectSessionPrefix));
+      createBoundChat.mockRejectedValue(new Error("sdk exploded"));
+      const channel = fakeChannel();
+      await makeBoundGroupBySid(channel, deps, "oc_p2p", sid, "ou_me");
+      expect(channel.texts().some((t) => t.includes("sdk exploded"))).toBe(true);
+      expect(getBinding("oc_new")).toBeNull();
+    });
+
     it("rejects a second group for an already-grouped recent project", async () => {
       const deps = fakeDeps();
       await appendRecentProject(dir, deps.config.projectSessionPrefix);
@@ -290,6 +369,100 @@ describe("group-commands", () => {
 
       expect(getBinding("oc_grp")?.workspacePath).toBe(dir);
       expect(channel.texts().some((t) => t.includes("群组已绑定到"))).toBe(true);
+    });
+
+    it("replies shortIdNotFound and does not bind for an unknown sid", async () => {
+      const deps = fakeDeps();
+      const channel = fakeChannel();
+      await bindCurrentGroupBySid(channel, deps, "oc_grp_x", "unknownsid");
+      expect(getBinding("oc_grp_x")).toBeNull();
+      expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── free parallel groups ──────────────────────────────────────────────────────
+
+  describe("makeFreeGroupBySid", () => {
+    it("replies shortIdNotFound and creates nothing for an unknown sid", async () => {
+      const deps = fakeDeps();
+      const channel = fakeChannel();
+      await makeFreeGroupBySid(channel, deps, "oc_p2p", "ghost-sid", "ou_me");
+      expect(createBoundChat).not.toHaveBeenCalled();
+      expect(channel.texts().some((t) => t.includes("未找到短 id"))).toBe(true);
+    });
+  });
+
+  describe("handleNewFreeGroup", () => {
+    it("refuses with the p2p-only policy message inside a group", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await handleNewFreeGroup(channel, deps, "oc_g1", "group", "ou_me", dir);
+      expect(channel.texts().some((t) => t.includes("仅在与机器人的私聊中有效"))).toBe(true);
+      expect(createBoundChat).not.toHaveBeenCalled();
+    });
+
+    it("replies usage and creates nothing when arg is undefined", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await handleNewFreeGroup(channel, deps, "ou_me", "p2p", "ou_me", undefined);
+      expect(channel.texts().some((t) => t.includes("用法"))).toBe(true);
+      expect(createBoundChat).not.toHaveBeenCalled();
+    });
+
+    it("creates a fresh free-session group on an allowed path (label gets a #1 index)", async () => {
+      createBoundChat.mockResolvedValue({ chatId: "oc_free_new", name: "x" });
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await handleNewFreeGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+
+      expect(createBoundChat).toHaveBeenCalledOnce();
+      const created = getBinding("oc_free_new");
+      expect(created?.workspacePath).toBe(dir);
+      expect(created?.sessionName).toMatch(/^tmux_proj_free_\d+$/);
+      expect(created?.label).toBe(`${basename(dir)} #1`);
+      expect(channel.texts().some((t) => t.includes("已创建平行群"))).toBe(true);
+    });
+
+    it("replies the free-project limit and creates nothing when all slots are taken", async () => {
+      // Fill every free slot so allocateFreeSlotPruned returns null.
+      for (let n = 1; n <= FREE_PROJECT_LIMIT; n++) {
+        setFreeProject(n, { label: `taken-${n}` });
+        bindGroup(`oc_full_${n}`, {
+          workspacePath: `/x/${n}`,
+          sessionName: `tmux_proj_free_${n}`,
+          label: `taken-${n}`,
+        });
+      }
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await handleNewFreeGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+      expect(createBoundChat).not.toHaveBeenCalled();
+      expect(channel.texts().some((t) => t.includes(String(FREE_PROJECT_LIMIT)))).toBe(true);
+    });
+
+    it("stringifies a non-Error rejection from createBoundChat", async () => {
+      createBoundChat.mockRejectedValue(404); // a number, not an Error
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await handleNewFreeGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+      expect(channel.texts().some((t) => t.includes("404"))).toBe(true);
+    });
+
+    it("uses err.message when createBoundChat rejects with an Error", async () => {
+      createBoundChat.mockRejectedValue(new Error("free sdk down"));
+      const channel = fakeChannel();
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir] } });
+      await handleNewFreeGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+      expect(channel.texts().some((t) => t.includes("free sdk down"))).toBe(true);
+    });
+
+    it("no-ops after slot allocation when lark config is absent", async () => {
+      // Defensive `!deps.config.lark` guard in createFreeGroupAtPath: returns
+      // before creating a chat even though a free slot was allocated.
+      const deps = fakeDeps({ config: { cdAllowedDirs: [dir], lark: undefined } });
+      const channel = fakeChannel();
+      await handleNewFreeGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+      expect(createBoundChat).not.toHaveBeenCalled();
     });
   });
 });

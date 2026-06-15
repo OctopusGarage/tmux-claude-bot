@@ -96,6 +96,19 @@ describe("findClaudePid", () => {
     ];
     expect(findClaudePid(rows, 100, BIN)).toBeNull();
   });
+
+  it("does not loop forever on a cyclic process graph (visited guard)", () => {
+    // 100 → 200 → 100 forms a cycle; the seen-set must break it and still find
+    // claude rather than spinning. Multiple children of one ppid also exercise
+    // the sibling-append path.
+    const rows = [
+      { pid: 100, ppid: 200, command: "-zsh" },
+      { pid: 200, ppid: 100, command: "sh" },
+      { pid: 300, ppid: 100, command: "noise" },
+      { pid: 400, ppid: 200, command: `${BIN} --x` },
+    ];
+    expect(findClaudePid(rows, 100, BIN)).toBe(400);
+  });
 });
 
 function fakeProbe(overrides: Partial<ResolverProbe> & { time?: { v: number } }): ResolverProbe {
@@ -218,6 +231,39 @@ describe("resolveConfigRoot when the pane can't be queried (tmux gone)", () => {
   it("falls back to the default root when nothing was ever resolved", async () => {
     const r = createConfigResolver(fakeProbe({ panePid: async () => null }), OPTS);
     expect(await r.resolveConfigRoot("s")).toBe("/home/.claude");
+  });
+});
+
+describe("resolveApiInfo", () => {
+  it("returns the api info of the running claude (cheap path reuses cached pid)", async () => {
+    const readProcEnv = vi.fn(
+      async () => "claude ANTHROPIC_BASE_URL=https://api.example.com ANTHROPIC_API_KEY=sk-x",
+    );
+    const snapshot = vi.fn(async () => [{ pid: 200, ppid: 100, command: "/bin/claude" }]);
+    const r = createConfigResolver(fakeProbe({ readProcEnv, snapshot }), OPTS);
+    await r.resolveConfigRoot("s"); // warm the cache with the live pid (1 snapshot)
+    const info = await r.resolveApiInfo?.("s");
+    expect(info).toEqual({ baseUrl: "https://api.example.com", mode: "api" });
+    expect(snapshot).toHaveBeenCalledTimes(1); // cheap path: no extra scan
+  });
+
+  it("scans the pane when nothing is cached and reports subscription mode", async () => {
+    const readProcEnv = vi.fn(async () => "claude --dangerously-skip-permissions");
+    const r = createConfigResolver(fakeProbe({ readProcEnv }), OPTS);
+    expect(await r.resolveApiInfo?.("s")).toEqual({ baseUrl: null, mode: "subscription" });
+  });
+
+  it("returns null when no claude runs in the pane", async () => {
+    const r = createConfigResolver(
+      fakeProbe({ snapshot: async () => [{ pid: 200, ppid: 100, command: "-zsh" }] }),
+      OPTS,
+    );
+    expect(await r.resolveApiInfo?.("s")).toBeNull();
+  });
+
+  it("returns null when the pane pid can't be determined", async () => {
+    const r = createConfigResolver(fakeProbe({ panePid: async () => null }), OPTS);
+    expect(await r.resolveApiInfo?.("s")).toBeNull();
   });
 });
 

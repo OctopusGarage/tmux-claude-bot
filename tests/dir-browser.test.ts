@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   browseCwd,
   browseRoots,
@@ -139,6 +139,27 @@ describe("resolveBrowseAction", () => {
     clearBrowse("s5");
   });
 
+  it("ignores open/up actions while on the roots screen (no cwd to move from)", () => {
+    const root2 = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-browse-roots-"));
+    startBrowse("s7", [root, root2]); // roots screen, cwd null
+    const afterOpen = resolveBrowseAction("s7", { kind: "open", index: 0 }, [root, root2]);
+    expect(afterOpen.kind).toBe("roots"); // open is a no-op without a cwd
+    expect(afterOpen.cwd).toBeNull();
+    const afterUp = resolveBrowseAction("s7", { kind: "up" }, [root, root2]);
+    expect(afterUp.kind).toBe("roots"); // up is a no-op without a cwd
+    clearBrowse("s7");
+    fs.rmSync(root2, { recursive: true, force: true });
+  });
+
+  it("keeps the current dir when a root tap is out of range", () => {
+    const root2 = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-browse-oor-"));
+    resolveBrowseAction("s8", { kind: "root", index: 0 }, [root, root2]); // into root
+    const oor = resolveBrowseAction("s8", { kind: "root", index: 99 }, [root, root2]);
+    expect(oor.cwd).toBe(path.resolve(root)); // unchanged, not crashed/null
+    clearBrowse("s8");
+    fs.rmSync(root2, { recursive: true, force: true });
+  });
+
   it("browseCwd reflects the current dir and clearBrowse forgets it", () => {
     startBrowse("s6", [root]);
     expect(browseCwd("s6")).toBe(path.resolve(root));
@@ -191,5 +212,80 @@ describe("new folder", () => {
     resolveBrowseAction("nf5", { kind: "open", index: 0 }, [root]); // navigate into sub
     expect(isAwaitingFolderName("nf5")).toBe(false);
     clearBrowse("nf5");
+  });
+
+  it("requestNewFolder returns null when not browsing a directory (roots screen)", () => {
+    const root2 = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-browse-nf-"));
+    startBrowse("nf6", [root, root2]); // multiple roots → roots screen, cwd null
+    expect(requestNewFolder("nf6")).toBeNull();
+    expect(isAwaitingFolderName("nf6")).toBe(false);
+    clearBrowse("nf6");
+    fs.rmSync(root2, { recursive: true, force: true });
+  });
+
+  it("reports mkdir failure as an error result (parent not writable)", () => {
+    // Arm the capture against a path whose parent does not exist so mkdir throws.
+    startBrowse("nf7", [root]);
+    requestNewFolder("nf7");
+    // Remove the pending dir out from under the capture → mkdir(target) fails.
+    fs.rmSync(root, { recursive: true, force: true });
+    const res = createSubfolder("nf7", "child", [root]);
+    expect(res).toMatchObject({ ok: false, reason: "error" });
+    clearBrowse("nf7");
+    fs.mkdirSync(root); // restore for afterEach cleanup
+  });
+
+  it("expires a pending capture after its TTL elapses", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      startBrowse("nf8", [root]);
+      requestNewFolder("nf8");
+      expect(isAwaitingFolderName("nf8")).toBe(true);
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1); // past NEWFOLDER_TTL_MS
+      expect(isAwaitingFolderName("nf8")).toBe(false); // expired + cleared
+      // A create after expiry is rejected as expired, not invalid/exists.
+      requestNewFolder("nf8");
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+      expect(createSubfolder("nf8", "x", [root])).toMatchObject({
+        ok: false,
+        reason: "expired",
+      });
+      clearBrowse("nf8");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("buildView error surfacing", () => {
+  it("surfaces an unreadable dir (cannot create a project there)", () => {
+    const sub = path.join(root, "gone");
+    fs.mkdirSync(sub);
+    startBrowse("err1", [root]);
+    resolveBrowseAction("err1", { kind: "open", index: 0 }, [root]); // enter gone
+    fs.rmSync(sub, { recursive: true, force: true }); // now unreadable
+    const view = resolveBrowseAction("err1", { kind: "page", page: 0 }, [root]);
+    expect(view.error).toBe("unreadable");
+    expect(view.canCreate).toBe(false);
+    clearBrowse("err1");
+  });
+});
+
+describe("idle navigation state is pruned", () => {
+  it("drops a scope's state after the navigation TTL", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      startBrowse("prune1", [root]);
+      expect(browseCwd("prune1")).toBe(path.resolve(root));
+      vi.advanceTimersByTime(10 * 60 * 1000 + 1); // past NAV_TTL_MS
+      // Any entry-point that calls prune() will evict the stale state.
+      startBrowse("prune2", [root]);
+      expect(browseCwd("prune1")).toBeNull(); // pruned
+      clearBrowse("prune2");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

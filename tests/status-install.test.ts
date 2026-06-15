@@ -1,13 +1,30 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   categorizeStatusLine,
   manualSnippet,
+  runStatusInstall,
+  scriptPath,
   statuslineScript,
 } from "../src/core/status-install.js";
+
+// runStatusInstall reads which config dirs are in use by probing real processes;
+// mock that boundary so the install logic itself can be driven deterministically.
+const dirsInUse = vi.hoisted(() => ({ value: [] as string[] }));
+vi.mock("../src/core/takeover-service.js", () => ({
+  claudeConfigDirsInUse: () => Promise.resolve(dirsInUse.value),
+}));
 
 const OURS = "/state/status-snapshots/statusline.sh";
 
@@ -77,4 +94,170 @@ describe("statuslineScript / manualSnippet", () => {
       expect(out).toContain("█"); // progress bar rendered
     },
   );
+});
+
+describe("runStatusInstall", () => {
+  let stateDir: string;
+  let origState: string | undefined;
+  let origLang: string | undefined;
+
+  /** Make a fake claude config dir with an optional settings.json. */
+  function makeConfigDir(name: string, settings?: unknown): string {
+    const dir = join(stateDir, name);
+    mkdirSync(dir, { recursive: true });
+    if (settings !== undefined) {
+      writeFileSync(join(dir, "settings.json"), JSON.stringify(settings, null, 2));
+    }
+    return dir;
+  }
+
+  const readSettings = (dir: string): { statusLine?: { command?: string } } =>
+    JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
+
+  beforeEach(() => {
+    origState = process.env.TCB_STATE_DIR;
+    origLang = process.env.UI_LANG;
+    stateDir = mkdtempSync(join(tmpdir(), "tcb-statusinstall-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    process.env.UI_LANG = "en"; // pin English copy so message assertions are stable
+    dirsInUse.value = [];
+  });
+
+  afterEach(() => {
+    if (origState === undefined) delete process.env.TCB_STATE_DIR;
+    else process.env.TCB_STATE_DIR = origState;
+    if (origLang === undefined) delete process.env.UI_LANG;
+    else process.env.UI_LANG = origLang;
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it("reports no claude and writes nothing when no config dirs are in use", async () => {
+    dirsInUse.value = [];
+    const res = await runStatusInstall("telegram", "scan");
+    expect(res.foreignPending).toBe(false);
+    expect(res.lines).toHaveLength(1);
+    expect(res.lines[0]).toMatch(/no .*claude/i);
+    // ensureScript() must not have run.
+    expect(existsSync(scriptPath())).toBe(false);
+  });
+
+  it("installs into a clean dir (no settings.json) and writes our statusLine", async () => {
+    const dir = makeConfigDir("clean-new");
+    rmSync(join(dir, "x"), { force: true }); // dir exists, settings.json absent
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "scan");
+    expect(res.foreignPending).toBe(false);
+    expect(res.lines.some((l) => l.includes("installed"))).toBe(true);
+    // The generated script and the dir's settings.json both exist now.
+    expect(existsSync(scriptPath())).toBe(true);
+    expect(readSettings(dir).statusLine?.command).toBe(scriptPath());
+  });
+
+  it("installs into a clean dir with existing settings, preserving other keys + backing up", async () => {
+    const dir = makeConfigDir("clean-existing", { theme: "dark", model: "opus" });
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "scan");
+    expect(res.lines.some((l) => l.includes("installed"))).toBe(true);
+    const merged = readSettings(dir) as Record<string, unknown>;
+    expect(merged.theme).toBe("dark");
+    expect(merged.model).toBe("opus");
+    expect((merged.statusLine as { command: string }).command).toBe(scriptPath());
+    // A timestamped backup of the original settings was created.
+    const backups = readdirSync(dir).filter((f) => f.startsWith("settings.json.bak."));
+    expect(backups).toHaveLength(1);
+  });
+
+  it("skips a dir that already has our statusLine (idempotent), making no backup", async () => {
+    const dir = makeConfigDir("ours", {
+      statusLine: { type: "command", command: scriptPath() },
+    });
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "scan");
+    expect(res.foreignPending).toBe(false);
+    expect(res.lines.some((l) => l.includes("already"))).toBe(true);
+    expect(readdirSync(dir).filter((f) => f.includes(".bak."))).toHaveLength(0);
+  });
+
+  it("on scan, surfaces foreign dirs as pending without modifying them", async () => {
+    const foreignCmd = "~/my-statusline.sh";
+    const dir = makeConfigDir("foreign", { statusLine: { type: "command", command: foreignCmd } });
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "scan");
+    expect(res.foreignPending).toBe(true);
+    expect(res.lines.some((l) => l.includes(dir))).toBe(true);
+    // Untouched: still the foreign command, no backup written.
+    expect(readSettings(dir).statusLine?.command).toBe(foreignCmd);
+    expect(readdirSync(dir).filter((f) => f.includes(".bak."))).toHaveLength(0);
+  });
+
+  it("overwrite replaces the foreign command with ours and backs up", async () => {
+    const dir = makeConfigDir("ovr", { statusLine: { type: "command", command: "~/old.sh" } });
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "overwrite");
+    expect(res.foreignPending).toBe(false);
+    expect(res.lines.some((l) => l.includes("overwritten"))).toBe(true);
+    expect(readSettings(dir).statusLine?.command).toBe(scriptPath());
+    expect(readdirSync(dir).filter((f) => f.startsWith("settings.json.bak."))).toHaveLength(1);
+  });
+
+  it("wrap writes a sidecar with the original cmd and points statusLine at script + sidecar", async () => {
+    const foreignCmd = "~/original-statusline.sh --flag";
+    const dir = makeConfigDir("wrap", {
+      statusLine: { type: "command", command: foreignCmd },
+    });
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "wrap");
+    expect(res.lines.some((l) => l.includes("wrapped") || l.includes("Wrapped"))).toBe(true);
+    const cmd = readSettings(dir).statusLine?.command ?? "";
+    expect(cmd.startsWith(`${scriptPath()} `)).toBe(true);
+    // The sidecar referenced in the command holds the original command verbatim.
+    const sidecar = cmd.slice(scriptPath().length + 1);
+    expect(readFileSync(sidecar, "utf8")).toBe(foreignCmd);
+  });
+
+  it("snippet leaves settings untouched and returns the paste-in jq block", async () => {
+    const foreignCmd = "~/mine.sh";
+    const dir = makeConfigDir("snip", { statusLine: { type: "command", command: foreignCmd } });
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "snippet");
+    expect(res.lines.some((l) => l.includes("jq -c"))).toBe(true);
+    // Settings unchanged — snippet is manual.
+    expect(readSettings(dir).statusLine?.command).toBe(foreignCmd);
+  });
+
+  it("skip leaves the foreign dir untouched and reports it skipped", async () => {
+    const foreignCmd = "~/mine.sh";
+    const dir = makeConfigDir("skp", { statusLine: { type: "command", command: foreignCmd } });
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "skip");
+    expect(res.lines.some((l) => l.includes("skipped"))).toBe(true);
+    expect(readSettings(dir).statusLine?.command).toBe(foreignCmd);
+  });
+
+  it("reports a per-dir error when installing into a clean dir fails", async () => {
+    // Point at a path whose parent is a FILE, so mkdirSync(dir) throws (ENOTDIR).
+    const blocker = join(stateDir, "not-a-dir");
+    writeFileSync(blocker, "x");
+    const dir = join(blocker, "child");
+    dirsInUse.value = [dir];
+    const res = await runStatusInstall("telegram", "scan");
+    expect(res.foreignPending).toBe(false);
+    expect(res.lines.some((l) => l.includes(dir) && l.includes("❌"))).toBe(true);
+  });
+
+  it("handles a mix of clean, ours, and foreign dirs in one pass", async () => {
+    const clean = makeConfigDir("mix-clean", {});
+    const ours = makeConfigDir("mix-ours", {
+      statusLine: { type: "command", command: scriptPath() },
+    });
+    const foreign = makeConfigDir("mix-foreign", {
+      statusLine: { type: "command", command: "~/f.sh" },
+    });
+    dirsInUse.value = [clean, ours, foreign];
+    const res = await runStatusInstall("telegram", "scan");
+    expect(res.foreignPending).toBe(true);
+    expect(res.lines.some((l) => l.includes(clean) && l.includes("installed"))).toBe(true);
+    expect(res.lines.some((l) => l.includes(ours) && l.includes("already"))).toBe(true);
+    expect(res.lines.some((l) => l.includes(foreign))).toBe(true);
+  });
 });

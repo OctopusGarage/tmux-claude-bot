@@ -102,4 +102,67 @@ describe("matchFlavorAlias", () => {
       matchFlavorAlias(dupes, { configRoot: "/home/u/.claude", baseUrl: null }, HOME),
     ).toBeNull();
   });
+
+  it("treats an empty configRoot as the default ~/.claude", () => {
+    // Line 74: `target.configRoot || defaultConfig` — an empty string falls back
+    // to the home default, so the default flavor (claude-yolo) still matches.
+    expect(matchFlavorAlias(aliases, { configRoot: "", baseUrl: null }, HOME)).toBe("claude-yolo");
+  });
+
+  it("returns null on an empty alias list", () => {
+    expect(matchFlavorAlias([], { configRoot: "/home/u/.claude", baseUrl: null }, HOME)).toBeNull();
+  });
+});
+
+describe("parseFlavorAliases edge cases", () => {
+  it("returns an empty list when there are no aliases at all", () => {
+    expect(parseFlavorAliases("# just a comment\nexport FOO=bar\n", HOME)).toEqual([]);
+  });
+
+  it("expands a bare ~ CLAUDE_CONFIG_DIR to home itself", () => {
+    // Line 16: expandHome's `p === "~"` branch (no trailing slash).
+    const aliases = parseFlavorAliases('alias claude-h="CLAUDE_CONFIG_DIR=~ claude"', HOME);
+    expect(aliases[0]?.configDir).toBe(HOME);
+  });
+
+  it("keeps an absolute (non-~) CLAUDE_CONFIG_DIR verbatim", () => {
+    // expandHome's pass-through branch — no ~ prefix.
+    const aliases = parseFlavorAliases(
+      'alias claude-abs="CLAUDE_CONFIG_DIR=/etc/claude claude"',
+      HOME,
+    );
+    expect(aliases[0]?.configDir).toBe("/etc/claude");
+  });
+
+  it("ignores an alias with an empty body (no binary token)", () => {
+    // m[3] is "" → split yields [""], no assignment, binary stays "" → dropped.
+    expect(parseFlavorAliases('alias claude-empty=""', HOME)).toEqual([]);
+  });
+
+  it("records an env assignment with an empty value", () => {
+    // assign[2] === "" → env key kept with empty string; binary is the next token.
+    const aliases = parseFlavorAliases('alias claude-e="ANTHROPIC_BASE_URL= claude"', HOME);
+    expect(aliases[0]).toEqual({ name: "claude-e", configDir: null, baseUrl: "" });
+  });
+
+  it("parses multiple env assignments before the binary and stops at the binary", () => {
+    const aliases = parseFlavorAliases(
+      'alias claude-multi="CLAUDE_CONFIG_DIR=~/.c ANTHROPIC_BASE_URL=http://x claude --foo BAR=baz"',
+      HOME,
+    );
+    // BAR=baz comes after `claude`, so it must NOT become an env assignment.
+    expect(aliases[0]).toEqual({
+      name: "claude-multi",
+      configDir: "/home/u/.c",
+      baseUrl: "http://x",
+    });
+  });
+
+  it("supports single-quoted alias bodies", () => {
+    const aliases = parseFlavorAliases(
+      "alias claude-sq='ANTHROPIC_BASE_URL=http://q claude'",
+      HOME,
+    );
+    expect(aliases[0]).toEqual({ name: "claude-sq", configDir: null, baseUrl: "http://q" });
+  });
 });
