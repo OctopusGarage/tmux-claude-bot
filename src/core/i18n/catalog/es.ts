@@ -174,6 +174,8 @@ export const es: Messages = {
   alreadySwitched: "Ya existe · cambiado",
   projectCreated: "Proyecto creado",
   projectCreatedPath: (p) => `Proyecto creado: ${p}`,
+  projectPathCollision: (p) =>
+    `⚠️ El nombre de sesión de este directorio choca con un proyecto existente (${p}). Renombra uno para usar ambos.`,
   browseTitle: "📂 Elige la ubicación del proyecto",
   browseRootsTitle: "📂 Elige un directorio inicial",
   browseEmpty: "(sin subdirectorios)",

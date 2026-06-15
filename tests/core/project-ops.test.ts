@@ -10,7 +10,7 @@ import {
   removeProjectBySession,
   resolveProjectPath,
 } from "../../src/core/project-ops.js";
-import { setPathForSession } from "../../src/core/sessionPathMap.js";
+import { sessionNameFromPath, setPathForSession } from "../../src/core/sessionPathMap.js";
 import { fakeDeps } from "../adapters/lark/_fakes.js";
 
 vi.mock("../../src/core/recentProjects.js", () => ({
@@ -85,6 +85,22 @@ describe("createProjectFromPath", () => {
     const r = await createProjectFromPath(deps, "lark", dir);
     expect(r).toMatchObject({ status: "created", projectPath: dir });
     expect(deps.bridge.createSession).toHaveBeenCalledWith(expect.any(String), dir);
+  });
+
+  it("refuses when a live session's name already belongs to a DIFFERENT path (collision guard)", async () => {
+    const deps = fakeDeps({
+      bridge: { hasSession: vi.fn(async () => true) },
+      config: { cdAllowedDirs: [] },
+    });
+    // Pre-seed the path map so this dir's session name is owned by another path —
+    // i.e. the /a/b-c vs /a-b/c collision. The guard must refuse, not switch.
+    const session = sessionNameFromPath(dir, deps.config.projectSessionPrefix);
+    setPathForSession(session, "/some/other/project");
+    const r = await createProjectFromPath(deps, "telegram", dir);
+    expect(r.status).toBe("error");
+    expect((r as { message: string }).message).toContain("/some/other/project");
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
   });
 });
 

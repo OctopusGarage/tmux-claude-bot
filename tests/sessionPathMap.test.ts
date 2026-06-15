@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import fc from "fast-check";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -192,6 +193,26 @@ describe("isCdAllowed", () => {
       true,
     );
   });
+
+  it("rejects a symlink inside an allowed root that escapes it (realpath, not just lexical)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-cd-"));
+    try {
+      const root = fs.realpathSync(fs.mkdtempSync(path.join(tmp, "root-")));
+      const outside = fs.realpathSync(fs.mkdtempSync(path.join(tmp, "out-")));
+      const okDir = path.join(root, "real-proj");
+      fs.mkdirSync(okDir);
+      const escapeLink = path.join(root, "escape");
+      fs.symlinkSync(outside, escapeLink); // root/escape -> /…/out-XXXX (outside the root)
+
+      expect(isCdAllowed(okDir, [root])).toBe(true); // a genuine subdir is fine
+      expect(isCdAllowed(escapeLink, [root])).toBe(false); // the symlink resolves outside
+      expect(isCdAllowed(path.join(escapeLink, "sub"), [root])).toBe(false); // and paths through it
+      // a not-yet-created dir under a symlinked PARENT is caught via the ancestor realpath
+      expect(isCdAllowed(path.join(escapeLink, "newproj"), [root])).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("isCdAllowed (property-based)", () => {
@@ -208,7 +229,14 @@ describe("isCdAllowed (property-based)", () => {
     });
   };
 
-  const ROOTS = ["/allow/root", "/srv/data", "/home/u/work"];
+  // Root under a deep, guaranteed-NONEXISTENT base so isCdAllowed's symlink
+  // canonicalization stays lexical-equivalent here (nothing on these paths exists,
+  // and the padding depth keeps the ≤6 `..` segments from climbing to `/` and into
+  // a real symlinked system dir like /etc → /private/etc on macOS). This pins the
+  // `..`-normalization + segment-boundary logic; the symlink behavior is covered
+  // by the dedicated realpath test above.
+  const PAD = "/__tcb_nonexistent__/p0/p1/p2/p3/p4/p5/p6/p7";
+  const ROOTS = [`${PAD}/allow/root`, `${PAD}/srv/data`, `${PAD}/home/u/work`];
   // Segments deliberately include `..`/`.` and names that collide with the roots,
   // so generated targets both escape and re-enter the allowed dirs.
   const seg = fc.constantFrom("a", "b", "root", "work", "data", "..", ".", "secret", "x");

@@ -170,6 +170,8 @@ export const en: Messages = {
   alreadySwitched: "Already exists · switched",
   projectCreated: "Project created",
   projectCreatedPath: (p) => `Project created: ${p}`,
+  projectPathCollision: (p) =>
+    `⚠️ This directory's session name collides with an existing project (${p}). Rename one to use both.`,
   browseTitle: "📂 Choose a project location",
   browseRootsTitle: "📂 Choose a starting directory",
   browseEmpty: "(no subdirectories)",

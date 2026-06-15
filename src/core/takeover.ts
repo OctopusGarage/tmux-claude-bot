@@ -10,6 +10,7 @@ import {
   parseClaudeConfigDir,
   parseEnvVar,
 } from "./claude-config-resolver.js";
+import { isClaudeProcess } from "./claude-process.js";
 import { matchFlavorAlias, parseFlavorAliases } from "./flavor-alias.js";
 import { DEFAULT_CONFIG_ROOT, listClaudeSessions } from "./history.js";
 import { type ProcessIntrospector, selectIntrospector } from "./platform/introspector.js";
@@ -51,19 +52,10 @@ export function isPaneBusy(foreground: string | null): boolean {
   return foreground !== null && !isShellForeground(foreground);
 }
 
-/**
- * argv0-basename test for a claude process. Every flavor (claude-stella,
- * claude-ollama, …) runs the SAME `claude` binary and only differs by env
- * (CLAUDE_CONFIG_DIR), so at runtime argv0 is `claude` or an absolute path
- * ending in `/claude`. A bare wrapper script named `claude-<flavor>` is matched
- * too. An unrelated command that merely mentions claude in an argument
- * (`vim claude.ts`, `node build-claude.js`) is not — only argv0 counts.
- */
-export function isClaudeProcess(command: string): boolean {
-  const argv0 = command.trim().split(/\s+/)[0] ?? "";
-  const name = basename(argv0);
-  return name === "claude" || name.startsWith("claude-");
-}
+// argv0-basename test for a claude process — shared with the config resolver via
+// a leaf module (avoids a takeover ↔ claude-config-resolver import cycle).
+// Re-exported here so existing importers (takeover-service, tests) are unchanged.
+export { isClaudeProcess };
 
 /**
  * Claude PIDs running OUTSIDE every tmux pane — i.e. started directly in a
