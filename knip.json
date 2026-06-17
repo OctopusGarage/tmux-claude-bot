@@ -10,7 +10,9 @@
     "scripts/service.sh",
     "scripts/install-whisper.sh",
     "shellcheck",
-    "ps"
+    "ps",
+    "tmux",
+    "which"
   ],
   "ignoreExportsUsedInFile": true,
   "vitest": {
