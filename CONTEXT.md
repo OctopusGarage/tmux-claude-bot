@@ -64,3 +64,7 @@ under `src/adapters/`. See ADR-0002 for the layering.
 - One active project per chat at a time (`.current_project`)
 - Queued messages execute in FIFO order within a session
 - `/esc` and `/interrupt` bypass queue — latency-critical interrupt signals
+- **Live process / on-disk transcript is the source of truth; recorded state is
+  fallback only.** State that matters across a bot restart is persisted under the
+  state dir and restored on boot; desktop-side changes self-heal the record on the
+  next interaction. New features must follow the Resilience Protocol in `CLAUDE.md`.
