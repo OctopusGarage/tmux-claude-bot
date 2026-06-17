@@ -64,23 +64,35 @@ export async function reconcileGroupBinding(
   const binding = getBinding(chatId);
   if (!binding) return { status: "unbound" };
 
-  if (!fs.existsSync(binding.workspacePath)) {
-    return { status: "missing-path", label: binding.label };
+  // Only a genuinely ABSENT path is "missing"; a transient stat error (EACCES /
+  // EBUSY on a mount/permission blip) must NOT brick the group — proceed and let
+  // reconcile try, rather than falsely reporting the dir gone.
+  try {
+    fs.statSync(binding.workspacePath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { status: "missing-path", label: binding.label };
+    }
   }
+
+  // `sessionName` is authoritative — it is set deliberately at bind time, and for
+  // a `/bind <workspace-name>` it is the SAVED workspace's session, NOT
+  // sessionNameFromPath(workspacePath). Do not re-derive it.
+  const sessionName = binding.sessionName;
 
   const scope = chatScope(channel, chatId);
   const pointer = await deps.currentProject.get(scope);
-  const alive = await deps.bridge.hasSession(binding.sessionName);
+  const alive = await deps.bridge.hasSession(sessionName);
 
-  if (pointer === binding.sessionName && alive) {
-    return { status: "ok", sessionName: binding.sessionName };
+  if (pointer === sessionName && alive) {
+    return { status: "ok", sessionName };
   }
 
   if (!alive) {
     // Recreate at the bound path; createProjectSession also sets current + cd.
-    await createProjectSession(deps, scope, binding.sessionName, binding.workspacePath);
+    await createProjectSession(deps, scope, sessionName, binding.workspacePath);
   } else {
-    await switchToProject(deps, scope, binding.sessionName);
+    await switchToProject(deps, scope, sessionName);
   }
-  return { status: "restored", sessionName: binding.sessionName, label: binding.label };
+  return { status: "restored", sessionName, label: binding.label };
 }
