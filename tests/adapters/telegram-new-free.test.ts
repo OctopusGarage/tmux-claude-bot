@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleNewFreeCommand } from "../../src/adapters/telegram/handlers.js";
-import * as ops from "../../src/core/project-ops.js";
+import * as ops from "../../src/core/projects/project-ops.js";
 
 afterEach(() => vi.restoreAllMocks());
 

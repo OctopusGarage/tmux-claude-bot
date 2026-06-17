@@ -4,9 +4,9 @@ import { join } from "node:path";
 import type { CardActionEvent } from "@larksuiteoapi/node-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.js";
-import { bindGroup, getBinding, unbindGroup } from "../../../src/core/group-bindings.js";
-import { appendRecentProject } from "../../../src/core/recentProjects.js";
-import { sessionNameFromPath } from "../../../src/core/sessionPathMap.js";
+import { bindGroup, getBinding, unbindGroup } from "../../../src/core/projects/group-bindings.js";
+import { appendRecentProject } from "../../../src/core/projects/recentProjects.js";
+import { sessionNameFromPath } from "../../../src/core/projects/sessionPathMap.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
@@ -18,8 +18,8 @@ const installVoiceMock = vi.fn(
     bin: "/x/mlx_whisper",
   }),
 );
-vi.mock("../../../src/core/voice-support.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../src/core/voice-support.js")>()),
+vi.mock("../../../src/core/read/voice-support.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/core/read/voice-support.js")>()),
   persistEnvVar: vi.fn(),
   checkVoiceSupport: vi.fn(() => ({ ready: false, reason: "not-installed" })),
   isVoicePlatformSupported: vi.fn(() => true),
@@ -178,7 +178,7 @@ describe("makeCardActionHandler", () => {
     const deps = fakeDeps({
       session: "other",
       bridge: { listProjectSessions: vi.fn(async () => [session]) },
-      claude: { checkIfRunning: vi.fn(async () => false) },
+      agent: { checkIfRunning: vi.fn(async () => false) },
     });
     const handler = makeCardActionHandler(channel, deps);
 
@@ -195,7 +195,7 @@ describe("makeCardActionHandler", () => {
     channel.setChatType("group");
     const deps = fakeDeps({
       bridge: { listProjectSessions: vi.fn(async () => [session]) },
-      claude: { checkIfRunning: vi.fn(async () => false) },
+      agent: { checkIfRunning: vi.fn(async () => false) },
     });
     const handler = makeCardActionHandler(channel, deps);
 
@@ -214,7 +214,7 @@ describe("makeCardActionHandler", () => {
     channel.setChatType("group");
     const deps = fakeDeps({
       bridge: { listProjectSessions: vi.fn(async () => [session]) },
-      claude: { checkIfRunning: vi.fn(async () => false) },
+      agent: { checkIfRunning: vi.fn(async () => false) },
     });
     const handler = makeCardActionHandler(channel, deps);
 
@@ -232,7 +232,7 @@ describe("makeCardActionHandler", () => {
     });
     const deps = fakeDeps({
       bridge: { listProjectSessions: vi.fn(async () => [session]) },
-      claude: { checkIfRunning: vi.fn(async () => false) },
+      agent: { checkIfRunning: vi.fn(async () => false) },
     });
     const handler = makeCardActionHandler(channel, deps);
 
@@ -450,14 +450,14 @@ describe("makeCardActionHandler", () => {
       const deps = fakeDeps(multi);
       await makeCardActionHandler(channel, deps)(evt({ cmd: "start" }));
       expect(JSON.stringify(channel.cards())).toContain("选择启动方式");
-      expect(deps.claude.start).not.toHaveBeenCalled();
+      expect(deps.agent.start).not.toHaveBeenCalled();
     });
 
     it("startpick → starts the chosen command and confirms", async () => {
       const channel = fakeChannel();
       const deps = fakeDeps(multi);
       await makeCardActionHandler(channel, deps)(evt({ cmd: "startpick", idx: 1 }));
-      expect(deps.claude.start).toHaveBeenCalledWith("proj-1", "bash");
+      expect(deps.agent.start).toHaveBeenCalledWith("proj-1", "bash");
       expect(channel.texts().some((t) => t.includes("B"))).toBe(true);
     });
   });

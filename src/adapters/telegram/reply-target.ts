@@ -1,5 +1,5 @@
 import * as nodePath from "node:path";
-import { BoundedSessionMap } from "../../core/bounded-session-map.js";
+import { BoundedSessionMap } from "../../core/infra/bounded-session-map.js";
 
 /**
  * Telegram reply-target map: telegram message id → session. Replying to a bot

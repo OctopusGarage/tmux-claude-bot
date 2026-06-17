@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isGroupMgmtCommand, parseLarkInput } from "../../../src/adapters/lark/commands.js";
+import {
+  isGroupMgmtCommand,
+  isRecoveryCommand,
+  parseLarkInput,
+} from "../../../src/adapters/lark/commands.js";
 
 describe("parseLarkInput", () => {
   it("plain text → text kind", () => {
@@ -202,5 +206,30 @@ describe("parseLarkInput arg extraction", () => {
       name: "addproject",
       arg: "/home/user/app",
     });
+  });
+});
+
+describe("isRecoveryCommand", () => {
+  it("is true for binding-management commands", () => {
+    for (const c of [
+      "/bind /x",
+      "/rebind /x",
+      "/restore",
+      "/unbind",
+      "/newgroup /x",
+      "/newfreegroup /x",
+    ]) {
+      expect(isRecoveryCommand(c)).toBe(true);
+    }
+  });
+
+  it("is true for /help (so an unbound group can still show its options)", () => {
+    expect(isRecoveryCommand("/help")).toBe(true);
+  });
+
+  it("is false for plain prompts and non-recovery commands", () => {
+    for (const c of ["just chatting", "/status", "/peek", "/list_alive_projects"]) {
+      expect(isRecoveryCommand(c)).toBe(false);
+    }
   });
 });

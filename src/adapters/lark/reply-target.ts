@@ -1,4 +1,4 @@
-import { BoundedSessionMap } from "../../core/bounded-session-map.js";
+import { BoundedSessionMap } from "../../core/infra/bounded-session-map.js";
 import { appStateFile } from "../../shared/state-dir.js";
 
 /**

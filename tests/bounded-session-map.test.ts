@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BoundedSessionMap } from "../src/core/bounded-session-map.js";
+import { BoundedSessionMap } from "../src/core/infra/bounded-session-map.js";
 
 vi.mock("../src/shared/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },

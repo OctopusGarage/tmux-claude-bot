@@ -4,12 +4,12 @@ import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  formatSingleConversation,
   getLatestAssistantReply,
   getRecentConversations,
   listClaudeSessions,
   projectPathToHistoryDir,
-} from "../src/core/history.js";
+} from "../src/core/agents/claude/claude-history.js";
+import { formatSingleConversation } from "../src/core/read/transcript.js";
 
 describe("projectPathToHistoryDir", () => {
   it("converts slashes and underscores to hyphens to match Claude's actual behavior", () => {
@@ -29,6 +29,18 @@ describe("projectPathToHistoryDir", () => {
     expect(result).toBe(
       nodePath.join(homedir(), ".claude/projects", "-Users-test-tmux-claude-bot"),
     );
+  });
+
+  it("converts dots (and other non-alphanumerics) to hyphens, matching real claude", () => {
+    // Live-verified: claude encodes /private/tmp/tcb3-claude.J75ggs as
+    // -private-tmp-tcb3-claude-J75ggs (the "." becomes "-"). A dotted project path
+    // must resolve to claude's actual dir, or /history/usage come back empty.
+    const result = projectPathToHistoryDir("/private/tmp/tcb3-claude.J75ggs");
+    expect(result).toBe(
+      nodePath.join(homedir(), ".claude/projects", "-private-tmp-tcb3-claude-J75ggs"),
+    );
+    // A dot must NOT survive into the encoded dir name.
+    expect(result).not.toContain(".J75ggs");
   });
 
   it("converts both slashes and underscores to hyphens", () => {
@@ -138,8 +150,34 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
 
   it("getLatestAssistantReply matches the sent prompt exactly", async () => {
     write("a.jsonl", [line("user", "what is 2+2"), line("assistant", "4")]);
-    const reply = await getLatestAssistantReply(projectPath, "what is 2+2", configRoot, 0);
+    const reply = await getLatestAssistantReply(projectPath, "what is 2+2", configRoot, null, 0);
     expect(reply).toBe("4");
+  });
+
+  it("uses an explicit transcriptPath over the newest-mtime file (same-cwd Free Projects)", async () => {
+    // The live session the user is in…
+    write("live.jsonl", [line("user", "ping"), line("assistant", "from-live")]);
+    // …and a SECOND session in the same dir, written more recently — the
+    // newest-mtime guess would wrongly pick this one.
+    write("other.jsonl", [line("user", "ping"), line("assistant", "from-other")]);
+    const other = nodePath.join(histDir, "other.jsonl");
+    fs.utimesSync(other, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+
+    const live = nodePath.join(histDir, "live.jsonl");
+    const reply = await getLatestAssistantReply(projectPath, "ping", configRoot, live, 0);
+    expect(reply).toBe("from-live"); // the live pid's open file, NOT the newer one
+  });
+
+  it("getRecentConversations reads the explicit transcriptPath only", async () => {
+    write("live.jsonl", [line("user", "hi"), line("assistant", "live-answer")]);
+    write("other.jsonl", [line("user", "hi"), line("assistant", "other-answer")]);
+    const rounds = await getRecentConversations(
+      projectPath,
+      configRoot,
+      nodePath.join(histDir, "live.jsonl"),
+    );
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.assistant).toBe("live-answer");
   });
 
   it("getLatestAssistantReply fuzzy-matches when the sent text contains the stored prompt", async () => {
@@ -148,6 +186,7 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
       projectPath,
       "please summarize the file now",
       configRoot,
+      null,
       0,
     );
     expect(reply).toBe("summary done");
@@ -155,7 +194,13 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
 
   it("getLatestAssistantReply returns null when nothing matches", async () => {
     write("a.jsonl", [line("user", "unrelated prompt"), line("assistant", "x")]);
-    const reply = await getLatestAssistantReply(projectPath, "totally different", configRoot, 0);
+    const reply = await getLatestAssistantReply(
+      projectPath,
+      "totally different",
+      configRoot,
+      null,
+      0,
+    );
     expect(reply).toBeNull();
   });
 
@@ -170,6 +215,7 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
       projectPath,
       "summarize the entire long document",
       configRoot,
+      null,
       0,
     );
     expect(reply).toBe("summary here");
@@ -179,7 +225,7 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
     // Write a directory with the .jsonl name so fs.readFile fails.
     const histDir = projectPathToHistoryDir(projectPath, configRoot);
     fs.mkdirSync(nodePath.join(histDir, "unreadable.jsonl"), { recursive: true });
-    const reply = await getLatestAssistantReply(projectPath, "anything", configRoot, 0);
+    const reply = await getLatestAssistantReply(projectPath, "anything", configRoot, null, 0);
     expect(reply).toBeNull();
   });
 
@@ -347,7 +393,13 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
   it("getLatestAssistantReply returns null when the project dir has no transcripts", async () => {
     // historyDir exists (created in beforeEach) but contains no .jsonl files →
     // files.length === 0 → early null.
-    const reply = await getLatestAssistantReply(projectPath, "anything at all", configRoot, 0);
+    const reply = await getLatestAssistantReply(
+      projectPath,
+      "anything at all",
+      configRoot,
+      null,
+      0,
+    );
     expect(reply).toBeNull();
   });
 
@@ -359,6 +411,7 @@ describe("parseConversationRounds (via getRecentConversations)", () => {
       projectPath,
       "a lonely prompt with no answer",
       configRoot,
+      null,
       0,
     );
     expect(reply).toBeNull();
@@ -416,7 +469,7 @@ describe("formatSingleConversation", () => {
     expect(text).toContain("[1/3]");
     expect(text).toContain("hello");
     expect(text).toContain("world");
-    expect(text).toContain("🤖 Claude");
+    expect(text).toContain("🤖");
   });
 
   it("defaults to telegram channel", () => {

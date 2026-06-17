@@ -1,15 +1,59 @@
-import { ClaudeRunner } from "./core/claude.js";
-import { createConfigResolver, createExecProbe } from "./core/claude-config-resolver.js";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { createConfigResolver, createExecProbe } from "./core/agents/agent-config-resolver.js";
+import { parseClaudeFlavorAliases } from "./core/agents/claude/claude-flavor-alias.js";
+import { DEFAULT_CONFIG_ROOT } from "./core/agents/claude/claude-history.js";
+import { ClaudeRunner } from "./core/agents/claude/claude-runner.js";
+import { parseCodexFlavorAliases } from "./core/agents/codex/codex-flavor-alias.js";
+import { CodexRunner } from "./core/agents/codex/codex-runner.js";
+import { AgentRunnerDispatcher } from "./core/agents/runner-dispatcher.js";
+import { executeMessage } from "./core/command/dispatch.js";
+import { MessageQueue } from "./core/command/queue.js";
 import type { HandlerDeps } from "./core/deps.js";
-import { executeMessage } from "./core/dispatch.js";
-import { DEFAULT_CONFIG_ROOT } from "./core/history.js";
-import { OutputProcessor } from "./core/output.js";
-import { createProjectManager } from "./core/project-manager.js";
-import { MessageQueue } from "./core/queue.js";
-import { TmuxBridge } from "./core/tmux.js";
+import { createProjectManager } from "./core/projects/project-manager.js";
+import { createActivityWatcher } from "./core/session/activity-watcher.js";
+import { OutputProcessor } from "./core/session/output.js";
+import { TmuxBridge } from "./core/session/tmux.js";
 import { claudeBinFromStartCommand, loadConfig } from "./shared/config.js";
+import { SHELL_RC_FILES } from "./shared/shell-rc.js";
 import { appStateDir } from "./shared/state-dir.js";
 import { normalizeError } from "./shared/utils/error.js";
+
+/** Concatenated shell rc files, mined for `claude-*`/`codex-*` launcher aliases.
+ * The sync analogue of TakeoverProbe.readShellRc — bootstrap is synchronous, so
+ * we read the same rc files directly, missing-tolerant. */
+function readShellRcSync(home: string): string {
+  return SHELL_RC_FILES.map((f) => {
+    try {
+      return readFileSync(join(home, f), "utf8");
+    } catch {
+      return "";
+    }
+  }).join("\n");
+}
+
+/** Derive the fs.watch roots: the `projects` dir of every claude config dir and
+ * the `sessions` dir of every codex home — flavor aliases plus each agent's
+ * default. De-duped. */
+function deriveWatchRoots(home: string): string[] {
+  const rc = readShellRcSync(home);
+  const roots = new Set<string>();
+
+  const claudeDirs = new Set<string>([DEFAULT_CONFIG_ROOT]);
+  for (const a of parseClaudeFlavorAliases(rc, home)) {
+    if (a.configDir) claudeDirs.add(a.configDir);
+  }
+  for (const dir of claudeDirs) roots.add(join(dir, "projects"));
+
+  const codexHomes = new Set<string>([join(home, ".codex")]);
+  for (const a of parseCodexFlavorAliases(rc, home)) {
+    if (a.configDir) codexHomes.add(a.configDir);
+  }
+  for (const dir of codexHomes) roots.add(join(dir, "sessions"));
+
+  return [...roots];
+}
 
 /**
  * Build the protocol-agnostic core service bundle ONCE and wire the shared
@@ -34,7 +78,8 @@ export function bootstrap(): HandlerDeps {
     claudeBin: claudeBinFromStartCommand(config.claudeStartCommand),
     ttlMs: 60_000,
   });
-  const claude = new ClaudeRunner({
+
+  const claudeRunner = new ClaudeRunner({
     bridge,
     output,
     configResolver,
@@ -45,14 +90,37 @@ export function bootstrap(): HandlerDeps {
     maxWaitDoneMs: config.maxWaitDoneMs,
   });
 
+  const codexCommand = config.startCommands.find((c) => c.agent === "codex")?.command ?? "codex";
+  const codexRunner = new CodexRunner({
+    bridge,
+    output,
+    configResolver,
+    codexCommand,
+    idlePollTicks: config.idlePollTicks,
+    pollIntervalMs: config.pollIntervalMs,
+    maxWaitReadyMs: config.maxWaitReadyMs,
+    maxWaitDoneMs: config.maxWaitDoneMs,
+  });
+
+  const agentRunner = new AgentRunnerDispatcher({
+    bridge,
+    claude: claudeRunner,
+    codex: codexRunner,
+    configResolver,
+  });
+
+  const activity = createActivityWatcher(deriveWatchRoots(homedir()));
+  activity.start();
+
   const deps: HandlerDeps = {
     bridge,
     queue,
-    claude,
+    agent: agentRunner,
     output,
     config,
     currentProject,
     configResolver,
+    activity,
   };
 
   // The queue handler is protocol-agnostic: it runs the command and routes the

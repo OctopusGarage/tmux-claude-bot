@@ -4,7 +4,7 @@ import {
   consumeFreeLabel,
   isAwaitingFreeLabel,
   requestFreeLabel,
-} from "../src/core/free-label-prompt.js";
+} from "../src/core/projects/free-label-prompt.js";
 
 afterEach(() => vi.useRealTimers());
 

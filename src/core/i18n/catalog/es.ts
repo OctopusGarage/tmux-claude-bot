@@ -68,9 +68,9 @@ export const es: Messages = {
   btnCancel: "✕ Cancelar",
   btnDeleteMode: "🗑 Eliminar…",
 
-  // ── adopt (take over a non-tmux claude) ──
-  adoptTitle: "🧲 Procesos de Claude adoptables (fuera de tmux)",
-  adoptEmpty: "No se encontraron procesos de Claude adoptables",
+  // ── adopt (take over a non-tmux agent) ──
+  adoptTitle: "🧲 Procesos adoptables (fuera de tmux)",
+  adoptEmpty: "No se encontraron procesos adoptables",
   adoptConfirmPrompt: (label: string) =>
     `¿Tomar el control? Primero se interrumpe y termina el proceso original, luego se reanuda en tmux:\n${label}`,
   btnAdoptConfirm: "🧲 Adoptar",
@@ -82,24 +82,24 @@ export const es: Messages = {
     resumed
       ? `✅ Adoptado y sesión reanudada: ${proj}`
       : `✅ Adoptado e iniciado de nuevo: ${proj}`,
-  adoptFailed: "Fallo al adoptar: el proceso no terminó o Claude no se inició",
+  adoptFailed: "Fallo al adoptar: el proceso no terminó o el agente no se inició",
   adoptBusy:
-    "La sesión de tmux destino ya tiene un programa en primer plano (otro Claude u otra cosa). Se canceló sin tocar el original — sal de ahí primero y vuelve a adoptar.",
+    "La sesión de tmux destino ya tiene un programa en primer plano (otro agente u otra cosa). Se canceló sin tocar el original — sal de ahí primero y vuelve a adoptar.",
   btnAdoptAttach: "💻 Ver en la terminal del computador (opcional)",
   adoptAttachHint: (cmd: string) =>
     `✅ El comando de conexión ya está en el portapapeles de tu COMPUTADOR (no hace falta copiar nada en el móvil). Al volver, solo pégalo en una terminal y pulsa Enter para entrar — este paso es opcional.\nComando: ${cmd}`,
 
   doneShort: "Listo",
-  claudeNotRunningRestart: "Claude no está en ejecución — usa /restart para iniciarlo",
+  agentNotRunningRestart: "No está en ejecución — usa /restart para iniciarlo",
   contentTruncated: "...(contenido demasiado largo, truncado)",
-  claudeEmptyOutput: "Claude no devolvió nada · /peek para ver el panel",
-  claudeStarted: "✅ Claude iniciado",
-  claudeStartedWith: (label) => `✅ Claude iniciado con «${label}»`,
+  agentEmptyOutput: "No devolvió nada · /peek para ver el panel",
+  agentStarted: "✅ Iniciado",
+  agentStartedWith: (label) => `✅ Iniciado con «${label}»`,
   startPickerTitle: "🚀 Elige cómo iniciar",
   startPickerPrompt: "Hay varios comandos de inicio configurados — elige uno:",
   btnStartThis: "🚀 Iniciar este",
-  claudeExited: "✅ Claude cerrado",
-  claudeRestarted: "🔄 Claude reiniciado · --continue",
+  agentExited: "✅ Cerrado",
+  agentRestarted: "🔄 Reiniciado",
   sentEsc: "✅ Esc enviado",
   interrupted: "✅ Interrumpido · Ctrl-C",
   clearedContext: "✅ Contexto borrado · /clear",
@@ -110,24 +110,26 @@ export const es: Messages = {
   sentLeft: "✅ ← enviado",
   sentRight: "✅ → enviado",
   sentTab: "✅ Tab enviado",
-  statusRunning: "🟢 Claude en ejecución",
-  statusNotRunning: "🔴 Claude detenido",
+  statusRunning: (agent) => `🟢 ${agent} en ejecución`,
+  statusNotRunning: (agent) => `🔴 ${agent} detenido`,
   statusContext: (bar, pct) => `📊 Contexto ${bar} ${pct}%`,
   statusFiveHour: (bar, pct, reset) => `⏱ Sesión (5h) ${bar} ${pct}% (reinicia ${reset})`,
   statusSevenDay: (bar, pct, reset) => `📅 Semanal ${bar} ${pct}% (reinicia ${reset})`,
   statusUsageStale: (mins) =>
-    `⚠️ Datos de uso con ${mins} min de antigüedad (Claude Code pudo detenerse)`,
+    `⚠️ Datos de uso con ${mins} min de antigüedad (el agente pudo detenerse)`,
 
   // -- status usage install --
   statusUsageHint: "💡 ¿Ver el uso? Envía /status_install para configurarlo",
   statusUsagePending:
     "📊 Datos de uso aún no disponibles — se mostrarán tras la próxima llamada a la API",
+  statusUsageNoData:
+    "📊 Sin datos de uso para esta sesión todavía · envía un mensaje para actualizar",
   statusModeApi: "API",
   statusModeSubscription: "suscripción",
   statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "📊 Instalación de reporte de uso",
   statusInstallNoClaude:
-    "No se detectó ningún Claude en ejecución, así que no hay dónde instalar. Inicia un Claude primero.",
+    "No se detect\u00f3 ning\u00fan Claude en ejecuci\u00f3n. La instalaci\u00f3n del informe de uso es solo para Claude; Codex ya informa el uso de forma nativa, no requiere instalaci\u00f3n.",
   statusInstallInstalled: (dir) => `✅ ${dir} reporte de uso instalado`,
   statusInstallAlready: (dir) => `⏭ ${dir} ya instalado`,
   statusInstallForeignPrompt: (dirs) =>
@@ -197,6 +199,8 @@ export const es: Messages = {
   noRecentProjects: "No hay proyectos recientes\n\nAñade uno con /add_project <ruta>",
   messageTooLong: (len, max) => `Mensaje demasiado largo · ${len} > ${max} caracteres`,
   onlyTextVoice: "Solo se admiten mensajes de texto y de voz",
+  handlerError:
+    "⚠️ Error al procesar el mensaje; inténtalo de nuevo. Si el grupo no responde, envía /restore para reconectar el proyecto.",
   unknownCommand: (name) => `Comando desconocido: /${name} (envía /help para ver la lista)`,
 
   toastProcessing: "➕ Trabajando…",
@@ -220,7 +224,7 @@ export const es: Messages = {
     `♻️ tmux-claude-bot se recuperó de una salida anómala (caída / kill) · ${time}`,
 
   noSession: "Sin sesión activa · primero /list_alive_projects o /add_project",
-  notRunning: "Claude no está en ejecución · /start para lanzarlo, o /restart para continuar",
+  notRunning: "No está en ejecución · /start para lanzarlo, o /restart para continuar",
   noShortId: (id) => `ID corto no encontrado: ${id}`,
   pathNotAllowed: (dirs) => `Ruta fuera de la lista permitida · permitidas: ${dirs.join(", ")}`,
   voiceNotEnabled:
@@ -240,14 +244,14 @@ export const es: Messages = {
 
   helpIntroTelegram: `🤖 tmux-claude-bot
 
-Envía cualquier texto → se reenvía a Claude → respuesta
+Envía cualquier texto → se reenvía al agente → respuesta
 🎙️ La transcripción de voz es opcional · /voice_install para habilitarla (solo Apple Silicon) · /voice_lang para fijar el idioma
 
 Consejo: los mensajes reciben reacciones 👀 (recibido) / 👍 (hecho); el progreso se muestra en el sitio y se edita hasta el resultado; el resultado lleva debajo botones ⏎/✋/⎋/🔄.`,
 
   helpIntroLark: `🤖 tmux-claude (Lark)
 
-Envía cualquier texto → se reenvía a Claude → respuesta`,
+Envía cualquier texto → se reenvía al agente → respuesta`,
 
   helpSectionProjects: "📂 Proyectos",
   helpSectionRunning: "⚡ En ejecución",
@@ -260,11 +264,11 @@ Envía cualquier texto → se reenvía a Claude → respuesta`,
   cmdNewFree: "Nuevo proyecto libre (paralelo, misma ruta)",
   freeProjectLimit: (max) => `Límite de proyectos libres alcanzado (${max}). Elimina uno primero.`,
   freeProjectCreated: (slot, label) =>
-    `🆓 Proyecto libre #${slot}${label ? ` (${label})` : ""} creado.\nUsa /cd a cualquier ruta e inicia Claude tú mismo; /list_alive_projects para volver.`,
+    `🆓 Proyecto libre #${slot}${label ? ` (${label})` : ""} creado.\nUsa /cd a cualquier ruta e inicia el agente tú mismo; /list_alive_projects para volver.`,
   btnNewFree: "🆓 Nuevo proyecto libre",
   freeLabelPrompt: "Envía un nombre para el proyecto libre (envía - para omitir)",
   freeLabelCancelled: "Cancelado",
-  cmdAdopt: "adoptar un Claude que corre fuera de tmux",
+  cmdAdopt: "adoptar un agente que corre fuera de tmux",
   cmdQueueStatus: "estado de la cola",
   cmdHistory: "historial de conversación (el último por defecto)",
   cmdPeek: "ver el panel de tmux",
@@ -279,7 +283,7 @@ Envía cualquier texto → se reenvía a Claude → respuesta`,
   cmdArrowsTab: "flechas / Tab",
   cmdExit: "salir",
   cmdStatus: "comprobar estado",
-  cmdStart: "iniciar Claude",
+  cmdStart: "iniciar el agente",
   cmdDoctor: "ejecutar comprobaciones de instalación",
   cmdHelp: "esta ayuda",
   cmdWs: "gestión de espacios de trabajo (save/use/list/remove)",

@@ -5,11 +5,11 @@ import type { Context } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import { createReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
 import { browseText, replyCreateProject, sendAliveList } from "../src/adapters/telegram/views.js";
-import type { BrowseView } from "../src/core/dir-browser.js";
 import { messages } from "../src/core/i18n/index.js";
-import { chatScope } from "../src/core/project-manager.js";
-import type { CreateProjectResult } from "../src/core/project-ops.js";
-import { setPathForSession } from "../src/core/sessionPathMap.js";
+import type { BrowseView } from "../src/core/projects/dir-browser.js";
+import { chatScope } from "../src/core/projects/project-manager.js";
+import type { CreateProjectResult } from "../src/core/projects/project-ops.js";
+import { setPathForSession } from "../src/core/projects/sessionPathMap.js";
 import { fakeDeps } from "./adapters/lark/_fakes.js";
 
 type Button = { text: string; callback_data?: string };

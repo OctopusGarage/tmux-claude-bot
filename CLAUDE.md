@@ -56,7 +56,7 @@ If any matches are found, refactor to use `process.env`, `os.homedir()`, or gene
 On this machine the bot is installed as a launchd service (`~/Library/LaunchAgents/com.octopusgarage.tmux-claude-bot.plist`, label `com.octopusgarage.tmux-claude-bot`) with **`KeepAlive=true`**. That means:
 
 - **`scripts/stop.sh` does NOT stop it** — launchd immediately respawns the process. Running `start.sh` on top of that spawns a *second* lineage, so you end up with multiple instances fighting over the Telegram long-poll (409). This is a real trap; don't fall into it.
-- Since the runtime instance lock (`src/core/instance-lock.ts`), a second instance sharing the same state dir refuses to start with an `InstanceLockHeldError` naming the holder pid — the trap now fails fast instead of 409-ing. Instances with different `TCB_STATE_DIR`s are not protected.
+- Since the runtime instance lock (`src/core/infra/instance-lock.ts`), a second instance sharing the same state dir refuses to start with an `InstanceLockHeldError` naming the holder pid — the trap now fails fast instead of 409-ing. Instances with different `TCB_STATE_DIR`s are not protected.
 - The launchd wrapper runs the bundled CLI: `node dist/cli.js run`. A restart runs whatever `dist/` was **last built** — so to pick up source changes the managed copy must be rebuilt (`install.sh` runs `npm run build` on every deploy). This is the deploy path; a bare `kickstart` alone will NOT pick up un-built source edits.
 
 **To restart (the correct way):**

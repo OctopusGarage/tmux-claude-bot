@@ -1,7 +1,7 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
 import { vi } from "vitest";
+import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
-import type { QueuedMessage } from "../../../src/core/queue.js";
 
 /**
  * Shared fakes for the Lark adapter orchestration tests. They record observable
@@ -87,9 +87,10 @@ type DepsOverrides = {
   currentProject?: Partial<HandlerDeps["currentProject"]>;
   queue?: Partial<HandlerDeps["queue"]>;
   bridge?: Partial<HandlerDeps["bridge"]>;
-  claude?: Partial<HandlerDeps["claude"]>;
+  agent?: Partial<HandlerDeps["agent"]>;
   output?: Partial<HandlerDeps["output"]>;
   configResolver?: Partial<HandlerDeps["configResolver"]>;
+  activity?: Partial<HandlerDeps["activity"]>;
   /** Override the default current session ("proj-1"); pass null for "none". */
   session?: string | null;
   /** Override the default allowed open ids (default {"ou_me"}). */
@@ -154,15 +155,16 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     sendKeys: vi.fn(async () => {}),
     sendExit: vi.fn(async () => {}),
     sendRawKey: vi.fn(async () => {}),
+    paneCurrentPath: vi.fn(async () => null),
     ...overrides.bridge,
   } as unknown as HandlerDeps["bridge"];
 
-  const claude = {
+  const agent = {
     checkIfRunning: vi.fn(async () => true),
     waitUntilDone: vi.fn(async () => ({ done: true, output: "done" })),
     start: vi.fn(async () => {}),
-    ...overrides.claude,
-  } as unknown as HandlerDeps["claude"];
+    ...overrides.agent,
+  } as unknown as HandlerDeps["agent"];
 
   const output = {
     process: vi.fn((s: string) => s),
@@ -186,14 +188,23 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     ...overrides.config,
   } as unknown as HandlerDeps["config"];
 
+  const activity = {
+    isActiveWithin: () => false,
+    onActivity: () => () => {},
+    start: () => {},
+    stop: () => {},
+    ...overrides.activity,
+  } as unknown as HandlerDeps["activity"];
+
   return {
     bridge,
     queue,
-    claude,
+    agent,
     output,
     config,
     currentProject,
     configResolver,
+    activity,
   } as FakeDeps;
 }
 

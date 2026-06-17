@@ -5,14 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Control the recents list without touching the real recent_projects.txt in cwd.
 const recentLines: string[] = [];
-vi.mock("../../../src/core/recentProjects.js", () => ({
+vi.mock("../../../src/core/projects/recentProjects.js", () => ({
   readRecentProjectLines: vi.fn(async () => recentLines.slice()),
   appendRecentProject: vi.fn(async () => {}),
 }));
 
 import { addRecentProjectBySid } from "../../../src/adapters/telegram/project-ops.js";
 import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-target.js";
-import { sessionNameFromPath } from "../../../src/core/sessionPathMap.js";
+import { sessionNameFromPath } from "../../../src/core/projects/sessionPathMap.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeCtx, fakeDeps } from "./_fakes.js";
 

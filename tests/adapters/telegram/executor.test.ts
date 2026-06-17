@@ -5,7 +5,7 @@ import {
   handleQueuedCommand,
 } from "../../../src/adapters/telegram/executor.js";
 import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-target.js";
-import type { PersistedMessage } from "../../../src/core/queue.js";
+import type { PersistedMessage } from "../../../src/core/command/queue.js";
 import { fakeBot, fakeCtx, fakeDeps } from "./_fakes.js";
 
 describe("enqueueSessionCommand", () => {
@@ -122,7 +122,7 @@ describe("handleQueuedCommand", () => {
 
   it("runs an immediate action (status) inline without enqueuing", async () => {
     const ctx = fakeCtx();
-    const deps = fakeDeps({ claude: { checkIfRunning: vi.fn(async () => true) } });
+    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => true) } });
 
     await handleQueuedCommand(ctx, deps, "status");
 
@@ -135,7 +135,7 @@ describe("handleQueuedCommand", () => {
     // tab is larkKind:"immediate" in the registry; telegram now derives its
     // immediate set from there instead of a hardcoded list that had drifted.
     const ctx = fakeCtx();
-    const deps = fakeDeps({ claude: { checkIfRunning: vi.fn(async () => true) } });
+    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => true) } });
 
     await handleQueuedCommand(ctx, deps, "tab");
 

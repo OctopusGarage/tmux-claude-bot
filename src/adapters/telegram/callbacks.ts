@@ -1,26 +1,27 @@
 import type { Context } from "grammy";
+import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
+import { orphanLabel } from "../../core/agents/takeover.js";
+import {
+  adoptOrphan,
+  composeAdoptOutcome,
+  copyAttachCommand,
+  findAdoptableOrphans,
+} from "../../core/agents/takeover-service.js";
+import { executeMessage, performRestart, performStart } from "../../core/command/dispatch.js";
+import type { QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
+import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import {
   browseCwd,
   clearBrowse,
   displayPath,
   requestNewFolder,
   resolveBrowseAction,
-} from "../../core/dir-browser.js";
-import { executeMessage, performRestart, performStart } from "../../core/dispatch.js";
-import { clearFreeLabel, requestFreeLabel } from "../../core/free-label-prompt.js";
-import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
-import { createProjectFromPath } from "../../core/project-ops.js";
-import type { QueuedMessage } from "../../core/queue.js";
-import { getPathBySession } from "../../core/sessionPathMap.js";
-import { orphanLabel } from "../../core/takeover.js";
-import {
-  adoptOrphan,
-  composeAdoptOutcome,
-  copyAttachCommand,
-  findAdoptableOrphans,
-} from "../../core/takeover-service.js";
-import { setWhisperLanguage } from "../../core/voice-support.js";
+} from "../../core/projects/dir-browser.js";
+import { clearFreeLabel, requestFreeLabel } from "../../core/projects/free-label-prompt.js";
+import { createProjectFromPath } from "../../core/projects/project-ops.js";
+import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { setWhisperLanguage } from "../../core/read/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -194,10 +195,14 @@ export async function handleCallbackQuery(
         await reply(ctx, "err", MSG.noSession, { replyTarget });
         return;
       }
+      // Resolve the live kind before exit — resolveAgentKind self-persists it,
+      // so the post-exit dispatch resumes with the right runner (live detection
+      // returns null once it's gone).
+      await resolveAgentKind(deps.configResolver, sessionName);
       deps.queue.clearSession(sessionName);
       await deps.bridge.sendExit(sessionName);
       await sleep(2000);
-      await deps.claude.startWithResume(sessionName, parsed.sessionId);
+      await deps.agent.startWithResume(sessionName, parsed.sessionId);
       deps.configResolver.invalidate(sessionName);
       await reply(ctx, "ok", messages("telegram").resumeStarted(parsed.sessionId.slice(0, 8)), {
         session: sessionName,
@@ -358,7 +363,7 @@ export async function handleCallbackQuery(
       await safeAnswerCallback(ctx, messages("telegram").toastSent(restart ? "restart" : "start"));
       if (restart) await performRestart(deps, sessionName, pick.command);
       else await performStart(deps, sessionName, pick.command);
-      await reply(ctx, "ok", messages("telegram").claudeStartedWith(pick.label), {
+      await reply(ctx, "ok", messages("telegram").agentStartedWith(pick.label), {
         session: sessionName,
         replyTarget,
       });

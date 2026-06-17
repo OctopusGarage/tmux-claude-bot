@@ -2,13 +2,18 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FREE_PROJECT_LIMIT, getFreeProject, setFreeProject } from "../src/core/free-projects.js";
-import { bindGroup, getBinding } from "../src/core/group-bindings.js";
+import {
+  FREE_PROJECT_LIMIT,
+  getFreeProject,
+  setFreeProject,
+} from "../src/core/projects/free-projects.js";
+import { bindGroup, getBinding } from "../src/core/projects/group-bindings.js";
 import {
   aliveProjectButtons,
+  allocateFreeSlotPruned,
   createFreeProject,
   removeProjectBySession,
-} from "../src/core/project-ops.js";
+} from "../src/core/projects/project-ops.js";
 
 let dir: string;
 let orig: string | undefined;
@@ -92,12 +97,33 @@ describe("createFreeProject", () => {
   });
 });
 
+describe("allocateFreeSlotPruned never recycles a bound slot (#5 guard)", () => {
+  it("keeps a dead-but-bound free slot and allocates the next one instead", async () => {
+    // Slot 1 is registered and bound to a Lark group, but not live in tmux (e.g.
+    // after a tmux restart). A naive prune would reclaim it and hand it to a NEW
+    // group → two groups on one session. The guard must keep it reserved.
+    setFreeProject(1, { label: "g1" });
+    bindGroup("oc_1", {
+      workspacePath: "/work/app",
+      sessionName: "tmux_proj_free_1",
+      label: "app #1",
+    });
+    const { deps } = makeDeps({ live: [] });
+
+    const slot = await allocateFreeSlotPruned(deps);
+
+    expect(slot).toBe(2); // slot 1 protected by its binding → next slot allocated
+    expect(getFreeProject(1)?.label).toBe("g1"); // still reserved
+    expect(getBinding("oc_1")?.sessionName).toBe("tmux_proj_free_1"); // binding intact
+  });
+});
+
 describe("removeProjectBySession releases free slots", () => {
   it("frees the slot for a free session", async () => {
     setFreeProject(2, { label: "x" });
     const deps = {
       config: { projectSessionPrefix: "tmux_proj_" },
-      claude: { checkIfRunning: vi.fn().mockResolvedValue(false) },
+      agent: { checkIfRunning: vi.fn().mockResolvedValue(false) },
       queue: { clearSession: vi.fn() },
       bridge: { killSession: vi.fn().mockResolvedValue(undefined) },
       configResolver: { invalidate: vi.fn() },
@@ -116,7 +142,7 @@ describe("removeProjectBySession releases free slots", () => {
     });
     const deps = {
       config: { projectSessionPrefix: "tmux_proj_" },
-      claude: { checkIfRunning: vi.fn().mockResolvedValue(false) },
+      agent: { checkIfRunning: vi.fn().mockResolvedValue(false) },
       queue: { clearSession: vi.fn() },
       bridge: { killSession: vi.fn().mockResolvedValue(undefined) },
       configResolver: { invalidate: vi.fn() },
@@ -134,12 +160,21 @@ describe("aliveProjectButtons includes path-less free sessions", () => {
     setFreeProject(1, { label: "taskB" });
     const deps = {
       config: { projectSessionPrefix: "tmux_proj_" },
-      bridge: { listProjectSessions: vi.fn().mockResolvedValue(["tmux_proj_free_1"]) },
+      bridge: {
+        listProjectSessions: vi.fn().mockResolvedValue(["tmux_proj_free_1"]),
+        paneCurrentPath: vi.fn().mockResolvedValue(null),
+      },
       currentProject: { get: vi.fn().mockResolvedValue("tmux_proj_free_1") },
+      configResolver: { detectAgentKind: vi.fn().mockResolvedValue(null) },
+      queue: {
+        isSessionProcessing: vi.fn().mockReturnValue(false),
+        getSessionQueue: vi.fn().mockReturnValue([]),
+      },
     } as never;
     const buttons = await aliveProjectButtons(deps, "telegram:1");
     expect(buttons).toHaveLength(1);
-    expect(buttons[0]?.label).toBe("🆓 taskB");
+    // No live agent → 💤 prefix; the 🆓 free label is preserved verbatim.
+    expect(buttons[0]?.label).toBe("💤 🆓 taskB");
     expect(buttons[0]?.active).toBe(true);
   });
 });

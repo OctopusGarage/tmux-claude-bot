@@ -26,7 +26,7 @@ describe("deriveStartLabel", () => {
 describe("parseStartCommands", () => {
   it("returns just the primary when no numbered vars are set", () => {
     expect(parseStartCommands({}, "claude-yolo")).toEqual([
-      { label: "claude-yolo", command: "claude-yolo" },
+      { label: "claude-yolo", command: "claude-yolo", agent: "claude" },
     ]);
   });
 
@@ -50,6 +50,7 @@ describe("parseStartCommands", () => {
     expect(parseStartCommands(env, "claude-yolo")[1]).toEqual({
       label: "工作号",
       command: "claude-x",
+      agent: "claude",
     });
   });
 
@@ -59,5 +60,29 @@ describe("parseStartCommands", () => {
       CLAUDE_START_COMMAND_4: "c",
     } as NodeJS.ProcessEnv;
     expect(parseStartCommands(env, "p").map((c) => c.command)).toEqual(["p", "a"]);
+  });
+});
+
+describe("parseStartCommands — codex", () => {
+  it("tags claude commands as agent 'claude' (default) and codex as 'codex'", () => {
+    const env = {
+      CLAUDE_START_COMMAND: "claude-yolo",
+      CODEX_START_COMMAND: "codex-stella",
+      CODEX_START_LABEL: "Stella",
+      CODEX_START_COMMAND_2: "codex-farmer",
+    } as unknown as NodeJS.ProcessEnv;
+    const out = parseStartCommands(env, "claude-yolo");
+    expect(out).toEqual([
+      { label: expect.any(String), command: "claude-yolo", agent: "claude" },
+      { label: "Stella", command: "codex-stella", agent: "codex" },
+      { label: expect.any(String), command: "codex-farmer", agent: "codex" },
+    ]);
+  });
+  it("omits codex when no CODEX_START_COMMAND is set", () => {
+    const out = parseStartCommands(
+      { CLAUDE_START_COMMAND: "claude-yolo" } as unknown as NodeJS.ProcessEnv,
+      "claude-yolo",
+    );
+    expect(out.every((c) => c.agent === "claude")).toBe(true);
   });
 });

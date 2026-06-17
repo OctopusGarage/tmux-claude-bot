@@ -1,16 +1,16 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
+import { PendingQueue } from "../../core/command/pending-queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import { createSubfolder, isAwaitingFolderName } from "../../core/dir-browser.js";
-import { reconcileGroupBinding } from "../../core/group-binding-ops.js";
-import { isProjectGroup } from "../../core/group-bindings.js";
 import { messages } from "../../core/i18n/index.js";
-import { PendingQueue } from "../../core/pending-queue.js";
-import { chatScope } from "../../core/project-manager.js";
-import { isVoiceInstallable } from "../../core/voice-support.js";
+import { createSubfolder, isAwaitingFolderName } from "../../core/projects/dir-browser.js";
+import { reconcileGroupBinding } from "../../core/projects/group-binding-ops.js";
+import { isProjectGroup } from "../../core/projects/group-bindings.js";
+import { chatScope } from "../../core/projects/project-manager.js";
+import { isVoiceInstallable } from "../../core/read/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { browseCard, helpCard } from "./cards.js";
-import { isGroupMgmtCommand, parseLarkInput } from "./commands.js";
+import { isGroupMgmtCommand, isRecoveryCommand, parseLarkInput } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
 import {
   handleBind,
@@ -86,7 +86,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
     }
   });
 
-  return async (msg: NormalizedMessage): Promise<void> => {
+  const handle = async (msg: NormalizedMessage): Promise<void> => {
     if (!isOpenIdAllowed(msg.senderId, allowed)) {
       logger.info(`[lark] drop message from non-allowlisted open_id=${msg.senderId || "?"}`);
       return;
@@ -94,8 +94,18 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
 
     const isP2p = msg.chatType === "p2p";
     if (!isP2p && !isProjectGroup(msg.chatId)) {
-      logger.info(`[lark] ignore unbound chat_type=${msg.chatType} chat=${msg.chatId}`);
-      return;
+      // The group has no binding. Rather than bricking it (a lost binding would
+      // otherwise make EVERY message — including the recovery commands — silently
+      // dropped, forcing the user to recreate the group), let an allow-listed user
+      // run binding-recovery commands (/bind, /rebind, /restore, /newgroup…, /help)
+      // in place. Everything else (plain prompts, views) is still ignored: there is
+      // no project to talk to until the group is re-bound.
+      const recoverable = msg.rawContentType === "text" && isRecoveryCommand(msg.content ?? "");
+      if (!recoverable) {
+        logger.info(`[lark] ignore unbound chat_type=${msg.chatType} chat=${msg.chatId}`);
+        return;
+      }
+      logger.info(`[lark] unbound chat=${msg.chatId} — allowing recovery command`);
     }
 
     if (!isP2p) {
@@ -297,6 +307,25 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
           replySession,
         });
         break;
+    }
+  };
+
+  // Top-level boundary: no single message may take the handler down or vanish
+  // silently. A throw from reconcile (e.g. the tmux server briefly down) or a
+  // failed session (re)create is logged and surfaced to the chat, so the user
+  // gets feedback and can /restore — instead of an unhandled rejection.
+  return async (msg: NormalizedMessage): Promise<void> => {
+    try {
+      await handle(msg);
+    } catch (err) {
+      logger.error(
+        `[lark] handler error chat=${msg.chatId}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+      );
+      try {
+        await sendText(channel, msg.chatId, messages("lark").handlerError);
+      } catch {
+        // best-effort reply — the original error is already logged
+      }
     }
   };
 }

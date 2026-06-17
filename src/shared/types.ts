@@ -5,11 +5,30 @@ export type LarkConfig = {
   domain: "feishu" | "lark";
 };
 
+/** Which coding agent a start command launches. Absent => "claude" (back-compat). */
+export type AgentKind = "claude" | "codex";
+
+/** UI glyph for an agent: 🟠 claude / 🔘 codex, or 💤 when none is live (null).
+ * Single source so the alive-list, keyboards, and Lark cards never drift. */
+export function agentGlyph(kind: AgentKind | null): string {
+  return kind === "codex" ? "🔘" : kind === "claude" ? "🟠" : "💤";
+}
+
+/** Endpoint/auth an agent is using, for the /status line. `baseUrl` null = the
+ * agent's default endpoint; `mode` is "api" (key/token set) vs "subscription"
+ * (OAuth login). NEVER carries the key — only its presence. Shared by both agents
+ * (claude mines it from process env, codex from auth.json/config.toml). */
+export interface AgentApiInfo {
+  baseUrl: string | null;
+  mode: "api" | "subscription";
+}
+
 /** A selectable Claude start command: a full shell command line (may carry
  * leading `VAR=value` env assignments) plus a short button label. */
 export type StartCommand = {
   label: string;
   command: string;
+  agent?: AgentKind;
 };
 
 export type AppConfig = {

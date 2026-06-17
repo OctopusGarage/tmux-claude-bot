@@ -12,7 +12,7 @@ import {
   encodeControlAction,
   parseCallbackData,
 } from "../src/adapters/telegram/keyboards.js";
-import type { BrowseView } from "../src/core/dir-browser.js";
+import type { BrowseView } from "../src/core/projects/dir-browser.js";
 
 function callbackDatas(kb: { inline_keyboard: { text: string; callback_data?: string }[][] }) {
   return kb.inline_keyboard.flat().map((b) => b.callback_data);
@@ -112,6 +112,19 @@ describe("start-command picker", () => {
   it("builds one sp button per command, indexed and sid-tagged", () => {
     const kb = buildStartPickerKeyboard([{ label: "Stella" }, { label: "Work" }], "abc123");
     expect(callbackDatas(kb)).toEqual(["sp:0:abc123", "sp:1:abc123"]);
+  });
+
+  it("prefixes codex commands with a codex glyph, claude with the rocket", () => {
+    const kb = buildStartPickerKeyboard(
+      [
+        { label: "YOLO", command: "claude-yolo", agent: "claude" },
+        { label: "Stella", command: "codex-stella", agent: "codex" },
+      ],
+      "sid",
+    );
+    const texts = kb.inline_keyboard.flat().map((b) => b.text);
+    expect(texts.find((t) => t.includes("YOLO"))).toContain("🟠");
+    expect(texts.find((t) => t.includes("Stella"))).toContain("🔘");
   });
 });
 

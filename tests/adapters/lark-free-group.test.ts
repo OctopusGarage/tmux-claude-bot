@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../src/core/recentProjects.js", () => ({
+vi.mock("../../src/core/projects/recentProjects.js", () => ({
   readRecentProjectLines: vi.fn().mockResolvedValue(["/work/app"]),
   appendRecentProject: vi.fn().mockResolvedValue(undefined),
 }));
@@ -13,8 +13,8 @@ vi.mock("../../src/adapters/lark/resource.js", () => ({
 vi.mock("../../src/adapters/lark/replies.js", () => ({ sendText: vi.fn(), sendCard: vi.fn() }));
 
 import { makeFreeGroupBySid } from "../../src/adapters/lark/group-commands.js";
-import { getFreeProject } from "../../src/core/free-projects.js";
-import { bindGroup, getBinding, listBindings } from "../../src/core/group-bindings.js";
+import { getFreeProject } from "../../src/core/projects/free-projects.js";
+import { bindGroup, getBinding, listBindings } from "../../src/core/projects/group-bindings.js";
 import { sessionShortId } from "../../src/shared/utils/hash.js";
 
 let dir: string;

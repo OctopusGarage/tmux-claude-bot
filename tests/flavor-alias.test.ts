@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  type FlavorAlias,
-  matchFlavorAlias,
-  parseFlavorAliases,
-} from "../src/core/flavor-alias.js";
+import { parseClaudeFlavorAliases } from "../src/core/agents/claude/claude-flavor-alias.js";
+import { type FlavorAlias, matchFlavorAlias } from "../src/core/agents/flavor-alias.js";
 
 const HOME = "/home/u";
 
@@ -19,9 +16,9 @@ alias claude-ollama="CLAUDE_CONFIG_DIR=~/.claude ANTHROPIC_BASE_URL=http://192.1
 alias claude-tmux="npx tsx ~/scripts/claude-tmux.ts"
 `;
 
-describe("parseFlavorAliases", () => {
+describe("parseClaudeFlavorAliases", () => {
   it("extracts claude launcher aliases with their config dir + base url", () => {
-    const aliases = parseFlavorAliases(RC, HOME);
+    const aliases = parseClaudeFlavorAliases(RC, HOME);
     const byName = Object.fromEntries(aliases.map((a) => [a.name, a]));
     expect(byName["claude-yolo"]).toEqual({
       name: "claude-yolo",
@@ -38,18 +35,18 @@ describe("parseFlavorAliases", () => {
   });
 
   it("ignores aliases whose binary isn't claude (e.g. claude-tmux)", () => {
-    const names = parseFlavorAliases(RC, HOME).map((a) => a.name);
+    const names = parseClaudeFlavorAliases(RC, HOME).map((a) => a.name);
     expect(names).not.toContain("claude-tmux");
   });
 
   it("does not leak the secret token into the parsed signature", () => {
-    const minmax = parseFlavorAliases(RC, HOME).find((a) => a.name === "claude-minmax");
+    const minmax = parseClaudeFlavorAliases(RC, HOME).find((a) => a.name === "claude-minmax");
     expect(JSON.stringify(minmax)).not.toContain("sk-secret");
   });
 });
 
 describe("matchFlavorAlias", () => {
-  const aliases = parseFlavorAliases(RC, HOME);
+  const aliases = parseClaudeFlavorAliases(RC, HOME);
 
   it("matches a base-url flavor sharing the default config dir", () => {
     expect(
@@ -114,20 +111,20 @@ describe("matchFlavorAlias", () => {
   });
 });
 
-describe("parseFlavorAliases edge cases", () => {
+describe("parseClaudeFlavorAliases edge cases", () => {
   it("returns an empty list when there are no aliases at all", () => {
-    expect(parseFlavorAliases("# just a comment\nexport FOO=bar\n", HOME)).toEqual([]);
+    expect(parseClaudeFlavorAliases("# just a comment\nexport FOO=bar\n", HOME)).toEqual([]);
   });
 
   it("expands a bare ~ CLAUDE_CONFIG_DIR to home itself", () => {
     // Line 16: expandHome's `p === "~"` branch (no trailing slash).
-    const aliases = parseFlavorAliases('alias claude-h="CLAUDE_CONFIG_DIR=~ claude"', HOME);
+    const aliases = parseClaudeFlavorAliases('alias claude-h="CLAUDE_CONFIG_DIR=~ claude"', HOME);
     expect(aliases[0]?.configDir).toBe(HOME);
   });
 
   it("keeps an absolute (non-~) CLAUDE_CONFIG_DIR verbatim", () => {
     // expandHome's pass-through branch — no ~ prefix.
-    const aliases = parseFlavorAliases(
+    const aliases = parseClaudeFlavorAliases(
       'alias claude-abs="CLAUDE_CONFIG_DIR=/etc/claude claude"',
       HOME,
     );
@@ -136,17 +133,17 @@ describe("parseFlavorAliases edge cases", () => {
 
   it("ignores an alias with an empty body (no binary token)", () => {
     // m[3] is "" → split yields [""], no assignment, binary stays "" → dropped.
-    expect(parseFlavorAliases('alias claude-empty=""', HOME)).toEqual([]);
+    expect(parseClaudeFlavorAliases('alias claude-empty=""', HOME)).toEqual([]);
   });
 
   it("records an env assignment with an empty value", () => {
     // assign[2] === "" → env key kept with empty string; binary is the next token.
-    const aliases = parseFlavorAliases('alias claude-e="ANTHROPIC_BASE_URL= claude"', HOME);
+    const aliases = parseClaudeFlavorAliases('alias claude-e="ANTHROPIC_BASE_URL= claude"', HOME);
     expect(aliases[0]).toEqual({ name: "claude-e", configDir: null, baseUrl: "" });
   });
 
   it("parses multiple env assignments before the binary and stops at the binary", () => {
-    const aliases = parseFlavorAliases(
+    const aliases = parseClaudeFlavorAliases(
       'alias claude-multi="CLAUDE_CONFIG_DIR=~/.c ANTHROPIC_BASE_URL=http://x claude --foo BAR=baz"',
       HOME,
     );
@@ -159,7 +156,7 @@ describe("parseFlavorAliases edge cases", () => {
   });
 
   it("supports single-quoted alias bodies", () => {
-    const aliases = parseFlavorAliases(
+    const aliases = parseClaudeFlavorAliases(
       "alias claude-sq='ANTHROPIC_BASE_URL=http://q claude'",
       HOME,
     );

@@ -8,7 +8,7 @@ import {
   isCdAllowed,
   sessionNameFromPath,
   setPathForSession,
-} from "../src/core/sessionPathMap.js";
+} from "../src/core/projects/sessionPathMap.js";
 
 // The session map resolves under TCB_STATE_DIR (set to a temp dir by tests/setup.ts),
 // falling back to the project root — target the same location the functions use.

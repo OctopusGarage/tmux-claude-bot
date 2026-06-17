@@ -1,0 +1,41 @@
+  tmux, short for “terminal multiplexer,” belongs to a long tradition of Unix tools built
+  around one simple idea: a command-line session should survive beyond the life of a single
+  terminal window. Before tmux existed, users relied heavily on GNU Screen, first released
+  in the late 1980s. Screen allowed people to run multiple shell sessions inside one
+  terminal, detach from them, and reconnect later. This was especially useful for system
+  administrators working over unreliable SSH connections.
+
+  tmux emerged in the late 2000s as a cleaner, more modern alternative. It was created by
+  Nicholas Marriott and developed closely with the OpenBSD community. Like many OpenBSD
+  projects, tmux emphasized simplicity, portability, security-conscious design, and a
+  permissive license. Rather than merely copying Screen, tmux introduced a clearer client-
+  server architecture: sessions run in the background, while terminal windows act as clients
+  connecting to them.
+
+  Its design made several workflows easier. Users could split terminal windows into panes,
+  organize work into windows and sessions, detach from remote tasks, and later resume
+  exactly where they left off. Developers, sysadmins, and power users quickly adopted it
+  because it fit naturally into SSH-heavy environments, long-running build processes, log
+  monitoring, and editor-based workflows.
+
+  Over time, tmux gained a reputation for being more scriptable and configurable than
+  Screen. Its command system made automation practical, while its status bar, key bindings,
+  layouts, and hooks let users shape it into a personal workspace manager. On macOS, Linux,
+  BSD systems, and remote servers, tmux became a standard part of many development
+  environments.
+
+  By the 2010s, tmux had become especially popular among programmers using Vim, Emacs, and
+  terminal-based tools. Blog posts, dotfile repositories, and tutorials spread common
+  configurations. Plugins and plugin managers appeared, adding session restoration, sensible
+  defaults, theming, and integration with editors.
+
+  The history of tmux is not one of flashy reinvention, but of careful refinement. It solved
+  an old Unix problem with modern taste: keep work alive, organized, and reachable. Its
+  success comes from being boring in the best sense: reliable, scriptable, portable, and
+  respectful of how command-line users actually work. Today, tmux remains one of the
+  essential tools for anyone who spends serious time in a terminal.
+
+
+› Improve documentation in @filename
+
+  esc again to edit previous message

@@ -68,9 +68,9 @@ export const ja: Messages = {
   btnCancel: "✕ キャンセル",
   btnDeleteMode: "🗑 削除…",
 
-  // ── adopt (take over a non-tmux claude) ──
-  adoptTitle: "🧲 引き継ぎ可能な Claude プロセス（tmux 外）",
-  adoptEmpty: "引き継ぎ可能な Claude プロセスは見つかりません",
+  // ── adopt (take over a non-tmux agent) ──
+  adoptTitle: "🧲 引き継ぎ可能なプロセス（tmux 外）",
+  adoptEmpty: "引き継ぎ可能なプロセスは見つかりません",
   adoptConfirmPrompt: (label: string) =>
     `引き継ぎますか？元のプロセスを中断・終了してから tmux で再開します:\n${label}`,
   btnAdoptConfirm: "🧲 引き継ぐ",
@@ -82,24 +82,24 @@ export const ja: Messages = {
     resumed
       ? `✅ 引き継ぎ、セッションを再開しました: ${proj}`
       : `✅ 引き継ぎ、新規開始しました: ${proj}`,
-  adoptFailed: "引き継ぎ失敗: プロセスを終了できないか、Claude が起動しませんでした",
+  adoptFailed: "引き継ぎ失敗: プロセスを終了できないか、エージェントが起動しませんでした",
   adoptBusy:
-    "対象の tmux セッションのフォアグラウンドで既にプログラムが動作中です（別の Claude など）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
+    "対象の tmux セッションのフォアグラウンドで既にプログラムが動作中です（別のエージェントなど）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
   btnAdoptAttach: "💻 PC のターミナルで見る（任意）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接続コマンドは「PC」のクリップボードにコピー済みです（スマホ側でコピーする必要はありません）。PC に戻ったらターミナルに貼り付けて Enter を押すだけで入れます。この手順は任意です。\nコマンド: ${cmd}`,
 
   doneShort: "完了",
-  claudeNotRunningRestart: "Claude が実行されていません · /restart で起動してください",
+  agentNotRunningRestart: "実行されていません · /restart で起動してください",
   contentTruncated: "...(内容が長すぎるため省略しました)",
-  claudeEmptyOutput: "Claude の出力が空です · /peek で画面を確認",
-  claudeStarted: "✅ Claude を起動しました",
-  claudeStartedWith: (label) => `✅ 「${label}」で Claude を起動しました`,
+  agentEmptyOutput: "出力が空です · /peek で画面を確認",
+  agentStarted: "✅ 起動しました",
+  agentStartedWith: (label) => `✅ 「${label}」で起動しました`,
   startPickerTitle: "🚀 起動方法を選択",
   startPickerPrompt: "複数の起動コマンドが設定されています。1つ選んでください:",
   btnStartThis: "🚀 これで起動",
-  claudeExited: "✅ Claude を終了しました",
-  claudeRestarted: "🔄 Claude を再起動しました · --continue",
+  agentExited: "✅ 終了しました",
+  agentRestarted: "🔄 再起動しました",
   sentEsc: "✅ Esc を送信しました",
   interrupted: "✅ 中断しました · Ctrl-C",
   clearedContext: "✅ コンテキストをクリアしました · /clear",
@@ -110,23 +110,25 @@ export const ja: Messages = {
   sentLeft: "✅ ← を送信しました",
   sentRight: "✅ → を送信しました",
   sentTab: "✅ Tab を送信しました",
-  statusRunning: "🟢 Claude 実行中",
-  statusNotRunning: "🔴 Claude 停止中",
+  statusRunning: (agent) => `🟢 ${agent} 実行中`,
+  statusNotRunning: (agent) => `🔴 ${agent} 停止中`,
   statusContext: (bar, pct) => `📊 コンテキスト ${bar} ${pct}%`,
   statusFiveHour: (bar, pct, reset) => `⏱ セッション(5h) ${bar} ${pct}%（リセット ${reset}）`,
   statusSevenDay: (bar, pct, reset) => `📅 週間 ${bar} ${pct}%（リセット ${reset}）`,
   statusUsageStale: (mins) =>
-    `⚠️ 使用量データが ${mins} 分前から未更新（Claude Code が停止した可能性）`,
+    `⚠️ 使用量データが ${mins} 分前から未更新（エージェントが停止した可能性）`,
 
   // -- status usage install --
   statusUsageHint: "💡 使用量を見たい?/status_install で設定できます",
   statusUsagePending: "📊 使用量データはまだありません——次の Claude API 応答後に表示されます",
+  statusUsageNoData:
+    "📊 このセッションの使用量データはまだありません · メッセージを送ると更新されます",
   statusModeApi: "API",
   statusModeSubscription: "サブスク",
   statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "📊 使用量レポートの導入",
   statusInstallNoClaude:
-    "実行中の Claude が見つからず、導入先を特定できません。Claude を起動してから導入してください。",
+    "\u5b9f\u884c\u4e2d\u306e Claude \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002\u4f7f\u7528\u91cf\u30ec\u30dd\u30fc\u30c8\u306e\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb\u306f Claude \u5c02\u7528\u3067\u3059\u3002Codex \u306f\u30bb\u30c3\u30b7\u30e7\u30f3\u8a18\u9332\u306b\u4f7f\u7528\u91cf\u3092\u30cd\u30a4\u30c6\u30a3\u30d6\u3067\u8a18\u9332\u3059\u308b\u305f\u3081\u3001\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb\u306f\u4e0d\u8981\u3067\u3059\u3002",
   statusInstallInstalled: (dir) => `✅ ${dir} に使用量レポートを導入`,
   statusInstallAlready: (dir) => `⏭ ${dir} は導入済み`,
   statusInstallForeignPrompt: (dirs) =>
@@ -195,6 +197,8 @@ export const ja: Messages = {
   noRecentProjects: "最近のプロジェクトがありません\n\n/add_project <パス> で追加してください",
   messageTooLong: (len, max) => `メッセージが長すぎます · ${len} > ${max} 文字`,
   onlyTextVoice: "テキストと音声メッセージのみ対応しています",
+  handlerError:
+    "⚠️ メッセージの処理中にエラーが発生しました。再試行してください。グループが応答しない場合は /restore でプロジェクトに再接続できます。",
   unknownCommand: (name) => `不明なコマンド：/${name}（/help で一覧を表示）`,
 
   toastProcessing: "➕ 処理中…",
@@ -218,7 +222,7 @@ export const ja: Messages = {
     `♻️ tmux-claude-bot が異常終了（クラッシュ/強制終了）から自動復旧しました · ${time}`,
 
   noSession: "アクティブなセッションがありません · まず /list_alive_projects か /add_project",
-  notRunning: "Claude が実行されていません · /start で起動、または /restart で継続",
+  notRunning: "実行されていません · /start で起動、または /restart で継続",
   noShortId: (id) => `短縮 ID が見つかりません：${id}`,
   pathNotAllowed: (dirs) => `パスが許可リストにありません · 許可：${dirs.join("、")}`,
   voiceNotEnabled:
@@ -239,14 +243,14 @@ export const ja: Messages = {
 
   helpIntroTelegram: `🤖 tmux-claude-bot
 
-任意のテキストを送信 → Claude に転送 → 返信
+任意のテキストを送信 → エージェントに転送 → 返信
 🎙️ 音声の文字起こしは任意機能 · /voice_install で有効化（Apple Silicon のみ）· /voice_lang で言語を設定
 
 ヒント：メッセージには 👀（受信）/👍（完了）のリアクションが付きます。処理中はその場に進捗が表示され、結果に編集されます。結果の下に ⏎/✋/⎋/🔄 のショートカットボタンがあります。`,
 
   helpIntroLark: `🤖 tmux-claude (Lark)
 
-任意のテキストを送信 → Claude に転送 → 返信`,
+任意のテキストを送信 → エージェントに転送 → 返信`,
 
   helpSectionProjects: "📂 プロジェクト",
   helpSectionRunning: "⚡ 実行中",
@@ -260,11 +264,11 @@ export const ja: Messages = {
   freeProjectLimit: (max) =>
     `フリープロジェクトは上限 ${max} 件です。1件削除してから再試行してください。`,
   freeProjectCreated: (slot, label) =>
-    `🆓 フリープロジェクト #${slot}${label ? `（${label}）` : ""} を作成しました。\n任意のディレクトリへ /cd し、Claude をご自身で起動してください。/list_alive_projects で戻れます。`,
+    `🆓 フリープロジェクト #${slot}${label ? `（${label}）` : ""} を作成しました。\n任意のディレクトリへ /cd し、エージェントをご自身で起動してください。/list_alive_projects で戻れます。`,
   btnNewFree: "🆓 フリープロジェクト作成",
   freeLabelPrompt: "フリープロジェクトの名前を送信してください（- で命名をスキップ）",
   freeLabelCancelled: "キャンセルしました",
-  cmdAdopt: "tmux 外の Claude を引き継ぐ",
+  cmdAdopt: "tmux 外のエージェントを引き継ぐ",
   cmdQueueStatus: "キューの状態",
   cmdHistory: "会話履歴（既定は最新の1件）",
   cmdPeek: "tmux ペインを表示",
@@ -279,7 +283,7 @@ export const ja: Messages = {
   cmdArrowsTab: "矢印キー / Tab",
   cmdExit: "終了",
   cmdStatus: "状態を確認",
-  cmdStart: "Claude を起動",
+  cmdStart: "エージェントを起動",
   cmdDoctor: "インストールのヘルスチェックを実行",
   cmdHelp: "このヘルプ",
   cmdWs: "ワークスペース管理（save/use/list/remove）",

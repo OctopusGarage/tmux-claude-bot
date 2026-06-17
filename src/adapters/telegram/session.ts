@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
-import { chatScope } from "../../core/project-manager.js";
+import { chatScope } from "../../core/projects/project-manager.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 
 /** The current project's session for a specific chat, but only if its tmux pane is alive. */

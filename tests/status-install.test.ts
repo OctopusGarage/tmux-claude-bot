@@ -17,12 +17,12 @@ import {
   runStatusInstall,
   scriptPath,
   statuslineScript,
-} from "../src/core/status-install.js";
+} from "../src/core/infra/status-install.js";
 
 // runStatusInstall reads which config dirs are in use by probing real processes;
 // mock that boundary so the install logic itself can be driven deterministically.
 const dirsInUse = vi.hoisted(() => ({ value: [] as string[] }));
-vi.mock("../src/core/takeover-service.js", () => ({
+vi.mock("../src/core/agents/takeover-service.js", () => ({
   claudeConfigDirsInUse: () => Promise.resolve(dirsInUse.value),
 }));
 

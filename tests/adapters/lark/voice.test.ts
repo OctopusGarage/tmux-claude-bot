@@ -1,6 +1,6 @@
 import type { NormalizedMessage, ResourceDescriptor } from "@larksuiteoapi/node-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TranscribeOutcome } from "../../../src/core/transcriber.js";
+import type { TranscribeOutcome } from "../../../src/core/read/transcriber.js";
 import { fakeChannel, fakeDeps, fakeMessage } from "./_fakes.js";
 
 // Voice readiness + language, the shared cache-aware transcriber, and the Feishu
@@ -12,11 +12,11 @@ const resolveWhisperLanguage = vi.fn(() => "en");
 const transcribeWithCache = vi.fn();
 const downloadMessageResource = vi.fn();
 
-vi.mock("../../../src/core/voice-support.js", () => ({
+vi.mock("../../../src/core/read/voice-support.js", () => ({
   checkVoiceSupport: () => checkVoiceSupport(),
   resolveWhisperLanguage: () => resolveWhisperLanguage(),
 }));
-vi.mock("../../../src/core/transcriber.js", () => ({
+vi.mock("../../../src/core/read/transcriber.js", () => ({
   transcribeWithCache: (opts: unknown) => transcribeWithCache(opts),
 }));
 vi.mock("../../../src/adapters/lark/resource.js", () => ({

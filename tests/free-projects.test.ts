@@ -12,7 +12,7 @@ import {
   listFreeSlots,
   releaseFreeSlot,
   setFreeProject,
-} from "../src/core/free-projects.js";
+} from "../src/core/projects/free-projects.js";
 
 let dir: string;
 let orig: string | undefined;

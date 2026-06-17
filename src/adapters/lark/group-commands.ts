@@ -1,8 +1,16 @@
 import { basename } from "node:path";
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
-import { FREE_PROJECT_LIMIT, freeSessionName, setFreeProject } from "../../core/free-projects.js";
-import { reconcileGroupBinding, resolveWorkspaceTarget } from "../../core/group-binding-ops.js";
+import { messages } from "../../core/i18n/index.js";
+import {
+  FREE_PROJECT_LIMIT,
+  freeSessionName,
+  setFreeProject,
+} from "../../core/projects/free-projects.js";
+import {
+  reconcileGroupBinding,
+  resolveWorkspaceTarget,
+} from "../../core/projects/group-binding-ops.js";
 import {
   bindGroup,
   bindingForSession,
@@ -10,20 +18,34 @@ import {
   getBinding,
   listBindings,
   unbindGroup,
-} from "../../core/group-bindings.js";
-import { messages } from "../../core/i18n/index.js";
-import { chatScope } from "../../core/project-manager.js";
-import { allocateFreeSlotPruned, createProjectSession } from "../../core/project-ops.js";
-import { readRecentProjectLines } from "../../core/recentProjects.js";
-import { sessionNameFromPath } from "../../core/sessionPathMap.js";
+} from "../../core/projects/group-bindings.js";
+import { chatScope } from "../../core/projects/project-manager.js";
+import { allocateFreeSlotPruned, createProjectSession } from "../../core/projects/project-ops.js";
+import { readRecentProjectLines } from "../../core/projects/recentProjects.js";
+import { sessionNameFromPath } from "../../core/projects/sessionPathMap.js";
+import { isVoiceInstallable } from "../../core/read/voice-support.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
-import { groupBoundCard } from "./cards.js";
+import { helpCard } from "./cards.js";
 import { chatKindOf, checkAction, type ProjectAction } from "./chat-policy.js";
 import { sendCard, sendText } from "./replies.js";
 import { createBoundChat } from "./resource.js";
 
 const m = () => messages("lark");
+
+/** After a successful bind/create: confirm the binding, then drop the full group
+ * home menu (work-surface shortcuts — peek / history / queue / controls — plus
+ * binding management) so the user can act immediately, instead of getting only an
+ * unbind button. Used by EVERY bind/create path for a consistent welcome. */
+async function sendGroupHome(
+  channel: LarkChannel,
+  chatId: string,
+  label: string,
+  path: string,
+): Promise<void> {
+  await sendText(channel, chatId, m().groupBoundWelcome(label, path));
+  await sendCard(channel, chatId, helpCard(true, isVoiceInstallable()));
+}
 
 /** Enforce the shared chat-type policy (chat-policy.ts) for a typed command:
  *  reply with the policy's refusal and return true when denied. Keeps the text
@@ -106,8 +128,7 @@ export async function makeBoundGroupBySid(
 
   bindGroup(created.chatId, { workspacePath: path, sessionName, label });
   await createProjectSession(deps, chatScope("lark", created.chatId), sessionName, path);
-  await sendText(channel, created.chatId, m().groupBoundWelcome(label, path));
-  await sendCard(channel, created.chatId, groupBoundCard(label));
+  await sendGroupHome(channel, created.chatId, label, path);
   await sendText(channel, originChatId, m().groupCreatedShort(label));
 }
 
@@ -155,8 +176,7 @@ async function createFreeGroupAtPath(
   bindGroup(created.chatId, { workspacePath: path, sessionName, label });
   setFreeProject(slot, { label });
   await createProjectSession(deps, chatScope("lark", created.chatId), sessionName, path);
-  await sendText(channel, created.chatId, m().groupBoundWelcome(label, path));
-  await sendCard(channel, created.chatId, groupBoundCard(label));
+  await sendGroupHome(channel, created.chatId, label, path);
   await sendText(channel, originChatId, m().freeGroupCreated(label));
 }
 
@@ -217,7 +237,7 @@ export async function bindCurrentGroupBySid(
   }
   bindGroup(chatId, { workspacePath: path, sessionName, label });
   await createProjectSession(deps, chatScope("lark", chatId), sessionName, path);
-  await sendText(channel, chatId, m().groupBoundWelcome(label, path));
+  await sendGroupHome(channel, chatId, label, path);
 }
 
 /** Validate the arg, return the resolved target, or reply an error + return null. */
@@ -294,12 +314,8 @@ export async function handleNewGroup(
     target.sessionName,
     target.workspacePath,
   );
-  await sendText(
-    channel,
-    created.chatId,
-    m().groupBoundWelcome(target.label, target.workspacePath),
-  );
-  await sendCard(channel, created.chatId, groupBoundCard(target.label));
+  await sendGroupHome(channel, created.chatId, target.label, target.workspacePath);
+  // Confirm back in the originating private chat too.
   await sendText(channel, chatId, m().groupBoundWelcome(target.label, target.workspacePath));
 }
 
@@ -328,7 +344,7 @@ export async function handleBind(
     target.sessionName,
     target.workspacePath,
   );
-  await sendText(channel, chatId, m().groupBoundWelcome(target.label, target.workspacePath));
+  await sendGroupHome(channel, chatId, target.label, target.workspacePath);
 }
 
 /** `/unbind` — inside a group only. */

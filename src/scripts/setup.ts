@@ -25,7 +25,7 @@ import {
   pollForCaptureIds,
   serializeEnv,
   validateTokenShape,
-} from "../core/onboarding.js";
+} from "../core/infra/onboarding.js";
 
 /** Language for the pre-prompt guards + non-interactive run: UI_LANG env, else English. */
 function envLang(): Lang {

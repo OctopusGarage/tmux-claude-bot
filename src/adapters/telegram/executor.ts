@@ -1,10 +1,10 @@
 import type { Bot, Context } from "grammy";
-import { getImmediateActions } from "../../core/action-registry.js";
+import { getImmediateActions } from "../../core/command/action-registry.js";
+import { executeMessage, type MessageAction } from "../../core/command/dispatch.js";
+import { enqueueMessage } from "../../core/command/enqueue.js";
+import type { PersistedMessage, QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import { executeMessage, type MessageAction } from "../../core/dispatch.js";
-import { enqueueMessage } from "../../core/enqueue.js";
 import { messages } from "../../core/i18n/index.js";
-import type { PersistedMessage, QueuedMessage } from "../../core/queue.js";
 import { logger } from "../../shared/utils/logger.js";
 import { MSG } from "./messages.js";
 import { reply, send } from "./replies.js";

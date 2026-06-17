@@ -1,0 +1,41 @@
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.139.0)                    │
+│                                               │
+│ model:       gpt-5.5 xhigh   /model to change │
+│ directory:   /private/tmp/codexcap-proj       │
+│ permissions: YOLO mode                        │
+╰───────────────────────────────────────────────╯
+
+  Tip: Visit the Codex community forum: https://community.openai.com/c/codex/37
+
+
+› Please run exactly this shell command: sleep 20 && echo done
+
+
+• Working (15s • esc to interrupt)
+
+
+› Run /review on my current changes
+
+  gpt-5.5 xhigh fast · /private/tmp/codexcap-proj
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

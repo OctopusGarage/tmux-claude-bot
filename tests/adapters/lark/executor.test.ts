@@ -112,7 +112,7 @@ describe("runImmediateLarkAction", () => {
 
   it("runs executeMessage and replies plain text with the result", async () => {
     const channel = fakeChannel();
-    const deps = fakeDeps({ claude: { checkIfRunning: vi.fn(async () => true) } });
+    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => true) } });
 
     await runImmediateLarkAction(channel, deps, "chat-1", "msg-1", "status");
 
@@ -126,7 +126,7 @@ describe("runImmediateLarkAction", () => {
     const channel = fakeChannel();
     const deps = fakeDeps({
       // force executeMessage to throw during a status action.
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => {
           throw new Error("boom");
         }),

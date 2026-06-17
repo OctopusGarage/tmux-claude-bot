@@ -1,10 +1,11 @@
 import type { AppConfig } from "../shared/types.js";
-import type { ClaudeRunner } from "./claude.js";
-import type { ConfigResolver } from "./claude-config-resolver.js";
-import type { CurrentProjectManager } from "./currentProject.js";
-import type { OutputProcessor } from "./output.js";
-import type { MessageQueue } from "./queue.js";
-import type { TmuxBridge } from "./tmux.js";
+import type { ConfigResolver } from "./agents/agent-config-resolver.js";
+import type { AgentRunner } from "./agents/runner.js";
+import type { MessageQueue } from "./command/queue.js";
+import type { CurrentProjectManager } from "./projects/project-manager.js";
+import type { ActivityWatcher } from "./session/activity-watcher.js";
+import type { OutputProcessor } from "./session/output.js";
+import type { TmuxBridge } from "./session/tmux.js";
 
 /**
  * The protocol-agnostic capability bundle the command dispatcher needs. Any
@@ -14,9 +15,14 @@ import type { TmuxBridge } from "./tmux.js";
 export type HandlerDeps = {
   bridge: TmuxBridge;
   queue: MessageQueue;
-  claude: ClaudeRunner;
+  /** The agent run loop — an AgentRunnerDispatcher that routes each call to the
+   * claude or codex backend by the session's persisted agent kind. */
+  agent: AgentRunner;
   output: OutputProcessor;
   config: AppConfig;
   currentProject: CurrentProjectManager;
   configResolver: ConfigResolver;
+  /** Event-driven "is this transcript being written" signal, sourced from
+   * fs.watch over the agents' transcript roots. */
+  activity: ActivityWatcher;
 };

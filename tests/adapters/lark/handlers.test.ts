@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Keep the voice path deterministic & fast: stub voice readiness so the audio
 // route returns the hint immediately instead of spawning real whisper.
 // Pass through VOICE_LANGS so voiceLangCard (used by /voice_lang) still works.
-vi.mock(import("../../../src/core/voice-support.js"), async (importOriginal) => {
+vi.mock(import("../../../src/core/read/voice-support.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
@@ -17,9 +17,9 @@ const { recordReplyTarget, removeReplyTargetSession } = await import(
   "../../../src/adapters/lark/reply-target.js"
 );
 const { requestNewFolder, startBrowse, clearBrowse } = await import(
-  "../../../src/core/dir-browser.js"
+  "../../../src/core/projects/dir-browser.js"
 );
-const { chatScope } = await import("../../../src/core/project-manager.js");
+const { chatScope } = await import("../../../src/core/projects/project-manager.js");
 const { fakeChannel, fakeDeps, fakeMessage } = await import("./_fakes.js");
 const nodeFs = await import("node:fs");
 const nodeOs = await import("node:os");

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { MessageQueue } from "../src/core/queue.js";
+import { MessageQueue } from "../src/core/command/queue.js";
 
 /** Poll until predicate is true or timeout. Replaces fixed-sleep coordination. */
 async function waitFor(

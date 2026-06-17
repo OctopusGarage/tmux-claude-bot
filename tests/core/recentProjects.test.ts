@@ -13,14 +13,14 @@ afterEach(() => {
 describe("readRecentProjectLines", () => {
   it("reads from file on first call (cache miss)", async () => {
     fs.writeFileSync(file, "/proj/a\n/proj/b\n", "utf-8");
-    const { readRecentProjectLines } = await import("../../src/core/recentProjects.js");
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
     const lines = await readRecentProjectLines();
     expect(lines).toEqual(["/proj/a", "/proj/b"]);
   });
 
   it("returns cached result on second call without re-reading the file", async () => {
     fs.writeFileSync(file, "/proj/c\n", "utf-8");
-    const { readRecentProjectLines } = await import("../../src/core/recentProjects.js");
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
     await readRecentProjectLines();
     fs.rmSync(file);
     const lines = await readRecentProjectLines();
@@ -28,7 +28,7 @@ describe("readRecentProjectLines", () => {
   });
 
   it("returns empty array when file does not exist", async () => {
-    const { readRecentProjectLines } = await import("../../src/core/recentProjects.js");
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
     const lines = await readRecentProjectLines();
     expect(lines).toEqual([]);
   });
@@ -37,7 +37,7 @@ describe("readRecentProjectLines", () => {
 describe("appendRecentProject", () => {
   it("trims the list to 15 entries when it overflows", async () => {
     const { appendRecentProject, readRecentProjectLines } = await import(
-      "../../src/core/recentProjects.js"
+      "../../src/core/projects/recentProjects.js"
     );
     for (let i = 0; i < 16; i++) {
       await appendRecentProject(`/proj/${i}`, "pfx_");
@@ -48,7 +48,7 @@ describe("appendRecentProject", () => {
 
   it("deduplicates by path — same path stays once", async () => {
     const { appendRecentProject, readRecentProjectLines } = await import(
-      "../../src/core/recentProjects.js"
+      "../../src/core/projects/recentProjects.js"
     );
     await appendRecentProject("/proj/a", "pfx_");
     await appendRecentProject("/proj/b", "pfx_");

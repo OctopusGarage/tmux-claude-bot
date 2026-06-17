@@ -1,29 +1,39 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConfigResolver, ProcRow } from "../../src/core/claude-config-resolver.js";
-import { DEFAULT_CONFIG_ROOT } from "../../src/core/history.js";
+import type { ConfigResolver, ProcRow } from "../../src/core/agents/agent-config-resolver.js";
+import { DEFAULT_CONFIG_ROOT } from "../../src/core/agents/claude/claude-history.js";
+import type { OrphanAgent, TakeoverDeps, TakeoverResult } from "../../src/core/agents/takeover.js";
 import { messages } from "../../src/core/i18n/index.js";
-import type { OrphanClaude, TakeoverDeps, TakeoverResult } from "../../src/core/takeover.js";
-import type { TmuxBridge } from "../../src/core/tmux.js";
+import type { TmuxBridge } from "../../src/core/session/tmux.js";
 
 // takeover-service is wiring: it composes a probe + bridge + resolver into the
-// pure takeover() orchestration. Mock the takeover module (probe/listOrphans/
-// takeover), the clipboard, and the session→path map so each branch is driven
-// without touching the OS.
-const listOrphans = vi.fn<() => Promise<OrphanClaude[]>>();
-const takeover = vi.fn<(o: OrphanClaude, d: TakeoverDeps) => Promise<TakeoverResult>>();
+// pure takeover() orchestration. Mock the takeover module (probe/takeover),
+// claude-takeover (listClaudeOrphans) + codex-takeover (listCodexOrphans), the
+// clipboard, and the session→path map so each branch is driven without the OS.
+const takeover = vi.fn<(o: OrphanAgent, d: TakeoverDeps) => Promise<TakeoverResult>>();
 // Probe used by claudeConfigDirsInUse (snapshot + readProcEnv). Empty by default.
 const probeSnapshot = vi.fn<() => Promise<ProcRow[]>>(async () => []);
 const probeReadProcEnv = vi.fn<(pid: number) => Promise<string>>(async () => "");
-vi.mock("../../src/core/takeover.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/core/takeover.js")>();
+vi.mock("../../src/core/agents/takeover.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/core/agents/takeover.js")>();
   return {
     ...actual,
     createTakeoverProbe: () =>
       ({ snapshot: probeSnapshot, readProcEnv: probeReadProcEnv }) as never,
-    listOrphans: (...a: unknown[]) => listOrphans(...(a as [])),
     takeover: (...a: unknown[]) => takeover(...(a as Parameters<typeof takeover>)),
   };
 });
+
+const listClaudeOrphans = vi.fn<() => Promise<OrphanAgent[]>>();
+vi.mock("../../src/core/agents/claude/claude-takeover.js", () => ({
+  listClaudeOrphans: (...a: unknown[]) => listClaudeOrphans(...(a as [])),
+}));
+
+// listCodexOrphans always returns empty by default — codex orphan behaviour is
+// tested in codex-takeover.test.ts; here we only need it not to interfere.
+const listCodexOrphans = vi.fn<() => Promise<OrphanAgent[]>>(async () => []);
+vi.mock("../../src/core/agents/codex/codex-takeover.js", () => ({
+  listCodexOrphans: (...a: unknown[]) => listCodexOrphans(...(a as [])),
+}));
 
 const copyToClipboard = vi.fn(async () => {});
 vi.mock("../../src/core/platform/clipboard.js", () => ({
@@ -32,8 +42,8 @@ vi.mock("../../src/core/platform/clipboard.js", () => ({
 
 const getPathBySession = vi.fn<(s: string) => string | null>(() => null);
 const setPathForSession = vi.fn();
-vi.mock("../../src/core/sessionPathMap.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/core/sessionPathMap.js")>();
+vi.mock("../../src/core/projects/sessionPathMap.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/core/projects/sessionPathMap.js")>();
   return {
     ...actual,
     getPathBySession: (s: string) => getPathBySession(s),
@@ -48,18 +58,20 @@ const {
   composeAdoptOutcome,
   copyAttachCommand,
   findAdoptableOrphans,
-} = await import("../../src/core/takeover-service.js");
+} = await import("../../src/core/agents/takeover-service.js");
 
-const ORPHAN: OrphanClaude = {
+const ORPHAN: OrphanAgent = {
   pid: 42,
   cwd: "/home/u/proj",
   configRoot: "/home/u/.claude",
   sessionId: "sess-1",
   startCommand: "claude --resume sess-1",
+  agent: "claude",
 };
 
 beforeEach(() => {
-  listOrphans.mockReset();
+  listClaudeOrphans.mockReset();
+  listCodexOrphans.mockReset().mockResolvedValue([]);
   takeover.mockReset();
   copyToClipboard.mockClear();
   getPathBySession.mockReset().mockReturnValue(null);
@@ -130,7 +142,7 @@ describe("composeAdoptOutcome", () => {
 
   it("maps other failures to the generic failed message", () => {
     const out = composeAdoptOutcome(
-      { ok: false, sessionName: "tcb-x", resumed: false, reason: "claude_did_not_start" },
+      { ok: false, sessionName: "tcb-x", resumed: false, reason: "agent_did_not_start" },
       "telegram",
     );
     expect(out.body).toBe(m.adoptFailed);
@@ -156,8 +168,15 @@ describe("composeAdoptOutcome", () => {
 });
 
 describe("findAdoptableOrphans", () => {
-  it("delegates to listOrphans", async () => {
-    listOrphans.mockResolvedValue([ORPHAN]);
+  it("merges claude and codex orphan lists", async () => {
+    const codexOrphan: OrphanAgent = { ...ORPHAN, pid: 99, agent: "codex" };
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
+    listCodexOrphans.mockResolvedValue([codexOrphan]);
+    expect(await findAdoptableOrphans()).toEqual([ORPHAN, codexOrphan]);
+  });
+
+  it("returns claude orphans only when there are no codex orphans", async () => {
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
     expect(await findAdoptableOrphans()).toEqual([ORPHAN]);
   });
 });
@@ -183,13 +202,13 @@ describe("adoptOrphan", () => {
   }
 
   it("returns null when the tapped pid is no longer in the (re-scanned) orphan list", async () => {
-    listOrphans.mockResolvedValue([{ ...ORPHAN, pid: 99 }]);
+    listClaudeOrphans.mockResolvedValue([{ ...ORPHAN, pid: 99 }]);
     expect(await adoptOrphan(42, ctx())).toBeNull();
     expect(takeover).not.toHaveBeenCalled();
   });
 
   it("wires the bridge/resolver into takeover and returns its result", async () => {
-    listOrphans.mockResolvedValue([ORPHAN]);
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
     const result: TakeoverResult = { ok: true, sessionName: "tcb-proj", resumed: true };
     takeover.mockResolvedValue(result);
     expect(await adoptOrphan(42, ctx())).toBe(result);
@@ -199,13 +218,31 @@ describe("adoptOrphan", () => {
         isTargetBusy: expect.any(Function),
         ensureSession: expect.any(Function),
         startInSession: expect.any(Function),
-        isClaudeRunning: expect.any(Function),
+        isAgentRunning: expect.any(Function),
       }),
     );
   });
 
+  it("records the adopted session's agent kind so a codex session routes correctly", async () => {
+    const codexOrphan: OrphanAgent = { ...ORPHAN, pid: 99, agent: "codex" };
+    listClaudeOrphans.mockResolvedValue([]);
+    listCodexOrphans.mockResolvedValue([codexOrphan]);
+    takeover.mockResolvedValue({ ok: true, sessionName: "tcb-codex", resumed: true });
+    await adoptOrphan(99, ctx());
+    const { getAgentKind } = await import("../../src/core/agents/agentKindMap.js");
+    expect(getAgentKind("tcb-codex")).toBe("codex");
+  });
+
+  it("does not record agent kind when the takeover fails", async () => {
+    listClaudeOrphans.mockResolvedValue([{ ...ORPHAN, pid: 77, agent: "codex" }]);
+    takeover.mockResolvedValue({ ok: false, sessionName: "tcb-fail", resumed: false });
+    await adoptOrphan(77, ctx());
+    const { getAgentKind } = await import("../../src/core/agents/agentKindMap.js");
+    expect(getAgentKind("tcb-fail")).toBe("claude"); // default — nothing recorded
+  });
+
   it("isTargetBusy: false when no session exists", async () => {
-    listOrphans.mockResolvedValue([ORPHAN]);
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
     const c = ctx({ hasSession: vi.fn(async () => false) });
     takeover.mockImplementation(async (_o, d) => {
       expect(await d.isTargetBusy("/home/u/proj")).toBe(false);
@@ -215,7 +252,7 @@ describe("adoptOrphan", () => {
   });
 
   it("isTargetBusy: true when the existing session has a non-shell foreground", async () => {
-    listOrphans.mockResolvedValue([ORPHAN]);
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
     const c = ctx({
       hasSession: vi.fn(async () => true),
       paneCurrentCommand: vi.fn(async () => "vim"),
@@ -228,7 +265,7 @@ describe("adoptOrphan", () => {
   });
 
   it("ensureSession creates a missing session, records its path, and returns its name", async () => {
-    listOrphans.mockResolvedValue([ORPHAN]);
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
     const createSession = vi.fn(async () => true);
     const c = ctx({ hasSession: vi.fn(async () => false), createSession });
     takeover.mockImplementation(async (_o, d) => {
@@ -242,7 +279,7 @@ describe("adoptOrphan", () => {
   });
 
   it("ensureSession reuses an existing session without creating it", async () => {
-    listOrphans.mockResolvedValue([ORPHAN]);
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
     const createSession = vi.fn(async () => true);
     const c = ctx({ hasSession: vi.fn(async () => true), createSession });
     takeover.mockImplementation(async (_o, d) => {
@@ -254,20 +291,20 @@ describe("adoptOrphan", () => {
   });
 
   it("startInSession types the command, isClaudeRunning consults the resolver", async () => {
-    listOrphans.mockResolvedValue([ORPHAN]);
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
     const sendKeys = vi.fn(async () => {});
     const c = ctx({ sendKeys }, false);
     takeover.mockImplementation(async (_o, d) => {
       await d.startInSession("tcb-x", "claude --resume sess-1");
       expect(sendKeys).toHaveBeenCalledWith("claude --resume sess-1", "tcb-x");
-      expect(await d.isClaudeRunning("tcb-x")).toBe(false);
-      return { ok: false, sessionName: "tcb-x", resumed: false, reason: "claude_did_not_start" };
+      expect(await d.isAgentRunning("tcb-x")).toBe(false);
+      return { ok: false, sessionName: "tcb-x", resumed: false, reason: "agent_did_not_start" };
     });
     await adoptOrphan(42, c);
   });
 
   it("rejects a concurrent adopt of the same pid (in-flight guard returns null)", async () => {
-    listOrphans.mockResolvedValue([ORPHAN]);
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
     let release!: () => void;
     const gate = new Promise<void>((r) => {
       release = r;
@@ -282,8 +319,8 @@ describe("adoptOrphan", () => {
     release();
     await first;
     // After the first completes the guard is cleared — a later adopt runs again.
-    listOrphans.mockResolvedValue([]);
+    listClaudeOrphans.mockResolvedValue([]);
     expect(await adoptOrphan(42, ctx())).toBeNull();
-    expect(listOrphans).toHaveBeenCalledTimes(2); // first + the post-release retry
+    expect(listClaudeOrphans).toHaveBeenCalledTimes(2); // first + the post-release retry
   });
 });

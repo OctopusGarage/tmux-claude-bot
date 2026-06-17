@@ -1,29 +1,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ProcRow } from "../src/core/claude-config-resolver.js";
-import { DEFAULT_CONFIG_ROOT } from "../src/core/history.js";
+import type { ProcRow } from "../src/core/agents/agent-config-resolver.js";
+import { DEFAULT_CONFIG_ROOT } from "../src/core/agents/claude/claude-history.js";
+import { listClaudeOrphans } from "../src/core/agents/claude/claude-takeover.js";
 import {
   buildResumeCommand,
   createTakeoverProbe,
-  findOrphanClaudes,
+  findOrphans,
   isClaudeProcess,
   isPaneBusy,
   isShellForeground,
-  listOrphans,
-  type OrphanClaude,
+  type OrphanAgent,
   orphanLabel,
   type Signal,
   type TakeoverDeps,
   type TakeoverProbe,
   takeover,
-} from "../src/core/takeover.js";
+} from "../src/core/agents/takeover.js";
 
 // listOrphans falls back to the newest on-disk session via listClaudeSessions,
 // which reads the real fs — stub it so each test pins the session id it returns.
-vi.mock("../src/core/history.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/core/history.js")>();
+vi.mock("../src/core/agents/claude/claude-history.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../src/core/agents/claude/claude-history.js")>();
   return { ...actual, listClaudeSessions: vi.fn(async () => []) };
 });
-const { listClaudeSessions } = await import("../src/core/history.js");
+const { listClaudeSessions } = await import("../src/core/agents/claude/claude-history.js");
 
 describe("isClaudeProcess", () => {
   it("matches a bare claude and an absolute-path claude", () => {
@@ -43,7 +44,7 @@ describe("isClaudeProcess", () => {
   });
 });
 
-describe("findOrphanClaudes", () => {
+describe("findOrphans (claude predicate)", () => {
   // tmux server (1) -> pane shell (10) -> claude (11)   [in tmux]
   // login shell (20) -> claude (21)                     [orphan]
   // editor (30) referencing claude in args              [ignored]
@@ -56,15 +57,15 @@ describe("findOrphanClaudes", () => {
   ];
 
   it("returns claude pids not reachable from any tmux pane pid", () => {
-    expect(findOrphanClaudes(rows, [10])).toEqual([21]);
+    expect(findOrphans(rows, [10], isClaudeProcess)).toEqual([21]);
   });
 
   it("treats every claude as orphan when there are no tmux panes", () => {
-    expect(findOrphanClaudes(rows, [])).toEqual([11, 21]);
+    expect(findOrphans(rows, [], isClaudeProcess)).toEqual([11, 21]);
   });
 
   it("returns nothing when both claudes live under panes", () => {
-    expect(findOrphanClaudes(rows, [10, 20])).toEqual([]);
+    expect(findOrphans(rows, [10, 20], isClaudeProcess)).toEqual([]);
   });
 });
 
@@ -153,12 +154,13 @@ function fakeProbe(opts: { alive?: boolean[] }): {
   return { probe, signals };
 }
 
-const ORPHAN: OrphanClaude = {
+const ORPHAN: OrphanAgent = {
   pid: 42,
   cwd: "/proj",
   configRoot: DEFAULT_CONFIG_ROOT,
   sessionId: "sess-1",
   startCommand: "/bin/claude --resume sess-1 --dangerously-skip-permissions",
+  agent: "claude",
 };
 
 function deps(probe: TakeoverProbe, over: Partial<TakeoverDeps> = {}): TakeoverDeps {
@@ -167,7 +169,7 @@ function deps(probe: TakeoverProbe, over: Partial<TakeoverDeps> = {}): TakeoverD
     isTargetBusy: vi.fn(async () => false),
     ensureSession: vi.fn(async () => "tcb-proj"),
     startInSession: vi.fn(async () => {}),
-    isClaudeRunning: vi.fn(async () => true),
+    isAgentRunning: vi.fn(async () => true),
     ...over,
   };
 }
@@ -208,9 +210,9 @@ describe("takeover", () => {
 
   it("reports a failure reason when claude does not start after resume", async () => {
     const { probe } = fakeProbe({ alive: [false] });
-    const res = await takeover(ORPHAN, deps(probe, { isClaudeRunning: vi.fn(async () => false) }));
+    const res = await takeover(ORPHAN, deps(probe, { isAgentRunning: vi.fn(async () => false) }));
     expect(res.ok).toBe(false);
-    expect(res.reason).toBe("claude_did_not_start");
+    expect(res.reason).toBe("agent_did_not_start");
   });
 
   it("aborts without touching the orphan when the target session is busy", async () => {
@@ -228,10 +230,10 @@ describe("takeover", () => {
     const { probe } = fakeProbe({ alive: [true, false] });
     // claude isn't visible on the first two checks, then spawns.
     const readiness = [false, false, true];
-    const isClaudeRunning = vi.fn(async () => readiness.shift() ?? true);
-    const res = await takeover(ORPHAN, deps(probe, { isClaudeRunning }));
+    const isAgentRunning = vi.fn(async () => readiness.shift() ?? true);
+    const res = await takeover(ORPHAN, deps(probe, { isAgentRunning }));
     expect(res.ok).toBe(true);
-    expect(isClaudeRunning).toHaveBeenCalledTimes(3);
+    expect(isAgentRunning).toHaveBeenCalledTimes(3);
   });
 
   it("types the orphan's resolved start command verbatim (e.g. a flavor alias)", async () => {
@@ -256,6 +258,20 @@ describe("createTakeoverProbe composition", () => {
     const probe = createTakeoverProbe(intro);
     expect(await probe.openSessionFile(200)).toBe("12345678-1234-1234-1234-123456789abc");
     expect(await probe.cwdOf(200)).toBe("/home/u/project");
+  });
+
+  it("openSessionFile also extracts a CODEX rollout's session id (orphan takeover parity)", async () => {
+    const intro = {
+      snapshot: async () => [],
+      readProcEnv: async () => "",
+      listOpenFiles: async () => [
+        "/dev/null",
+        "/home/u/.codex/sessions/2026/06/17/rollout-2026-06-17T10-00-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
+      ],
+      cwdOf: async () => "/home/u/project",
+    };
+    const probe = createTakeoverProbe(intro);
+    expect(await probe.openSessionFile(200)).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
   });
 
   it("openSessionFile returns null when no jsonl is open", async () => {
@@ -325,6 +341,7 @@ describe("orphanLabel", () => {
         configRoot: DEFAULT_CONFIG_ROOT,
         sessionId: "12345678-aaaa-bbbb-cccc-dddddddddddd",
         startCommand: "claude",
+        agent: "claude",
       }),
     ).toBe("my-project · 12345678");
   });
@@ -337,12 +354,13 @@ describe("orphanLabel", () => {
         configRoot: DEFAULT_CONFIG_ROOT,
         sessionId: null,
         startCommand: "claude",
+        agent: "claude",
       }),
     ).toBe("my-project · new");
   });
 });
 
-describe("listOrphans", () => {
+describe("listClaudeOrphans", () => {
   afterEach(() => vi.mocked(listClaudeSessions).mockReset());
 
   function probeFor(over: Partial<TakeoverProbe>): TakeoverProbe {
@@ -362,12 +380,12 @@ describe("listOrphans", () => {
 
   it("bails (empty) when tmux can't be queried (panePids null)", async () => {
     const snapshot = vi.fn(async () => [{ pid: 9, ppid: 1, command: "claude" }] as ProcRow[]);
-    const out = await listOrphans(probeFor({ snapshot, tmuxPanePids: async () => null }));
+    const out = await listClaudeOrphans(probeFor({ snapshot, tmuxPanePids: async () => null }));
     expect(out).toEqual([]);
   });
 
   it("drops an orphan with no resolvable cwd (can't resume without a project dir)", async () => {
-    const out = await listOrphans(
+    const out = await listClaudeOrphans(
       probeFor({
         snapshot: async () => [{ pid: 9, ppid: 1, command: "claude" }],
         tmuxPanePids: async () => [],
@@ -379,7 +397,7 @@ describe("listOrphans", () => {
 
   it("prefers the exact open session file over the newest on disk", async () => {
     vi.mocked(listClaudeSessions).mockResolvedValue([{ sessionId: "on-disk", mtime: new Date(1) }]);
-    const out = await listOrphans(
+    const out = await listClaudeOrphans(
       probeFor({
         snapshot: async () => [{ pid: 9, ppid: 1, command: "/usr/bin/claude --resume x" }],
         tmuxPanePids: async () => [],
@@ -397,7 +415,7 @@ describe("listOrphans", () => {
     vi.mocked(listClaudeSessions).mockResolvedValue([
       { sessionId: "newest-disk", mtime: new Date(9) },
     ]);
-    const out = await listOrphans(
+    const out = await listClaudeOrphans(
       probeFor({
         snapshot: async () => [{ pid: 9, ppid: 1, command: "claude" }],
         tmuxPanePids: async () => [],
@@ -409,7 +427,7 @@ describe("listOrphans", () => {
 
   it("uses null session (start fresh) when nothing is open and nothing on disk", async () => {
     vi.mocked(listClaudeSessions).mockResolvedValue([]);
-    const out = await listOrphans(
+    const out = await listClaudeOrphans(
       probeFor({
         snapshot: async () => [{ pid: 9, ppid: 1, command: "claude" }],
         tmuxPanePids: async () => [],
@@ -423,7 +441,7 @@ describe("listOrphans", () => {
   it("relaunches via a matched flavor alias instead of a reconstructed command", async () => {
     vi.mocked(listClaudeSessions).mockResolvedValue([]);
     const home = process.env.HOME ?? "/home/u";
-    const out = await listOrphans(
+    const out = await listClaudeOrphans(
       probeFor({
         snapshot: async () => [{ pid: 9, ppid: 1, command: "claude" }],
         tmuxPanePids: async () => [],

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PendingQueue } from "../../src/core/pending-queue.js";
+import { PendingQueue } from "../../src/core/command/pending-queue.js";
 
 const DELAY = 600;
 

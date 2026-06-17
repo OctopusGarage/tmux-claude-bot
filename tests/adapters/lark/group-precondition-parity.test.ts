@@ -6,8 +6,8 @@ import {
   handleNewFreeGroup,
   handleNewGroup,
 } from "../../../src/adapters/lark/group-commands.js";
-import { bindGroup, getBinding, unbindGroup } from "../../../src/core/group-bindings.js";
 import { messages } from "../../../src/core/i18n/index.js";
+import { bindGroup, getBinding, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
 // createBoundChat hits the Lark API — stub it so "did we try to create a group?"

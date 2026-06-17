@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExecFileLike, ExecResult } from "../src/core/tmux.js";
-import { TmuxBridge } from "../src/core/tmux.js";
+import type { ExecFileLike, ExecResult } from "../src/core/session/tmux.js";
+import { TmuxBridge } from "../src/core/session/tmux.js";
 
 type MockExecFile = ExecFileLike & ReturnType<typeof vi.fn>;
 
@@ -12,6 +12,7 @@ function createMockExecFile(results: {
   newSession?: ExecResult;
   killSession?: ExecResult;
   listSessions?: ExecResult;
+  displayMessage?: ExecResult;
 }): MockExecFile {
   return vi.fn().mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
     if (cmd === "tmux") {
@@ -31,6 +32,8 @@ function createMockExecFile(results: {
           return results.killSession ?? { stdout: "", stderr: "" };
         case "list-sessions":
           return results.listSessions ?? { stdout: "", stderr: "" };
+        case "display-message":
+          return results.displayMessage ?? { stdout: "", stderr: "" };
       }
     }
     throw new Error(`Unexpected execFile call: ${cmd} ${args.join(" ")}`);
@@ -266,6 +269,35 @@ describe("TmuxBridge", () => {
         ["send-keys", "-t", "tmux_proj_test:0.0", "Escape"],
         { timeout: 10000 },
       );
+    });
+  });
+
+  describe("paneCurrentPath", () => {
+    it("returns the trimmed pane_current_path", async () => {
+      mockExecFile = createMockExecFile({
+        displayMessage: { stdout: "/home/user/app\n", stderr: "" },
+      });
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+      const result = await bridge.paneCurrentPath();
+      expect(result).toBe("/home/user/app");
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "tmux",
+        ["display-message", "-p", "-t", "tmux_proj_test:0.0", "#{pane_current_path}"],
+        { timeout: 5000 },
+      );
+    });
+
+    it("returns null when the pane path is empty", async () => {
+      mockExecFile = createMockExecFile({ displayMessage: { stdout: "  \n", stderr: "" } });
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+      expect(await bridge.paneCurrentPath()).toBeNull();
+    });
+
+    it("returns null when the query fails (execFile throws)", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(new Error("no such session"));
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+      expect(await bridge.paneCurrentPath()).toBeNull();
     });
   });
 

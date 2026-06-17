@@ -13,7 +13,7 @@ import {
   requestNewFolder,
   resolveBrowseAction,
   startBrowse,
-} from "../src/core/dir-browser.js";
+} from "../src/core/projects/dir-browser.js";
 
 let root: string;
 beforeEach(() => {

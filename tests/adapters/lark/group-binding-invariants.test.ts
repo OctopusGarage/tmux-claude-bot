@@ -8,9 +8,9 @@ import {
   handleBind,
   handleUnbind,
 } from "../../../src/adapters/lark/group-commands.js";
-import { listBindings, unbindGroup } from "../../../src/core/group-bindings.js";
-import { appendRecentProject } from "../../../src/core/recentProjects.js";
-import { sessionNameFromPath } from "../../../src/core/sessionPathMap.js";
+import { listBindings, unbindGroup } from "../../../src/core/projects/group-bindings.js";
+import { appendRecentProject } from "../../../src/core/projects/recentProjects.js";
+import { sessionNameFromPath } from "../../../src/core/projects/sessionPathMap.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 

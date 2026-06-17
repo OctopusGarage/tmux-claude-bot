@@ -1,5 +1,5 @@
-import { getImmediateActions, getLarkQueued } from "../../core/action-registry.js";
-import type { MessageAction } from "../../core/dispatch.js";
+import { getImmediateActions, getLarkQueued } from "../../core/command/action-registry.js";
+import type { MessageAction } from "../../core/command/dispatch.js";
 
 export const IMMEDIATE = getImmediateActions();
 export const QUEUED = getLarkQueued();
@@ -107,5 +107,15 @@ const GROUP_MGMT_VIEWS: ReadonlySet<ViewName> = new Set([
 /** True when `raw` is one of the group binding-management slash commands. */
 export function isGroupMgmtCommand(raw: string): boolean {
   const parsed = parseLarkInput(raw);
+  return parsed.kind === "view" && GROUP_MGMT_VIEWS.has(parsed.name);
+}
+
+/** Commands an allow-listed user may run in an UNBOUND group to recover it: the
+ * binding-management set plus `/help` (so a bricked-looking group can still show
+ * its options). Lets a group that lost its binding be re-bound in place instead
+ * of forcing the user to recreate it. */
+export function isRecoveryCommand(raw: string): boolean {
+  const parsed = parseLarkInput(raw);
+  if (parsed.kind === "help") return true;
   return parsed.kind === "view" && GROUP_MGMT_VIEWS.has(parsed.name);
 }

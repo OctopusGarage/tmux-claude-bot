@@ -31,8 +31,12 @@ import { registerHandlers } from "../../../src/adapters/telegram/handlers.js";
 import { runPromptWithProgress } from "../../../src/adapters/telegram/prompt-lifecycle.js";
 import { reply } from "../../../src/adapters/telegram/replies.js";
 import { sendBrowse } from "../../../src/adapters/telegram/views.js";
-import { clearBrowse, requestNewFolder, startBrowse } from "../../../src/core/dir-browser.js";
-import { chatScope } from "../../../src/core/project-manager.js";
+import {
+  clearBrowse,
+  requestNewFolder,
+  startBrowse,
+} from "../../../src/core/projects/dir-browser.js";
+import { chatScope } from "../../../src/core/projects/project-manager.js";
 
 const replyMock = reply as ReturnType<typeof vi.fn>;
 const promptMock = runPromptWithProgress as ReturnType<typeof vi.fn>;
@@ -273,7 +277,7 @@ describe("registerHandlers — message:text routing", () => {
   });
 
   it("replies not-running when Claude is down for the session", async () => {
-    const deps = depsFor({ claude: { checkIfRunning: vi.fn(async () => false) } });
+    const deps = depsFor({ agent: { checkIfRunning: vi.fn(async () => false) } });
     await runText(deps, ctx("do a thing"));
     expect(replyTarget.record).toHaveBeenCalledWith(7, "proj-1");
     expect(replyMock).toHaveBeenCalledWith(
@@ -285,7 +289,7 @@ describe("registerHandlers — message:text routing", () => {
   });
 
   it("runs the prompt when Claude is running for the current session", async () => {
-    const deps = depsFor({ claude: { checkIfRunning: vi.fn(async () => true) } });
+    const deps = depsFor({ agent: { checkIfRunning: vi.fn(async () => true) } });
     const c = ctx("build me a thing");
     await runText(deps, c);
     expect(promptMock).toHaveBeenCalledWith(c, deps, "proj-1", "build me a thing", replyTarget);
@@ -293,7 +297,7 @@ describe("registerHandlers — message:text routing", () => {
 
   it("routes a reply-to-message to that message's session", async () => {
     replyTarget.resolveReplyTarget.mockReturnValue("proj-reply");
-    const deps = depsFor({ claude: { checkIfRunning: vi.fn(async () => true) } });
+    const deps = depsFor({ agent: { checkIfRunning: vi.fn(async () => true) } });
     const c = ctx("follow up", { message: { message_id: 9, reply_to_message: { message_id: 5 } } });
     await runText(deps, c);
     expect(replyTarget.resolveReplyTarget).toHaveBeenCalledWith(5);

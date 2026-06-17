@@ -4,16 +4,17 @@ import {
   TELEGRAM_COLLAPSED_ROW,
   TELEGRAM_EXPANDED_ROWS,
   TELEGRAM_PRIMARY_ROWS,
-} from "../../core/action-registry.js";
-import type { BrowseAction, BrowseView } from "../../core/dir-browser.js";
-import { isMessageAction, type MessageAction } from "../../core/dispatch.js";
-import type { SessionEntry } from "../../core/history.js";
+} from "../../core/command/action-registry.js";
+import { isMessageAction, type MessageAction } from "../../core/command/dispatch.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
-import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
-import { VOICE_LANGS } from "../../core/voice-support.js";
+import type { BrowseAction, BrowseView } from "../../core/projects/dir-browser.js";
+import type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+import type { SessionEntry } from "../../core/read/transcript.js";
+import { VOICE_LANGS } from "../../core/read/voice-support.js";
+import { agentGlyph } from "../../shared/types.js";
 
-export type { SessionEntry } from "../../core/history.js";
-export type { ProjectButton, RecentButton } from "../../core/project-ops.js";
+export type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+export type { SessionEntry } from "../../core/read/transcript.js";
 
 /**
  * Parsed inline-button callback. Telegram limits callback_data to 64 bytes, so
@@ -225,14 +226,15 @@ export function buildLangKeyboard(current: Lang): InlineKeyboard {
 /** Pick-a-start keyboard: one button per configured start command (shown when
  * more than one is configured). Tapping sends `sp:<idx>:<sid>`. */
 export function buildStartPickerKeyboard(
-  commands: { label: string }[],
+  commands: { label: string; command?: string; agent?: "claude" | "codex" }[],
   sid: string,
   mode: "start" | "restart" = "start",
 ): InlineKeyboard {
   const prefix = mode === "restart" ? "rp" : "sp";
   const kb = new InlineKeyboard();
   commands.forEach((c, i) => {
-    kb.text(`🚀 ${c.label}`, `${prefix}:${i}:${sid}`);
+    const glyph = agentGlyph(c.agent ?? "claude");
+    kb.text(`${glyph} ${c.label}`, `${prefix}:${i}:${sid}`);
     if (i < commands.length - 1) kb.row();
   });
   return kb;

@@ -21,13 +21,15 @@ const {
   bindCurrentGroupBySid,
 } = await import("../../../src/adapters/lark/group-commands.js");
 const { fakeChannel, fakeDeps } = await import("./_fakes.js");
-const { bindGroup, getBinding } = await import("../../../src/core/group-bindings.js");
+const { bindGroup, getBinding } = await import("../../../src/core/projects/group-bindings.js");
 const { setPathForSession, sessionNameFromPath } = await import(
-  "../../../src/core/sessionPathMap.js"
+  "../../../src/core/projects/sessionPathMap.js"
 );
-const { saveWorkspace } = await import("../../../src/core/workspaces.js");
-const { setFreeProject, FREE_PROJECT_LIMIT } = await import("../../../src/core/free-projects.js");
-const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+const { saveWorkspace } = await import("../../../src/core/projects/workspaces.js");
+const { setFreeProject, FREE_PROJECT_LIMIT } = await import(
+  "../../../src/core/projects/free-projects.js"
+);
+const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
 const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
 
 /**
@@ -97,8 +99,12 @@ describe("group-commands", () => {
       expect(deps.bridge.createSession).toHaveBeenCalled();
       // Two welcome messages: one to the new group, one back to the p2p chat
       expect(channel.texts().filter((t) => t.includes("群组已绑定到")).length).toBe(2);
-      // Feature D: the bound-project card is sent into the new group.
-      expect(JSON.stringify(channel.cards())).toContain("本群已绑定");
+      // The new group gets the full home menu — work-surface shortcuts (peek) AND
+      // binding management (unbind) — so the user can act immediately, instead of
+      // an unbind-only card.
+      const cards = JSON.stringify(channel.cards());
+      expect(cards).toContain('"peek"');
+      expect(cards).toContain('"unbind"');
     });
 
     it("replies groupCreateFailed and does not persist a binding when createBoundChat rejects", async () => {
@@ -175,6 +181,10 @@ describe("group-commands", () => {
       expect(getBinding("oc_bind1")).not.toBeNull();
       expect(deps.bridge.createSession).toHaveBeenCalled();
       expect(channel.texts().some((t) => t.includes("群组已绑定到"))).toBe(true);
+      // /bind now also lands the full home menu (peek + management), not text only.
+      const cards = JSON.stringify(channel.cards());
+      expect(cards).toContain('"peek"');
+      expect(cards).toContain('"unbind"');
     });
 
     it("rejects binding to a project ANOTHER group already owns", async () => {

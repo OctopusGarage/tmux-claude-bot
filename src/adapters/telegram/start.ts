@@ -4,7 +4,7 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { markCleanShutdown } from "../../core/lifecycle.js";
+import { markCleanShutdown } from "../../core/infra/lifecycle.js";
 import { logger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";

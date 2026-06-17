@@ -5,10 +5,10 @@ import {
   acquireInstanceLock,
   InstanceLockHeldError,
   releaseInstanceLock,
-} from "./core/instance-lock.js";
-import { detectUncleanRestart, markCleanShutdown } from "./core/lifecycle.js";
+} from "./core/infra/instance-lock.js";
+import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
-import { getPathBySession } from "./core/sessionPathMap.js";
+import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { logger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 

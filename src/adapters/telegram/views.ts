@@ -1,14 +1,16 @@
 import type { Context } from "grammy";
+import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
+import { profileFor } from "../../core/agents/registry.js";
+import { buildQueueStatusLines } from "../../core/command/queue-status.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import type { BrowseView } from "../../core/dir-browser.js";
-import { formatSingleConversation, getRecentConversations } from "../../core/history.js";
 import { messages } from "../../core/i18n/index.js";
-import { markSemantics } from "../../core/output.js";
-import type { CreateProjectResult } from "../../core/project-ops.js";
-import { buildQueueStatusLines } from "../../core/queue-status.js";
-import { getPathBySession } from "../../core/sessionPathMap.js";
-import type { ForeignAction } from "../../core/status-install.js";
-import { runStatusInstall } from "../../core/status-install.js";
+import type { ForeignAction } from "../../core/infra/status-install.js";
+import { runStatusInstall } from "../../core/infra/status-install.js";
+import type { BrowseView } from "../../core/projects/dir-browser.js";
+import type { CreateProjectResult } from "../../core/projects/project-ops.js";
+import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { formatSingleConversation } from "../../core/read/transcript.js";
+import { markSemantics } from "../../core/session/output.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import {
@@ -166,8 +168,8 @@ export async function sendHistory(
       });
       return;
     }
-    const configRoot = await deps.configResolver.resolveConfigRoot(session);
-    const rounds = await getRecentConversations(projectPath, configRoot);
+    const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
+    const rounds = await profile.getRecentConversations(deps.configResolver, session, projectPath);
     if (rounds.length === 0) {
       await reply(ctx, "info", messages("telegram").noHistory, { session, replyTarget });
       return;

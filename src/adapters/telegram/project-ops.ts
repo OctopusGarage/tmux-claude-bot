@@ -1,8 +1,8 @@
 import type { Context } from "grammy";
+import { performStart } from "../../core/command/dispatch.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import { performStart } from "../../core/dispatch.js";
 import { messages } from "../../core/i18n/index.js";
-import { openRecentProjectBySid } from "../../core/project-ops.js";
+import { openRecentProjectBySid } from "../../core/projects/project-ops.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { buildStartPickerKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
@@ -32,7 +32,7 @@ export async function startOrPickAfterCreate(
   }
   const only = deps.config.startCommands[0];
   await performStart(deps, session, only?.command);
-  await reply(ctx, "ok", tm.claudeStartedWith(only?.label ?? "claude"), { session, replyTarget });
+  await reply(ctx, "ok", tm.agentStartedWith(only?.label ?? "claude"), { session, replyTarget });
 }
 
 /**
@@ -48,7 +48,7 @@ export {
   removeProjectBySession,
   resolveAliveSessionByShortId,
   switchToProject,
-} from "../../core/project-ops.js";
+} from "../../core/projects/project-ops.js";
 
 /**
  * Switch to a recent project by its short id, creating the tmux session (and

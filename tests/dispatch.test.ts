@@ -2,15 +2,17 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getAgentKind } from "../src/core/agents/agentKindMap.js";
+import { projectPathToHistoryDir } from "../src/core/agents/claude/claude-history.js";
 import {
   assertClaudeBinaryAccessible,
   executeMessage,
   type MessageAction,
   performRestart,
-} from "../src/core/dispatch.js";
-import { projectPathToHistoryDir } from "../src/core/history.js";
-import type { QueuedMessage } from "../src/core/queue.js";
-import { setPathForSession } from "../src/core/sessionPathMap.js";
+  performStart,
+} from "../src/core/command/dispatch.js";
+import type { QueuedMessage } from "../src/core/command/queue.js";
+import { setPathForSession } from "../src/core/projects/sessionPathMap.js";
 import { fakeDeps } from "./adapters/lark/_fakes.js";
 
 function msg(action: MessageAction, over: Partial<QueuedMessage> = {}): QueuedMessage {
@@ -29,11 +31,12 @@ function msg(action: MessageAction, over: Partial<QueuedMessage> = {}): QueuedMe
 
 function deps(claudeOver: Record<string, unknown> = {}) {
   return fakeDeps({
-    claude: {
+    agent: {
       checkIfRunning: vi.fn(async () => true),
       waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE" })),
       start: vi.fn(async () => {}),
       interrupt: vi.fn(async () => {}),
+      exit: vi.fn(async () => {}),
       gracefulRestartWithContinue: vi.fn(async () => {}),
       ...claudeOver,
     } as never,
@@ -85,7 +88,7 @@ describe("performRestart", () => {
   it("asserts the binary, restarts with --continue, and invalidates the config cache", async () => {
     const d = deps();
     await performRestart(d, "proj-1");
-    expect(d.claude.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1", undefined);
+    expect(d.agent.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1", undefined);
     expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
   });
 
@@ -93,7 +96,7 @@ describe("performRestart", () => {
     const d = deps();
     // "sh" is a valid bin so assertClaudeBinaryAccessible(command) passes.
     await performRestart(d, "proj-1", "sh --flavor");
-    expect(d.claude.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1", "sh --flavor");
+    expect(d.agent.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1", "sh --flavor");
   });
 
   it("throws (and does not restart) when the override command's binary is missing", async () => {
@@ -101,7 +104,7 @@ describe("performRestart", () => {
     await expect(performRestart(d, "proj-1", "/no/such/bin/ever --x")).rejects.toThrow(
       /not found or not executable/,
     );
-    expect(d.claude.gracefulRestartWithContinue).not.toHaveBeenCalled();
+    expect(d.agent.gracefulRestartWithContinue).not.toHaveBeenCalled();
   });
 });
 
@@ -112,29 +115,32 @@ describe("executeMessage — control actions", () => {
 
   it("start launches Claude and invalidates the config cache", async () => {
     const d = deps();
-    expect(await executeMessage(msg("start"), d)).toBe("✅ Claude 已启动");
+    expect(await executeMessage(msg("start"), d)).toBe("✅ 已启动");
     // The default start passes no command override (uses the primary).
-    expect(d.claude.start).toHaveBeenCalledWith("proj-1", undefined);
+    expect(d.agent.start).toHaveBeenCalledWith("proj-1", undefined);
     expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
   });
 
-  it("exit clears the queue, exits Claude, invalidates config", async () => {
+  it("exit clears the queue, exits the agent via the runner, invalidates config", async () => {
     const d = deps();
-    expect(await executeMessage(msg("exit"), d)).toBe("✅ 已退出 Claude");
+    expect(await executeMessage(msg("exit"), d)).toBe("✅ 已退出");
     expect(d.queue.clearSession).toHaveBeenCalledWith("proj-1");
-    expect(d.bridge.sendExit).toHaveBeenCalledWith("proj-1");
+    // Routed through the agent runner (both agents: Ctrl-C + /exit), not the
+    // hardcoded bridge.sendExit it used to call.
+    expect(d.agent.exit).toHaveBeenCalledWith("proj-1");
+    expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
   });
 
   it("restart does a graceful --continue restart", async () => {
     const d = deps();
-    expect(await executeMessage(msg("restart"), d)).toBe("🔄 Claude 已重启 · --continue");
-    expect(d.claude.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1");
+    expect(await executeMessage(msg("restart"), d)).toBe("🔄 已重启");
+    expect(d.agent.gracefulRestartWithContinue).toHaveBeenCalledWith("proj-1");
   });
 
   it("esc interrupts; interrupt sends Ctrl-C; enter/up/down/tab send raw keys", async () => {
     const d = deps();
     expect(await executeMessage(msg("esc"), d)).toBe("✅ 已发送 Esc");
-    expect(d.claude.interrupt).toHaveBeenCalledWith("proj-1");
+    expect(d.agent.interrupt).toHaveBeenCalledWith("proj-1");
     expect(await executeMessage(msg("interrupt"), d)).toBe("✅ 已中断 · Ctrl-C");
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("C-c", "proj-1");
     expect(await executeMessage(msg("enter"), d)).toBe("✅ 已回车");
@@ -147,10 +153,13 @@ describe("executeMessage — control actions", () => {
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Tab", "proj-1");
   });
 
-  it("clear/compact send the slash commands to the pane", async () => {
+  it("clear/compact send the slash commands and invalidate the resolver cache", async () => {
     const d = deps();
     expect(await executeMessage(msg("clear"), d)).toBe("✅ 已清空上下文 · /clear");
     expect(d.bridge.sendKeys).toHaveBeenCalledWith("/clear", "proj-1");
+    // /clear starts a new session → new transcript; the cached open-transcript
+    // must be dropped so the next read re-detects it.
+    expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
     expect(await executeMessage(msg("compact"), d)).toBe("✅ 已压缩上下文 · /compact");
     expect(d.bridge.sendKeys).toHaveBeenCalledWith("/compact", "proj-1");
   });
@@ -167,7 +176,7 @@ describe("executeMessage — control actions", () => {
     // channel undefined → `msg.channel ?? "telegram"` → zh telegram strings.
     const d = deps();
     const out = await executeMessage(msg("status", { channel: undefined }), d);
-    expect(out).toContain("🟢 Claude 运行中");
+    expect(out).toContain("🟢 Claude 运行中"); // statusRunning("Claude") → "🟢 Claude 运行中"
   });
 
   it("status reflects whether Claude is running", async () => {
@@ -180,9 +189,7 @@ describe("executeMessage — control actions", () => {
 
   it("text rejects (throws) when Claude isn't running — no keys sent", async () => {
     const d = deps({ checkIfRunning: vi.fn(async () => false) });
-    await expect(executeMessage(msg("text", { text: "do it" }), d)).rejects.toThrow(
-      "Claude 未运行",
-    );
+    await expect(executeMessage(msg("text", { text: "do it" }), d)).rejects.toThrow("未运行");
     expect(d.bridge.sendKeys).not.toHaveBeenCalled();
   });
 
@@ -235,7 +242,7 @@ describe("executeMessage — text action with history", () => {
       `${[line("user", "make it long please"), line("assistant", long)].join("\n")}\n`,
     );
     const d = fakeDeps({
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => ({ done: true, output: "P" })),
       } as never,
@@ -274,7 +281,7 @@ describe("executeMessage — text action with history", () => {
     // msg.text undefined exercises `msg.text?.length ?? 0` in the entry log and a
     // null sent-text lookup; falls back to the pane snapshot.
     const d = fakeDeps({
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE_FOR_UNDEF" })),
       } as never,
@@ -289,7 +296,7 @@ describe("executeMessage — text action with history", () => {
   it("falls back to the processed tmux pane when no history reply matches", async () => {
     // No history file → getLatestAssistantReply returns null → pane output is used.
     const d = fakeDeps({
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE_SNAPSHOT" })),
       } as never,
@@ -301,14 +308,14 @@ describe("executeMessage — text action with history", () => {
 
   it("reports empty output when the pane processes to nothing", async () => {
     const d = fakeDeps({
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => ({ done: true, output: "   " })),
       } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "another unmatched prompt abc" }), d);
-    expect(out).toBe("Claude 返回空内容 · 用 /peek 查看画面");
+    expect(out).toBe("返回空内容 · 用 /peek 查看画面");
   });
 
   it("keeps waiting across timeout rounds and notifies once, then resolves the real result", async () => {
@@ -318,7 +325,7 @@ describe("executeMessage — text action with history", () => {
       .mockResolvedValueOnce({ done: false, output: "partial 2" })
       .mockResolvedValueOnce({ done: true, output: "FINAL" });
     const d = fakeDeps({
-      claude: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
+      agent: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
       config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 1000 } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
@@ -338,7 +345,7 @@ describe("executeMessage — text action with history", () => {
   it("gives up at the total-wait horizon with the still-running reply", async () => {
     const waitUntilDone = vi.fn(async () => ({ done: false, output: "PARTIAL" }));
     const d = fakeDeps({
-      claude: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
+      agent: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
       config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 250 } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
@@ -357,7 +364,7 @@ describe("executeMessage — text action with history", () => {
       .mockResolvedValueOnce({ done: false, output: "partial" })
       .mockResolvedValueOnce({ done: true, output: "DONE_LATE" });
     const d = fakeDeps({
-      claude: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
+      agent: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
       config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 1000 } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
@@ -368,7 +375,7 @@ describe("executeMessage — text action with history", () => {
 
   it("falls back to capturePane when waitUntilDone throws", async () => {
     const d = fakeDeps({
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => {
           throw new Error("done failed");
@@ -394,7 +401,7 @@ describe("executeMessage — text action with history", () => {
     // Throwing a string (not an Error) exercises the `: err` branch of the
     // error-logging ternary; capturePane still salvages the pane.
     const d = fakeDeps({
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => {
           throw "string failure";
@@ -420,7 +427,7 @@ describe("executeMessage — text action with history", () => {
     // Both throws are non-Error literals → hits the `: err` and `: paneErr`
     // branches of both logging ternaries before normalizeError rethrows.
     const d = fakeDeps({
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => {
           throw "wait literal";
@@ -447,7 +454,7 @@ describe("executeMessage — text action with history", () => {
 
   it("rethrows when both waitUntilDone and capturePane throw", async () => {
     const d = fakeDeps({
-      claude: {
+      agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => {
           throw new Error("done failed");
@@ -468,5 +475,73 @@ describe("executeMessage — text action with history", () => {
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     await expect(executeMessage(msg("text", { text: "double fail xyz" }), d)).rejects.toThrow();
+  });
+});
+
+describe("performStart / performRestart — agent kind recording", () => {
+  let stateDir: string;
+  beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-agent-"));
+    process.env.TCB_STATE_DIR = stateDir;
+  });
+  afterEach(() => {
+    delete process.env.TCB_STATE_DIR;
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it("performStart records 'codex' when the command matches a codex startCommand", async () => {
+    const d = fakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => false),
+        start: vi.fn(async () => {}),
+      } as never,
+      config: {
+        claudeStartCommand: "bash",
+        startCommands: [
+          { label: "claude", command: "bash", agent: "claude" as const },
+          { label: "codex", command: "sh", agent: "codex" as const },
+        ],
+      } as never,
+    });
+    await performStart(d, "proj-codex", "sh");
+    expect(await getAgentKind("proj-codex")).toBe("codex");
+  });
+
+  it("performStart records 'claude' for the default (no command)", async () => {
+    const d = fakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => false),
+        start: vi.fn(async () => {}),
+      } as never,
+    });
+    await performStart(d, "proj-claude");
+    expect(await getAgentKind("proj-claude")).toBe("claude");
+  });
+
+  it("performRestart records 'codex' when the command matches a codex startCommand", async () => {
+    const d = fakeDeps({
+      agent: {
+        gracefulRestartWithContinue: vi.fn(async () => {}),
+      } as never,
+      config: {
+        claudeStartCommand: "bash",
+        startCommands: [
+          { label: "claude", command: "bash", agent: "claude" as const },
+          { label: "codex", command: "sh", agent: "codex" as const },
+        ],
+      } as never,
+    });
+    await performRestart(d, "proj-codex-restart", "sh");
+    expect(await getAgentKind("proj-codex-restart")).toBe("codex");
+  });
+
+  it("performRestart records 'claude' when no command override (default)", async () => {
+    const d = fakeDeps({
+      agent: {
+        gracefulRestartWithContinue: vi.fn(async () => {}),
+      } as never,
+    });
+    await performRestart(d, "proj-claude-restart");
+    expect(await getAgentKind("proj-claude-restart")).toBe("claude");
   });
 });

@@ -8,7 +8,7 @@ vi.mock(import("../../../src/adapters/lark/resource.js"), async (importOriginal)
   const actual = await importOriginal();
   return { ...actual, createBoundChat: (...args: unknown[]) => createBoundChat(...args) };
 });
-vi.mock(import("../../../src/core/voice-support.js"), async (importOriginal) => {
+vi.mock(import("../../../src/core/read/voice-support.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, resolveWhisperLanguage: () => "en" };
 });
@@ -17,8 +17,8 @@ const { makeMessageHandler } = await import("../../../src/adapters/lark/handlers
 const { handleNewGroup, handleUnbind } = await import(
   "../../../src/adapters/lark/group-commands.js"
 );
-const { getBinding } = await import("../../../src/core/group-bindings.js");
-const { sessionNameFromPath } = await import("../../../src/core/sessionPathMap.js");
+const { getBinding } = await import("../../../src/core/projects/group-bindings.js");
+const { sessionNameFromPath } = await import("../../../src/core/projects/sessionPathMap.js");
 const { fakeChannel, fakeDeps, fakeMessage } = await import("./_fakes.js");
 
 /**

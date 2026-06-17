@@ -14,7 +14,7 @@
 [![Checked with Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?logo=biome)](https://biomejs.dev)
 
 <p align="center">
-  A chat bot that drives <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> inside tmux sessions — remote-control your local Claude from <strong>Telegram and/or Feishu/Lark</strong>, with voice and text input. Supports <strong>multiple projects</strong>, each with its own tmux session. Pick one chat app or run both.
+  A chat bot that drives a coding agent — <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> or <a href="https://github.com/openai/codex">OpenAI Codex</a> — inside tmux sessions — remote-control your local agent from <strong>Telegram and/or Feishu/Lark</strong>, with voice and text input. Supports <strong>multiple projects</strong>, each with its own tmux session. Pick one chat app or run both.
   <br />
   <br />
   <a href="docs/commands.md"><strong>Explore the docs »</strong></a>
@@ -53,7 +53,7 @@
         <li><a href="#session-naming">Session Naming</a></li>
         <li><a href="#telegram-commands">Telegram Commands</a></li>
         <li><a href="#voice-transcription-optional">Voice transcription</a></li>
-        <li><a href="#claude-running-detection">Claude Running Detection</a></li>
+        <li><a href="#agent-running-detection">Agent Running Detection</a></li>
       </ul>
     </li>
     <li><a href="#deployment--resilience">Deployment &amp; Resilience</a></li>
@@ -65,7 +65,7 @@
 
 ## About The Project
 
-The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + screen-scrape) rather than calling an LLM API — so you get the full interactive Claude session, controlled remotely from a chat app. Run several projects at once (each in its own tmux session), switch between them from buttons, and talk to Claude with text or voice.
+The bot **drives the agent's CLI like a user typing in tmux** (send-keys + screen-scrape) rather than calling an LLM API — so you get the full interactive session (Claude Code or OpenAI Codex), controlled remotely from a chat app. Run several projects at once (each in its own tmux session), switch between them from buttons, and talk to the agent with text or voice.
 
 ### Demo
 
@@ -78,10 +78,10 @@ The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + s
 - **Multi-project tmux sessions** — each project gets its own tmux session (`tmux_proj_<path>`)
 - **Project switching** — create, switch, and remove projects via Telegram/Feishu commands & buttons
 - **Feishu/Lark project groups** — bind a Feishu group to one workspace, so you switch projects by switching groups (no `/cd`); works without `@bot`. See [docs/commands.md](docs/commands.md)
-- **Multiple start commands** — configure several Claude launch commands (different env/model/API key) and pick which to start from a button
+- **Multiple start commands** — configure several agent launch commands (Claude or Codex, different env/model/API key) and pick which to start from a button
 - **Real-time output streaming** — captures tmux pane and streams output to the chat
 - **Queue-based execution** — prevents concurrent commands from interleaving
-- **Idle detection** — polls tmux pane to detect when Claude is idle vs. running
+- **Idle detection** — polls tmux pane to detect when the agent is idle vs. running
 - **Directory guard** — operations restricted to configured allowed directories
 
 ### Built With
@@ -115,8 +115,8 @@ The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + s
    │                 ┌──────▼───────┐                     │
    │                 │     core/    │  dispatch  — meaning │  protocol-agnostic
    │                 │   dispatch   │  queue     — serial  │  (no platform code;
-   │                 │   queue      │  claude.ts — Claude  │   reused by any
-   │                 │   claude.ts  │              lifecycle│   adapter)
+   │                 │   queue      │  agents/   — agent   │   reused by any
+   │                 │   agents/    │              lifecycle│   adapter)
    │                 │   tmux.ts    │  tmux.ts   — sessions │
    │                 └──────┬───────┘                     │
    └────────────────────────┼─────────────────────────────┘
@@ -127,8 +127,8 @@ The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + s
                   ┌──────────────────────┐
                   │     tmux session      │  one per project
                   │  ┌────────────────┐   │
-                  │  │  Claude Code    │   │  interactive CLI,
-                  │  │     CLI         │   │  foreground in the pane
+                  │  │  coding agent   │   │  interactive CLI,
+                  │  │ (Claude / Codex)│   │  foreground in the pane
                   │  └────────────────┘   │
                   └──────────────────────┘
 ```
@@ -144,7 +144,7 @@ The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + s
 **Key points:**
 
 - **Two inbound transports** — Telegram *polls* (HTTPS long-poll), Feishu *pushes* (persistent WebSocket); each reply goes back out its own platform.
-- **One-way layering `adapters/ → core/ → shared/`** — `core/` knows nothing about any chat platform, so adding Feishu was just another adapter; the tmux + Claude machinery is fully reused.
+- **One-way layering `adapters/ → core/ → shared/`** — `core/` knows nothing about any chat platform, so adding Feishu was just another adapter; the tmux + agent machinery is fully reused.
 - The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + screen-scrape), rather than calling an LLM API — which is why tmux sits in the middle.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -260,7 +260,7 @@ All settings via `.env`:
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | *(optional)* | Telegram bot token from @BotFather. Blank = Telegram off (Feishu-only) |
 | `LARK_ENABLED` / `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_ALLOWED_OPEN_IDS` / `LARK_DOMAIN` | *(optional)* | Feishu/Lark adapter — set by `npm run setup:lark`. At least one of Telegram/Feishu must be configured. Feishu *project groups* need the `im:chat` and `im:message.group_msg` scopes (see [docs/commands.md](docs/commands.md)) |
-| `CLAUDE_START_COMMAND` | `claude-yolo` | Command to launch Claude (a full line; may carry leading `VAR=value` env). Add `CLAUDE_START_COMMAND_2..N` (+ optional `CLAUDE_START_LABEL_n`) for a pick-on-start menu — see `.env.example` |
+| `CLAUDE_START_COMMAND` | `claude-yolo` | Command to launch Claude (a full line; may carry leading `VAR=value` env). Add `CLAUDE_START_COMMAND_2..N` (+ optional `CLAUDE_START_LABEL_n`) for a pick-on-start menu. Codex flavors use `CODEX_START_COMMAND[_N]` the same way (absent ⇒ codex disabled) — see `.env.example` |
 | `IDLE_POLL_TICKS` | `3` | Consecutive idle polls before considered idle |
 | `POLL_INTERVAL_MS` | `1000` | Milliseconds between idle polls |
 | `MAX_OUTPUT_LINES` | `200` | Max tmux pane lines to capture |
@@ -278,7 +278,7 @@ The active session name is stored in `.current_project` (gitignored).
 
 ### Telegram Commands
 
-#### Projects (no Claude required)
+#### Projects (no agent required)
 
 | Command | Description |
 |---------|-------------|
@@ -288,31 +288,31 @@ The active session name is stored in `.current_project` (gitignored).
 | `/switch_<N>` | Switch to project by number |
 | `/remove_<N>` | Remove project session |
 
-#### Claude control (session required)
+#### Agent control (session required)
 
 | Command | When | Description |
 |---------|------|-------------|
-| `start` | session exists | Start Claude session |
-| `status` | session exists | Check if Claude is running |
+| `start` | session exists | Start the agent |
+| `status` | session exists | Check if the agent is running |
 | `peek` | session exists | Capture current tmux pane |
-| `esc` | Claude running | Send Escape key |
-| `interrupt` | Claude running | Send Ctrl-C |
-| `exit` | Claude running | Send /exit to Claude |
-| `restart` | Claude running | Restart with --continue flag |
-| `clear` | Claude running | Send /clear (clear context) |
-| `compact` | Claude running | Send /compact (compact context) |
-| `enter` | Claude running | Send Enter key |
-| `up` / `down` | Claude running | Send arrow keys |
+| `esc` | agent running | Send Escape key |
+| `interrupt` | agent running | Send Ctrl-C |
+| `exit` | agent running | Send /exit to the agent |
+| `restart` | agent running | Restart, resuming the conversation |
+| `clear` | agent running | Send /clear (clear context) |
+| `compact` | agent running | Send /compact (compact context) |
+| `enter` | agent running | Send Enter key |
+| `up` / `down` | agent running | Send arrow keys |
 | `help` | always | Show all commands |
 
 #### Natural language
 
-When Claude is running, any text message is sent to Claude and the result is returned.
+When the agent is running, any text message is sent to it and the result is returned.
 
 ### Voice transcription (optional)
 
 Voice messages are transcribed locally with [mlx-whisper](https://pypi.org/project/mlx-whisper/)
-(Apple Silicon only) and then forwarded to Claude like any text. **The feature is
+(Apple Silicon only) and then forwarded to the agent like any text. **The feature is
 off until you install it** — if you never use voice, you can ignore this entirely.
 
 **Enable it (two ways):**
@@ -341,13 +341,13 @@ Japanese, so transcription forces a language — **`zh` by default**. Switch any
 time from Telegram with `/voice_lang <zh|en|yue|ja|es|auto>` (`auto` re-enables detection);
 it persists to `.env`. Override the default with `WHISPER_LANGUAGE` in `.env`.
 
-### Claude Running Detection
+### Agent Running Detection
 
-The bot decides whether Claude is running by **process detection**, not screen
-scraping: it walks the tmux pane's process tree (`pane_pid` → `ps`) and looks for a
-`claude` process. Present → **running**; absent → **idle**. This is theme- and
-output-independent. (Readiness — "Claude finished loading" — is still detected from
-the pane, since the process exists before it is ready for input.)
+The bot decides whether the agent is running by **process detection**, not screen
+scraping: it walks the tmux pane's process tree (`pane_pid` → `ps`) and looks for the
+agent process (`claude` or `codex`). Present → **running**; absent → **idle**. This is
+theme- and output-independent. (Readiness — "the agent finished loading" — is still
+detected from the pane, since the process exists before it is ready for input.)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

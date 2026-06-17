@@ -2,9 +2,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { reconcileGroupBinding } from "../../../src/core/group-binding-ops.js";
-import { bindGroup, unbindGroup } from "../../../src/core/group-bindings.js";
-import { createProjectSession } from "../../../src/core/project-ops.js";
+import { reconcileGroupBinding } from "../../../src/core/projects/group-binding-ops.js";
+import { bindGroup, unbindGroup } from "../../../src/core/projects/group-bindings.js";
+import { createProjectSession } from "../../../src/core/projects/project-ops.js";
 import { fakeDeps } from "./_fakes.js";
 
 /**
