@@ -180,8 +180,13 @@ export abstract class AgentRunnerBase implements AgentRunner {
     // most recent in the dir". Falls back to the continue command when the id
     // can't be read (no live transcript open).
     const resolved = await this.bridge.resolveSessionName(sessionName);
+    // Prefer the EXACT live id; if the pid isn't holding the transcript open right
+    // now, fall back to the last-observed live id (disambiguates co-located Free
+    // Projects, where continueCommand's "newest in dir" can resume the wrong one).
     const sessionId =
-      (await this.configResolver.resolveLiveTranscript?.(resolved))?.sessionId ?? null;
+      (await this.configResolver.resolveLiveTranscript?.(resolved))?.sessionId ??
+      this.configResolver.lastLiveSessionId?.(resolved) ??
+      null;
     await this.bridge.sendExit(sessionName);
     await sleep(EXIT_GRACE_MS);
     if (await this.checkIfRunning(sessionName)) return; // didn't exit — don't double-launch
