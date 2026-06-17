@@ -55,13 +55,16 @@ import {
 } from "./views.js";
 
 export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: ReplyTargetMap): void {
+  // Restore this channel's persisted backlog on boot. Drop ONLY the Telegram
+  // channel — Lark restores + drops its own in startLark, so a Telegram+Lark
+  // deployment loses neither side's queue regardless of which starts first.
   const persisted = deps.queue.loadPersisted();
   if (persisted.length > 0) {
-    deps.queue.clearPersisted();
     for (const p of persisted) {
-      if (p.channel === "lark") continue; // Lark restore is out of scope (Phase 1)
+      if (p.channel === "lark") continue; // Lark restores its own (startLark)
       deps.queue.enqueue(createRestoredMessage(p, bot));
     }
+    deps.queue.clearPersistedChannel("telegram"); // legacy no-channel entries count as telegram
   }
 
   bot.command("lang", async (ctx) => {

@@ -156,7 +156,11 @@ describe("CodexRunner.startWithResume", () => {
 describe("CodexRunner restart", () => {
   // isCodexRunning yields `running` per call (clamped to the last value), so a
   // restart can model "still running through N Ctrl-C, then gone".
-  function makeRunner(running: boolean[], liveSessionId: string | null = null) {
+  function makeRunner(
+    running: boolean[],
+    liveSessionId: string | null = null,
+    storedSessionId: string | null = null,
+  ) {
     let i = 0;
     const sent: string[] = [];
     const bridge = {
@@ -178,6 +182,7 @@ describe("CodexRunner restart", () => {
       isCodexRunning: async () => running[Math.min(i++, running.length - 1)],
       resolveLiveTranscript: async () =>
         liveSessionId ? { path: "/x.jsonl", sessionId: liveSessionId } : null,
+      lastLiveSessionId: () => storedSessionId,
     } as unknown as ConfigResolver;
     const runner = new CodexRunner({
       bridge,
@@ -215,9 +220,20 @@ describe("CodexRunner restart", () => {
   });
 
   it("gracefulRestartWithContinue falls back to resume --last when no live id is available", async () => {
-    const { runner, sent } = makeRunner([false]); // no live session id
+    const { runner, sent } = makeRunner([false]); // no live session id, no stored id
     await runner.gracefulRestartWithContinue("sess");
     expect(sent).toContain("keys:codex --yolo resume --last");
+  });
+
+  it("gracefulRestartWithContinue resumes the last-observed live id when the live id can't be read (Free Projects disambiguation)", async () => {
+    // Live id unreadable (codex idle, not holding the rollout open), but a prior
+    // observation recorded the exact id — resume THAT, not `resume --last` (which
+    // could pick a co-located free-project session sharing the same cwd).
+    const stored = "99999999-aaaa-bbbb-cccc-dddddddddddd";
+    const { runner, sent } = makeRunner([false], null, stored);
+    await runner.gracefulRestartWithContinue("sess");
+    expect(sent).toContain(`keys:codex --yolo resume ${stored}`);
+    expect(sent.some((s) => s.includes("resume --last"))).toBe(false);
   });
 
   it("gracefulRestartWithContinue bails (no resume) if codex is still running", async () => {

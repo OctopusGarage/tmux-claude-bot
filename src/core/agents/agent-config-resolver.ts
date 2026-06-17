@@ -5,6 +5,7 @@ import { logger } from "../../shared/utils/logger.js";
 import { isClaudeProcess, matchOpenClaudeTranscript } from "./claude/claude-process.js";
 import { isCodexProcess } from "./codex/codex-process.js";
 import { matchOpenCodexRollout } from "./codex/codex-rollout.js";
+import { getLastLiveSessionId, recordLiveSessionId } from "./live-session-id.js";
 
 export type { ProcRow } from "../platform/introspector.js";
 
@@ -135,6 +136,10 @@ export interface ConfigResolver {
    * process — "codex"/"claude", or null when neither is running yet.
    * Optional so existing fakes need not implement it. */
   detectAgentKind?(session: string): Promise<AgentKind | null>;
+  /** The last session id this session's live transcript was observed to be —
+   * a persisted, self-healing fallback for /restart when the live id can't be
+   * read right now. Optional so existing fakes need not implement it. */
+  lastLiveSessionId?(session: string): string | null;
   /** Drop the cached entry — call on lifecycle changes (/clear, /compact, switch…). */
   invalidate(session: string): void;
 }
@@ -275,6 +280,10 @@ export function createConfigResolver(
       return (await resolveAgent(session)).entry?.kind ?? null;
     },
 
+    lastLiveSessionId(session: string): string | null {
+      return getLastLiveSessionId(session);
+    },
+
     async resolveCodexHome(session: string): Promise<string | null> {
       const { entry } = await resolveAgent(session);
       return entry?.kind === "codex" ? entry.home : null;
@@ -283,11 +292,16 @@ export function createConfigResolver(
     async resolveLiveTranscript(session: string): Promise<LiveTranscript | null> {
       const { entry } = await resolveAgent(session);
       if (!entry) return null;
-      if (entry.transcript !== undefined) return entry.transcript; // cached (lifecycle-invalidated)
-      // Whichever transcript the live pid holds open — claude's
-      // projects/<dir>/<uuid>.jsonl or codex's sessions/.../rollout-<uuid>.jsonl.
-      const files = await probe.listOpenFiles(entry.agentPid);
-      entry.transcript = matchOpenClaudeTranscript(files) ?? matchOpenCodexRollout(files);
+      if (entry.transcript === undefined) {
+        // Whichever transcript the live pid holds open — claude's
+        // projects/<dir>/<uuid>.jsonl or codex's sessions/.../rollout-<uuid>.jsonl.
+        const files = await probe.listOpenFiles(entry.agentPid);
+        entry.transcript = matchOpenClaudeTranscript(files) ?? matchOpenCodexRollout(files);
+      }
+      // Refresh the persisted last-observed id (self-healing) so /restart can
+      // disambiguate co-located Free-Project sessions when the live id later
+      // can't be read. No-op when unchanged.
+      if (entry.transcript?.sessionId) recordLiveSessionId(session, entry.transcript.sessionId);
       return entry.transcript;
     },
 

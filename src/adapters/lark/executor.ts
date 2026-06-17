@@ -1,7 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import { executeMessage, type MessageAction } from "../../core/command/dispatch.js";
 import { enqueueMessage } from "../../core/command/enqueue.js";
-import type { QueuedMessage } from "../../core/command/queue.js";
+import type { PersistedMessage, QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
@@ -18,6 +18,48 @@ import { recordReplyTarget } from "./reply-target.js";
  * tmux session received it — mirrors the Telegram adapter's project line. */
 function projectTag(session: string): string {
   return messages("lark").projectTag(projectLabel(session, getPathBySession(session) ?? undefined));
+}
+
+/**
+ * Rehydrate a persisted Lark-channel message into a live QueuedMessage on boot,
+ * so a bot restart resumes the backlog instead of dropping it (parity with
+ * Telegram's createRestoredMessage). resolve/reject deliver the result through
+ * the freshly-connected Lark channel, the same way enqueueLarkAction does.
+ */
+export function createLarkRestoredMessage(
+  p: PersistedMessage,
+  channel: LarkChannel,
+): QueuedMessage {
+  const chatId = String(p.chatId);
+  const session = p.sessionName ?? "";
+  return {
+    id: p.id,
+    text: p.text,
+    chatId: p.chatId,
+    sessionName: p.sessionName,
+    action: p.action,
+    channel: "lark",
+    resolve: (output: string) => {
+      void (async () => {
+        const mid = await sendCard(
+          channel,
+          chatId,
+          resultCard(output, projectTag(session), isProjectGroup(chatId)),
+        );
+        if (mid) recordReplyTarget(mid, session);
+      })();
+    },
+    reject: (err: Error) => {
+      void sendCard(
+        channel,
+        chatId,
+        recoveryCard(
+          `${messages("lark").errorPrefix(err.message)}\n${projectTag(session)}`,
+          isProjectGroup(chatId),
+        ),
+      );
+    },
+  };
 }
 
 export async function resolveSession(

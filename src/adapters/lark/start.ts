@@ -9,6 +9,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { logger } from "../../shared/utils/logger.js";
 import { makeCardActionHandler } from "./card-actions.js";
+import { createLarkRestoredMessage } from "./executor.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
 import { notifyLarkOwner } from "./resource.js";
@@ -73,6 +74,15 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
   const channel: LarkChannel = createLarkChannel(larkChannelOptions(cfg, domain));
   channel.on("message", makeMessageHandler(channel, deps));
   channel.on("cardAction", makeCardActionHandler(channel, deps));
+
+  // Restore this channel's persisted backlog so a bot restart doesn't drop
+  // queued Lark messages (parity with Telegram). Each adapter restores + drops
+  // ONLY its own channel, so a Telegram+Lark deployment loses neither side.
+  for (const p of deps.queue.loadPersisted()) {
+    if (p.channel !== "lark") continue;
+    deps.queue.enqueue(createLarkRestoredMessage(p, channel));
+  }
+  deps.queue.clearPersistedChannel("lark");
   // App-level WS watchdog — catches half-open sockets after laptop sleep /
   // network flaps that the SDK's own reconnect loop can miss. Ticks are
   // no-ops until connect() initializes the WS client.

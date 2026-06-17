@@ -7,6 +7,7 @@ import { expandTilde } from "../../shared/utils/path.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { listClaudeSessions, projectPathToHistoryDir } from "../agents/claude/claude-history.js";
 import { findRolloutForProject } from "../agents/codex/codex-rollout.js";
+import { clearLiveSessionId } from "../agents/live-session-id.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import {
@@ -283,6 +284,7 @@ export async function removeProjectBySession(
   }
   await deps.bridge.killSession(sessionName);
   deps.configResolver.invalidate(sessionName);
+  clearLiveSessionId(sessionName); // drop the last-observed id (a reused free slot must not read it)
   // The session is gone — drop it from any channel that had it as current.
   await deps.currentProject.clearSession(sessionName);
   // A free project owns a registry slot — free it so the number can be reused.

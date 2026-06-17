@@ -134,6 +134,25 @@ export class MessageQueue {
     }
   }
 
+  /** Remove only one channel's persisted messages, leaving other channels for
+   * their own adapter to restore. Each adapter restores + drops its own channel
+   * on boot, so a Telegram+Lark deployment doesn't lose either side's backlog and
+   * neither double-restores. Legacy entries without a channel are treated as
+   * Telegram (that is who wrote them before the field existed). Unlinks the file
+   * when nothing remains. */
+  clearPersistedChannel(channel: Channel): void {
+    const remaining = this.loadPersisted().filter((m) => (m.channel ?? "telegram") !== channel);
+    if (remaining.length === 0) {
+      this.clearPersisted();
+      return;
+    }
+    try {
+      fs.writeFileSync(this.persistPath, JSON.stringify(remaining, null, 2), "utf-8");
+    } catch {
+      // ignore persist failures
+    }
+  }
+
   private hasDuplicateText(chatId: string | number, text: string): boolean {
     const matches = (m: QueuedMessage | undefined): boolean =>
       m !== undefined && m.action === "text" && m.chatId === chatId && m.text === text;
