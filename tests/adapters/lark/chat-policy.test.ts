@@ -6,8 +6,8 @@ import {
   type ChatKind,
   type ProjectAction,
 } from "../../../src/adapters/lark/chat-policy.js";
-import { bindGroup, unbindGroup } from "../../../src/core/group-bindings.js";
 import { messages } from "../../../src/core/i18n/index.js";
+import { bindGroup, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
 vi.mock(import("../../../src/adapters/lark/resource.js"), async (importOriginal) => {

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock(import("../../../src/core/voice-support.js"), async (importOriginal) => {
+vi.mock(import("../../../src/core/read/voice-support.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
@@ -14,7 +14,8 @@ vi.mock(import("../../../src/core/voice-support.js"), async (importOriginal) => 
 
 const { makeMessageHandler } = await import("../../../src/adapters/lark/handlers.js");
 const { fakeChannel, fakeDeps, fakeMessage } = await import("./_fakes.js");
-const { bindGroup } = await import("../../../src/core/group-bindings.js");
+const { bindGroup } = await import("../../../src/core/projects/group-bindings.js");
+const { messages } = await import("../../../src/core/i18n/index.js");
 
 describe("lark bound-group routing", () => {
   let dir: string;
@@ -34,6 +35,35 @@ describe("lark bound-group routing", () => {
     const handler = makeMessageHandler(channel, deps);
 
     await handler(fakeMessage({ chatType: "group" as never, chatId: "oc_unbound", content: "hi" }));
+
+    expect(channel.sent).toHaveLength(0);
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("lets an allow-listed user run a recovery command (/restore) in an UNBOUND group", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
+
+    // A group that lost its binding must NOT be bricked: recovery commands are
+    // processed in place (here /restore replies "not bound" — the point is it ran
+    // instead of being silently dropped, so the user can re-bind without
+    // recreating the group).
+    await handler(
+      fakeMessage({ chatType: "group" as never, chatId: "oc_unbound", content: "/restore" }),
+    );
+
+    expect(channel.sent.length).toBeGreaterThan(0);
+  });
+
+  it("still drops a plain prompt in an UNBOUND group (only recovery commands pass)", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(
+      fakeMessage({ chatType: "group" as never, chatId: "oc_unbound", content: "just chatting" }),
+    );
 
     expect(channel.sent).toHaveLength(0);
     expect(deps.queue.enqueued).toHaveLength(0);
@@ -72,6 +102,26 @@ describe("lark bound-group routing", () => {
     expect(deps.bridge.createSession).toHaveBeenCalled();
     // and reported the restore to the group
     expect(channel.texts().some((t) => t.includes("projX"))).toBe(true);
+  });
+
+  it("surfaces a handler error (e.g. tmux briefly down) to the chat instead of throwing", async () => {
+    bindGroup("oc_bound", { workspacePath: dir, sessionName: "proj-1", label: "projX" });
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      bridge: {
+        hasSession: vi.fn(async () => {
+          throw new Error("tmux server down");
+        }),
+      },
+    });
+    const handler = makeMessageHandler(channel, deps);
+
+    // The boundary must swallow the throw (no unhandled rejection)…
+    await expect(
+      handler(fakeMessage({ chatType: "group" as never, chatId: "oc_bound", content: "do x" })),
+    ).resolves.toBeUndefined();
+    // …and tell the user, who can then /restore.
+    expect(channel.texts()).toContain(messages("lark").handlerError);
   });
 
   it("does NOT auto-reconcile a binding-management command (/unbind)", async () => {

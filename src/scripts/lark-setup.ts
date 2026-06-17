@@ -11,7 +11,7 @@ import { createInterface } from "node:readline/promises";
 import { runLarkOnboardingWizard } from "../adapters/lark/onboarding-wizard.js";
 import type { Lang } from "../core/i18n/index.js";
 import { parseSetupLang, SETUP_LANG_PROMPT, setupMessages } from "../core/i18n/setup.js";
-import { serializeEnv } from "../core/onboarding.js";
+import { serializeEnv } from "../core/infra/onboarding.js";
 import { managedRestartCommand } from "../core/platform/service-hints.js";
 
 const ENV_PATH = join(process.cwd(), ".env");

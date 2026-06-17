@@ -17,10 +17,10 @@ import {
   sendRecentList,
   sendVoiceLangPicker,
 } from "../../../src/adapters/lark/views.js";
-import { bindGroup, unbindGroup } from "../../../src/core/group-bindings.js";
-import { projectPathToHistoryDir } from "../../../src/core/history.js";
-import type { QueuedMessage } from "../../../src/core/queue.js";
-import { setPathForSession } from "../../../src/core/sessionPathMap.js";
+import { projectPathToHistoryDir } from "../../../src/core/agents/claude/claude-history.js";
+import type { QueuedMessage } from "../../../src/core/command/queue.js";
+import { bindGroup, unbindGroup } from "../../../src/core/projects/group-bindings.js";
+import { setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
 const qmsg = (text: string): QueuedMessage =>
@@ -297,7 +297,7 @@ describe("alive/recent error branches", () => {
       },
     });
     // populate recents so the path reaches the session listing
-    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
     const tmpDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-rl-err-"));
     await appendRecentProject(tmpDir, "tmux_proj_");
     await sendRecentList(channel, deps, "chat-1");
@@ -330,7 +330,7 @@ describe("addRecentBySid", () => {
       bridge: { hasSession: vi.fn(async () => true) },
     });
     // populate recents so addRecentBySid can find the sid
-    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
     await appendRecentProject(allowedRoot, prefix);
     const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
     const sid = sessionShortId(sessionName);
@@ -347,7 +347,7 @@ describe("addRecentBySid", () => {
       config: { cdAllowedDirs: [allowedOther], projectSessionPrefix: prefix, sessionWarmupMs: 0 },
       bridge: { hasSession: vi.fn(async () => false) },
     });
-    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
     await appendRecentProject(allowedRoot, prefix);
     const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
     const sessionName = `tmux_proj_${allowedRoot.replace(/\//g, "-")}`;
@@ -524,7 +524,7 @@ describe("handleWsCommand", () => {
   });
 
   it("use → switches to the saved session when alive", async () => {
-    const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+    const { saveWorkspace } = await import("../../../src/core/projects/workspaces.js");
     saveWorkspace("my-ws", "proj-1");
     const channel = fakeChannel();
     const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
@@ -534,7 +534,7 @@ describe("handleWsCommand", () => {
   });
 
   it("use → session gone → error", async () => {
-    const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+    const { saveWorkspace } = await import("../../../src/core/projects/workspaces.js");
     saveWorkspace("gone-ws", "dead-session");
     const channel = fakeChannel();
     const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => false) } });
@@ -549,7 +549,7 @@ describe("handleWsCommand", () => {
   });
 
   it("remove → deletes saved workspace", async () => {
-    const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+    const { saveWorkspace } = await import("../../../src/core/projects/workspaces.js");
     saveWorkspace("del-ws", "proj-x");
     const channel = fakeChannel();
     await handleWsCommand(channel, fakeDeps(), "chat-1", "remove del-ws");
@@ -575,7 +575,7 @@ describe("handleWsCommand", () => {
   });
 
   it("list → shows saved workspaces", async () => {
-    const { saveWorkspace } = await import("../../../src/core/workspaces.js");
+    const { saveWorkspace } = await import("../../../src/core/projects/workspaces.js");
     saveWorkspace("proj-a", "sess-a");
     const channel = fakeChannel();
     await handleWsCommand(channel, fakeDeps(), "chat-1", "list");
@@ -590,10 +590,10 @@ describe("sendGroupMenu", () => {
     const pathB = nodePath.join(root, "beta");
     fs.mkdirSync(pathA);
     fs.mkdirSync(pathB);
-    const { appendRecentProject } = await import("../../../src/core/recentProjects.js");
-    const { sessionNameFromPath } = await import("../../../src/core/sessionPathMap.js");
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
+    const { sessionNameFromPath } = await import("../../../src/core/projects/sessionPathMap.js");
     const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
-    const { bindGroup } = await import("../../../src/core/group-bindings.js");
+    const { bindGroup } = await import("../../../src/core/projects/group-bindings.js");
 
     const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => []) } });
     const prefix = deps.config.projectSessionPrefix;

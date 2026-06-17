@@ -26,7 +26,7 @@ import {
   DEFAULT_WHISPER_MODEL,
   transcribeOgg,
   transcribeWithCache,
-} from "../src/core/transcriber.js";
+} from "../src/core/read/transcriber.js";
 import { getFromCache, saveToCache } from "../src/shared/utils/media-cache.js";
 
 const TMP = os.tmpdir();

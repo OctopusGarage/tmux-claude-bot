@@ -13,11 +13,11 @@
  */
 
 import { config as loadEnv } from "dotenv";
-import { createConfigResolver, createExecProbe } from "../core/claude-config-resolver.js";
-import { DEFAULT_CONFIG_ROOT } from "../core/history.js";
+import { createConfigResolver, createExecProbe } from "../core/agents/agent-config-resolver.js";
+import { DEFAULT_CONFIG_ROOT } from "../core/agents/claude/claude-history.js";
 import { copyToClipboard } from "../core/platform/clipboard.js";
-import { sessionNameFromPath, setPathForSession } from "../core/sessionPathMap.js";
-import { TmuxBridge } from "../core/tmux.js";
+import { sessionNameFromPath, setPathForSession } from "../core/projects/sessionPathMap.js";
+import { TmuxBridge } from "../core/session/tmux.js";
 import { claudeBinFromStartCommand, loadScriptConfig } from "../shared/config.js";
 import { appStateFile } from "../shared/state-dir.js";
 import { sleep } from "../shared/utils/sleep.js";

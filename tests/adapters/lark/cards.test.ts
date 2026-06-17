@@ -9,7 +9,7 @@ import {
   startPickerCard,
   viewCard,
 } from "../../../src/adapters/lark/cards.js";
-import type { ProjectButton, RecentButton } from "../../../src/core/project-ops.js";
+import type { ProjectButton, RecentButton } from "../../../src/core/projects/project-ops.js";
 
 // Minimal structural shapes for navigating a schema-2.0 card in assertions.
 interface Card {
@@ -217,6 +217,17 @@ describe("helpCard", () => {
     expect(cmds).toEqual(
       expect.arrayContaining(["peek", "history", "queuestatus", "current", "uilangmenu"]),
     );
+  });
+
+  it("in a group: includes binding management (restore/rebind/unbind) so the home menu is self-sufficient", () => {
+    const cmds = allCmds(cardOf(helpCard(true)));
+    expect(cmds).toEqual(expect.arrayContaining(["restore", "rebind", "unbind"]));
+  });
+
+  it("in a 1:1 chat: does NOT show group binding-management buttons", () => {
+    const cmds = allCmds(cardOf(helpCard(false)));
+    expect(cmds).not.toContain("restore");
+    expect(cmds).not.toContain("unbind");
   });
 });
 

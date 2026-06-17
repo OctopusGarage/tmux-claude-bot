@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { projectPathToHistoryDir } from "../../src/core/agents/claude/claude-history.js";
+import { projectLabel } from "../../src/core/projects/project-label.js";
 import {
   aliveProjectButtons,
   createProjectFromPath,
@@ -9,11 +11,13 @@ import {
   recentProjectButtons,
   removeProjectBySession,
   resolveProjectPath,
-} from "../../src/core/project-ops.js";
-import { sessionNameFromPath, setPathForSession } from "../../src/core/sessionPathMap.js";
+} from "../../src/core/projects/project-ops.js";
+import { sessionNameFromPath, setPathForSession } from "../../src/core/projects/sessionPathMap.js";
+import type { AgentKind } from "../../src/shared/types.js";
+import { sessionShortId } from "../../src/shared/utils/hash.js";
 import { fakeDeps } from "../adapters/lark/_fakes.js";
 
-vi.mock("../../src/core/recentProjects.js", () => ({
+vi.mock("../../src/core/projects/recentProjects.js", () => ({
   readRecentProjectLines: vi.fn(async () => []),
   appendRecentProject: vi.fn(async () => {}),
 }));
@@ -137,7 +141,7 @@ describe("createProjectSession", () => {
 
 describe("removeProjectBySession", () => {
   it("skips exit sequence when Claude is not running", async () => {
-    const deps = fakeDeps({ claude: { checkIfRunning: vi.fn(async () => false) } });
+    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => false) } });
     await removeProjectBySession(deps, "tmux_proj_a");
     expect(deps.bridge.sendExit).not.toHaveBeenCalled();
     expect(deps.bridge.killSession).toHaveBeenCalledWith("tmux_proj_a");
@@ -147,7 +151,7 @@ describe("removeProjectBySession", () => {
   it("sends /exit and waits when Claude is running, then kills session", async () => {
     // First call (isRunning check) → true; subsequent calls in loop → false (graceful exit).
     const checkIfRunning = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
-    const deps = fakeDeps({ claude: { checkIfRunning } });
+    const deps = fakeDeps({ agent: { checkIfRunning } });
     await removeProjectBySession(deps, "tmux_proj_b");
     expect(deps.bridge.sendExit).toHaveBeenCalledWith("tmux_proj_b");
     expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
@@ -156,7 +160,7 @@ describe("removeProjectBySession", () => {
 
   it("falls back to Ctrl-C when Claude does not exit within the poll window", async () => {
     // Always running — triggers the C-c fallback after 10 polls.
-    const deps = fakeDeps({ claude: { checkIfRunning: vi.fn(async () => true) } });
+    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => true) } });
     await removeProjectBySession(deps, "tmux_proj_c");
     expect(deps.bridge.sendRawKey).toHaveBeenCalledWith("C-c", "tmux_proj_c");
     expect(deps.bridge.killSession).toHaveBeenCalledWith("tmux_proj_c");
@@ -199,6 +203,178 @@ describe("aliveProjectButtons", () => {
     expect(buttons[0]?.active).toBe(true);
     expect(buttons[0]?.sid).toBeTruthy();
   });
+
+  it("shows 💤 when no agent is live in the pane", async () => {
+    const session = "tmux_proj_-home-user-idle";
+    setPathForSession(session, dir);
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      configResolver: { detectAgentKind: vi.fn(async () => null) },
+    });
+    const buttons = await aliveProjectButtons(deps, "telegram");
+    expect(buttons[0]?.label).toContain("💤");
+  });
+
+  it("shows 🟠 for a live claude session and 🔘 for a live codex session", async () => {
+    const session = "tmux_proj_-home-user-agent";
+    setPathForSession(session, dir);
+    const claudeDeps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
+    });
+    const codexDeps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "codex") },
+    });
+    expect((await aliveProjectButtons(claudeDeps, "telegram"))[0]?.label).toContain("🟠");
+    expect((await aliveProjectButtons(codexDeps, "telegram"))[0]?.label).toContain("🔘");
+  });
+
+  it("shows ⏳ when the queue is processing the session", async () => {
+    const session = "tmux_proj_-home-user-busy";
+    setPathForSession(session, dir);
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
+      queue: { isSessionProcessing: vi.fn(() => true) },
+    });
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⏳");
+  });
+
+  it("shows ⏳ when a message is waiting in the session queue (not yet processing)", async () => {
+    const session = "tmux_proj_-home-user-queued";
+    setPathForSession(session, dir);
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
+      queue: {
+        isSessionProcessing: vi.fn(() => false),
+        getSessionQueue: vi.fn(() => [{ id: "m1" }] as never),
+      },
+    });
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⏳");
+  });
+
+  it("shows ⏳ when the agent transcript was just written (active even with an idle queue)", async () => {
+    const session = "tmux_proj_-active";
+    setPathForSession(session, dir);
+    // A fresh claude transcript under a temp config root → active within the window.
+    const cfg = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-cfg-"));
+    const histDir = projectPathToHistoryDir(dir, cfg);
+    fs.mkdirSync(histDir, { recursive: true });
+    fs.writeFileSync(path.join(histDir, "00000000-0000-4000-8000-000000000000.jsonl"), "x\n");
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: vi.fn(async () => [session]),
+        paneCurrentPath: vi.fn(async () => dir),
+      },
+      configResolver: {
+        detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude"),
+        resolveConfigRoot: vi.fn(async () => cfg),
+      },
+      queue: { isSessionProcessing: vi.fn(() => false), getSessionQueue: vi.fn(() => []) },
+    });
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⏳");
+    fs.rmSync(cfg, { recursive: true, force: true });
+  });
+
+  it("shows ⏳ from the activity event source even when the transcript mtime is stale", async () => {
+    const session = "tmux_proj_-event-active";
+    setPathForSession(session, dir);
+    // A STALE transcript on disk (mtime set well past the idle window): the stat
+    // fallback alone would yield false. The fs.watch-backed activity watcher
+    // reports a recent write, so the session still reads as actively working —
+    // proving the event source, not stat, produced the ⏳ (idle queue, live claude).
+    const cfg = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-evt-"));
+    const histDir = projectPathToHistoryDir(dir, cfg);
+    fs.mkdirSync(histDir, { recursive: true });
+    const file = path.join(histDir, "00000000-0000-4000-8000-000000000001.jsonl");
+    fs.writeFileSync(file, "x\n");
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(file, old, old);
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: vi.fn(async () => [session]),
+        paneCurrentPath: vi.fn(async () => dir),
+      },
+      configResolver: {
+        detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude"),
+        resolveConfigRoot: vi.fn(async () => cfg),
+      },
+      queue: { isSessionProcessing: vi.fn(() => false), getSessionQueue: vi.fn(() => []) },
+      activity: { isActiveWithin: () => true },
+    });
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⏳");
+    fs.rmSync(cfg, { recursive: true, force: true });
+  });
+
+  it("degrades a session to its plain label when its decoration probe rejects (others survive)", async () => {
+    // One wedged pane: paneCurrentPath rejects for it. The other session must
+    // still return, and the failed one falls back to its plain base label — no
+    // ⚠️ glyph, no throw that would blank the whole list.
+    const wedged = "tmux_proj_-home-user-wedged";
+    const ok = "tmux_proj_-home-user-ok";
+    setPathForSession(wedged, dir);
+    setPathForSession(ok, dir);
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: vi.fn(async () => [wedged, ok]),
+        paneCurrentPath: vi.fn(async (session?: string) => {
+          if (session === wedged) throw new Error("pane is wedged");
+          return dir;
+        }),
+      },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
+    });
+    const buttons = await aliveProjectButtons(deps, "telegram");
+    expect(buttons).toHaveLength(2);
+    const wedgedBtn = buttons.find((b) => b.sid === sessionShortId(wedged));
+    const okBtn = buttons.find((b) => b.sid === sessionShortId(ok));
+    // Failed one degrades to the plain projectLabel — no agent/⚠️ decoration.
+    expect(wedgedBtn?.label).toBe(projectLabel(wedged, dir));
+    expect(wedgedBtn?.label).not.toContain("⚠️");
+    // The healthy one still gets its full decoration.
+    expect(okBtn?.label).toContain("🟠");
+  });
+
+  it("shows ⚠️ when the pane cwd differs from the bound dir (agent live)", async () => {
+    const session = "tmux_proj_-home-user-drift";
+    setPathForSession(session, dir);
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: vi.fn(async () => [session]),
+        paneCurrentPath: vi.fn(async () => "/somewhere/else"),
+      },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
+    });
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⚠️");
+  });
+
+  it("no ⚠️ when the pane cwd matches the bound dir", async () => {
+    const session = "tmux_proj_-home-user-match";
+    setPathForSession(session, dir);
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: vi.fn(async () => [session]),
+        paneCurrentPath: vi.fn(async () => dir),
+      },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
+    });
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).not.toContain("⚠️");
+  });
+
+  it("no ⚠️ when no agent is live, even if cwd differs", async () => {
+    const session = "tmux_proj_-home-user-noagent-drift";
+    setPathForSession(session, dir);
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: vi.fn(async () => [session]),
+        paneCurrentPath: vi.fn(async () => "/somewhere/else"),
+      },
+      configResolver: { detectAgentKind: vi.fn(async () => null) },
+    });
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).not.toContain("⚠️");
+  });
 });
 
 describe("recentProjectButtons", () => {
@@ -209,7 +385,7 @@ describe("recentProjectButtons", () => {
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
   it("returns empty array when there are no recent projects", async () => {
-    const { readRecentProjectLines } = await import("../../src/core/recentProjects.js");
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
     vi.mocked(readRecentProjectLines).mockResolvedValueOnce([]);
     const deps = fakeDeps();
     const buttons = await recentProjectButtons(deps, "telegram");
@@ -217,7 +393,7 @@ describe("recentProjectButtons", () => {
   });
 
   it("filters out paths that no longer exist on disk", async () => {
-    const { readRecentProjectLines } = await import("../../src/core/recentProjects.js");
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
     vi.mocked(readRecentProjectLines).mockResolvedValueOnce(["/nonexistent/path"]);
     const deps = fakeDeps();
     const buttons = await recentProjectButtons(deps, "telegram");
@@ -225,7 +401,7 @@ describe("recentProjectButtons", () => {
   });
 
   it("returns button with alive and active flags set correctly", async () => {
-    const { readRecentProjectLines } = await import("../../src/core/recentProjects.js");
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
     vi.mocked(readRecentProjectLines).mockResolvedValueOnce([dir]);
     const sessionName = `tmux_proj_${dir.replace(/\//g, "-")}`;
     const deps = fakeDeps({

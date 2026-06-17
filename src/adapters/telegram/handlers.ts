@@ -1,17 +1,22 @@
 import type { Bot } from "grammy";
-import { buildHelpBody, getTelegramActions } from "../../core/action-registry.js";
+import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
+import { profileFor } from "../../core/agents/registry.js";
+import { orphanLabel } from "../../core/agents/takeover.js";
+import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
+import { buildHelpBody, getTelegramActions } from "../../core/command/action-registry.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import { createSubfolder, isAwaitingFolderName, startBrowse } from "../../core/dir-browser.js";
-import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
-import { consumeFreeLabel, isAwaitingFreeLabel } from "../../core/free-label-prompt.js";
-import { FREE_PROJECT_LIMIT } from "../../core/free-projects.js";
-import { listClaudeSessions } from "../../core/history.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
-import { createFreeProject, createProjectFromPath } from "../../core/project-ops.js";
-import { getPathBySession } from "../../core/sessionPathMap.js";
-import { orphanLabel } from "../../core/takeover.js";
-import { findAdoptableOrphans } from "../../core/takeover-service.js";
-import { runWorkspaceCommand } from "../../core/workspace-command.js";
+import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
+import {
+  createSubfolder,
+  isAwaitingFolderName,
+  startBrowse,
+} from "../../core/projects/dir-browser.js";
+import { consumeFreeLabel, isAwaitingFreeLabel } from "../../core/projects/free-label-prompt.js";
+import { FREE_PROJECT_LIMIT } from "../../core/projects/free-projects.js";
+import { createFreeProject, createProjectFromPath } from "../../core/projects/project-ops.js";
+import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
@@ -215,8 +220,8 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       await reply(ctx, "err", messages("telegram").noPathMapping);
       return;
     }
-    const configRoot = await deps.configResolver.resolveConfigRoot(sessionName);
-    const sessions = await listClaudeSessions(projectPath, configRoot);
+    const profile = profileFor(await resolveAgentKind(deps.configResolver, sessionName));
+    const sessions = await profile.listSessions(deps.configResolver, sessionName, projectPath);
     if (sessions.length === 0) {
       await reply(ctx, "list", messages("telegram").noSessions);
       return;
@@ -369,7 +374,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     logger.info(
       `[handlers] currentSession=${currentSessionName} chat=${chatId} via=${targetSession ? "reply" : "currentProject"}`,
     );
-    const isRunning = await deps.claude.checkIfRunning(currentSessionName);
+    const isRunning = await deps.agent.checkIfRunning(currentSessionName);
     if (isRunning) {
       logger.info(`[handlers] enqueuing text message session=${currentSessionName} chat=${chatId}`);
       await runPromptWithProgress(ctx, deps, currentSessionName, text, replyTarget);

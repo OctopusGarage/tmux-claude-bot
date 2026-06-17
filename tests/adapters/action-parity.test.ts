@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock executeMessage so the immediate path is a no-op: we're testing the
 // routing DECISION (immediate runs inline vs queued enqueues), not execution.
-vi.mock("../../src/core/dispatch.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/core/dispatch.js")>();
+vi.mock("../../src/core/command/dispatch.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/core/command/dispatch.js")>();
   return { ...actual, executeMessage: vi.fn(async () => "ok") };
 });
 
@@ -12,8 +12,12 @@ import {
   QUEUED as LARK_QUEUED,
 } from "../../src/adapters/lark/commands.js";
 import { handleQueuedCommand } from "../../src/adapters/telegram/executor.js";
-import { ACTION_META, getImmediateActions, getLarkQueued } from "../../src/core/action-registry.js";
-import type { MessageAction } from "../../src/core/dispatch.js";
+import {
+  ACTION_META,
+  getImmediateActions,
+  getLarkQueued,
+} from "../../src/core/command/action-registry.js";
+import type { MessageAction } from "../../src/core/command/dispatch.js";
 import { fakeCtx, fakeDeps } from "./telegram/_fakes.js";
 
 /**

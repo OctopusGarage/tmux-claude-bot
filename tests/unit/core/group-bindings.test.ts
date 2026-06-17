@@ -14,7 +14,7 @@ describe("group-bindings registry", () => {
   });
 
   it("binds, reads, lists and unbinds by chat_id", async () => {
-    const m = await import("../../../src/core/group-bindings.js");
+    const m = await import("../../../src/core/projects/group-bindings.js");
     expect(m.getBinding("oc_1")).toBeNull();
     expect(m.isProjectGroup("oc_1")).toBe(false);
 
@@ -43,7 +43,7 @@ describe("group-bindings registry", () => {
   });
 
   it("bindingForSession finds the group bound to a session (one workspace ↔ one group)", async () => {
-    const m = await import("../../../src/core/group-bindings.js");
+    const m = await import("../../../src/core/projects/group-bindings.js");
     expect(m.bindingForSession("claude_-x")).toBeNull();
 
     m.bindGroup("oc_a", { workspacePath: "/p/x", sessionName: "claude_-x", label: "x" });

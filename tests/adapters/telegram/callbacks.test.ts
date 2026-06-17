@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Avoid touching the real .env in the voice-language branch; keep VOICE_LANGS etc.
-vi.mock("../../../src/core/voice-support.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../src/core/voice-support.js")>()),
+vi.mock("../../../src/core/read/voice-support.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/core/read/voice-support.js")>()),
   persistEnvVar: vi.fn(),
 }));
 
@@ -119,7 +119,7 @@ describe("handleCallbackQuery", () => {
     const killSession = vi.fn(async () => {});
     const deps = aliveDeps({
       bridge: { killSession },
-      claude: { checkIfRunning: vi.fn(async () => false) },
+      agent: { checkIfRunning: vi.fn(async () => false) },
     });
 
     await handleCallbackQuery(ctx, deps, replyTarget);
@@ -151,7 +151,7 @@ describe("handleCallbackQuery", () => {
 
   it("control action (a:status:<sid>) runs executeMessage and replies the result", async () => {
     const ctx = fakeCtx({ callbackData: `a:status:${SID}` });
-    const deps = aliveDeps({ claude: { checkIfRunning: vi.fn(async () => true) } });
+    const deps = aliveDeps({ agent: { checkIfRunning: vi.fn(async () => true) } });
 
     await handleCallbackQuery(ctx, deps, replyTarget);
 

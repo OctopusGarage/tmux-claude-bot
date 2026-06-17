@@ -1,5 +1,5 @@
-import { persistEnvVar } from "../env-store.js";
-import type { Channel } from "../project-manager.js";
+import { persistEnvVar } from "../infra/env-store.js";
+import type { Channel } from "../projects/project-manager.js";
 import { en } from "./catalog/en.js";
 import { es } from "./catalog/es.js";
 import { ja } from "./catalog/ja.js";

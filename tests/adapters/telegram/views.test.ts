@@ -9,9 +9,9 @@ import {
   sendPeek,
   sendQueueStatus,
 } from "../../../src/adapters/telegram/views.js";
-import { projectPathToHistoryDir } from "../../../src/core/history.js";
-import type { QueuedMessage } from "../../../src/core/queue.js";
-import { setPathForSession } from "../../../src/core/sessionPathMap.js";
+import { projectPathToHistoryDir } from "../../../src/core/agents/claude/claude-history.js";
+import type { QueuedMessage } from "../../../src/core/command/queue.js";
+import { setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
 import { fakeCtx, fakeDeps } from "./_fakes.js";
 
 const replyTarget = createReplyTargetMap(`/tmp/tg-views-rt-${Date.now()}`);

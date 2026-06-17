@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   reconcileGroupBinding,
   resolveWorkspaceTarget,
-} from "../../../src/core/group-binding-ops.js";
-import { bindGroup } from "../../../src/core/group-bindings.js";
-import { setPathForSession } from "../../../src/core/sessionPathMap.js";
-import { saveWorkspace } from "../../../src/core/workspaces.js";
+} from "../../../src/core/projects/group-binding-ops.js";
+import { bindGroup } from "../../../src/core/projects/group-bindings.js";
+import { setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
+import { saveWorkspace } from "../../../src/core/projects/workspaces.js";
 
 function depsWith(cdAllowedDirs: string[]) {
   return {

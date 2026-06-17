@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { pollForCaptureIds } from "../../src/core/onboarding.js";
+import { pollForCaptureIds } from "../../src/core/infra/onboarding.js";
 
 const msg = (id: number, username?: string, updateId = id) => ({
   update_id: updateId,

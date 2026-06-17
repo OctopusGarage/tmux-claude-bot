@@ -1,32 +1,30 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
+import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
+import { profileFor } from "../../core/agents/registry.js";
+import { orphanLabel } from "../../core/agents/takeover.js";
+import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
+import { performStart } from "../../core/command/dispatch.js";
+import { buildQueueStatusLines } from "../../core/command/queue-status.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import { startBrowse } from "../../core/dir-browser.js";
-import { performStart } from "../../core/dispatch.js";
-import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/doctor.js";
-import { getBinding, isProjectGroup, listBindings } from "../../core/group-bindings.js";
-import {
-  formatSingleConversation,
-  getRecentConversations,
-  listClaudeSessions,
-} from "../../core/history.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
-import { markSemantics } from "../../core/output.js";
-import { projectLabel } from "../../core/project-label.js";
-import { chatScope } from "../../core/project-manager.js";
+import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
+import { type ForeignAction, runStatusInstall } from "../../core/infra/status-install.js";
+import { startBrowse } from "../../core/projects/dir-browser.js";
+import { getBinding, isProjectGroup, listBindings } from "../../core/projects/group-bindings.js";
+import { projectLabel } from "../../core/projects/project-label.js";
+import { chatScope } from "../../core/projects/project-manager.js";
 import {
   aliveProjectButtons,
   type CreateProjectResult,
   createProjectFromPath,
   openRecentProjectBySid,
   recentProjectButtons,
-} from "../../core/project-ops.js";
-import { buildQueueStatusLines } from "../../core/queue-status.js";
-import { getPathBySession } from "../../core/sessionPathMap.js";
-import { type ForeignAction, runStatusInstall } from "../../core/status-install.js";
-import { orphanLabel } from "../../core/takeover.js";
-import { findAdoptableOrphans } from "../../core/takeover-service.js";
-import { resolveWhisperLanguage } from "../../core/voice-support.js";
-import { runWorkspaceCommand } from "../../core/workspace-command.js";
+} from "../../core/projects/project-ops.js";
+import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
+import { formatSingleConversation, type SessionEntry } from "../../core/read/transcript.js";
+import { resolveWhisperLanguage } from "../../core/read/voice-support.js";
+import { markSemantics } from "../../core/session/output.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
@@ -176,8 +174,8 @@ export async function sendHistory(
       await sendText(channel, chatId, messages("lark").noPathMapping);
       return;
     }
-    const configRoot = await deps.configResolver.resolveConfigRoot(session);
-    const rounds = await getRecentConversations(projectPath, configRoot);
+    const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
+    const rounds = await profile.getRecentConversations(deps.configResolver, session, projectPath);
     if (rounds.length === 0) {
       await sendText(channel, chatId, messages("lark").noHistory);
       return;
@@ -257,7 +255,7 @@ export async function startOrPickAfterCreate(
   }
   const only = deps.config.startCommands[0];
   await performStart(deps, session, only?.command);
-  await sendText(channel, chatId, messages("lark").claudeStartedWith(only?.label ?? "claude"));
+  await sendText(channel, chatId, messages("lark").agentStartedWith(only?.label ?? "claude"));
 }
 
 /** Map a `createProjectFromPath` outcome to a Lark reply — shared by the typed
@@ -436,24 +434,31 @@ export async function sendSessionsList(
     await sendText(channel, chatId, m.noPathMapping);
     return;
   }
-  const configRoot = await deps.configResolver.resolveConfigRoot(session);
+  const listSessions = async (): Promise<SessionEntry[]> => {
+    const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
+    return profile.listSessions(deps.configResolver, session, projectPath);
+  };
 
   if (arg) {
-    const sessions = await listClaudeSessions(projectPath, configRoot);
+    const sessions = await listSessions();
     const match = sessions.find((s) => s.sessionId.startsWith(arg));
     if (!match) {
       await sendText(channel, chatId, m.noSessions);
       return;
     }
+    // Resolve the live kind before exit — resolveAgentKind self-persists it, so
+    // the post-exit dispatch resumes with the right runner (live detection
+    // returns null once it's gone).
+    await resolveAgentKind(deps.configResolver, session);
     await deps.bridge.sendExit(session);
     await sleep(2000);
-    await deps.claude.startWithResume(session, match.sessionId);
+    await deps.agent.startWithResume(session, match.sessionId);
     deps.configResolver.invalidate(session);
     await sendText(channel, chatId, m.resumeStarted(match.sessionId.slice(0, 8)));
     return;
   }
 
-  const sessions = await listClaudeSessions(projectPath, configRoot);
+  const sessions = await listSessions();
   if (sessions.length === 0) {
     await sendText(channel, chatId, m.noSessions);
     return;

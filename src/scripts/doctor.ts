@@ -7,7 +7,7 @@
  * this wrapper only renders with ANSI colors — including sensitive details
  * the chat rendering redacts — and sets the exit code.
  */
-import { defaultProbes, runDoctorChecks } from "../core/doctor.js";
+import { defaultProbes, runDoctorChecks } from "../core/infra/doctor.js";
 
 const PREFIX = {
   ok: "\x1b[1;32m✓\x1b[0m",

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { enqueueMessage, newMessageId } from "../src/core/enqueue.js";
-import type { MessageQueue } from "../src/core/queue.js";
+import { enqueueMessage, newMessageId } from "../src/core/command/enqueue.js";
+import type { MessageQueue } from "../src/core/command/queue.js";
 
 /** A minimal MessageQueue stand-in: programmable verdict + captured enqueue arg. */
 function fakeQueue(verdict: "queued" | "duplicate" | false, sizeBefore = 0) {

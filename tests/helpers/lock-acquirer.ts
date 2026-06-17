@@ -5,7 +5,7 @@
  * Run via tsx. Prints exactly one of ACQUIRED / HELD; exit 1 on anything else.
  */
 import { setTimeout as sleep } from "node:timers/promises";
-import { acquireInstanceLock, InstanceLockHeldError } from "../../src/core/instance-lock.js";
+import { acquireInstanceLock, InstanceLockHeldError } from "../../src/core/infra/instance-lock.js";
 
 try {
   acquireInstanceLock();

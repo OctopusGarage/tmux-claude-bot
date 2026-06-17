@@ -8,7 +8,7 @@ import {
   removeWorkspace,
   saveWorkspace,
   WORKSPACE_NAME_RE,
-} from "../src/core/workspaces.js";
+} from "../src/core/projects/workspaces.js";
 
 let stateDir: string;
 let origEnv: string | undefined;

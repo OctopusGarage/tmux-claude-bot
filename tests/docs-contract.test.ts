@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BOT_COMMANDS } from "../src/core/action-registry.js";
+import { BOT_COMMANDS } from "../src/core/command/action-registry.js";
 import { envSchema } from "../src/shared/config.js";
 
 /**

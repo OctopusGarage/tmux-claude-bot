@@ -2,13 +2,13 @@ import type { Bot, Context } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import type { HandlerDeps } from "../src/core/deps.js";
 
-vi.mock("../src/core/transcriber.js", () => ({
+vi.mock("../src/core/read/transcriber.js", () => ({
   transcribeWithCache: vi.fn(),
 }));
 
 // Voice is "ready" in tests so the handler proceeds to download + transcribe;
 // readiness gating itself is covered by voice-support's own unit tests.
-vi.mock("../src/core/voice-support.js", () => ({
+vi.mock("../src/core/read/voice-support.js", () => ({
   checkVoiceSupport: vi.fn(() => ({ ready: true, bin: "mlx_whisper" })),
   isVoicePlatformSupported: vi.fn(() => true),
   resolveWhisperLanguage: vi.fn(() => "zh"),
@@ -24,7 +24,7 @@ vi.mock("../src/shared/utils/logger.js", () => ({
 
 import { createReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
 import { registerVoiceHandler } from "../src/adapters/telegram/voice-handler.js";
-import { transcribeWithCache } from "../src/core/transcriber.js";
+import { transcribeWithCache } from "../src/core/read/transcriber.js";
 
 function createMockVoiceContext(): Context {
   return {
@@ -58,7 +58,7 @@ describe("registerVoiceHandler", () => {
         hasSession: vi.fn().mockResolvedValue(true),
         isPaneAlive: vi.fn().mockResolvedValue(true),
       },
-      claude: { checkIfRunning: vi.fn().mockResolvedValue(true) },
+      agent: { checkIfRunning: vi.fn().mockResolvedValue(true) },
       queue: {
         enqueue: vi.fn().mockReturnValue(true),
         size: vi.fn().mockReturnValue(0),
@@ -112,7 +112,7 @@ describe("registerVoiceHandler", () => {
     const deps = {
       currentProject: { get: vi.fn().mockResolvedValue("tmux_proj_test") },
       bridge: { hasSession: vi.fn().mockResolvedValue(true) },
-      claude: { checkIfRunning: vi.fn().mockResolvedValue(true) },
+      agent: { checkIfRunning: vi.fn().mockResolvedValue(true) },
       queue: { enqueue: vi.fn().mockReturnValue(true), size: vi.fn().mockReturnValue(0) },
       config: { projectSessionPrefix: "tmux_proj_" },
     } as unknown as HandlerDeps;
@@ -145,7 +145,7 @@ describe("registerVoiceHandler", () => {
         hasSession: vi.fn().mockResolvedValue(true),
         isPaneAlive: vi.fn().mockResolvedValue(true),
       },
-      claude: { checkIfRunning: vi.fn().mockResolvedValue(true) },
+      agent: { checkIfRunning: vi.fn().mockResolvedValue(true) },
       queue: {
         enqueue: vi.fn().mockReturnValue(true),
         size: vi.fn().mockReturnValue(0),

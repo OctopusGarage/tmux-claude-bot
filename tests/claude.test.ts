@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ClaudeRunner } from "../src/core/claude.js";
-import type { ConfigResolver } from "../src/core/claude-config-resolver.js";
-import { OutputProcessor } from "../src/core/output.js";
-import type { ExecResult } from "../src/core/tmux.js";
-import { TmuxBridge } from "../src/core/tmux.js";
+import type { ConfigResolver } from "../src/core/agents/agent-config-resolver.js";
+import { ClaudeRunner } from "../src/core/agents/claude/claude-runner.js";
+import { OutputProcessor } from "../src/core/session/output.js";
+import type { ExecResult } from "../src/core/session/tmux.js";
+import { TmuxBridge } from "../src/core/session/tmux.js";
 
 function createMockResolver(): ConfigResolver {
   return {
     resolveConfigRoot: vi.fn(async () => "/home/.claude"),
     isClaudeRunning: vi.fn(async () => false),
+    isCodexRunning: vi.fn(async () => false),
     invalidate: vi.fn(),
   };
 }
@@ -69,7 +70,6 @@ describe("ClaudeRunner", () => {
         ...defaultOptions,
       });
       expect(runner).toBeDefined();
-      expect(runner.isRunning()).toBe(false);
     });
   });
 
@@ -111,10 +111,12 @@ describe("ClaudeRunner", () => {
   });
 
   describe("start", () => {
-    it("sets running to true when already running", async () => {
-      mockExecFile.mockImplementation(async (cmd: string): Promise<ExecResult> => {
-        if (cmd === "tmux") {
-          return { stdout: "Claude is running...", stderr: "" };
+    it("does not re-send the start command when claude is already running", async () => {
+      (mockResolver.isClaudeRunning as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      let sendKeysCalled = false;
+      mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
+        if (cmd === "tmux" && args[0] === "send-keys") {
+          sendKeysCalled = true;
         }
         return { stdout: "", stderr: "" };
       });
@@ -125,14 +127,14 @@ describe("ClaudeRunner", () => {
         ...defaultOptions,
       });
       await runner.start();
-      expect(runner.isRunning()).toBe(true);
+      expect(sendKeysCalled).toBe(false);
     });
 
     it("sends claude command when not running", async () => {
       let sendKeysCalled = false;
       mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
         if (cmd === "tmux" && args[0] === "capture-pane") {
-          return { stdout: "➜", stderr: "" }; // ➜
+          return { stdout: "❯ ", stderr: "" }; // ready composer
         }
         if (cmd === "tmux" && args[0] === "send-keys") {
           sendKeysCalled = true;
@@ -146,8 +148,43 @@ describe("ClaudeRunner", () => {
         ...defaultOptions,
       });
       await runner.start();
-      expect(runner.isRunning()).toBe(true);
       expect(sendKeysCalled).toBe(true);
+    });
+
+    it("clears the trust-directory gate on start (sends Enter)", async () => {
+      // Claude shows the same one-time trust-directory gate as codex; it blocks
+      // input until accepted, so start() must clear it (send Enter) before the
+      // first message — handled by the shared base, not codex-only. The pane text
+      // is the REAL claude gate (live-captured): its wording differs from codex's
+      // and contains NO "Do you trust" — see paneNeedsTrust. After Enter, the real
+      // composer (with the "❯" prompt) renders → ready.
+      const sentKeys: string[] = [];
+      let captures = 0;
+      mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
+        if (cmd === "tmux") {
+          if (args[0] === "capture-pane") {
+            captures++;
+            return {
+              stdout:
+                captures < 2
+                  ? "Is this a project you created or one you trust?\n ❯ 1. Yes, I trust this folder\n   2. No, exit"
+                  : "────────\n❯ \n────────",
+              stderr: "",
+            };
+          }
+          if (args[0] === "send-keys") sentKeys.push(args[args.length - 1] ?? "");
+        }
+        return { stdout: "", stderr: "" };
+      });
+      runner = new ClaudeRunner({
+        bridge,
+        output,
+        configResolver: mockResolver,
+        ...defaultOptions,
+        pollIntervalMs: 5,
+      });
+      await runner.start();
+      expect(sentKeys).toContain("Enter"); // accepted the trust gate
     });
   });
 
@@ -171,11 +208,15 @@ describe("ClaudeRunner", () => {
       expect(callCount).toBeGreaterThanOrEqual(1);
     });
 
-    it("throws error when timeout reached", async () => {
+    it("times out on the near-empty boot pane (no composer marker yet)", async () => {
+      // Regression: the first second after launch the pane is just the echoed
+      // command with no banner. The old "no spinner ⇒ ready" heuristic
+      // false-positived this as ready BEFORE the trust gate even rendered
+      // (live-verified bug). A positive marker (❯ / bypass) must be required, so a
+      // boot pane stays not-ready until the composer paints.
       mockExecFile.mockImplementation(async (cmd: string): Promise<ExecResult> => {
         if (cmd === "tmux") {
-          // Include spinner to prevent fallback early-exit
-          return { stdout: "still loading...\n⏵⏵ processing", stderr: "" };
+          return { stdout: "claude\n\n\n", stderr: "" };
         }
         return { stdout: "", stderr: "" };
       });
@@ -190,10 +231,12 @@ describe("ClaudeRunner", () => {
       await expect(runner.waitUntilReady()).rejects.toThrow("Claude did not become ready in time");
     });
 
-    it("returns via fallback when no spinner in last two lines", async () => {
+    it("returns when the composer prompt ❯ is visible", async () => {
+      // The real ready composer (live-captured): the "❯" prompt cursor between the
+      // box-rule lines. This is the positive marker that the TUI has booted.
       mockExecFile.mockImplementation(async (cmd: string): Promise<ExecResult> => {
         if (cmd === "tmux") {
-          return { stdout: "ready prompt\n➜", stderr: "" };
+          return { stdout: "────────\n❯ \n────────\n  0% ctx", stderr: "" };
         }
         return { stdout: "", stderr: "" };
       });
@@ -204,6 +247,53 @@ describe("ClaudeRunner", () => {
         ...defaultOptions,
       });
       await expect(runner.waitUntilReady()).resolves.not.toThrow();
+    });
+
+    it("falls back to ready when an UNMARKED pane is stable + substantive + process alive", async () => {
+      // Robustness: imagine a future UI re-skin where neither ❯ nor "bypass
+      // permissions" appears. A pane that stays byte-identical for idlePollTicks
+      // polls, has real content, and whose process is alive must still be treated
+      // as ready (prose-agnostic) rather than timing out.
+      (mockResolver.isClaudeRunning as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      mockExecFile.mockImplementation(async (cmd: string): Promise<ExecResult> => {
+        if (cmd === "tmux") {
+          // No marker (no ❯, no "bypass permissions"), but 3+ real lines, unchanging.
+          return { stdout: "RESKINNED UI\nline two\nline three\nline four", stderr: "" };
+        }
+        return { stdout: "", stderr: "" };
+      });
+      runner = new ClaudeRunner({
+        bridge,
+        output,
+        configResolver: mockResolver,
+        ...defaultOptions,
+        idlePollTicks: 3,
+        pollIntervalMs: 5,
+      });
+      await expect(runner.waitUntilReady()).resolves.not.toThrow();
+    });
+
+    it("does NOT fall back to ready when the process is not alive (stable but dead)", async () => {
+      // The stability fallback is gated on the agent process being alive — a stable
+      // pane with no detectable agent (e.g. it crashed to a static error screen)
+      // must NOT be declared ready.
+      (mockResolver.isClaudeRunning as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+      mockExecFile.mockImplementation(async (cmd: string): Promise<ExecResult> => {
+        if (cmd === "tmux") {
+          return { stdout: "static error screen\nline two\nline three\nline four", stderr: "" };
+        }
+        return { stdout: "", stderr: "" };
+      });
+      runner = new ClaudeRunner({
+        bridge,
+        output,
+        configResolver: mockResolver,
+        ...defaultOptions,
+        maxWaitReadyMs: 100,
+        pollIntervalMs: 10,
+        idlePollTicks: 3,
+      });
+      await expect(runner.waitUntilReady()).rejects.toThrow("Claude did not become ready in time");
     });
   });
 
@@ -358,7 +448,7 @@ describe("ClaudeRunner", () => {
           const sub = args[0] ?? "";
           calls.push(sub);
           if (sub === "capture-pane") {
-            return { stdout: "➜", stderr: "" };
+            return { stdout: "❯ ", stderr: "" }; // ready composer
           }
           return { stdout: "", stderr: "" };
         }
@@ -370,18 +460,24 @@ describe("ClaudeRunner", () => {
         configResolver: mockResolver,
         ...defaultOptions,
       });
-      // running is private — set via cast to put runner into the expected initial state
-      (runner as unknown as { running: boolean }).running = true;
       await runner.gracefulRestart();
-      expect(runner.isRunning()).toBe(true);
+      // Exits the old session and types a fresh start command.
       expect(calls).toContain("send-keys");
     });
   });
 
   describe("gracefulRestartWithContinue", () => {
-    it("returns early if claude is still running after exit", async () => {
+    it("returns early (no --continue typed) if claude is still running after exit", async () => {
       // Process-based check reports claude still alive in the pane.
       (mockResolver.isClaudeRunning as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      const typed: string[] = [];
+      mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
+        // send-keys typed text is the last positional arg (after -t <target>).
+        if (cmd === "tmux" && args[0] === "send-keys") {
+          typed.push(args[args.length - 1] ?? "");
+        }
+        return { stdout: "", stderr: "" };
+      });
       runner = new ClaudeRunner({
         bridge,
         output,
@@ -389,7 +485,8 @@ describe("ClaudeRunner", () => {
         ...defaultOptions,
       });
       await runner.gracefulRestartWithContinue();
-      expect(runner.isRunning()).toBe(true);
+      // The exit sequence (/exit) may go out, but the --continue relaunch must NOT.
+      expect(typed.some((t) => t.includes("--continue"))).toBe(false);
     });
 
     it("sends continue command when not running after exit", async () => {
@@ -399,7 +496,7 @@ describe("ClaudeRunner", () => {
           const sub = args[0] ?? "";
           calls.push(sub);
           if (sub === "capture-pane") {
-            return { stdout: "➜", stderr: "" };
+            return { stdout: "❯ ", stderr: "" }; // ready composer
           }
           return { stdout: "", stderr: "" };
         }
@@ -412,9 +509,30 @@ describe("ClaudeRunner", () => {
         ...defaultOptions,
       });
       await runner.gracefulRestartWithContinue();
-      expect(runner.isRunning()).toBe(true);
       // Should have sent the continue command
       expect(calls.filter((c) => c === "send-keys").length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("resumes the EXACT live session id (--resume <id>) when the process exposes it", async () => {
+      const typed: string[] = [];
+      mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
+        if (cmd === "tmux" && args[0] === "send-keys") typed.push(args[args.length - 1] ?? "");
+        if (cmd === "tmux" && args[0] === "capture-pane") return { stdout: "❯ ", stderr: "" };
+        return { stdout: "", stderr: "" };
+      });
+      mockResolver.resolveLiveTranscript = vi.fn(async () => ({
+        path: "/x.jsonl",
+        sessionId: "abcd-1234",
+      }));
+      runner = new ClaudeRunner({
+        bridge,
+        output,
+        configResolver: mockResolver,
+        ...defaultOptions,
+      });
+      await runner.gracefulRestartWithContinue();
+      expect(typed.some((t) => t.includes("--resume abcd-1234"))).toBe(true);
+      expect(typed.some((t) => t.includes("--continue"))).toBe(false);
     });
   });
 

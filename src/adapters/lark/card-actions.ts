@@ -1,5 +1,15 @@
 import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
+import { orphanLabel } from "../../core/agents/takeover.js";
+import {
+  adoptOrphan,
+  composeAdoptOutcome,
+  copyAttachCommand,
+  findAdoptableOrphans,
+} from "../../core/agents/takeover-service.js";
+import { type MessageAction, performRestart, performStart } from "../../core/command/dispatch.js";
 import type { HandlerDeps } from "../../core/deps.js";
+import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
+import type { ForeignAction } from "../../core/infra/status-install.js";
 import {
   type BrowseAction,
   browseCwd,
@@ -7,28 +17,18 @@ import {
   displayPath,
   requestNewFolder,
   resolveBrowseAction,
-} from "../../core/dir-browser.js";
-import { type MessageAction, performRestart, performStart } from "../../core/dispatch.js";
-import { getBinding, isProjectGroup } from "../../core/group-bindings.js";
-import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
-import { projectLabel } from "../../core/project-label.js";
-import { chatScope } from "../../core/project-manager.js";
+} from "../../core/projects/dir-browser.js";
+import { getBinding, isProjectGroup } from "../../core/projects/group-bindings.js";
+import { projectLabel } from "../../core/projects/project-label.js";
+import { chatScope } from "../../core/projects/project-manager.js";
 import {
   botSelfRepoWarning,
   createProjectFromPath,
   removeProjectBySession,
   resolveAliveSessionByShortId,
   switchToProject,
-} from "../../core/project-ops.js";
-import { getPathBySession } from "../../core/sessionPathMap.js";
-import type { ForeignAction } from "../../core/status-install.js";
-import { orphanLabel } from "../../core/takeover.js";
-import {
-  adoptOrphan,
-  composeAdoptOutcome,
-  copyAttachCommand,
-  findAdoptableOrphans,
-} from "../../core/takeover-service.js";
+} from "../../core/projects/project-ops.js";
+import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import {
   checkVoiceSupport,
   installVoice,
@@ -37,7 +37,7 @@ import {
   resolveWhisperLanguage,
   setWhisperLanguage,
   VOICE_LANGS,
-} from "../../core/voice-support.js";
+} from "../../core/read/voice-support.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
@@ -259,7 +259,7 @@ async function pickAndLaunch(
   if (!session) return;
   if (restart) await performRestart(deps, session, pick.command);
   else await performStart(deps, session, pick.command);
-  await sendText(channel, evt.chatId, messages("lark").claudeStartedWith(pick.label));
+  await sendText(channel, evt.chatId, messages("lark").agentStartedWith(pick.label));
 }
 
 async function handleStartPick(ctx: CardCtx): Promise<void> {

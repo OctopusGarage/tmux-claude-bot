@@ -9,7 +9,7 @@ import {
   LARK_HELP_RUNNING_ROWS,
   TELEGRAM_EXPANDED_ROWS,
   TELEGRAM_PRIMARY_ROWS,
-} from "../../src/core/action-registry.js";
+} from "../../src/core/command/action-registry.js";
 
 describe("ACTION_META", () => {
   it("tab is immediate on Lark and registered on Telegram", () => {

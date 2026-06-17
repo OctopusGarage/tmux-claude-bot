@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { markSemantics, OutputProcessor } from "../src/core/output.js";
+import { markSemantics, OutputProcessor } from "../src/core/session/output.js";
 
 describe("OutputProcessor", () => {
   describe("constructor", () => {

@@ -1,4 +1,4 @@
-import { isProjectGroup } from "../../core/group-bindings.js";
+import { isProjectGroup } from "../../core/projects/group-bindings.js";
 
 /**
  * Single source of truth for "where may a chat do what" on Feishu. The recurring

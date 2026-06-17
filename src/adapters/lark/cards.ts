@@ -3,12 +3,13 @@ import {
   buildHelpBody,
   LARK_CONTROL_ROWS,
   LARK_HELP_RUNNING_ROWS,
-} from "../../core/action-registry.js";
-import type { BrowseView } from "../../core/dir-browser.js";
-import type { MessageAction } from "../../core/dispatch.js";
+} from "../../core/command/action-registry.js";
+import type { MessageAction } from "../../core/command/dispatch.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
-import type { ProjectButton, RecentButton } from "../../core/project-ops.js";
-import { VOICE_LANGS } from "../../core/voice-support.js";
+import type { BrowseView } from "../../core/projects/dir-browser.js";
+import type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+import { VOICE_LANGS } from "../../core/read/voice-support.js";
+import { agentGlyph } from "../../shared/types.js";
 import { signValue } from "./card-signing.js";
 
 /** A card button spec. `value` is echoed back in cardAction.action.value. */
@@ -172,23 +173,24 @@ export function recoveryCard(body: string, group = false, title = "⚠️"): obj
 /** Pick-a-start card: one button per configured start command (shown when more
  * than one is configured). Each carries its index back as `startpick`. */
 export function startPickerCard(
-  commands: { label: string; command: string }[],
+  commands: { label: string; command: string; agent?: "claude" | "codex" }[],
   mode: "start" | "restart" = "start",
 ): object {
   const m = messages("lark");
   const cmd = mode === "restart" ? "restartpick" : "startpick";
   const elements: object[] = [md(m.startPickerPrompt)];
   commands.forEach((c, i) => {
-    elements.push(md(`**${c.label}**\n\`${c.command}\``));
+    const glyph = agentGlyph(c.agent ?? "claude");
+    elements.push(md(`**${glyph} ${c.label}**\n\`${c.command}\``));
     elements.push(gridRow([{ text: m.btnStartThis, value: { cmd, idx: i }, style: "primary" }]));
   });
   return shell(m.startPickerTitle, elements);
 }
 
-/** A Claude-result card: the output (or placeholder), the 7 control shortcuts,
+/** An agent-result card: the output (or placeholder), the 7 control shortcuts,
  * and a help button. The title carries the 📂 project so the user sees which
  * session answered. */
-export function resultCard(output: string, title = "Claude", group = false): object {
+export function resultCard(output: string, title = "Agent", group = false): object {
   const body = output && output.trim() ? output : messages("lark").emptyOutput;
   return shell(title, [md(body), HR, ...controlActions(group)]);
 }
@@ -458,5 +460,18 @@ export function helpCard(group = false, voiceInstallable = false): object {
       ? [gridRow([{ text: m.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }])]
       : []),
     ...prefsRows.map((row) => gridRow(row)),
+    // In a group, surface binding management at the bottom (restore / rebind /
+    // unbind) so the group's home menu is self-sufficient — no need to hunt for a
+    // separate card. Secondary emphasis; unbind is the only destructive one.
+    ...(group
+      ? [
+          HR,
+          gridRow([
+            { text: m.btnRestoreGroup, value: { cmd: "restore" } },
+            { text: m.btnRebindGroup, value: { cmd: "rebind" } },
+            { text: m.btnUnbindGroup, value: { cmd: "unbind" }, style: "danger" },
+          ]),
+        ]
+      : []),
   ]);
 }

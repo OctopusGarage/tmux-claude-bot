@@ -23,7 +23,7 @@ vi.mock("node:fs", async (importActual) => {
 vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
 
 // persistWhisperBin writes .env via env-store; stub it (no real file in tests).
-vi.mock("../src/core/env-store.js", () => ({ persistEnvVar: vi.fn() }));
+vi.mock("../src/core/infra/env-store.js", () => ({ persistEnvVar: vi.fn() }));
 
 import { execFile } from "node:child_process";
 import * as os from "node:os";
@@ -33,7 +33,7 @@ import {
   installVoice,
   resolveWhisperBin,
   resolveWhisperLanguage,
-} from "../src/core/voice-support.js";
+} from "../src/core/read/voice-support.js";
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 

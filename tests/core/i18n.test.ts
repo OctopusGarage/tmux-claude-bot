@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // setUiLang persists to .env — stub the writer so tests don't touch the real file.
-vi.mock("../../src/core/env-store.js", () => ({ persistEnvVar: vi.fn() }));
+vi.mock("../../src/core/infra/env-store.js", () => ({ persistEnvVar: vi.fn() }));
 
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../src/core/i18n/index.js";
 import { parseSetupLang, setupMessages } from "../../src/core/i18n/setup.js";

@@ -1,1 +1,1 @@
-export { BOT_COMMANDS } from "../../core/action-registry.js";
+export { BOT_COMMANDS } from "../../core/command/action-registry.js";

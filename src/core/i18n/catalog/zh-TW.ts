@@ -68,9 +68,9 @@ export const zhTW: Messages = {
   btnCancel: "✕ 取消",
   btnDeleteMode: "🗑 刪除…",
 
-  // ── adopt (take over a non-tmux claude) ──
-  adoptTitle: "🧲 可接管的 Claude 程序（不在 tmux 中）",
-  adoptEmpty: "沒有發現可接管的 Claude 程序",
+  // ── adopt (take over a non-tmux agent) ──
+  adoptTitle: "🧲 可接管的程序（不在 tmux 中）",
+  adoptEmpty: "沒有發現可接管的程序",
   adoptConfirmPrompt: (label: string) =>
     `確認接管？將先中斷並結束原程序，再在 tmux 中續接：\n${label}`,
   btnAdoptConfirm: "🧲 接管",
@@ -80,24 +80,24 @@ export const zhTW: Messages = {
   adoptGone: "該程序已不在可接管清單（已結束或已在 tmux 中）",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
-  adoptFailed: "接管失敗：程序無法結束或 Claude 未能啟動",
+  adoptFailed: "接管失敗：程序無法結束或未能啟動",
   adoptBusy:
-    "目標 tmux 工作階段裡已有程式在前台運行（另一個 Claude 或其他程式）。已中止，未動原程序——請先去那邊退出，再重新接管。",
+    "目標 tmux 工作階段裡已有程式在前台運行（另一個 agent 或其他程式）。已中止，未動原程序——請先去那邊退出，再重新接管。",
   btnAdoptAttach: "💻 在電腦終端查看（可選）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接入指令已經放進「電腦」的剪貼簿了（不用在手機上複製）。回到電腦後，在終端裡直接貼上按 Enter，就能進去查看——這一步是可選的。\n指令：${cmd}`,
 
   doneShort: "完成",
-  claudeNotRunningRestart: "Claude 未執行，請使用 /restart 啟動",
+  agentNotRunningRestart: "未執行，請使用 /restart 啟動",
   contentTruncated: "...(內容過長，已截斷)",
-  claudeEmptyOutput: "Claude 回傳空內容 · 用 /peek 查看畫面",
-  claudeStarted: "✅ Claude 已啟動",
-  claudeStartedWith: (label) => `✅ Claude 已用「${label}」啟動`,
+  agentEmptyOutput: "回傳空內容 · 用 /peek 查看畫面",
+  agentStarted: "✅ 已啟動",
+  agentStartedWith: (label) => `✅ 已用「${label}」啟動`,
   startPickerTitle: "🚀 選擇啟動方式",
   startPickerPrompt: "設定了多個啟動指令,選一個啟動:",
   btnStartThis: "🚀 用這個啟動",
-  claudeExited: "✅ 已離開 Claude",
-  claudeRestarted: "🔄 Claude 已重啟 · --continue",
+  agentExited: "✅ 已離開",
+  agentRestarted: "🔄 已重啟",
   sentEsc: "✅ 已傳送 Esc",
   interrupted: "✅ 已中斷 · Ctrl-C",
   clearedContext: "✅ 已清空上下文 · /clear",
@@ -108,21 +108,23 @@ export const zhTW: Messages = {
   sentLeft: "✅ 已傳送 ←",
   sentRight: "✅ 已傳送 →",
   sentTab: "✅ 已傳送 Tab",
-  statusRunning: "🟢 Claude 執行中",
-  statusNotRunning: "🔴 Claude 未執行",
+  statusRunning: (agent) => `🟢 ${agent} 執行中`,
+  statusNotRunning: (agent) => `🔴 ${agent} 未執行`,
   statusContext: (bar, pct) => `📊 上下文 ${bar} ${pct}%`,
   statusFiveHour: (bar, pct, reset) => `⏱ Session(5h) ${bar} ${pct}%（重置 ${reset}）`,
   statusSevenDay: (bar, pct, reset) => `📅 本週 ${bar} ${pct}%（重置 ${reset}）`,
-  statusUsageStale: (mins) => `⚠️ 額度資料 ${mins} 分鐘未更新（Claude Code 可能已關閉）`,
+  statusUsageStale: (mins) => `⚠️ 額度資料 ${mins} 分鐘未更新（agent 可能已關閉）`,
 
   // -- status usage install --
   statusUsageHint: "💡 想看額度?傳送 /status_install 一鍵安裝",
   statusUsagePending: "📊 額度資料擷取中——下次 Claude 呼叫後顯示",
+  statusUsageNoData: "📊 本工作階段暫無用量資料 · 傳送訊息後會更新",
   statusModeApi: "API",
   statusModeSubscription: "訂閱",
   statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "📊 額度上報安裝",
-  statusInstallNoClaude: "沒有偵測到執行中的 Claude,無法確定安裝位置。先啟動一個 Claude 再試。",
+  statusInstallNoClaude:
+    "\u672a\u5075\u6e2c\u5230\u57f7\u884c\u4e2d\u7684 Claude\u3002\u7528\u91cf\u4e0a\u5831\u5b89\u88dd\u50c5\u9069\u7528\u65bc Claude\uff1bCodex \u5df2\u5728\u5de5\u4f5c\u968e\u6bb5\u8a18\u9304\u4e2d\u539f\u751f\u4e0a\u5831\u7528\u91cf\uff0c\u7121\u9700\u5b89\u88dd\u3002",
   statusInstallInstalled: (dir) => `✅ ${dir} 已安裝額度上報`,
   statusInstallAlready: (dir) => `⏭ ${dir} 已安裝過`,
   statusInstallForeignPrompt: (dirs) =>
@@ -191,6 +193,7 @@ export const zhTW: Messages = {
   noRecentProjects: "沒有近期專案\n\n用 /add_project <路徑> 加入一個",
   messageTooLong: (len, max) => `訊息過長 · ${len} > ${max} 字元`,
   onlyTextVoice: "目前僅支援文字和語音訊息",
+  handlerError: "⚠️ 處理訊息時發生錯誤，請重試；若群組無回應，可傳送 /restore 重新連接專案。",
   unknownCommand: (name) => `未知指令：/${name}（傳送 /help 查看指令）`,
 
   toastProcessing: "➕ 處理中…",
@@ -212,7 +215,7 @@ export const zhTW: Messages = {
     `♻️ tmux-claude-bot 異常重啟 — 上次未正常結束（當機/被中止），已自動恢復 · ${time}`,
 
   noSession: "沒有活躍工作階段 · 先 /list_alive_projects 或 /add_project",
-  notRunning: "Claude 未執行 · /start 啟動，或 /restart 繼續",
+  notRunning: "未執行 · /start 啟動，或 /restart 繼續",
   noShortId: (id) => `找不到短 ID：${id}`,
   pathNotAllowed: (dirs) => `路徑不在允許清單 · 允許：${dirs.join("、")}`,
   voiceNotEnabled:
@@ -229,14 +232,14 @@ export const zhTW: Messages = {
 
   helpIntroTelegram: `🤖 tmux-claude-bot
 
-傳任意文字 → 轉給 Claude → 回傳結果
+傳任意文字 → 轉給 agent → 回傳結果
 🎙️ 語音轉錄為選用功能 · /voice_install 啟用（僅 Apple Silicon）· /voice_lang 設辨識語言
 
 提示：訊息會收到 👀（已接收）/👍（完成）回應；處理中就地顯示進度並編輯成結果；結果下方有 ⏎/✋/⎋/🔄 快捷按鈕。`,
 
   helpIntroLark: `🤖 tmux-claude (Lark)
 
-傳任意文字 → 轉給 Claude → 回傳結果`,
+傳任意文字 → 轉給 agent → 回傳結果`,
 
   helpSectionProjects: "📂 專案",
   helpSectionRunning: "⚡ 執行中",
@@ -249,11 +252,11 @@ export const zhTW: Messages = {
   cmdNewFree: "新增自由專案（同目錄可並行）",
   freeProjectLimit: (max) => `自由專案已達上限 ${max} 個，請先刪除一個再試。`,
   freeProjectCreated: (slot, label) =>
-    `🆓 已建立自由專案 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目錄並自行啟動 Claude；/list_alive_projects 可切回。`,
+    `🆓 已建立自由專案 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目錄並自行啟動 agent；/list_alive_projects 可切回。`,
   btnNewFree: "🆓 新增自由專案",
   freeLabelPrompt: "請輸入自由專案名稱（傳送 - 略過命名）",
   freeLabelCancelled: "已取消",
-  cmdAdopt: "接管 tmux 外的 Claude",
+  cmdAdopt: "接管 tmux 外的 agent",
   cmdQueueStatus: "佇列狀態",
   cmdHistory: "對話歷史（預設最近一筆）",
   cmdPeek: "查看 tmux 畫面",
@@ -268,7 +271,7 @@ export const zhTW: Messages = {
   cmdArrowsTab: "方向鍵 / Tab",
   cmdExit: "離開",
   cmdStatus: "檢查狀態",
-  cmdStart: "啟動 Claude",
+  cmdStart: "啟動 agent",
   cmdDoctor: "執行安裝健康檢查",
   cmdHelp: "本說明",
   cmdWs: "工作區管理（save/use/list/remove）",

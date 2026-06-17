@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { JsonMapStore } from "../src/core/json-map-store.js";
+import { JsonMapStore } from "../src/core/infra/json-map-store.js";
 
 const filePath = (): string => path.join(process.env.TCB_STATE_DIR ?? "", "test-store.json");
 

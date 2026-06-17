@@ -44,7 +44,7 @@ vi.mock("node:fs", () => ({
   },
 }));
 
-import { acquireInstanceLock } from "../src/core/instance-lock.js";
+import { acquireInstanceLock } from "../src/core/infra/instance-lock.js";
 
 const holder = (pid: number): string => JSON.stringify({ pid, startedAt: "t" });
 const DEAD_PID = 2_000_000_000; // far above any real pid → process.kill(...,0) throws ESRCH

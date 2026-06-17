@@ -1,6 +1,6 @@
 import type { Bot, Context } from "grammy";
 import { messages } from "../../core/i18n/index.js";
-import { getPathBySession } from "../../core/sessionPathMap.js";
+import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { logger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";

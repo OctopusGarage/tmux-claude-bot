@@ -68,9 +68,9 @@ export const en: Messages = {
   btnCancel: "✕ Cancel",
   btnDeleteMode: "🗑 Delete…",
 
-  // ── adopt (take over a non-tmux claude) ──
-  adoptTitle: "🧲 Adoptable Claude processes (not in tmux)",
-  adoptEmpty: "No adoptable Claude processes found",
+  // ── adopt (take over a non-tmux agent) ──
+  adoptTitle: "🧲 Adoptable processes (not in tmux)",
+  adoptEmpty: "No adoptable processes found",
   adoptConfirmPrompt: (label: string) =>
     `Take over? The original process is interrupted and ended first, then resumed in tmux:\n${label}`,
   btnAdoptConfirm: "🧲 Take over",
@@ -80,24 +80,24 @@ export const en: Messages = {
   adoptGone: "That process is no longer adoptable (exited or now in tmux)",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ Adopted and resumed session: ${proj}` : `✅ Adopted and started fresh: ${proj}`,
-  adoptFailed: "Takeover failed: process would not end, or Claude did not start",
+  adoptFailed: "Takeover failed: process would not end, or the agent did not start",
   adoptBusy:
-    "The target tmux session already has a program in the foreground (another Claude or something else). Aborted without touching the original — please exit it there first, then adopt again.",
+    "The target tmux session already has a program in the foreground (another agent or something else). Aborted without touching the original — please exit it there first, then adopt again.",
   btnAdoptAttach: "💻 View in computer terminal (optional)",
   adoptAttachHint: (cmd: string) =>
     `✅ The attach command is now on your COMPUTER's clipboard (nothing to copy on your phone). Back at the computer, just paste it in a terminal and press Enter to go in — this step is optional.\nCommand: ${cmd}`,
 
   doneShort: "Done",
-  claudeNotRunningRestart: "Claude isn't running — use /restart to start it",
+  agentNotRunningRestart: "Not running — use /restart to start it",
   contentTruncated: "...(content too long, truncated)",
-  claudeEmptyOutput: "Claude returned nothing · /peek to view the pane",
-  claudeStarted: "✅ Claude started",
-  claudeStartedWith: (label) => `✅ Claude started with "${label}"`,
+  agentEmptyOutput: "Returned nothing · /peek to view the pane",
+  agentStarted: "✅ Started",
+  agentStartedWith: (label) => `✅ Started with "${label}"`,
   startPickerTitle: "🚀 Choose how to start",
   startPickerPrompt: "Multiple start commands are configured — pick one:",
   btnStartThis: "🚀 Start this one",
-  claudeExited: "✅ Exited Claude",
-  claudeRestarted: "🔄 Claude restarted · --continue",
+  agentExited: "✅ Exited",
+  agentRestarted: "🔄 Restarted",
   sentEsc: "✅ Sent Esc",
   interrupted: "✅ Interrupted · Ctrl-C",
   clearedContext: "✅ Context cleared · /clear",
@@ -108,22 +108,23 @@ export const en: Messages = {
   sentLeft: "✅ Sent ←",
   sentRight: "✅ Sent →",
   sentTab: "✅ Sent Tab",
-  statusRunning: "🟢 Claude running",
-  statusNotRunning: "🔴 Claude not running",
+  statusRunning: (agent) => `🟢 ${agent} running`,
+  statusNotRunning: (agent) => `🔴 ${agent} not running`,
   statusContext: (bar, pct) => `📊 Context ${bar} ${pct}%`,
   statusFiveHour: (bar, pct, reset) => `⏱ Session (5h) ${bar} ${pct}% (resets ${reset})`,
   statusSevenDay: (bar, pct, reset) => `📅 Weekly ${bar} ${pct}% (resets ${reset})`,
-  statusUsageStale: (mins) => `⚠️ Usage data is ${mins} min stale (Claude Code may have stopped)`,
+  statusUsageStale: (mins) => `⚠️ Usage data is ${mins} min stale (the agent may have exited)`,
 
   // -- status usage install --
   statusUsageHint: "💡 Want to see usage? Send /status_install to set it up",
   statusUsagePending: "📊 Usage data not available yet — shown after the next Claude API call",
+  statusUsageNoData: "📊 No usage data for this session yet · send a message to refresh",
   statusModeApi: "API",
   statusModeSubscription: "subscription",
   statusApiLine: (mode, host) => `🔌 ${mode} · ${host}`,
   statusInstallTitle: "📊 Usage reporting install",
   statusInstallNoClaude:
-    "No running Claude detected, so there's nowhere to install. Start a Claude first, then install.",
+    "No running Claude detected. Usage-report install is for Claude only \u2014 Codex reports usage natively in its session log, so nothing to install.",
   statusInstallInstalled: (dir) => `✅ ${dir} usage reporting installed`,
   statusInstallAlready: (dir) => `⏭ ${dir} already installed`,
   statusInstallForeignPrompt: (dirs) =>
@@ -193,6 +194,8 @@ export const en: Messages = {
   noRecentProjects: "No recent projects\n\nAdd one with /add_project <path>",
   messageTooLong: (len, max) => `Message too long · ${len} > ${max} chars`,
   onlyTextVoice: "Only text and voice messages are supported",
+  handlerError:
+    "⚠️ Something went wrong handling that message; please retry. If the group stops responding, send /restore to reconnect the project.",
   unknownCommand: (name) => `Unknown command: /${name} (send /help for the list)`,
 
   toastProcessing: "➕ Working…",
@@ -215,7 +218,7 @@ export const en: Messages = {
     `♻️ tmux-claude-bot recovered from an unclean exit (crash / kill) · ${time}`,
 
   noSession: "No active session · /list_alive_projects or /add_project first",
-  notRunning: "Claude isn't running · /start to launch, or /restart to continue",
+  notRunning: "Not running · /start to launch, or /restart to continue",
   noShortId: (id) => `Short ID not found: ${id}`,
   pathNotAllowed: (dirs) => `Path not in the allow-list · allowed: ${dirs.join(", ")}`,
   voiceNotEnabled:
@@ -235,14 +238,14 @@ export const en: Messages = {
 
   helpIntroTelegram: `🤖 tmux-claude-bot
 
-Send any text → forwarded to Claude → reply
+Send any text → forwarded to the agent → reply
 🎙️ Voice transcription is optional · /voice_install to enable (Apple Silicon only) · /voice_lang to set the language
 
 Tip: messages get 👀 (received) / 👍 (done) reactions; progress shows in place and is edited into the result; the result has ⏎/✋/⎋/🔄 shortcut buttons below it.`,
 
   helpIntroLark: `🤖 tmux-claude (Lark)
 
-Send any text → forwarded to Claude → reply`,
+Send any text → forwarded to the agent → reply`,
 
   helpSectionProjects: "📂 Projects",
   helpSectionRunning: "⚡ Running",
@@ -255,11 +258,11 @@ Send any text → forwarded to Claude → reply`,
   cmdNewFree: "New free project (parallel, same dir OK)",
   freeProjectLimit: (max) => `Free-project limit reached (${max}). Remove one first.`,
   freeProjectCreated: (slot, label) =>
-    `🆓 Free project #${slot}${label ? ` (${label})` : ""} created.\n/cd anywhere and start Claude yourself; /list_alive_projects to switch back.`,
+    `🆓 Free project #${slot}${label ? ` (${label})` : ""} created.\n/cd anywhere and start the agent yourself; /list_alive_projects to switch back.`,
   btnNewFree: "🆓 New free project",
   freeLabelPrompt: "Send a name for the free project (send - to skip naming)",
   freeLabelCancelled: "Cancelled",
-  cmdAdopt: "take over a Claude running outside tmux",
+  cmdAdopt: "adopt an agent running outside tmux",
   cmdQueueStatus: "queue status",
   cmdHistory: "conversation history (latest by default)",
   cmdPeek: "view the tmux pane",
@@ -274,7 +277,7 @@ Send any text → forwarded to Claude → reply`,
   cmdArrowsTab: "arrow keys / Tab",
   cmdExit: "exit",
   cmdStatus: "check status",
-  cmdStart: "start Claude",
+  cmdStart: "start the agent",
   cmdDoctor: "run install health checks",
   cmdHelp: "this help",
   cmdWs: "workspace management (save/use/list/remove)",

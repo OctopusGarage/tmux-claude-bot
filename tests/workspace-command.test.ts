@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { HandlerDeps } from "../src/core/deps.js";
 import { messages } from "../src/core/i18n/index.js";
-import { runWorkspaceCommand, type WsReplyKind } from "../src/core/workspace-command.js";
+import { runWorkspaceCommand, type WsReplyKind } from "../src/core/projects/workspace-command.js";
 
 const m = messages("lark");
 const last = <T>(a: readonly T[]): T | undefined => a[a.length - 1];

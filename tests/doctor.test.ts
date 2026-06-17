@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { DoctorProbes } from "../src/core/doctor.js";
-import { renderDoctorReport, runDoctorChecks } from "../src/core/doctor.js";
+import type { DoctorProbes } from "../src/core/infra/doctor.js";
+import { renderDoctorReport, runDoctorChecks } from "../src/core/infra/doctor.js";
 
 const VALID_TOKEN = `123456789:${"a".repeat(35)}`;
 

@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { botSelfRepoWarning } from "../../src/core/project-ops.js";
+import { botSelfRepoWarning } from "../../src/core/projects/project-ops.js";
 
 describe("botSelfRepoWarning (nesting guard)", () => {
   it("warns when the project path is a tmux-claude-bot checkout", () => {

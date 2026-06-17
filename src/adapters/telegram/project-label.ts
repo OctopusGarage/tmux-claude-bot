@@ -1,1 +1,1 @@
-export { projectLabel } from "../../core/project-label.js";
+export { projectLabel } from "../../core/projects/project-label.js";

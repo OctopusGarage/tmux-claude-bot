@@ -1,6 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
-import type { AppConfig, ScriptConfig } from "./types.js";
+import type { AgentKind, AppConfig, ScriptConfig, StartCommand } from "./types.js";
 
 /**
  * A positive-integer env var that tolerates a *blank* value. A stray `KEY=`
@@ -105,22 +105,33 @@ export function deriveStartLabel(command: string, idx: number): string {
  * Build the selectable start-command list from the env: `CLAUDE_START_COMMAND`
  * (primary) plus contiguous `CLAUDE_START_COMMAND_2..N`, each with an optional
  * friendly `CLAUDE_START_LABEL_n` (falls back to {@link deriveStartLabel}).
+ * Codex flavors (`CODEX_START_COMMAND[_N]`) are scanned the same way and
+ * appended after the claude entries; every entry is tagged with its `agent`.
  */
-export function parseStartCommands(
-  env: NodeJS.ProcessEnv,
-  primary: string,
-): { label: string; command: string }[] {
-  const out: { label: string; command: string }[] = [];
-  const add = (command: string | undefined, labelKey: string, idx: number): void => {
+export function parseStartCommands(env: NodeJS.ProcessEnv, primary: string): StartCommand[] {
+  const out: StartCommand[] = [];
+  const add = (
+    command: string | undefined,
+    labelKey: string,
+    idx: number,
+    agent: AgentKind,
+  ): void => {
     const cmd = command?.trim();
     if (!cmd) return;
-    out.push({ label: env[labelKey]?.trim() || deriveStartLabel(cmd, idx), command: cmd });
+    out.push({ label: env[labelKey]?.trim() || deriveStartLabel(cmd, idx), command: cmd, agent });
   };
-  add(primary, "CLAUDE_START_LABEL", 1);
+  add(primary, "CLAUDE_START_LABEL", 1, "claude");
   for (let i = 2; ; i++) {
     const cmd = env[`CLAUDE_START_COMMAND_${i}`];
     if (cmd === undefined) break; // stop at the first gap
-    add(cmd, `CLAUDE_START_LABEL_${i}`, i);
+    add(cmd, `CLAUDE_START_LABEL_${i}`, i, "claude");
+  }
+  // Codex flavors, appended after claude (mirrors the CLAUDE_START_COMMAND_* scan).
+  add(env.CODEX_START_COMMAND, "CODEX_START_LABEL", 1, "codex");
+  for (let i = 2; ; i++) {
+    const cmd = env[`CODEX_START_COMMAND_${i}`];
+    if (cmd === undefined) break; // stop at the first gap
+    add(cmd, `CODEX_START_LABEL_${i}`, i, "codex");
   }
   return out;
 }

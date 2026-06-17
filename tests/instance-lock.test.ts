@@ -9,7 +9,7 @@ import {
   InstanceLockHeldError,
   type ProcessProbe,
   releaseInstanceLock,
-} from "../src/core/instance-lock.js";
+} from "../src/core/infra/instance-lock.js";
 
 const lockPath = (): string => path.join(process.env.TCB_STATE_DIR ?? "", ".instance.lock");
 

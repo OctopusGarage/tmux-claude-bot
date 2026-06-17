@@ -3,15 +3,15 @@ import * as fs from "node:fs";
 import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { chatScope } from "../../core/project-manager.js";
-import { transcribeWithCache } from "../../core/transcriber.js";
+import { chatScope } from "../../core/projects/project-manager.js";
+import { transcribeWithCache } from "../../core/read/transcriber.js";
 import {
   checkVoiceSupport,
   installVoice,
   isVoicePlatformSupported,
   resolveWhisperLanguage,
   setWhisperLanguage,
-} from "../../core/voice-support.js";
+} from "../../core/read/voice-support.js";
 import { logger } from "../../shared/utils/logger.js";
 import { buildVoiceLangKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
@@ -159,7 +159,7 @@ export function registerVoiceHandler<TContext extends Context>(
       return;
     }
 
-    const isRunning = await deps.claude.checkIfRunning(currentSession);
+    const isRunning = await deps.agent.checkIfRunning(currentSession);
     if (!isRunning) {
       await reply(ctx, "err", MSG.notRunning, { replyTarget });
       return;
