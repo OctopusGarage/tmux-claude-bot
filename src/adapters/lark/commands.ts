@@ -20,6 +20,7 @@ export type ViewName =
   | "uilang"
   | "ws"
   | "sessions"
+  | "logs"
   | "doctor"
   | "newgroup"
   | "newfreegroup"
@@ -44,6 +45,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   lang: "uilang",
   ws: "ws",
   sessions: "sessions",
+  logs: "logs",
   doctor: "doctor",
   newgroup: "newgroup",
   newfreegroup: "newfreegroup",

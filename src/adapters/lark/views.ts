@@ -9,6 +9,8 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
 import { type ForeignAction, runStatusInstall } from "../../core/infra/status-install.js";
+import { queryLogs } from "../../core/logs/log-query.js";
+import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
 import { startBrowse } from "../../core/projects/dir-browser.js";
 import { getBinding, isProjectGroup, listBindings } from "../../core/projects/group-bindings.js";
 import { projectLabel } from "../../core/projects/project-label.js";
@@ -196,6 +198,30 @@ export async function sendHistory(
   } catch (err) {
     await sendError(channel, chatId, err);
   }
+}
+
+/** Send recent WARN/ERROR logs for the current session, a trace, or last N, as a
+ * view card. The handler only routes here from a 1:1 (p2p) chat with the
+ * allow-listed owner, so logs never reach group members. */
+export async function sendLogs(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+  arg: string | undefined,
+): Promise<void> {
+  const session = await deps.currentProject.get(chatScope("lark", chatId));
+  const filter = logsArgToFilter(arg, session ?? undefined);
+  if (!filter) {
+    await sendText(channel, chatId, messages("lark").noLogsContext);
+    return;
+  }
+  const body = formatLogsForChat(queryLogs(filter), { maxChars: 3500 });
+  const mid = await sendCard(
+    channel,
+    chatId,
+    viewCard(messages("lark").logsTitle, body, isProjectGroup(chatId)),
+  );
+  if (mid && session) recordReplyTarget(mid, session);
 }
 
 /** Build and send the message-queue status (global + per-session). No control

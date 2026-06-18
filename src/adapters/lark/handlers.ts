@@ -31,6 +31,7 @@ import {
   sendDoctor,
   sendHistory,
   sendLangPicker,
+  sendLogs,
   sendOrphanList,
   sendPeek,
   sendQueueStatus,
@@ -262,6 +263,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               break;
             case "sessions":
               await sendSessionsList(channel, deps, msg.chatId, parsed.arg);
+              break;
+            case "logs":
+              // Host-wide diagnostics (trace mode crosses sessions) — restrict to
+              // 1:1 chats with the allow-listed owner, never to group members.
+              if (msg.chatType === "p2p") await sendLogs(channel, deps, msg.chatId, parsed.arg);
               break;
             case "doctor":
               await sendDoctor(channel, msg.chatId);

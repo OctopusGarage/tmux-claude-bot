@@ -46,10 +46,15 @@ export function filterRecords(records: LogRecord[], f: LogFilter): LogRecord[] {
   return out;
 }
 
-const LOG_DIR = process.env.TCB_LOG_DIR ?? appStateFile("logs");
+/** The log directory, resolved per call so TCB_LOG_DIR is honored even when set
+ * after this module loads (tests pin it late; the bot sets it before any query). */
+function logDir(): string {
+  return process.env.TCB_LOG_DIR ?? appStateFile("logs");
+}
 
 /** Read records from the daily files covering the last `days` days (inclusive). */
 export function readRecords(days = 1): LogRecord[] {
+  const LOG_DIR = logDir();
   let files: string[];
   try {
     files = fs

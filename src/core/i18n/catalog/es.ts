@@ -309,6 +309,12 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   resumeStarted: (id) => `✅ Sesión ${id} reanudada`,
   cmdSessions: "Explorar y reanudar sesiones anteriores",
 
+  // ── logs ──
+  cmdLogs: "Ver registros recientes de advertencia/error (/logs <traceId|N>)",
+  logsTitle: "🪵 Registros recientes",
+  noLogsContext:
+    "No hay proyecto actual. Selecciona un proyecto o especifica un trace (/logs <traceId>).",
+
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label, path) =>
     `🎉 Grupo vinculado a **${label}**\n\`${path}\`\n\nSolo escribe — sin @ necesario.`,

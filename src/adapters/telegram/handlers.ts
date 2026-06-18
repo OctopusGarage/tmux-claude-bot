@@ -7,6 +7,8 @@ import { buildHelpBody, getTelegramActions } from "../../core/command/action-reg
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
+import { queryLogs } from "../../core/logs/log-query.js";
+import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
 import {
   createSubfolder,
   isAwaitingFolderName,
@@ -256,6 +258,26 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
     await sendHistory(ctx, deps, session, index, replyTarget);
+  });
+
+  // Owner-only (the auth guard drops non-allowlisted users before this runs).
+  // Shows recent WARN/ERROR for the current session, a specific trace, or the
+  // last N — rendered as a code block.
+  bot.command("logs", async (ctx) => {
+    const arg = (ctx.message?.text ?? "").split(/\s+/).slice(1)[0]?.trim();
+    const session = await resolveSessionFromReply(ctx, replyTarget, deps);
+    const filter = logsArgToFilter(arg, session ?? undefined);
+    if (!filter) {
+      await reply(ctx, "err", messages("telegram").noLogsContext);
+      return;
+    }
+    const body = formatLogsForChat(queryLogs(filter), { maxChars: 3500 });
+    await reply(ctx, "view", messages("telegram").logsTitle, {
+      session: session ?? undefined,
+      body,
+      code: true,
+      replyTarget,
+    });
   });
 
   bot.command("ws", async (ctx) => {

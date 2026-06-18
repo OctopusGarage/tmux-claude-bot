@@ -326,6 +326,11 @@ export const zh = {
   resumeStarted: (id: string) => `✅ 已恢复会话 ${id}`,
   cmdSessions: "浏览并恢复历史会话",
 
+  // ── logs ──
+  cmdLogs: "查看近期警告/错误日志（/logs <traceId|N>）",
+  logsTitle: "🪵 近期日志",
+  noLogsContext: "无当前项目，请先选择项目或指定 trace（/logs <traceId>）。",
+
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label: string, path: string) =>
     `🎉 群组已绑定到 **${label}**\n\`${path}\`\n\n直接发消息即可，无需 @ 机器人。`,

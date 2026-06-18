@@ -296,6 +296,11 @@ export const zhTW: Messages = {
   resumeStarted: (id) => `✅ 已恢復工作階段 ${id}`,
   cmdSessions: "瀏覽並恢復歷史工作階段",
 
+  // ── logs ──
+  cmdLogs: "查看近期警告/錯誤日誌（/logs <traceId|N>）",
+  logsTitle: "🪵 近期日誌",
+  noLogsContext: "無當前專案，請先選擇專案或指定 trace（/logs <traceId>）。",
+
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label, path) =>
     `🎉 群組已綁定到 **${label}**\n\`${path}\`\n\n直接傳訊息即可，無需 @ 機器人。`,
