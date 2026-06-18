@@ -123,6 +123,35 @@ The project root directory name `tmux-claude-bot` is used as the process identit
   pause/resume) or pause the service first.
 - Commands exposed via Telegram Bot menu
 
+## Logging
+
+All code logs via `createLogger("<area>.<file>")` exported from
+`src/shared/utils/logger.ts`. **Do not use `console.*`** except in user-facing
+CLI/wizard stdout in `src/scripts/*` and `onboarding-wizard.ts`.
+
+**Log destination:** structured JSONL under `~/.tmux-claude-bot/logs/tcb-YYYYMMDD.jsonl`
+(or `TCB_LOG_DIR`). One file per day; 30-day rotation; secrets auto-redacted.
+
+**JSONL fields:** `ts`, `level`, `component`, `msg`, `traceId`, `session`, `chatId`,
+`channel`, `data`, `err`.
+
+**Ambient context** (`traceId`, `session`, `chatId`, `channel`) is attached
+automatically via the AsyncLocalStorage store in
+`src/shared/utils/log-context.ts`. It is established once at each ingress (adapter
+handler, queue handler, boot) and inherited by every `await` in that async scope.
+Call sites write `log.info("msg", { data })` / `log.error("msg", { err })` — do not
+string-embed context fields.
+
+**Verbosity:** `LOG_LEVEL` env var (DEBUG|INFO|WARN|ERROR, default INFO).
+
+**Querying:**
+- CLI: `tcb logs [--session <n>] [--trace <id>] [--level WARN] [--days N] [-n 50] [--json]`
+- Chat: `/logs` (owner-only) — recent WARN/ERROR for the current session;
+  `/logs <traceId>` or `/logs N`.
+
+**Logging is best-effort** — the logger never throws into the caller; a file-write
+failure falls back to the stdout mirror.
+
 ## Internationalization (i18n) copy style
 
 All user-facing strings live in `src/core/i18n/catalog/*.ts`. `zh.ts` is canonical
