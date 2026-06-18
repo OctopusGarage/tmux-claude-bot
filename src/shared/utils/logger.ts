@@ -130,7 +130,10 @@ function write(
   }
   if (ctx?.err !== undefined) entry.err = errToObj(ctx.err);
 
-  if (level !== "DEBUG") {
+  // Human mirror to stdout/stderr for launchd's logs + live `tail -f`. Suppressed
+  // under Vitest so the structured-file assertions aren't drowned in console noise
+  // (the JSONL file — what tests read — is still written below).
+  if (level !== "DEBUG" && !process.env.VITEST) {
     const tag = component ? ` ${component}` : "";
     const line = `${entry.ts} ${level}${tag} ${entry.msg}`;
     if (level === "ERROR") process.stderr.write(`${line}\n`);
