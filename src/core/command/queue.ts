@@ -17,6 +17,7 @@ export type QueuedMessage = {
   channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
+  traceId?: string | undefined;
   resolve: (output: string) => void;
   reject: (err: Error) => void;
   /** Optional interim-progress channel: sends a message to the chat while the
@@ -31,6 +32,7 @@ export type PersistedMessage = {
   channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
+  traceId?: string | undefined;
 };
 
 export type QueueHandler = (msg: QueuedMessage) => Promise<void>;
@@ -96,6 +98,7 @@ export class MessageQueue {
         channel: msg.channel,
         sessionName: msg.sessionName,
         action: msg.action,
+        traceId: msg.traceId,
       });
     }
     for (const queue of this.sessionQueues.values()) {
@@ -107,6 +110,7 @@ export class MessageQueue {
           channel: msg.channel,
           sessionName: msg.sessionName,
           action: msg.action,
+          traceId: msg.traceId,
         });
       }
     }

@@ -77,4 +77,21 @@ describe("queue persistence with channel", () => {
     q.clearPersistedChannel("telegram");
     expect(q.loadPersisted()).toEqual([]);
   });
+
+  it("persists and reloads a backlogged message's traceId", () => {
+    const q = new MessageQueue(10, persistPath);
+    q.setHandler(() => new Promise<void>(() => {})); // block the in-flight message
+    const base = {
+      chatId: "c",
+      channel: "telegram" as const,
+      sessionName: "s",
+      action: "text",
+      resolve: () => {},
+      reject: () => {},
+    };
+    q.enqueue({ id: "1", text: "hi", traceId: "t_aaa", ...base }); // dequeued, in flight
+    q.enqueue({ id: "2", text: "bye", traceId: "t_bbb", ...base }); // backlog
+    q.flushPending();
+    expect(q.loadPersisted().find((m) => m.id === "2")?.traceId).toBe("t_bbb");
+  });
 });
