@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
 import { appStateFile } from "../state-dir.js";
+import { currentLogContext } from "./log-context.js";
 
 // Logs live under the app state home so they follow TCB_STATE_DIR like every
 // other state dir; TCB_LOG_DIR still overrides for explicit redirection / tests.
@@ -11,6 +12,8 @@ export type LogCtx = {
   session?: string;
   chatId?: string | number;
   channel?: "telegram" | "lark";
+  data?: Record<string, unknown>;
+  err?: unknown;
 };
 
 type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
@@ -82,30 +85,78 @@ export function redactSecrets(message: string): string {
   return out.replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot<redacted-token>");
 }
 
-function write(level: LogLevel, message: string, ctx?: LogCtx): void {
+function errToObj(err: unknown): { name: string; message: string; stack?: string } {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: redactSecrets(err.message),
+      ...(err.stack ? { stack: redactSecrets(err.stack) } : {}),
+    };
+  }
+  return { name: "NonError", message: redactSecrets(String(err)) };
+}
+
+function write(
+  level: LogLevel,
+  component: string | undefined,
+  message: string,
+  ctx?: LogCtx,
+): void {
   if (LEVELS[level] < LEVELS[MIN_LEVEL]) return;
+  const ambient = currentLogContext();
 
   const entry: Record<string, unknown> = {
     ts: new Date().toISOString(),
     level,
+    ...(component ? { component } : {}),
     msg: redactSecrets(message),
   };
-  if (ctx?.session !== undefined) entry.session = ctx.session;
-  if (ctx?.chatId !== undefined) entry.chatId = ctx.chatId;
-  if (ctx?.channel !== undefined) entry.channel = ctx.channel;
+  const traceId = ambient.traceId;
+  const session = ctx?.session ?? ambient.session;
+  const chatId = ctx?.chatId ?? ambient.chatId;
+  const channel = ctx?.channel ?? ambient.channel;
+  if (traceId !== undefined) entry.traceId = traceId;
+  if (session !== undefined) entry.session = session;
+  if (chatId !== undefined) entry.chatId = chatId;
+  if (channel !== undefined) entry.channel = channel;
+  if (ctx?.data !== undefined) entry.data = JSON.parse(redactSecrets(JSON.stringify(ctx.data)));
+  if (ctx?.err !== undefined) entry.err = errToObj(ctx.err);
+
+  if (level !== "DEBUG") {
+    const tag = component ? ` ${component}` : "";
+    const line = `${entry.ts} ${level}${tag} ${entry.msg}`;
+    if (level === "ERROR") process.stderr.write(`${line}\n`);
+    else process.stdout.write(`${line}\n`);
+  }
 
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     fs.appendFileSync(getLogFile(getDateStr()), `${JSON.stringify(entry)}\n`, "utf-8");
     cleanOldLogs();
   } catch {
-    // file write failed — no stdout fallback
+    // file write failed — the stdout mirror above is the fallback
   }
 }
 
-export const logger = {
-  debug: (msg: string, ctx?: LogCtx) => write("DEBUG", msg, ctx),
-  info: (msg: string, ctx?: LogCtx) => write("INFO", msg, ctx),
-  warn: (msg: string, ctx?: LogCtx) => write("WARN", msg, ctx),
-  error: (msg: string, ctx?: LogCtx) => write("ERROR", msg, ctx),
+type ComponentLogger = {
+  debug: (msg: string, ctx?: LogCtx) => void;
+  info: (msg: string, ctx?: LogCtx) => void;
+  warn: (msg: string, ctx?: LogCtx) => void;
+  error: (msg: string, ctx?: LogCtx) => void;
+};
+
+export function createLogger(component: string): ComponentLogger {
+  return {
+    debug: (msg, ctx) => write("DEBUG", component, msg, ctx),
+    info: (msg, ctx) => write("INFO", component, msg, ctx),
+    warn: (msg, ctx) => write("WARN", component, msg, ctx),
+    error: (msg, ctx) => write("ERROR", component, msg, ctx),
+  };
+}
+
+export const logger: ComponentLogger = {
+  debug: (msg, ctx) => write("DEBUG", undefined, msg, ctx),
+  info: (msg, ctx) => write("INFO", undefined, msg, ctx),
+  warn: (msg, ctx) => write("WARN", undefined, msg, ctx),
+  error: (msg, ctx) => write("ERROR", undefined, msg, ctx),
 };
