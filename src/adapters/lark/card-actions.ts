@@ -39,6 +39,7 @@ import {
   VOICE_LANGS,
 } from "../../core/read/voice-support.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
+import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { logger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { verifyValue } from "./card-signing.js";
@@ -449,61 +450,75 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
 export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
   const allowed = deps.config.lark?.allowedOpenIds ?? new Set<string>();
 
-  return async (evt: CardActionEvent): Promise<void> => {
-    if (!isOpenIdAllowed(evt.operator.openId, allowed)) {
-      logger.info(`[lark] drop cardAction from open_id=${evt.operator.openId || "?"}`);
-      return;
-    }
+  return async (evt: CardActionEvent): Promise<void> =>
+    runWithLogContext({ traceId: newTraceId(), channel: "lark", chatId: evt.chatId }, async () => {
+      if (!isOpenIdAllowed(evt.operator.openId, allowed)) {
+        logger.info(`[lark] drop cardAction from open_id=${evt.operator.openId || "?"}`);
+        return;
+      }
 
-    const rawValue = evt.action?.value;
-    if (!verifyValue(rawValue)) {
-      logger.warn(`[lark] drop cardAction: invalid signature chat=${evt.chatId}`);
-      return;
-    }
+      const rawValue = evt.action?.value;
+      if (!verifyValue(rawValue)) {
+        logger.warn(`[lark] drop cardAction: invalid signature chat=${evt.chatId}`);
+        return;
+      }
 
-    const value = rawValue as CardValue;
-    const cmd = value?.cmd;
-    if (!cmd) return;
+      const value = rawValue as CardValue;
+      const cmd = value?.cmd;
+      if (!cmd) return;
 
-    logger.info(`[lark] cardAction cmd=${cmd} chat=${evt.chatId}`);
+      logger.info(`[lark] cardAction cmd=${cmd} chat=${evt.chatId}`);
 
-    // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
-    // groups are serviced (serviceableChat). An unbound group — including one
-    // whose binding was lost — is ignored, so its (possibly stale) buttons do
-    // nothing. Bound is a cheap local check; only hit the chat API otherwise.
-    // Resolve the chat kind ONCE here and thread it into the handlers so the
-    // per-action policy (chat-policy.ts) is enforced symmetrically with text.
-    const isP2p = isProjectGroup(evt.chatId) ? false : await isP2pChat(channel, evt.chatId);
-    if (!serviceableChat(isP2p, evt.chatId)) {
-      logger.info(`[lark] ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
-      return;
-    }
-    const chatKind: ChatKind = isP2p ? "p2p" : "group";
+      // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
+      // groups are serviced (serviceableChat). An unbound group — including one
+      // whose binding was lost — is ignored, so its (possibly stale) buttons do
+      // nothing. Bound is a cheap local check; only hit the chat API otherwise.
+      // Resolve the chat kind ONCE here and thread it into the handlers so the
+      // per-action policy (chat-policy.ts) is enforced symmetrically with text.
+      const isP2p = isProjectGroup(evt.chatId) ? false : await isP2pChat(channel, evt.chatId);
+      if (!serviceableChat(isP2p, evt.chatId)) {
+        logger.info(`[lark] ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
+        return;
+      }
+      const chatKind: ChatKind = isP2p ? "p2p" : "group";
 
-    // Multi-command start/restart: show a picker instead of using the default.
-    // With a single start command, fall through to the queued-action routing.
-    if ((cmd === "start" || cmd === "restart") && deps.config.startCommands.length > 1) {
-      const mode = cmd === "restart" ? "restart" : "start";
-      await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
-      return;
-    }
+      // Multi-command start/restart: show a picker instead of using the default.
+      // With a single start command, fall through to the queued-action routing.
+      if ((cmd === "start" || cmd === "restart") && deps.config.startCommands.length > 1) {
+        const mode = cmd === "restart" ? "restart" : "start";
+        await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
+        return;
+      }
 
-    const handler = CARD_HANDLERS[cmd];
-    if (handler) {
-      await handler({ channel, deps, evt, value, chatKind });
-      return;
-    }
+      const handler = CARD_HANDLERS[cmd];
+      if (handler) {
+        await handler({ channel, deps, evt, value, chatKind });
+        return;
+      }
 
-    if (IMMEDIATE.has(cmd as MessageAction)) {
-      await runImmediateLarkAction(channel, deps, evt.chatId, evt.messageId, cmd as MessageAction);
-      return;
-    }
+      if (IMMEDIATE.has(cmd as MessageAction)) {
+        await runImmediateLarkAction(
+          channel,
+          deps,
+          evt.chatId,
+          evt.messageId,
+          cmd as MessageAction,
+        );
+        return;
+      }
 
-    if (QUEUED.has(cmd as MessageAction)) {
-      await enqueueLarkAction(channel, deps, evt.chatId, evt.messageId, cmd as MessageAction, cmd);
-      return;
-    }
+      if (QUEUED.has(cmd as MessageAction)) {
+        await enqueueLarkAction(
+          channel,
+          deps,
+          evt.chatId,
+          evt.messageId,
+          cmd as MessageAction,
+          cmd,
+        );
+        return;
+      }
 
-    logger.info(`[lark] unknown cardAction cmd=${cmd}`);
-  };
+      logger.info(`[lark] unknown cardAction cmd=${cmd}`);
+    });
 }

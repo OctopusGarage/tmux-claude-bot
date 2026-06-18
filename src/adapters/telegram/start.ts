@@ -5,6 +5,7 @@ import nodeFetch from "node-fetch";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { markCleanShutdown } from "../../core/infra/lifecycle.js";
+import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { logger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
@@ -84,6 +85,20 @@ export async function startTelegram(
   bot.catch((err) => {
     console.error(`[bot] handler error on update ${err.ctx.update.update_id}:`, err.error);
   });
+
+  // Open a log context per update (after the auth guard, so dropped updates
+  // don't mint a trace), before any handler runs — so all logs during parse and
+  // routing share one traceId.
+  bot.use((ctx, next) =>
+    runWithLogContext(
+      {
+        traceId: newTraceId(),
+        channel: "telegram",
+        ...(ctx.chat?.id !== undefined && { chatId: ctx.chat.id }),
+      },
+      () => next(),
+    ),
+  );
 
   // One reply-target map (TG message id → session) shared by both handler sets.
   const replyTarget = createReplyTargetMap();
