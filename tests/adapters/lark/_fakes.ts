@@ -149,6 +149,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
   const bridge = {
     capturePane: vi.fn(async () => "PANE"),
     listProjectSessions: vi.fn(async () => [] as string[]),
+    sessionsCreatedAt: vi.fn(async () => new Map<string, number>()),
     hasSession: vi.fn(async () => false),
     createSession: vi.fn(async () => {}),
     killSession: vi.fn(async () => {}),

@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   acquireInstanceLock,
   InstanceLockHeldError,
+  instanceStartedAt,
   type ProcessProbe,
   releaseInstanceLock,
 } from "../src/core/infra/instance-lock.js";
@@ -119,5 +120,18 @@ describe("instance lock", () => {
     );
     releaseInstanceLock();
     expect(fs.existsSync(lockPath())).toBe(true);
+  });
+
+  describe("instanceStartedAt", () => {
+    it("returns a parseable ISO string after acquiring the lock", () => {
+      acquireInstanceLock();
+      const ts = instanceStartedAt();
+      expect(ts).not.toBeNull();
+      expect(Number.isNaN(new Date(ts!).getTime())).toBe(false);
+    });
+
+    it("returns null when no lock file exists", () => {
+      expect(instanceStartedAt()).toBeNull();
+    });
   });
 });

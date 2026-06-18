@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { buildCodexResumeCommand } from "../resume-command.js";
 import type { AgentProfile, ReadResolver } from "../types.js";
@@ -10,6 +11,7 @@ import {
 import { isCodexProcess } from "./codex-process.js";
 import { findRolloutForProject } from "./codex-rollout.js";
 import { buildCodexStatusReport } from "./codex-status.js";
+import { readCodexUsage } from "./codex-usage.js";
 
 const DEFAULT_CODEX_ROOT = `${homedir()}/.codex`;
 
@@ -42,6 +44,34 @@ export const codexProfile: AgentProfile = {
   // the newest cwd-matched rollout when the pid isn't holding one open.
   discoverSessionId: async ({ openSession, cwd, configRoot }) =>
     openSession ?? (await findRolloutForProject(configRoot, cwd))?.sessionId ?? null,
+  // Mirror the codex /status usage resolution: resolve CODEX_HOME (null when no
+  // codex runs → no usage), prefer the live pid's open rollout (exact under
+  // same-cwd contention; else readCodexUsage falls back to the newest cwd-matched
+  // rollout), then parse usage from the rollout JSONL tail.
+  readUsage: async (resolver, session, projectPath) => {
+    const home = (await resolver.resolveCodexHome?.(session)) ?? null;
+    if (!home) return null;
+    const live = (await resolver.resolveLiveTranscript?.(session)) ?? null;
+    return readCodexUsage({
+      sessionId: live?.sessionId ?? "",
+      configRoot: home,
+      projectPath,
+      rolloutPath: live?.path ?? null,
+    });
+  },
+  // Newest cwd-matched rollout's mtime — codex appends to its rollout JSONL as it
+  // streams, so its mtime is the last-write time (works regardless of who drove it).
+  lastActivityAt: async (resolver, session, projectPath) => {
+    const home = (await resolver.resolveCodexHome?.(session)) ?? null;
+    if (!home) return null;
+    const match = await findRolloutForProject(home, projectPath);
+    if (!match) return null;
+    try {
+      return (await stat(match.path)).mtimeMs;
+    } catch {
+      return null;
+    }
+  },
   buildResumeCommand: ({ aliasName, configRoot, sessionId, origCmd }) =>
     buildCodexResumeCommand({ aliasName, configRoot, sessionId, origCmd }),
   getRecentConversations: async (resolver, session, projectPath) => {

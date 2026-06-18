@@ -90,6 +90,11 @@ function readHolder(): InstanceLockHolder | undefined {
   }
 }
 
+/** ISO start time of the instance currently holding the lock, or null. */
+export function instanceStartedAt(): string | null {
+  return readHolder()?.startedAt ?? null;
+}
+
 /** Create the lock file atomically; false when it already exists. */
 function tryCreate(): boolean {
   const payload = `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`;

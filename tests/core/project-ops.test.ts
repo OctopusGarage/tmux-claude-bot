@@ -13,6 +13,7 @@ import {
   resolveProjectPath,
 } from "../../src/core/projects/project-ops.js";
 import { sessionNameFromPath, setPathForSession } from "../../src/core/projects/sessionPathMap.js";
+import { cumulativeBusyMs, taskEnded, taskStarted } from "../../src/core/session/task-timing.js";
 import type { AgentKind } from "../../src/shared/types.js";
 import { sessionShortId } from "../../src/shared/utils/hash.js";
 import { fakeDeps } from "../adapters/lark/_fakes.js";
@@ -164,6 +165,18 @@ describe("removeProjectBySession", () => {
     await removeProjectBySession(deps, "tmux_proj_c");
     expect(deps.bridge.sendRawKey).toHaveBeenCalledWith("C-c", "tmux_proj_c");
     expect(deps.bridge.killSession).toHaveBeenCalledWith("tmux_proj_c");
+  });
+
+  it("clears task-timing so a reused session name cannot read stale cumulative time", async () => {
+    // Seed 100 ms of cumulative busy time for the session.
+    taskStarted("tmux_proj_timing", 1000);
+    taskEnded("tmux_proj_timing", 1100);
+    expect(cumulativeBusyMs("tmux_proj_timing", 1100)).toBe(100);
+
+    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => false) } });
+    await removeProjectBySession(deps, "tmux_proj_timing");
+
+    expect(cumulativeBusyMs("tmux_proj_timing", 1100)).toBe(0);
   });
 });
 

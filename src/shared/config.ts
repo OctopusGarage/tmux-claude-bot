@@ -143,7 +143,10 @@ export function parseStartCommands(env: NodeJS.ProcessEnv, primary: string): Sta
  */
 function loadEnvFile(): void {
   const path = process.env.TCB_ENV_FILE;
-  loadEnv(path ? { path } : undefined);
+  // `quiet: true` suppresses the dotenvx startup banner — it's noise in the
+  // launchd logs and, critically, corrupts the stdout of data CLI commands like
+  // `tcb dashboard --json` / `tcb logs --json` (it would break `| jq`).
+  loadEnv({ ...(path ? { path } : {}), quiet: true });
 }
 
 export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {

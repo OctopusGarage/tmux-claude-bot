@@ -21,7 +21,8 @@ function resolver(opts: { home?: string | null; rolloutPath?: string | null }): 
   return {
     resolveConfigRoot: async () => "/cfg",
     resolveCodexHome: async () => opts.home ?? null,
-    resolveLiveTranscript: async () => (opts.rolloutPath ? { path: opts.rolloutPath } : null),
+    resolveLiveTranscript: async () =>
+      opts.rolloutPath ? { path: opts.rolloutPath, sessionId: null } : null,
   };
 }
 

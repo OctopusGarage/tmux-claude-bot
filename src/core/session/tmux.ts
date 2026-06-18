@@ -176,6 +176,27 @@ export class TmuxBridge {
     await this.execFile("tmux", ["kill-session", "-t", sessionName], { timeout: 10000 });
   }
 
+  /** Map of session name -> creation epoch-seconds, via `tmux list-sessions`.
+   * Best-effort: empty map if tmux isn't running. */
+  async sessionsCreatedAt(): Promise<Map<string, number>> {
+    try {
+      const { stdout } = await this.execFile(
+        "tmux",
+        ["list-sessions", "-F", "#{session_name} #{session_created}"],
+        { timeout: 5000 },
+      );
+      const out = new Map<string, number>();
+      for (const line of stdout.split("\n")) {
+        const [name, created] = line.trim().split(/\s+/);
+        const epoch = Number.parseInt(created ?? "", 10);
+        if (name && !Number.isNaN(epoch)) out.set(name, epoch);
+      }
+      return out;
+    } catch {
+      return new Map();
+    }
+  }
+
   async listProjectSessions(): Promise<string[]> {
     try {
       const result = await this.execFile("tmux", ["list-sessions", "-F", "#{session_name}"], {

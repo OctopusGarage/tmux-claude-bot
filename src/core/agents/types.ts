@@ -1,6 +1,7 @@
 import type { HandlerDeps } from "../deps.js";
 import type { Channel } from "../projects/project-manager.js";
 import type { ConversationRound, SessionEntry } from "../read/transcript.js";
+import type { UsageSnapshot } from "../read/usage.js";
 import type { FlavorAlias } from "./flavor-alias.js";
 
 export type { AgentKind } from "../../shared/types.js";
@@ -17,8 +18,12 @@ export type ReadResolver = {
   resolveConfigRoot(session: string): Promise<string>;
   resolveCodexHome?(session: string): Promise<string | null>;
   /** The transcript the live agent (claude or codex) holds open, for exact
-   * same-cwd resolution; the read methods fall back to newest-on-disk when null. */
-  resolveLiveTranscript?(session: string): Promise<{ path: string } | null>;
+   * same-cwd resolution; the read methods fall back to newest-on-disk when null.
+   * `sessionId` is the transcript/rollout id (null when the pid holds the file
+   * open but the id can't be read). */
+  resolveLiveTranscript?(
+    session: string,
+  ): Promise<{ path: string; sessionId: string | null } | null>;
 };
 
 /**
@@ -81,6 +86,23 @@ export interface AgentProfile {
     projectPath: string,
     sentText: string,
   ): Promise<string | null>;
+  /** Structured current usage for a session (context %, rate limits), or null when
+   * none is available. Used by the dashboard; mirrors the /status usage resolution. */
+  readUsage(
+    resolver: ReadResolver,
+    session: string,
+    projectPath: string,
+  ): Promise<UsageSnapshot | null>;
+  /** When this session's transcript was last written (epoch ms), or null when no
+   * transcript is found. A process-independent "agent wrote output recently"
+   * signal: unlike the bot-queue task timer, it sees work driven directly in the
+   * pane too, so the dashboard can mark such sessions busy. Optional so fakes
+   * need not implement it. */
+  lastActivityAt?(
+    resolver: ReadResolver,
+    session: string,
+    projectPath: string,
+  ): Promise<number | null>;
   /** /status body for a session: running state + this agent's usage/api lines. */
   buildStatusReport(
     deps: HandlerDeps,

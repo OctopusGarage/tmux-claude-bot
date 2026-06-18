@@ -51,7 +51,7 @@ if [ -n "${TCB_MATERIALIZE_FROM:-}" ]; then
   if [ "$TCB_MATERIALIZE_FROM" != "$PROJECT_DIR" ]; then
     rsync -a --delete \
       --exclude='.env' --exclude='.current_project' --exclude='recent_projects.txt' \
-      --exclude='session_path_map.json' --exclude='.queue' --exclude='logs' \
+      --exclude='session_path_map.json' --exclude='.queue' --exclude='/logs' \
       --exclude='.bot.pid' --exclude='node_modules' \
       "$TCB_MATERIALIZE_FROM/" "$PROJECT_DIR/"
   fi
@@ -109,7 +109,7 @@ else
     # deps, and logs are excluded from deletion and preserved.
     rsync -a --delete \
       --exclude='.env' --exclude='.current_project' --exclude='recent_projects.txt' \
-      --exclude='session_path_map.json' --exclude='.queue' --exclude='logs' \
+      --exclude='session_path_map.json' --exclude='.queue' --exclude='/logs' \
       --exclude='.bot.pid' --exclude='node_modules' \
       "$tmpdir/" "$PROJECT_DIR/"
     rm -rf "$tmpdir"
