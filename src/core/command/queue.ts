@@ -119,16 +119,24 @@ export class MessageQueue {
     }
     try {
       fs.writeFileSync(this.persistPath, JSON.stringify(messages, null, 2), "utf-8");
-    } catch {
-      // ignore persist failures
+    } catch (err) {
+      // Best-effort, but a failure means queued work won't survive a restart.
+      log.warn("failed to persist queue backlog", { err, data: { count: messages.length } });
     }
   }
 
   loadPersisted(): PersistedMessage[] {
+    let raw: string;
     try {
-      const raw = fs.readFileSync(this.persistPath, "utf-8");
-      return JSON.parse(raw) as PersistedMessage[];
+      raw = fs.readFileSync(this.persistPath, "utf-8");
     } catch {
+      return []; // no backlog file — the normal cold-start case, not an error
+    }
+    try {
+      return JSON.parse(raw) as PersistedMessage[];
+    } catch (err) {
+      // The file exists but is corrupt — surface it, the backlog is being dropped.
+      log.warn("failed to parse persisted queue backlog — dropping it", { err });
       return [];
     }
   }
