@@ -12,13 +12,15 @@ import {
   resolveWhisperLanguage,
   setWhisperLanguage,
 } from "../../core/read/voice-support.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { buildVoiceLangKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
 import { resolveSessionForMessage } from "./reply-routing.js";
 import type { ReplyTargetMap } from "./reply-target.js";
+
+const log = createLogger("telegram.voice-handler");
 
 export function registerVoiceHandler<TContext extends Context>(
   bot: Bot<TContext>,
@@ -43,11 +45,11 @@ export function registerVoiceHandler<TContext extends Context>(
     const result = await installVoice();
     switch (result.status) {
       case "ok":
-        logger.info("[voice-install] voice feature installed and enabled");
+        log.info("voice feature installed and enabled");
         await reply(ctx, "info", MSG.voiceInstallOk, { replyTarget });
         break;
       case "failed":
-        logger.error(`[voice-install] failed: ${result.message}`);
+        log.error(`failed: ${result.message}`);
         await reply(ctx, "err", MSG.voiceInstallFailed(result.message), { replyTarget });
         break;
       case "already-ready":
@@ -81,13 +83,13 @@ export function registerVoiceHandler<TContext extends Context>(
       return;
     }
     setWhisperLanguage("telegram", arg);
-    logger.info(`[voice-lang] telegram recognition language set to ${arg}`);
+    log.info(`telegram recognition language set to ${arg}`);
     await reply(ctx, "info", MSG.voiceLangSet(arg), { replyTarget });
   });
 
   bot.on("message:voice", async (ctx: Context) => {
     const chatId = ctx.chat?.id ?? "unknown";
-    logger.info(`[voice-handler] voice message received chat=${chatId}`);
+    log.info(`voice message received chat=${chatId}`);
 
     const msg = ctx.message;
     if (!msg) return;
@@ -144,7 +146,7 @@ export function registerVoiceHandler<TContext extends Context>(
     }
     const transcribed = outcome.text;
 
-    logger.info(`[voice-handler] transcribed len=${transcribed.length}`);
+    log.info(`transcribed len=${transcribed.length}`);
 
     const fallbackSession = await deps.currentProject.get(chatScope("telegram", String(chatId)));
     const currentSession = resolveSessionForMessage(

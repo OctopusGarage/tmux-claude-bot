@@ -6,7 +6,7 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { markCleanShutdown } from "../../core/infra/lifecycle.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
-import { createLogger, logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
@@ -164,7 +164,7 @@ export async function startTelegram(
           messages("telegram").crashRecovered(new Date().toLocaleString()),
         );
       } catch (err) {
-        logger.warn(`[bot] owner crash-alert failed: ${err instanceof Error ? err.message : err}`);
+        log.warn(`owner crash-alert failed: ${err instanceof Error ? err.message : err}`);
       }
     }
   }

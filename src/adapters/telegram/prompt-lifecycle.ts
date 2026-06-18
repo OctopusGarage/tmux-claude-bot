@@ -3,7 +3,7 @@ import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { looksLikeTerminalOutput } from "./format.js";
 import { buildControlKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
@@ -12,6 +12,8 @@ import { REACTION, type ReactionApi, reactToMessage } from "./reactions.js";
 import { composeMessage, reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { startTyping } from "./typing.js";
+
+const log = createLogger("telegram.prompt-lifecycle");
 
 const PROGRESS_TICK_MS = 5000;
 // Tasks longer than this likely finished while the user was away. The result is
@@ -119,7 +121,7 @@ export async function runPromptWithProgress(
 
   if (queued === false) {
     cleanup();
-    logger.warn(`[lifecycle] queue full session=${session}`);
+    log.warn(`queue full session=${session}`);
     await reply(ctx, "err", MSG.queueFull(deps.queue.getMaxSize()), {
       session,
       replyTarget,
@@ -132,7 +134,7 @@ export async function runPromptWithProgress(
     // indicator + elapsed-time ticker) so they don't leak forever, and replace the
     // "processing…" placeholder with a short notice — the original copy still answers.
     cleanup();
-    logger.info(`[lifecycle] duplicate prompt ignored session=${session}`);
+    log.info(`duplicate prompt ignored session=${session}`);
     const note = messages("telegram").duplicateIgnored;
     if (progress) {
       await progress.finalize(note);

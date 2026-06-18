@@ -1,5 +1,7 @@
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { timeApi } from "../../shared/utils/timing.js";
+
+const log = createLogger("telegram.progress");
 
 export interface ProgressApi {
   sendMessage(
@@ -59,8 +61,8 @@ export async function startProgress(
       api.sendMessage(chatId, initialText, extra ?? {}),
     );
   } catch (err) {
-    logger.warn(
-      `[progress] failed to send initial message chat=${chatId}: ${err instanceof Error ? err.message : err}`,
+    log.warn(
+      `failed to send initial message chat=${chatId}: ${err instanceof Error ? err.message : err}`,
     );
     return null;
   }
@@ -90,8 +92,8 @@ export async function startProgress(
     try {
       await timeApi("editMessageText(tick)", () => edit(text));
     } catch (err) {
-      logger.warn(
-        `[progress] failed to edit chat=${chatId} msg=${messageId}: ${err instanceof Error ? err.message : err}`,
+      log.warn(
+        `failed to edit chat=${chatId} msg=${messageId}: ${err instanceof Error ? err.message : err}`,
       );
     }
   };
@@ -113,14 +115,14 @@ export async function startProgress(
           await timeApi("editMessageText(final,plain)", () => edit(text, rest));
           return true;
         } catch (fallbackErr) {
-          logger.warn(
-            `[progress] finalize fallback failed chat=${chatId} msg=${messageId}: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+          log.warn(
+            `finalize fallback failed chat=${chatId} msg=${messageId}: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
           );
           return false;
         }
       }
-      logger.warn(
-        `[progress] finalize failed chat=${chatId} msg=${messageId}: ${err instanceof Error ? err.message : err}`,
+      log.warn(
+        `finalize failed chat=${chatId} msg=${messageId}: ${err instanceof Error ? err.message : err}`,
       );
       return false;
     }

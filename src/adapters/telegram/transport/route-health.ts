@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
-import { logger } from "../../../shared/utils/logger.js";
+import { createLogger } from "../../../shared/utils/logger.js";
+
+const log = createLogger("telegram.route-health");
 
 export type RouteName = string;
 
@@ -120,9 +122,7 @@ export function createRouteHealthStore(opts: {
       fs.mkdirSync(nodePath.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, JSON.stringify(health, null, 2), "utf-8");
     } catch (err) {
-      logger.warn(
-        `[route-health] failed to persist ${filePath}: ${err instanceof Error ? err.message : err}`,
-      );
+      log.warn(`failed to persist ${filePath}: ${err instanceof Error ? err.message : err}`);
     }
   };
 

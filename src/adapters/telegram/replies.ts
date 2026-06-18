@@ -2,12 +2,14 @@ import type { Bot, Context } from "grammy";
 import { messages } from "../../core/i18n/index.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { normalizeError } from "../../shared/utils/error.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { timeApi } from "../../shared/utils/timing.js";
 import { codeBlockV2, escapeMarkdownV2, stripMarkdownV2, toTelegramMarkdown } from "./markdown.js";
 import { projectLabel } from "./project-label.js";
 import type { ReplyTargetMap } from "./reply-target.js";
+
+const log = createLogger("telegram.replies");
 
 export type Tone =
   | "ok"
@@ -200,8 +202,8 @@ async function withSendRetry(
       return;
     } catch (err) {
       if (isRetryableError(err) && n < MAX_RETRIES) {
-        logger.warn(
-          `[replies] ${label} network error on attempt ${n}/${MAX_RETRIES}, retrying in 1s: ${describe(err)}`,
+        log.warn(
+          `${label} network error on attempt ${n}/${MAX_RETRIES}, retrying in 1s: ${describe(err)}`,
         );
         await sleep(retryDelayMs(err));
         continue;
@@ -229,8 +231,8 @@ export async function reply(
     () => ctx.reply(text, sendExtra),
     (sentMsg) => {
       const telegramMsgId = messageIdOf(sentMsg);
-      logger.info(
-        `[replies] sent to chat=${chatId} replyTo=${msgId} telegramMsgId=${telegramMsgId} len=${text.length}`,
+      log.info(
+        `sent to chat=${chatId} replyTo=${msgId} telegramMsgId=${telegramMsgId} len=${text.length}`,
       );
       if (telegramMsgId !== null && opts.replyTarget && opts.session) {
         opts.replyTarget.record(telegramMsgId, opts.session);
@@ -247,23 +249,21 @@ export async function reply(
         typeof (err as Record<string, unknown>).description === "string" &&
         String((err as Record<string, unknown>).description).includes("can't parse");
       if (isParseError) {
-        logger.warn(
-          `[replies] Markdown parse failed for chat=${chatId}, retrying without parse_mode`,
-        );
+        log.warn(`Markdown parse failed for chat=${chatId}, retrying without parse_mode`);
         const fallbackExtra = { ...sendExtra };
         delete fallbackExtra.parse_mode;
         // Strip the MarkdownV2 markup so the fallback shows clean text.
         const plain = stripMarkdownV2(text);
         try {
           await timeApi("reply(fallback)", () => ctx.reply(plain, fallbackExtra));
-          logger.info(`[replies] fallback sent to chat=${chatId} replyTo=${msgId}`);
+          log.info(`fallback sent to chat=${chatId} replyTo=${msgId}`);
           return;
         } catch (fallbackErr) {
-          logger.error(`[replies] fallback reply failed ${describe(fallbackErr)} chat=${chatId}`);
+          log.error(`fallback reply failed ${describe(fallbackErr)} chat=${chatId}`);
         }
       }
-      logger.error(
-        `[replies] reply failed ${describe(err)} chat=${chatId} replyTo=${msgId} text_len=${text.length}`,
+      log.error(
+        `reply failed ${describe(err)} chat=${chatId} replyTo=${msgId} text_len=${text.length}`,
       );
     },
   );
@@ -290,7 +290,7 @@ export async function send(
       }
     },
     async (err) => {
-      logger.error(`[replies] send failed ${describe(err)}`);
+      log.error(`send failed ${describe(err)}`);
     },
   );
 }

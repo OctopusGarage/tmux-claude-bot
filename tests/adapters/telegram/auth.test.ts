@@ -2,9 +2,10 @@ import type { Context, NextFunction } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import { createAuthGuard, isAuthorized } from "../../../src/adapters/telegram/auth.js";
 
-vi.mock("../../../src/shared/utils/logger.js", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
+vi.mock("../../../src/shared/utils/logger.js", () => {
+  const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return { logger: log, createLogger: () => log };
+});
 
 describe("isAuthorized — fails closed", () => {
   it("rejects everyone when the allowlist is empty", () => {
