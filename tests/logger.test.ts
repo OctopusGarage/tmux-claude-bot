@@ -131,4 +131,14 @@ describe("logger (ambient context, component, err/data)", () => {
     expect((rec?.err as { message: string }).message).not.toContain("SECRETSECRET");
     delete process.env.TELEGRAM_BOT_TOKEN;
   });
+
+  it("never throws into the caller on a non-serializable data payload", async () => {
+    const { logger: freshLogger } = await import("../src/shared/utils/logger.js");
+    const circular: Record<string, unknown> = {};
+    circular.self = circular; // JSON.stringify would throw
+    expect(() => freshLogger.info("circular", { data: circular })).not.toThrow();
+    const rec = readRecords()[0];
+    expect(rec?.msg).toBe("circular");
+    expect((rec?.data as { _serializeError?: string })._serializeError).toContain("circular");
+  });
 });

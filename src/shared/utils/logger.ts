@@ -119,7 +119,15 @@ function write(
   if (session !== undefined) entry.session = session;
   if (chatId !== undefined) entry.chatId = chatId;
   if (channel !== undefined) entry.channel = channel;
-  if (ctx?.data !== undefined) entry.data = JSON.parse(redactSecrets(JSON.stringify(ctx.data)));
+  if (ctx?.data !== undefined) {
+    // Never let a non-serializable payload (circular ref, BigInt) throw into the
+    // caller — logging is best-effort. Fall back to a marker on failure.
+    try {
+      entry.data = JSON.parse(redactSecrets(JSON.stringify(ctx.data)));
+    } catch (e) {
+      entry.data = { _serializeError: String(e) };
+    }
+  }
   if (ctx?.err !== undefined) entry.err = errToObj(ctx.err);
 
   if (level !== "DEBUG") {
