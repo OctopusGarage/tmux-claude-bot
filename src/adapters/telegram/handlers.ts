@@ -62,11 +62,14 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   // deployment loses neither side's queue regardless of which starts first.
   const persisted = deps.queue.loadPersisted();
   if (persisted.length > 0) {
+    let restored = 0;
     for (const p of persisted) {
       if (p.channel === "lark") continue; // Lark restores its own (startLark)
       deps.queue.enqueue(createRestoredMessage(p, bot));
+      restored++;
     }
     deps.queue.clearPersistedChannel("telegram"); // legacy no-channel entries count as telegram
+    if (restored > 0) log.info("queue restored", { channel: "telegram", data: { restored } });
   }
 
   bot.command("lang", async (ctx) => {

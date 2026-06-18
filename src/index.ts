@@ -22,6 +22,7 @@ const fatalLog = createLogger("index");
 // ("Process Management") for the launchd KeepAlive trap this guards against.
 try {
   acquireInstanceLock();
+  log.info("instance lock acquired", { data: { pid: process.pid } });
 } catch (err) {
   if (err instanceof InstanceLockHeldError) {
     log.error(
@@ -43,10 +44,12 @@ async function init(): Promise<void> {
     log.info("No current project for any channel, skipping auto-start.");
     return;
   }
+  let recreated = 0;
   for (const session of sessions) {
     try {
       const alive = await bridge.isPaneAlive(session);
       if (!alive) {
+        recreated++;
         log.info(`Session ${session} not alive, creating...`);
         // Start the pane directly in the mapped directory (-c) — no typed `cd`.
         const projectPath = getPathBySession(session);
@@ -60,6 +63,9 @@ async function init(): Promise<void> {
       log.error(`init failed for ${session}`, { err });
     }
   }
+  log.info("current-session restore complete", {
+    data: { channels: sessions.length, recreated },
+  });
   // Auto-starting Claude on boot is disabled by design: the bot must never type
   // the start command into a pane on its own. Launch Claude explicitly with /start.
   log.info("Auto-start disabled — use /start to launch Claude.");
@@ -68,6 +74,10 @@ async function init(): Promise<void> {
 // Did the previous run exit cleanly? If not, launchd auto-recovered a crash —
 // the adapters alert the owner once connected. Clean shutdowns clear the marker.
 const recoveredFromCrash = detectUncleanRestart();
+process.once("SIGINT", () => log.info("shutdown signal received", { data: { signal: "SIGINT" } }));
+process.once("SIGTERM", () =>
+  log.info("shutdown signal received", { data: { signal: "SIGTERM" } }),
+);
 process.once("SIGINT", markCleanShutdown);
 process.once("SIGTERM", markCleanShutdown);
 process.once("SIGINT", releaseInstanceLock);
