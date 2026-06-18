@@ -3,13 +3,15 @@ import * as nodePath from "node:path";
 import { claudeBinFromStartCommand } from "../../shared/config.js";
 import type { AgentKind } from "../../shared/types.js";
 import { normalizeError } from "../../shared/utils/error.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { resolveAgentKind, setAgentKind } from "../agents/agentKindMap.js";
 import { profileFor } from "../agents/registry.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { QueuedMessage } from "./queue.js";
+
+const log = createLogger("command.dispatch");
 
 /** Derive the AgentKind for a start command by matching against startCommands config. */
 function agentKindForCommand(deps: HandlerDeps, command: string | undefined): AgentKind {
@@ -107,20 +109,18 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     throw new Error(`Unknown action: ${msg.action}`);
   }
 
-  logger.info(
-    `[executor] action=${msg.action} session=${session} text_len=${msg.text?.length ?? 0}`,
-  );
+  log.info(`action=${msg.action} session=${session} text_len=${msg.text?.length ?? 0}`);
 
   switch (msg.action) {
     case "text": {
       const running = await deps.agent.checkIfRunning(session);
       if (!running) {
-        logger.warn(`[executor] text action rejected: Claude not running session=${session}`);
+        log.warn(`text action rejected: Claude not running session=${session}`);
         throw new Error(m.agentNotRunningRestart);
       }
-      logger.info(`[executor] sending keys session=${session}`);
+      log.info(`sending keys session=${session}`);
       await deps.bridge.sendKeys(msg.text, session);
-      logger.info(`[executor] keys sent, waiting for done session=${session}`);
+      log.info(`keys sent, waiting for done session=${session}`);
 
       // Wait in maxWaitDoneMs rounds up to maxWaitDoneTotalMs total. The first
       // expired round sends a one-time "still running" notice (when the adapter
@@ -137,27 +137,23 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
             msg.notify?.(m.taskStillRunningNotice);
             noticed = true;
           }
-          logger.info(
-            `[executor] still running session=${session} waited=${waitedMs}ms, continuing to wait`,
-          );
+          log.info(`still running session=${session} waited=${waitedMs}ms, continuing to wait`);
           round = await deps.agent.waitUntilDone(session);
           waitedMs += deps.config.maxWaitDoneMs;
         }
         if (!round.done) {
-          logger.warn(`[executor] gave up waiting session=${session} after ${waitedMs}ms`);
+          log.warn(`gave up waiting session=${session} after ${waitedMs}ms`);
           return m.taskStillRunning(deps.output.process(round.output));
         }
         rawResult = round.output;
       } catch (err) {
-        logger.error(
-          `[executor] waitUntilDone failed: ${err instanceof Error ? err.message : err}`,
-        );
+        log.error(`waitUntilDone failed: ${err instanceof Error ? err.message : err}`);
         try {
           const pane = await deps.bridge.capturePane(session);
           rawResult = deps.output.process(pane);
         } catch (paneErr) {
-          logger.error(
-            `[executor] capturePane fallback failed: ${paneErr instanceof Error ? paneErr.message : paneErr}`,
+          log.error(
+            `capturePane fallback failed: ${paneErr instanceof Error ? paneErr.message : paneErr}`,
           );
           throw normalizeError(err);
         }
@@ -168,7 +164,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       // ANSI pane). claude: <CLAUDE_CONFIG_DIR>/projects JSONL; codex: the rollout
       // under <CODEX_HOME>/sessions. Either may return null → pane fallback below.
       const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
-      logger.info(`[executor] looking up history session=${session} path=${projectPath}`);
+      log.info(`looking up history session=${session} path=${projectPath}`);
       const historyReply = await profile.getLatestReply(
         deps.configResolver,
         session,
@@ -176,7 +172,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         msg.text,
       );
       if (historyReply?.trim()) {
-        logger.info(`[executor] history reply found len=${historyReply.length}`);
+        log.info(`history reply found len=${historyReply.length}`);
         const maxLen = deps.config.maxMessageLength - 100;
         if (historyReply.length > maxLen) {
           return `${historyReply.slice(0, maxLen)}\n\n${m.contentTruncated}`;
@@ -184,23 +180,23 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         return historyReply;
       }
 
-      logger.info(
-        `[executor] no history reply, using pane output session=${session} raw_len=${rawResult.length}`,
+      log.info(
+        `no history reply, using pane output session=${session} raw_len=${rawResult.length}`,
       );
       const processed = deps.output.process(rawResult);
-      logger.info(`[executor] processed output len=${processed.length}`);
+      log.info(`processed output len=${processed.length}`);
       if (!processed.trim()) {
         return m.agentEmptyOutput;
       }
       return processed;
     }
     case "start": {
-      logger.info(`[executor] starting agent session=${session}`);
+      log.info(`starting agent session=${session}`);
       await performStart(deps, session);
       return m.agentStarted;
     }
     case "exit": {
-      logger.info(`[executor] exiting agent session=${session}`);
+      log.info(`exiting agent session=${session}`);
       deps.queue.clearSession(session);
       // Route through the agent runner (both claude and codex: Ctrl-C + `/exit`),
       // not the hardcoded bridge.sendExit it used to call.
@@ -209,23 +205,23 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       return m.agentExited;
     }
     case "restart": {
-      logger.info(`[executor] restarting agent session=${session}`);
+      log.info(`restarting agent session=${session}`);
       await deps.agent.gracefulRestartWithContinue(session);
       deps.configResolver.invalidate(session);
       return m.agentRestarted;
     }
     case "esc": {
-      logger.info(`[executor] sending esc session=${session}`);
+      log.info(`sending esc session=${session}`);
       await deps.agent.interrupt(session);
       return m.sentEsc;
     }
     case "interrupt": {
-      logger.info(`[executor] sending ctrl-c session=${session}`);
+      log.info(`sending ctrl-c session=${session}`);
       await deps.bridge.sendRawKey("C-c", session);
       return m.interrupted;
     }
     case "clear": {
-      logger.info(`[executor] sending /clear session=${session}`);
+      log.info(`sending /clear session=${session}`);
       await deps.bridge.sendKeys("/clear", session);
       // /clear starts a fresh session → a NEW transcript file; drop the cached
       // open-transcript so the next read/usage re-detects it (the resolver's
@@ -234,43 +230,43 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       return m.clearedContext;
     }
     case "compact": {
-      logger.info(`[executor] sending /compact session=${session}`);
+      log.info(`sending /compact session=${session}`);
       await deps.bridge.sendKeys("/compact", session);
       deps.configResolver.invalidate(session);
       return m.compactedContext;
     }
     case "enter": {
-      logger.info(`[executor] sending enter session=${session}`);
+      log.info(`sending enter session=${session}`);
       await deps.bridge.sendRawKey("C-m", session);
       return m.sentEnter;
     }
     case "up": {
-      logger.info(`[executor] sending up session=${session}`);
+      log.info(`sending up session=${session}`);
       await deps.bridge.sendRawKey("Up", session);
       return m.sentUp;
     }
     case "down": {
-      logger.info(`[executor] sending down session=${session}`);
+      log.info(`sending down session=${session}`);
       await deps.bridge.sendRawKey("Down", session);
       return m.sentDown;
     }
     case "left": {
-      logger.info(`[executor] sending left session=${session}`);
+      log.info(`sending left session=${session}`);
       await deps.bridge.sendRawKey("Left", session);
       return m.sentLeft;
     }
     case "right": {
-      logger.info(`[executor] sending right session=${session}`);
+      log.info(`sending right session=${session}`);
       await deps.bridge.sendRawKey("Right", session);
       return m.sentRight;
     }
     case "tab": {
-      logger.info(`[executor] sending tab session=${session}`);
+      log.info(`sending tab session=${session}`);
       await deps.bridge.sendRawKey("Tab", session);
       return m.sentTab;
     }
     case "status": {
-      logger.info(`[executor] checking status session=${session}`);
+      log.info(`checking status session=${session}`);
       const running = await deps.agent.checkIfRunning(session);
       const channel = msg.channel ?? "telegram";
       const profile = profileFor(await resolveAgentKind(deps.configResolver, session));

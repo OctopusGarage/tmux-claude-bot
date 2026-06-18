@@ -1,5 +1,7 @@
 import type { Context, NextFunction } from "grammy";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
+
+const log = createLogger("telegram.auth");
 
 /**
  * Whitelist check. Fails CLOSED: an empty allowlist rejects everyone, matching
@@ -24,8 +26,8 @@ export function createAuthGuard(allowedIds: Set<string>) {
       await next();
       return;
     }
-    logger.warn(
-      `[auth] rejected unauthorized update from user=${ctx.from?.id ?? "unknown"} chat=${ctx.chat?.id ?? "unknown"}`,
+    log.warn(
+      `rejected unauthorized update from user=${ctx.from?.id ?? "unknown"} chat=${ctx.chat?.id ?? "unknown"}`,
     );
   };
 }

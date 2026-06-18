@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AgentApiInfo, AgentKind } from "../../shared/types.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { isClaudeProcess, matchOpenClaudeTranscript } from "./claude/claude-process.js";
 import { isCodexProcess } from "./codex/codex-process.js";
 import { matchOpenCodexRollout } from "./codex/codex-rollout.js";
@@ -13,6 +13,8 @@ import type { ProcRow } from "../platform/introspector.js";
 import { type ProcessIntrospector, selectIntrospector } from "../platform/introspector.js";
 
 const execFileAsync = promisify(execFile);
+
+const log = createLogger("agents.config-resolver");
 
 /**
  * Extract an env var value from `ps eww -o command= -p <pid>` output (the env is
@@ -246,7 +248,7 @@ export function createConfigResolver(
         : (parseClaudeConfigDir(await probe.readProcEnv(pid)) ?? opts.defaultRoot);
     const entry: CacheEntry = { agentPid: pid, kind, home, checkedAt: probe.now() };
     cache.set(session, entry);
-    logger.info(`[config-resolver] session=${session} ${kind}Pid=${pid} home=${home}`);
+    log.info(`session=${session} ${kind}Pid=${pid} home=${home}`);
     return { entry, paneQueryable: true };
   };
 

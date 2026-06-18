@@ -54,6 +54,8 @@
         <li><a href="#telegram-commands">Telegram Commands</a></li>
         <li><a href="#voice-transcription-optional">Voice transcription</a></li>
         <li><a href="#agent-running-detection">Agent Running Detection</a></li>
+        <li><a href="#structured-logs">Structured Logs</a></li>
+        <li><a href="#dashboard">Dashboard</a></li>
       </ul>
     </li>
     <li><a href="#deployment--resilience">Deployment &amp; Resilience</a></li>
@@ -267,6 +269,8 @@ All settings via `.env`:
 | `MAX_MESSAGE_LENGTH` | `3500` | Max Telegram message size |
 | `TELEGRAM_ALLOWED_USER_IDS` | *(empty)* | Comma-separated Telegram user IDs that can use the bot |
 | `CD_ALLOWED_DIRS` | *(empty)* | Allowed directories for project creation |
+| `LOG_LEVEL` | `INFO` | Minimum log level written to the JSONL log (`DEBUG`\|`INFO`\|`WARN`\|`ERROR`) |
+| `TCB_LOG_DIR` | `~/.tmux-claude-bot/logs` | Directory for structured JSONL log files (overrides the default under `TCB_STATE_DIR`) |
 
 ### Session Naming
 
@@ -348,6 +352,40 @@ scraping: it walks the tmux pane's process tree (`pane_pid` → `ps`) and looks 
 agent process (`claude` or `codex`). Present → **running**; absent → **idle**. This is
 theme- and output-independent. (Readiness — "the agent finished loading" — is still
 detected from the pane, since the process exists before it is ready for input.)
+
+### Structured Logs
+
+The bot writes structured JSONL logs to `~/.tmux-claude-bot/logs/tcb-YYYYMMDD.jsonl` (one file per day, 30-day retention). Query them with the `tcb logs` CLI subcommand:
+
+```bash
+tcb logs                                # today's log (INFO+)
+tcb logs --level WARN                   # WARN and ERROR only
+tcb logs --session myapp                # filter by tmux session
+tcb logs --trace t_a1b2c3d4             # all lines from one request trace
+tcb logs --chat 123456                  # filter by chat id
+tcb logs --channel telegram             # filter by protocol adapter
+tcb logs --component core.queue         # filter by logger component
+tcb logs --grep "timeout"               # substring match on msg
+tcb logs --days 3 -n 50                 # last 50 lines from the past 3 days
+tcb logs --json                         # output raw JSON lines
+```
+
+From within the chat, `/logs` (owner-only) shows recent WARN/ERROR entries for the current session. `/logs <traceId>` filters to one trace; `/logs N` shows the last N entries.
+
+### Dashboard
+
+Get a global status snapshot of all managed sessions with the `tcb dashboard` CLI subcommand:
+
+```bash
+tcb dashboard          # human-readable snapshot of all sessions
+tcb dashboard --json   # raw JSON snapshot (DashboardSnapshot)
+```
+
+Each session row shows: agent kind, busy/idle state + current-task duration, uptime, cumulative busy time, and `/status` usage (context %, rate-limit state). The global header shows bot uptime, version, session count, active sessions, queue depth, and which adapters (Telegram/Lark) are enabled.
+
+From within the chat, `/dashboard` (owner-only) shows the same information. On Lark it is restricted to p2p (direct) messages.
+
+The snapshot is on-demand — there is no live auto-refresh.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

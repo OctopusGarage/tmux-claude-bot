@@ -1,5 +1,7 @@
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { timeApi } from "../../shared/utils/timing.js";
+
+const log = createLogger("telegram.callback-utils");
 
 export interface AnswerableCtx {
   answerCallbackQuery(other?: { text?: string }): Promise<unknown>;
@@ -17,8 +19,6 @@ export async function safeAnswerCallback(ctx: AnswerableCtx, text?: string): Pro
       ctx.answerCallbackQuery(text !== undefined ? { text } : undefined),
     );
   } catch (err) {
-    logger.warn(
-      `[callback] answerCallbackQuery failed: ${err instanceof Error ? err.message : err}`,
-    );
+    log.warn(`answerCallbackQuery failed: ${err instanceof Error ? err.message : err}`);
   }
 }

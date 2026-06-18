@@ -1,9 +1,13 @@
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
-import { logger } from "../../shared/utils/logger.js";
+import { runWithLogContext } from "../../shared/utils/log-context.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { Queue } from "../../shared/utils/queue.js";
 import type { Channel } from "../projects/project-manager.js";
+import { taskEnded, taskStarted } from "../session/task-timing.js";
+
+const log = createLogger("command.queue");
 
 // Re-exported from its canonical home (project-manager) so there is a single
 // Channel type across core; QueuedMessage carries it, so queue consumers import
@@ -17,6 +21,7 @@ export type QueuedMessage = {
   channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
+  traceId?: string | undefined;
   resolve: (output: string) => void;
   reject: (err: Error) => void;
   /** Optional interim-progress channel: sends a message to the chat while the
@@ -31,6 +36,7 @@ export type PersistedMessage = {
   channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
+  traceId?: string | undefined;
 };
 
 export type QueueHandler = (msg: QueuedMessage) => Promise<void>;
@@ -96,6 +102,7 @@ export class MessageQueue {
         channel: msg.channel,
         sessionName: msg.sessionName,
         action: msg.action,
+        traceId: msg.traceId,
       });
     }
     for (const queue of this.sessionQueues.values()) {
@@ -107,21 +114,30 @@ export class MessageQueue {
           channel: msg.channel,
           sessionName: msg.sessionName,
           action: msg.action,
+          traceId: msg.traceId,
         });
       }
     }
     try {
       fs.writeFileSync(this.persistPath, JSON.stringify(messages, null, 2), "utf-8");
-    } catch {
-      // ignore persist failures
+    } catch (err) {
+      // Best-effort, but a failure means queued work won't survive a restart.
+      log.warn("failed to persist queue backlog", { err, data: { count: messages.length } });
     }
   }
 
   loadPersisted(): PersistedMessage[] {
+    let raw: string;
     try {
-      const raw = fs.readFileSync(this.persistPath, "utf-8");
-      return JSON.parse(raw) as PersistedMessage[];
+      raw = fs.readFileSync(this.persistPath, "utf-8");
     } catch {
+      return []; // no backlog file — the normal cold-start case, not an error
+    }
+    try {
+      return JSON.parse(raw) as PersistedMessage[];
+    } catch (err) {
+      // The file exists but is corrupt — surface it, the backlog is being dropped.
+      log.warn("failed to parse persisted queue backlog — dropping it", { err });
       return [];
     }
   }
@@ -181,8 +197,8 @@ export class MessageQueue {
    * (e.g. a blocked debounce scope) must release them on "duplicate". */
   enqueue(msg: QueuedMessage): "queued" | "duplicate" | false {
     if (msg.action === "text" && this.hasDuplicateText(msg.chatId, msg.text)) {
-      logger.info(
-        `[queue] dedup: skipping identical text from chatId=${msg.chatId} session=${msg.sessionName ?? "global"}`,
+      log.info(
+        `dedup: skipping identical text from chatId=${msg.chatId} session=${msg.sessionName ?? "global"}`,
       );
       return "duplicate";
     }
@@ -194,20 +210,18 @@ export class MessageQueue {
         this.sessionQueues.set(msg.sessionName, queue);
       }
       if (!queue.enqueue(msg)) {
-        logger.warn(`[queue] enqueue rejected: session=${msg.sessionName} queue full`);
+        log.warn(`enqueue rejected: session=${msg.sessionName} queue full`);
         return false;
       }
-      logger.info(
-        `[queue] enqueued session=${msg.sessionName} action=${msg.action} msgId=${msg.id}`,
-      );
+      log.info(`enqueued session=${msg.sessionName} action=${msg.action} msgId=${msg.id}`);
       this.persist();
       void this.processSession(msg.sessionName);
     } else {
       if (!this.globalQueue.enqueue(msg)) {
-        logger.warn(`[queue] enqueue rejected: global queue full`);
+        log.warn(`enqueue rejected: global queue full`);
         return false;
       }
-      logger.info(`[queue] enqueued global action=${msg.action} msgId=${msg.id}`);
+      log.info(`enqueued global action=${msg.action} msgId=${msg.id}`);
       this.persist();
       void this.processGlobal();
     }
@@ -289,26 +303,43 @@ export class MessageQueue {
    * No retry: the handler drives tmux (`sendKeys`), which is not idempotent to
    * replay — re-running it would type the same prompt into the pane again.
    */
-  private async runHandler(msg: QueuedMessage, sessionName: string): Promise<void> {
+  private async runHandler(msg: QueuedMessage, sessionName: string | undefined): Promise<void> {
+    // A real tmux session times its task; the bot-level pseudo-queue (sessionName
+    // undefined) does not — timing it would persist a key into the per-session
+    // task-time store that clearTaskTiming, seeing only real session names, never
+    // clears. Keying on presence (not a "global" sentinel) keeps the decision in
+    // the types and lets a session literally named "global" time correctly.
+    if (sessionName !== undefined) taskStarted(sessionName);
+    const label = sessionName ?? "global";
     try {
-      await this.handler?.(msg);
-      logger.info(`[queue] handler completed session=${sessionName} msgId=${msg.id}`);
+      await runWithLogContext(
+        {
+          ...(msg.traceId !== undefined && { traceId: msg.traceId }),
+          ...(msg.sessionName !== undefined && { session: msg.sessionName }),
+          chatId: msg.chatId,
+          ...(msg.channel !== undefined && { channel: msg.channel }),
+        },
+        () => this.handler?.(msg) ?? Promise.resolve(),
+      );
+      log.info(`handler completed session=${label} msgId=${msg.id}`);
     } catch (err) {
       const e = normalizeError(err);
-      logger.error(`[queue] handler threw session=${sessionName} msgId=${msg.id}: ${e.message}`);
+      log.error(`handler threw session=${label} msgId=${msg.id}: ${e.message}`);
       msg.reject(e); // one-shot: a no-op if the handler already settled
+    } finally {
+      if (sessionName !== undefined) taskEnded(sessionName);
     }
   }
 
   private async processSession(sessionName: string): Promise<void> {
     if (this.processingSessions.has(sessionName)) {
-      logger.info(`[queue] processSession already processing session=${sessionName}`);
+      log.info(`processSession already processing session=${sessionName}`);
       return;
     }
 
     if (this.processingSessions.size >= this.maxConcurrentSessions) {
-      logger.info(
-        `[queue] concurrent limit reached (${this.processingSessions.size}/${this.maxConcurrentSessions}), deferring session=${sessionName}`,
+      log.info(
+        `concurrent limit reached (${this.processingSessions.size}/${this.maxConcurrentSessions}), deferring session=${sessionName}`,
       );
       // Two deferred timers for the same session can both fire when a slot frees,
       // but this is NOT a double-processing bug: the guard above and the
@@ -330,10 +361,10 @@ export class MessageQueue {
     const msg = queue.dequeue()!;
     this.processingSessions.add(sessionName);
     this.currentSessionMessage.set(sessionName, msg);
-    logger.info(`[queue] processing session=${sessionName} action=${msg.action} msgId=${msg.id}`);
+    log.info(`processing session=${sessionName} action=${msg.action} msgId=${msg.id}`);
 
     if (!this.handler) {
-      logger.error(`[queue] handler not set session=${sessionName}`);
+      log.error(`handler not set session=${sessionName}`);
       this.processingSessions.delete(sessionName);
       this.currentSessionMessage.delete(sessionName);
       msg.reject(new Error("Queue handler not set"));
@@ -352,32 +383,32 @@ export class MessageQueue {
 
   private async processGlobal(): Promise<void> {
     if (this.processingGlobal) {
-      logger.info("[queue] processGlobal already running");
+      log.info("processGlobal already running");
       return;
     }
     this.processingGlobal = true;
-    logger.info("[queue] processGlobal started");
+    log.info("processGlobal started");
 
     try {
       while (!this.globalQueue.isEmpty()) {
         const msg = this.globalQueue.dequeue()!;
         this.currentGlobalMessage = msg;
-        logger.info(`[queue] processing global action=${msg.action} msgId=${msg.id}`);
+        log.info(`processing global action=${msg.action} msgId=${msg.id}`);
 
         if (!this.handler) {
-          logger.error("[queue] handler not set for global message");
+          log.error("handler not set for global message");
           this.currentGlobalMessage = undefined;
           msg.reject(new Error("Queue handler not set"));
           continue;
         }
 
-        await this.runHandler(msg, "global");
+        await this.runHandler(msg, undefined);
         this.currentGlobalMessage = undefined;
       }
     } finally {
       this.processingGlobal = false;
       this.persist();
-      logger.info("[queue] processGlobal finished");
+      log.info("processGlobal finished");
     }
   }
 

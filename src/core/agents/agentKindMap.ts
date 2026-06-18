@@ -1,6 +1,9 @@
+import { createLogger } from "../../shared/utils/logger.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 import type { ConfigResolver } from "./agent-config-resolver.js"; // type-only — no cycle
 import type { AgentKind } from "./types.js";
+
+const log = createLogger("agents.kind");
 
 /** Persisted map of tmux session name → which agent it runs. A session absent
  * from the map predates codex support (or is a claude session) → defaults to
@@ -32,6 +35,10 @@ export async function resolveAgentKind(
 ): Promise<AgentKind> {
   const live = await resolver.detectAgentKind?.(session);
   if (live == null) return getAgentKind(session);
-  if (getAgentKind(session) !== live) setAgentKind(session, live);
+  const stored = getAgentKind(session);
+  if (stored !== live) {
+    setAgentKind(session, live);
+    log.info("self-healed kind", { session, data: { from: stored, to: live } });
+  }
   return live;
 }

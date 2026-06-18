@@ -4,9 +4,13 @@ import { profileFor } from "../../core/agents/registry.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
 import { buildHelpBody, getTelegramActions } from "../../core/command/action-registry.js";
+import { buildDashboard } from "../../core/dashboard/dashboard.js";
+import { formatDashboardForChat } from "../../core/dashboard/dashboard-view.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
+import { queryLogs } from "../../core/logs/log-query.js";
+import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
 import {
   createSubfolder,
   isAwaitingFolderName,
@@ -19,7 +23,7 @@ import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
 import {
@@ -54,17 +58,22 @@ import {
   sendStatusInstall,
 } from "./views.js";
 
+const log = createLogger("telegram.handlers");
+
 export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: ReplyTargetMap): void {
   // Restore this channel's persisted backlog on boot. Drop ONLY the Telegram
   // channel — Lark restores + drops its own in startLark, so a Telegram+Lark
   // deployment loses neither side's queue regardless of which starts first.
   const persisted = deps.queue.loadPersisted();
   if (persisted.length > 0) {
+    let restored = 0;
     for (const p of persisted) {
       if (p.channel === "lark") continue; // Lark restores its own (startLark)
       deps.queue.enqueue(createRestoredMessage(p, bot));
+      restored++;
     }
     deps.queue.clearPersistedChannel("telegram"); // legacy no-channel entries count as telegram
+    if (restored > 0) log.info("queue restored", { channel: "telegram", data: { restored } });
   }
 
   bot.command("lang", async (ctx) => {
@@ -253,6 +262,39 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     await sendHistory(ctx, deps, session, index, replyTarget);
   });
 
+  // Owner-only (the auth guard drops non-allowlisted users before this runs).
+  // Shows recent WARN/ERROR for the current session, a specific trace, or the
+  // last N — rendered as a code block.
+  bot.command("logs", async (ctx) => {
+    const arg = (ctx.message?.text ?? "").split(/\s+/).slice(1)[0]?.trim();
+    const session = await resolveSessionFromReply(ctx, replyTarget, deps);
+    const filter = logsArgToFilter(arg, session ?? undefined);
+    if (!filter) {
+      await reply(ctx, "err", messages("telegram").noLogsContext);
+      return;
+    }
+    const body = formatLogsForChat(queryLogs(filter), { maxChars: 3500 });
+    await reply(ctx, "view", messages("telegram").logsTitle, {
+      session: session ?? undefined,
+      body,
+      code: true,
+      replyTarget,
+    });
+  });
+
+  // Owner-only (the auth guard drops non-allowlisted users before this runs).
+  // Renders the global dashboard — every live session plus bot-level totals — as
+  // a code block.
+  bot.command("dashboard", async (ctx) => {
+    const snap = await buildDashboard(deps);
+    const body = formatDashboardForChat(snap, { maxChars: 3500 });
+    await reply(ctx, "view", messages("telegram").dashboardTitle, {
+      body,
+      code: true,
+      replyTarget,
+    });
+  });
+
   bot.command("ws", async (ctx) => {
     const raw = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
     await runWorkspaceCommand(deps, "telegram", String(ctx.chat?.id ?? 0), raw, (kind, text) =>
@@ -267,10 +309,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
     const chatId = ctx.chat?.id ?? "unknown";
-    logger.info(`[handlers] message received chat=${chatId} text_len=${text.length}`);
+    log.info(`message received chat=${chatId} text_len=${text.length}`);
 
     if (text.length > deps.config.maxInboundLength) {
-      logger.warn(`[handlers] message too long chat=${chatId} len=${text.length}`);
+      log.warn(`message too long chat=${chatId} len=${text.length}`);
       await reply(
         ctx,
         "err",
@@ -317,9 +359,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     if (replyToMsg) {
       targetSession = replyTarget.resolveReplyTarget(replyToMsg.message_id);
       if (targetSession) {
-        logger.info(
-          `[handlers] reply detected msgId=${replyToMsg.message_id} → session=${targetSession}`,
-        );
+        log.info(`reply detected msgId=${replyToMsg.message_id} → session=${targetSession}`);
       }
     }
 
@@ -369,22 +409,22 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
     const currentSessionName = targetSession ?? (await deps.currentProject.get(tgScope(ctx)));
     if (!currentSessionName) {
-      logger.warn(`[handlers] no current session chat=${chatId}`);
+      log.warn(`no current session chat=${chatId}`);
       await reply(ctx, "err", MSG.noSession);
       return;
     }
     replyTarget.record(ctx.message.message_id, currentSessionName);
-    logger.info(
-      `[handlers] currentSession=${currentSessionName} chat=${chatId} via=${targetSession ? "reply" : "currentProject"}`,
+    log.info(
+      `currentSession=${currentSessionName} chat=${chatId} via=${targetSession ? "reply" : "currentProject"}`,
     );
     const isRunning = await deps.agent.checkIfRunning(currentSessionName);
     if (isRunning) {
-      logger.info(`[handlers] enqueuing text message session=${currentSessionName} chat=${chatId}`);
+      log.info(`enqueuing text message session=${currentSessionName} chat=${chatId}`);
       await runPromptWithProgress(ctx, deps, currentSessionName, text, replyTarget);
       return;
     }
 
-    logger.warn(`[handlers] claude not running session=${currentSessionName} chat=${chatId}`);
+    log.warn(`claude not running session=${currentSessionName} chat=${chatId}`);
     await reply(ctx, "err", MSG.notRunning);
   });
 }

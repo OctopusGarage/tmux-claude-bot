@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { currentLogContext } from "../../shared/utils/log-context.js";
 import type { Channel, MessageQueue } from "./queue.js";
 
 /** A unique-enough id for a queued message (timestamp + random suffix). */
@@ -51,6 +52,7 @@ export async function enqueueMessage(
   acks: EnqueueAcks,
 ): Promise<"queued" | "duplicate" | false> {
   const queueSizeBefore = req.queue.size(req.session);
+  const traceId = currentLogContext().traceId;
   const verdict = req.queue.enqueue({
     id: newMessageId(),
     text: req.text,
@@ -58,6 +60,7 @@ export async function enqueueMessage(
     channel: req.channel,
     sessionName: req.session,
     action: req.action,
+    ...(traceId !== undefined && { traceId }),
     resolve: req.callbacks.resolve,
     reject: req.callbacks.reject,
     notify: req.callbacks.notify,

@@ -9,11 +9,19 @@
  * postinstall: installing the package must never touch the user's system.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { appVersion } from "./shared/version.js";
+
+// Operational logs mirror to stdout only for the bot itself (the `run` command,
+// whose stdout launchd captures). Every OTHER subcommand prints machine/CLI
+// output to stdout, so default the logger's stdout mirror OFF here and let `run`
+// re-enable it — keeping `--json` and query output clean for all data commands
+// without each one having to remember the flag. (The JSONL log file is written
+// regardless; only the stdout mirror is suppressed.)
+process.env.TCB_LOG_QUIET ??= "1";
 
 // dist/cli.js -> package root is one level up. Works the same when this file is
 // run from source (src/cli.ts) via tsx.
@@ -26,11 +34,6 @@ const SCRIPTS = join(PKG_ROOT, "scripts");
 const MANAGED_DIR = process.env.TMUX_CLAUDE_BOT_DIR ?? join(homedir(), ".tmux-claude-bot");
 const IS_MANAGED = resolve(PKG_ROOT) === resolve(MANAGED_DIR);
 
-function version(): string {
-  const pkg = JSON.parse(readFileSync(join(PKG_ROOT, "package.json"), "utf8"));
-  return pkg.version ?? "0.0.0";
-}
-
 /** Run one of the project's bash scripts, inheriting stdio, and exit with its code. */
 function runScript(file: string, args: string[] = []): never {
   const res = spawnSync("bash", [join(SCRIPTS, file), ...args], { stdio: "inherit" });
@@ -42,12 +45,15 @@ const program = new Command();
 program
   .name("tmux-claude-bot")
   .description("Telegram/Feishu bot that drives Claude Code in tmux sessions")
-  .version(version(), "-v, --version");
+  .version(appVersion(), "-v, --version");
 
 program
   .command("run")
   .description("run the bot in the foreground (what the launchd service execs)")
   .action(async () => {
+    // The bot owns stdout for launchd/`tail -f`, so re-enable the logger's stdout
+    // mirror that the CLI defaults off (see TCB_LOG_QUIET note at top).
+    delete process.env.TCB_LOG_QUIET;
     // index.ts starts the bot via top-level side effects on import.
     await import("./index.js");
   });
@@ -121,6 +127,56 @@ for (const action of ["status", "pause", "resume", "restart", "logs"] as const) 
     .description(`service.sh ${action}`)
     .action(() => runScript("service.sh", [action]));
 }
+
+program
+  .command("dashboard")
+  .description("Show a global status dashboard of all sessions")
+  .option("--json", "output the raw snapshot as JSON")
+  .action(async (o) => {
+    try {
+      // stdout stays clean for the snapshot (esp. --json) via the CLI-wide
+      // TCB_LOG_QUIET default set at the top of this file.
+      const { bootstrap } = await import("./bootstrap.js");
+      const { buildDashboard } = await import("./core/dashboard/dashboard.js");
+      const { formatDashboardText } = await import("./core/dashboard/dashboard-view.js");
+      const deps = bootstrap();
+      const snap = await buildDashboard(deps);
+      process.stdout.write(
+        o.json ? `${JSON.stringify(snap, null, 2)}\n` : `${formatDashboardText(snap)}\n`,
+      );
+      process.exit(0); // bootstrap starts a live fs.watch (activity watcher) that would otherwise hang the process
+    } catch (err) {
+      process.stderr.write(
+        `dashboard failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("logs")
+  .description("Query the structured logs")
+  .option("--session <name>")
+  .option("--trace <id>")
+  .option("--chat <id>")
+  .option("--channel <ch>")
+  .option("--component <prefix>")
+  .option("--level <level>", "minimum level (DEBUG|INFO|WARN|ERROR)")
+  .option("--grep <text>")
+  .option("--days <n>", "how many daily files back to read", "1")
+  .option("-n, --n <count>", "keep the last N")
+  .option("--json", "output JSON lines")
+  .action(async (o) => {
+    const { argsToFilter, queryLogs } = await import("./core/logs/log-query.js");
+    const recs = queryLogs(argsToFilter(o), Number.parseInt(o.days, 10));
+    for (const r of recs) {
+      if (o.json) process.stdout.write(`${JSON.stringify(r)}\n`);
+      else
+        process.stdout.write(
+          `${r.ts} ${r.level} ${r.component ?? "-"} ${r.traceId ?? "-"} ${r.msg}\n`,
+        );
+    }
+  });
 
 program.parseAsync().catch((err) => {
   // An async action (e.g. `run`) rejecting would otherwise be an unhandled

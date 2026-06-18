@@ -308,6 +308,16 @@ export const ja: Messages = {
   resumeStarted: (id) => `✅ セッション ${id} を再開しました`,
   cmdSessions: "過去のセッションを閲覧・再開",
 
+  // ── logs ──
+  cmdLogs: "最近の警告・エラーログを表示（/logs <traceId|N>）",
+  logsTitle: "🪵 最近のログ",
+
+  // ── dashboard ──
+  cmdDashboard: "グローバルダッシュボードを表示（全セッションの状態概要）",
+  dashboardTitle: "📊 ダッシュボード",
+  noLogsContext:
+    "現在のプロジェクトがありません。プロジェクトを選択するか trace を指定してください（/logs <traceId>）。",
+
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label, path) =>
     `🎉 グループを **${label}** に紐付けました\n\`${path}\`\n\n@ なしでそのまま入力できます。`,

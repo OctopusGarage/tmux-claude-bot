@@ -7,12 +7,14 @@ import {
 } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { makeCardActionHandler } from "./card-actions.js";
 import { createLarkRestoredMessage } from "./executor.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
 import { notifyLarkOwner } from "./resource.js";
+
+const log = createLogger("lark.start");
 
 /**
  * Options for the SDK's `createLarkChannel`. Extracted (and exported) so the
@@ -67,7 +69,7 @@ export function larkChannelOptions(
 export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolean } = {}): void {
   const cfg = deps.config.lark;
   if (!cfg) {
-    logger.info("[lark] disabled — skipping (run `npm run setup:lark` to onboard via QR scan)");
+    log.info("disabled — skipping (run `npm run setup:lark` to onboard via QR scan)");
     return;
   }
   const domain = cfg.domain === "lark" ? Domain.Lark : Domain.Feishu;
@@ -78,11 +80,14 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
   // Restore this channel's persisted backlog so a bot restart doesn't drop
   // queued Lark messages (parity with Telegram). Each adapter restores + drops
   // ONLY its own channel, so a Telegram+Lark deployment loses neither side.
+  let restored = 0;
   for (const p of deps.queue.loadPersisted()) {
     if (p.channel !== "lark") continue;
     deps.queue.enqueue(createLarkRestoredMessage(p, channel));
+    restored++;
   }
   deps.queue.clearPersistedChannel("lark");
+  if (restored > 0) log.info("queue restored", { channel: "lark", data: { restored } });
   // App-level WS watchdog — catches half-open sockets after laptop sleep /
   // network flaps that the SDK's own reconnect loop can miss. Ticks are
   // no-ops until connect() initializes the WS client.
@@ -97,7 +102,7 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
   channel
     .connect()
     .then(() => {
-      logger.info(`[lark] connected (domain=${cfg.domain}, app=${cfg.appId})`);
+      log.info(`connected (domain=${cfg.domain}, app=${cfg.appId})`);
       // Mirror Telegram: after a launchd auto-recovery, DM the owner that the bot
       // restarted from a crash. Best-effort. Disable with TCB_STARTUP_NOTIFY=0.
       if (opts.recoveredFromCrash && process.env.TCB_STARTUP_NOTIFY !== "0") {
@@ -105,13 +110,9 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
           cfg,
           messages("lark").crashRecovered(new Date().toLocaleString()),
         ).catch((err) =>
-          logger.warn(
-            `[lark] owner crash-alert failed: ${err instanceof Error ? err.message : err}`,
-          ),
+          log.warn(`owner crash-alert failed: ${err instanceof Error ? err.message : err}`),
         );
       }
     })
-    .catch((err) =>
-      logger.error(`[lark] connect failed: ${err instanceof Error ? err.message : err}`),
-    );
+    .catch((err) => log.error(`connect failed: ${err instanceof Error ? err.message : err}`));
 }

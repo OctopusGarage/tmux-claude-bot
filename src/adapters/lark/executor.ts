@@ -8,11 +8,13 @@ import { isProjectGroup } from "../../core/projects/group-bindings.js";
 import { projectLabel } from "../../core/projects/project-label.js";
 import { chatScope } from "../../core/projects/project-manager.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { recoveryCard, resultCard } from "./cards.js";
 import { markDone, markWorking } from "./reactions.js";
 import { sendCard, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
+
+const log = createLogger("lark.executor");
 
 /** "📂 <friendly project>" tag stamped on every reply so the user can see which
  * tmux session received it — mirrors the Telegram adapter's project line. */
@@ -120,7 +122,7 @@ export async function enqueueLarkAction(
       text,
       callbacks: {
         resolve: (output) => {
-          logger.info(`[lark] resolve session=${session} output_len=${output.length}`);
+          log.info(`resolve session=${session} output_len=${output.length}`);
           onSettled?.();
           void markDone(channel, messageId);
           void (async () => {
@@ -145,7 +147,7 @@ export async function enqueueLarkAction(
           void sendText(channel, chatId, `${text}\n\n${projectTag(session)}`);
         },
         reject: (err) => {
-          logger.error(`[lark] reject session=${session} err=${err.message}`);
+          log.error(`reject session=${session} err=${err.message}`);
           onSettled?.();
           // Errors often mean Claude died / isn't running — surface start/restart.
           void sendCard(
@@ -161,9 +163,7 @@ export async function enqueueLarkAction(
     },
     {
       accepted: async (queueSizeBefore) => {
-        logger.info(
-          `[lark] enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`,
-        );
+        log.info(`enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`);
         void markWorking(channel, messageId);
         // Mirror Telegram's tone emoji (✅ received / ⏳ queued) so both channels
         // read the same — Feishu has no tone layer, so it's stamped here.
@@ -172,7 +172,7 @@ export async function enqueueLarkAction(
         await sendText(channel, chatId, `${ack}\n${tag}`);
       },
       full: async () => {
-        logger.warn(`[lark] queue full session=${session} max=${deps.queue.getMaxSize()}`);
+        log.warn(`queue full session=${session} max=${deps.queue.getMaxSize()}`);
         onSettled?.();
         await sendText(channel, chatId, `⚠️ ${m.queueFull(deps.queue.getMaxSize())}\n${tag}`);
       },
@@ -220,9 +220,7 @@ export async function runImmediateLarkAction(
     await sendText(channel, chatId, `${result}\n\n${projectTag(session)}`);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    logger.error(
-      `[lark] immediate action failed action=${action} session=${session} err=${errMsg}`,
-    );
+    log.error(`immediate action failed action=${action} session=${session} err=${errMsg}`);
     await sendCard(
       channel,
       chatId,

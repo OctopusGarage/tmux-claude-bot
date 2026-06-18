@@ -3,6 +3,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { agentGlyph } from "../../shared/types.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { expandTilde } from "../../shared/utils/path.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { listClaudeSessions, projectPathToHistoryDir } from "../agents/claude/claude-history.js";
@@ -10,6 +11,7 @@ import { findRolloutForProject } from "../agents/codex/codex-rollout.js";
 import { clearLiveSessionId } from "../agents/live-session-id.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
+import { clearTaskTiming } from "../session/task-timing.js";
 import {
   allocateFreeSlot,
   freeLabel,
@@ -30,6 +32,8 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "./sessionPathMap.js";
+
+const log = createLogger("projects.project-ops");
 
 /** Outcome of validating a raw `/add_project` path. `resolvedPath` is always the
  * expanded absolute path (handy for the error message); `error` says why it was
@@ -127,11 +131,14 @@ export type CreateFreeResult =
 export async function allocateFreeSlotPruned(deps: HandlerDeps): Promise<number | null> {
   const live = new Set(await deps.bridge.listProjectSessions());
   const prefix = deps.config.projectSessionPrefix;
+  const pruned: number[] = [];
   for (const slot of listFreeSlots()) {
     const name = freeSessionName(prefix, slot);
     if (live.has(name) || bindingForSession(name)) continue;
     releaseFreeSlot(slot);
+    pruned.push(slot);
   }
+  if (pruned.length > 0) log.info("free slots pruned", { data: { slots: pruned } });
   return allocateFreeSlot();
 }
 
@@ -158,6 +165,7 @@ export async function createFreeProject(
     await deps.bridge.createSession(sessionName); // bare: no cwd argv
     setFreeProject(slot, { label: label.trim() || null }); // after createSession: no orphan slot on failure
     await deps.currentProject.set(scope, sessionName);
+    log.info("free project created", { session: sessionName, data: { channel: scope, slot } });
     return { status: "created", sessionName, slot };
   } catch (err) {
     return { status: "error", message: normalizeError(err).message };
@@ -215,6 +223,7 @@ export async function createProjectSession(
   setPathForSession(sessionName, projectPath);
   await deps.currentProject.set(channel, sessionName);
   await appendRecentProject(projectPath, deps.config.projectSessionPrefix);
+  log.info("project created", { session: sessionName, data: { channel, projectPath } });
 }
 
 /** Make `sessionName` the current project FOR THIS CHANNEL and bump it in the
@@ -229,6 +238,7 @@ export async function switchToProject(
   if (projectPath) {
     await appendRecentProject(projectPath, deps.config.projectSessionPrefix);
   }
+  log.info("project switched", { session: sessionName, data: { channel } });
 }
 
 /**
@@ -285,6 +295,7 @@ export async function removeProjectBySession(
   await deps.bridge.killSession(sessionName);
   deps.configResolver.invalidate(sessionName);
   clearLiveSessionId(sessionName); // drop the last-observed id (a reused free slot must not read it)
+  clearTaskTiming(sessionName); // drop cumulative + in-flight timing (a reused name must not read stale data)
   // The session is gone — drop it from any channel that had it as current.
   await deps.currentProject.clearSession(sessionName);
   // A free project owns a registry slot — free it so the number can be reused.
@@ -298,6 +309,10 @@ export async function removeProjectBySession(
     if (bound) unbindGroup(bound.chatId);
     releaseFreeSlot(freeSlot);
   }
+  log.info("project removed", {
+    session: sessionName,
+    data: { wasRunning: isRunning, ...(freeSlot !== null ? { freeSlot } : {}) },
+  });
 }
 
 /**

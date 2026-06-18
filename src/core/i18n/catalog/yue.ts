@@ -299,6 +299,15 @@ export const yue: Messages = {
   resumeStarted: (id) => `✅ 已恢復會話 ${id}`,
   cmdSessions: "瀏覽並恢復歷史會話",
 
+  // ── logs ──
+  cmdLogs: "查看近期警告/錯誤日誌（/logs <traceId|N>）",
+  logsTitle: "🪵 近期日誌",
+
+  // ── dashboard ──
+  cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
+  dashboardTitle: "📊 儀表板",
+  noLogsContext: "沒有當前項目，請先選擇項目或指定 trace（/logs <traceId>）。",
+
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label, path) =>
     `🎉 群組已綁定至 **${label}**\n\`${path}\`\n\n直接傳送訊息即可，無需 @ 機器人。`,

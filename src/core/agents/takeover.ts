@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import { SHELL_RC_FILES } from "../../shared/shell-rc.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { type ProcessIntrospector, selectIntrospector } from "../platform/introspector.js";
 import { createExecProbe, type ProcRow, parseEnvVar } from "./agent-config-resolver.js";
 import { isClaudeProcess, matchOpenClaudeTranscript } from "./claude/claude-process.js";
@@ -16,6 +16,8 @@ import type { AgentKind, AgentProfile } from "./types.js";
 export { buildCodexResumeCommand, buildResumeCommand, SKIP_PERMS } from "./resume-command.js";
 
 const execFileAsync = promisify(execFile);
+
+const log = createLogger("agents.takeover");
 
 // Claude continuously persists each completed turn to its session `.jsonl`, so a
 // brief pause after a soft interrupt is enough for in-flight work to land on
@@ -239,7 +241,7 @@ export async function takeover(orphan: OrphanAgent, deps: TakeoverDeps): Promise
     await probe.sleep(500);
   }
   if (await probe.isAlive(orphan.pid)) {
-    logger.warn(`[takeover] pid=${orphan.pid} would not die`);
+    log.warn(`pid=${orphan.pid} would not die`);
     return { ok: false, sessionName: "", resumed: false, reason: "process_would_not_die" };
   }
 
@@ -256,8 +258,8 @@ export async function takeover(orphan: OrphanAgent, deps: TakeoverDeps): Promise
     }
     await probe.sleep(READY_POLL_MS);
   }
-  logger.info(
-    `[takeover] pid=${orphan.pid} -> session=${sessionName} resumed=${orphan.sessionId !== null} ok=${running}`,
+  log.info(
+    `pid=${orphan.pid} -> session=${sessionName} resumed=${orphan.sessionId !== null} ok=${running}`,
   );
   const result: TakeoverResult = {
     ok: running,

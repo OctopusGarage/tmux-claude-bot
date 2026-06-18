@@ -23,9 +23,10 @@ vi.mock("../../../src/adapters/telegram/executor.js", () => ({
   handleQueuedCommand: vi.fn(),
   createRestoredMessage: vi.fn(),
 }));
-vi.mock("../../../src/shared/utils/logger.js", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
+vi.mock("../../../src/shared/utils/logger.js", () => {
+  const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return { logger: log, createLogger: () => log };
+});
 
 import { registerHandlers } from "../../../src/adapters/telegram/handlers.js";
 import { runPromptWithProgress } from "../../../src/adapters/telegram/prompt-lifecycle.js";

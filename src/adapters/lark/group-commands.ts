@@ -25,11 +25,13 @@ import { readRecentProjectLines } from "../../core/projects/recentProjects.js";
 import { sessionNameFromPath } from "../../core/projects/sessionPathMap.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { helpCard } from "./cards.js";
 import { chatKindOf, checkAction, type ProjectAction } from "./chat-policy.js";
 import { sendCard, sendText } from "./replies.js";
 import { createBoundChat } from "./resource.js";
+
+const log = createLogger("lark.group-commands");
 
 const m = () => messages("lark");
 
@@ -95,7 +97,7 @@ export async function makeBoundGroupBySid(
   inviteOpenId: string,
 ): Promise<void> {
   if (!deps.config.lark) {
-    logger.warn("[lark] makegroup with no lark config (unreachable)");
+    log.warn("makegroup with no lark config (unreachable)");
     return;
   }
   const path = await recentPathByShortId(deps, sid);
@@ -144,7 +146,7 @@ async function createFreeGroupAtPath(
   inviteOpenId: string,
 ): Promise<void> {
   if (!deps.config.lark) {
-    logger.warn("[lark] free group with no lark config (unreachable)");
+    log.warn("free group with no lark config (unreachable)");
     return;
   }
   const slot = await allocateFreeSlotPruned(deps);
@@ -276,7 +278,7 @@ export async function handleNewGroup(
   const target = await resolveOrReply(channel, deps, chatId, arg);
   if (!target) return;
   if (!deps.config.lark) {
-    logger.warn("[lark] /newgroup with no lark config (unreachable)");
+    log.warn("/newgroup with no lark config (unreachable)");
     return;
   }
 
@@ -375,5 +377,5 @@ export async function handleRestore(
   } else {
     await sendText(channel, chatId, m().groupRestored(binding.label));
   }
-  logger.info(`[lark] /restore chat=${chatId} status=${r.status}`);
+  log.info(`/restore chat=${chatId} status=${r.status}`);
 }

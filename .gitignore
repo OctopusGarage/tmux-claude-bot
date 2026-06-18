@@ -12,6 +12,7 @@ coverage/
 .queue/
 .playwright-cli/
 logs/
+!src/core/logs/
 .bot.pid
 # Ignore local Claude settings, but track shared slash commands and the
 # shared AI-agent quality-gate hooks (settings.local.json stays ignored).

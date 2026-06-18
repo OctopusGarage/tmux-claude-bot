@@ -1,8 +1,10 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import { messages } from "../../core/i18n/index.js";
 import { normalizeError } from "../../shared/utils/error.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { textOrPlaceholder } from "./format.js";
+
+const log = createLogger("lark.replies");
 
 /** Send a plain text/markdown reply. Never throws — failures are logged and
  * swallowed so they cannot bubble into the channel's message handler. */
@@ -14,9 +16,7 @@ export async function sendText(
   try {
     await channel.send(chatId, { markdown: textOrPlaceholder(output) });
   } catch (err) {
-    logger.error(
-      `[lark] sendText failed chat=${chatId}: ${err instanceof Error ? err.message : err}`,
-    );
+    log.error(`sendText failed chat=${chatId}: ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -37,9 +37,7 @@ export async function sendCard(
     const r = await channel.send(chatId, { card });
     return r.messageId;
   } catch (err) {
-    logger.error(
-      `[lark] sendCard failed chat=${chatId}: ${err instanceof Error ? err.message : err}`,
-    );
+    log.error(`sendCard failed chat=${chatId}: ${err instanceof Error ? err.message : err}`);
     return undefined;
   }
 }

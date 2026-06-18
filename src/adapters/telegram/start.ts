@@ -5,7 +5,8 @@ import nodeFetch from "node-fetch";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { markCleanShutdown } from "../../core/infra/lifecycle.js";
-import { logger } from "../../shared/utils/logger.js";
+import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
@@ -23,6 +24,8 @@ type MyContext = FileFlavor<Context>;
  * blocks until the bot is stopped (SIGINT/SIGTERM, wired here). Requires
  * `deps.config.telegramBotToken`; the caller only invokes this when Telegram is enabled.
  */
+const log = createLogger("telegram.start");
+
 export async function startTelegram(
   deps: HandlerDeps,
   opts: { recoveredFromCrash?: boolean } = {},
@@ -58,9 +61,7 @@ export async function startTelegram(
     timeoutMs: 5000,
     isLongPoll: (url) => url.includes("/getUpdates"),
   });
-  console.log(
-    `[bot] transport routes: ${routes.map((r) => r.name).join(", ")} (default: ${defaultRoute})`,
-  );
+  log.info(`transport routes: ${routes.map((r) => r.name).join(", ")} (default: ${defaultRoute})`);
 
   // smartFetch wraps node-fetch, whose fetch type differs nominally from grammy's
   // DOM fetch type; the runtime contract (url, init) -> Response is identical.
@@ -76,14 +77,28 @@ export async function startTelegram(
   // handler runs. Without this the bot drives Claude for anyone who finds it.
   bot.use(createAuthGuard(config.telegramAllowedUserIds));
   if (config.telegramAllowedUserIds.size === 0) {
-    console.warn("[bot] TELEGRAM_ALLOWED_USER_IDS is empty — the bot will reject ALL messages.");
+    log.warn("TELEGRAM_ALLOWED_USER_IDS is empty — the bot will reject ALL messages.");
   }
 
   // Catch any error thrown inside a handler so a transient Telegram/network blip
   // is logged instead of becoming an uncaughtException that exits the process.
   bot.catch((err) => {
-    console.error(`[bot] handler error on update ${err.ctx.update.update_id}:`, err.error);
+    log.error(`handler error on update ${err.ctx.update.update_id}`, { err: err.error });
   });
+
+  // Open a log context per update (after the auth guard, so dropped updates
+  // don't mint a trace), before any handler runs — so all logs during parse and
+  // routing share one traceId.
+  bot.use((ctx, next) =>
+    runWithLogContext(
+      {
+        traceId: newTraceId(),
+        channel: "telegram",
+        ...(ctx.chat?.id !== undefined && { chatId: ctx.chat.id }),
+      },
+      () => next(),
+    ),
+  );
 
   // One reply-target map (TG message id → session) shared by both handler sets.
   const replyTarget = createReplyTargetMap();
@@ -94,16 +109,16 @@ export async function startTelegram(
 
   try {
     await bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } });
-    console.log(`[bot] Registered ${BOT_COMMANDS.length} commands to Telegram`);
+    log.info(`Registered ${BOT_COMMANDS.length} commands to Telegram`);
   } catch (err) {
-    console.error("[bot] Failed to set commands:", err instanceof Error ? err.message : err);
+    log.error("Failed to set commands", { err });
   }
 
   let stopping = false;
   const stop = async (signal: string) => {
     if (stopping) return;
     stopping = true;
-    console.log(`Stopping bot after ${signal}`);
+    log.info(`Stopping bot after ${signal}`);
     markCleanShutdown();
     try {
       await bot.stop();
@@ -116,21 +131,21 @@ export async function startTelegram(
   process.once("SIGINT", () => void stop("SIGINT"));
   process.once("SIGTERM", () => void stop("SIGTERM"));
 
-  console.log("[bot] Starting bot...");
+  log.info("Starting bot...");
   // Verify Telegram connectivity with exponential backoff.
   const maxRetries = 5;
   for (let i = 0; i < maxRetries; i++) {
     try {
       const me = await bot.api.getMe();
-      console.log(`[bot] Connected to Telegram as @${me.username} (bot ID: ${me.id})`);
+      log.info(`Connected to Telegram as @${me.username} (bot ID: ${me.id})`);
       break;
     } catch (err) {
       const delayMs = Math.min(1000 * 2 ** i, 30000);
-      console.error(
-        `[bot] Failed to connect (attempt ${i + 1}/${maxRetries}): ${err instanceof Error ? err.message : err}. Retrying in ${delayMs}ms...`,
+      log.error(
+        `Failed to connect (attempt ${i + 1}/${maxRetries}): ${err instanceof Error ? err.message : err}. Retrying in ${delayMs}ms...`,
       );
       if (i === maxRetries - 1) {
-        console.error("[bot] Max retries exceeded, exiting.");
+        log.error("Max retries exceeded, exiting.");
         process.exit(1);
       }
       await sleep(delayMs);
@@ -149,11 +164,11 @@ export async function startTelegram(
           messages("telegram").crashRecovered(new Date().toLocaleString()),
         );
       } catch (err) {
-        logger.warn(`[bot] owner crash-alert failed: ${err instanceof Error ? err.message : err}`);
+        log.warn(`owner crash-alert failed: ${err instanceof Error ? err.message : err}`);
       }
     }
   }
 
   await bot.start();
-  console.log("[bot] Bot started successfully");
+  log.info("Bot started successfully");
 }

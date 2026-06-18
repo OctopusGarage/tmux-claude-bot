@@ -1,5 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
+
+const log = createLogger("lark.reactions");
 
 const WORKING = "OnIt";
 const DONE = "DONE";
@@ -9,8 +11,8 @@ export async function markWorking(channel: LarkChannel, messageId: string): Prom
   try {
     await channel.addReaction(messageId, WORKING);
   } catch (err) {
-    logger.warn(
-      `[lark] addReaction working failed msg=${messageId}: ${err instanceof Error ? err.message : err}`,
+    log.warn(
+      `addReaction working failed msg=${messageId}: ${err instanceof Error ? err.message : err}`,
     );
   }
 }
@@ -25,8 +27,8 @@ export async function markDone(channel: LarkChannel, messageId: string): Promise
   try {
     await channel.addReaction(messageId, DONE);
   } catch (err) {
-    logger.warn(
-      `[lark] addReaction done failed msg=${messageId}: ${err instanceof Error ? err.message : err}`,
+    log.warn(
+      `addReaction done failed msg=${messageId}: ${err instanceof Error ? err.message : err}`,
     );
   }
 }

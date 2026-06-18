@@ -94,6 +94,7 @@ export abstract class AgentRunnerBase implements AgentRunner {
   protected async waitReadyBestEffort(sessionName?: string): Promise<void> {
     try {
       await this.waitUntilReady(sessionName);
+      logger.info(`${this.logTag} agent ready`);
     } catch (err) {
       logger.warn(
         `${this.logTag} post-launch: trust-clear/readiness did not complete: ${err instanceof Error ? err.message : err}`,
@@ -110,12 +111,16 @@ export abstract class AgentRunnerBase implements AgentRunner {
 
   async start(sessionName?: string, command?: string): Promise<void> {
     if (await this.checkIfRunning(sessionName)) return;
+    logger.info(`${this.logTag} starting agent`, { data: { resume: "fresh" } });
     await this.bridge.sendKeys(command ?? this.command, sessionName);
     await this.waitReadyBestEffort(sessionName);
   }
 
   async startWithResume(sessionName: string | undefined, sessionId: string): Promise<void> {
     if (await this.checkIfRunning(sessionName)) return;
+    logger.info(`${this.logTag} starting agent`, {
+      data: { resume: "exact-id", sessionId },
+    });
     await this.bridge.sendKeys(this.resumeCommand(this.command, sessionId), sessionName);
     await this.waitReadyBestEffort(sessionName);
   }
@@ -165,10 +170,12 @@ export abstract class AgentRunnerBase implements AgentRunner {
 
   async exit(sessionName?: string): Promise<void> {
     // Ctrl-C interrupts any in-flight turn, then `/exit` quits. Both agents.
+    logger.info(`${this.logTag} exiting agent`);
     await this.bridge.sendExit(sessionName);
   }
 
   async gracefulRestart(sessionName?: string): Promise<void> {
+    logger.info(`${this.logTag} restarting agent`, { data: { resume: "fresh" } });
     await this.bridge.sendExit(sessionName);
     await sleep(EXIT_GRACE_MS);
     await this.start(sessionName);
@@ -187,6 +194,9 @@ export abstract class AgentRunnerBase implements AgentRunner {
       (await this.configResolver.resolveLiveTranscript?.(resolved))?.sessionId ??
       this.configResolver.lastLiveSessionId?.(resolved) ??
       null;
+    logger.info(`${this.logTag} restarting agent`, {
+      data: { resume: sessionId ? "exact-id" : "continue", ...(sessionId ? { sessionId } : {}) },
+    });
     await this.bridge.sendExit(sessionName);
     await sleep(EXIT_GRACE_MS);
     if (await this.checkIfRunning(sessionName)) return; // didn't exit — don't double-launch

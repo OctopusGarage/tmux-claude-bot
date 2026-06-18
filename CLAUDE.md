@@ -123,6 +123,46 @@ The project root directory name `tmux-claude-bot` is used as the process identit
   pause/resume) or pause the service first.
 - Commands exposed via Telegram Bot menu
 
+## Logging
+
+All code logs via `createLogger("<area>.<file>")` exported from
+`src/shared/utils/logger.ts`. **Do not use `console.*`** except in user-facing
+CLI/wizard stdout in `src/scripts/*` and `onboarding-wizard.ts`.
+
+**Log destination:** structured JSONL under `~/.tmux-claude-bot/logs/tcb-YYYYMMDD.jsonl`
+(or `TCB_LOG_DIR`). One file per day; 30-day rotation; secrets auto-redacted.
+
+**JSONL fields:** `ts`, `level`, `component`, `msg`, `traceId`, `session`, `chatId`,
+`channel`, `data`, `err`.
+
+**Ambient context** (`traceId`, `session`, `chatId`, `channel`) is attached
+automatically via the AsyncLocalStorage store in
+`src/shared/utils/log-context.ts`. It is established once at each ingress (adapter
+handler, queue handler, boot) and inherited by every `await` in that async scope.
+Call sites write `log.info("msg", { data })` / `log.error("msg", { err })` — do not
+string-embed context fields.
+
+**Verbosity:** `LOG_LEVEL` env var (DEBUG|INFO|WARN|ERROR, default INFO).
+
+**Querying:**
+- CLI: `tcb logs [--session <n>] [--trace <id>] [--level WARN] [--days N] [-n 50] [--json]`
+- Chat: `/logs` (owner-only) — recent WARN/ERROR for the current session;
+  `/logs <traceId>` or `/logs N`.
+
+**Logging is best-effort** — the logger never throws into the caller; a file-write
+failure falls back to the stdout mirror.
+
+## Dashboard
+
+An on-demand global status snapshot of all managed sessions.
+
+- **Entry point:** `buildDashboard(deps)` in `src/core/dashboard/dashboard.ts` returns a `DashboardSnapshot`.
+- **Surfaces:** `tcb dashboard` (CLI, `--json` for raw JSON) and `/dashboard` (owner-only chat command; Lark restricts it to p2p messages).
+- **"Busy"** is `(bot task in flight) OR (transcript written within ACTIVITY_WINDOW_MS) OR (pane is animating)`. The second arm — `AgentProfile.lastActivityAt` (newest transcript mtime, per-agent; process-independent so the one-shot `tcb dashboard` sees it too) — catches work driven directly in the pane, so desktop-initiated activity shows busy. The third arm — `paneIsAnimating`, **only when the first two say idle** — captures the pane twice `PANE_DIFF_MS` (~1.1s) apart and marks busy if it changed: an actively-working pane has a cycling spinner / ticking elapsed timer (main turn, a long *silent* tool call, or a running background subagent), an idle pane is static. It is agent-agnostic (no fragile UI-string match) but adds ~1.1s + two captures per idle session to the snapshot.
+- **current-task duration / cumulative** come from the queue-bracketed task-timing tracker (`src/core/session/task-timing.ts`). `taskStarted`/`taskEnded` are called by the queue's `runHandler`, so the `task Xs` duration and the cumulative total still count **bot-driven** tasks (queued Telegram/Lark messages) only — a desktop-driven session shows plain `busy` with no duration.
+- **Session uptime** is derived from the tmux `#{session_created}` timestamp (via `bridge.sessionsCreatedAt()`), not from any bot-side record.
+- **No live auto-refresh** — every call to `buildDashboard` is a fresh point-in-time snapshot; there is no push or polling mode.
+
 ## Internationalization (i18n) copy style
 
 All user-facing strings live in `src/core/i18n/catalog/*.ts`. `zh.ts` is canonical

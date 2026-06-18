@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger, redactSecrets } from "../src/shared/utils/logger.js";
 
 describe("redactSecrets", () => {
@@ -63,5 +66,79 @@ describe("redactSecrets (Lark app secret)", () => {
       if (prev === undefined) delete process.env.LARK_APP_SECRET;
       else process.env.LARK_APP_SECRET = prev;
     }
+  });
+});
+
+describe("logger (ambient context, component, err/data)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), "tcb-logger-"));
+    process.env.TCB_LOG_DIR = dir;
+    vi.resetModules();
+  });
+  afterEach(() => {
+    delete process.env.TCB_LOG_DIR;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function readRecords(): Array<Record<string, unknown>> {
+    const file = fs.readdirSync(dir).find((f) => f.startsWith("tcb-") && f.endsWith(".jsonl"));
+    if (!file) return [];
+    return fs
+      .readFileSync(join(dir, file), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  }
+
+  it("attaches ambient context fields to a record", async () => {
+    const { createLogger } = await import("../src/shared/utils/logger.js");
+    const { runWithLogContext: run } = await import("../src/shared/utils/log-context.js");
+    const log = createLogger("test.unit");
+    run({ traceId: "t_z", session: "sess_a", chatId: "c1", channel: "lark" }, () => {
+      log.info("hello", { data: { len: 3 } });
+    });
+    const recs = readRecords();
+    expect(recs).toHaveLength(1);
+    expect(recs[0]).toMatchObject({
+      level: "INFO",
+      component: "test.unit",
+      msg: "hello",
+      traceId: "t_z",
+      session: "sess_a",
+      chatId: "c1",
+      channel: "lark",
+      data: { len: 3 },
+    });
+  });
+
+  it("works with no ambient context (fields omitted)", async () => {
+    const { logger: freshLogger } = await import("../src/shared/utils/logger.js");
+    freshLogger.info("bare");
+    const rec = readRecords()[0];
+    expect(rec).toMatchObject({ msg: "bare", level: "INFO" });
+    expect(rec).not.toHaveProperty("traceId");
+    expect(rec).not.toHaveProperty("session");
+  });
+
+  it("records an error with name/message/stack and redacts secrets in err", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "bot123:SECRETSECRETSECRETSECRET";
+    const { logger: freshLogger } = await import("../src/shared/utils/logger.js");
+    freshLogger.error("boom", { err: new Error("token bot123:SECRETSECRETSECRETSECRET leaked") });
+    const rec = readRecords()[0];
+    expect(rec).toBeDefined();
+    expect(rec?.level).toBe("ERROR");
+    expect((rec?.err as { message: string }).message).not.toContain("SECRETSECRET");
+    delete process.env.TELEGRAM_BOT_TOKEN;
+  });
+
+  it("never throws into the caller on a non-serializable data payload", async () => {
+    const { logger: freshLogger } = await import("../src/shared/utils/logger.js");
+    const circular: Record<string, unknown> = {};
+    circular.self = circular; // JSON.stringify would throw
+    expect(() => freshLogger.info("circular", { data: circular })).not.toThrow();
+    const rec = readRecords()[0];
+    expect(rec?.msg).toBe("circular");
+    expect((rec?.data as { _serializeError?: string })._serializeError).toContain("circular");
   });
 });

@@ -4,9 +4,10 @@ import * as nodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-target.js";
 
-vi.mock("../../../src/shared/utils/logger.js", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
+vi.mock("../../../src/shared/utils/logger.js", () => {
+  const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return { logger: log, createLogger: () => log };
+});
 
 describe("createReplyTargetMap", () => {
   let dir: string;

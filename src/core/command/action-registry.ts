@@ -145,6 +145,8 @@ const PROJECTS: readonly HelpRow[] = [
   [{ cmds: ["queue_status"], descKey: "cmdQueueStatus" }],
   [{ cmds: ["history"], descKey: "cmdHistory", argHint: " [N]" }],
   [{ cmds: ["sessions"], descKey: "cmdSessions" }],
+  [{ cmds: ["logs"], descKey: "cmdLogs", argHint: " [traceId|N]" }],
+  [{ cmds: ["dashboard"], descKey: "cmdDashboard" }],
 ];
 
 const RUNNING: readonly HelpRow[] = [
@@ -267,6 +269,11 @@ export const BOT_COMMANDS: BotCommand[] = [
     description: "Show recent conversation history (default: last, /history N for Nth recent)",
   },
   { command: "sessions", description: "List resumable agent sessions" },
+  {
+    command: "logs",
+    description: "Show recent WARN/ERROR logs (/logs <traceId> or /logs N)",
+  },
+  { command: "dashboard", description: "Show the global dashboard (all sessions overview)" },
   { command: "doctor", description: "Run install health checks" },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
   { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },

@@ -4,11 +4,13 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { transcribeWithCache } from "../../core/read/transcriber.js";
 import { checkVoiceSupport, resolveWhisperLanguage } from "../../core/read/voice-support.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { voiceInstallCard } from "./cards.js";
 import { enqueueLarkAction } from "./executor.js";
 import { sendCard, sendText } from "./replies.js";
 import { downloadMessageResource } from "./resource.js";
+
+const log = createLogger("lark.voice");
 
 /**
  * Transcribe a Feishu voice/audio message and feed the text into the normal
@@ -66,7 +68,7 @@ export async function handleLarkVoice(
   }
   const transcribed = outcome.text;
 
-  logger.info(`[lark] voice transcribed chat=${msg.chatId} len=${transcribed.length}`);
+  log.info(`voice transcribed chat=${msg.chatId} len=${transcribed.length}`);
   // Echo the transcription (like Telegram), then process it as a normal prompt.
   await sendText(channel, msg.chatId, messages("lark").voiceHeard(transcribed));
   await enqueueLarkAction(

@@ -18,9 +18,10 @@ vi.mock("../src/core/read/voice-support.js", () => ({
   INSTALL_SCRIPT: "/repo/scripts/install-whisper.sh",
 }));
 
-vi.mock("../src/shared/utils/logger.js", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
+vi.mock("../src/shared/utils/logger.js", () => {
+  const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return { logger: log, createLogger: () => log };
+});
 
 import { createReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
 import { registerVoiceHandler } from "../src/adapters/telegram/voice-handler.js";

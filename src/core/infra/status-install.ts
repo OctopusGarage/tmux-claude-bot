@@ -1,11 +1,13 @@
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { snapshotDir } from "../agents/claude/claude-status.js";
 import { claudeConfigDirsInUse } from "../agents/takeover-service.js";
 import { messages } from "../i18n/index.js";
 import type { Channel } from "../projects/project-manager.js";
+
+const log = createLogger("infra.status-install");
 
 /** Absolute path of the generated statusLine script (lives next to the snapshots). */
 export function scriptPath(): string {
@@ -84,7 +86,7 @@ function stamp(): string {
 function backupSettings(settingsFile: string): string {
   const backup = `${settingsFile}.bak.${stamp()}`;
   fs.copyFileSync(settingsFile, backup);
-  logger.info(`[status-install] backed up ${settingsFile} -> ${backup}`);
+  log.info(`backed up ${settingsFile} -> ${backup}`);
   return backup;
 }
 

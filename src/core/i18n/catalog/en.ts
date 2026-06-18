@@ -302,6 +302,15 @@ Send any text → forwarded to the agent → reply`,
   resumeStarted: (id) => `✅ Resumed session ${id}`,
   cmdSessions: "Browse and resume past sessions",
 
+  // ── logs ──
+  cmdLogs: "View recent warning/error logs (/logs <traceId|N>)",
+  logsTitle: "🪵 Recent logs",
+
+  // ── dashboard ──
+  cmdDashboard: "View the global dashboard (overview of all sessions)",
+  dashboardTitle: "📊 Dashboard",
+  noLogsContext: "No current project. Select a project or specify a trace (/logs <traceId>).",
+
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label, path) =>
     `🎉 Group bound to **${label}**\n\`${path}\`\n\nJust type — no @ needed.`,

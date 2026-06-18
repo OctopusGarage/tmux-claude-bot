@@ -24,7 +24,7 @@ import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { setWhisperLanguage } from "../../core/read/voice-support.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { timeApi } from "../../shared/utils/timing.js";
 import { safeAnswerCallback } from "./callback-utils.js";
@@ -63,6 +63,8 @@ import {
   sendQueueStatus,
   sendStatusInstall,
 } from "./views.js";
+
+const log = createLogger("telegram.callbacks");
 
 /**
  * Dispatch an inline-keyboard tap. The callback data (parsed by
@@ -152,7 +154,7 @@ export async function handleCallbackQuery(
     // the picker in place so the ✅ moves to the new selection.
     if (parsed.kind === "voicelang") {
       setWhisperLanguage("telegram", parsed.lang);
-      logger.info(`[voice-lang] telegram set to ${parsed.lang} via button`);
+      log.info(`telegram set to ${parsed.lang} via button`);
       await safeAnswerCallback(ctx, MSG.voiceLangSet(parsed.lang));
       try {
         await timeApi("editMessageReplyMarkup", () =>
@@ -166,7 +168,7 @@ export async function handleCallbackQuery(
     // UI-language pick: set + persist, then refresh the picker in place.
     if (parsed.kind === "uilang") {
       setUiLang("telegram", parsed.lang);
-      logger.info(`[ui-lang] telegram set to ${parsed.lang} via button`);
+      log.info(`telegram set to ${parsed.lang} via button`);
       const label = UI_LANGS.find((l) => l.code === parsed.lang)?.label ?? parsed.lang;
       await safeAnswerCallback(ctx, messages("telegram").uiLangSet(label));
       try {
@@ -394,7 +396,7 @@ export async function handleCallbackQuery(
     );
     await reply(ctx, "info", result, { session: sessionName, replyTarget });
   } catch (err) {
-    logger.error(`[callback] error: ${normalizeError(err).message}`);
+    log.error(`error: ${normalizeError(err).message}`);
     await safeAnswerCallback(ctx, messages("telegram").toastError);
   }
 }

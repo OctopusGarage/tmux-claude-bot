@@ -5,10 +5,12 @@ import { enqueueMessage } from "../../core/command/enqueue.js";
 import type { PersistedMessage, QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { MSG } from "./messages.js";
 import { reply, send } from "./replies.js";
 import { requireSession } from "./session.js";
+
+const log = createLogger("telegram.executor");
 
 // Single source of truth (core/action-registry) — same set Lark derives, so the
 // two adapters can't drift (telegram used to omit `tab`).
@@ -36,22 +38,18 @@ export async function enqueueSessionCommand(
         resolve:
           onResolve ??
           ((output: string) => {
-            logger.info(
-              `[executor] resolve callback fired session=${session} output_len=${output.length}`,
-            );
+            log.info(`resolve callback fired session=${session} output_len=${output.length}`);
             void reply(ctx, "info", output, { session, replyTo });
           }),
         reject: (err: Error) => {
-          logger.error(`[executor] reject callback fired session=${session} err=${err.message}`);
+          log.error(`reject callback fired session=${session} err=${err.message}`);
           void reply(ctx, "err", `${err.message}`, { session, replyTo });
         },
       },
     },
     {
       accepted: async (queueSizeBefore) => {
-        logger.info(
-          `[executor] enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`,
-        );
+        log.info(`enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`);
         if (queueSizeBefore === 0) {
           await reply(ctx, "ok", m.ackReceived, { session });
         } else {
@@ -59,7 +57,7 @@ export async function enqueueSessionCommand(
         }
       },
       full: async () => {
-        logger.warn(`[executor] queue full session=${session} max=${deps.queue.getMaxSize()}`);
+        log.warn(`queue full session=${session} max=${deps.queue.getMaxSize()}`);
         await reply(ctx, "err", MSG.queueFull(deps.queue.getMaxSize()), { session });
       },
     },

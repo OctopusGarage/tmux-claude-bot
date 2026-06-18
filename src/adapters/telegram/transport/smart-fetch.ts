@@ -1,5 +1,7 @@
-import { logger } from "../../../shared/utils/logger.js";
+import { createLogger } from "../../../shared/utils/logger.js";
 import type { RouteHealthStore, RouteName } from "./route-health.js";
+
+const log = createLogger("telegram.smart-fetch");
 
 // Kept intentionally loose: the underlying route fetches are node-fetch, whose
 // Response type differs from the DOM lib's. We pass responses through untouched
@@ -76,7 +78,7 @@ export function createSmartFetch(opts: {
         return res;
       } catch (err) {
         opts.health.recordFailure(route.name);
-        logger.warn(`[smart-fetch] longpoll via ${route.name} failed: ${describe(err)}`);
+        log.warn(`longpoll via ${route.name} failed: ${describe(err)}`);
         throw err;
       }
     }
@@ -89,15 +91,15 @@ export function createSmartFetch(opts: {
         const res = await callWithTimeout(route, url, init);
         opts.health.recordSuccess(route.name, now() - t0);
         if (i > 0) {
-          logger.info(`[smart-fetch] recovered via ${route.name} after preferred route failed`);
+          log.info(`recovered via ${route.name} after preferred route failed`);
         }
         return res;
       } catch (err) {
         lastErr = err;
         opts.health.recordFailure(route.name);
         const more = i + 1 < routes.length;
-        logger.warn(
-          `[smart-fetch] ${route.name} failed in ${now() - t0}ms: ${describe(err)}${more ? " — trying other route" : ""}`,
+        log.warn(
+          `${route.name} failed in ${now() - t0}ms: ${describe(err)}${more ? " — trying other route" : ""}`,
         );
       }
     }

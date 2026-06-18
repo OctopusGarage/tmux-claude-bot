@@ -9,20 +9,24 @@ import {
 import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
-import { logger } from "./shared/utils/logger.js";
+import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 
 const AUTO_START_DELAY_MS = 1000;
+
+const log = createLogger("boot");
+const fatalLog = createLogger("index");
 
 // Refuse to start beside another running instance — two pollers on one
 // Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
 // ("Process Management") for the launchd KeepAlive trap this guards against.
 try {
   acquireInstanceLock();
+  log.info("instance lock acquired", { data: { pid: process.pid } });
 } catch (err) {
   if (err instanceof InstanceLockHeldError) {
-    console.error(
-      `[bot] ${err.message}. If that instance is the managed service, restart it with ` +
+    log.error(
+      `${err.message}. If that instance is the managed service, restart it with ` +
         `\`${managedRestartCommand()}\` instead of starting a second copy.`,
     );
     process.exit(1);
@@ -37,46 +41,55 @@ async function init(): Promise<void> {
   // Restore every channel's current session (Telegram + Feishu may differ).
   const sessions = await currentProject.allCurrent();
   if (sessions.length === 0) {
-    console.log("[init] No current project for any channel, skipping auto-start.");
+    log.info("No current project for any channel, skipping auto-start.");
     return;
   }
+  let recreated = 0;
   for (const session of sessions) {
     try {
       const alive = await bridge.isPaneAlive(session);
       if (!alive) {
-        console.log(`[init] Session ${session} not alive, creating...`);
+        recreated++;
+        log.info(`Session ${session} not alive, creating...`);
         // Start the pane directly in the mapped directory (-c) — no typed `cd`.
         const projectPath = getPathBySession(session);
         await bridge.createSession(session, projectPath ?? undefined);
         await sleep(AUTO_START_DELAY_MS);
         if (projectPath) {
-          console.log(`[init] Restored directory: ${projectPath}`);
+          log.info(`Restored directory: ${projectPath}`);
         }
       }
     } catch (err) {
-      console.error(`[init] init failed for ${session}:`, err);
+      log.error(`init failed for ${session}`, { err });
     }
   }
+  log.info("current-session restore complete", {
+    data: { channels: sessions.length, recreated },
+  });
   // Auto-starting Claude on boot is disabled by design: the bot must never type
   // the start command into a pane on its own. Launch Claude explicitly with /start.
-  console.log("[init] Auto-start disabled — use /start to launch Claude.");
+  log.info("Auto-start disabled — use /start to launch Claude.");
 }
 
 // Did the previous run exit cleanly? If not, launchd auto-recovered a crash —
 // the adapters alert the owner once connected. Clean shutdowns clear the marker.
 const recoveredFromCrash = detectUncleanRestart();
+process.once("SIGINT", () => log.info("shutdown signal received", { data: { signal: "SIGINT" } }));
+process.once("SIGTERM", () =>
+  log.info("shutdown signal received", { data: { signal: "SIGTERM" } }),
+);
 process.once("SIGINT", markCleanShutdown);
 process.once("SIGTERM", markCleanShutdown);
 process.once("SIGINT", releaseInstanceLock);
 process.once("SIGTERM", releaseInstanceLock);
 
 process.on("uncaughtException", (err) => {
-  logger.error(`[fatal] uncaughtException: ${err.stack ?? err.message}`);
+  fatalLog.error(`uncaughtException: ${err.stack ?? err.message}`);
   process.exit(1); // launchd restarts → startup flags the unclean exit → owner alert
 });
 process.on("unhandledRejection", (reason) => {
-  logger.error(
-    `[fatal] unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : reason}`,
+  fatalLog.error(
+    `unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : reason}`,
   );
 });
 
@@ -87,8 +100,8 @@ const telegramEnabled = Boolean(config.telegramBotToken) && process.env.LARK_ONL
 const larkEnabled = Boolean(config.lark);
 
 if (!telegramEnabled && !larkEnabled) {
-  console.error(
-    "[bot] No chat adapter configured. Set TELEGRAM_BOT_TOKEN for Telegram and/or run `npm run setup:lark` for Feishu/Lark, then restart.",
+  log.error(
+    "No chat adapter configured. Set TELEGRAM_BOT_TOKEN for Telegram and/or run `npm run setup:lark` for Feishu/Lark, then restart.",
   );
   process.exit(1);
 }
@@ -104,7 +117,7 @@ if (telegramEnabled) {
   await startTelegram(deps, { recoveredFromCrash });
 } else {
   // Feishu-only: the Lark WS keeps the process alive. Wire a minimal shutdown.
-  console.log("[bot] Telegram disabled — running Feishu (Lark) only. Ctrl-C to stop.");
+  log.info("Telegram disabled — running Feishu (Lark) only. Ctrl-C to stop.");
   const stop = (): void => {
     markCleanShutdown();
     deps.queue.flushPending();

@@ -1,5 +1,7 @@
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { timeApi } from "../../shared/utils/timing.js";
+
+const log = createLogger("telegram.reactions");
 
 /** Emoji reactions used to acknowledge message lifecycle without text noise. */
 export const REACTION = {
@@ -35,8 +37,8 @@ export async function reactToMessage(
       api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji }]),
     );
   } catch (err) {
-    logger.warn(
-      `[reactions] failed to set ${emoji} on chat=${chatId} msg=${messageId}: ${err instanceof Error ? err.message : err}`,
+    log.warn(
+      `failed to set ${emoji} on chat=${chatId} msg=${messageId}: ${err instanceof Error ? err.message : err}`,
     );
   }
 }
