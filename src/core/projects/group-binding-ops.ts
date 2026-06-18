@@ -1,11 +1,14 @@
 import * as fs from "node:fs";
 import { basename } from "node:path";
+import { createLogger } from "../../shared/utils/logger.js";
 import type { HandlerDeps } from "../deps.js";
 import { getBinding } from "./group-bindings.js";
 import { type Channel, chatScope } from "./project-manager.js";
 import { createProjectSession, resolveProjectPath, switchToProject } from "./project-ops.js";
 import { getPathBySession, sessionNameFromPath } from "./sessionPathMap.js";
 import { getWorkspace } from "./workspaces.js";
+
+const log = createLogger("projects.group-binding-ops");
 
 export type ResolvedTarget =
   | { workspacePath: string; sessionName: string; label: string }
@@ -71,6 +74,11 @@ export async function reconcileGroupBinding(
     fs.statSync(binding.workspacePath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      log.warn("group binding workspace path missing", {
+        chatId,
+        session: binding.sessionName,
+        data: { workspacePath: binding.workspacePath, label: binding.label },
+      });
       return { status: "missing-path", label: binding.label };
     }
   }
@@ -94,5 +102,10 @@ export async function reconcileGroupBinding(
   } else {
     await switchToProject(deps, scope, sessionName);
   }
+  log.info("group binding reconciled", {
+    chatId,
+    session: sessionName,
+    data: { recreated: !alive, reanchored: alive && pointer !== sessionName },
+  });
   return { status: "restored", sessionName, label: binding.label };
 }

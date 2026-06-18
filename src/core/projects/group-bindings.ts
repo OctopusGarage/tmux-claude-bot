@@ -1,4 +1,7 @@
+import { createLogger } from "../../shared/utils/logger.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
+
+const log = createLogger("projects.group-bindings");
 
 /** A group is permanently associated with one workspace. `workspacePath` is the
  * source of truth for re-anchoring; `sessionName`/`label` are derived snapshots. */
@@ -12,6 +15,11 @@ const store = new JsonMapStore<GroupBinding>("group_bindings.json");
 
 export function bindGroup(chatId: string, binding: GroupBinding): void {
   store.set(chatId, binding);
+  log.info("group bound", {
+    chatId,
+    session: binding.sessionName,
+    data: { label: binding.label },
+  });
 }
 
 export function getBinding(chatId: string): GroupBinding | null {
@@ -23,7 +31,9 @@ export function isProjectGroup(chatId: string): boolean {
 }
 
 export function unbindGroup(chatId: string): boolean {
-  return store.delete(chatId);
+  const removed = store.delete(chatId);
+  if (removed) log.info("group unbound", { chatId });
+  return removed;
 }
 
 export function listBindings(): Array<{ chatId: string; binding: GroupBinding }> {
