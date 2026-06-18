@@ -1,5 +1,7 @@
 import { normalizeError } from "../../shared/utils/error.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
+
+const log = createLogger("lark.keepalive");
 
 /**
  * App-level keepalive loop for the Lark WebSocket. Defense-in-depth against
@@ -60,7 +62,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     }
     // (2) Sleep detection — machine likely just woke from sleep.
     if (sinceLast > SLEEP_DETECT_MS) {
-      logger.info(`[lark-keepalive] wake-up detected (slept ~${Math.round(sinceLast / 1000)}s)`);
+      log.info(`wake-up detected (slept ~${Math.round(sinceLast / 1000)}s)`);
       consecutiveDown = 0;
       networkDownTicks = 0;
       lastTick = now;
@@ -75,7 +77,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     }
     if (status.state === "connected") {
       if (consecutiveDown > 0) {
-        logger.info(`[lark-keepalive] recovered after ${consecutiveDown} down tick(s)`);
+        log.info(`recovered after ${consecutiveDown} down tick(s)`);
       }
       consecutiveDown = 0;
       networkDownTicks = 0;
@@ -88,39 +90,37 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     if (!reachable) {
       networkDownTicks++;
       if (networkDownTicks === 1 || networkDownTicks % NETWORK_DOWN_LOG_EVERY === 0) {
-        logger.warn(`[lark-keepalive] network unreachable (${networkDownTicks} tick(s))`);
+        log.warn(`network unreachable (${networkDownTicks} tick(s))`);
       }
       consecutiveDown = 0;
       return;
     }
     if (networkDownTicks > 0) {
-      logger.info(`[lark-keepalive] network reachable again after ${networkDownTicks} tick(s)`);
+      log.info(`network reachable again after ${networkDownTicks} tick(s)`);
       networkDownTicks = 0;
     }
 
     // Network reachable but WS not connected → WS is stuck.
     consecutiveDown++;
-    logger.warn(
-      `[lark-keepalive] ws stuck (state=${status.state}, attempts=${status.reconnectAttempts}, down=${consecutiveDown}/${DEAD_THRESHOLD})`,
+    log.warn(
+      `ws stuck (state=${status.state}, attempts=${status.reconnectAttempts}, down=${consecutiveDown}/${DEAD_THRESHOLD})`,
     );
 
     // (5) Counter debounce — wait for DEAD_THRESHOLD ticks before reconnecting.
     if (consecutiveDown >= DEAD_THRESHOLD) {
-      logger.warn(`[lark-keepalive] force-reconnect (state=${status.state})`);
+      log.warn(`force-reconnect (state=${status.state})`);
       consecutiveDown = 0;
       try {
         await deps.forceReconnect();
       } catch (err) {
-        logger.error(`[lark-keepalive] force-reconnect failed: ${normalizeError(err).message}`);
+        log.error(`force-reconnect failed: ${normalizeError(err).message}`);
       }
     }
   };
 
   // (1) Independent timer, untied from the SDK's internal ping cadence.
   const timer = setInterval(() => {
-    void tick().catch((err) =>
-      logger.error(`[lark-keepalive] tick failed: ${normalizeError(err).message}`),
-    );
+    void tick().catch((err) => log.error(`tick failed: ${normalizeError(err).message}`));
   }, intervalMs);
 
   return {

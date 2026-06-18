@@ -1,13 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock logger before importing replies (vi.mock is hoisted)
-vi.mock("../src/shared/utils/logger.js", () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
+vi.mock("../src/shared/utils/logger.js", () => {
+  const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return { logger: log, createLogger: () => log };
+});
 
 // Mock normalizeError
 vi.mock("../src/shared/utils/error.js", () => ({

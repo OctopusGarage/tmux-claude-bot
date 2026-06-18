@@ -40,7 +40,7 @@ import {
 } from "../../core/read/voice-support.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { verifyValue } from "./card-signing.js";
 import {
@@ -81,6 +81,8 @@ import {
   sendStatusInstall,
 } from "./views.js";
 
+const log = createLogger("lark.card-actions");
+
 type CardValue =
   | {
       cmd?: string;
@@ -111,7 +113,7 @@ type CardHandler = (ctx: CardCtx) => Promise<void>;
 async function handleVoiceLang({ channel, evt, value }: CardCtx): Promise<void> {
   if (!(value?.lang && VOICE_LANGS.some((l) => l.code === value.lang))) return;
   setWhisperLanguage("lark", value.lang);
-  logger.info(`[lark] voice recognition language set to ${value.lang} via card`);
+  log.info(`voice recognition language set to ${value.lang} via card`);
   // Re-send the picker (regular card) with the ✅ moved. CardKit in-place updates
   // would need entity-card callbacks, which don't fire reliably on Feishu.
   await sendCard(channel, evt.chatId, voiceLangCard(value.lang));
@@ -135,11 +137,11 @@ async function handleVoiceInstall({ channel, evt }: CardCtx): Promise<void> {
   const result = await installVoice();
   switch (result.status) {
     case "ok":
-      logger.info("[lark] voice feature installed and enabled");
+      log.info("voice feature installed and enabled");
       await sendText(channel, evt.chatId, m.voiceInstallOk);
       break;
     case "failed":
-      logger.error(`[lark] voice-install failed: ${result.message}`);
+      log.error(`voice-install failed: ${result.message}`);
       await sendText(channel, evt.chatId, m.voiceInstallFailed(result.message));
       break;
     case "already-ready":
@@ -158,7 +160,7 @@ async function handleUiLang({ channel, evt, value }: CardCtx): Promise<void> {
   const lang = value?.lang;
   if (!lang || !isUiLang(lang)) return;
   setUiLang("lark", lang);
-  logger.info(`[lark] ui language set to ${lang} via card`);
+  log.info(`ui language set to ${lang} via card`);
   await sendCard(channel, evt.chatId, langCard(lang));
 }
 
@@ -169,7 +171,7 @@ async function isP2pChat(channel: LarkChannel, chatId: string): Promise<boolean>
   try {
     return (await channel.getChatInfo(chatId)).chatType === "p2p";
   } catch (err) {
-    logger.warn(`[lark] getChatInfo failed chat=${chatId}: ${String(err)}`);
+    log.warn(`getChatInfo failed chat=${chatId}: ${String(err)}`);
     return false;
   }
 }
@@ -453,13 +455,13 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
   return async (evt: CardActionEvent): Promise<void> =>
     runWithLogContext({ traceId: newTraceId(), channel: "lark", chatId: evt.chatId }, async () => {
       if (!isOpenIdAllowed(evt.operator.openId, allowed)) {
-        logger.info(`[lark] drop cardAction from open_id=${evt.operator.openId || "?"}`);
+        log.info(`drop cardAction from open_id=${evt.operator.openId || "?"}`);
         return;
       }
 
       const rawValue = evt.action?.value;
       if (!verifyValue(rawValue)) {
-        logger.warn(`[lark] drop cardAction: invalid signature chat=${evt.chatId}`);
+        log.warn(`drop cardAction: invalid signature chat=${evt.chatId}`);
         return;
       }
 
@@ -467,7 +469,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       const cmd = value?.cmd;
       if (!cmd) return;
 
-      logger.info(`[lark] cardAction cmd=${cmd} chat=${evt.chatId}`);
+      log.info(`cardAction cmd=${cmd} chat=${evt.chatId}`);
 
       // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
       // groups are serviced (serviceableChat). An unbound group — including one
@@ -477,7 +479,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       // per-action policy (chat-policy.ts) is enforced symmetrically with text.
       const isP2p = isProjectGroup(evt.chatId) ? false : await isP2pChat(channel, evt.chatId);
       if (!serviceableChat(isP2p, evt.chatId)) {
-        logger.info(`[lark] ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
+        log.info(`ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
         return;
       }
       const chatKind: ChatKind = isP2p ? "p2p" : "group";
@@ -519,6 +521,6 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
         return;
       }
 
-      logger.info(`[lark] unknown cardAction cmd=${cmd}`);
+      log.info(`unknown cardAction cmd=${cmd}`);
     });
 }

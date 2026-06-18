@@ -8,7 +8,7 @@ import { isProjectGroup } from "../../core/projects/group-bindings.js";
 import { chatScope } from "../../core/projects/project-manager.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { browseCard, helpCard } from "./cards.js";
 import { isGroupMgmtCommand, isRecoveryCommand, parseLarkInput } from "./commands.js";
@@ -40,6 +40,8 @@ import {
   sendVoiceLangPicker,
 } from "./views.js";
 import { handleLarkVoice } from "./voice.js";
+
+const log = createLogger("lark.handlers");
 
 /** Quiet window for merging rapid-fire plain-text messages into one prompt. */
 const TEXT_DEBOUNCE_MS = 600;
@@ -90,7 +92,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
   const handle = async (msg: NormalizedMessage): Promise<void> =>
     runWithLogContext({ traceId: newTraceId(), channel: "lark", chatId: msg.chatId }, async () => {
       if (!isOpenIdAllowed(msg.senderId, allowed)) {
-        logger.info(`[lark] drop message from non-allowlisted open_id=${msg.senderId || "?"}`);
+        log.info(`drop message from non-allowlisted open_id=${msg.senderId || "?"}`);
         return;
       }
 
@@ -104,10 +106,10 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         // no project to talk to until the group is re-bound.
         const recoverable = msg.rawContentType === "text" && isRecoveryCommand(msg.content ?? "");
         if (!recoverable) {
-          logger.info(`[lark] ignore unbound chat_type=${msg.chatType} chat=${msg.chatId}`);
+          log.info(`ignore unbound chat_type=${msg.chatType} chat=${msg.chatId}`);
           return;
         }
-        logger.info(`[lark] unbound chat=${msg.chatId} — allowing recovery command`);
+        log.info(`unbound chat=${msg.chatId} — allowing recovery command`);
       }
 
       if (!isP2p) {
@@ -145,7 +147,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       const text = msg.content ?? "";
       if (!text.trim()) return;
 
-      logger.info(`[lark] received text chat=${msg.chatId} len=${text.length}`);
+      log.info(`received text chat=${msg.chatId} len=${text.length}`);
 
       // Directory browser: a pending "new folder" capture takes this text as the
       // folder name (before command parsing, so a name like "help" isn't a command).
@@ -327,8 +329,8 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
     try {
       await handle(msg);
     } catch (err) {
-      logger.error(
-        `[lark] handler error chat=${msg.chatId}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+      log.error(
+        `handler error chat=${msg.chatId}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
       );
       try {
         await sendText(channel, msg.chatId, messages("lark").handlerError);
