@@ -1,6 +1,6 @@
 {
   "name": "@octopusgarage/tmux-claude-bot",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Telegram/Feishu bot that drives Claude Code in tmux sessions on macOS and Linux",
   "repository": {
