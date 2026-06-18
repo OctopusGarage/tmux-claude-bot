@@ -122,6 +122,31 @@ for (const action of ["status", "pause", "resume", "restart", "logs"] as const) 
     .action(() => runScript("service.sh", [action]));
 }
 
+program
+  .command("logs")
+  .description("Query the structured logs")
+  .option("--session <name>")
+  .option("--trace <id>")
+  .option("--chat <id>")
+  .option("--channel <ch>")
+  .option("--component <prefix>")
+  .option("--level <level>", "minimum level (DEBUG|INFO|WARN|ERROR)")
+  .option("--grep <text>")
+  .option("--days <n>", "how many daily files back to read", "1")
+  .option("-n, --n <count>", "keep the last N")
+  .option("--json", "output JSON lines")
+  .action(async (o) => {
+    const { argsToFilter, queryLogs } = await import("./core/logs/log-query.js");
+    const recs = queryLogs(argsToFilter(o), Number.parseInt(o.days, 10));
+    for (const r of recs) {
+      if (o.json) process.stdout.write(`${JSON.stringify(r)}\n`);
+      else
+        process.stdout.write(
+          `${r.ts} ${r.level} ${r.component ?? "-"} ${r.traceId ?? "-"} ${r.msg}\n`,
+        );
+    }
+  });
+
 program.parseAsync().catch((err) => {
   // An async action (e.g. `run`) rejecting would otherwise be an unhandled
   // rejection — surface it cleanly and exit non-zero instead.

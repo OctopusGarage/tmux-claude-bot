@@ -83,3 +83,25 @@ export function readRecords(days = 1): LogRecord[] {
 export function queryLogs(filter: LogFilter, days = 1): LogRecord[] {
   return filterRecords(readRecords(days), filter);
 }
+
+export function argsToFilter(o: {
+  session?: string;
+  trace?: string;
+  chat?: string;
+  channel?: "telegram" | "lark";
+  component?: string;
+  level?: string;
+  grep?: string;
+  n?: string;
+}): LogFilter {
+  const f: LogFilter = {};
+  if (o.session) f.session = o.session;
+  if (o.trace) f.trace = o.trace;
+  if (o.chat) f.chat = o.chat;
+  if (o.channel) f.channel = o.channel;
+  if (o.component) f.component = o.component;
+  if (o.level) f.levelMin = o.level.toUpperCase() as LogRecord["level"];
+  if (o.grep) f.grep = o.grep;
+  if (o.n) f.n = Number.parseInt(o.n, 10);
+  return f;
+}
