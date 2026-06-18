@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
+import { runWithLogContext } from "../../shared/utils/log-context.js";
 import { logger } from "../../shared/utils/logger.js";
 import { Queue } from "../../shared/utils/queue.js";
 import type { Channel } from "../projects/project-manager.js";
@@ -295,7 +296,15 @@ export class MessageQueue {
    */
   private async runHandler(msg: QueuedMessage, sessionName: string): Promise<void> {
     try {
-      await this.handler?.(msg);
+      await runWithLogContext(
+        {
+          ...(msg.traceId !== undefined && { traceId: msg.traceId }),
+          ...(msg.sessionName !== undefined && { session: msg.sessionName }),
+          chatId: msg.chatId,
+          ...(msg.channel !== undefined && { channel: msg.channel }),
+        },
+        () => this.handler?.(msg) ?? Promise.resolve(),
+      );
       logger.info(`[queue] handler completed session=${sessionName} msgId=${msg.id}`);
     } catch (err) {
       const e = normalizeError(err);
