@@ -1,5 +1,7 @@
 import { normalizeError } from "../../shared/utils/error.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
+
+const log = createLogger("command.pending-queue");
 
 /**
  * Per-scope debounce queue: items pushed to the same scope within a quiet
@@ -75,9 +77,7 @@ export class PendingQueue<T> {
       this.map.delete(scope);
       void Promise.resolve()
         .then(() => this.onFlush(scope, entry.items))
-        .catch((err) =>
-          logger.error(`[pending-queue] flush failed (${scope}): ${normalizeError(err).message}`),
-        );
+        .catch((err) => log.error(`flush failed (${scope}): ${normalizeError(err).message}`));
     }, this.delayMs);
   }
 }

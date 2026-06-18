@@ -9,12 +9,13 @@ import {
 import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
-import { createLogger, logger } from "./shared/utils/logger.js";
+import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 
 const AUTO_START_DELAY_MS = 1000;
 
 const log = createLogger("boot");
+const fatalLog = createLogger("index");
 
 // Refuse to start beside another running instance — two pollers on one
 // Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
@@ -73,12 +74,12 @@ process.once("SIGINT", releaseInstanceLock);
 process.once("SIGTERM", releaseInstanceLock);
 
 process.on("uncaughtException", (err) => {
-  logger.error(`[fatal] uncaughtException: ${err.stack ?? err.message}`);
+  fatalLog.error(`uncaughtException: ${err.stack ?? err.message}`);
   process.exit(1); // launchd restarts → startup flags the unclean exit → owner alert
 });
 process.on("unhandledRejection", (reason) => {
-  logger.error(
-    `[fatal] unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : reason}`,
+  fatalLog.error(
+    `unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : reason}`,
   );
 });
 

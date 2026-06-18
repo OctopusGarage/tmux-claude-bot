@@ -3,11 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
 import { promisify } from "node:util";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger, logger } from "../../shared/utils/logger.js";
 import { getFromCache, saveToCache } from "../../shared/utils/media-cache.js";
 import { withRetry } from "../../shared/utils/retry.js";
 
 const execFileAsync = promisify(execFile);
+
+const log = createLogger("read.transcriber");
 
 /**
  * Default whisper model. Must be a large-v3-family model: the "yue" (Cantonese)
@@ -62,8 +64,8 @@ export async function transcribeOgg(
   // has no "yue"/Cantonese → ValueError). Retry once with auto-detect so a bad
   // language code degrades to a best-effort transcript instead of hard-failing.
   if (!fs.existsSync(txtFile) && langArgs.length > 0 && !opts?.noFallback) {
-    logger.warn(
-      `[transcribe] no output with --language ${language}; retrying auto-detect — ${whisperReason(result)}`,
+    log.warn(
+      `no output with --language ${language}; retrying auto-detect — ${whisperReason(result)}`,
     );
     result = await execFileAsync(MLX_WHISPER_BIN, baseArgs);
   }

@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
+
+const log = createLogger("infra.bounded-session-map");
 
 /**
  * A bounded `messageId → session` map: it lets a user's reply to a *specific*
@@ -47,8 +49,8 @@ export class BoundedSessionMap<K extends string | number> {
       const entries = JSON.parse(fs.readFileSync(this.file, "utf-8")) as Array<[K, string]>;
       for (const [k, v] of entries) this.map.set(k, v);
     } catch (err) {
-      logger.error(
-        `[reply-target] failed to load ${this.file}, starting empty: ${err instanceof Error ? err.message : err}`,
+      log.error(
+        `failed to load ${this.file}, starting empty: ${err instanceof Error ? err.message : err}`,
       );
     }
   }
@@ -59,9 +61,7 @@ export class BoundedSessionMap<K extends string | number> {
       fs.mkdirSync(nodePath.dirname(this.file), { recursive: true });
       fs.writeFileSync(this.file, JSON.stringify([...this.map.entries()]), "utf-8");
     } catch (err) {
-      logger.error(
-        `[reply-target] failed to write ${this.file}: ${err instanceof Error ? err.message : err}`,
-      );
+      log.error(`failed to write ${this.file}: ${err instanceof Error ? err.message : err}`);
     }
   }
 

@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import { appStateFile } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
+
+const log = createLogger("infra.json-map-store");
 
 interface CacheEntry<V> {
   path: string;
@@ -69,8 +71,8 @@ export class JsonMapStore<V> {
   private backupCorrupt(path: string, raw: string): void {
     try {
       writeFileAtomicSync(`${path}.corrupt`, raw);
-      logger.error(
-        `[json-map-store] ${this.fileName} is corrupt; backed up to ${this.fileName}.corrupt and kept last-good data`,
+      log.error(
+        `${this.fileName} is corrupt; backed up to ${this.fileName}.corrupt and kept last-good data`,
       );
     } catch {
       // backup is best-effort — data safety still holds via the last-good cache
@@ -90,7 +92,7 @@ export class JsonMapStore<V> {
         return {};
       }
       // Transient unreadable (EACCES/EBUSY/…): never treat a bound store as empty.
-      logger.warn(`[json-map-store] stat failed for ${this.fileName}: ${String(err)}`);
+      log.warn(`stat failed for ${this.fileName}: ${String(err)}`);
       return this.lastGood(path);
     }
 
@@ -108,7 +110,7 @@ export class JsonMapStore<V> {
     try {
       raw = fs.readFileSync(path, "utf-8");
     } catch (err) {
-      logger.warn(`[json-map-store] read failed for ${this.fileName}: ${String(err)}`);
+      log.warn(`read failed for ${this.fileName}: ${String(err)}`);
       return this.lastGood(path);
     }
 
