@@ -36,7 +36,7 @@ describe("enqueueMessage", () => {
 
     expect(verdict).toBe("queued");
     expect(enqueue).toHaveBeenCalledOnce();
-    expect(accepted).toHaveBeenCalledWith(2);
+    expect(accepted).toHaveBeenCalledWith(2, expect.any(String)); // (queueSizeBefore, msgId)
     expect(full).not.toHaveBeenCalled();
     expect(duplicate).not.toHaveBeenCalled();
   });
@@ -67,6 +67,9 @@ describe("enqueueMessage", () => {
 
     expect(verdict).toBe("duplicate");
     expect(order).toEqual(["duplicate", "accepted"]);
+    // A deduped message wasn't enqueued → no real id, so accepted gets undefined
+    // (the adapter then renders a plain ack, no cancel/rewrite on a phantom item).
+    expect(accepted).toHaveBeenCalledWith(0, undefined);
   });
 
   it("on a duplicate with no duplicate handler still acks accepted (telegram case)", async () => {

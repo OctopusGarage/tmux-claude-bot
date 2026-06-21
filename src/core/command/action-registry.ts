@@ -53,40 +53,29 @@ export const ACTION_META: Partial<Record<MessageAction, ActionMeta>> = {
   // "text" — no button, not a slash command
 };
 
-// ── Button row groups ────────────────────────────────────────────────────────
-// Inner array = one button row. Edit these to reposition buttons across ALL surfaces.
+// ── Canonical agent-control button layout ────────────────────────────────────
+// ONE ordering, the single source for every control surface — Telegram's expanded
+// panel, Lark's control card, and both help cards all render these rows in this
+// order, so the surfaces can no longer drift. Telegram's COLLAPSED panel shows
+// just the interrupts row + a "more ▾" toggle; expanding reveals the rest.
+// Grouped by purpose: interrupts (mid-task essentials) → lifecycle → navigation.
 
-/** Primary control rows for the EXPANDED Telegram control panel. */
-export const TELEGRAM_PRIMARY_ROWS: MessageAction[][] = [
-  ["enter", "interrupt"],
-  ["esc", "restart"],
+/** Always-visible mid-task controls (also the Telegram collapsed row). */
+export const CONTROL_INTERRUPTS: MessageAction[] = ["esc", "enter", "interrupt"];
+/** Agent lifecycle. */
+export const CONTROL_LIFECYCLE: MessageAction[] = ["restart", "clear", "compact", "exit"];
+/** TUI navigation keys (rarely needed → only in the expanded / help surfaces). */
+export const CONTROL_NAV: MessageAction[] = ["up", "down", "left", "right", "tab"];
+
+/** Full control rows for the expanded Telegram panel and the Lark control card. */
+export const CONTROL_ROWS_FULL: MessageAction[][] = [
+  CONTROL_INTERRUPTS,
+  CONTROL_LIFECYCLE,
+  CONTROL_NAV,
 ];
 
-/** Single action row for the collapsed Telegram control keyboard (shown beneath
- * every result). Leads with the most-used mid-task controls — matching Lark's
- * control panel; clear/compact live in the expanded panel. */
-export const TELEGRAM_COLLAPSED_ROW: MessageAction[] = ["esc", "enter", "interrupt"];
-
-/** Additional rows shown in the expanded Telegram control keyboard. */
-export const TELEGRAM_EXPANDED_ROWS: MessageAction[][] = [
-  ["clear", "compact"],
-  ["up", "down", "left", "right", "tab"],
-  ["exit", "status"],
-];
-
-/** Action rows for the Lark inline control panel (stamped on every card). */
-export const LARK_CONTROL_ROWS: MessageAction[][] = [
-  ["esc", "enter", "interrupt"],
-  ["clear", "compact", "restart"],
-];
-
-/** Action rows for the Lark /help card "running" section. */
-export const LARK_HELP_RUNNING_ROWS: MessageAction[][] = [
-  ["enter", "esc", "interrupt"],
-  ["restart", "clear", "compact"],
-  ["up", "down", "left", "right", "tab", "status"],
-  ["start", "exit"],
-];
+/** Agent-action button rows for the help card "Session" section (adds start/status). */
+export const HELP_SESSION_ROWS: MessageAction[][] = [...CONTROL_ROWS_FULL, ["start", "status"]];
 
 // ── Derived sets / lists ─────────────────────────────────────────────────────
 
@@ -135,76 +124,70 @@ interface HelpSection {
   rows: readonly HelpRow[];
 }
 
-const PROJECTS: readonly HelpRow[] = [
-  [{ cmds: ["current_project"], descKey: "cmdCurrentProject" }],
-  [{ cmds: ["list_alive_projects"], descKey: "cmdListAlive" }],
-  [{ cmds: ["list_recent_projects"], descKey: "cmdListRecent" }],
-  [{ cmds: ["add_project"], descKey: "cmdAddProject", argHint: " <path>" }],
-  [{ cmds: ["new_free"], descKey: "cmdNewFree", argHint: " [label]" }],
-  [{ cmds: ["adopt"], descKey: "cmdAdopt" }],
-  [{ cmds: ["queue_status"], descKey: "cmdQueueStatus" }],
-  [{ cmds: ["history"], descKey: "cmdHistory", argHint: " [N]" }],
-  [{ cmds: ["sessions"], descKey: "cmdSessions" }],
-  [{ cmds: ["logs"], descKey: "cmdLogs", argHint: " [traceId|N]" }],
-  [{ cmds: ["dashboard"], descKey: "cmdDashboard" }],
-];
+// One taxonomy for both adapters: Session → Projects → Settings → Diagnostics
+// (matching the / menu grouping and the help-card sections). Each command lives in
+// exactly one category, so a user can predict where to find it.
 
-const RUNNING: readonly HelpRow[] = [
+const SESSION: readonly HelpRow[] = [
   [
-    { cmds: ["enter"], descKey: "cmdEnter" },
-    { cmds: ["esc"], descKey: "cmdEsc" },
+    { cmds: ["start"], descKey: "cmdStart" },
+    { cmds: ["status"], descKey: "cmdStatus" },
   ],
   [
-    { cmds: ["interrupt"], descKey: "cmdInterrupt" },
+    { cmds: ["peek"], descKey: "cmdPeek", argHint: " [N]" },
+    { cmds: ["history"], descKey: "cmdHistory", argHint: " [N]" },
+  ],
+  [{ cmds: ["inputs"], descKey: "cmdInputs", argHint: " [N]" }],
+  [
     { cmds: ["restart"], descKey: "cmdRestart" },
+    { cmds: ["exit"], descKey: "cmdExit" },
   ],
   [
     { cmds: ["clear"], descKey: "cmdClear" },
     { cmds: ["compact"], descKey: "cmdCompact" },
   ],
   [
+    { cmds: ["esc"], descKey: "cmdEsc" },
+    { cmds: ["interrupt"], descKey: "cmdInterrupt" },
+  ],
+  [
+    { cmds: ["enter"], descKey: "cmdEnter" },
     { cmds: ["up", "down", "left", "right", "tab"], descKey: "cmdArrowsTab" },
-    { cmds: ["exit"], descKey: "cmdExit" },
   ],
 ];
 
-const TELEGRAM_SECTIONS: readonly HelpSection[] = [
-  { headerKey: "helpSectionProjects", rows: PROJECTS },
-  { headerKey: "helpSectionRunning", rows: RUNNING },
-  {
-    headerKey: "helpSectionIdle",
-    rows: [
-      [{ cmds: ["start"], descKey: "cmdStart" }],
-      [{ cmds: ["peek"], descKey: "cmdPeek" }],
-      [{ cmds: ["status"], descKey: "cmdStatus" }],
-      [{ cmds: ["doctor"], descKey: "cmdDoctor" }],
-      [{ cmds: ["help"], descKey: "cmdHelp" }],
-    ],
-  },
+const PROJECTS: readonly HelpRow[] = [
+  [{ cmds: ["current_project"], descKey: "cmdCurrentProject" }],
+  [{ cmds: ["list_alive_projects"], descKey: "cmdListAlive" }],
+  [{ cmds: ["list_recent_projects"], descKey: "cmdListRecent" }],
+  [{ cmds: ["sessions"], descKey: "cmdSessions" }],
+  [{ cmds: ["add_project"], descKey: "cmdAddProject", argHint: " <path>" }],
+  [{ cmds: ["new_free"], descKey: "cmdNewFree", argHint: " [label]" }],
+  [{ cmds: ["adopt"], descKey: "cmdAdopt" }],
+  [{ cmds: ["recover"], descKey: "cmdRecover" }],
 ];
 
-const LARK_SECTIONS: readonly HelpSection[] = [
-  {
-    headerKey: "helpSectionProjects",
-    rows: [
-      ...PROJECTS,
-      [{ cmds: ["peek"], descKey: "cmdPeek" }],
-      [{ cmds: ["voice_lang"], descKey: "cmdVoiceLang" }],
-      [{ cmds: ["lang"], descKey: "cmdLang" }],
-    ],
-  },
-  {
-    headerKey: "helpSectionRunning",
-    rows: [...RUNNING, [{ cmds: ["status"], descKey: "cmdStatus" }]],
-  },
-  {
-    headerKey: "helpSectionIdle",
-    rows: [
-      [{ cmds: ["start"], descKey: "cmdStart" }],
-      [{ cmds: ["doctor"], descKey: "cmdDoctor" }],
-      [{ cmds: ["help"], descKey: "cmdHelp" }],
-    ],
-  },
+const SETTINGS: readonly HelpRow[] = [
+  [{ cmds: ["lang"], descKey: "cmdLang" }],
+  [{ cmds: ["voice_lang"], descKey: "cmdVoiceLang" }],
+  [{ cmds: ["voice_install"], descKey: "cmdVoiceInstall" }],
+  [{ cmds: ["status_install"], descKey: "cmdStatusInstall" }],
+];
+
+const DIAGNOSTICS: readonly HelpRow[] = [
+  [{ cmds: ["dashboard"], descKey: "cmdDashboard" }],
+  [{ cmds: ["sysload"], descKey: "cmdSysload" }],
+  [{ cmds: ["logs"], descKey: "cmdLogs", argHint: " [traceId|N]" }],
+  [{ cmds: ["queue_status"], descKey: "cmdQueueStatus" }],
+  [{ cmds: ["doctor"], descKey: "cmdDoctor" }],
+  [{ cmds: ["help"], descKey: "cmdHelp" }],
+];
+
+const SECTIONS: readonly HelpSection[] = [
+  { headerKey: "helpSectionSession", rows: SESSION },
+  { headerKey: "helpSectionProjects", rows: PROJECTS },
+  { headerKey: "helpSectionSettings", rows: SETTINGS },
+  { headerKey: "helpSectionDiagnostics", rows: DIAGNOSTICS },
 ];
 
 function renderItem(item: HelpItem, m: Messages): string {
@@ -221,61 +204,62 @@ function renderRow(row: HelpRow, m: Messages, sep: string): string {
 export function buildHelpBody(adapter: "telegram" | "lark", channel: "telegram" | "lark"): string {
   const m = messages(channel);
   const intro = adapter === "telegram" ? m.helpIntroTelegram : m.helpIntroLark;
-  const sections = adapter === "telegram" ? TELEGRAM_SECTIONS : LARK_SECTIONS;
 
-  const body = sections
-    .map((section) => {
-      const header = `━━ ${m[section.headerKey] as string} ━━`;
-      const rows = section.rows.map((row) => renderRow(row, m, "    "));
-      return [header, ...rows].join("\n");
-    })
-    .join("\n\n");
+  const body = SECTIONS.map((section) => {
+    const header = `━━ ${m[section.headerKey] as string} ━━`;
+    const rows = section.rows.map((row) => renderRow(row, m, "    "));
+    return [header, ...rows].join("\n");
+  }).join("\n\n");
 
   return `${intro}\n\n${body}`;
 }
 
 // ── Telegram BOT_COMMANDS ────────────────────────────────────────────────────
 
+// The `/` autocomplete menu, grouped by category (Session → Projects → Settings →
+// Diagnostics). Deliberately OMITS the pure button keys (esc/interrupt/enter/up/
+// down/left/right/tab) — nobody types `/up`, and they flood the menu. Their
+// bot.command() handlers stay registered (getTelegramActions), so typing them
+// still works; they're just not advertised. Reachable as one-tap control buttons.
 export const BOT_COMMANDS: BotCommand[] = [
+  // ▶️ Session
   { command: "help", description: "Show all commands" },
   { command: "start", description: "Start the agent" },
   { command: "status", description: "Check agent status" },
-  { command: "peek", description: "Capture tmux pane" },
-  { command: "esc", description: "Send Escape key" },
-  { command: "interrupt", description: "Send Ctrl-C" },
-  { command: "clear", description: "Send /clear command" },
-  { command: "compact", description: "Send /compact command" },
-  { command: "enter", description: "Send Enter key" },
-  { command: "up", description: "Send Up arrow" },
-  { command: "down", description: "Send Down arrow" },
-  { command: "left", description: "Send Left arrow" },
-  { command: "right", description: "Send Right arrow" },
-  { command: "tab", description: "Send Tab key" },
-  { command: "exit", description: "Exit the agent" },
-  { command: "restart", description: "Restart the agent (resumes the conversation)" },
-  { command: "list_alive_projects", description: "List alive projects" },
-  { command: "list_recent_projects", description: "List recent projects" },
-  { command: "current_project", description: "Show current project" },
-  { command: "add_project", description: "Add a new project" },
-  { command: "new_free", description: "Create a free (parallel) project" },
-  { command: "adopt", description: "Take over an agent running outside tmux" },
-  {
-    command: "status_install",
-    description: "Install usage reporting (statusLine snapshot) for /status",
-  },
-  { command: "queue_status", description: "Show message queue status" },
+  { command: "peek", description: "Capture the tmux pane (/peek N for N lines of scrollback)" },
   {
     command: "history",
     description: "Show recent conversation history (default: last, /history N for Nth recent)",
   },
+  { command: "inputs", description: "List your recent inputs — tap one to fetch & edit it" },
+  { command: "restart", description: "Restart the agent (resumes the conversation)" },
+  { command: "clear", description: "Send /clear command" },
+  { command: "compact", description: "Send /compact command" },
+  { command: "exit", description: "Exit the agent" },
+  // 📂 Projects
+  { command: "current_project", description: "Show current project" },
+  { command: "list_alive_projects", description: "List alive projects" },
+  { command: "list_recent_projects", description: "List recent projects" },
   { command: "sessions", description: "List resumable agent sessions" },
+  { command: "add_project", description: "Add a new project" },
+  { command: "new_free", description: "Create a free (parallel) project" },
+  { command: "adopt", description: "Take over an agent running outside tmux" },
+  { command: "recover", description: "Recover all projects after a reboot (recreate + relaunch)" },
+  // ⚙️ Settings
+  { command: "lang", description: "Set interface language (en/zh/zh-TW/yue/ja/es)" },
+  { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },
+  { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
+  {
+    command: "status_install",
+    description: "Install usage reporting (statusLine snapshot) for /status",
+  },
+  // 🛠 Diagnostics
+  { command: "dashboard", description: "Show the global dashboard (all sessions overview)" },
+  { command: "sysload", description: "Show machine load, heat, and runaway processes" },
   {
     command: "logs",
     description: "Show recent WARN/ERROR logs (/logs <traceId> or /logs N)",
   },
-  { command: "dashboard", description: "Show the global dashboard (all sessions overview)" },
+  { command: "queue_status", description: "Show message queue status" },
   { command: "doctor", description: "Run install health checks" },
-  { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
-  { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },
-  { command: "lang", description: "Set interface language (en/zh/zh-TW/yue/ja/es)" },
 ];

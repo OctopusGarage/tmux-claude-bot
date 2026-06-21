@@ -82,6 +82,43 @@ describe("assertClaudeBinaryAccessible", () => {
       process.env.PATH = orig;
     }
   });
+
+  // A launcher defined only as a shell alias/function (e.g. `claude-stella` in
+  // ~/.zshrc) is not on PATH, but the command runs in the session's interactive
+  // shell via tmux send-keys — so the pre-flight must accept it. HOME is pointed
+  // at a temp dir whose rc files we control (os.homedir() honours $HOME on POSIX).
+  function withRcFiles(files: Record<string, string>, fn: () => void) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rc-"));
+    for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(tmp, name), body);
+    const origHome = process.env.HOME;
+    process.env.HOME = tmp;
+    try {
+      fn();
+    } finally {
+      process.env.HOME = origHome;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  it("accepts a name defined as a shell alias in ~/.zshrc (not on PATH)", () => {
+    withRcFiles({ ".zshrc": 'alias claude-stella="CLAUDE_CONFIG_DIR=~/.x claude --foo"\n' }, () => {
+      expect(() => assertClaudeBinaryAccessible("claude-stella")).not.toThrow();
+    });
+  });
+
+  it("accepts a name defined as a shell function in ~/.bashrc", () => {
+    withRcFiles({ ".bashrc": 'my-launcher() {\n  claude "$@"\n}\n' }, () => {
+      expect(() => assertClaudeBinaryAccessible("my-launcher")).not.toThrow();
+    });
+  });
+
+  it("still throws when a name is neither on PATH nor defined in any rc file", () => {
+    withRcFiles({ ".zshrc": 'alias other="claude"\n' }, () => {
+      expect(() => assertClaudeBinaryAccessible("__no_such_launcher_xyz__")).toThrow(
+        /not found in PATH/,
+      );
+    });
+  });
 });
 
 describe("performRestart", () => {
@@ -113,12 +150,27 @@ describe("executeMessage — control actions", () => {
     expect(await executeMessage(msg("status", { sessionName: undefined }), deps())).toBe("完成");
   });
 
-  it("start launches Claude and invalidates the config cache", async () => {
-    const d = deps();
+  it("start launches Claude with a bot-assigned --session-id and invalidates config", async () => {
+    const d = deps({ checkIfRunning: vi.fn(async () => false) }); // not running → start proceeds
     expect(await executeMessage(msg("start"), d)).toBe("✅ 已启动");
-    // The default start passes no command override (uses the primary).
-    expect(d.agent.start).toHaveBeenCalledWith("proj-1", undefined);
+    // Claude gets a bot-pinned session id appended to the primary command, so the
+    // exact conversation id is owned deterministically (for /restart + recovery).
+    expect(d.agent.start).toHaveBeenCalledWith(
+      "proj-1",
+      expect.stringMatching(/^bash --session-id [0-9a-f-]{36}$/),
+    );
     expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
+  });
+
+  it("start persists the kind, exact command, and the assigned session id (for recovery)", async () => {
+    const d = deps({ checkIfRunning: vi.fn(async () => false) }); // not running → start proceeds
+    await executeMessage(msg("start"), d);
+    const { getAgentKind } = await import("../src/core/agents/agentKindMap.js");
+    const { getStartCommand } = await import("../src/core/agents/startCommandMap.js");
+    const { getLastLiveSessionId } = await import("../src/core/agents/live-session-id.js");
+    expect(getAgentKind("proj-1")).toBe("claude");
+    expect(getStartCommand("proj-1")).toBe("bash"); // the base flavor, no --session-id
+    expect(getLastLiveSessionId("proj-1")).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("exit clears the queue, exits the agent via the runner, invalidates config", async () => {
@@ -151,6 +203,15 @@ describe("executeMessage — control actions", () => {
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Down", "proj-1");
     expect(await executeMessage(msg("tab"), d)).toBe("✅ 已发送 Tab");
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("Tab", "proj-1");
+  });
+
+  it("interrupt/esc/raw-keys are tolerant — they go through even when no agent is running", async () => {
+    // Escape hatches: a stuck/uncertain pane must still accept Ctrl-C and raw keys.
+    const d = deps({ checkIfRunning: vi.fn(async () => false) });
+    expect(await executeMessage(msg("interrupt"), d)).toBe("✅ 已中断 · Ctrl-C");
+    expect(d.bridge.sendRawKey).toHaveBeenCalledWith("C-c", "proj-1");
+    expect(await executeMessage(msg("enter"), d)).toBe("✅ 已回车");
+    expect(await executeMessage(msg("esc"), d)).toBe("✅ 已发送 Esc");
   });
 
   it("clear/compact send the slash commands and invalidate the resolver cache", async () => {
@@ -187,9 +248,17 @@ describe("executeMessage — control actions", () => {
     ).toContain("🔴 Claude 未运行");
   });
 
-  it("text rejects (throws) when Claude isn't running — no keys sent", async () => {
+  it("start is rejected when an agent is already running (no second agent)", async () => {
+    const d = deps({ checkIfRunning: vi.fn(async () => true) }); // already running
+    expect(await executeMessage(msg("start"), d)).toBe("✅ 已在运行中，无需重复启动");
+    expect(d.agent.start).not.toHaveBeenCalled();
+  });
+
+  it("a running-required action is rejected when Claude isn't running — no keys sent", async () => {
     const d = deps({ checkIfRunning: vi.fn(async () => false) });
-    await expect(executeMessage(msg("text", { text: "do it" }), d)).rejects.toThrow("未运行");
+    expect(await executeMessage(msg("text", { text: "do it" }), d)).toBe(
+      "未运行，请使用 /restart 启动",
+    );
     expect(d.bridge.sendKeys).not.toHaveBeenCalled();
   });
 

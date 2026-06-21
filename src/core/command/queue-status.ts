@@ -1,9 +1,8 @@
 import { truncate } from "../../shared/utils/string.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
-import { projectLabel } from "../projects/project-label.js";
+import { labelForSession } from "../projects/project-label.js";
 import type { Channel } from "../projects/project-manager.js";
-import { getPathBySession } from "../projects/sessionPathMap.js";
 
 /**
  * Build the message-queue status report (global queue + per-session queues) as
@@ -32,7 +31,7 @@ export function buildQueueStatusLines(deps: HandlerDeps, channel: Channel): stri
   }
   for (const sessionName of sessionNames.sort()) {
     const queueItems = deps.queue.getSessionQueue(sessionName);
-    const name = projectLabel(sessionName, getPathBySession(sessionName) ?? undefined);
+    const name = labelForSession(sessionName);
     lines.push(`\n━━ 📂 ${name} ━━`);
     lines.push(m.queueCounts(queueItems.length, deps.queue.isSessionProcessing(sessionName)));
     const currentMsg = deps.queue.getCurrentSessionMessage(sessionName);

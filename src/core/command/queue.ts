@@ -27,6 +27,16 @@ export type QueuedMessage = {
   /** Optional interim-progress channel: sends a message to the chat while the
    * run is still in flight (resolve/reject remain the one-shot finale). */
   notify?: ((text: string) => void) | undefined;
+  /** Don't persist this message to the on-disk backlog. For the local control
+   * transport (the TUI): its client is ephemeral, so a bot restart must not
+   * "restore" a prompt that has no one to reply to. Still fully queued in-memory
+   * (per-session serialization holds), just never written to pending.json. */
+  ephemeral?: boolean | undefined;
+  /** Chat message id (stringified) of this item's "queued" ack, set once the ack
+   * is sent (setQueueAck). A reply to that ack rewrites THIS item (rewriteByAck).
+   * Persisted, so reply-to-rewrite survives a restart exactly like the item does —
+   * the ack mapping lives WITH the item rather than in a separate volatile map. */
+  ackMsgId?: string | undefined;
 };
 
 export type PersistedMessage = {
@@ -37,9 +47,23 @@ export type PersistedMessage = {
   sessionName?: string | undefined;
   action: string;
   traceId?: string | undefined;
+  ackMsgId?: string | undefined;
 };
 
 export type QueueHandler = (msg: QueuedMessage) => Promise<void>;
+
+/** Settles a cancelled queued message. A distinct type so an adapter's reject
+ * closure can tell a user-initiated cancel apart from a runtime failure and
+ * confirm it plainly (not with an error/recovery surface). */
+export class QueueCancelledError extends Error {}
+
+/** Actions that type the user's prompt into the agent's pane. The single predicate
+ * the idle-gate (hold behind a busy agent) and the streak skip (a completed prompt
+ * left the agent idle via waitUntilDone) both key on — so "which actions inject a
+ * prompt" lives in one place instead of two scattered `=== "text"` literals. */
+function injectsPrompt(action: string): boolean {
+  return action === "text";
+}
 
 export class MessageQueue {
   private readonly sessionQueues = new Map<string, Queue<QueuedMessage>>();
@@ -54,6 +78,12 @@ export class MessageQueue {
   private readonly lastProcessedAt = new Map<string, number>();
   private readonly persistPath: string;
   private persistScheduled = false;
+  /** Optional idle-gate: returns false while the session's agent is busy with
+   * work this queue didn't start (e.g. the user driving it on the desktop), so
+   * the next message is HELD in the queue instead of being typed into a busy
+   * pane. Injected (setReadinessProbe) to keep the queue protocol-agnostic. */
+  private readyProbe: ((session: string) => Promise<boolean>) | undefined;
+  private readyRecheckMs = 1500;
 
   constructor(
     maxSize: number = 30,
@@ -94,7 +124,8 @@ export class MessageQueue {
 
   private writePersistedNow(): void {
     const messages: PersistedMessage[] = [];
-    for (const msg of this.globalQueue.toArray()) {
+    const collect = (msg: QueuedMessage): void => {
+      if (msg.ephemeral) return; // local-control messages are never restored
       messages.push({
         id: msg.id,
         text: msg.text,
@@ -103,20 +134,12 @@ export class MessageQueue {
         sessionName: msg.sessionName,
         action: msg.action,
         traceId: msg.traceId,
+        ackMsgId: msg.ackMsgId,
       });
-    }
+    };
+    for (const msg of this.globalQueue.toArray()) collect(msg);
     for (const queue of this.sessionQueues.values()) {
-      for (const msg of queue.toArray()) {
-        messages.push({
-          id: msg.id,
-          text: msg.text,
-          chatId: msg.chatId,
-          channel: msg.channel,
-          sessionName: msg.sessionName,
-          action: msg.action,
-          traceId: msg.traceId,
-        });
-      }
+      for (const msg of queue.toArray()) collect(msg);
     }
     try {
       fs.writeFileSync(this.persistPath, JSON.stringify(messages, null, 2), "utf-8");
@@ -281,6 +304,74 @@ export class MessageQueue {
     this.persist();
   }
 
+  /** Cancel ONE still-waiting message by id (never the in-flight ▶ one — that's
+   * already typed in; only esc/interrupt stops it). Rejects it so the adapter's
+   * pending reply settles (same path as clearSession), and persists. Returns
+   * true if a queued message with that id was found. */
+  cancelQueued(sessionName: string, msgId: string, reason = "Message cancelled"): boolean {
+    const removed = this.sessionQueues.get(sessionName)?.remove((m) => m.id === msgId);
+    if (!removed) return false;
+    // The reject closure IS the user-facing confirmation (the adapter passes its
+    // localized "已取消" text as the reason) — typed so the closure confirms it
+    // plainly instead of showing an error/recovery surface.
+    removed.reject(new QueueCancelledError(reason));
+    this.persist();
+    return true;
+  }
+
+  /** Bind the chat-message id of a queued item's "queued" ack to that item, so a
+   * reply to the ack can rewrite it ({@link rewriteByAck}). Persisted with the item,
+   * so the binding survives a restart. No-op if the item is already gone.
+   *
+   * The ack's chat-message id only exists AFTER the ack is sent, so the adapter binds
+   * it post-enqueue. If the item is dequeued (starts running) in that brief window the
+   * bind is a no-op — which is CORRECT: a running item can't be cancelled or rewritten
+   * anyway, and a later ❌/reply on its ack then resolves to "no longer queued"
+   * (queueItemGone, which points the user at interrupt). So the race needs no guard. */
+  setQueueAck(sessionName: string, msgId: string, ackMsgId: string): void {
+    const msg = this.sessionQueues
+      .get(sessionName)
+      ?.toArray()
+      .find((m) => m.id === msgId);
+    if (!msg) return;
+    msg.ackMsgId = ackMsgId;
+    this.persist();
+  }
+
+  /** Rewrite, in ONE pass, the still-waiting item whose "queued" ack has id
+   * `ackMsgId` in chat `chatId` — the single op the reply-to-rewrite handlers need
+   * (resolve + rewrite are one logical step). Returns the owning session plus:
+   *  - "rewritten": text replaced in place, queue position kept (the queued objects
+   *    are live references, so the mutated text is what the handler later sends);
+   *  - "duplicate": blocked — `newText` already matches another queued/in-flight item
+   *    in this chat, so the rewrite can't manufacture a double-send the enqueue path
+   *    would reject (the caller reports it, never silently re-enqueues);
+   *  - "not-found": no waiting item with that ack here (already ran, or the reply
+   *    wasn't to one of our acks → the caller falls through to normal routing).
+   *
+   * Scoped by `chatId`, NOT just the ack id: a Telegram message_id is unique only
+   * within a chat, so the same id can recur across the owner DM and a group — chat
+   * scoping keeps a reply in one chat from rewriting another chat's item, and also
+   * separates the channels (their chatId value-spaces don't overlap). Scans the live
+   * queue (single source of truth, correct after a restore). */
+  rewriteByAck(
+    ackMsgId: string,
+    chatId: string | number,
+    newText: string,
+  ): { kind: "rewritten" | "duplicate"; session: string } | { kind: "not-found" } {
+    for (const [session, queue] of this.sessionQueues) {
+      const msg = queue.toArray().find((m) => m.ackMsgId === ackMsgId && m.chatId === chatId);
+      if (!msg) continue;
+      if (msg.action === "text" && this.hasDuplicateText(msg.chatId, newText)) {
+        return { kind: "duplicate", session };
+      }
+      msg.text = newText;
+      this.persist();
+      return { kind: "rewritten", session };
+    }
+    return { kind: "not-found" };
+  }
+
   clear(): void {
     for (const queue of this.sessionQueues.values()) {
       queue.clear();
@@ -331,7 +422,13 @@ export class MessageQueue {
     }
   }
 
-  private async processSession(sessionName: string): Promise<void> {
+  /**
+   * @param gated when true (a FRESH start), the idle-gate runs before dequeuing;
+   * when false (a streak continuation right after the bot's own task finished),
+   * it is skipped — the bot just held the agent via waitUntilDone, so it's idle
+   * for us and re-probing would only add latency / a false defer.
+   */
+  private async processSession(sessionName: string, gated = true): Promise<void> {
     if (this.processingSessions.has(sessionName)) {
       log.info(`processSession already processing session=${sessionName}`);
       return;
@@ -358,8 +455,32 @@ export class MessageQueue {
       return;
     }
 
-    const msg = queue.dequeue()!;
+    // Reserve the slot synchronously BEFORE the idle-gate await, so a concurrent
+    // processSession call returns at the guard above — keeping this non-reentrant
+    // per session across the await (the message is not yet dequeued).
     this.processingSessions.add(sessionName);
+
+    // Idle-gate: don't type into a pane busy with work this queue didn't start
+    // (the user driving the agent on the desktop). Hold the message — leave it
+    // QUEUED, so it still counts in size()/"排队中" — and recheck shortly.
+    //
+    // ONLY a `text` prompt is gated — it's the one action that types into the
+    // agent's input. Control verbs (restart/exit/start/esc/…) must NEVER be held
+    // by agent-busy: they're how a user breaks a stuck or desktop-driven agent.
+    const head = queue.peek();
+    if (
+      gated &&
+      head !== undefined &&
+      injectsPrompt(head.action) &&
+      this.readyProbe &&
+      !(await this.readyProbe(sessionName))
+    ) {
+      this.processingSessions.delete(sessionName);
+      setTimeout(() => void this.processSession(sessionName), this.readyRecheckMs);
+      return;
+    }
+
+    const msg = queue.dequeue()!;
     this.currentSessionMessage.set(sessionName, msg);
     log.info(`processing session=${sessionName} action=${msg.action} msgId=${msg.id}`);
 
@@ -368,7 +489,7 @@ export class MessageQueue {
       this.processingSessions.delete(sessionName);
       this.currentSessionMessage.delete(sessionName);
       msg.reject(new Error("Queue handler not set"));
-      void this.processSession(sessionName);
+      void this.processSession(sessionName, false);
       return;
     }
 
@@ -378,7 +499,11 @@ export class MessageQueue {
     this.currentSessionMessage.delete(sessionName);
     this.lastProcessedAt.set(sessionName, Date.now());
     this.persist();
-    void this.processSession(sessionName);
+    // Streak continuation: skip the gate for the immediate next message ONLY when
+    // we just ran a prompt-injecting task — waitUntilDone left the agent idle for
+    // us. After a non-text action (restart/exit/start) the agent may be
+    // (re)starting, so the next message must be re-gated, not typed into a half-up agent.
+    void this.processSession(sessionName, !injectsPrompt(msg.action));
   }
 
   private async processGlobal(): Promise<void> {
@@ -438,5 +563,12 @@ export class MessageQueue {
 
   setHandler(handler: QueueHandler): void {
     this.handler = handler;
+  }
+
+  /** Install the idle-gate (see {@link readyProbe}). `recheckMs` is how often a
+   * held message re-probes while the agent stays busy. */
+  setReadinessProbe(probe: (session: string) => Promise<boolean>, recheckMs?: number): void {
+    this.readyProbe = probe;
+    if (recheckMs !== undefined) this.readyRecheckMs = recheckMs;
   }
 }

@@ -78,6 +78,25 @@ describe("queue persistence with channel", () => {
     expect(q.loadPersisted()).toEqual([]);
   });
 
+  it("does NOT persist an ephemeral backlog message (the local-control transport)", () => {
+    const q = new MessageQueue(10, persistPath);
+    q.setHandler(() => new Promise<void>(() => {})); // block the in-flight message
+    const base = {
+      chatId: "c",
+      sessionName: "sess_a",
+      action: "text",
+      resolve: () => {},
+      reject: () => {},
+    };
+    q.enqueue({ id: "blocker", text: "block", channel: "telegram", ...base }); // in flight
+    q.enqueue({ id: "keep", text: "normal", channel: "telegram", ...base }); // backlog → persisted
+    q.enqueue({ id: "eph", text: "control", ephemeral: true, ...base }); // backlog → NOT persisted
+    q.flushPending();
+    // The ephemeral control message is queued in-memory (so per-session serialization
+    // holds) but never written to disk — a restart must not "restore" it.
+    expect(q.loadPersisted().map((m) => m.id)).toEqual(["keep"]);
+  });
+
   it("persists and reloads a backlogged message's traceId", () => {
     const q = new MessageQueue(10, persistPath);
     q.setHandler(() => new Promise<void>(() => {})); // block the in-flight message

@@ -19,11 +19,12 @@ const createTestMessage = (
     text: string;
     chatId: number;
     sessionName: string | undefined;
+    action: string;
     resolve: (v: string) => void;
     reject: (e: Error) => void;
   }> = {},
 ) => ({
-  action: "test" as const,
+  action: "test",
   id: "1",
   text: "default",
   chatId: 1,
@@ -84,6 +85,159 @@ describe("MessageQueue", () => {
       // Give any stray retry a chance to fire before asserting it did not.
       await new Promise((r) => setTimeout(r, 50));
       expect(runs).toBe(1);
+    });
+
+    it("idle-gate: holds a message in the queue while the agent is busy, then runs it", async () => {
+      const queue = new MessageQueue(10);
+      const results: string[] = [];
+      queue.setHandler(async (msg) => {
+        results.push(msg.text);
+        msg.resolve("ok");
+      });
+
+      // Probe reports busy until we flip it; recheck fast so the test isn't slow.
+      let idle = false;
+      queue.setReadinessProbe(async () => idle, 20);
+
+      queue.enqueue(createTestMessage({ id: "1", text: "a", action: "text" }));
+
+      // While busy: the message stays QUEUED (counts in size, "排队中"), unrun.
+      await new Promise((r) => setTimeout(r, 60));
+      expect(results).toEqual([]);
+      expect(queue.size("s1")).toBe(1);
+      expect(queue.isSessionProcessing("s1")).toBe(false); // not dequeued/in-flight
+
+      // Agent goes idle → the held message dispatches on the next recheck.
+      idle = true;
+      await waitFor(() => results.length === 1);
+      expect(results).toEqual(["a"]);
+      expect(queue.size("s1")).toBe(0);
+    });
+
+    it("idle-gate: a streak continuation skips the gate (no re-probe after a task)", async () => {
+      const queue = new MessageQueue(10);
+      const results: string[] = [];
+      queue.setHandler(async (msg) => {
+        results.push(msg.text);
+        msg.resolve("ok");
+      });
+
+      // Probe is only consulted on a FRESH start; count how often it runs.
+      let probes = 0;
+      const idle = true;
+      queue.setReadinessProbe(async () => {
+        probes += 1;
+        return idle;
+      }, 20);
+
+      // Two messages enqueued up front. The first is a fresh start (1 probe); the
+      // second is dispatched as a streak continuation right after, so it must NOT
+      // re-probe.
+      queue.enqueue(createTestMessage({ id: "1", text: "a", action: "text" }));
+      queue.enqueue(createTestMessage({ id: "2", text: "b", action: "text" }));
+
+      await waitFor(() => results.length === 2);
+      expect(results).toEqual(["a", "b"]);
+      expect(probes).toBe(1); // only the fresh start was gated
+    });
+
+    it("idle-gate: a non-text action (restart/exit) bypasses the gate even while busy", async () => {
+      const queue = new MessageQueue(10);
+      const ran: string[] = [];
+      queue.setHandler(async (msg) => {
+        ran.push(msg.action);
+        msg.resolve("ok");
+      });
+      // Agent reports BUSY — yet an abort verb must still run (it's how the user
+      // breaks a stuck/desktop-driven agent), unlike a text prompt which is held.
+      queue.setReadinessProbe(async () => false, 20);
+
+      queue.enqueue(createTestMessage({ id: "r", action: "restart" }));
+
+      await waitFor(() => ran.length === 1);
+      expect(ran).toEqual(["restart"]);
+    });
+
+    it("cancelQueued: removes ONE waiting message by id (rejects it), leaves the rest", async () => {
+      const queue = new MessageQueue(10);
+      // Keep the session busy so nothing is dequeued and the items stay queued.
+      queue.setReadinessProbe(async () => false, 10_000);
+      queue.setHandler(async (msg) => msg.resolve("ok"));
+
+      let rejected: Error | undefined;
+      queue.enqueue(
+        createTestMessage({
+          id: "a",
+          text: "first",
+          action: "text",
+          reject: (e) => (rejected = e),
+        }),
+      );
+      queue.enqueue(createTestMessage({ id: "b", text: "second", action: "text" }));
+      await waitFor(() => queue.size("s1") === 2);
+
+      expect(queue.cancelQueued("s1", "a")).toBe(true);
+      expect(rejected?.message).toBe("Message cancelled");
+      expect(queue.size("s1")).toBe(1);
+      expect(queue.getSessionQueue("s1").map((m) => m.id)).toEqual(["b"]);
+
+      // Unknown id → false, no change.
+      expect(queue.cancelQueued("s1", "nope")).toBe(false);
+      expect(queue.size("s1")).toBe(1);
+    });
+
+    it("setQueueAck + rewriteByAck: a reply-ack rewrites its item in place (chat-scoped)", async () => {
+      const queue = new MessageQueue(10);
+      queue.setReadinessProbe(async () => false, 10_000); // keep items queued
+      queue.setHandler(async (msg) => msg.resolve("ok"));
+      queue.enqueue(createTestMessage({ id: "q1", text: "old", action: "text" }));
+      queue.enqueue(createTestMessage({ id: "q2", text: "keep", action: "text" }));
+      await waitFor(() => queue.size("s1") === 2);
+
+      queue.setQueueAck("s1", "q1", "ack-42"); // test messages have chatId 1
+
+      // Scoped by chat: a matching ack in a DIFFERENT chat must not rewrite this item.
+      expect(queue.rewriteByAck("ack-42", 999, "x")).toEqual({ kind: "not-found" });
+      expect(queue.rewriteByAck("missing", 1, "x")).toEqual({ kind: "not-found" }); // unknown ack
+      expect(queue.rewriteByAck("ack-42", 1, "new")).toEqual({ kind: "rewritten", session: "s1" });
+      expect(queue.getSessionQueue("s1").map((m) => [m.id, m.text])).toEqual([
+        ["q1", "new"], // rewritten in place, position kept
+        ["q2", "keep"],
+      ]);
+
+      // A rewrite that would duplicate another queued item is blocked, not applied.
+      expect(queue.rewriteByAck("ack-42", 1, "keep")).toEqual({ kind: "duplicate", session: "s1" });
+      expect(queue.getSessionQueue("s1")[0]?.text).toBe("new"); // unchanged
+
+      // The binding is dropped with the item (cancel removes it → ack no longer resolves).
+      queue.cancelQueued("s1", "q1");
+      expect(queue.rewriteByAck("ack-42", 1, "z")).toEqual({ kind: "not-found" });
+    });
+
+    it("rewriteByAck: the SAME ack id in two chats rewrites only the addressed chat's item", async () => {
+      // A Telegram message_id is unique only within a chat, so two chats can hold a
+      // queued ack with the same id — the chat scoping must keep them apart.
+      const queue = new MessageQueue(10);
+      queue.setReadinessProbe(async () => false, 10_000);
+      queue.setHandler(async (msg) => msg.resolve("ok"));
+      queue.enqueue(
+        createTestMessage({ id: "a", sessionName: "s1", chatId: 1, action: "text", text: "A" }),
+      );
+      queue.enqueue(
+        createTestMessage({ id: "b", sessionName: "s2", chatId: 2, action: "text", text: "B" }),
+      );
+      await waitFor(() => queue.size("s1") === 1 && queue.size("s2") === 1);
+      queue.setQueueAck("s1", "a", "dup-ack");
+      queue.setQueueAck("s2", "b", "dup-ack"); // same ack id, different chat
+
+      // Reply in chat 1 hits s1's item only; s2's identical-ack item is untouched.
+      expect(queue.rewriteByAck("dup-ack", 1, "A2")).toEqual({ kind: "rewritten", session: "s1" });
+      expect(queue.getSessionQueue("s1")[0]?.text).toBe("A2");
+      expect(queue.getSessionQueue("s2")[0]?.text).toBe("B");
+
+      // And a reply in chat 2 hits s2's item.
+      expect(queue.rewriteByAck("dup-ack", 2, "B2")).toEqual({ kind: "rewritten", session: "s2" });
+      expect(queue.getSessionQueue("s2")[0]?.text).toBe("B2");
     });
 
     it("handles multiple messages in sequence", async () => {

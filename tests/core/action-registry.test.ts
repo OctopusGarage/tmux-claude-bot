@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   ACTION_META,
   buildHelpBody,
+  CONTROL_INTERRUPTS,
+  CONTROL_LIFECYCLE,
+  CONTROL_ROWS_FULL,
   getImmediateActions,
   getLarkQueued,
   getTelegramActions,
-  LARK_CONTROL_ROWS,
-  LARK_HELP_RUNNING_ROWS,
-  TELEGRAM_EXPANDED_ROWS,
-  TELEGRAM_PRIMARY_ROWS,
+  HELP_SESSION_ROWS,
 } from "../../src/core/command/action-registry.js";
 
 describe("ACTION_META", () => {
@@ -76,32 +76,29 @@ describe("getTelegramActions", () => {
   });
 });
 
-describe("button row groups", () => {
-  it("TELEGRAM_PRIMARY_ROWS contains enter and interrupt on row 0", () => {
-    expect(TELEGRAM_PRIMARY_ROWS[0]).toContain("enter");
-    expect(TELEGRAM_PRIMARY_ROWS[0]).toContain("interrupt");
+describe("canonical control rows", () => {
+  it("interrupts row is the same single order shared by every surface", () => {
+    expect(CONTROL_INTERRUPTS).toEqual(["esc", "enter", "interrupt"]);
   });
 
-  it("TELEGRAM_EXPANDED_ROWS contains tab", () => {
-    const all = TELEGRAM_EXPANDED_ROWS.flat();
-    expect(all).toContain("tab");
-  });
-
-  it("LARK_CONTROL_ROWS contains interrupt with danger style", () => {
-    const all = LARK_CONTROL_ROWS.flat();
-    expect(all).toContain("interrupt");
+  it("interrupt button carries the danger style", () => {
+    expect(CONTROL_INTERRUPTS).toContain("interrupt");
     expect(ACTION_META["interrupt"]?.larkStyle).toBe("danger");
   });
 
-  it("LARK_HELP_RUNNING_ROWS contains tab", () => {
-    const all = LARK_HELP_RUNNING_ROWS.flat();
-    expect(all).toContain("tab");
+  it("the full control rows are interrupts → lifecycle → navigation", () => {
+    expect(CONTROL_ROWS_FULL[0]).toEqual(CONTROL_INTERRUPTS);
+    expect(CONTROL_ROWS_FULL[1]).toEqual(CONTROL_LIFECYCLE);
+    expect(CONTROL_ROWS_FULL.flat()).toContain("tab");
+    expect(CONTROL_LIFECYCLE).toContain("exit");
   });
 
-  it("LARK_HELP_RUNNING_ROWS contains start and exit", () => {
-    const all = LARK_HELP_RUNNING_ROWS.flat();
+  it("the help Session rows add start + status to the full control rows", () => {
+    const all = HELP_SESSION_ROWS.flat();
+    expect(all).toContain("tab");
     expect(all).toContain("start");
     expect(all).toContain("exit");
+    expect(all).toContain("status");
   });
 });
 
@@ -116,10 +113,11 @@ describe("buildHelpBody", () => {
     expect(body).toContain("/tab");
   });
 
-  it("telegram help contains the section headers (using zh channel)", () => {
+  it("telegram help contains the five-category section headers (using zh channel)", () => {
     const body = buildHelpBody("telegram", "telegram");
-    expect(body).toMatch(/📂/);
-    expect(body).toMatch(/⚡/);
-    expect(body).toMatch(/🚀/);
+    expect(body).toMatch(/▶️/); // Session
+    expect(body).toMatch(/📂/); // Projects
+    expect(body).toMatch(/⚙️/); // Settings
+    expect(body).toMatch(/🛠/); // Diagnostics
   });
 });
