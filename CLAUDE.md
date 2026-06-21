@@ -159,7 +159,8 @@ An on-demand global status snapshot of all managed sessions.
 - **Entry point:** `buildDashboard(deps)` in `src/core/dashboard/dashboard.ts` returns a `DashboardSnapshot`.
 - **Surfaces:** `tcb dashboard` (CLI, `--json` for raw JSON) and `/dashboard` (owner-only chat command; Lark restricts it to p2p messages).
 - **"Busy"** is `(bot task in flight) OR (transcript written within ACTIVITY_WINDOW_MS) OR (pane is animating)`. The second arm — `AgentProfile.lastActivityAt` (newest transcript mtime, per-agent; process-independent so the one-shot `tcb dashboard` sees it too) — catches work driven directly in the pane, so desktop-initiated activity shows busy. The third arm — `paneIsAnimating`, **only when the first two say idle** — captures the pane twice `PANE_DIFF_MS` (~1.1s) apart and marks busy if it changed: an actively-working pane has a cycling spinner / ticking elapsed timer (main turn, a long *silent* tool call, or a running background subagent), an idle pane is static. It is agent-agnostic (no fragile UI-string match) but adds ~1.1s + two captures per idle session to the snapshot.
-- **current-task duration / cumulative** come from the queue-bracketed task-timing tracker (`src/core/session/task-timing.ts`). `taskStarted`/`taskEnded` are called by the queue's `runHandler`, so the `task Xs` duration and the cumulative total still count **bot-driven** tasks (queued Telegram/Lark messages) only — a desktop-driven session shows plain `busy` with no duration.
+- **current-task duration** (`busy Xs`): bot-driven tasks use the precise queue-bracketed tracker (`task-timing.ts`, `taskStarted`/`taskEnded` around `runHandler`); a desktop-driven busy session has no bot timer, so the duration is derived from the transcript — the newest `ConversationRound.timeMs` (the current turn's raw start timestamp) read via `getRecentConversations`, only when busy without a bot timer. Use `ConversationRound.timeMs` (raw epoch ms), never `.time` (the formatted `MM/DD HH:MM`), for arithmetic.
+- **cumulative** (`Σ`) still counts **bot-driven** task time only (the persisted `task-timing` total) — desktop work isn't summed.
 - **Session uptime** is derived from the tmux `#{session_created}` timestamp (via `bridge.sessionsCreatedAt()`), not from any bot-side record.
 - **No live auto-refresh** — every call to `buildDashboard` is a fresh point-in-time snapshot; there is no push or polling mode.
 
@@ -185,6 +186,40 @@ Per-locale register:
 | `ja` | Polite/neutral Japanese (です・ます or noun style); kanji used as Japanese; refer to the app as "Lark". |
 | `es` | Neutral Spanish; avoid first-person ("Salí…" → neutral "… cerrado"). |
 | `en` | Concise, neutral English. |
+
+## User-facing paths
+
+Any filesystem path shown to a user MUST render the home dir as `~`, never a raw
+`/Users/alice/…` or `/home/alice/…`.
+
+This is enforced at the message **send boundary**, so individual call sites do NOT
+need to remember:
+
+- Telegram: `compose()` in `src/adapters/telegram/replies.ts` runs every reply
+  through `tildeifyHome()`.
+- Lark: `sendText()` / `sendCard()` in `src/adapters/lark/replies.ts` run the text
+  / every string in the card through `tildeifyHome()` / `tildeifyHomeDeep()`.
+
+`tildeifyHome` / `tildeifyHomeDeep` live in `src/shared/utils/path.ts`. Because the
+chokepoint covers all chat output, new features get this for free — do not paste
+raw `getPathBySession(...)` / `projectPath` / `workspacePath` into a message and
+expect to "fix the display later"; it is already handled. For output that does NOT
+go through those send functions (e.g. a new CLI command's stdout, a non-chat
+surface), call `tildeifyHome()` yourself. Never widen this by printing absolute
+home paths to users.
+
+### Floating-point display noise
+
+The SAME send boundary also runs every reply through `tidyFloatNoise()` /
+`tidyFloatNoiseDeep()` (`src/shared/utils/number.ts`): JS double arithmetic prints
+`14` as `14.000000000000002` and `3` as `2.9999999999999996`, and this collapses any
+number with a ≥10-digit run of 0s or 9s in its fraction back to the clean value (no
+real datum has that, so legit decimals like `3.14159` are untouched). So a new view
+that formats a computed number can't leak float noise into chat — it's fixed at the
+boundary. Still prefer rounding at the source for *intended* precision (e.g. a
+percentage shown as an integer); the boundary only cleans noise, not your rounding
+choice. Non-chat surfaces (CLI stdout, the TUI's client-side render) don't pass
+through it — round there yourself.
 
 ## Coverage Threshold Protocol
 
@@ -218,6 +253,7 @@ Two facts shape every feature that records session / project / agent state:
 
 **Rule:** state whose loss would drop a message, break routing, or confuse the user MUST be persisted under the state dir and restored on boot. State that is a cheap cache of live/disk facts MUST NOT be persisted — rebuild it.
 
+- **The state dir is `<install dir>/state` (a subdir), NOT the install dir itself.** The install dir is also where the deploy mirrors each release with `rsync --delete` (`install.sh`) — so any state file living at the install-dir ROOT that wasn't in the deploy's exclude list got silently DELETED on every deploy. This is exactly what wiped `group_bindings.json` and bricked Feishu project groups ("send a message, no reply, must recreate the group"). State now lives in one `state/` subdir, excluded as a single `/state` entry; `.env` lives there too. The launchd/systemd wrappers export `TCB_STATE_DIR=<install>/state`; `migrateLegacyStateDir()` (run first in `bootstrap()`, before `loadConfig`) relocates any legacy root-level state on boot. **Invariant:** every state filename in `LEGACY_STATE_NAMES` (`state-migration.ts`) MUST stay in `install.sh`'s `rsync --delete` excludes — a guard test (`state-dir.test.ts`) fails CI otherwise, so a new state file can never silently regress into the deploy-wipe.
 - **Persist** via the existing stores (all resolve `TCB_STATE_DIR`): `JsonMapStore` (session→X — `agentKindMap`, `group_bindings`, `session_path_map`, `session_live_id_map`), `BoundedSessionMap` (bounded id→session, the reply-target maps), the message queue's `.queue/pending.json`, `.current_project`.
 - **Restore on boot**: `index.ts` `init()` (current sessions + dead-pane recreation); each adapter's start restores the queue backlog **channel-symmetrically** — each adapter restores and drops ONLY its own channel (`queue.clearPersistedChannel`), so a Telegram+Lark deployment loses neither side and neither double-restores.
 - **Decision test for new state:** *"if the bot restarts right now, does losing this lose a message / break routing / confuse the user?"* Yes → persist + restore. No (rebuildable from the live process or disk) → keep it in-memory and say why (e.g. the `ConfigResolver` cache is deliberately not persisted — it is rebuilt from the live process).
@@ -233,17 +269,48 @@ Two facts shape every feature that records session / project / agent state:
 - **Clean up records when a session is removed** so a reused free-slot name can't read stale data — `removeProjectBySession` clears queue / current-project / kind / live-id.
 - **Invalidate caches on lifecycle events** (`/clear`, `/compact`, switch, start) — `configResolver.invalidate`.
 - **Tolerate dead sessions gracefully:** check `hasSession` / `isPaneAlive` before acting; a gone session yields a clear "no session" path, never a crash or a silently stuck queue.
+- **Enumerate from live ∪ records, never records alone.** Any feature that LISTS / picks / sweeps / acts on the *set* of projects or sessions (a picker, a status list, the recovery roster) MUST union the bot's own records with what is live in tmux / on disk — a bot-maintained list captures only what the bot itself created. The user starts sessions DIRECTLY in tmux (bypassing the bot), so a desktop-created project is absent from bot-only lists (`recent_projects.txt`, `agentKindMap`, …) yet is a real, live project the feature must include. Ask: *"if the user `tmux new`'d a project the bot never saw, does this list still show it?"* If no, widen the source. Patterns: `recentProjectButtons` unions `recent_projects.txt` with live `listProjectSessions()` that have a recorded path (so the group-creation picker shows desktop-started projects); the running-sweep adds desktop-started sessions to the recovery roster. The single recorded-value rule above (resolve one value from live) and this one (enumerate the whole set from live) are the same principle at different cardinalities.
 
 ### Checklist for any feature touching session/project/agent state
 
 - [ ] Adds state? Survives restart if lost matters → persist + restore on boot; else in-memory + documented why.
 - [ ] Can the desktop change the underlying reality? → resolve from live, self-heal the record, fall back to recorded only when nothing is live.
+- [ ] LISTS / picks / sweeps a *set* of projects/sessions? → source from live ∪ records, never a bot-only list; a desktop-created (`tmux new`) project the bot never saw must still appear.
 - [ ] Reads a recorded id/kind for a resume/destructive op? → verify against the live process first.
 - [ ] Removing a session leaves orphan records? → clear them in the removal path.
 - [ ] Multi-adapter (Telegram + Lark)? → restore/clear per-channel; don't let one adapter drop the other's state.
 - [ ] Tested on BOTH axes (restart-restore + desktop-divergence self-heal) — see `live-session-id.test.ts`, `queue.channel.test.ts`, `agentKindMap.test.ts`.
 
+## User documentation (keep it in sync)
+
+`docs/manual.md` is the **canonical, comprehensive user manual** — the single entry
+point for using the system (install, chat usage, the terminal UI, keep-awake, CLI,
+troubleshooting). It links the focused references: `docs/commands.md` (the full
+chat-command table) and `docs/tui.md` (the terminal-UI guide).
+
+**When you add or change a user-facing command or feature, update the manual in the
+same change** — do not "document it later". This is mechanically enforced, so drift
+fails CI instead of rotting silently (`tests/docs-contract.test.ts`):
+
+- every Telegram/Feishu menu command (`BOT_COMMANDS`) must appear in `docs/commands.md`;
+- every CLI command (each `.command("…")` in `src/cli.ts`) must be named in
+  `docs/manual.md`;
+- the manual must link `commands.md` and `tui.md`;
+- every config key (`envSchema`) must be in `.env.example`.
+
+So: add a `tcb` subcommand → name it in the manual; add a chat command → add a
+`docs/commands.md` row; add a config key → add it to `.env.example`. The test tells
+you exactly what's missing.
+
 ## Agent skills
+
+### Guiding users (AI usage reference)
+
+When asked to explain or walk someone through using this system, consult
+`docs/agents/usage-guide.md` — task recipes ("user wants to X → relay Y") + a quick
+command/key reference + how to interpret what users see, so you can guide without
+memorising. It relays from the canonical docs (`docs/manual.md`, `docs/commands.md`,
+`docs/tui.md`); when in doubt trust those / `tcb --help`.
 
 ### Issue tracker
 

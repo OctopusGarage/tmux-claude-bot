@@ -8,9 +8,13 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 . "$SCRIPT_DIR/resolve-node.sh"
 
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-# Pin the state-file home to this install dir (covers non-default locations and
-# never depends on cwd or bundle layout).
-export TCB_STATE_DIR="$PROJECT_DIR"
+# State lives in the install dir's `state/` subdir, NOT the install dir itself:
+# the deploy re-mirrors the install dir with `rsync --delete` and would wipe any
+# state at the root (this is what erased group_bindings.json). `.env` lives there
+# too. Logs stay at the install-dir root (excluded from the deploy as `/logs`).
+export TCB_STATE_DIR="$PROJECT_DIR/state"
+export TCB_ENV_FILE="$PROJECT_DIR/state/.env"
+export TCB_LOG_DIR="$PROJECT_DIR/logs"
 cd "$PROJECT_DIR"
 
 # Run the bundled CLI (built by install.sh via `npm run build`). No tsx loader:

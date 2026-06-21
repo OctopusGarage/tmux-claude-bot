@@ -50,9 +50,15 @@ if [ -n "${TCB_MATERIALIZE_FROM:-}" ]; then
   rm -rf "$PROJECT_DIR/.git"
   if [ "$TCB_MATERIALIZE_FROM" != "$PROJECT_DIR" ]; then
     rsync -a --delete \
-      --exclude='.env' --exclude='.current_project' --exclude='recent_projects.txt' \
-      --exclude='session_path_map.json' --exclude='.queue' --exclude='/logs' \
-      --exclude='.bot.pid' --exclude='node_modules' \
+      --exclude='/state' --exclude='/logs' --exclude='node_modules' \
+      --exclude='.bot.pid' --exclude='.running' --exclude='.instance.lock' \
+      --exclude='.env' --exclude='.current_project' --exclude='.queue' \
+      --exclude='recent_projects.txt' --exclude='media' --exclude='status-snapshots' \
+      --exclude='group_bindings.json' --exclude='workspaces.json' --exclude='auth.json' \
+      --exclude='settings.json' --exclude='free_projects.json' \
+      --exclude='session_path_map.json' --exclude='session_agent_map.json' \
+      --exclude='session_live_id_map.json' --exclude='session_task_time.json' \
+      --exclude='lark_reply_target_map.json' --exclude='reply_target_map.json' \
       "$TCB_MATERIALIZE_FROM/" "$PROJECT_DIR/"
   fi
 elif [ -z "${TMUX_CLAUDE_BOT_VERSION:-}" ] && [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && grep -qE '"(@[^"/]+/)?tmux-claude-bot"' "$SELF_DIR/package.json" 2>/dev/null; then
@@ -108,14 +114,27 @@ else
     # don't orphan on update (.git was already dropped above). Runtime state,
     # deps, and logs are excluded from deletion and preserved.
     rsync -a --delete \
-      --exclude='.env' --exclude='.current_project' --exclude='recent_projects.txt' \
-      --exclude='session_path_map.json' --exclude='.queue' --exclude='/logs' \
-      --exclude='.bot.pid' --exclude='node_modules' \
+      --exclude='/state' --exclude='/logs' --exclude='node_modules' \
+      --exclude='.bot.pid' --exclude='.running' --exclude='.instance.lock' \
+      --exclude='.env' --exclude='.current_project' --exclude='.queue' \
+      --exclude='recent_projects.txt' --exclude='media' --exclude='status-snapshots' \
+      --exclude='group_bindings.json' --exclude='workspaces.json' --exclude='auth.json' \
+      --exclude='settings.json' --exclude='free_projects.json' \
+      --exclude='session_path_map.json' --exclude='session_agent_map.json' \
+      --exclude='session_live_id_map.json' --exclude='session_task_time.json' \
+      --exclude='lark_reply_target_map.json' --exclude='reply_target_map.json' \
       "$tmpdir/" "$PROJECT_DIR/"
     rm -rf "$tmpdir"
   fi
 fi
 cd "$PROJECT_DIR"
+
+# State (and .env) live in the state/ subdir, kept out of the deploy's
+# `rsync --delete` (see scripts/launchd-wrapper.sh). Pin it so the setup wizard
+# and any CLI below write/read .env there, matching the running service. The
+# boot-time migrateLegacyStateDir() relocates a legacy root-level .env/state.
+export TCB_STATE_DIR="$PROJECT_DIR/state"
+export TCB_ENV_FILE="$PROJECT_DIR/state/.env"
 
 # Prerequisites.
 command -v node >/dev/null 2>&1 || { err "node not found - install via nvm: https://github.com/nvm-sh/nvm"; exit 1; }
@@ -138,10 +157,37 @@ else
   HUSKY=0 npm prune --omit=dev
 fi
 
+# Global launchers so the documented commands ('tmux-claude-bot tui', 'tcb tui',
+# 'tcb dashboard', ...) work from anywhere - a thin wrapper that execs the bundled
+# CLI. Same ~/.local/bin launcher pattern as the sibling net-auto-switch install.
+# Two names: the full 'tmux-claude-bot' and the short 'tcb' the docs use.
+BIN_DIR="$HOME/.local/bin"
+NODE_BIN="$(command -v node)"
+mkdir -p "$BIN_DIR"
+cat >"$BIN_DIR/tmux-claude-bot" <<EOF_RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+# Pin to THIS install's state dir (the launchd/systemd service uses the same
+# state/ subdir) so the CLI always reaches the managed bot's control socket,
+# regardless of any stray TCB_STATE_DIR in the caller's environment.
+export TCB_STATE_DIR="$PROJECT_DIR/state"
+exec "$NODE_BIN" "$PROJECT_DIR/dist/cli.js" "\$@"
+EOF_RUNNER
+chmod +x "$BIN_DIR/tmux-claude-bot"
+ln -sf tmux-claude-bot "$BIN_DIR/tcb"
+info "Installed launchers 'tcb' and 'tmux-claude-bot' in $BIN_DIR"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) warn "Add $BIN_DIR to your PATH to use them globally:  export PATH=\"$BIN_DIR:\$PATH\"" ;;
+esac
+
 # Guided setup (read prompts from the terminal even when piped via curl). Driven
 # through the built CLI, not `npm run setup` (= tsx src/...): the materialized npm
 # package ships dist only, no src.
-if [ ! -f .env ]; then
+# Migrate a legacy root-level .env into state/ before the check, so an existing
+# install isn't re-prompted for setup after the state/ split.
+[ -f .env ] && [ ! -f "$TCB_ENV_FILE" ] && { mkdir -p "$PROJECT_DIR/state"; mv .env "$TCB_ENV_FILE"; }
+if [ ! -f "$TCB_ENV_FILE" ]; then
   info "Starting guided setup..."
   if [ -e /dev/tty ]; then node dist/cli.js setup < /dev/tty; else node dist/cli.js setup --yes; fi
 else
@@ -156,10 +202,20 @@ else
   info "TCB_SKIP_SERVICE set - skipping service registration."
 fi
 
+# AI operating skill (Claude Code / Codex). Lets an agent drive the bot via the
+# tcb CLI in natural language. Opt out with TCB_SKIP_SKILL=1.
+if [ -z "${TCB_SKIP_SKILL:-}" ]; then
+  info "Installing AI operating skill (Claude Code / Codex)..."
+  node dist/cli.js skill install || info "Skill install skipped (non-fatal)."
+else
+  info "TCB_SKIP_SKILL set - skipping AI skill install."
+fi
+
 info "Done. Installed at $PROJECT_DIR"
-info "These commands must run from the install dir (cd shown):"
-info "  Health check:  cd $PROJECT_DIR && node dist/cli.js doctor"
-info "  Reconfigure:   cd $PROJECT_DIR && node dist/cli.js setup --reconfigure"
-info "  Add Feishu:    cd $PROJECT_DIR && node dist/cli.js setup:lark   (scan a QR; works with or instead of Telegram)"
-info "  Uninstall:     cd $PROJECT_DIR && node dist/cli.js service uninstall"
+info "Terminal UI:     tcb tui"
+info "Other commands (global - no cd needed; 'tmux-claude-bot' works too):"
+info "  Health check:  tcb doctor"
+info "  Reconfigure:   tcb setup --reconfigure"
+info "  Add Feishu:    tcb setup:lark   (scan a QR; works with or instead of Telegram)"
+info "  Uninstall:     tcb service uninstall"
 info "  Live logs:     tail -f $PROJECT_DIR/logs/launchd.out.log $PROJECT_DIR/logs/launchd.err.log"

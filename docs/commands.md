@@ -30,12 +30,15 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `add_project` | Add a new project: `add_project <path>` creates it directly; with no path, opens a tap-to-navigate directory browser |
 | `new_free` | Create a free (parallel) project: `new_free [label]` opens a bare tmux session decoupled from any path, so multiple agents can run in the same directory |
 | `adopt` | Take over an agent (Claude or Codex) running outside tmux |
+| `recover` | Recover all projects after a reboot: recreate each tmux session + relaunch its agent, resuming the conversation. Previews then confirms |
 | `status_install` | Install usage reporting (statusLine snapshot) for /status |
 | `queue_status` | Show message queue status |
 | `history` | Show recent conversation history (`/history N` for the Nth recent round) |
+| `inputs` | List your recent inputs (`/inputs N` for the last N) — tap one to fetch & edit it |
 | `sessions` | List resumable sessions for the current project's agent (tap one to resume) |
 | `logs` | Show recent WARN/ERROR logs for the current session; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
 | `dashboard` | Show the global dashboard: every live session plus bot-level totals (version, uptime, queue depth). Owner-only (Lark: 1:1 chat only). |
+| `sysload` | Show machine load, thermal state, top CPU, and runaway/orphan shells (with a `kill -9` hint). Owner-only (Lark: 1:1 chat only). |
 | `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |
 | `voice_install` | Install voice transcription (Apple Silicon) |
 | `voice_lang` | Set voice recognition language (zh/en/yue/ja/es/auto) |

@@ -1,4 +1,8 @@
 npx lint-staged
 npx tsc --noEmit
 npx tsc -p tsconfig.tests.json --noEmit
-npx vitest run
+# Exclude the env-gated integration tests (tmux-live needs a real tmux,
+# composer-pty needs a pty): they self-skip on CI and are flaky/absent across
+# dev machines, so running them here only makes the hook unreliable — which
+# pushes people to --no-verify and bypasses every gate. Run them via `npm test`.
+npx vitest run --exclude '**/tmux-live.test.ts' --exclude '**/composer-pty.test.ts'

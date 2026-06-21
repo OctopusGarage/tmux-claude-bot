@@ -32,6 +32,26 @@ describe("docs contract", () => {
     }
   });
 
+  it("docs/manual.md documents every CLI command (tcb …)", () => {
+    // Source-derived: a `.command("x")` added to the CLI without a mention in the
+    // manual fails here, keeping the user manual in sync with the runtime surface.
+    const cli = read("src/cli.ts");
+    // Capture just the command NAME (the token before any `<arg>` / space).
+    const commands = new Set(
+      [...cli.matchAll(/\.command\("([^"\s<]+)/g)].map((m) => m[1] as string),
+    );
+    const manual = read("docs/manual.md");
+    for (const cmd of commands) {
+      expect(manual, `missing \`${cmd}\` in docs/manual.md`).toMatch(new RegExp(`\\b${cmd}\\b`));
+    }
+  });
+
+  it("docs/manual.md links the detailed references", () => {
+    const manual = read("docs/manual.md");
+    expect(manual).toContain("commands.md"); // full chat-command table
+    expect(manual).toContain("tui.md"); // terminal-UI guide
+  });
+
   it("README documents the operational entry points", () => {
     const readme = read("README.md");
     for (const phrase of [

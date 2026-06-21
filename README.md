@@ -17,7 +17,7 @@
   A chat bot that drives a coding agent — <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> or <a href="https://github.com/openai/codex">OpenAI Codex</a> — inside tmux sessions — remote-control your local agent from <strong>Telegram and/or Feishu/Lark</strong>, with voice and text input. Supports <strong>multiple projects</strong>, each with its own tmux session. Pick one chat app or run both.
   <br />
   <br />
-  <a href="docs/commands.md"><strong>Explore the docs »</strong></a>
+  <a href="docs/manual.md"><strong>Read the manual »</strong></a>
   <br />
   <br />
   <a href="#demo">View Demo</a>
@@ -80,6 +80,8 @@ The bot **drives the agent's CLI like a user typing in tmux** (send-keys + scree
 - **Multi-project tmux sessions** — each project gets its own tmux session (`tmux_proj_<path>`)
 - **Project switching** — create, switch, and remove projects via Telegram/Feishu commands & buttons
 - **Feishu/Lark project groups** — bind a Feishu group to one workspace, so you switch projects by switching groups (no `/cd`); works without `@bot`. See [docs/commands.md](docs/commands.md)
+- **Terminal UI (`tcb tui`)** — a keyboard-driven control panel at the PC: every session's status at a glance, send prompts, peek, and control — a local client of the same bot. See [docs/tui.md](docs/tui.md)
+- **Drive it from an AI agent (`tcb` CLI + installable skill)** — one-shot `tcb` clients over the same control socket let an assistant in Claude Code / Codex operate the bot in natural language; `tcb skill install` bundles the operating skill (auto-installed on deploy). See [docs/manual.md](docs/manual.md)
 - **Multiple start commands** — configure several agent launch commands (Claude or Codex, different env/model/API key) and pick which to start from a button
 - **Real-time output streaming** — captures tmux pane and streams output to the chat
 - **Queue-based execution** — prevents concurrent commands from interleaving
@@ -98,55 +100,56 @@ The bot **drives the agent's CLI like a user typing in tmux** (send-keys + scree
 ## Architecture
 
 ```
-   ┌──────────────┐                        ┌──────────────┐
-   │   Telegram   │                        │  Feishu/Lark │
-   │  app (user)  │                        │  app (user)  │
-   └──────┬───────┘                        └──────┬───────┘
-          │                                       │
-   HTTPS long-poll                         WebSocket (persistent)
-   getUpdates / sendMessage                events + Open API reply
-          │                                       │
-   ┌──────▼───────────────────────────────────────▼──────┐
-   │      tmux-claude-bot   (node dist/cli.js run)        │  launchd service
-   │                                                      │  (single instance)
-   │  ┌─────────────────┐         ┌─────────────────┐     │
-   │  │ adapters/telegram│        │  adapters/lark  │     │  protocol glue:
-   │  │     (grammY)     │        │ (@larksuite sdk)│     │  receive / render /
-   │  └───────┬─────────┘         └────────┬────────┘     │  buttons & cards
-   │          └─────────────┬──────────────┘              │
-   │                 ┌──────▼───────┐                     │
-   │                 │     core/    │  dispatch  — meaning │  protocol-agnostic
-   │                 │   dispatch   │  queue     — serial  │  (no platform code;
-   │                 │   queue      │  agents/   — agent   │   reused by any
-   │                 │   agents/    │              lifecycle│   adapter)
-   │                 │   tmux.ts    │  tmux.ts   — sessions │
-   │                 └──────┬───────┘                     │
-   └────────────────────────┼─────────────────────────────┘
-                            │
-             tmux send-keys │ ▲ capture-pane
-              (inject cmd)  │ │ (scrape output)
-                            ▼ │
-                  ┌──────────────────────┐
-                  │     tmux session      │  one per project
-                  │  ┌────────────────┐   │
-                  │  │  coding agent   │   │  interactive CLI,
-                  │  │ (Claude / Codex)│   │  foreground in the pane
-                  │  └────────────────┘   │
-                  └──────────────────────┘
+   ┌──────────────┐         ┌──────────────┐         ┌──────────────────┐
+   │   Telegram   │         │  Feishu/Lark │         │ Terminal TUI /   │
+   │  app (user)  │         │  app (user)  │         │  tcb CLI (local) │
+   └──────┬───────┘         └──────┬───────┘         └────────┬─────────┘
+          │                        │                          │
+   HTTPS long-poll          WebSocket (push)          unix-domain socket
+   getUpdates / send        events + Open API         (local, NDJSON)
+          │                        │                          │
+   ┌──────▼────────────────────────▼──────────────────────────▼─────────┐
+   │            tmux-claude-bot   (node dist/cli.js run)                │  launchd / systemd
+   │                                                                    │  (single instance)
+   │  ┌──────────────┐     ┌──────────────┐     ┌─────────────────────┐ │
+   │  │  adapters/   │     │  adapters/   │     │  adapters/control   │ │  protocol glue:
+   │  │  telegram    │     │  lark        │     │  unix-socket server │ │  receive / render /
+   │  │  (grammY)    │     │ (@larksuite) │     │  ← TUI + tcb CLI    │ │  buttons & cards
+   │  └──────┬───────┘     └──────┬───────┘     └──────────┬──────────┘ │
+   │         └───────────────────┬┴────────────────────────┘            │
+   │                      ┌──────▼───────┐                              │
+   │                      │     core/    │  dispatch — meaning          │  protocol-agnostic
+   │                      │   dispatch   │  queue    — serial + idle    │  (no platform code;
+   │                      │   queue      │  agents/  — agent lifecycle  │   reused by every
+   │                      │   agents/    │  tmux.ts  — tmux sessions    │   adapter)
+   │                      │   tmux.ts    │                              │
+   │                      └──────┬───────┘                              │
+   └─────────────────────────────┼──────────────────────────────────────┘
+                                 │
+                  tmux send-keys │ ▲ capture-pane
+                   (inject cmd)  │ │ (scrape output)
+                                 ▼ │
+                       ┌──────────────────────┐
+                       │     tmux session      │  one per project
+                       │  ┌────────────────┐   │
+                       │  │  coding agent   │   │  interactive CLI,
+                       │  │ (Claude / Codex)│   │  foreground in the pane
+                       │  └────────────────┘   │
+                       └──────────────────────┘
 ```
 
 **Message round-trip:**
 
-1. User sends a message in **Telegram / Feishu**.
-2. The matching **adapter** receives it (long-poll / WebSocket) and normalizes it to a core command.
+1. User sends a message in **Telegram / Feishu**, or drives the bot from the **Terminal TUI / `tcb` CLI**.
+2. The matching **adapter** receives it (long-poll / WebSocket / unix socket) and normalizes it to a core command.
 3. **`core/dispatch`** routes it; **`tmux.ts`** injects it into the project's tmux session via `send-keys`.
 4. **Claude Code** processes it in the pane; the bot reads the result with `capture-pane`.
-5. The adapter **renders the reply back** to the originating platform.
+5. The adapter **renders the reply back** to the originating surface.
 
 **Key points:**
 
-- **Two inbound transports** — Telegram *polls* (HTTPS long-poll), Feishu *pushes* (persistent WebSocket); each reply goes back out its own platform.
-- **One-way layering `adapters/ → core/ → shared/`** — `core/` knows nothing about any chat platform, so adding Feishu was just another adapter; the tmux + agent machinery is fully reused.
+- **Three client surfaces** — Telegram *polls* (HTTPS long-poll), Feishu *pushes* (persistent WebSocket), and the local **Terminal TUI / `tcb` CLI** talk over a unix-domain socket; each reply goes back out the surface it came from. All three funnel through the **same per-session queue**, so the TUI/CLI can't race the chat adapters.
+- **One-way layering `adapters/ → core/ → shared/`** — `core/` knows nothing about any client, so adding Feishu — and later the local control transport (TUI/CLI) — was just another adapter; the tmux + agent machinery is fully reused.
 - The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + screen-scrape), rather than calling an LLM API — which is why tmux sits in the middle.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

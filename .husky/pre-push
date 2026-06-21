@@ -1,2 +1,6 @@
-npx vitest run --coverage
+# Coverage gate that MIRRORS CI: excludes the env-gated integration tests
+# (tmux-live needs a real tmux, composer-pty needs a pty) so the number matches
+# what CI measures on a bare runner — and so a missing tmux/pty can't flake the
+# push. Catches a coverage regression locally before it reaches CI.
+npm run test:coverage
 npm audit --audit-level=high

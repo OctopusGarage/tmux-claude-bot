@@ -1,0 +1,128 @@
+# Guiding users of tmux-claude-bot — AI reference
+
+A reference for an **AI assistant** to answer "how do I use this?" and walk a user
+through any task **without memorising the system**. Find the task below → relay the
+steps. This is the AI-facing companion to the human manual; the canonical detail
+lives in [docs/manual.md](../manual.md), [docs/commands.md](../commands.md), and
+[docs/tui.md](../tui.md) — link the user there for depth.
+
+How to use this doc: skim "30-second model" to frame your answer, find the matching
+"task recipe", relay the exact command/keys, and only then point to the canonical doc
+if they want more. Prefer giving the one concrete command over describing options.
+
+---
+
+## 30-second model (so you can frame any answer)
+
+tmux-claude-bot runs a coding agent (**Claude Code** or **Codex**) inside **tmux**
+sessions on the user's computer, and lets them **drive it remotely** from **Telegram /
+Feishu** (phone, text + voice) and from a **terminal UI** (`tcb tui`) at the PC. The
+bot is a long-running, auto-restarting service; it's the single brain — phone, Feishu,
+and TUI are all just clients of it. One tmux session per project; multiple projects run
+in parallel.
+
+Three surfaces, all driving the same bot:
+- **Chat** (Telegram / Feishu): commands + buttons + voice. Full table: commands.md.
+- **TUI** (`tcb tui`): keyboard control panel at the PC. Guide: tui.md.
+- **CLI** (`tcb …`): local admin commands.
+
+---
+
+## Task recipes — "the user wants to …"
+
+**Install it** → one-line installer (macOS/Linux); it builds, registers an
+auto-restarting service, and runs a guided setup wizard. Point them at the README
+install command + `tcb doctor` to verify.
+
+**Connect Telegram** → in setup, paste a bot token from **@BotFather**, then send the
+bot any message so it captures their user id. Re-run later: `tcb setup --reconfigure`.
+
+**Connect Feishu/Lark** → `tcb setup:lark` → scan the QR with the Feishu app to create
+the app; their own open_id is captured as the allow-list.
+
+**Send a prompt / get a reply** → just send text in the chat; it's typed into the
+current project's agent and the reply returns when the agent finishes. Voice messages
+are auto-transcribed.
+
+**Run / switch between multiple projects** → each project is its own tmux session.
+Create/switch/remove via the projects commands/buttons (commands.md). On Feishu they
+can bind a **group per project** so switching groups = switching projects (no `/cd`).
+
+**Re-run a past input** → `/inputs` (chat) lists recent inputs, tap one to re-run; in
+the TUI press `u`.
+
+**See what the agent is doing** → `/peek` (a snapshot of the tmux pane), `/history`
+(recent rounds). In the TUI it's the live right-pane; `a` drops into the real tmux pane.
+
+**The bot stopped responding** → walk them through: (1) `tcb doctor`; (2) confirm
+exactly ONE bot process (two cause a Telegram 409); (3) check network/proxy can reach
+the chat API; (4) on macOS, was it asleep? — see keep-awake.
+
+**Keep the Mac awake so it stays reachable** → a sleeping Mac drops the bot (an
+outbound long-poll can't be woken). Enable in setup or `tcb setup --reconfigure`: while
+the bot runs it holds `caffeinate -i -s` (idle-sleep blocked, pinned on AC). A **closed
+lid** still sleeps — for that they ALSO need `sudo pmset -a disablesleep 1` (persistent,
+drains battery; warn them). `tcb doctor` shows if it's active.
+
+**Use it from the PC terminal** → `tcb tui` (managed) or `npm run tui` (dev). Needs the
+bot running. Keys: `j/k` move, `i` compose a prompt (multi-line paste works), `c`
+controls, `s` projects (switch/start), `R` recover, `l` logs, `m` machine load, `u`
+re-run input, `a` attach to the real tmux pane, `q` quit, `?` for all keys. Detail: tui.md.
+
+**Check status / "is something wrong?"** → `/dashboard` or `tcb dashboard` (every
+session, busy/idle, queue, version); `/sysload` or `tcb sysload` (machine load, heat,
+runaway processes); `/logs` or `tcb logs`; `tcb doctor` (install health).
+
+**Restart the bot / deploy code changes** → it's a managed service, so restart via the
+manager: `tcb service restart` (or `launchctl kickstart -k …` / `systemctl --user
+restart tmux-claude-bot`). To pick up SOURCE changes, deploy a fresh build:
+`node dist/cli.js install` (rebuilds `dist/` then restarts). Plain restart alone won't
+rebuild.
+
+**Recover after a reboot** → agents that were running before a reboot are relaunched
+automatically on boot; to do it on demand use `/recover` (chat) / `R` (TUI) / `tcb
+recover`.
+
+---
+
+## Quick reference
+
+- **Chat commands**: organised as Session / Projects / Settings / Diagnostics — full
+  table with descriptions in [commands.md](../commands.md). Diagnostics (`/dashboard`,
+  `/sysload`, `/logs`, `/doctor`) are owner-only (Feishu: 1:1 chat only).
+- **CLI — drive the bot from the shell** (this is what you, the AI, run; the bot must
+  be running, every command takes a project by name + `--json`):
+  - `tcb sessions` / `tcb projects` — list running sessions / all projects.
+  - `tcb send <project> "<prompt>"` — send a prompt; **waits for the reply** and prints
+    it (`--no-wait` to fire-and-forget, `--timeout <s>`). This is your main verb.
+  - `tcb peek <project>` — snapshot its pane · `tcb open <project>` — switch to / start
+    a project · `tcb control <project> <esc|enter|restart|…>` — a control key.
+- **CLI — admin**: `run` · `setup` / `setup:lark` · `doctor` · `dashboard` · `sysload`
+  · `tui` · `recover` · `logs` · `install` · `service <install|uninstall|status|pause|
+  resume|restart|logs>`. (`npm run dev|tui|doctor|service:*` for dev.)
+- **TUI keys**: see [tui.md](../tui.md).
+
+---
+
+## Interpreting what users see ("what does this mean?")
+
+- **`ctx X% · 5h Y% · 7d Z%`** (dashboard) → Claude subscription usage: `ctx` = context
+  window fullness (high → suggest `/compact` or a new session); `5h`/`7d` = the
+  5-hour / weekly rate-limit consumed (near 100% → they'll be throttled until reset).
+- **"409 conflict" / multiple instances** → two bot processes share one Telegram token;
+  there must be exactly one. Identify the managed one and kill the stray.
+- **busy `●` (green) / idle `○`** → a session actively working vs not.
+- **TUI "can't reach the control socket"** → the bot isn't running; start the service.
+
+---
+
+## When unsure
+
+Point the user to [docs/manual.md](../manual.md) (the comprehensive manual) and have
+them run `tcb doctor` — its checklist names the exact problem and the fix command. Do
+not invent commands; everything the system exposes is in commands.md / the CLI list
+above.
+
+> Kept current: a contract test ties the command surfaces to the docs (see CLAUDE.md
+> "User documentation"). If a recipe here ever conflicts with the live commands, trust
+> commands.md / `tcb --help` and fix this file.
