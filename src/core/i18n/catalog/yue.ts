@@ -52,7 +52,9 @@ export const yue: Messages = {
   btnExit: "🚪 退出",
   btnPeek: "👁 peek",
   btnHistory: "📜 歷史",
+  btnInputs: "🔁 重發",
   btnQueue: "📋 隊列",
+  btnDashboard: "📊 儀表板",
   btnProjects: "📁 項目",
   btnRecent: "🕘 近期",
   btnCurrent: "📌 當前",
@@ -79,6 +81,23 @@ export const yue: Messages = {
   btnAdoptCancel: "✕ 取消",
   adoptCancelled: "已取消接管",
   adoptWorking: "正在接管…",
+  recoverEmpty: "沒有需要恢復的專案。",
+  cmdInputs: "取回最近的輸入以編輯",
+  inputsTitle: "📝 最近輸入(點一個取回編輯)",
+  inputsEmpty: "沒有可重發的輸入",
+  inputsExpired: "清單已過期,請重新發送 /inputs",
+  inputDraftToast: "✏️ 已取回為草稿,編輯後發送",
+  recoverAllRunning: (count: number, list: string) =>
+    `🟢 ${count} 個專案都在執行中，暫無需要恢復的：\n\n${list}`,
+  btnRecover: "🔄 恢復",
+  recoverPreview: (count: number, alive: number, list: string) =>
+    `🔄 將會恢復 ${count} 個專案${alive > 0 ? `（${alive} 個執行中，略過）` : ""}\n\n${list}\n\n確認恢復？`,
+  btnRecoverConfirm: "🔄 確認恢復",
+  recoverWorking: "正在恢復…",
+  recoverCancelled: "已取消恢復。",
+  recoverBusy: "已有一個恢復正在進行,請稍候。",
+  recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
+    `🔄 恢復完成\n\n🔁 重新啟動 ${launched}${shellOnly > 0 ? ` · 🐚 重建 ${shellOnly}` : ""} · 🟢 執行中 ${alive}${failed > 0 ? ` · ⚠️ 失敗 ${failed}` : ""}`,
   adoptGone: "該程序已不在可接管清單（已結束或已在 tmux 中）",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
@@ -94,6 +113,7 @@ export const yue: Messages = {
   contentTruncated: "...(內容過長，已截斷)",
   agentEmptyOutput: "沒有返回內容 · 用 /peek 查看畫面",
   agentStarted: "✅ 已啟動",
+  agentAlreadyRunning: "✅ 已在執行中，無需重複啟動",
   agentStartedWith: (label) => `✅ 已用「${label}」啟動`,
   startPickerTitle: "🚀 選擇啟動方式",
   startPickerPrompt: "已設定多個啟動指令,請選一個啟動:",
@@ -148,6 +168,9 @@ export const yue: Messages = {
   queueSessionHeader: "━━ 會話隊列 ━━",
   queueNoSessions: "沒有活躍的會話隊列",
   queueLastDone: (s) => `上次完成： ${s}s 前`,
+  queueItemCancelled: "已取消該排隊訊息",
+  queueItemRewritten: "已改寫該排隊訊息",
+  queueItemGone: "該訊息已不在佇列（可能正在執行，可用 ✋ 中斷停止）",
   queueTitle: "隊列狀態",
 
   paneTitle: "👁 tmux 畫面",
@@ -245,6 +268,10 @@ export const yue: Messages = {
 傳送任何文字 → 轉交 agent → 返回結果`,
 
   helpSectionProjects: "📂 項目",
+  helpSectionSession: "▶️ 工作階段",
+  helpSectionGroups: "👥 群組",
+  helpSectionSettings: "⚙️ 設定",
+  helpSectionDiagnostics: "🛠 診斷",
   helpSectionRunning: "⚡ 運行中",
   helpSectionIdle: "🚀 未運行",
 
@@ -276,6 +303,9 @@ export const yue: Messages = {
   cmdStatus: "檢查狀態",
   cmdStart: "啟動 agent",
   cmdDoctor: "執行安裝健康檢查",
+  cmdRecover: "重新開機後恢復所有專案",
+  cmdStatusInstall: "為 /status 安裝用量上報",
+  cmdVoiceInstall: "安裝語音轉錄(Apple Silicon)",
   cmdHelp: "本說明",
   cmdWs: "工作區管理（save/use/list/remove）",
 
@@ -305,6 +335,8 @@ export const yue: Messages = {
 
   // ── dashboard ──
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
+  cmdSysload: "查看本機負載/發熱/失控進程",
+  sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
   noLogsContext: "沒有當前項目，請先選擇項目或指定 trace（/logs <traceId>）。",
 

@@ -1,5 +1,8 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
+import { appStateDir, appStateFile } from "./state-dir.js";
 import type { AgentKind, AppConfig, ScriptConfig, StartCommand } from "./types.js";
 
 /**
@@ -12,6 +15,11 @@ import type { AgentKind, AppConfig, ScriptConfig, StartCommand } from "./types.j
  */
 const blankTolerantPositiveInt = (def: number): z.ZodType<number> =>
   z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(def));
+
+/** Like {@link blankTolerantPositiveInt} but allows 0 (e.g. a long-poll timeout
+ * of 0 means short polling — getUpdates returns immediately). */
+const blankTolerantNonNegativeInt = (def: number): z.ZodType<number> =>
+  z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().min(0).default(def));
 
 /**
  * A non-empty string env var that tolerates a *blank* value — same trap as
@@ -56,6 +64,23 @@ export const envSchema = z.object({
   PROJECT_SESSION_PREFIX: blankTolerantString("tmux_proj_"),
   TELEGRAM_HTTP_PROXY: z.string().optional(),
   HTTP_PROXY: z.string().optional(), // legacy alias
+  // Long-poll timeout (seconds) for getUpdates. grammy's default is 30. Behind a
+  // flaky proxy that drops idle upstream connections after a few seconds, a long
+  // hold gets cut mid-poll and the lingering server-side getUpdates then 409s the
+  // next call — set this below the proxy's idle cut-off (e.g. 3) so each poll
+  // returns cleanly before the drop. 0 = short polling (return immediately).
+  TELEGRAM_LONGPOLL_TIMEOUT_SEC: blankTolerantNonNegativeInt(30),
+  // How often (ms) to reconcile the reboot-recovery "running sessions" roster
+  // against live tmux, so sessions started/exited directly in tmux (bypassing the
+  // bot) are tracked too. Default 5 min; 0 disables the sweep.
+  RUNNING_SWEEP_MS: blankTolerantNonNegativeInt(300000),
+  // Automatically run reboot recovery on boot (no /recover needed). Idempotent —
+  // a no-op when tmux survived a mere bot restart (everything's already alive),
+  // does real work only after a machine reboot. Set to false/0 to disable.
+  AUTO_RECOVER: z.string().default("true"),
+  // macOS: keep the Mac awake (caffeinate) while the bot runs so a sleeping
+  // laptop can't drop it off the phone. Opt-in; set by the setup wizard.
+  TCB_KEEP_AWAKE: z.string().default("0"),
   LARK_ENABLED: z.string().default("false"),
   LARK_APP_ID: z.string().default(""),
   LARK_APP_SECRET: z.string().default(""),
@@ -76,6 +101,14 @@ export const envSchema = z.object({
 export function claudeBinFromStartCommand(cmd: string): string {
   const tokens = cmd.split(/\s+/).filter(Boolean);
   return tokens.find((t) => !/^[A-Za-z_]\w*=/.test(t)) ?? "claude";
+}
+
+/** Pin a fresh conversation id at launch via claude's `--session-id <uuid>` flag,
+ * so the bot owns the exact id deterministically (codex can't pre-assign). Kept
+ * with the other claude-command helpers so the CLI flag syntax stays out of the
+ * orchestration layer. */
+export function claudeStartCommandWithSessionId(command: string, sessionId: string): string {
+  return `${command} --session-id ${sessionId}`;
 }
 
 /**
@@ -139,14 +172,27 @@ export function parseStartCommands(env: NodeJS.ProcessEnv, primary: string): Sta
 /**
  * Load `.env` into process.env. Honors `TCB_ENV_FILE` so `npm run dev` can borrow
  * the deployed (prod) config — develop against the real token/proxy/Feishu with
- * hot reload, with no second `.env` to drift. Defaults to `./.env`.
+ * hot reload, with no second `.env` to drift. Otherwise `.env` lives in the state
+ * dir (alongside the other state files, written there by `env-store`/the setup
+ * wizard) — NOT cwd, so a `tcb` command run from any directory still finds it.
+ *
+ * Transition: installs predating the `state/` subdir split keep `.env` at the
+ * app-home root; if the state-dir `.env` is absent we also layer the legacy root
+ * `.env` (dotenv never overrides an already-set key, so the state-dir copy wins).
  */
 function loadEnvFile(): void {
-  const path = process.env.TCB_ENV_FILE;
   // `quiet: true` suppresses the dotenvx startup banner — it's noise in the
   // launchd logs and, critically, corrupts the stdout of data CLI commands like
   // `tcb dashboard --json` / `tcb logs --json` (it would break `| jq`).
-  loadEnv({ ...(path ? { path } : {}), quiet: true });
+  const explicit = process.env.TCB_ENV_FILE;
+  if (explicit) {
+    loadEnv({ path: explicit, quiet: true });
+    return;
+  }
+  loadEnv({ path: appStateFile(".env"), quiet: true });
+  if (!existsSync(appStateFile(".env"))) {
+    loadEnv({ path: join(dirname(appStateDir()), ".env"), quiet: true });
+  }
 }
 
 export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
@@ -204,6 +250,10 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       .filter(Boolean),
     projectSessionPrefix: parsed.PROJECT_SESSION_PREFIX,
     telegramHttpProxy,
+    telegramLongpollTimeoutSec: parsed.TELEGRAM_LONGPOLL_TIMEOUT_SEC,
+    runningSweepMs: parsed.RUNNING_SWEEP_MS,
+    autoRecover: parsed.AUTO_RECOVER !== "false" && parsed.AUTO_RECOVER !== "0",
+    keepAwake: parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true",
     lark,
   };
 }

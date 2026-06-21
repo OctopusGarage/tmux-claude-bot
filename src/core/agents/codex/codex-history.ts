@@ -48,6 +48,7 @@ export function parseCodexRounds(jsonlText: string): ConversationRound[] {
         user: text,
         assistant: "",
         time: formatTranscriptTime(obj.timestamp ?? ""),
+        timeMs: Date.parse(obj.timestamp ?? "") || 0,
         file: "codex",
       };
       rounds.push(current);
@@ -62,6 +63,7 @@ export function parseCodexRounds(jsonlText: string): ConversationRound[] {
           user: "",
           assistant: "",
           time: formatTranscriptTime(obj.timestamp ?? ""),
+          timeMs: Date.parse(obj.timestamp ?? "") || 0,
           file: "codex",
         };
         rounds.push(current);

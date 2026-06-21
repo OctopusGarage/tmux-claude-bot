@@ -116,12 +116,16 @@ export abstract class AgentRunnerBase implements AgentRunner {
     await this.waitReadyBestEffort(sessionName);
   }
 
-  async startWithResume(sessionName: string | undefined, sessionId: string): Promise<void> {
+  async startWithResume(
+    sessionName: string | undefined,
+    sessionId: string,
+    command?: string,
+  ): Promise<void> {
     if (await this.checkIfRunning(sessionName)) return;
     logger.info(`${this.logTag} starting agent`, {
       data: { resume: "exact-id", sessionId },
     });
-    await this.bridge.sendKeys(this.resumeCommand(this.command, sessionId), sessionName);
+    await this.bridge.sendKeys(this.resumeCommand(command ?? this.command, sessionId), sessionName);
     await this.waitReadyBestEffort(sessionName);
   }
 

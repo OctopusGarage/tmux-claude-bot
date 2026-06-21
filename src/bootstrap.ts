@@ -8,9 +8,11 @@ import { ClaudeRunner } from "./core/agents/claude/claude-runner.js";
 import { parseCodexFlavorAliases } from "./core/agents/codex/codex-flavor-alias.js";
 import { CodexRunner } from "./core/agents/codex/codex-runner.js";
 import { AgentRunnerDispatcher } from "./core/agents/runner-dispatcher.js";
+import { agentIsIdle } from "./core/command/agent-ready.js";
 import { executeMessage } from "./core/command/dispatch.js";
 import { MessageQueue } from "./core/command/queue.js";
 import type { HandlerDeps } from "./core/deps.js";
+import { migrateLegacyStateDir } from "./core/infra/state-migration.js";
 import { createProjectManager } from "./core/projects/project-manager.js";
 import { createActivityWatcher } from "./core/session/activity-watcher.js";
 import { OutputProcessor } from "./core/session/output.js";
@@ -61,6 +63,9 @@ function deriveWatchRoots(home: string): string[] {
  * and only supplies its own ingestion + per-message reply closures.
  */
 export function bootstrap(): HandlerDeps {
+  // Relocate any legacy root-level state into the state/ subdir BEFORE loadConfig
+  // reads .env from it — closes the deploy-wipe that erased group_bindings.json.
+  migrateLegacyStateDir();
   const config = loadConfig();
   const { currentProject } = createProjectManager(appStateDir());
 
@@ -132,6 +137,11 @@ export function bootstrap(): HandlerDeps {
       msg.reject(normalizeError(err));
     }
   });
+
+  // Idle-gate: hold a message in the queue while its session's agent is busy with
+  // work the bot didn't start (the user driving it on the desktop), instead of
+  // typing into a mid-render pane. The bot's own work is already serialized.
+  queue.setReadinessProbe((session) => agentIsIdle(deps, session));
 
   return deps;
 }

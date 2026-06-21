@@ -50,7 +50,9 @@ export const zhTW: Messages = {
   btnExit: "🚪 離開",
   btnPeek: "👁 peek",
   btnHistory: "📜 歷史",
+  btnInputs: "🔁 重發",
   btnQueue: "📋 佇列",
+  btnDashboard: "📊 儀表板",
   btnProjects: "📁 專案",
   btnRecent: "🕘 近期",
   btnCurrent: "📌 目前",
@@ -77,6 +79,23 @@ export const zhTW: Messages = {
   btnAdoptCancel: "✕ 取消",
   adoptCancelled: "已取消接管",
   adoptWorking: "正在接管…",
+  recoverEmpty: "沒有需要復原的專案。",
+  cmdInputs: "取回最近的輸入以編輯",
+  inputsTitle: "📝 最近輸入(點一個取回編輯)",
+  inputsEmpty: "沒有可重發的輸入",
+  inputsExpired: "清單已過期,請重新發送 /inputs",
+  inputDraftToast: "✏️ 已取回為草稿,編輯後發送",
+  recoverAllRunning: (count: number, list: string) =>
+    `🟢 ${count} 個專案都在執行中，暫無需要復原的：\n\n${list}`,
+  btnRecover: "🔄 復原",
+  recoverPreview: (count: number, alive: number, list: string) =>
+    `🔄 將復原 ${count} 個專案${alive > 0 ? `（${alive} 個執行中，略過）` : ""}\n\n${list}\n\n確認復原？`,
+  btnRecoverConfirm: "🔄 確認復原",
+  recoverWorking: "正在復原…",
+  recoverCancelled: "已取消復原。",
+  recoverBusy: "已有一個復原正在進行,請稍候。",
+  recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
+    `🔄 復原完成\n\n🔁 重新啟動 ${launched}${shellOnly > 0 ? ` · 🐚 重建 ${shellOnly}` : ""} · 🟢 執行中 ${alive}${failed > 0 ? ` · ⚠️ 失敗 ${failed}` : ""}`,
   adoptGone: "該程序已不在可接管清單（已結束或已在 tmux 中）",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
@@ -92,6 +111,7 @@ export const zhTW: Messages = {
   contentTruncated: "...(內容過長，已截斷)",
   agentEmptyOutput: "回傳空內容 · 用 /peek 查看畫面",
   agentStarted: "✅ 已啟動",
+  agentAlreadyRunning: "✅ 已在執行中，無需重複啟動",
   agentStartedWith: (label) => `✅ 已用「${label}」啟動`,
   startPickerTitle: "🚀 選擇啟動方式",
   startPickerPrompt: "設定了多個啟動指令,選一個啟動:",
@@ -146,6 +166,9 @@ export const zhTW: Messages = {
   queueSessionHeader: "━━ 工作階段佇列 ━━",
   queueNoSessions: "沒有活躍的工作階段佇列",
   queueLastDone: (s) => `上次完成： ${s}s 前`,
+  queueItemCancelled: "已取消該排隊訊息",
+  queueItemRewritten: "已改寫該排隊訊息",
+  queueItemGone: "該訊息已不在佇列（可能正在執行，可用 ✋ 中斷停止）",
   queueTitle: "佇列狀態",
 
   paneTitle: "👁 tmux 畫面",
@@ -242,6 +265,10 @@ export const zhTW: Messages = {
 傳任意文字 → 轉給 agent → 回傳結果`,
 
   helpSectionProjects: "📂 專案",
+  helpSectionSession: "▶️ 工作階段",
+  helpSectionGroups: "👥 群組",
+  helpSectionSettings: "⚙️ 設定",
+  helpSectionDiagnostics: "🛠 診斷",
   helpSectionRunning: "⚡ 執行中",
   helpSectionIdle: "🚀 未執行",
 
@@ -273,6 +300,9 @@ export const zhTW: Messages = {
   cmdStatus: "檢查狀態",
   cmdStart: "啟動 agent",
   cmdDoctor: "執行安裝健康檢查",
+  cmdRecover: "重新開機後復原所有專案",
+  cmdStatusInstall: "為 /status 安裝用量回報",
+  cmdVoiceInstall: "安裝語音轉錄(Apple Silicon)",
   cmdHelp: "本說明",
   cmdWs: "工作區管理（save/use/list/remove）",
 
@@ -302,6 +332,8 @@ export const zhTW: Messages = {
 
   // ── dashboard ──
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
+  cmdSysload: "查看本機負載/發熱/失控程序",
+  sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
   noLogsContext: "無當前專案，請先選擇專案或指定 trace（/logs <traceId>）。",
 

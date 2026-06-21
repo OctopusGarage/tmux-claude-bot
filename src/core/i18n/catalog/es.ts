@@ -50,7 +50,9 @@ export const es: Messages = {
   btnExit: "🚪 Salir",
   btnPeek: "👁 peek",
   btnHistory: "📜 Historial",
+  btnInputs: "🔁 Reenviar",
   btnQueue: "📋 Cola",
+  btnDashboard: "📊 Panel",
   btnProjects: "📁 Proyectos",
   btnRecent: "🕘 Recientes",
   btnCurrent: "📌 Actual",
@@ -77,6 +79,23 @@ export const es: Messages = {
   btnAdoptCancel: "✕ Cancelar",
   adoptCancelled: "Adopción cancelada",
   adoptWorking: "Adoptando…",
+  recoverEmpty: "No hay proyectos que recuperar.",
+  cmdInputs: "Recuperar una entrada reciente para editar",
+  inputsTitle: "📝 Entradas recientes (toca para recuperar y editar)",
+  inputsEmpty: "No hay entradas recientes",
+  inputsExpired: "La lista caducó — envía /inputs de nuevo",
+  inputDraftToast: "✏️ Recuperado como borrador — edítalo y envíalo",
+  recoverAllRunning: (count: number, list: string) =>
+    `🟢 Los ${count} proyecto(s) están en ejecución; no hay nada que recuperar:\n\n${list}`,
+  btnRecover: "🔄 Recuperar",
+  recoverPreview: (count: number, alive: number, list: string) =>
+    `🔄 Se recuperarán ${count} proyecto(s)${alive > 0 ? ` (${alive} en ejecución, se omiten)` : ""}\n\n${list}\n\n¿Confirmar la recuperación?`,
+  btnRecoverConfirm: "🔄 Confirmar recuperación",
+  recoverWorking: "Recuperando…",
+  recoverCancelled: "Recuperación cancelada.",
+  recoverBusy: "Ya hay una recuperación en curso.",
+  recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
+    `🔄 Recuperación completada\n\n🔁 ${launched} reiniciado(s)${shellOnly > 0 ? ` · 🐚 ${shellOnly} recreado(s)` : ""} · 🟢 ${alive} en ejecución${failed > 0 ? ` · ⚠️ ${failed} con error` : ""}`,
   adoptGone: "Ese proceso ya no es adoptable (terminó o ya está en tmux)",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed
@@ -94,6 +113,7 @@ export const es: Messages = {
   contentTruncated: "...(contenido demasiado largo, truncado)",
   agentEmptyOutput: "No devolvió nada · /peek para ver el panel",
   agentStarted: "✅ Iniciado",
+  agentAlreadyRunning: "✅ Ya está en ejecución",
   agentStartedWith: (label) => `✅ Iniciado con «${label}»`,
   startPickerTitle: "🚀 Elige cómo iniciar",
   startPickerPrompt: "Hay varios comandos de inicio configurados — elige uno:",
@@ -152,6 +172,10 @@ export const es: Messages = {
   queueSessionHeader: "━━ Colas de sesión ━━",
   queueNoSessions: "No hay colas de sesión activas",
   queueLastDone: (s) => `último completado hace ${s}s`,
+  queueItemCancelled: "mensaje en cola cancelado",
+  queueItemRewritten: "mensaje en cola reescrito",
+  queueItemGone:
+    "ese mensaje ya no está en cola (si se está ejecutando, usa ✋ interrumpir para detenerlo)",
   queueTitle: "Estado de la cola",
 
   paneTitle: "👁 panel de tmux",
@@ -254,6 +278,10 @@ Consejo: los mensajes reciben reacciones 👀 (recibido) / 👍 (hecho); el prog
 Envía cualquier texto → se reenvía al agente → respuesta`,
 
   helpSectionProjects: "📂 Proyectos",
+  helpSectionSession: "▶️ Sesión",
+  helpSectionGroups: "👥 Grupos",
+  helpSectionSettings: "⚙️ Ajustes",
+  helpSectionDiagnostics: "🛠 Diagnóstico",
   helpSectionRunning: "⚡ En ejecución",
   helpSectionIdle: "🚀 Detenido",
 
@@ -285,6 +313,9 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   cmdStatus: "comprobar estado",
   cmdStart: "iniciar el agente",
   cmdDoctor: "ejecutar comprobaciones de instalación",
+  cmdRecover: "Recuperar proyectos tras reinicio",
+  cmdStatusInstall: "Instalar informe de uso para /status",
+  cmdVoiceInstall: "Instalar transcripción de voz (Apple Silicon)",
   cmdHelp: "esta ayuda",
   cmdWs: "gestión de espacios de trabajo (save/use/list/remove)",
 
@@ -315,6 +346,8 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
 
   // ── dashboard ──
   cmdDashboard: "Ver el panel global (resumen de todas las sesiones)",
+  cmdSysload: "Ver carga, temperatura y procesos descontrolados",
+  sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",
   noLogsContext:
     "No hay proyecto actual. Selecciona un proyecto o especifica un trace (/logs <traceId>).",

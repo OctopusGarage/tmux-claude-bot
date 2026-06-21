@@ -39,6 +39,12 @@ export function setPathForSession(sessionName: string, projectPath: string): voi
   store.set(sessionName, projectPath);
 }
 
+/** Drop the record (e.g. when the session/project is removed, so reboot recovery
+ * doesn't resurrect a deleted project and a reused free slot reads no stale path). */
+export function clearPathForSession(sessionName: string): void {
+  store.delete(sessionName);
+}
+
 export function sessionNameFromPath(projectPath: string, prefix: string): string {
   const absPath = nodePath.resolve(projectPath);
   return prefix + absPath.replace(/\//g, "-");

@@ -132,6 +132,18 @@ export class TmuxBridge {
     return result.stdout;
   }
 
+  /** Like {@link capturePane} but with ANSI escapes kept (`-e`), so peek can read
+   * colour meaning (dim/gray hints) before stripping. `scrollbackLines` adds that
+   * many lines of history ABOVE the visible pane (`-S -N`) — the detached pane is
+   * only ~24 lines tall, so peek would otherwise miss everything scrolled off. */
+  async capturePaneColored(sessionName?: string, scrollbackLines?: number): Promise<string> {
+    const target = await this.formatTarget(sessionName);
+    const args = ["capture-pane", "-e", "-p", "-J", "-t", target];
+    if (scrollbackLines && scrollbackLines > 0) args.push("-S", `-${scrollbackLines}`);
+    const result = await this.execFile("tmux", args, { timeout: 10000 });
+    return result.stdout;
+  }
+
   async sendExit(sessionName?: string): Promise<void> {
     await this.sendRawKey("C-c", sessionName);
     await new Promise((r) => setTimeout(r, 300));

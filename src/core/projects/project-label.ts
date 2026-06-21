@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { sessionShortId } from "../../shared/utils/hash.js";
+import { getPathBySession } from "./sessionPathMap.js";
 
 /**
  * A short, friendly name for a project session — used in the `📂 <name>` line
@@ -13,4 +14,11 @@ export function projectLabel(session: string, path: string | undefined): string 
     if (name) return name;
   }
   return `#${sessionShortId(session)}`;
+}
+
+/** {@link projectLabel} resolved from a session alone — looks up its mapped path.
+ * The one place the `📂` label is derived, shared by the queue-status view and
+ * both adapters' project-tag lines so the lookup can't drift. */
+export function labelForSession(session: string): string {
+  return projectLabel(session, getPathBySession(session) ?? undefined);
 }

@@ -93,6 +93,139 @@ export function markSemantics(text: string): string {
     .join("\n");
 }
 
+/** Scrollback lines a bare /peek captures (≈ one chat message; ~2× the visible
+ * pane). `/peek N` overrides, up to MAX_PEEK_LINES; paging splits whatever results
+ * across messages as needed. */
+export const DEFAULT_PEEK_LINES = 40;
+export const MAX_PEEK_LINES = 500;
+
+/** Parse the `/peek N` argument → line count clamped to [1, MAX], or the default
+ * for no/bad arg. (Small N is honoured as-is; paging adapts to the actual size.) */
+export function parsePeekLines(arg: string | undefined): number {
+  const n = arg ? Number.parseInt(arg, 10) : Number.NaN;
+  if (Number.isNaN(n) || n <= 0) return DEFAULT_PEEK_LINES;
+  return Math.min(n, MAX_PEEK_LINES);
+}
+
+// One SGR (colour/attribute) sequence, e.g. ESC[2m or ESC[38;5;240m.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI ESC is intentional
+const SGR_RE = /\x1b\[([0-9;]*)m/g;
+// Faint/gray runs (placeholder hints, inactive text) get this prefix so a hint
+// reads as a hint in colourless chat — e.g. the input box placeholder you can't
+// otherwise tell apart from real, typed/selected text.
+const MUTED_MARK = "🔅";
+
+/** Whether an extended-colour spec (the params AFTER `38`) is a gray, the usual
+ * colour of hint/placeholder text. Covers 256-colour grays and near-gray RGB. */
+function isGrayExtendedColor(params: number[]): boolean {
+  if (params[0] === 5) {
+    const n = params[1] ?? -1;
+    return n === 8 || (n >= 232 && n <= 243); // bright-black + low grayscale ramp
+  }
+  if (params[0] === 2) {
+    const r = params[1] ?? 0;
+    const g = params[2] ?? 0;
+    const b = params[3] ?? 0;
+    return Math.max(r, g, b) - Math.min(r, g, b) <= 16 && Math.max(r, g, b) <= 150;
+  }
+  return false;
+}
+
+/** Update the running "muted" flag from one SGR sequence's parameters. */
+function nextMuted(prev: boolean, sgr: string): boolean {
+  const codes = sgr.split(";").map((c) => (c === "" ? 0 : Number(c)));
+  let muted = prev;
+  for (let i = 0; i < codes.length; i++) {
+    const c = codes[i];
+    if (c === undefined) continue;
+    // 2 = faint/dim, 90 = gray fg → muted. 0/22/39 + any real colour → not muted.
+    if (c === 2 || c === 90) {
+      muted = true;
+    } else if (c === 0 || c === 22 || c === 39 || (c >= 30 && c <= 37) || (c >= 91 && c <= 97)) {
+      muted = false;
+    } else if (c === 38) {
+      muted = isGrayExtendedColor(codes.slice(i + 1)); // extended fg: 38;5;N | 38;2;r;g;b
+      break;
+    }
+  }
+  return muted;
+}
+
+/**
+ * Make ANSI COLOUR MEANING survive into colourless chat: prefix faint/gray text
+ * (placeholder hints, inactive/secondary text) with {@link MUTED_MARK} — ONCE per
+ * line, at the first muted char, so a line broken into many gray words (claude
+ * wraps each word in its own SGR) reads as one hint, not "🔅w1 🔅w2 🔅w3". Must run
+ * on a pane captured WITH colour (`capture-pane -e`) and BEFORE the colourless
+ * OutputProcessor, which would otherwise discard the escapes (and the meaning).
+ */
+export function markColorSemantics(ansi: string): string {
+  let muted = false;
+  let markedThisLine = false;
+  let out = "";
+  let last = 0;
+  const emit = (text: string, isMuted: boolean): void => {
+    for (const ch of text) {
+      if (ch === "\n") {
+        markedThisLine = false;
+      } else if (isMuted && !markedThisLine && !/\s/.test(ch)) {
+        out += MUTED_MARK; // one marker per line, before its first gray glyph
+        markedThisLine = true;
+      }
+      out += ch;
+    }
+  };
+  for (const m of ansi.matchAll(SGR_RE)) {
+    const idx = m.index ?? 0;
+    emit(ansi.slice(last, idx), muted);
+    muted = nextMuted(muted, m[1] ?? "");
+    last = idx + m[0].length;
+  }
+  emit(ansi.slice(last), muted);
+  return out;
+}
+
+/** Full peek render: colour meaning (🔅 hints) → strip ANSI/box noise (keeping
+ * ❯/➜ selection arrows) → diff/error/etc. markers. Shared by both adapters. */
+export function renderPeekPane(coloredSnapshot: string, output: OutputProcessor): string {
+  return markSemantics(output.process(markColorSemantics(coloredSnapshot)));
+}
+
+/**
+ * Peek render for paging: same passes as {@link renderPeekPane} but keep the last
+ * `maxLines` and split into message-sized chunks (each ≤ `maxChars`, on line
+ * boundaries) — top→bottom — so a tall capture is sent across several messages
+ * instead of truncated to one. Returns [] for an empty pane.
+ */
+export function renderPeekPaneChunks(
+  coloredSnapshot: string,
+  output: OutputProcessor,
+  maxLines: number,
+  maxChars: number,
+): string[] {
+  const marked = markSemantics(output.clean(markColorSemantics(coloredSnapshot))).trim();
+  if (!marked) return [];
+  const lines = marked.split("\n").slice(-maxLines);
+  const chunks: string[] = [];
+  let buf = "";
+  const flush = (): void => {
+    if (buf) chunks.push(buf);
+    buf = "";
+  };
+  for (const line of lines) {
+    if (line.length > maxChars) {
+      // A single over-long line: flush, then hard-slice it across chunks.
+      flush();
+      for (let i = 0; i < line.length; i += maxChars) chunks.push(line.slice(i, i + maxChars));
+      continue;
+    }
+    if (buf && buf.length + 1 + line.length > maxChars) flush();
+    buf = buf ? `${buf}\n${line}` : line;
+  }
+  flush();
+  return chunks;
+}
+
 export class OutputProcessor {
   private readonly maxOutputLines: number;
   private readonly maxMessageLength: number;
@@ -102,11 +235,15 @@ export class OutputProcessor {
     this.maxMessageLength = options.maxMessageLength;
   }
 
-  private clean(text: string): string {
+  /** Strip ANSI / box-noise without the single-message truncation — peek paging
+   * cleans once, then splits into message-sized chunks itself. */
+  clean(text: string): string {
     // Remove ANSI escape codes
     let cleaned = text.replace(ANSI_REGEX, "");
-    // Remove tmux box drawing chars and UI elements
-    cleaned = cleaned.replace(/[╭│➜⏵⏺❯▌▛█▜▝⎿⏣╮╯╰▀▐░▒▓]+/g, "");
+    // Remove tmux box-drawing / spinner noise — but KEEP the selection/prompt
+    // arrows ❯ ➜ ›, which mark the highlighted menu item (peek must show what's
+    // selected, not silently drop it).
+    cleaned = cleaned.replace(/[╭│⏵⏺▌▛█▜▝⎿⏣╮╯╰▀▐░▒▓]+/g, "");
     // Remove hook errors and system messages (only at line start to avoid deleting legitimate content)
     cleaned = cleaned.replace(/^hook error.*$/gim, "");
     cleaned = cleaned.replace(/^UserPromptSubmit.*$/gim, "");
@@ -118,7 +255,7 @@ export class OutputProcessor {
       .filter((l) => {
         const t = l.trim();
         if (!t) return false;
-        if (/^[╭│─➜⏵⏺❯▌▛█▜▝⎿⏣ \-=★•·]+$/.test(t)) return false;
+        if (/^[╭│─⏵⏺▌▛█▜▝⎿⏣ \-=★•·]+$/.test(t)) return false;
         if (t.includes("UserPromptSubmit")) return false;
         if (t.includes("hook error")) return false;
         if (t.includes("english-gate")) return false;

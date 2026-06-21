@@ -55,6 +55,17 @@ export type AppConfig = {
   cdAllowedDirs: string[];
   projectSessionPrefix: string;
   telegramHttpProxy?: string | undefined;
+  /** Long-poll timeout (seconds) for getUpdates; default 30. Lower it behind a
+   * flaky proxy so each poll returns before the proxy drops the connection. */
+  telegramLongpollTimeoutSec: number;
+  /** How often (ms) to reconcile the reboot-recovery running-sessions roster
+   * against live tmux; default 5 min, 0 disables. */
+  runningSweepMs: number;
+  /** Run reboot recovery automatically on boot (idempotent); default true. */
+  autoRecover: boolean;
+  /** macOS: keep the Mac awake (caffeinate) while the bot runs so a sleeping
+   * laptop can't drop it off the phone. Opt-in; works for any launch path. */
+  keepAwake: boolean;
   lark?: LarkConfig | undefined;
 };
 

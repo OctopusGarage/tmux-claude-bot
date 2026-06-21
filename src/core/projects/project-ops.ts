@@ -6,9 +6,12 @@ import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { expandTilde } from "../../shared/utils/path.js";
 import { sleep } from "../../shared/utils/sleep.js";
+import { clearAgentKind } from "../agents/agentKindMap.js";
 import { listClaudeSessions, projectPathToHistoryDir } from "../agents/claude/claude-history.js";
 import { findRolloutForProject } from "../agents/codex/codex-rollout.js";
 import { clearLiveSessionId } from "../agents/live-session-id.js";
+import { markSessionStopped } from "../agents/runningSessions.js";
+import { clearStartCommand } from "../agents/startCommandMap.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { clearTaskTiming } from "../session/task-timing.js";
@@ -27,6 +30,7 @@ import { projectLabel } from "./project-label.js";
 import { channelFromScope } from "./project-manager.js";
 import { appendRecentProject, readRecentProjectLines } from "./recentProjects.js";
 import {
+  clearPathForSession,
   getPathBySession,
   isCdAllowed,
   sessionNameFromPath,
@@ -296,6 +300,12 @@ export async function removeProjectBySession(
   deps.configResolver.invalidate(sessionName);
   clearLiveSessionId(sessionName); // drop the last-observed id (a reused free slot must not read it)
   clearTaskTiming(sessionName); // drop cumulative + in-flight timing (a reused name must not read stale data)
+  // Drop the recovery roster records so a deleted project isn't resurrected by
+  // /recover and a reused free slot reads no stale path/kind/command.
+  clearPathForSession(sessionName);
+  clearAgentKind(sessionName);
+  clearStartCommand(sessionName);
+  markSessionStopped(sessionName); // drop from the reboot-recovery roster
   // The session is gone — drop it from any channel that had it as current.
   await deps.currentProject.clearSession(sessionName);
   // A free project owns a registry slot — free it so the number can be reused.
@@ -486,8 +496,7 @@ export async function openRecentProjectBySid(
   sid: string,
 ): Promise<OpenRecentResult> {
   const prefix = deps.config.projectSessionPrefix;
-  const lines = await readRecentProjectLines();
-  const projectPath = lines.find((p) => sessionShortId(sessionNameFromPath(p, prefix)) === sid);
+  const projectPath = await resolveProjectPathByShortId(deps, sid);
   if (!projectPath) return { status: "not-found" };
   const sessionName = sessionNameFromPath(projectPath, prefix);
   try {
@@ -506,24 +515,65 @@ export async function openRecentProjectBySid(
   }
 }
 
+/**
+ * The set of projects a picker / recent list offers, as `session → path` in
+ * display order: recents (existing dirs, LRU) first, then any LIVE tmux project
+ * not already listed. A project started directly in tmux (outside the bot) never
+ * enters the recents file, but the user is working in it, so it must be both
+ * SHOWN and ACTIONABLE — hence this single source is used by both the buttons and
+ * the short-id resolver, so display and resolution can never disagree.
+ */
+async function projectChoices(
+  deps: HandlerDeps,
+): Promise<{ choices: Map<string, string>; live: Set<string> }> {
+  const prefix = deps.config.projectSessionPrefix;
+  // One `tmux list-sessions` for the liveness lookup, instead of spawning a
+  // `tmux has-session` subprocess per recent path (up to 15).
+  const live = new Set(await deps.bridge.listProjectSessions());
+  // Raw set, NOT filtered by on-disk existence — resolution must accept any sid a
+  // picker could show (the caller / create path handles a missing dir). The button
+  // builder applies the existence filter for display only.
+  const choices = new Map<string, string>();
+  for (const p of await readRecentProjectLines()) {
+    choices.set(sessionNameFromPath(p, prefix), p);
+  }
+  for (const sessionName of live) {
+    if (choices.has(sessionName)) continue;
+    const p = getPathBySession(sessionName);
+    if (p) choices.set(sessionName, p);
+  }
+  return { choices, live };
+}
+
+/** Resolve a project short id to its absolute path over the SAME set the pickers
+ * show (recents ∪ live), so any button shown can be acted on — including a live
+ * project absent from recents (the "Short id not found" bug). */
+export async function resolveProjectPathByShortId(
+  deps: HandlerDeps,
+  sid: string,
+): Promise<string | null> {
+  const { choices } = await projectChoices(deps);
+  for (const [sessionName, projectPath] of choices) {
+    if (sessionShortId(sessionName) === sid) return projectPath;
+  }
+  return null;
+}
+
 /** Recent projects (existing dirs) as keyboard buttons, with alive/active flags. */
 export async function recentProjectButtons(
   deps: HandlerDeps,
   channel: string,
 ): Promise<RecentButton[]> {
-  const paths = (await readRecentProjectLines()).filter((p) => fs.existsSync(p));
+  const { choices, live } = await projectChoices(deps);
   const currentSession = await deps.currentProject.get(channel);
-  const prefix = deps.config.projectSessionPrefix;
-  // One `tmux list-sessions` for the liveness lookup, instead of spawning a
-  // `tmux has-session` subprocess per recent path (up to 15).
-  const live = new Set(await deps.bridge.listProjectSessions());
-  return paths.map((projectPath) => {
-    const sessionName = sessionNameFromPath(projectPath, prefix);
-    return {
+
+  // Hide dead dirs (deleted projects) from the UI — resolution stays permissive.
+  return [...choices]
+    .filter(([, projectPath]) => fs.existsSync(projectPath))
+    .map(([sessionName, projectPath]) => ({
       sid: sessionShortId(sessionName),
       label: projectLabel(sessionName, projectPath),
       alive: live.has(sessionName),
       active: currentSession === sessionName,
-    };
-  });
+    }));
 }

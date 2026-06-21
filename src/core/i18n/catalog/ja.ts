@@ -50,7 +50,9 @@ export const ja: Messages = {
   btnExit: "🚪 終了",
   btnPeek: "👁 peek",
   btnHistory: "📜 履歴",
+  btnInputs: "🔁 再送",
   btnQueue: "📋 キュー",
+  btnDashboard: "📊 ダッシュボード",
   btnProjects: "📁 プロジェクト",
   btnRecent: "🕘 最近",
   btnCurrent: "📌 現在",
@@ -77,6 +79,23 @@ export const ja: Messages = {
   btnAdoptCancel: "✕ キャンセル",
   adoptCancelled: "引き継ぎをキャンセルしました",
   adoptWorking: "引き継ぎ中…",
+  recoverEmpty: "復元するプロジェクトはありません。",
+  cmdInputs: "最近の入力を取り出して編集",
+  inputsTitle: "📝 最近の入力(タップで取り出して編集)",
+  inputsEmpty: "再送できる入力はありません",
+  inputsExpired: "リストの有効期限切れです。/inputs をもう一度送信してください",
+  inputDraftToast: "✏️ 下書きとして取り出しました。編集して送信してください",
+  recoverAllRunning: (count: number, list: string) =>
+    `🟢 ${count} 件のプロジェクトはすべて実行中です。復元の必要はありません：\n\n${list}`,
+  btnRecover: "🔄 復元",
+  recoverPreview: (count: number, alive: number, list: string) =>
+    `🔄 ${count} 件のプロジェクトを復元します${alive > 0 ? `（実行中 ${alive} 件はスキップ）` : ""}\n\n${list}\n\n復元しますか？`,
+  btnRecoverConfirm: "🔄 復元する",
+  recoverWorking: "復元中…",
+  recoverCancelled: "復元をキャンセルしました。",
+  recoverBusy: "別の復元が進行中です。しばらくお待ちください。",
+  recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
+    `🔄 復元完了\n\n🔁 再起動 ${launched}${shellOnly > 0 ? ` · 🐚 再作成 ${shellOnly}` : ""} · 🟢 実行中 ${alive}${failed > 0 ? ` · ⚠️ 失敗 ${failed}` : ""}`,
   adoptGone: "このプロセスは引き継ぎ対象ではありません（終了済み、または tmux 内）",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed
@@ -94,6 +113,7 @@ export const ja: Messages = {
   contentTruncated: "...(内容が長すぎるため省略しました)",
   agentEmptyOutput: "出力が空です · /peek で画面を確認",
   agentStarted: "✅ 起動しました",
+  agentAlreadyRunning: "✅ すでに実行中です（再起動は不要）",
   agentStartedWith: (label) => `✅ 「${label}」で起動しました`,
   startPickerTitle: "🚀 起動方法を選択",
   startPickerPrompt: "複数の起動コマンドが設定されています。1つ選んでください:",
@@ -150,6 +170,9 @@ export const ja: Messages = {
   queueSessionHeader: "━━ セッションキュー ━━",
   queueNoSessions: "アクティブなセッションキューはありません",
   queueLastDone: (s) => `最終完了： ${s}秒前`,
+  queueItemCancelled: "キュー内のメッセージをキャンセルしました",
+  queueItemRewritten: "キュー内のメッセージを書き換えました",
+  queueItemGone: "このメッセージはキューにありません（実行中の場合は ✋ 中断で停止できます）",
   queueTitle: "キューの状態",
 
   paneTitle: "👁 tmux ペイン",
@@ -253,6 +276,10 @@ export const ja: Messages = {
 任意のテキストを送信 → エージェントに転送 → 返信`,
 
   helpSectionProjects: "📂 プロジェクト",
+  helpSectionSession: "▶️ セッション",
+  helpSectionGroups: "👥 グループ",
+  helpSectionSettings: "⚙️ 設定",
+  helpSectionDiagnostics: "🛠 診断",
   helpSectionRunning: "⚡ 実行中",
   helpSectionIdle: "🚀 停止中",
 
@@ -285,6 +312,9 @@ export const ja: Messages = {
   cmdStatus: "状態を確認",
   cmdStart: "エージェントを起動",
   cmdDoctor: "インストールのヘルスチェックを実行",
+  cmdRecover: "再起動後に全プロジェクトを復元",
+  cmdStatusInstall: "/status 用の使用状況レポートを設定",
+  cmdVoiceInstall: "音声文字起こしをインストール(Apple Silicon)",
   cmdHelp: "このヘルプ",
   cmdWs: "ワークスペース管理（save/use/list/remove）",
 
@@ -314,6 +344,8 @@ export const ja: Messages = {
 
   // ── dashboard ──
   cmdDashboard: "グローバルダッシュボードを表示（全セッションの状態概要）",
+  cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
+  sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
   noLogsContext:
     "現在のプロジェクトがありません。プロジェクトを選択するか trace を指定してください（/logs <traceId>）。",

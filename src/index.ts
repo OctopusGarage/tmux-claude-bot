@@ -1,3 +1,4 @@
+import { startControlServer } from "./adapters/control/server.js";
 import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
@@ -7,12 +8,17 @@ import {
   releaseInstanceLock,
 } from "./core/infra/instance-lock.js";
 import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
+import { startKeepAwake, stopKeepAwake } from "./core/platform/keep-awake.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
+import { autoRecoverOnBoot } from "./core/recovery/recover.js";
+import { startRunningSweep } from "./core/recovery/running-sweep.js";
 import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 
 const AUTO_START_DELAY_MS = 1000;
+// Delay auto-recovery a few seconds after boot so init()/adapters settle first.
+const AUTO_RECOVER_DELAY_MS = 5000;
 
 const log = createLogger("boot");
 const fatalLog = createLogger("index");
@@ -36,6 +42,11 @@ try {
 
 const deps = bootstrap();
 const { config, currentProject, bridge } = deps;
+
+// Keep the Mac awake (macOS, opt-in) for the bot's lifetime, so a sleeping laptop
+// can't drop it off the phone. In the bot process — not the launchd wrapper — so it
+// covers every launch path identically (dev tsx, managed service, manual run).
+startKeepAwake(config.keepAwake);
 
 async function init(): Promise<void> {
   // Restore every channel's current session (Telegram + Feishu may differ).
@@ -66,8 +77,10 @@ async function init(): Promise<void> {
   log.info("current-session restore complete", {
     data: { channels: sessions.length, recreated },
   });
-  // Auto-starting Claude on boot is disabled by design: the bot must never type
-  // the start command into a pane on its own. Launch Claude explicitly with /start.
+  // Auto-starting Claude on boot is disabled by design: the bot must never type a
+  // start command into a pane on its own — EXCEPT reboot recovery (AUTO_RECOVER),
+  // which only restores agents the user already had running, resuming their
+  // conversation. A fresh project still requires an explicit /start.
   log.info("Auto-start disabled — use /start to launch Claude.");
 }
 
@@ -82,6 +95,8 @@ process.once("SIGINT", markCleanShutdown);
 process.once("SIGTERM", markCleanShutdown);
 process.once("SIGINT", releaseInstanceLock);
 process.once("SIGTERM", releaseInstanceLock);
+process.once("SIGINT", stopKeepAwake);
+process.once("SIGTERM", stopKeepAwake);
 
 process.on("uncaughtException", (err) => {
   fatalLog.error(`uncaughtException: ${err.stack ?? err.message}`);
@@ -107,6 +122,21 @@ if (!telegramEnabled && !larkEnabled) {
 }
 
 await init();
+
+// Keep the reboot-recovery "running sessions" roster in sync with live tmux, so
+// sessions started/exited directly in tmux (outside the bot) are tracked too.
+startRunningSweep(deps, config.runningSweepMs);
+
+// Restore the agents that were running before a machine reboot, automatically.
+// Delayed + fire-and-forget so boot isn't held up by N agent launches; idempotent
+// (a no-op when tmux survived a plain bot restart).
+if (config.autoRecover) {
+  setTimeout(() => void autoRecoverOnBoot(deps), AUTO_RECOVER_DELAY_MS).unref?.();
+}
+
+// Local control transport for the terminal TUI — a unix socket that drives this
+// same bot (one queue, no races). Non-blocking; best-effort.
+startControlServer(deps);
 
 // Lark connects over a WebSocket (non-blocking); start it first. No-op unless
 // config.lark is set.

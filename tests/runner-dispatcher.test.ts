@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigResolver } from "../src/core/agents/agent-config-resolver.js";
 import { setAgentKind } from "../src/core/agents/agentKindMap.js";
+import { getLastLiveSessionId } from "../src/core/agents/live-session-id.js";
 import type { AgentRunner } from "../src/core/agents/runner.js";
 import { AgentRunnerDispatcher } from "../src/core/agents/runner-dispatcher.js";
 import type { AgentKind } from "../src/core/agents/types.js";
@@ -72,6 +73,46 @@ describe("AgentRunnerDispatcher", () => {
     await dispatcher.start("tmux_proj_x");
     expect(claude.calls).toContain("start");
     expect(codex.calls).toHaveLength(0);
+  });
+
+  it("forwards the command override through startWithResume to the picked runner", async () => {
+    const claude = fakeRunner("claude");
+    const startWithResume = vi.fn(async () => {});
+    claude.startWithResume = startWithResume as never;
+    const dispatcher = new AgentRunnerDispatcher({
+      bridge: fakeBridge("tmux_proj_z") as never,
+      claude,
+      codex: fakeRunner("codex"),
+      configResolver: fakeConfigResolver(),
+    });
+
+    await dispatcher.startWithResume(
+      "tmux_proj_z",
+      "uuid-9",
+      "CLAUDE_CONFIG_DIR=~/.claude-stella claude",
+    );
+
+    expect(startWithResume).toHaveBeenCalledWith(
+      "tmux_proj_z",
+      "uuid-9",
+      "CLAUDE_CONFIG_DIR=~/.claude-stella claude",
+    );
+  });
+
+  it("persists the resumed conversation id as the live id (reboot recovery resumes THIS one)", async () => {
+    const claude = fakeRunner("claude");
+    const dispatcher = new AgentRunnerDispatcher({
+      bridge: fakeBridge("tmux_proj_resume") as never,
+      claude,
+      codex: fakeRunner("codex"),
+      configResolver: fakeConfigResolver(),
+    });
+
+    await dispatcher.startWithResume("tmux_proj_resume", "uuid-resumed");
+
+    // Without this, the recorded id would still point at the pre-resume
+    // conversation, so a reboot would resume the wrong one (recover.ts reads it).
+    expect(getLastLiveSessionId("tmux_proj_resume")).toBe("uuid-resumed");
   });
 
   it("routes to codex when the session has agent kind 'codex'", async () => {

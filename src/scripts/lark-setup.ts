@@ -5,16 +5,18 @@
  * scanning user is auto-added to the allowlist. Run via `npm run setup:lark`.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { chmod, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { runLarkOnboardingWizard } from "../adapters/lark/onboarding-wizard.js";
 import type { Lang } from "../core/i18n/index.js";
 import { parseSetupLang, SETUP_LANG_PROMPT, setupMessages } from "../core/i18n/setup.js";
 import { serializeEnv } from "../core/infra/onboarding.js";
 import { managedRestartCommand } from "../core/platform/service-hints.js";
+import { appStateFile } from "../shared/state-dir.js";
 
-const ENV_PATH = join(process.cwd(), ".env");
+// `.env` lives in the state dir (not cwd) — kept out of the deploy's rsync --delete.
+const ENV_PATH = appStateFile(".env");
 const RESTART_CMD = managedRestartCommand();
 
 const C = {
@@ -30,6 +32,7 @@ const C = {
  * replaces existing LARK_* lines and appends any that are missing.
  */
 async function writeEnv(values: Record<string, string>): Promise<void> {
+  await mkdir(dirname(ENV_PATH), { recursive: true }); // state dir may not exist yet
   const current = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, "utf8") : "";
   const tmp = `${ENV_PATH}.tmp`;
   await writeFile(tmp, serializeEnv(current, values), "utf8");

@@ -50,7 +50,9 @@ export const en: Messages = {
   btnExit: "🚪 Exit",
   btnPeek: "👁 peek",
   btnHistory: "📜 History",
+  btnInputs: "🔁 Re-run",
   btnQueue: "📋 Queue",
+  btnDashboard: "📊 Dashboard",
   btnProjects: "📁 Projects",
   btnRecent: "🕘 Recent",
   btnCurrent: "📌 Current",
@@ -77,6 +79,23 @@ export const en: Messages = {
   btnAdoptCancel: "✕ Cancel",
   adoptCancelled: "Takeover cancelled",
   adoptWorking: "Taking over…",
+  recoverEmpty: "No projects to recover.",
+  cmdInputs: "Fetch a recent input to edit",
+  inputsTitle: "📝 Recent inputs (tap to fetch & edit)",
+  inputsEmpty: "No recent inputs to re-run",
+  inputsExpired: "List expired — send /inputs again",
+  inputDraftToast: "✏️ Fetched as a draft — edit, then send",
+  recoverAllRunning: (count: number, list: string) =>
+    `🟢 All ${count} project(s) are running — nothing to recover:\n\n${list}`,
+  btnRecover: "🔄 Recover",
+  recoverPreview: (count: number, alive: number, list: string) =>
+    `🔄 Will recover ${count} project(s)${alive > 0 ? ` (${alive} already running, skipped)` : ""}\n\n${list}\n\nConfirm recovery?`,
+  btnRecoverConfirm: "🔄 Confirm recovery",
+  recoverWorking: "Recovering…",
+  recoverCancelled: "Recovery cancelled.",
+  recoverBusy: "A recovery is already in progress.",
+  recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
+    `🔄 Recovery complete\n\n🔁 ${launched} relaunched${shellOnly > 0 ? ` · 🐚 ${shellOnly} recreated` : ""} · 🟢 ${alive} running${failed > 0 ? ` · ⚠️ ${failed} failed` : ""}`,
   adoptGone: "That process is no longer adoptable (exited or now in tmux)",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ Adopted and resumed session: ${proj}` : `✅ Adopted and started fresh: ${proj}`,
@@ -92,6 +111,7 @@ export const en: Messages = {
   contentTruncated: "...(content too long, truncated)",
   agentEmptyOutput: "Returned nothing · /peek to view the pane",
   agentStarted: "✅ Started",
+  agentAlreadyRunning: "✅ Already running",
   agentStartedWith: (label) => `✅ Started with "${label}"`,
   startPickerTitle: "🚀 Choose how to start",
   startPickerPrompt: "Multiple start commands are configured — pick one:",
@@ -147,6 +167,10 @@ export const en: Messages = {
   queueSessionHeader: "━━ Session queues ━━",
   queueNoSessions: "No active session queues",
   queueLastDone: (s) => `last done ${s}s ago`,
+  queueItemCancelled: "queued message cancelled",
+  queueItemRewritten: "queued message rewritten",
+  queueItemGone:
+    "that message is no longer queued (it may be running — use ✋ interrupt to stop it)",
   queueTitle: "Queue status",
 
   paneTitle: "👁 tmux pane",
@@ -248,6 +272,10 @@ Tip: messages get 👀 (received) / 👍 (done) reactions; progress shows in pla
 Send any text → forwarded to the agent → reply`,
 
   helpSectionProjects: "📂 Projects",
+  helpSectionSession: "▶️ Session",
+  helpSectionGroups: "👥 Groups",
+  helpSectionSettings: "⚙️ Settings",
+  helpSectionDiagnostics: "🛠 Diagnostics",
   helpSectionRunning: "⚡ Running",
   helpSectionIdle: "🚀 Not running",
 
@@ -279,6 +307,9 @@ Send any text → forwarded to the agent → reply`,
   cmdStatus: "check status",
   cmdStart: "start the agent",
   cmdDoctor: "run install health checks",
+  cmdRecover: "Recover all projects after a reboot",
+  cmdStatusInstall: "Install usage reporting for /status",
+  cmdVoiceInstall: "Install voice transcription (Apple Silicon)",
   cmdHelp: "this help",
   cmdWs: "workspace management (save/use/list/remove)",
 
@@ -308,6 +339,8 @@ Send any text → forwarded to the agent → reply`,
 
   // ── dashboard ──
   cmdDashboard: "View the global dashboard (overview of all sessions)",
+  cmdSysload: "Show machine load, heat, and runaway processes",
+  sysloadTitle: "🖥 System load",
   dashboardTitle: "📊 Dashboard",
   noLogsContext: "No current project. Select a project or specify a trace (/logs <traceId>).",
 

@@ -59,7 +59,9 @@ export const zh = {
   btnExit: "🚪 退出",
   btnPeek: "👁 peek",
   btnHistory: "📜 历史",
+  btnInputs: "🔁 重发",
   btnQueue: "📋 队列",
+  btnDashboard: "📊 仪表盘",
   btnProjects: "📁 项目",
   btnRecent: "🕘 近期",
   btnCurrent: "📌 当前",
@@ -86,6 +88,23 @@ export const zh = {
   btnAdoptCancel: "✕ 取消",
   adoptCancelled: "已取消接管",
   adoptWorking: "正在接管…",
+  recoverEmpty: "没有需要恢复的项目。",
+  cmdInputs: "取回最近的输入以编辑",
+  inputsTitle: "📝 最近输入(点一个取回编辑)",
+  inputsEmpty: "没有可重发的输入",
+  inputsExpired: "列表已过期,请重新发送 /inputs",
+  inputDraftToast: "✏️ 已取回为草稿,编辑后发送",
+  recoverAllRunning: (count: number, list: string) =>
+    `🟢 ${count} 个项目都在运行中，暂无需要恢复的：\n\n${list}`,
+  btnRecover: "🔄 恢复",
+  recoverPreview: (count: number, alive: number, list: string) =>
+    `🔄 将恢复 ${count} 个项目${alive > 0 ? `（${alive} 个运行中，跳过）` : ""}\n\n${list}\n\n确认恢复？`,
+  btnRecoverConfirm: "🔄 确认恢复",
+  recoverWorking: "正在恢复…",
+  recoverCancelled: "已取消恢复。",
+  recoverBusy: "已有一个恢复正在进行,请稍候。",
+  recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
+    `🔄 恢复完成\n\n🔁 重启 ${launched}${shellOnly > 0 ? ` · 🐚 重建 ${shellOnly}` : ""} · 🟢 运行中 ${alive}${failed > 0 ? ` · ⚠️ 失败 ${failed}` : ""}`,
   adoptGone: "该进程已不在可接管列表（已退出或已在 tmux 中）",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管并续接会话：${proj}` : `✅ 已接管并新建会话：${proj}`,
@@ -102,6 +121,7 @@ export const zh = {
   contentTruncated: "...(内容过长，已截断)",
   agentEmptyOutput: "返回空内容 · 用 /peek 查看画面",
   agentStarted: "✅ 已启动",
+  agentAlreadyRunning: "✅ 已在运行中，无需重复启动",
   agentStartedWith: (label: string) => `✅ 已用「${label}」启动`,
   startPickerTitle: "🚀 选择启动方式",
   startPickerPrompt: "配置了多个启动命令,选一个启动:",
@@ -165,6 +185,9 @@ export const zh = {
   queueSessionHeader: "━━ 会话队列 ━━",
   queueNoSessions: "没有活跃的会话队列",
   queueLastDone: (s: number) => `上次完成： ${s}s 前`,
+  queueItemCancelled: "已取消该排队消息",
+  queueItemRewritten: "已改写该排队消息",
+  queueItemGone: "该消息已不在队列（可能正在执行，可用 ✋ 中断停止）",
   queueTitle: "队列状态",
 
   // ── history / peek / placeholders ──
@@ -271,6 +294,10 @@ export const zh = {
 
   // ── help section headers ──
   helpSectionProjects: "📂 项目",
+  helpSectionSession: "▶️ 会话",
+  helpSectionGroups: "👥 群组",
+  helpSectionSettings: "⚙️ 设置",
+  helpSectionDiagnostics: "🛠 诊断",
   helpSectionRunning: "⚡ 运行中",
   helpSectionIdle: "🚀 未运行",
 
@@ -303,6 +330,9 @@ export const zh = {
   cmdStatus: "检查状态",
   cmdStart: "启动 agent",
   cmdDoctor: "运行安装健康检查",
+  cmdRecover: "重启后恢复所有项目",
+  cmdStatusInstall: "为 /status 安装用量上报",
+  cmdVoiceInstall: "安装语音转写(Apple Silicon)",
   cmdHelp: "本帮助",
   cmdWs: "工作区管理（save/use/list/remove）",
 
@@ -332,6 +362,8 @@ export const zh = {
 
   // ── dashboard ──
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
+  cmdSysload: "查看本机负载/发热/跑飞进程",
+  sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
   noLogsContext: "无当前项目，请先选择项目或指定 trace（/logs <traceId>）。",
 

@@ -18,6 +18,12 @@ export function setAgentKind(sessionName: string, kind: AgentKind): void {
   store.set(sessionName, kind);
 }
 
+/** Drop the record (e.g. when the session/project is removed, so a reused free
+ * slot can't read a stale kind and reboot recovery sees an accurate roster). */
+export function clearAgentKind(sessionName: string): void {
+  store.delete(sessionName);
+}
+
 /** The agent running in `session`: the LIVE process when one is detectable,
  * else the recorded launch-intent (set at start), else "claude". Live process
  * wins so a running session always reflects reality, not a stale record.

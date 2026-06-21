@@ -88,6 +88,17 @@ describe("config schema", () => {
 
 import { loadConfig, loadScriptConfig } from "../src/shared/config.js";
 
+describe("autoRecover config", () => {
+  it("defaults to true (auto-recover on boot)", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).autoRecover).toBe(true);
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t", AUTO_RECOVER: "" }).autoRecover).toBe(true);
+  });
+  it("is disabled by false / 0", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t", AUTO_RECOVER: "false" }).autoRecover).toBe(false);
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t", AUTO_RECOVER: "0" }).autoRecover).toBe(false);
+  });
+});
+
 describe("loadScriptConfig without args", () => {
   it("reads from process.env and returns a valid config", () => {
     // Sets CLAUDE_START_COMMAND so the schema doesn't fail.

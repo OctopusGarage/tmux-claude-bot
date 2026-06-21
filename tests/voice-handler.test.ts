@@ -173,6 +173,6 @@ describe("registerVoiceHandler", () => {
     await capturedHandler(mockCtx);
 
     // The confirmation reply message_id is 888
-    expect(rt.resolveReplyTarget(888)).toBe("tmux_proj_test");
+    expect(rt.resolve(888)).toBe("tmux_proj_test");
   });
 });

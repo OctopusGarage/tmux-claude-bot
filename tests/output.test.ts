@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { markSemantics, OutputProcessor } from "../src/core/session/output.js";
+import {
+  DEFAULT_PEEK_LINES,
+  MAX_PEEK_LINES,
+  markColorSemantics,
+  markSemantics,
+  OutputProcessor,
+  parsePeekLines,
+  renderPeekPane,
+  renderPeekPaneChunks,
+} from "../src/core/session/output.js";
+
+const E = "\x1b"; // ANSI ESC
 
 describe("OutputProcessor", () => {
   describe("constructor", () => {
@@ -299,5 +310,91 @@ describe("markSemantics", () => {
     // The '-' line also contains 'Error:', but inside a diff hunk it stays a diff marker.
     const input = "+ ok now\n- Error: was here";
     expect(markSemantics(input)).toBe("🟩 ok now\n🟥 Error: was here");
+  });
+});
+
+describe("markColorSemantics (peek colour meaning)", () => {
+  it("marks a faint/dim run (placeholder hint) with 🔅", () => {
+    expect(markColorSemantics(`${E}[2mType a message${E}[0m`)).toBe("🔅Type a message");
+  });
+
+  it("marks a gray (90) foreground run", () => {
+    expect(markColorSemantics(`${E}[90mhint${E}[39m real`)).toBe("🔅hint real");
+  });
+
+  it("marks a 256-colour gray (240) run", () => {
+    expect(markColorSemantics(`${E}[38;5;240mgrey${E}[0m bright`)).toBe("🔅grey bright");
+  });
+
+  it("leaves a real colour (active/typed text) unmarked", () => {
+    expect(markColorSemantics(`${E}[32mgreen active${E}[0m`)).toBe("green active");
+  });
+
+  it("leaves plain text and the ❯ selection arrow untouched", () => {
+    expect(markColorSemantics("❯ 1. Yes")).toBe("❯ 1. Yes");
+  });
+});
+
+describe("peek keeps selection arrows; renderPeekPane wires the passes", () => {
+  it("OutputProcessor no longer strips ❯ / ➜ selection arrows", () => {
+    const out = new OutputProcessor({ maxOutputLines: 50, maxMessageLength: 4000 });
+    expect(out.process("❯ 1. Yes\n  2. No")).toContain("❯ 1. Yes");
+  });
+
+  it("renderPeekPane marks a dim hint and keeps the selected line", () => {
+    const out = new OutputProcessor({ maxOutputLines: 50, maxMessageLength: 4000 });
+    const pane = `${E}[2mtype here${E}[0m\n❯ 1. Yes`;
+    const rendered = renderPeekPane(pane, out);
+    expect(rendered).toContain("🔅type here");
+    expect(rendered).toContain("❯ 1. Yes");
+  });
+});
+
+describe("markColorSemantics — one marker per gray line", () => {
+  it("marks a multi-word gray line ONCE, not per word", () => {
+    // claude wraps each word in its own SGR; the spaces reset to default fg.
+    const line = `${E}[38;5;240m…${E}[39m ${E}[38;5;240m+41${E}[39m ${E}[38;5;240mlines${E}[39m`;
+    expect(markColorSemantics(line)).toBe("🔅… +41 lines");
+  });
+  it("re-marks on the next line", () => {
+    expect(markColorSemantics(`${E}[2mhint a${E}[0m\n${E}[2mhint b${E}[0m`)).toBe(
+      "🔅hint a\n🔅hint b",
+    );
+  });
+});
+
+describe("peek paging", () => {
+  const out = new OutputProcessor({ maxOutputLines: 1000, maxMessageLength: 4000 });
+
+  it("parsePeekLines = N lines, clamped to [1, max]; default for no/bad arg", () => {
+    expect(parsePeekLines(undefined)).toBe(DEFAULT_PEEK_LINES);
+    expect(parsePeekLines("abc")).toBe(DEFAULT_PEEK_LINES);
+    expect(parsePeekLines("0")).toBe(DEFAULT_PEEK_LINES);
+    expect(parsePeekLines("2")).toBe(2); // small N honoured as-is
+    expect(parsePeekLines("80")).toBe(80);
+    expect(parsePeekLines("99999")).toBe(MAX_PEEK_LINES);
+  });
+
+  it("keeps the last N lines", () => {
+    const text = Array.from({ length: 20 }, (_, i) => `line${i}`).join("\n");
+    const chunks = renderPeekPaneChunks(text, out, 5, 4000);
+    expect(chunks.join("\n").split("\n")).toEqual([
+      "line15",
+      "line16",
+      "line17",
+      "line18",
+      "line19",
+    ]);
+  });
+
+  it("splits into message-sized chunks on line boundaries", () => {
+    const text = Array.from({ length: 10 }, () => "x".repeat(50)).join("\n");
+    const chunks = renderPeekPaneChunks(text, out, 100, 120);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(120);
+  });
+
+  it("returns [] for an empty pane", () => {
+    expect(renderPeekPaneChunks("", out, 40, 4000)).toEqual([]);
   });
 });

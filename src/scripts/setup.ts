@@ -5,9 +5,9 @@
  * to edit an existing config, `--yes` for non-interactive).
  */
 import { existsSync, readFileSync } from "node:fs";
-import { chmod, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Bot } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -26,6 +26,7 @@ import {
   serializeEnv,
   validateTokenShape,
 } from "../core/infra/onboarding.js";
+import { appStateFile } from "../shared/state-dir.js";
 
 /** Language for the pre-prompt guards + non-interactive run: UI_LANG env, else English. */
 function envLang(): Lang {
@@ -34,7 +35,10 @@ function envLang(): Lang {
 }
 
 const ROOT = process.cwd();
-const ENV_PATH = join(ROOT, ".env");
+// `.env` lives in the state dir (alongside the other state files), NOT the code
+// install dir — so the deploy's `rsync --delete` never touches it. The template
+// (.env.example) is a shipped code file, read from the install dir.
+const ENV_PATH = appStateFile(".env");
 const EXAMPLE_PATH = join(ROOT, ".env.example");
 const CAPTURE_TIMEOUT_MS = 60_000;
 
@@ -281,6 +285,16 @@ async function main(): Promise<void> {
       existing.get("WHISPER_LANGUAGE") ?? "zh",
     );
 
+    // 5. Keep-awake (macOS only — a sleeping laptop is what drops the bot from
+    // your phone). Opt-in: default No, since it changes power behaviour.
+    if (process.platform === "darwin") {
+      C.info(M.keepAwakeIntro);
+      const def = existing.get("TCB_KEEP_AWAKE") === "1" ? "y" : "n";
+      const on = /^y/i.test(await ask(M.keepAwakePrompt, def));
+      values.TCB_KEEP_AWAKE = on ? "1" : "0";
+      if (on) C.info(M.keepAwakeClamshellHint);
+    }
+
     if (DRY_RUN) {
       C.ok(M.dryRunComplete);
       for (const [k, v] of Object.entries(values)) {
@@ -303,6 +317,7 @@ async function main(): Promise<void> {
 }
 
 async function writeEnv(template: string, values: Record<string, string>): Promise<void> {
+  await mkdir(dirname(ENV_PATH), { recursive: true }); // state dir may not exist yet
   const tmp = `${ENV_PATH}.tmp`;
   await writeFile(tmp, serializeEnv(template, values), "utf8");
   await chmod(tmp, 0o600);

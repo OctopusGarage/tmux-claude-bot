@@ -11,6 +11,7 @@ import {
   recentProjectButtons,
   removeProjectBySession,
   resolveProjectPath,
+  resolveProjectPathByShortId,
 } from "../../src/core/projects/project-ops.js";
 import { sessionNameFromPath, setPathForSession } from "../../src/core/projects/sessionPathMap.js";
 import { cumulativeBusyMs, taskEnded, taskStarted } from "../../src/core/session/task-timing.js";
@@ -411,6 +412,37 @@ describe("recentProjectButtons", () => {
     const deps = fakeDeps();
     const buttons = await recentProjectButtons(deps, "telegram");
     expect(buttons).toEqual([]);
+  });
+
+  it("includes a LIVE project that isn't in the recents file (started in tmux)", async () => {
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
+    vi.mocked(readRecentProjectLines).mockResolvedValueOnce([]); // geo-backend isn't in recents
+    const sessionName = `tmux_proj_${dir.replace(/\//g, "-")}`;
+    setPathForSession(sessionName, dir); // but it has a recorded path and is live in tmux
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
+    });
+    const buttons = await recentProjectButtons(deps, "telegram");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.alive).toBe(true);
+  });
+
+  it("resolveProjectPathByShortId resolves a LIVE project absent from recents", async () => {
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
+    vi.mocked(readRecentProjectLines).mockResolvedValueOnce([]); // not in recents (the geo-backend bug)
+    const sessionName = `tmux_proj_${dir.replace(/\//g, "-")}`;
+    setPathForSession(sessionName, dir);
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
+    });
+    expect(await resolveProjectPathByShortId(deps, sessionShortId(sessionName))).toBe(dir);
+  });
+
+  it("resolveProjectPathByShortId returns null for an unknown sid", async () => {
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
+    vi.mocked(readRecentProjectLines).mockResolvedValueOnce([]);
+    const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => []) } });
+    expect(await resolveProjectPathByShortId(deps, "nope12")).toBeNull();
   });
 
   it("returns button with alive and active flags set correctly", async () => {

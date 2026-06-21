@@ -6,7 +6,11 @@
 export interface AgentRunner {
   checkIfRunning(sessionName?: string): Promise<boolean>;
   start(sessionName?: string, command?: string): Promise<void>;
-  startWithResume(sessionName: string | undefined, sessionId: string): Promise<void>;
+  startWithResume(
+    sessionName: string | undefined,
+    sessionId: string,
+    command?: string,
+  ): Promise<void>;
   waitUntilReady(sessionName?: string): Promise<void>;
   waitUntilDone(sessionName?: string): Promise<{ done: boolean; output: string }>;
   interrupt(sessionName?: string): Promise<void>;

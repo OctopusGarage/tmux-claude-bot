@@ -102,7 +102,7 @@ async function listHistoryFilesByMtime(historyDir: string): Promise<HistoryFile[
 //   messages that separate intermediate assistant turns carry no text and are
 //   dropped, so appending would collapse the whole agentic trace into one blob
 function parseConversationRounds(rawContent: string, fileName: string): ConversationRound[] {
-  const messages: { role: "user" | "assistant"; text: string; time: string }[] = [];
+  const messages: { role: "user" | "assistant"; text: string; time: string; timeMs: number }[] = [];
 
   for (const d of iterJsonlObjects<Record<string, unknown>>(rawContent)) {
     try {
@@ -113,7 +113,9 @@ function parseConversationRounds(rawContent: string, fileName: string): Conversa
       const text = extractText((d.message as Record<string, unknown> | undefined)?.content);
       if (!text.trim()) continue;
 
-      const time = formatTranscriptTime(String((d.timestamp as string | undefined) ?? ""));
+      const rawTs = String((d.timestamp as string | undefined) ?? "");
+      const time = formatTranscriptTime(rawTs);
+      const timeMs = Date.parse(rawTs) || 0;
 
       const prev = messages[messages.length - 1];
 
@@ -126,6 +128,7 @@ function parseConversationRounds(rawContent: string, fileName: string): Conversa
           // prefix (e.g. a `/clear` from a previous day) keeps its old time
           // and the round looks far older than the real prompt.
           prev.time = time;
+          prev.timeMs = timeMs;
           const prevIsCommand = prev.text.startsWith("[") && prev.text.endsWith("]");
           const currIsCommand = parsed.startsWith("[") && parsed.endsWith("]");
 
@@ -139,15 +142,16 @@ function parseConversationRounds(rawContent: string, fileName: string): Conversa
             prev.text += ` | ${parsed.slice(0, 150)}`;
           }
         } else {
-          messages.push({ role: "user", text: parsed, time });
+          messages.push({ role: "user", text: parsed, time, timeMs });
         }
       } else {
         // assistant: keep only the final text block of the turn — the conclusion.
         if (prev && prev.role === "assistant") {
           prev.text = text;
           prev.time = time;
+          prev.timeMs = timeMs;
         } else {
-          messages.push({ role: "assistant", text, time });
+          messages.push({ role: "assistant", text, time, timeMs });
         }
       }
     } catch {
@@ -172,6 +176,7 @@ function parseConversationRounds(rawContent: string, fileName: string): Conversa
         user: cur.text,
         assistant: next.text,
         time: cur.time,
+        timeMs: cur.timeMs,
         file: fileName.slice(0, 8),
       });
       i += 2;

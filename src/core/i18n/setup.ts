@@ -58,6 +58,10 @@ export interface SetupMessages {
   voiceSkipHint: string;
   mlxPathPrompt: string;
   voiceLangPrompt: string;
+  // Keep-awake (macOS)
+  keepAwakeIntro: string;
+  keepAwakePrompt: string;
+  keepAwakeClamshellHint: string;
   // Finish
   dryRunComplete: string;
   wroteEnv: (path: string) => string;
@@ -118,6 +122,11 @@ const en: SetupMessages = {
     "Press ENTER to skip for now. To enable later: `npm run whisper:install` auto-fills this. (No need to type a path by hand.)",
   mlxPathPrompt: "mlx_whisper binary path (Enter to skip)",
   voiceLangPrompt: "Voice recognition language (zh/en/yue/ja/es/auto)",
+  keepAwakeIntro:
+    "Keep this Mac awake so the bot stays reachable from your phone (it goes offline when the Mac sleeps).",
+  keepAwakePrompt: "Keep the Mac awake while the bot runs? (y/N)",
+  keepAwakeClamshellHint:
+    "Note: works with the lid OPEN or an external display. For lid-closed (clamshell) use, also run: sudo pmset -a disablesleep 1",
   dryRunComplete: "[dry-run] flow complete. Resolved config (NOT written, secrets masked):",
   wroteEnv: (path) => `Wrote ${path}`,
   telegramIds: (ids) => `Telegram ids: ${ids}`,
@@ -174,6 +183,10 @@ const zh: SetupMessages = {
     "按回车先跳过。稍后启用：运行 `npm run whisper:install` 会自动填好此项。（无需手动输入路径。）",
   mlxPathPrompt: "mlx_whisper 可执行文件路径（回车跳过）",
   voiceLangPrompt: "语音识别语言（zh/en/yue/ja/es/auto）",
+  keepAwakeIntro: "保持这台 Mac 唤醒，手机才能随时连上 bot（Mac 休眠后 bot 会掉线）。",
+  keepAwakePrompt: "运行期间保持 Mac 唤醒？(y/N)",
+  keepAwakeClamshellHint:
+    "提示：仅在开盖或接外接显示器时有效。合盖（clamshell）使用还需手动执行：sudo pmset -a disablesleep 1",
   dryRunComplete: "[dry-run] 流程完成。解析后的配置（未写入，密钥已遮蔽）：",
   wroteEnv: (path) => `已写入 ${path}`,
   telegramIds: (ids) => `Telegram id：${ids}`,
@@ -230,6 +243,10 @@ const yue: SetupMessages = {
     "撳 Enter 暫時略過。之後啟用：執行 `npm run whisper:install` 會自動填好呢項。（唔使手動輸入路徑。）",
   mlxPathPrompt: "mlx_whisper 執行檔路徑（Enter 略過）",
   voiceLangPrompt: "語音識別語言（zh/en/yue/ja/es/auto）",
+  keepAwakeIntro: "保持這台 Mac 喚醒，手機才能隨時連上 bot（Mac 休眠後 bot 會離線）。",
+  keepAwakePrompt: "運行期間保持 Mac 喚醒？(y/N)",
+  keepAwakeClamshellHint:
+    "提示：僅在開蓋或接外接顯示器時有效。合蓋（clamshell）使用還需手動執行：sudo pmset -a disablesleep 1",
   dryRunComplete: "[dry-run] 流程完成。解析後嘅設定（未寫入，密鑰已遮蔽）：",
   wroteEnv: (path) => `已寫入 ${path}`,
   telegramIds: (ids) => `Telegram id：${ids}`,
@@ -286,6 +303,10 @@ const zhTW: SetupMessages = {
     "按 Enter 先略過。稍後啟用：執行 `npm run whisper:install` 會自動填好此項。（無需手動輸入路徑。）",
   mlxPathPrompt: "mlx_whisper 執行檔路徑（Enter 略過）",
   voiceLangPrompt: "語音辨識語言（zh/en/yue/ja/es/auto）",
+  keepAwakeIntro: "保持這台 Mac 喚醒，手機才能隨時連上 bot（Mac 休眠後 bot 會離線）。",
+  keepAwakePrompt: "執行期間保持 Mac 喚醒？(y/N)",
+  keepAwakeClamshellHint:
+    "提示：僅在開蓋或接外接顯示器時有效。闔蓋（clamshell）使用還需手動執行：sudo pmset -a disablesleep 1",
   dryRunComplete: "[dry-run] 流程完成。解析後的設定（未寫入，密鑰已遮蔽）：",
   wroteEnv: (path) => `已寫入 ${path}`,
   telegramIds: (ids) => `Telegram id：${ids}`,
@@ -345,6 +366,11 @@ const ja: SetupMessages = {
     "Enter で今はスキップ。後で有効化：`npm run whisper:install` がこの項目を自動で埋めます。（パスを手入力する必要はありません。）",
   mlxPathPrompt: "mlx_whisper バイナリのパス（Enter でスキップ）",
   voiceLangPrompt: "音声認識の言語（zh/en/yue/ja/es/auto）",
+  keepAwakeIntro:
+    "Mac をスリープさせず、スマホからいつでも bot に接続できるようにします（スリープすると bot はオフラインになります）。",
+  keepAwakePrompt: "bot の実行中は Mac をスリープさせない？(y/N)",
+  keepAwakeClamshellHint:
+    "注意：ふたを開けた状態または外部ディスプレイ接続時に有効です。ふたを閉じた（クラムシェル）運用には別途 sudo pmset -a disablesleep 1 を実行してください。",
   dryRunComplete: "[dry-run] フロー完了。解決済みの設定（未書き込み、秘密情報はマスク）：",
   wroteEnv: (path) => `${path} を書き込みました`,
   telegramIds: (ids) => `Telegram id：${ids}`,
@@ -406,6 +432,11 @@ const es: SetupMessages = {
     "Pulsa Enter para omitir por ahora. Para activarla luego: `npm run whisper:install` lo rellena automáticamente. (No hace falta escribir una ruta a mano.)",
   mlxPathPrompt: "Ruta del binario mlx_whisper (Enter para omitir)",
   voiceLangPrompt: "Idioma de reconocimiento de voz (zh/en/yue/ja/es/auto)",
+  keepAwakeIntro:
+    "Mantén este Mac despierto para que el bot siga accesible desde el teléfono (si el Mac duerme, el bot se desconecta).",
+  keepAwakePrompt: "¿Mantener el Mac despierto mientras el bot está en marcha? (y/N)",
+  keepAwakeClamshellHint:
+    "Nota: funciona con la tapa abierta o una pantalla externa. Para uso con la tapa cerrada (clamshell), ejecuta también: sudo pmset -a disablesleep 1",
   dryRunComplete:
     "[dry-run] flujo completado. Config resuelta (NO escrita, secretos enmascarados):",
   wroteEnv: (path) => `Se escribió ${path}`,
