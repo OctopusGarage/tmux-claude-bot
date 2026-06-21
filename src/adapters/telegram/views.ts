@@ -9,15 +9,24 @@ import { runStatusInstall } from "../../core/infra/status-install.js";
 import type { BrowseView } from "../../core/projects/dir-browser.js";
 import type { CreateProjectResult } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { getRecentInputs, storeInputList } from "../../core/read/recent-inputs.js";
 import { formatSingleConversation } from "../../core/read/transcript.js";
-import { markSemantics } from "../../core/session/output.js";
+import { planRecovery } from "../../core/recovery/recover.js";
+import {
+  actionableCount,
+  aliveCount,
+  recoverPreviewList,
+} from "../../core/recovery/recover-view.js";
+import { DEFAULT_PEEK_LINES, renderPeekPaneChunks } from "../../core/session/output.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import {
   buildBrowseKeyboard,
   buildControlKeyboard,
+  buildInputsKeyboard,
   buildNewFreeKeyboard,
   buildProjectKeyboard,
+  buildRecoverConfirmKeyboard,
   buildStatusInstallChoiceKeyboard,
 } from "./keyboards.js";
 import { MSG } from "./messages.js";
@@ -31,6 +40,37 @@ import { tgScope } from "./scope.js";
  * render it into a Telegram reply. No mutation — these only display. Kept apart
  * from command/callback wiring so the "what the user sees" lives in one place.
  */
+
+/** Reboot-recovery preview: list the projects that would be recreated + relaunched,
+ * with a confirm button. Shared by the /recover command and the panel button. */
+export async function sendRecoverPreview(
+  ctx: Context,
+  deps: HandlerDeps,
+  replyTarget: ReplyTargetMap,
+): Promise<void> {
+  try {
+    const plan = await planRecovery(deps);
+    const n = actionableCount(plan);
+    if (n === 0) {
+      // Nothing to recover: either nothing is tracked, or everything tracked is
+      // already running (show the roster so it's clear tracking works).
+      const msg =
+        plan.length === 0
+          ? messages("telegram").recoverEmpty
+          : messages("telegram").recoverAllRunning(plan.length, recoverPreviewList(plan));
+      await reply(ctx, "info", msg, { replyTarget });
+      return;
+    }
+    await reply(
+      ctx,
+      "info",
+      messages("telegram").recoverPreview(n, aliveCount(plan), recoverPreviewList(plan)),
+      { replyMarkup: buildRecoverConfirmKeyboard(), replyTarget },
+    );
+  } catch (err) {
+    await reply(ctx, "err", `${normalizeError(err).message}`, { replyTarget });
+  }
+}
 
 /** The alive-projects list (tappable switch/delete keyboard, no body text). */
 export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<void> {
@@ -50,29 +90,40 @@ export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<vo
   }
 }
 
-/** Capture and send the current tmux pane for a session. */
+/** Capture and send the tmux pane. `lines` (from `/peek N`) captures that many
+ * lines of scrollback and pages the result across messages so tall output isn't
+ * truncated to one screen; the control keyboard rides the LAST (bottom) message. */
 export async function sendPeek(
   ctx: Context,
   deps: HandlerDeps,
   session: string,
   replyTarget: ReplyTargetMap,
+  lines: number = DEFAULT_PEEK_LINES,
 ): Promise<void> {
-  const keyboard = buildControlKeyboard(sessionShortId(session));
+  // Adapt the panel to liveness: a peek of an idle session shouldn't offer dead
+  // control keys, just start/projects.
+  const keyboard = buildControlKeyboard(
+    sessionShortId(session),
+    await deps.agent.checkIfRunning(session),
+  );
   try {
-    const snapshot = await deps.bridge.capturePane(session);
-    const processed = markSemantics(deps.output.process(snapshot));
-    if (processed) {
-      await reply(ctx, "view", "", {
-        session,
-        body: processed,
-        code: true,
-        replyMarkup: keyboard,
-        replyTarget,
-      });
-    } else {
+    const snapshot = await deps.bridge.capturePaneColored(session, lines);
+    const chunks = renderPeekPaneChunks(snapshot, deps.output, lines, deps.config.maxMessageLength);
+    if (chunks.length === 0) {
       await reply(ctx, "view", messages("telegram").emptyPane, {
         session,
         replyMarkup: keyboard,
+        replyTarget,
+      });
+      return;
+    }
+    for (let i = 0; i < chunks.length; i++) {
+      const last = i === chunks.length - 1;
+      await reply(ctx, "view", chunks.length > 1 ? `${i + 1}/${chunks.length}` : "", {
+        session,
+        body: chunks[i],
+        code: true,
+        replyMarkup: last ? keyboard : undefined,
         replyTarget,
       });
     }
@@ -188,7 +239,40 @@ export async function sendHistory(
       session,
       body,
       markdown: true,
-      replyMarkup: buildControlKeyboard(sessionShortId(session)),
+      replyMarkup: buildControlKeyboard(
+        sessionShortId(session),
+        await deps.agent.checkIfRunning(session),
+      ),
+      replyTarget,
+    });
+  } catch (err) {
+    await reply(ctx, "err", `${normalizeError(err).message}`, { session, replyTarget });
+  }
+}
+
+/** `/inputs [N]`: list the last N inputs you sent (tap one to fetch & edit it). */
+export async function sendInputs(
+  ctx: Context,
+  deps: HandlerDeps,
+  session: string,
+  replyTarget: ReplyTargetMap,
+  limit: number,
+): Promise<void> {
+  try {
+    const projectPath = getPathBySession(session);
+    if (!projectPath) {
+      await reply(ctx, "err", messages("telegram").noPathMapping, { session, replyTarget });
+      return;
+    }
+    const inputs = await getRecentInputs(deps, session, projectPath, limit);
+    if (inputs.length === 0) {
+      await reply(ctx, "info", messages("telegram").inputsEmpty, { session, replyTarget });
+      return;
+    }
+    const token = storeInputList(session, inputs);
+    await reply(ctx, "view", messages("telegram").inputsTitle, {
+      session,
+      replyMarkup: buildInputsKeyboard(inputs, token),
       replyTarget,
     });
   } catch (err) {

@@ -115,8 +115,8 @@ describe("sendPeek", () => {
   it("sends the captured pane as a code body with a control keyboard", async () => {
     const ctx = fakeCtx();
     const deps = fakeDeps({
-      bridge: { capturePane: vi.fn(async () => "PANE TEXT") },
-      output: { process: vi.fn((s: string) => s) },
+      bridge: { capturePaneColored: vi.fn(async () => "PANE TEXT") },
+      output: { clean: vi.fn((s: string) => s) },
     });
 
     await sendPeek(ctx, deps, "proj-1", replyTarget);
@@ -128,8 +128,8 @@ describe("sendPeek", () => {
   it("sends （空）when the processed pane is empty", async () => {
     const ctx = fakeCtx();
     const deps = fakeDeps({
-      bridge: { capturePane: vi.fn(async () => "") },
-      output: { process: vi.fn(() => "") },
+      bridge: { capturePaneColored: vi.fn(async () => "") },
+      output: { clean: vi.fn(() => "") },
     });
 
     await sendPeek(ctx, deps, "proj-1", replyTarget);
@@ -141,7 +141,7 @@ describe("sendPeek", () => {
     const ctx = fakeCtx();
     const deps = fakeDeps({
       bridge: {
-        capturePane: vi.fn(async () => {
+        capturePaneColored: vi.fn(async () => {
           throw new Error("no pane");
         }),
       },

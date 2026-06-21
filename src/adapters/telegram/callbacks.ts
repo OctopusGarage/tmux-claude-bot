@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
+import { getStartCommand } from "../../core/agents/startCommandMap.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import {
   adoptOrphan,
@@ -7,7 +8,12 @@ import {
   copyAttachCommand,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
-import { executeMessage, performRestart, performStart } from "../../core/command/dispatch.js";
+import {
+  executeMessage,
+  performRestart,
+  performStart,
+  startDisposition,
+} from "../../core/command/dispatch.js";
 import type { QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
@@ -21,7 +27,9 @@ import {
 import { clearFreeLabel, requestFreeLabel } from "../../core/projects/free-label-prompt.js";
 import { createProjectFromPath } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { DEFAULT_INPUTS, lookupInput } from "../../core/read/recent-inputs.js";
 import { setWhisperLanguage } from "../../core/read/voice-support.js";
+import { recoverProjects } from "../../core/recovery/recover.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -51,6 +59,7 @@ import {
   resolveAliveSessionByShortId,
   switchToProject,
 } from "./project-ops.js";
+import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
@@ -59,8 +68,10 @@ import {
   replyCreateProject,
   sendAliveList,
   sendHistory,
+  sendInputs,
   sendPeek,
   sendQueueStatus,
+  sendRecoverPreview,
   sendStatusInstall,
 } from "./views.js";
 
@@ -150,6 +161,24 @@ export async function handleCallbackQuery(
       await sendQueueStatus(ctx, deps);
       return;
     }
+    // Cancel a still-waiting queued message via the ❌ on its "queued" ack. The
+    // reject closure (see executor) posts the localized "已取消" confirmation, so
+    // here we only toast + drop the now-stale button.
+    if (parsed.kind === "qcancel") {
+      const m = messages("telegram");
+      const session = await resolveAliveSessionByShortId(deps, parsed.sid);
+      const cancelled =
+        session !== null && deps.queue.cancelQueued(session, parsed.msgId, m.queueItemCancelled);
+      // The reject closure already posts the "已取消" reply on success; on false the
+      // item is gone (dispatched / deduped phantom) — toast that, don't imply success.
+      await safeAnswerCallback(ctx, cancelled ? m.queueItemCancelled : m.queueItemGone);
+      try {
+        await timeApi("editMessageReplyMarkup", () => ctx.editMessageReplyMarkup());
+      } catch {
+        /* message may be gone */
+      }
+      return;
+    }
     // Voice-language pick: set it live + persist, confirm via toast, and refresh
     // the picker in place so the ✅ moves to the new selection.
     if (parsed.kind === "voicelang") {
@@ -204,7 +233,13 @@ export async function handleCallbackQuery(
       deps.queue.clearSession(sessionName);
       await deps.bridge.sendExit(sessionName);
       await sleep(2000);
-      await deps.agent.startWithResume(sessionName, parsed.sessionId);
+      // Resume with the recorded launch flavor (e.g. claude-stella), not the
+      // runner default, so the resumed session keeps its CLAUDE_CONFIG_DIR/flags.
+      await deps.agent.startWithResume(
+        sessionName,
+        parsed.sessionId,
+        getStartCommand(sessionName) ?? undefined,
+      );
       deps.configResolver.invalidate(sessionName);
       await reply(ctx, "ok", messages("telegram").resumeStarted(parsed.sessionId.slice(0, 8)), {
         session: sessionName,
@@ -250,6 +285,37 @@ export async function handleCallbackQuery(
     }
     if (parsed.kind === "adoptcancel") {
       await safeAnswerCallback(ctx, messages("telegram").adoptCancelled);
+      return;
+    }
+    // Reboot recovery: panel button → show the preview (mirrors the /recover command).
+    if (parsed.kind === "recoverlist") {
+      await safeAnswerCallback(ctx);
+      await sendRecoverPreview(ctx, deps, replyTarget);
+      return;
+    }
+    // Reboot recovery confirm: recreate every gone session + relaunch its agent.
+    if (parsed.kind === "recover") {
+      await safeAnswerCallback(ctx, messages("telegram").recoverWorking);
+      const res = await recoverProjects(deps);
+      if (res.busy) {
+        await reply(ctx, "info", messages("telegram").recoverBusy, { replyTarget });
+        return;
+      }
+      await reply(
+        ctx,
+        res.failed.length > 0 ? "err" : "ok",
+        messages("telegram").recoverDone(
+          res.launched.length,
+          res.shellOnly.length,
+          res.alreadyAlive.length,
+          res.failed.length,
+        ),
+        { replyTarget },
+      );
+      return;
+    }
+    if (parsed.kind === "recovercancel") {
+      await safeAnswerCallback(ctx, messages("telegram").recoverCancelled);
       return;
     }
     // "View on computer": copy the attach command to the host clipboard on demand
@@ -318,6 +384,21 @@ export async function handleCallbackQuery(
       }
       return;
     }
+    // A picked input — its session comes from the cache, not a short id, so it's
+    // handled BEFORE the short-id session resolution below.
+    if (parsed.kind === "inputredo") {
+      const found = lookupInput(parsed.token, parsed.idx);
+      if (!found) {
+        await safeAnswerCallback(ctx, messages("telegram").inputsExpired);
+        return;
+      }
+      // Don't auto-send — hand the verbatim prompt back as an editable draft so the
+      // user can tweak it before sending. Raw ctx.reply (no tone emoji / no tildeify)
+      // keeps the text EXACTLY as typed and cleanly copyable.
+      await safeAnswerCallback(ctx, messages("telegram").inputDraftToast);
+      await ctx.reply(found.prompt);
+      return;
+    }
     const sessionName = await resolveAliveSessionByShortId(deps, parsed.sid);
     if (!sessionName) {
       await safeAnswerCallback(ctx, messages("telegram").sessionGone);
@@ -355,6 +436,11 @@ export async function handleCallbackQuery(
       await sendHistory(ctx, deps, sessionName, 0, replyTarget);
       return;
     }
+    if (parsed.kind === "inputslist") {
+      await safeAnswerCallback(ctx);
+      await sendInputs(ctx, deps, sessionName, replyTarget, DEFAULT_INPUTS);
+      return;
+    }
     if (parsed.kind === "startpick" || parsed.kind === "restartpick") {
       const pick = deps.config.startCommands[parsed.idx];
       if (!pick) {
@@ -363,30 +449,42 @@ export async function handleCallbackQuery(
       }
       const restart = parsed.kind === "restartpick";
       await safeAnswerCallback(ctx, messages("telegram").toastSent(restart ? "restart" : "start"));
-      if (restart) await performRestart(deps, sessionName, pick.command);
-      else await performStart(deps, sessionName, pick.command);
-      await reply(ctx, "ok", messages("telegram").agentStartedWith(pick.label), {
-        session: sessionName,
-        replyTarget,
-      });
+      let msg: string;
+      if (restart) {
+        await performRestart(deps, sessionName, pick.command);
+        msg = messages("telegram").agentStartedWith(pick.label);
+      } else {
+        const r = await performStart(deps, sessionName, pick.command);
+        msg =
+          r === "already-running"
+            ? messages("telegram").agentAlreadyRunning
+            : messages("telegram").agentStartedWith(pick.label);
+      }
+      await reply(ctx, "ok", msg, { session: sessionName, replyTarget });
       return;
     }
-    // Multi-command start/restart: show a picker instead of using the default.
-    if (
-      (parsed.action === "start" || parsed.action === "restart") &&
-      deps.config.startCommands.length > 1
-    ) {
-      await safeAnswerCallback(ctx);
-      await reply(ctx, "info", messages("telegram").startPickerPrompt, {
-        session: sessionName,
-        replyMarkup: buildStartPickerKeyboard(
-          deps.config.startCommands,
-          parsed.sid,
-          parsed.action === "restart" ? "restart" : "start",
-        ),
-        replyTarget,
-      });
-      return;
+    // start/restart buttons: reject a start when already running, else show the
+    // flavor picker (multi-command) or fall through to the single-command action.
+    if (parsed.action === "start" || parsed.action === "restart") {
+      const mode = parsed.action === "restart" ? "restart" : "start";
+      const disp = await startDisposition(deps, sessionName, mode);
+      if (disp === "already-running") {
+        await safeAnswerCallback(ctx);
+        await reply(ctx, "ok", messages("telegram").agentAlreadyRunning, {
+          session: sessionName,
+          replyTarget,
+        });
+        return;
+      }
+      if (disp === "pick") {
+        await safeAnswerCallback(ctx);
+        await reply(ctx, "info", messages("telegram").startPickerPrompt, {
+          session: sessionName,
+          replyMarkup: buildStartPickerKeyboard(deps.config.startCommands, parsed.sid, mode),
+          replyTarget,
+        });
+        return;
+      }
     }
     // Control action — verb already validated as a safe MessageAction.
     await safeAnswerCallback(ctx, messages("telegram").toastSent(parsed.action));

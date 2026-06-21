@@ -20,8 +20,10 @@ export interface ProgressApi {
 export interface ProgressHandle {
   /** Telegram id of the live progress message. */
   readonly messageId: number;
-  /** Edit the progress message in place (e.g. to show elapsed time). */
-  update(text: string): Promise<void>;
+  /** Edit the progress message in place (e.g. to show elapsed time). Pass `extra`
+   * (e.g. a reply_markup) to keep a keyboard attached across ticks — editMessageText
+   * drops the markup when it's omitted. */
+  update(text: string, extra?: Record<string, unknown>): Promise<void>;
   /**
    * Edit the progress message into its final form. Returns whether the edit
    * ultimately landed, so the caller can fall back to a fresh reply if the
@@ -87,10 +89,10 @@ export async function startProgress(
     return run;
   };
 
-  const update = async (text: string): Promise<void> => {
+  const update = async (text: string, extra?: Record<string, unknown>): Promise<void> => {
     if (finalized) return; // a tick after finalize must not overwrite the result
     try {
-      await timeApi("editMessageText(tick)", () => edit(text));
+      await timeApi("editMessageText(tick)", () => edit(text, extra));
     } catch (err) {
       log.warn(
         `failed to edit chat=${chatId} msg=${messageId}: ${err instanceof Error ? err.message : err}`,

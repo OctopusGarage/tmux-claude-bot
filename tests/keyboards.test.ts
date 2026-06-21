@@ -43,6 +43,16 @@ describe("directory browser keyboard", () => {
     expect(parseCallbackData("nfx")).toEqual({ kind: "newfreecancel" });
   });
 
+  it("parses qx:<sid>:<msgId> queue-cancel (msgId keeps its '-', not its ':')", () => {
+    expect(parseCallbackData("qx:ab12:1700-deadbeef")).toEqual({
+      kind: "qcancel",
+      sid: "ab12",
+      msgId: "1700-deadbeef",
+    });
+    expect(parseCallbackData("qx:ab12")).toBeNull(); // missing msgId
+    expect(parseCallbackData("qx::x")).toBeNull(); // empty sid
+  });
+
   it("rejects malformed br:* callbacks", () => {
     expect(parseCallbackData("br:cd:x")).toBeNull(); // non-numeric index
     expect(parseCallbackData("br:cd:-1")).toBeNull(); // negative index
@@ -162,6 +172,7 @@ describe("parseCallbackData", () => {
   it("parses the view actions (peek/history need a sid; list/queue don't)", () => {
     expect(parseCallbackData("pk:abc123")).toEqual({ kind: "peek", sid: "abc123" });
     expect(parseCallbackData("hi:abc123")).toEqual({ kind: "history", sid: "abc123" });
+    expect(parseCallbackData("ins:abc123")).toEqual({ kind: "inputslist", sid: "abc123" });
     expect(parseCallbackData("la")).toEqual({ kind: "listalive" });
     expect(parseCallbackData("qs")).toEqual({ kind: "queuestatus" });
   });
@@ -224,6 +235,7 @@ describe("buildControlKeyboard", () => {
     expect(datas).toContain("a:interrupt:abc123");
     expect(datas).toContain("pk:abc123"); // peek
     expect(datas).toContain("hi:abc123"); // history
+    expect(datas).toContain("ins:abc123"); // inputs
     expect(datas).toContain("la"); // list alive projects
     expect(datas).toContain("qs"); // queue status
     expect(datas).toContain("m:abc123"); // expand toggle
@@ -252,6 +264,7 @@ describe("buildExpandedControlKeyboard", () => {
     // view actions
     expect(datas).toContain("pk:abc123"); // peek
     expect(datas).toContain("hi:abc123"); // history
+    expect(datas).toContain("ins:abc123"); // inputs
     expect(datas).toContain("la"); // list alive projects
     expect(datas).toContain("qs"); // queue status
     expect(datas).toContain("l:abc123"); // collapse toggle

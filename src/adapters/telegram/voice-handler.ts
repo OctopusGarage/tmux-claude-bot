@@ -4,7 +4,7 @@ import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { chatScope } from "../../core/projects/project-manager.js";
-import { transcribeWithCache } from "../../core/read/transcriber.js";
+import { transcribeWithCache, voiceFailMessage } from "../../core/read/transcriber.js";
 import {
   checkVoiceSupport,
   installVoice,
@@ -134,14 +134,9 @@ export function registerVoiceHandler<TContext extends Context>(
       },
     });
     if (!outcome.ok) {
-      const m = messages("telegram");
-      const hint =
-        outcome.reason === "download"
-          ? m.voiceDownloadFailed
-          : outcome.reason === "transcribe"
-            ? m.voiceTranscribeFailed
-            : m.voiceEmpty;
-      await reply(ctx, "err", hint, { replyTarget });
+      await reply(ctx, "err", voiceFailMessage(outcome.reason, messages("telegram")), {
+        replyTarget,
+      });
       return;
     }
     const transcribed = outcome.text;

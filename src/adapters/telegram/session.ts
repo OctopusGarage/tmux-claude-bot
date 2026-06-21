@@ -27,6 +27,6 @@ export async function resolveSessionFromReply(
   deps: HandlerDeps,
 ): Promise<string | null> {
   const replyToId = ctx.message?.reply_to_message?.message_id;
-  const fromReply = replyToId !== undefined ? replyTarget.resolveReplyTarget(replyToId) : null;
+  const fromReply = replyToId !== undefined ? replyTarget.resolve(replyToId) : null;
   return fromReply ?? requireSession(deps, ctx.chat?.id ?? 0);
 }

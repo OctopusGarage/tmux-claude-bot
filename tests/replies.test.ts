@@ -46,6 +46,15 @@ describe("compose (via reply/send integration)", () => {
     expect(text).not.toContain("[tmux_proj_"); // the long ugly tag is gone
   });
 
+  it("shortens a home path in the body to ~ (send-boundary chokepoint)", async () => {
+    const { homedir } = await import("node:os");
+    const ctx = createMockContext();
+    await reply(ctx, "info", "完成", { body: `项目已创建：${homedir()}/programming/x` });
+    const [text] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+    expect(text).toContain("~/programming/x");
+    expect(text).not.toContain(homedir());
+  });
+
   it("omits the project line when no session provided", async () => {
     const ctx = createMockContext();
     await reply(ctx, "ok", "完成");

@@ -1,14 +1,14 @@
 import { InlineKeyboard } from "grammy";
 import {
   ACTION_META,
-  TELEGRAM_COLLAPSED_ROW,
-  TELEGRAM_EXPANDED_ROWS,
-  TELEGRAM_PRIMARY_ROWS,
+  CONTROL_INTERRUPTS,
+  CONTROL_ROWS_FULL,
 } from "../../core/command/action-registry.js";
 import { isMessageAction, type MessageAction } from "../../core/command/dispatch.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { BrowseAction, BrowseView } from "../../core/projects/dir-browser.js";
 import type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+import { inputButtonLabel } from "../../core/read/recent-inputs.js";
 import type { SessionEntry } from "../../core/read/transcript.js";
 import { VOICE_LANGS } from "../../core/read/voice-support.js";
 import { agentGlyph } from "../../shared/types.js";
@@ -32,17 +32,23 @@ export type CallbackAction =
   | { kind: "add"; sid: string }
   | { kind: "peek"; sid: string }
   | { kind: "history"; sid: string }
+  | { kind: "inputslist"; sid: string }
   | { kind: "delmode" }
   | { kind: "dellist" }
   | { kind: "listalive" }
   | { kind: "newfree" }
   | { kind: "newfreecancel" }
   | { kind: "queuestatus" }
+  | { kind: "recoverlist" }
+  | { kind: "recover" }
+  | { kind: "recovercancel" }
   | { kind: "voicelang"; lang: string }
   | { kind: "uilang"; lang: Lang }
   | { kind: "resume"; sessionId: string }
+  | { kind: "inputredo"; token: string; idx: number }
   | { kind: "startpick"; idx: number; sid: string }
   | { kind: "restartpick"; idx: number; sid: string }
+  | { kind: "qcancel"; sid: string; msgId: string }
   | { kind: "adoptshow"; pid: number }
   | { kind: "adoptexec"; pid: number }
   | { kind: "adoptcancel" }
@@ -61,13 +67,14 @@ export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
 }
 
-type SidKind = "switch" | "remove" | "more" | "less" | "add" | "peek" | "history";
+type SidKind = "switch" | "remove" | "more" | "less" | "add" | "peek" | "history" | "inputslist";
 const SID_TAGS: Record<string, SidKind> = {
   s: "switch",
   r: "remove",
   m: "more",
   l: "less",
   g: "add",
+  ins: "inputslist",
   pk: "peek",
   hi: "history",
 };
@@ -81,6 +88,9 @@ export function parseCallbackData(data: string): CallbackAction | null {
   if (data === "nfx") return { kind: "newfreecancel" };
   if (data === "qs") return { kind: "queuestatus" };
   if (data === "ac") return { kind: "adoptcancel" };
+  if (data === "rcv") return { kind: "recoverlist" };
+  if (data === "rec") return { kind: "recover" };
+  if (data === "recx") return { kind: "recovercancel" };
   const parts = data.split(":");
   const [tag] = parts;
   if (tag === "a") {
@@ -107,11 +117,24 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (!sessionId) return null;
     return { kind: "resume", sessionId };
   }
+  if (tag === "inp") {
+    const token = parts[1];
+    const idx = Number(parts[2]);
+    if (parts.length !== 3 || !token || !Number.isInteger(idx) || idx < 0) return null;
+    return { kind: "inputredo", token, idx };
+  }
   if (tag === "sp" || tag === "rp") {
     const idx = Number(parts[1]);
     const sid = parts[2];
     if (parts.length !== 3 || !Number.isInteger(idx) || idx < 0 || !sid) return null;
     return { kind: tag === "rp" ? "restartpick" : "startpick", idx, sid };
+  }
+  if (tag === "qx") {
+    // Cancel a still-queued message: qx:<sid>:<msgId> (msgId has no ':').
+    const sid = parts[1];
+    const msgId = parts[2];
+    if (parts.length !== 3 || !sid || !msgId) return null;
+    return { kind: "qcancel", sid, msgId };
   }
   if (tag === "as" || tag === "ae") {
     const pid = Number(parts[1]);
@@ -252,16 +275,30 @@ function addActionRows(kb: InlineKeyboard, rows: MessageAction[][], sid: string)
   return kb;
 }
 
-// The primary control rows, shared by the collapsed and expanded keyboards.
-function primaryRows(kb: InlineKeyboard, sid: string): InlineKeyboard {
-  return addActionRows(kb, TELEGRAM_PRIMARY_ROWS, sid);
+/** A lone ❌ on a "queued" ack, so the user can cancel that still-waiting message
+ * before it's typed in. `qx:<sid>:<msgId>` (msgId carries no ':'). */
+export function buildQueueCancelKeyboard(sid: string, msgId: string): InlineKeyboard {
+  return new InlineKeyboard().text("❌", `qx:${sid}:${msgId}`);
 }
 
-/** Collapsed control panel: the most-used controls + views, then a "more" toggle. */
-export function buildControlKeyboard(sid: string): InlineKeyboard {
+/** Idle panel: with no agent running, control keys do nothing — offer the launch
+ * and project-navigation actions instead. */
+export function buildIdleKeyboard(sid: string): InlineKeyboard {
+  const m = messages("telegram");
+  return new InlineKeyboard()
+    .text(m.btnStart, encodeControlAction("start", sid))
+    .row()
+    .text(m.btnProjects, "la")
+    .text(m.btnRecover, "rcv");
+}
+
+/** Collapsed control panel: the always-on interrupts row + views, then "more ▾".
+ * When `running` is false the panel adapts to {@link buildIdleKeyboard}. */
+export function buildControlKeyboard(sid: string, running = true): InlineKeyboard {
+  if (!running) return buildIdleKeyboard(sid);
   const m = messages("telegram");
   const kb = new InlineKeyboard();
-  for (const action of TELEGRAM_COLLAPSED_ROW) {
+  for (const action of CONTROL_INTERRUPTS) {
     const meta = ACTION_META[action];
     if (meta) kb.text(m[meta.btnKey] as string, encodeControlAction(action, sid));
   }
@@ -269,6 +306,7 @@ export function buildControlKeyboard(sid: string): InlineKeyboard {
     .row()
     .text(m.btnPeek, `pk:${sid}`)
     .text(m.btnHistory, `hi:${sid}`)
+    .text(m.btnInputs, `ins:${sid}`)
     .row()
     .text(m.btnProjects, "la")
     .text(m.btnQueue, "qs")
@@ -276,17 +314,21 @@ export function buildControlKeyboard(sid: string): InlineKeyboard {
     .text(m.btnMore, `m:${sid}`);
 }
 
-/** Expanded control panel: primary + secondary controls + a "collapse" toggle. */
+/** Expanded control panel: the full canonical control rows (interrupts → lifecycle
+ * → navigation), then read/views, then project nav, then "collapse". */
 export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
-  const kb = primaryRows(new InlineKeyboard(), sid);
-  addActionRows(kb, TELEGRAM_EXPANDED_ROWS, sid);
+  const kb = new InlineKeyboard();
+  addActionRows(kb, CONTROL_ROWS_FULL, sid);
   return kb
+    .text(m.btnStatus, encodeControlAction("status", sid))
     .text(m.btnPeek, `pk:${sid}`)
     .text(m.btnHistory, `hi:${sid}`)
+    .text(m.btnInputs, `ins:${sid}`)
     .row()
     .text(m.btnProjects, "la")
     .text(m.btnQueue, "qs")
+    .text(m.btnRecover, "rcv")
     .row()
     .text(m.btnCollapse, `l:${sid}`);
 }
@@ -353,6 +395,12 @@ export function buildOrphanKeyboard(orphans: OrphanButton[]): InlineKeyboard {
   return kb;
 }
 
+/** Confirm step before reboot recovery: tap to execute (`rec`) or cancel (`recx`). */
+export function buildRecoverConfirmKeyboard(): InlineKeyboard {
+  const m = messages("telegram");
+  return new InlineKeyboard().text(m.btnRecoverConfirm, "rec").text(m.btnCancel, "recx");
+}
+
 /** Confirm step before adopting: tap to execute (`ae:<pid>`) or cancel. */
 export function buildAdoptConfirmKeyboard(pid: number): InlineKeyboard {
   return new InlineKeyboard()
@@ -384,6 +432,17 @@ export function buildSessionsKeyboard(sessions: SessionEntry[]): InlineKeyboard 
     const label = `${s.sessionId.slice(0, 8)} · ${formatAgo(s.mtime)}`;
     kb.text(label, `rs:${s.sessionId}`);
     if (i < sessions.length - 1) kb.row();
+  });
+  return kb;
+}
+
+/** Recent-inputs list: one full-width row per input; tapping fetches it back as an
+ * editable draft (does NOT auto-send). Buttons carry `inp:<token>:<idx>` resolved
+ * against the server-side input cache. */
+export function buildInputsKeyboard(prompts: string[], token: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  prompts.forEach((p, i) => {
+    kb.text(inputButtonLabel(p, i), `inp:${token}:${i}`).row();
   });
   return kb;
 }

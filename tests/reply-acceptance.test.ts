@@ -54,7 +54,7 @@ describe("queue acceptance replies", () => {
     // Simulate: queue was empty → "已接收" reply first
     await reply(ctx, "ok", "已接收", { session: "tmux_proj_test", replyTarget: rt });
 
-    const resolved = rt.resolveReplyTarget(msgId);
+    const resolved = rt.resolve(msgId);
     expect(resolved).toBe("tmux_proj_test");
   });
 
@@ -68,7 +68,7 @@ describe("queue acceptance replies", () => {
     // Simulate: queue had items → "已进队列" reply
     await reply(ctx, "queued", "已进队列，位置 3", { session: "tmux_proj_test", replyTarget: rt });
 
-    expect(rt.resolveReplyTarget(msgId)).toBe("tmux_proj_test");
+    expect(rt.resolve(msgId)).toBe("tmux_proj_test");
   });
 
   it("acceptance replies without replyTarget do NOT record (safety check)", async () => {
@@ -80,6 +80,6 @@ describe("queue acceptance replies", () => {
     // No replyTarget passed — nothing recorded
     await reply(ctx, "ok", "已接收", { session: "tmux_proj_test" });
 
-    expect(rt.resolveReplyTarget(999)).toBeNull();
+    expect(rt.resolve(999)).toBeUndefined();
   });
 });

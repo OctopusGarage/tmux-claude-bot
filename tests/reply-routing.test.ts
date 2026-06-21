@@ -5,7 +5,7 @@ import type { ReplyTargetMap } from "../src/adapters/telegram/reply-target.js";
 function fakeMap(entries: Record<number, string>): ReplyTargetMap {
   return {
     record() {},
-    resolveReplyTarget: (id) => entries[id] ?? null,
+    resolve: (id) => entries[id],
     removeSession() {},
     clear() {},
   };

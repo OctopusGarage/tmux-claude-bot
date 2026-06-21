@@ -1,5 +1,5 @@
 import { type FileFlavor, hydrateFiles } from "@grammyjs/files";
-import { Bot, type Context } from "grammy";
+import { Bot, type Context, GrammyError } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 import type { HandlerDeps } from "../../core/deps.js";
@@ -25,6 +25,19 @@ type MyContext = FileFlavor<Context>;
  * `deps.config.telegramBotToken`; the caller only invokes this when Telegram is enabled.
  */
 const log = createLogger("telegram.start");
+
+/**
+ * Whether a long-poll error is fatal (no amount of retrying helps) vs. transient.
+ * Only an authentication failure — 401 (bad/revoked token) or 404 (wrong token /
+ * bot deleted) — is fatal. Everything else is treated as transient and retried:
+ * a 409 Conflict (a dropped long-poll still lingering server-side, or a duplicate
+ * — local duplicates are already prevented by the instance lock), 5xx, and network
+ * hang-ups (HttpError) all clear on their own, so the supervised loop should wait
+ * them out rather than crash the process.
+ */
+export function isFatalPollingError(err: unknown): boolean {
+  return err instanceof GrammyError && (err.error_code === 401 || err.error_code === 404);
+}
 
 export async function startTelegram(
   deps: HandlerDeps,
@@ -82,8 +95,17 @@ export async function startTelegram(
 
   // Catch any error thrown inside a handler so a transient Telegram/network blip
   // is logged instead of becoming an uncaughtException that exits the process.
-  bot.catch((err) => {
+  // Then surface a generic error to the user — every message must get a reply
+  // (parity with Lark's makeMessageHandler boundary; terminal output is invisible
+  // to the user). Best-effort: a failed reply (e.g. no chat on this update) must
+  // not re-throw out of the catch.
+  bot.catch(async (err) => {
     log.error(`handler error on update ${err.ctx.update.update_id}`, { err: err.error });
+    try {
+      await err.ctx.reply(messages("telegram").handlerError);
+    } catch (replyErr) {
+      log.error(`failed to send handler-error reply: ${String(replyErr)}`);
+    }
   });
 
   // Open a log context per update (after the auth guard, so dropped updates
@@ -132,7 +154,12 @@ export async function startTelegram(
   process.once("SIGTERM", () => void stop("SIGTERM"));
 
   log.info("Starting bot...");
-  // Verify Telegram connectivity with exponential backoff.
+  // Best-effort connectivity probe — for a clean "Connected as @…" log and to
+  // surface a bad token early. It is NOT a gate: if Telegram is unreachable (the
+  // proxy/route is down, a network blip), we do NOT exit the process. The
+  // supervised long-poll loop below keeps retrying Telegram in-process while the
+  // control transport (TUI/CLI) and Lark — already started — stay up. A Telegram
+  // or network outage must never take down the rest of the bot.
   const maxRetries = 5;
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -140,13 +167,23 @@ export async function startTelegram(
       log.info(`Connected to Telegram as @${me.username} (bot ID: ${me.id})`);
       break;
     } catch (err) {
+      if (isFatalPollingError(err)) {
+        const code = err instanceof GrammyError ? err.error_code : "?";
+        log.error(
+          `Telegram token rejected (${code}) — leaving Telegram off; Lark / TUI / CLI keep running. Fix the token and restart.`,
+          { err },
+        );
+        return; // bad token: don't poll, but keep the process alive for the other surfaces
+      }
       const delayMs = Math.min(1000 * 2 ** i, 30000);
-      log.error(
-        `Failed to connect (attempt ${i + 1}/${maxRetries}): ${err instanceof Error ? err.message : err}. Retrying in ${delayMs}ms...`,
+      log.warn(
+        `Telegram not reachable (attempt ${i + 1}/${maxRetries}): ${err instanceof Error ? err.message : err}. Retrying in ${delayMs}ms...`,
       );
       if (i === maxRetries - 1) {
-        log.error("Max retries exceeded, exiting.");
-        process.exit(1);
+        log.warn(
+          "Telegram still unreachable — continuing without it; the long-poll loop keeps retrying in the background. Lark / TUI / CLI are unaffected.",
+        );
+        break; // proceed to the supervised loop (it keeps retrying); never exit the process
       }
       await sleep(delayMs);
     }
@@ -169,6 +206,44 @@ export async function startTelegram(
     }
   }
 
-  await bot.start();
-  log.info("Bot started successfully");
+  // grammy's long-poll loop blocks until the bot is stopped. Through a flaky
+  // proxy, getUpdates fails transiently — most often a 409 when a previous
+  // long-poll was dropped and still lingers server-side, or a socket hang-up.
+  // Crashing the process on those churns: the abandoned long-poll becomes a
+  // server-side zombie that 409s the next start, so each restart re-collides.
+  // Supervise the loop instead — on a transient error back off and re-enter
+  // in-process (which closes the failed request cleanly and lets the zombie
+  // expire); only a fatal auth error bubbles out.
+  const MAX_BACKOFF_MS = 30_000;
+  const HEALTHY_RUN_MS = 60_000; // a run this long was healthy → reset backoff
+  let backoffMs = 1000;
+  for (;;) {
+    const startedAt = Date.now();
+    try {
+      await bot.start({
+        timeout: config.telegramLongpollTimeoutSec,
+        onStart: () => log.info("Bot started successfully"),
+      });
+      return; // resolved → bot.stop() was called (clean shutdown)
+    } catch (err) {
+      if (stopping) throw err; // clean-shutdown path
+      if (isFatalPollingError(err)) {
+        // A revoked/invalid token can't be retried away. Stop Telegram but keep
+        // the process alive — Lark / TUI / CLI must not die with it.
+        log.error(
+          "Telegram polling hit a fatal auth error — stopping Telegram; other surfaces continue.",
+          {
+            err,
+          },
+        );
+        return;
+      }
+      if (Date.now() - startedAt > HEALTHY_RUN_MS) backoffMs = 1000;
+      log.warn(
+        `polling error: ${err instanceof Error ? err.message : err} — retrying in ${backoffMs}ms`,
+      );
+      await sleep(backoffMs);
+      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+    }
+  }
 }

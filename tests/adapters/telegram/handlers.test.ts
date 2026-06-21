@@ -13,9 +13,11 @@ vi.mock("../../../src/adapters/telegram/views.js", () => ({
   sendAliveList: vi.fn(),
   sendHistory: vi.fn(),
   sendPeek: vi.fn(),
+  sendInputs: vi.fn(),
   sendQueueStatus: vi.fn(),
   sendBrowse: vi.fn(),
   sendStatusInstall: vi.fn(),
+  sendRecoverPreview: vi.fn(),
   replyCreateProject: vi.fn(),
 }));
 vi.mock("../../../src/adapters/telegram/callbacks.js", () => ({ handleCallbackQuery: vi.fn() }));
@@ -28,20 +30,39 @@ vi.mock("../../../src/shared/utils/logger.js", () => {
   return { logger: log, createLogger: () => log };
 });
 
+import { handleQueuedCommand } from "../../../src/adapters/telegram/executor.js";
 import { registerHandlers } from "../../../src/adapters/telegram/handlers.js";
 import { runPromptWithProgress } from "../../../src/adapters/telegram/prompt-lifecycle.js";
 import { reply } from "../../../src/adapters/telegram/replies.js";
-import { sendBrowse } from "../../../src/adapters/telegram/views.js";
+import {
+  sendAliveList,
+  sendBrowse,
+  sendHistory,
+  sendInputs,
+  sendPeek,
+  sendQueueStatus,
+  sendRecoverPreview,
+  sendStatusInstall,
+} from "../../../src/adapters/telegram/views.js";
 import {
   clearBrowse,
   requestNewFolder,
   startBrowse,
 } from "../../../src/core/projects/dir-browser.js";
+import { requestFreeLabel } from "../../../src/core/projects/free-label-prompt.js";
 import { chatScope } from "../../../src/core/projects/project-manager.js";
 
 const replyMock = reply as ReturnType<typeof vi.fn>;
 const promptMock = runPromptWithProgress as ReturnType<typeof vi.fn>;
 const sendBrowseMock = sendBrowse as ReturnType<typeof vi.fn>;
+const sendPeekMock = sendPeek as ReturnType<typeof vi.fn>;
+const sendInputsMock = sendInputs as ReturnType<typeof vi.fn>;
+const sendHistoryMock = sendHistory as ReturnType<typeof vi.fn>;
+const sendAliveListMock = sendAliveList as ReturnType<typeof vi.fn>;
+const sendQueueStatusMock = sendQueueStatus as ReturnType<typeof vi.fn>;
+const sendRecoverPreviewMock = sendRecoverPreview as ReturnType<typeof vi.fn>;
+const sendStatusInstallMock = sendStatusInstall as ReturnType<typeof vi.fn>;
+const handleQueuedMock = handleQueuedCommand as ReturnType<typeof vi.fn>;
 
 // A bot that captures the registered command/event handlers so we can drive them.
 function captureBot() {
@@ -67,7 +88,7 @@ function depsFor(over = {}) {
 
 const replyTarget = {
   record: vi.fn(),
-  resolveReplyTarget: vi.fn((): string | null => null),
+  resolve: vi.fn((): string | null => null),
   removeSession: vi.fn(),
 };
 
@@ -104,6 +125,7 @@ describe("registerHandlers — /start flavor picker", () => {
         ],
       },
       currentProject: { get: vi.fn(async () => "tmux_proj_x") },
+      agent: { checkIfRunning: vi.fn(async () => false) }, // not running → picker, not "already running"
     });
     await runCmd("start", "/start", deps);
     expect(replyMock).toHaveBeenCalledWith(
@@ -111,6 +133,33 @@ describe("registerHandlers — /start flavor picker", () => {
       "info",
       expect.any(String),
       expect.objectContaining({ replyMarkup: expect.anything() }),
+    );
+  });
+
+  it("rejects /start with 'already running' (no picker) when an agent is live", async () => {
+    const deps = depsFor({
+      config: {
+        startCommands: [
+          { label: "claude-stella", command: "claude-stella" },
+          { label: "claude-yolo", command: "claude-yolo" },
+        ],
+      },
+      currentProject: { get: vi.fn(async () => "tmux_proj_x") },
+      agent: { checkIfRunning: vi.fn(async () => true) }, // already running
+    });
+    await runCmd("start", "/start", deps);
+    // no picker (info + replyMarkup) — an "already running" reply instead
+    expect(replyMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      expect.any(String),
+      expect.objectContaining({ replyMarkup: expect.anything() }),
+    );
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "ok",
+      expect.any(String),
+      expect.anything(),
     );
   });
 
@@ -254,7 +303,7 @@ describe("registerHandlers — message:text routing", () => {
     replyMock.mockClear();
     promptMock.mockClear();
     replyTarget.record.mockClear();
-    replyTarget.resolveReplyTarget.mockReturnValue(null);
+    replyTarget.resolve.mockReturnValue(null);
   });
 
   it("rejects an over-long message", async () => {
@@ -285,6 +334,8 @@ describe("registerHandlers — message:text routing", () => {
       expect.anything(),
       "err",
       expect.stringContaining("未运行"),
+      // idle-adaptive: the not-running reply now carries a start/projects keyboard
+      expect.objectContaining({ replyMarkup: expect.anything() }),
     );
     expect(promptMock).not.toHaveBeenCalled();
   });
@@ -297,11 +348,11 @@ describe("registerHandlers — message:text routing", () => {
   });
 
   it("routes a reply-to-message to that message's session", async () => {
-    replyTarget.resolveReplyTarget.mockReturnValue("proj-reply");
+    replyTarget.resolve.mockReturnValue("proj-reply");
     const deps = depsFor({ agent: { checkIfRunning: vi.fn(async () => true) } });
     const c = ctx("follow up", { message: { message_id: 9, reply_to_message: { message_id: 5 } } });
     await runText(deps, c);
-    expect(replyTarget.resolveReplyTarget).toHaveBeenCalledWith(5);
+    expect(replyTarget.resolve).toHaveBeenCalledWith(5);
     expect(promptMock).toHaveBeenCalledWith(c, deps, "proj-reply", "follow up", replyTarget);
   });
 
@@ -323,5 +374,295 @@ describe("registerHandlers — message:text routing", () => {
       clearBrowse(scope);
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("rewrites a still-queued ack in place when replying to it (terminal)", async () => {
+    const deps = depsFor({
+      queue: {
+        loadPersisted: vi.fn(() => []),
+        clearPersisted: vi.fn(),
+        rewriteByAck: vi.fn(() => ({ kind: "rewritten", session: "proj-rw" }) as never),
+      },
+      agent: { checkIfRunning: vi.fn(async () => true) },
+    });
+    const c = ctx("new text", { message: { message_id: 9, reply_to_message: { message_id: 5 } } });
+    await runText(deps, c);
+    // Rewrite is terminal: the prompt is NOT re-enqueued as a fresh message.
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "ok",
+      expect.any(String),
+      expect.objectContaining({ session: "proj-rw" }),
+    );
+  });
+
+  it("reports a dedup-blocked rewrite (warn) instead of re-enqueueing", async () => {
+    const deps = depsFor({
+      queue: {
+        loadPersisted: vi.fn(() => []),
+        clearPersisted: vi.fn(),
+        rewriteByAck: vi.fn(() => ({ kind: "duplicate", session: "proj-rw" }) as never),
+      },
+      agent: { checkIfRunning: vi.fn(async () => true) },
+    });
+    const c = ctx("dupe", { message: { message_id: 9, reply_to_message: { message_id: 5 } } });
+    await runText(deps, c);
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "warn",
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+
+  it("consumes an awaited free-project label and creates a free project", async () => {
+    const scope = chatScope("telegram", "100");
+    requestFreeLabel(scope); // arm the label capture for this chat
+    const deps = depsFor({
+      bridge: { listProjectSessions: vi.fn(async () => []) },
+    });
+    await runText(deps, ctx("my-label"));
+    // The label was consumed (not routed to Claude as a prompt).
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
+  it("/switch_<id> with no matching alive session replies no-short-id", async () => {
+    // listProjectSessions is empty in the default fake → no short id resolves.
+    const deps = depsFor({ bridge: { listProjectSessions: vi.fn(async () => []) } });
+    await runText(deps, ctx("/switch_abc123"));
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "err",
+      expect.any(String),
+      expect.anything(),
+    );
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
+  it("/remove_<id> with no matching alive session replies no-short-id", async () => {
+    const deps = depsFor({ bridge: { listProjectSessions: vi.fn(async () => []) } });
+    await runText(deps, ctx("/remove_abc123"));
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "err",
+      expect.any(String),
+      expect.anything(),
+    );
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
+  it("/switch_<id> switches to the matching alive session and replies ok", async () => {
+    // Build a session whose short id we can derive, and make it "alive".
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const session = "tmux_proj_alive";
+    const deps = depsFor({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+    });
+    await runText(deps, ctx(`/switch_${sessionShortId(session)}`));
+    expect(deps.currentProject.set).toHaveBeenCalledWith(expect.any(String), session);
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "ok",
+      expect.any(String),
+      expect.objectContaining({ session }),
+    );
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("registerHandlers — commands routed to mocked views/executor", () => {
+  beforeEach(() => {
+    replyMock.mockClear();
+    promptMock.mockClear();
+    handleQueuedMock.mockClear();
+    sendPeekMock.mockClear();
+    sendInputsMock.mockClear();
+    sendHistoryMock.mockClear();
+    sendAliveListMock.mockClear();
+    sendQueueStatusMock.mockClear();
+    sendRecoverPreviewMock.mockClear();
+    sendStatusInstallMock.mockClear();
+    sendBrowseMock.mockClear();
+    replyTarget.resolve.mockReturnValue(null);
+  });
+
+  it("/help renders the help body", async () => {
+    await runCmd("help", "/help", depsFor());
+    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "help", expect.any(String));
+  });
+
+  it("/lang with no arg shows the current language + keyboard", async () => {
+    await runCmd("lang", "/lang", depsFor());
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      expect.any(String),
+      expect.objectContaining({ replyMarkup: expect.anything() }),
+    );
+  });
+
+  it("/lang with an invalid code replies usage", async () => {
+    await runCmd("lang", "/lang klingon", depsFor());
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "err",
+      expect.stringContaining("Usage"),
+      expect.anything(),
+    );
+  });
+
+  it("/lang with a valid code (case-insensitive) sets it", async () => {
+    await runCmd("lang", "/lang ZH", depsFor());
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+
+  // resolveSessionFromReply gates on bridge.hasSession + isPaneAlive (the lark
+  // fake omits isPaneAlive), so the live-session paths supply an alive bridge.
+  const aliveBridge = {
+    bridge: {
+      hasSession: vi.fn(async () => true),
+      isPaneAlive: vi.fn(async () => true),
+    },
+  };
+
+  it("/peek with a live session pages the pane via sendPeek", async () => {
+    await runCmd("peek", "/peek 50", depsFor(aliveBridge));
+    expect(sendPeekMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "proj-1",
+      replyTarget,
+      expect.any(Number),
+    );
+  });
+
+  it("/peek with no resolvable session replies no-session", async () => {
+    const deps = depsFor({ currentProject: { get: vi.fn(async () => null) } });
+    await runCmd("peek", "/peek", deps);
+    expect(sendPeekMock).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "err", expect.any(String));
+  });
+
+  it("/inputs with a live session lists recent inputs via sendInputs", async () => {
+    await runCmd("inputs", "/inputs 5", depsFor(aliveBridge));
+    expect(sendInputsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "proj-1",
+      replyTarget,
+      expect.any(Number),
+    );
+  });
+
+  it("/inputs with no session replies no-session", async () => {
+    const deps = depsFor({ currentProject: { get: vi.fn(async () => null) } });
+    await runCmd("inputs", "/inputs", deps);
+    expect(sendInputsMock).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "err", expect.any(String));
+  });
+
+  it("/history with a live session renders history via sendHistory", async () => {
+    await runCmd("history", "/history 2", depsFor(aliveBridge));
+    // arg "2" → index 1 (zero-based)
+    expect(sendHistoryMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "proj-1",
+      1,
+      replyTarget,
+    );
+  });
+
+  it("/history with no session replies no-session", async () => {
+    const deps = depsFor({ currentProject: { get: vi.fn(async () => null) } });
+    await runCmd("history", "/history", deps);
+    expect(sendHistoryMock).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "err", expect.any(String));
+  });
+
+  it("/list_alive_projects delegates to sendAliveList", async () => {
+    await runCmd("list_alive_projects", "/list_alive_projects", depsFor());
+    expect(sendAliveListMock).toHaveBeenCalled();
+  });
+
+  it("/queue_status delegates to sendQueueStatus", async () => {
+    await runCmd("queue_status", "/queue_status", depsFor());
+    expect(sendQueueStatusMock).toHaveBeenCalled();
+  });
+
+  it("/recover delegates to sendRecoverPreview", async () => {
+    await runCmd("recover", "/recover", depsFor());
+    expect(sendRecoverPreviewMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      replyTarget,
+    );
+  });
+
+  it("/status_install delegates to sendStatusInstall in scan mode", async () => {
+    await runCmd("status_install", "/status_install", depsFor());
+    expect(sendStatusInstallMock).toHaveBeenCalledWith(expect.anything(), "scan", replyTarget);
+  });
+
+  it("/add_project with no arg opens the directory browser", async () => {
+    await runCmd("add_project", "/add_project", depsFor());
+    expect(sendBrowseMock).toHaveBeenCalled();
+  });
+
+  it("/current_project with no current project replies error", async () => {
+    const deps = depsFor({ currentProject: { get: vi.fn(async () => null) } });
+    await runCmd("current_project", "/current_project", deps);
+    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "err", expect.any(String));
+  });
+
+  it("/current_project with a live current project lists it", async () => {
+    const deps = depsFor({
+      currentProject: { get: vi.fn(async () => "proj-1") },
+      bridge: { hasSession: vi.fn(async () => true) },
+    });
+    await runCmd("current_project", "/current_project", deps);
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "list",
+      expect.any(String),
+      expect.objectContaining({ session: "proj-1", body: expect.any(String) }),
+    );
+  });
+
+  it("/sessions with no current project replies no-session", async () => {
+    const deps = depsFor({ currentProject: { get: vi.fn(async () => null) } });
+    await runCmd("sessions", "/sessions", deps);
+    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "err", expect.any(String));
+  });
+
+  it("/sessions with a current project but no path mapping replies no-path-mapping", async () => {
+    // getPathBySession returns undefined for an unknown session → no-path branch.
+    const deps = depsFor({ currentProject: { get: vi.fn(async () => "proj-unmapped") } });
+    await runCmd("sessions", "/sessions", deps);
+    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "err", expect.any(String));
+  });
+
+  it("/list_recent_projects with no recents replies the empty list", async () => {
+    const deps = depsFor({ bridge: { listProjectSessions: vi.fn(async () => []) } });
+    await runCmd("list_recent_projects", "/list_recent_projects", deps);
+    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "list", expect.any(String));
+  });
+
+  it("a queued action (e.g. /status) routes to handleQueuedCommand", async () => {
+    await runCmd("status", "/status", depsFor());
+    expect(handleQueuedMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "status",
+      undefined,
+      replyTarget,
+    );
   });
 });

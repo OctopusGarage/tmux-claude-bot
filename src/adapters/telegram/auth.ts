@@ -1,18 +1,16 @@
 import type { Context, NextFunction } from "grammy";
+import { isAllowListed } from "../../core/infra/allow-list.js";
 import { createLogger } from "../../shared/utils/logger.js";
 
 const log = createLogger("telegram.auth");
 
 /**
- * Whitelist check. Fails CLOSED: an empty allowlist rejects everyone, matching
- * the contract documented in `scripts/setup.ts` ("the bot will reject ALL
- * messages until you set it"). The bot drives Claude with skipped permissions,
- * so an unconfigured allowlist must never default to open.
+ * Whitelist check for a Telegram user id. Defers the fail-CLOSED rule to the
+ * shared {@link isAllowListed} (empty allowlist rejects all); this wrapper owns
+ * only the Telegram-specific number -> string coercion.
  */
 export function isAuthorized(userId: number | undefined, allowedIds: Set<string>): boolean {
-  if (allowedIds.size === 0) return false;
-  if (userId === undefined) return false;
-  return allowedIds.has(String(userId));
+  return isAllowListed(userId === undefined ? undefined : String(userId), allowedIds);
 }
 
 /**

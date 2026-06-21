@@ -1,11 +1,12 @@
-import { randomUUID } from "node:crypto";
 import type { Context } from "grammy";
+import { newMessageId, planQueuedAck } from "../../core/command/enqueue.js";
+import { QueueCancelledError } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { looksLikeTerminalOutput } from "./format.js";
-import { buildControlKeyboard } from "./keyboards.js";
+import { buildControlKeyboard, buildQueueCancelKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { startProgress } from "./progress.js";
 import { REACTION, type ReactionApi, reactToMessage } from "./reactions.js";
@@ -70,19 +71,33 @@ export async function runPromptWithProgress(
   }
 
   const queuePosition = deps.queue.size(session);
+  const msgId = newMessageId();
+  // A prompt queued BEHIND others can be cancelled (❌) or rewritten (reply to the
+  // ack) before it's typed in — the same controls as the control-verb path. Decide
+  // via the shared planQueuedAck policy (the ONE place "is this cancellable" lives),
+  // so this path can't drift from the Lark / command paths. editMessageText drops
+  // the markup unless re-passed, so the ticker re-attaches it below.
+  const ackPlan = planQueuedAck(queuePosition, "text", msgId);
+  const cancelKb =
+    ackPlan.kind === "cancellable"
+      ? buildQueueCancelKeyboard(sessionShortId(session), ackPlan.msgId)
+      : undefined;
   const replyExtra = userMsgId !== undefined ? { reply_to_message_id: userMsgId } : {};
   const progress = await startProgress(
     ctx.api,
     chatId,
     thinkingText(session, queuePosition),
-    replyExtra,
+    cancelKb ? { ...replyExtra, reply_markup: cancelKb } : replyExtra,
   );
   const stopTyping = startTyping(ctx.api, chatId);
 
   let ticker: ReturnType<typeof setInterval> | undefined;
   if (progress) {
     ticker = setInterval(() => {
-      void progress.update(thinkingText(session, 0, elapsedSeconds(startedAt)));
+      void progress.update(
+        thinkingText(session, 0, elapsedSeconds(startedAt)),
+        cancelKb ? { reply_markup: cancelKb } : undefined,
+      );
     }, PROGRESS_TICK_MS);
     (ticker as { unref?: () => void }).unref?.();
   }
@@ -93,7 +108,7 @@ export async function runPromptWithProgress(
   };
 
   const queued = deps.queue.enqueue({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${randomUUID().slice(0, 6)}`,
+    id: msgId,
     text,
     chatId,
     sessionName: session,
@@ -112,12 +127,27 @@ export async function runPromptWithProgress(
     },
     reject: (err: Error) => {
       cleanup();
+      // A user-initiated cancel (❌) is not a failure — confirm it plainly via the
+      // progress message, no 😱 reaction or error surface.
+      if (err instanceof QueueCancelledError) {
+        const note = `🗑 ${err.message}`;
+        void (progress
+          ? progress.finalize(note)
+          : reply(ctx, "ok", note, { session, replyTarget }));
+        return;
+      }
       if (userMsgId !== undefined) {
         void reactToMessage(reactionApi, chatId, userMsgId, REACTION.failed);
       }
       void deliverError(ctx, session, err, elapsedSeconds(startedAt), progress, replyTarget);
     },
   });
+
+  // Queued behind others → bind the ack so a reply to it rewrites this item (cancel
+  // goes via the ❌). Only on a real enqueue, never on a dedup/full verdict.
+  if (queued === "queued" && cancelKb && progress) {
+    deps.queue.setQueueAck(session, msgId, String(progress.messageId));
+  }
 
   if (queued === false) {
     cleanup();

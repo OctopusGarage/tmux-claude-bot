@@ -49,7 +49,7 @@ describe("reply-target integration", () => {
     const rt = createReplyTargetMap(tmpDir);
     await reply(ctx, "ok", "test", { session: "session-A", replyTarget: rt });
 
-    const resolved = rt.resolveReplyTarget(888);
+    const resolved = rt.resolve(888);
     expect(resolved).toBe("session-A");
   });
 
@@ -60,7 +60,7 @@ describe("reply-target integration", () => {
     const rt = createReplyTargetMap(tmpDir);
     await reply(ctx, "ok", "test", { session: "session-B", replyTarget: rt }).catch(() => {});
 
-    expect(rt.resolveReplyTarget(888)).toBeNull();
+    expect(rt.resolve(888)).toBeUndefined();
   });
 
   it("does not record when session is not provided", async () => {
@@ -70,7 +70,7 @@ describe("reply-target integration", () => {
     const rt = createReplyTargetMap(tmpDir);
     await reply(ctx, "ok", "test", { replyTarget: rt });
 
-    expect(rt.resolveReplyTarget(999)).toBeNull();
+    expect(rt.resolve(999)).toBeUndefined();
   });
 
   it("does not record when reply returns no message_id", async () => {
@@ -80,6 +80,6 @@ describe("reply-target integration", () => {
     const rt = createReplyTargetMap(tmpDir);
     await reply(ctx, "ok", "test", { session: "session-C", replyTarget: rt });
 
-    expect(rt.resolveReplyTarget(999)).toBeNull();
+    expect(rt.resolve(999)).toBeUndefined();
   });
 });

@@ -49,7 +49,7 @@ function captureBot() {
 
 const replyTarget = {
   record: vi.fn(),
-  resolveReplyTarget: vi.fn((): string | null => null),
+  resolve: vi.fn((): string | null => null),
   removeSession: vi.fn(),
 };
 

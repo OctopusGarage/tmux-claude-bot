@@ -1,11 +1,18 @@
 import type { Bot, Context } from "grammy";
 import { getImmediateActions } from "../../core/command/action-registry.js";
 import { executeMessage, type MessageAction } from "../../core/command/dispatch.js";
-import { enqueueMessage } from "../../core/command/enqueue.js";
-import type { PersistedMessage, QueuedMessage } from "../../core/command/queue.js";
+import { enqueueMessage, planQueuedAck } from "../../core/command/enqueue.js";
+import {
+  type PersistedMessage,
+  QueueCancelledError,
+  type QueuedMessage,
+} from "../../core/command/queue.js";
+import { restoreMessage } from "../../core/command/restore.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { buildQueueCancelKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { reply, send } from "./replies.js";
 import { requireSession } from "./session.js";
@@ -43,15 +50,29 @@ export async function enqueueSessionCommand(
           }),
         reject: (err: Error) => {
           log.error(`reject callback fired session=${session} err=${err.message}`);
-          void reply(ctx, "err", `${err.message}`, { session, replyTo });
+          // A user-initiated cancel is not a failure — confirm it plainly (🗑),
+          // not with the error tone. Mirrors Lark's QueueCancelledError branch.
+          const tone = err instanceof QueueCancelledError ? "ok" : "err";
+          const head = err instanceof QueueCancelledError ? `🗑 ${err.message}` : err.message;
+          void reply(ctx, tone, head, { session, replyTo });
         },
       },
     },
     {
-      accepted: async (queueSizeBefore) => {
+      accepted: async (queueSizeBefore, msgId) => {
         log.info(`enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`);
-        if (queueSizeBefore === 0) {
+        const plan = planQueuedAck(queueSizeBefore, action, msgId);
+        if (plan.kind === "received") {
           await reply(ctx, "ok", m.ackReceived, { session });
+        } else if (plan.kind === "cancellable") {
+          // A still-waiting text message can be cancelled (❌) or rewritten (reply
+          // to this ack) before it's typed in.
+          const replyMarkup = buildQueueCancelKeyboard(sessionShortId(session), plan.msgId);
+          const ackId = await reply(ctx, "queued", m.queuedAt(queueSizeBefore), {
+            session,
+            replyMarkup,
+          });
+          if (ackId !== null) deps.queue.setQueueAck(session, plan.msgId, String(ackId));
         } else {
           await reply(ctx, "queued", m.queuedAt(queueSizeBefore), { session });
         }
@@ -74,7 +95,7 @@ export async function handleQueuedCommand(
   const replyToMsg = ctx.message?.reply_to_message;
   let session: string | null = null;
   if (replyToMsg && replyTarget) {
-    const fromReply = replyTarget.resolveReplyTarget(replyToMsg.message_id);
+    const fromReply = replyTarget.resolve(replyToMsg.message_id);
     if (fromReply) session = fromReply;
   }
   if (!session) {
@@ -101,24 +122,20 @@ export async function handleQueuedCommand(
 }
 
 export function createRestoredMessage(p: PersistedMessage, bot: Bot): QueuedMessage {
-  return {
-    id: p.id,
-    text: p.text,
-    chatId: p.chatId,
-    sessionName: p.sessionName,
-    action: p.action,
-    channel: "telegram",
-    resolve: (output: string) => {
+  return restoreMessage(
+    p,
+    "telegram",
+    (output) => {
       void send(bot, Number(p.chatId), "recover", "Recovered", {
         session: p.sessionName,
         body: output,
         code: true,
       });
     },
-    reject: (err: Error) => {
+    (err) => {
       void send(bot, Number(p.chatId), "err", `Recovered failed: ${err.message}`, {
         session: p.sessionName,
       });
     },
-  };
+  );
 }

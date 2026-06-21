@@ -51,7 +51,7 @@ describe("router enqueueTextToSession acceptance reply", () => {
     // FIXED: now passes replyTarget
     await reply(ctx, "ok", "已接收", { session: "tmux_proj_test", replyTarget: rt });
 
-    expect(rt.resolveReplyTarget(111)).toBe("tmux_proj_test");
+    expect(rt.resolve(111)).toBe("tmux_proj_test");
   });
 
   it("records queue position reply message ID", async () => {
@@ -62,7 +62,7 @@ describe("router enqueueTextToSession acceptance reply", () => {
 
     await reply(ctx, "queued", "已进队列，位置 3", { session: "tmux_proj_test", replyTarget: rt });
 
-    expect(rt.resolveReplyTarget(333)).toBe("tmux_proj_test");
+    expect(rt.resolve(333)).toBe("tmux_proj_test");
   });
 
   it("records error reply message ID", async () => {
@@ -73,7 +73,7 @@ describe("router enqueueTextToSession acceptance reply", () => {
 
     await reply(ctx, "err", "queue full", { session: "tmux_proj_test", replyTarget: rt });
 
-    expect(rt.resolveReplyTarget(444)).toBe("tmux_proj_test");
+    expect(rt.resolve(444)).toBe("tmux_proj_test");
   });
 
   it("completion reply (resolve callback) records its message ID", async () => {
@@ -87,7 +87,7 @@ describe("router enqueueTextToSession acceptance reply", () => {
     await reply(ctx, "info", "result", { session: "tmux_proj_test", replyTo, replyTarget: rt });
 
     // Completion message ID should be recorded
-    expect(rt.resolveReplyTarget(222)).toBe("tmux_proj_test");
+    expect(rt.resolve(222)).toBe("tmux_proj_test");
   });
 
   it("acceptance without replyTarget does NOT record (correct)", async () => {
@@ -99,6 +99,6 @@ describe("router enqueueTextToSession acceptance reply", () => {
     // Current router behavior: no replyTarget passed
     await reply(ctx, "ok", "已接收", { session: "tmux_proj_test" });
 
-    expect(rt.resolveReplyTarget(999)).toBeNull();
+    expect(rt.resolve(999)).toBeUndefined();
   });
 });

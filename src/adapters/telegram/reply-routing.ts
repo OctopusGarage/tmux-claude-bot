@@ -12,7 +12,7 @@ export function resolveSessionForMessage(
   fallbackSession: string | null,
 ): string | null {
   if (replyToMessageId !== undefined) {
-    const fromReply = replyTarget.resolveReplyTarget(replyToMessageId);
+    const fromReply = replyTarget.resolve(replyToMessageId);
     if (fromReply) return fromReply;
   }
   return fallbackSession;

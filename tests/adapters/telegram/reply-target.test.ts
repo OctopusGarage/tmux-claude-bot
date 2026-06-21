@@ -19,22 +19,22 @@ describe("createReplyTargetMap", () => {
   it("records and resolves a message → session mapping", () => {
     const m = createReplyTargetMap(dir);
     m.record(100, "sess_a");
-    expect(m.resolveReplyTarget(100)).toBe("sess_a");
-    expect(m.resolveReplyTarget(999)).toBeNull();
+    expect(m.resolve(100)).toBe("sess_a");
+    expect(m.resolve(999)).toBeUndefined();
   });
 
   it("evicts the oldest entry once it exceeds the 100-entry cap (drop-oldest)", () => {
     const m = createReplyTargetMap(dir);
     for (let i = 1; i <= 101; i++) m.record(i, `s${i}`); // one over the cap
-    expect(m.resolveReplyTarget(1)).toBeNull(); // oldest dropped
-    expect(m.resolveReplyTarget(2)).toBe("s2");
-    expect(m.resolveReplyTarget(101)).toBe("s101");
+    expect(m.resolve(1)).toBeUndefined(); // oldest dropped
+    expect(m.resolve(2)).toBe("s2");
+    expect(m.resolve(101)).toBe("s101");
   });
 
   it("persists across instances backed by the same dir (survives a restart)", () => {
     createReplyTargetMap(dir).record(55, "sess_persist");
     // A fresh map over the same dir loads what the previous one wrote.
-    expect(createReplyTargetMap(dir).resolveReplyTarget(55)).toBe("sess_persist");
+    expect(createReplyTargetMap(dir).resolve(55)).toBe("sess_persist");
   });
 
   it("removeSession drops every entry pointing at that session", () => {
@@ -43,17 +43,17 @@ describe("createReplyTargetMap", () => {
     m.record(2, "sess_y");
     m.record(3, "sess_x");
     m.removeSession("sess_x");
-    expect(m.resolveReplyTarget(1)).toBeNull();
-    expect(m.resolveReplyTarget(3)).toBeNull();
-    expect(m.resolveReplyTarget(2)).toBe("sess_y");
+    expect(m.resolve(1)).toBeUndefined();
+    expect(m.resolve(3)).toBeUndefined();
+    expect(m.resolve(2)).toBe("sess_y");
   });
 
   it("resets to empty (no throw) on a corrupted backing file", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(nodePath.join(dir, "reply_target_map.json"), "{ not json", "utf-8");
     const m = createReplyTargetMap(dir);
-    expect(m.resolveReplyTarget(1)).toBeNull(); // graceful reset, not a crash
+    expect(m.resolve(1)).toBeUndefined(); // graceful reset, not a crash
     m.record(5, "sess_ok");
-    expect(m.resolveReplyTarget(5)).toBe("sess_ok");
+    expect(m.resolve(5)).toBe("sess_ok");
   });
 });

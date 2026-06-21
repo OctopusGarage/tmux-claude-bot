@@ -4,11 +4,17 @@ import { profileFor } from "../../core/agents/registry.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
 import { buildHelpBody, getTelegramActions } from "../../core/command/action-registry.js";
+import { startDisposition } from "../../core/command/dispatch.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
 import { formatDashboardForChat } from "../../core/dashboard/dashboard-view.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
+import {
+  defaultSystemLoadProbes,
+  gatherSystemLoad,
+  renderSystemLoad,
+} from "../../core/infra/system-load.js";
 import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
 import {
@@ -21,12 +27,15 @@ import { FREE_PROJECT_LIMIT } from "../../core/projects/free-projects.js";
 import { createFreeProject, createProjectFromPath } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
+import { parseInputsLimit } from "../../core/read/recent-inputs.js";
+import { parsePeekLines } from "../../core/session/output.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
 import {
+  buildIdleKeyboard,
   buildLangKeyboard,
   buildOrphanKeyboard,
   buildRecentKeyboard,
@@ -53,8 +62,10 @@ import {
   sendAliveList,
   sendBrowse,
   sendHistory,
+  sendInputs,
   sendPeek,
   sendQueueStatus,
+  sendRecoverPreview,
   sendStatusInstall,
 } from "./views.js";
 
@@ -104,23 +115,34 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   for (const action of getTelegramActions()) {
     const a = action;
     bot.command(a, async (ctx) => {
-      // `/start` and `/restart` with multiple configured launch commands show the
-      // flavor picker (mirroring the inline buttons) instead of silently using the
-      // default. Falls through to the normal queued action when there's only one
-      // command, or no current project.
-      if ((a === "start" || a === "restart") && deps.config.startCommands.length > 1) {
+      // `/start` is rejected when an agent is already running (no pointless
+      // picker). Otherwise `/start`/`/restart` with multiple launch commands show
+      // the flavor picker. Falls through to the queued action for a single command
+      // or no current project.
+      if (a === "start" || a === "restart") {
         const session = await deps.currentProject.get(tgScope(ctx));
         if (session) {
-          await reply(ctx, "info", messages("telegram").startPickerPrompt, {
-            session,
-            replyMarkup: buildStartPickerKeyboard(
-              deps.config.startCommands,
-              sessionShortId(session),
-              a === "restart" ? "restart" : "start",
-            ),
-            replyTarget,
-          });
-          return;
+          const mode = a === "restart" ? "restart" : "start";
+          const disp = await startDisposition(deps, session, mode);
+          if (disp === "already-running") {
+            await reply(ctx, "ok", messages("telegram").agentAlreadyRunning, {
+              session,
+              replyTarget,
+            });
+            return;
+          }
+          if (disp === "pick") {
+            await reply(ctx, "info", messages("telegram").startPickerPrompt, {
+              session,
+              replyMarkup: buildStartPickerKeyboard(
+                deps.config.startCommands,
+                sessionShortId(session),
+                mode,
+              ),
+              replyTarget,
+            });
+            return;
+          }
         }
       }
       await handleQueuedCommand(ctx, deps, a, undefined, replyTarget);
@@ -133,7 +155,20 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       await reply(ctx, "err", MSG.noSession);
       return;
     }
-    await sendPeek(ctx, deps, session, replyTarget);
+    // `/peek N` captures N lines of scrollback (paged across messages as needed).
+    const peekArg = (ctx.message?.text ?? "").trim().split(/\s+/)[1];
+    await sendPeek(ctx, deps, session, replyTarget, parsePeekLines(peekArg));
+  });
+
+  // `/inputs [N]` — list the last N inputs you sent, tap one to re-run it.
+  bot.command("inputs", async (ctx) => {
+    const session = await resolveSessionFromReply(ctx, replyTarget, deps);
+    if (!session) {
+      await reply(ctx, "err", MSG.noSession);
+      return;
+    }
+    const arg = (ctx.message?.text ?? "").trim().split(/\s+/)[1];
+    await sendInputs(ctx, deps, session, replyTarget, parseInputsLimit(arg));
   });
 
   // List claude processes running outside tmux; tap one to take it over.
@@ -148,6 +183,12 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       replyMarkup: buildOrphanKeyboard(buttons),
       replyTarget,
     });
+  });
+
+  // Reboot recovery: after the machine restarts (tmux gone), preview every project
+  // that would be recreated + relaunched, then execute on confirm.
+  bot.command("recover", async (ctx) => {
+    await sendRecoverPreview(ctx, deps, replyTarget);
   });
 
   // Install usage reporting into the running claudes' config dirs.
@@ -172,9 +213,9 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("new_free", async (ctx) => {
-    const session = await handleNewFreeCommand(ctx, deps, tgScope(ctx), (kind, text) =>
-      reply(ctx, kind, text),
-    );
+    const session = await handleNewFreeCommand(ctx, deps, tgScope(ctx), async (kind, text) => {
+      await reply(ctx, kind, text);
+    });
     if (session) await startOrPickAfterCreate(deps, ctx, session, replyTarget);
   });
 
@@ -284,21 +325,38 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
   // Owner-only (the auth guard drops non-allowlisted users before this runs).
   // Renders the global dashboard — every live session plus bot-level totals — as
-  // a code block.
+  // plain text: the emoji + "·"-separated lines read cleanly in Telegram's
+  // proportional font; a monospace code block looked clunky (and the format is
+  // separator-based, not column-aligned, so it needs no monospace).
   bot.command("dashboard", async (ctx) => {
     const snap = await buildDashboard(deps);
     const body = formatDashboardForChat(snap, { maxChars: 3500 });
     await reply(ctx, "view", messages("telegram").dashboardTitle, {
       body,
-      code: true,
+      replyTarget,
+    });
+  });
+
+  // Owner-only: machine load / thermal / top CPU / runaway-orphan shells — check
+  // from your phone whether the Mac is overloaded or overheating.
+  bot.command("sysload", async (ctx) => {
+    const report = await gatherSystemLoad(defaultSystemLoadProbes());
+    await reply(ctx, "view", messages("telegram").sysloadTitle, {
+      body: renderSystemLoad(report),
       replyTarget,
     });
   });
 
   bot.command("ws", async (ctx) => {
     const raw = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
-    await runWorkspaceCommand(deps, "telegram", String(ctx.chat?.id ?? 0), raw, (kind, text) =>
-      reply(ctx, kind, text),
+    await runWorkspaceCommand(
+      deps,
+      "telegram",
+      String(ctx.chat?.id ?? 0),
+      raw,
+      async (kind, text) => {
+        await reply(ctx, kind, text);
+      },
     );
   });
 
@@ -327,9 +385,9 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       const scope = tgScope(ctx);
       consumeFreeLabel(scope);
       const label = text.trim() === "-" ? "" : text.trim();
-      const session = await createFreeAndReply(deps, scope, label, (kind, body) =>
-        reply(ctx, kind, body),
-      );
+      const session = await createFreeAndReply(deps, scope, label, async (kind, body) => {
+        await reply(ctx, kind, body);
+      });
       if (session) await startOrPickAfterCreate(deps, ctx, session, replyTarget);
       return;
     }
@@ -357,7 +415,21 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     const replyToMsg = ctx.message.reply_to_message;
     let targetSession: string | null = null;
     if (replyToMsg) {
-      targetSession = replyTarget.resolveReplyTarget(replyToMsg.message_id);
+      // Reply to a "已排队" ack with new text → rewrite that still-waiting message
+      // in place (keeps its queue position). TERMINAL unless it wasn't one of our
+      // acks: a rewrite blocked by dedup is reported, never silently re-enqueued as a
+      // fresh prompt (which dedup would then drop, losing the edit).
+      const rw = deps.queue.rewriteByAck(String(replyToMsg.message_id), ctx.chat?.id ?? 0, text);
+      if (rw.kind !== "not-found") {
+        const m = messages("telegram");
+        const ok = rw.kind === "rewritten";
+        await reply(ctx, ok ? "ok" : "warn", ok ? m.queueItemRewritten : m.duplicateIgnored, {
+          session: rw.session, // 📂 project tag + records the confirmation as a reply-target
+          replyTarget,
+        });
+        return;
+      }
+      targetSession = replyTarget.resolve(replyToMsg.message_id) ?? null;
       if (targetSession) {
         log.info(`reply detected msgId=${replyToMsg.message_id} → session=${targetSession}`);
       }
@@ -425,7 +497,11 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     }
 
     log.warn(`claude not running session=${currentSessionName} chat=${chatId}`);
-    await reply(ctx, "err", MSG.notRunning);
+    await reply(ctx, "err", MSG.notRunning, {
+      session: currentSessionName,
+      replyMarkup: buildIdleKeyboard(sessionShortId(currentSessionName)),
+      replyTarget,
+    });
   });
 }
 

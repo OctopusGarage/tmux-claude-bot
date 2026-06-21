@@ -1,12 +1,13 @@
 import type { Bot, Context } from "grammy";
 import { messages } from "../../core/i18n/index.js";
-import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { labelForSession } from "../../core/projects/project-label.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { tidyFloatNoise } from "../../shared/utils/number.js";
+import { tildeifyHome } from "../../shared/utils/path.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { timeApi } from "../../shared/utils/timing.js";
 import { codeBlockV2, escapeMarkdownV2, stripMarkdownV2, toTelegramMarkdown } from "./markdown.js";
-import { projectLabel } from "./project-label.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 
 const log = createLogger("telegram.replies");
@@ -72,7 +73,15 @@ export function composeMessage(tone: Tone, head: string, opts: ReplyOpts = {}): 
   return compose(tone, head, opts);
 }
 
+/** Build the message, then run it through the send-boundary chokepoints: shorten
+ * home paths to `~` and collapse floating-point display noise (see CLAUDE.md
+ * "User-facing paths"). Call sites never have to remember either. */
 function compose(tone: Tone, head: string, opts: ReplyOpts): Composed {
+  const { text, extra } = composeRaw(tone, head, opts);
+  return { text: tildeifyHome(tidyFloatNoise(text)), extra };
+}
+
+function composeRaw(tone: Tone, head: string, opts: ReplyOpts): Composed {
   const emoji = TONE_EMOJI[tone];
   // Line 1: "<emoji> <head> · ⏱ Ns"
   let statusLine = [emoji, head].filter(Boolean).join(" ");
@@ -81,9 +90,7 @@ function compose(tone: Tone, head: string, opts: ReplyOpts): Composed {
     statusLine = statusLine ? `${statusLine} · ${elapsed}` : elapsed;
   }
   // Line 2: "📂 <friendly project name>"
-  const projectLine = opts.session
-    ? `📂 ${projectLabel(opts.session, getPathBySession(opts.session) ?? undefined)}`
-    : "";
+  const projectLine = opts.session ? `📂 ${labelForSession(opts.session)}` : "";
   const header = [statusLine, projectLine].filter(Boolean).join("\n");
 
   // Messages with a formatted body render as Telegram MarkdownV2 (via
@@ -219,18 +226,23 @@ export async function reply(
   tone: Tone,
   head: string,
   opts: ReplyOpts = {},
-): Promise<void> {
+): Promise<number | null> {
   const { text, extra } = compose(tone, head, opts);
   const chatId = ctx.chat?.id ?? "unknown";
   const replyTo = opts.replyTo ?? ctx.message?.message_id;
   const msgId = replyTo ?? "none";
   const sendExtra = replyTo !== undefined ? { ...extra, reply_to_message_id: replyTo } : extra;
 
+  // The sent message's id, so callers can map an ack to what it acked (e.g. bind a
+  // queued-message ack to its queue item for reply-to-replace). null on a fallback
+  // send or a final failure.
+  let sentId: number | null = null;
   await withSendRetry(
     "reply",
     () => ctx.reply(text, sendExtra),
     (sentMsg) => {
       const telegramMsgId = messageIdOf(sentMsg);
+      sentId = telegramMsgId;
       log.info(
         `sent to chat=${chatId} replyTo=${msgId} telegramMsgId=${telegramMsgId} len=${text.length}`,
       );
@@ -267,6 +279,7 @@ export async function reply(
       );
     },
   );
+  return sentId;
 }
 
 export async function send(
