@@ -154,6 +154,118 @@ program
   });
 
 program
+  .command("sysload")
+  .description("show machine load, thermal state, top CPU, and runaway/orphan shells")
+  .action(async () => {
+    const { gatherSystemLoad, renderSystemLoad, defaultSystemLoadProbes } = await import(
+      "./core/infra/system-load.js"
+    );
+    process.stdout.write(
+      `${renderSystemLoad(await gatherSystemLoad(defaultSystemLoadProbes()))}\n`,
+    );
+  });
+
+program
+  .command("tui")
+  .description("interactive terminal UI to drive the bot's sessions (needs the bot running)")
+  .action(async () => {
+    const { runTui } = await import("./tui/run.js");
+    await runTui();
+  });
+
+// One-shot control-socket clients — drive the running bot from the shell (for an AI
+// agent / scripts) without the TUI or a chat app. All need the bot running.
+const ctl = (): Promise<typeof import("./cli/control.js")> => import("./cli/control.js");
+
+program
+  .command("sessions")
+  .description("list the bot's running sessions")
+  .option("--json", "output JSON")
+  .action(async (o) => (await ctl()).cmdSessions(o));
+
+program
+  .command("projects")
+  .description("list projects (live + recent) — `tcb open <name>` to start one")
+  .option("--json", "output JSON")
+  .action(async (o) => (await ctl()).cmdProjects(o));
+
+program
+  .command("send <project> <text...>")
+  .description("send a prompt to a project's agent; waits for the reply by default")
+  .option("--no-wait", "fire-and-forget instead of waiting for the reply")
+  .option("--timeout <seconds>", "how long to wait for the reply", "120")
+  .option("--json", "output JSON")
+  .action(async (project, text, o) => (await ctl()).cmdSend(project, text, o));
+
+program
+  .command("peek <project>")
+  .description("print a snapshot of a project's tmux pane")
+  .option("--lines <n>", "lines of scrollback")
+  .option("--json", "output JSON")
+  .action(async (project, o) => (await ctl()).cmdPeek(project, o));
+
+program
+  .command("open <project>")
+  .description("switch to / start a project (by name; includes stopped ones)")
+  .option("--json", "output JSON")
+  .action(async (project, o) => (await ctl()).cmdOpen(project, o));
+
+program
+  .command("control <project> <action>")
+  .description("send a control action (esc|enter|interrupt|restart|clear|compact|…)")
+  .option("--json", "output JSON")
+  .action(async (project, action, o) => (await ctl()).cmdControl(project, action, o));
+
+program
+  .command("skill")
+  .description(
+    "install the AI operating skill into Claude Code / Codex (so an agent can drive the bot)",
+  )
+  .argument("[action]", "install", "install")
+  .option("--tool <claude|codex>", "install for one tool only")
+  .option("--json", "output JSON")
+  .action(async (action: string, o: { tool?: "claude" | "codex"; json?: boolean }) => {
+    if (action !== "install") {
+      console.error(`unknown skill action "${action}". Try: tmux-claude-bot skill install`);
+      process.exit(1);
+    }
+    const { installSkill } = await import("./cli/skill.js");
+    const { tildeifyHome } = await import("./shared/utils/path.js");
+    const done = installSkill({
+      pkgRoot: PKG_ROOT,
+      only: o.tool ? [o.tool] : undefined,
+      log: o.json ? undefined : (m) => console.log(`  ${tildeifyHome(m)}`),
+    });
+    if (o.json) console.log(JSON.stringify(done, null, 2));
+    else
+      console.log(`Installed the tmux-claude-bot skill for: ${done.map((d) => d.tool).join(", ")}`);
+  });
+
+program
+  .command("recover")
+  .description("Recreate every project's tmux session and relaunch its agent (after a reboot)")
+  .option("--dry-run", "show what would be recovered without doing it")
+  .option("--json", "output the plan/result as JSON")
+  .action(async (o) => {
+    try {
+      const { bootstrap } = await import("./bootstrap.js");
+      const { recoverProjects } = await import("./core/recovery/recover.js");
+      const { formatRecoverResult } = await import("./core/recovery/recover-view.js");
+      const deps = bootstrap();
+      const res = await recoverProjects(deps, { dryRun: o.dryRun });
+      process.stdout.write(
+        o.json
+          ? `${JSON.stringify(res, null, 2)}\n`
+          : `${formatRecoverResult(res, { dryRun: o.dryRun })}\n`,
+      );
+      process.exit(res.failed.length > 0 ? 1 : 0); // bootstrap's fs.watch would otherwise hang
+    } catch (err) {
+      process.stderr.write(`recover failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    }
+  });
+
+program
   .command("logs")
   .description("Query the structured logs")
   .option("--session <name>")
