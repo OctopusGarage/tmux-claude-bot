@@ -16,7 +16,8 @@ vi.mock("../../../src/core/read/voice-support.js", () => ({
   checkVoiceSupport: () => checkVoiceSupport(),
   resolveWhisperLanguage: () => resolveWhisperLanguage(),
 }));
-vi.mock("../../../src/core/read/transcriber.js", () => ({
+vi.mock(import("../../../src/core/read/transcriber.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
   transcribeWithCache: (opts: unknown) => transcribeWithCache(opts),
 }));
 vi.mock("../../../src/adapters/lark/resource.js", () => ({

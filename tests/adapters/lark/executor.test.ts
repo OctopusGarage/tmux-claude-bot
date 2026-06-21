@@ -29,13 +29,16 @@ describe("enqueueLarkAction", () => {
     expect(channel.texts().some((t) => t.includes("📂"))).toBe(true);
   });
 
-  it("acks '已排队 · 第 N 位' when the queue was non-empty", async () => {
+  it("acks '已排队 · 第 N 位' as a card carrying the ❌ cancel button (text action)", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ queueSize: 2 });
 
     await enqueueLarkAction(channel, deps, "chat-1", "msg-1", "text", "hi");
 
-    expect(channel.texts().some((t) => t.includes("已排队 · 第 2 位"))).toBe(true);
+    // A queued TEXT message acks as a card (so it can carry ❌), not plain text.
+    const cards = JSON.stringify(channel.cards());
+    expect(cards).toContain("已排队 · 第 2 位");
+    expect(cards).toContain("qcancel"); // the ❌ cancel button
   });
 
   it("replies queue-full when enqueue is rejected", async () => {

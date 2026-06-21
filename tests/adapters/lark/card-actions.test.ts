@@ -7,6 +7,7 @@ import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.j
 import { bindGroup, getBinding, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { appendRecentProject } from "../../../src/core/projects/recentProjects.js";
 import { sessionNameFromPath } from "../../../src/core/projects/sessionPathMap.js";
+import { storeInputList } from "../../../src/core/read/recent-inputs.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
@@ -48,6 +49,26 @@ describe("makeCardActionHandler", () => {
     expect(JSON.stringify(channel.cards())).toContain("语音识别语言");
   });
 
+  it("qcancel → cancels that queued message by (session, id)", async () => {
+    const cancelQueued = vi.fn(() => true);
+    const channel = fakeChannel();
+    const deps = fakeDeps({ queue: { cancelQueued } });
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "qcancel", s: "proj-1", id: "m-7" }));
+    expect(cancelQueued).toHaveBeenCalledWith("proj-1", "m-7", expect.any(String));
+    // On success the queue's reject closure posts the confirmation, so the handler
+    // itself sends nothing extra.
+    expect(channel.texts()).toHaveLength(0);
+  });
+
+  it("qcancel → reports 'already gone' when cancelQueued returns false (no false confirm)", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ queue: { cancelQueued: vi.fn(() => false) } });
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "qcancel", s: "proj-1", id: "gone" }));
+    // Must NOT falsely confirm a cancellation; say the item is no longer queued.
+    expect(channel.texts().some((t) => t.includes("不在队列"))).toBe(true);
+    expect(channel.texts().some((t) => t.includes("已取消"))).toBe(false);
+  });
+
   it("voiceinstall → runs the core install and replies the result (Feishu parity with Telegram)", async () => {
     installVoiceMock.mockResolvedValueOnce({ status: "ok", bin: "/x/mlx_whisper" });
     const channel = fakeChannel();
@@ -80,6 +101,12 @@ describe("makeCardActionHandler", () => {
       if (prev === undefined) delete process.env.LARK_WHISPER_LANGUAGE;
       else process.env.LARK_WHISPER_LANGUAGE = prev;
     }
+  });
+
+  it("voicelang with an unsupported code → no-op (not in VOICE_LANGS)", async () => {
+    const channel = fakeChannel();
+    await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "voicelang", lang: "klingon" }));
+    expect(channel.sent).toHaveLength(0);
   });
 
   it("drops cardAction from a non-allowlisted operator", async () => {
@@ -443,6 +470,8 @@ describe("makeCardActionHandler", () => {
           { label: "B", command: "bash" },
         ],
       },
+      // not running → /start offers the picker rather than "already running"
+      agent: { checkIfRunning: vi.fn(async () => false) },
     };
 
     it("start with >1 command → sends the picker instead of starting", async () => {
@@ -453,11 +482,24 @@ describe("makeCardActionHandler", () => {
       expect(deps.agent.start).not.toHaveBeenCalled();
     });
 
+    it("start → rejects with 'already running' (no picker) when an agent is live", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        ...multi,
+        agent: { checkIfRunning: vi.fn(async () => true) }, // already running
+      });
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "start" }));
+      expect(JSON.stringify(channel.cards())).not.toContain("选择启动方式"); // no picker
+      expect(deps.agent.start).not.toHaveBeenCalled();
+    });
+
     it("startpick → starts the chosen command and confirms", async () => {
       const channel = fakeChannel();
       const deps = fakeDeps(multi);
       await makeCardActionHandler(channel, deps)(evt({ cmd: "startpick", idx: 1 }));
-      expect(deps.agent.start).toHaveBeenCalledWith("proj-1", "bash");
+      // performStart pins a claude conversation id, so the launched command is
+      // "bash --session-id <uuid>"; assert the chosen flavor (bash), not equality.
+      expect(deps.agent.start).toHaveBeenCalledWith("proj-1", expect.stringContaining("bash"));
       expect(channel.texts().some((t) => t.includes("B"))).toBe(true);
     });
   });
@@ -511,6 +553,291 @@ describe("makeCardActionHandler", () => {
       await handle(evt({ cmd: "browsenewfolder" }));
       // The prompt echoes the breadcrumb (~ or the dir path).
       expect(channel.texts().length).toBeGreaterThan(0);
+    });
+  });
+
+  // --- inputredo (re-run a /inputs entry as an editable draft) ---
+  describe("inputredo", () => {
+    it("taps a stored input → hands the verbatim prompt back as a raw {text} draft", async () => {
+      const token = storeInputList("proj-1", ["first prompt", "second prompt"]);
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "inputredo", token, idx: 1 }));
+      // Raw `{ text }` send (skips the markdown/tildeify pass) — lands in `sent`,
+      // NOT texts() (which only collects `{ markdown }`).
+      expect(channel.sent).toHaveLength(1);
+      expect(channel.sent[0]?.input).toEqual({ text: "second prompt" });
+    });
+
+    it("an expired/unknown token → replies the 'list expired' hint", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "inputredo", token: "nope", idx: 0 }));
+      expect(channel.texts().some((t) => t.includes("列表已过期"))).toBe(true);
+    });
+
+    it("a non-numeric idx → no-op (malformed value guard)", async () => {
+      const token = storeInputList("proj-1", ["p"]);
+      const channel = fakeChannel();
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "inputredo", token } as unknown as Record<string, unknown>));
+      expect(channel.sent).toHaveLength(0);
+    });
+  });
+
+  // --- restart picker ---
+  describe("restart picker", () => {
+    const multi = {
+      config: {
+        startCommands: [
+          { label: "A", command: "echo" },
+          { label: "B", command: "bash" },
+        ],
+      },
+      agent: { checkIfRunning: vi.fn(async () => true) }, // running → restart picker offered
+    };
+
+    it("restart with >1 command → sends the picker (mode=restart) instead of restarting", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps(multi);
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "restart" }));
+      expect(JSON.stringify(channel.cards())).toContain("选择启动方式");
+      // It is the picker, not the queued-action path.
+      expect(deps.queue.enqueued).toHaveLength(0);
+    });
+
+    it("restartpick → restarts with the chosen command and confirms", async () => {
+      const channel = fakeChannel();
+      const gracefulRestartWithContinue = vi.fn(async () => {});
+      const deps = fakeDeps({
+        ...multi,
+        agent: { ...multi.agent, gracefulRestartWithContinue },
+      });
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "restartpick", idx: 0 }));
+      // performRestart drives the graceful restart; the chosen flavor (A=echo) is
+      // confirmed in the reply.
+      expect(gracefulRestartWithContinue).toHaveBeenCalledWith(
+        "proj-1",
+        expect.stringContaining("echo"),
+      );
+      expect(channel.texts().some((t) => t.includes("A"))).toBe(true);
+    });
+
+    it("restartpick with an out-of-range idx → no-op (no pick)", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps(multi);
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "restartpick", idx: 9 }));
+      expect(channel.sent).toHaveLength(0);
+    });
+  });
+
+  // --- adopt (non-tmux agent takeover) ---
+  describe("adopt", () => {
+    it("adoptcancel → acknowledges the cancellation", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "adoptcancel" }));
+      expect(channel.texts().some((t) => t.includes("已取消接管"))).toBe(true);
+    });
+
+    it("adoptattach with a matching sid → replies the attach hint", async () => {
+      const session = "tmux_proj_at";
+      const channel = fakeChannel();
+      const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => [session]) } });
+      await makeCardActionHandler(
+        channel,
+        deps,
+      )(evt({ cmd: "adoptattach", sid: sessionShortId(session) }));
+      expect(channel.texts().some((t) => t.includes("tmux attach"))).toBe(true);
+    });
+
+    it("adoptattach with an unmatched sid → 'session gone'", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => []) } });
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "adoptattach", sid: "zzz" }));
+      expect(channel.texts().some((t) => t.includes("会话不存在"))).toBe(true);
+    });
+
+    it("adoptattach with no sid → inert", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "adoptattach" }));
+      expect(channel.sent).toHaveLength(0);
+    });
+
+    it("adopt (show-confirm) with no pid → inert (malformed value guard)", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "adopt" }));
+      expect(channel.sent).toHaveLength(0);
+    });
+
+    it("adoptgo (exec) with no pid → inert (malformed value guard)", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "adoptgo" }));
+      expect(channel.sent).toHaveLength(0);
+    });
+  });
+
+  // --- recover (reboot recovery) ---
+  describe("recover", () => {
+    it("recovercancel → acknowledges the cancellation", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "recovercancel" }));
+      expect(channel.texts().some((t) => t.includes("已取消恢复"))).toBe(true);
+    });
+  });
+
+  // --- p2p-only gates (host-probing handlers are no-ops in a group chat) ---
+  describe("p2p-only gates (group → silent no-op)", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "tcb-ca-p2p-"));
+      process.env.TCB_STATE_DIR = dir;
+      bindGroup("oc_grp_p2p", { workspacePath: dir, sessionName: "s", label: "g" });
+    });
+    afterEach(() => {
+      unbindGroup("oc_grp_p2p");
+      delete process.env.TCB_STATE_DIR;
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    // Each command is gated to p2p in CARD_HANDLERS; in a (bound) group it must do
+    // nothing — no card, no text, no host probe.
+    it.each([
+      "dashboard",
+      "statusinstall",
+      "statusoverwrite",
+      "statuswrap",
+      "statussnippet",
+      "statusskip",
+      "adoptlist",
+      "recover",
+    ])("'%s' in a group is a silent no-op", async (cmd) => {
+      const channel = fakeChannel();
+      channel.setChatType("group");
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd }, { chatId: "oc_grp_p2p" }));
+      expect(channel.sent).toHaveLength(0);
+    });
+
+    it("adopt (show-confirm) in a group is a silent no-op even with a pid", async () => {
+      const channel = fakeChannel();
+      channel.setChatType("group");
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "adopt", pid: 123 }, { chatId: "oc_grp_p2p" }));
+      expect(channel.sent).toHaveLength(0);
+    });
+
+    it("recovergo in a group is a silent no-op", async () => {
+      const channel = fakeChannel();
+      channel.setChatType("group");
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "recovergo" }, { chatId: "oc_grp_p2p" }));
+      expect(channel.sent).toHaveLength(0);
+    });
+  });
+
+  // --- unbindgroup (p2p escape hatch: clear a binding by chat id) ---
+  describe("unbindgroup", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "tcb-ca-ubg-"));
+      process.env.TCB_STATE_DIR = dir;
+    });
+    afterEach(() => {
+      delete process.env.TCB_STATE_DIR;
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("clears the named binding, confirms, and refreshes the group menu (p2p)", async () => {
+      bindGroup("oc_target", { workspacePath: dir, sessionName: "s", label: "tgt" });
+      const channel = fakeChannel(); // default p2p, chat-1 unbound
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "unbindgroup", chatId: "oc_target" }));
+      expect(getBinding("oc_target")).toBeNull();
+      expect(channel.texts().some((t) => t.includes("已解除"))).toBe(true);
+      // sendGroupMenu refresh follows the confirmation.
+      expect(channel.cards().length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("reports 'not bound' when the target chat id has no binding (p2p)", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "unbindgroup", chatId: "oc_never_bound" }));
+      expect(channel.texts().some((t) => t.includes("尚未绑定"))).toBe(true);
+    });
+
+    it("is a no-op in a group chat (p2p only)", async () => {
+      bindGroup("oc_caller_grp", { workspacePath: dir, sessionName: "s", label: "g" });
+      bindGroup("oc_victim", { workspacePath: dir, sessionName: "s2", label: "v" });
+      const channel = fakeChannel();
+      channel.setChatType("group");
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "unbindgroup", chatId: "oc_victim" }, { chatId: "oc_caller_grp" }));
+      // The victim binding survives — the group caller can't reach this handler.
+      expect(getBinding("oc_victim")).not.toBeNull();
+      expect(channel.sent).toHaveLength(0);
+      unbindGroup("oc_caller_grp");
+      unbindGroup("oc_victim");
+    });
+  });
+
+  // --- free-group picker + makegroup/makefreegroup p2p gate ---
+  describe("group create buttons", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "tcb-ca-mk-"));
+      process.env.TCB_STATE_DIR = dir;
+    });
+    afterEach(() => {
+      delete process.env.TCB_STATE_DIR;
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("freegroupmenu → sends the free-parallel-group picker card (p2p)", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "freegroupmenu" }));
+      expect(JSON.stringify(channel.cards())).toContain("自由项目群");
+    });
+
+    it("makegroup in a bound group → refused (createGroup is p2p-only), no group created", async () => {
+      bindGroup("oc_mk_grp", { workspacePath: dir, sessionName: "s", label: "g" });
+      const channel = fakeChannel();
+      channel.setChatType("group");
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "makegroup", sid: "whatever" }, { chatId: "oc_mk_grp" }));
+      expect(channel.texts().some((t) => t.includes("仅在与机器人的私聊中"))).toBe(true);
+      unbindGroup("oc_mk_grp");
+    });
+
+    it("makefreegroup in a bound group → refused (p2p-only)", async () => {
+      bindGroup("oc_mkf_grp", { workspacePath: dir, sessionName: "s", label: "g" });
+      const channel = fakeChannel();
+      channel.setChatType("group");
+      await makeCardActionHandler(
+        channel,
+        fakeDeps(),
+      )(evt({ cmd: "makefreegroup", sid: "whatever" }, { chatId: "oc_mkf_grp" }));
+      expect(channel.texts().some((t) => t.includes("仅在与机器人的私聊中"))).toBe(true);
+      unbindGroup("oc_mkf_grp");
+    });
+
+    it("makegroup with no sid → inert", async () => {
+      const channel = fakeChannel();
+      await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "makegroup" }));
+      expect(channel.sent).toHaveLength(0);
     });
   });
 });

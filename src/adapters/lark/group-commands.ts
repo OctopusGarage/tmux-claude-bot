@@ -20,12 +20,15 @@ import {
   unbindGroup,
 } from "../../core/projects/group-bindings.js";
 import { chatScope } from "../../core/projects/project-manager.js";
-import { allocateFreeSlotPruned, createProjectSession } from "../../core/projects/project-ops.js";
-import { readRecentProjectLines } from "../../core/projects/recentProjects.js";
+import {
+  allocateFreeSlotPruned,
+  createProjectSession,
+  resolveProjectPathByShortId,
+} from "../../core/projects/project-ops.js";
 import { sessionNameFromPath } from "../../core/projects/sessionPathMap.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
-import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { sleep } from "../../shared/utils/sleep.js";
 import { helpCard } from "./cards.js";
 import { chatKindOf, checkAction, type ProjectAction } from "./chat-policy.js";
 import { sendCard, sendText } from "./replies.js";
@@ -68,12 +71,11 @@ async function deniedByPolicy(
   return true;
 }
 
-/** Resolve a recent-project short id back to its absolute path (mirrors the
- * recent-list create button's resolution). */
+/** Resolve a picked project's short id back to its absolute path, over the same
+ * set the picker shows (recents ∪ live tmux) so a live project absent from the
+ * recents file still resolves (otherwise "Short id not found"). */
 async function recentPathByShortId(deps: HandlerDeps, sid: string): Promise<string | null> {
-  const prefix = deps.config.projectSessionPrefix;
-  const lines = await readRecentProjectLines();
-  return lines.find((p) => sessionShortId(sessionNameFromPath(p, prefix)) === sid) ?? null;
+  return resolveProjectPathByShortId(deps, sid);
 }
 
 /** The OTHER group already bound to `sessionName` (excluding `chatId`), if any.
@@ -108,11 +110,11 @@ export async function makeBoundGroupBySid(
   const label = basename(path);
   const sessionName = sessionNameFromPath(path, deps.config.projectSessionPrefix);
 
-  // One workspace ↔ one group: don't create a second group for a project that
-  // already has one.
-  const existing = bindingForSession(sessionName);
-  if (existing) {
-    await sendText(channel, originChatId, m().groupAlreadyExists(existing.binding.label));
+  // One workspace ↔ one group: refuse if a LIVE group already owns this project;
+  // a stale binding (its group was disbanded) is auto-cleared so rebuild proceeds.
+  const blocking = await blockingBindingFor(channel, sessionName);
+  if (blocking) {
+    await sendText(channel, originChatId, m().groupAlreadyExists(blocking.binding.label));
     return;
   }
 
@@ -232,9 +234,9 @@ export async function bindCurrentGroupBySid(
   }
   const label = basename(path);
   const sessionName = sessionNameFromPath(path, deps.config.projectSessionPrefix);
-  const other = otherGroupForSession(sessionName, chatId);
-  if (other) {
-    await sendText(channel, chatId, m().groupAlreadyExists(other.binding.label));
+  const blocking = await blockingBindingFor(channel, sessionName, chatId);
+  if (blocking) {
+    await sendText(channel, chatId, m().groupAlreadyExists(blocking.binding.label));
     return;
   }
   bindGroup(chatId, { workspacePath: path, sessionName, label });
@@ -282,11 +284,11 @@ export async function handleNewGroup(
     return;
   }
 
-  // One workspace ↔ one group: don't create a second group for a project that
-  // already has one.
-  const existing = bindingForSession(target.sessionName);
-  if (existing) {
-    await sendText(channel, chatId, m().groupAlreadyExists(existing.binding.label));
+  // One workspace ↔ one group: refuse only if a LIVE group owns this project;
+  // a disbanded group's stale binding is auto-cleared so rebuild proceeds.
+  const blocking = await blockingBindingFor(channel, target.sessionName);
+  if (blocking) {
+    await sendText(channel, chatId, m().groupAlreadyExists(blocking.binding.label));
     return;
   }
 
@@ -358,6 +360,52 @@ export async function handleUnbind(
 ): Promise<void> {
   if (await deniedByPolicy(channel, chatId, "unbind", chatType)) return;
   await sendText(channel, chatId, unbindGroup(chatId) ? m().groupUnbound : m().groupNotBound);
+}
+
+/** Clear a group's binding (its chat is gone / being abandoned), so the stale
+ * record can't block rebuilding a group for the same project. */
+function forgetBinding(chatId: string, reason: string): void {
+  const binding = getBinding(chatId);
+  if (!binding) return;
+  unbindGroup(chatId);
+  log.info(`group binding cleared (${reason}) chat=${chatId} label=${binding.label}`);
+}
+
+/** Whether a previously-bound group chat is still live (the bot can still read it).
+ * getChatInfo fails for a disbanded chat. Retries once so a transient API blip
+ * can't wrongly report "gone" and clear a healthy binding. */
+async function boundGroupStillLive(channel: LarkChannel, chatId: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await channel.getChatInfo(chatId);
+      return true;
+    } catch (err) {
+      log.warn(`getChatInfo failed for bound chat=${chatId} (try ${attempt + 1}): ${String(err)}`);
+      if (attempt === 0) await sleep(500);
+    }
+  }
+  return false;
+}
+
+/**
+ * The existing binding that should BLOCK creating a new group for `sessionName`
+ * (one workspace ↔ one group). Returns the binding only if its group is still
+ * live; if the group was disbanded, auto-clears the stale binding and returns null
+ * so the rebuild proceeds. Pass `excludeChatId` on the (re)bind path so a group can
+ * re-anchor to its own project.
+ */
+async function blockingBindingFor(
+  channel: LarkChannel,
+  sessionName: string,
+  excludeChatId?: string,
+): Promise<{ chatId: string; binding: GroupBinding } | null> {
+  const existing = excludeChatId
+    ? otherGroupForSession(sessionName, excludeChatId)
+    : bindingForSession(sessionName);
+  if (!existing) return null;
+  if (await boundGroupStillLive(channel, existing.chatId)) return existing;
+  forgetBinding(existing.chatId, "disbanded — detected at rebuild");
+  return null;
 }
 
 /** `/restore` — re-anchor this group to its binding. */

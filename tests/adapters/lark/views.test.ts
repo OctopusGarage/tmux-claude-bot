@@ -8,14 +8,25 @@ import {
   addRecentBySid,
   handleWsCommand,
   sendAliveList,
+  sendBrowse,
   sendCurrentProject,
+  sendDashboard,
+  sendDoctor,
+  sendFreeGroupPicker,
+  sendGroupBindPicker,
   sendGroupMenu,
   sendHistory,
+  sendInputs,
   sendLangPicker,
+  sendLogs,
+  sendOrphanList,
   sendPeek,
   sendQueueStatus,
   sendRecentList,
+  sendRecoverPreview,
+  sendSessionsList,
   sendVoiceLangPicker,
+  startOrPickAfterCreate,
 } from "../../../src/adapters/lark/views.js";
 import { projectPathToHistoryDir } from "../../../src/core/agents/claude/claude-history.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
@@ -163,7 +174,7 @@ describe("sendPeek / sendHistory record reply targets", () => {
 
     await sendPeek(channel, deps, "chat-1");
 
-    expect(deps.bridge.capturePane).toHaveBeenCalledWith("proj-peek");
+    expect(deps.bridge.capturePaneColored).toHaveBeenCalledWith("proj-peek", expect.any(Number));
     expect(channel.cards()).toHaveLength(1);
     // sendCard returns messageId "m1"; reply target must point back to the session.
     expect(resolveReplyTarget("m1")).toBe("proj-peek");
@@ -423,6 +434,18 @@ describe("addProject path allow-listing", () => {
     expect(channel.texts().some((t) => t.includes("目录不存在"))).toBe(true);
   });
 
+  it("rejects a path that exists but is a file, not a directory", async () => {
+    const channel = fakeChannel();
+    const filePath = nodePath.join(allowedRoot, "a-file.txt");
+    fs.writeFileSync(filePath, "x", "utf-8");
+    const deps = fakeDeps({ config: { cdAllowedDirs: [allowedRoot] } });
+
+    await addProject(channel, deps, "chat-1", filePath);
+
+    expect(channel.texts().some((t) => t.includes("不是目录"))).toBe(true);
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+  });
+
   it("creates an allowed project (new session)", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps({
@@ -616,4 +639,369 @@ describe("sendGroupMenu", () => {
     expect(card).not.toContain(sidA); // alpha already has a group → hidden
     fs.rmSync(root, { recursive: true, force: true });
   });
+});
+
+describe("sendOrphanList", () => {
+  it("replies the empty-text hint when no adoptable processes are found", async () => {
+    const channel = fakeChannel();
+    // In the test host no orphan claude/codex outside tmux is expected; assert
+    // the path lands on one of the two valid branches and observably replied.
+    await sendOrphanList(channel, "chat-1");
+    const repliedEmpty = channel.texts().includes("没有发现可接管的进程");
+    const repliedCard = channel.cards().length === 1;
+    expect(repliedEmpty || repliedCard).toBe(true);
+  });
+});
+
+describe("sendRecoverPreview", () => {
+  it("replies the empty hint when nothing is tracked as running", async () => {
+    const channel = fakeChannel();
+    // No running sessions are recorded in a fresh test process → plan is empty.
+    await sendRecoverPreview(channel, fakeDeps(), "chat-1");
+    expect(channel.texts()).toContain("没有需要恢复的项目。");
+    expect(channel.cards()).toHaveLength(0);
+  });
+
+  it("reports the error when planning throws", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      bridge: {
+        isPaneAlive: vi.fn(async () => {
+          throw new Error("recover boom");
+        }),
+      },
+    });
+    // Force a tracked running session so classifySession runs and throws.
+    const { markSessionRunning } = await import("../../../src/core/agents/runningSessions.js");
+    const session = "tmux_proj_recover_err";
+    setPathForSession(session, "/tmp");
+    markSessionRunning(session);
+    try {
+      await sendRecoverPreview(channel, deps, "chat-1");
+      expect(channel.texts().some((t) => t.includes("recover boom"))).toBe(true);
+    } finally {
+      const { markSessionStopped } = await import("../../../src/core/agents/runningSessions.js");
+      markSessionStopped(session);
+    }
+  });
+});
+
+describe("sendDoctor / sendDashboard", () => {
+  it("sendDoctor sends the redacted health report as text", async () => {
+    const channel = fakeChannel();
+    await sendDoctor(channel, "chat-1");
+    expect(channel.texts()).toHaveLength(1);
+    expect(channel.cards()).toHaveLength(0);
+  });
+
+  it("sendDashboard sends the dashboard as a view card", async () => {
+    const channel = fakeChannel();
+    await sendDashboard(channel, fakeDeps(), "chat-1");
+    expect(channel.cards()).toHaveLength(1);
+    expect(JSON.stringify(channel.cards())).toContain("📊 仪表盘");
+  });
+});
+
+describe("sendLogs", () => {
+  it("replies the no-context hint when there is no session and no arg", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: null });
+    await sendLogs(channel, deps, "chat-1", undefined);
+    expect(channel.texts().some((t) => t.includes("无当前项目"))).toBe(true);
+    expect(channel.cards()).toHaveLength(0);
+  });
+
+  it("renders a logs view card when a current session supplies the filter", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: "proj-logs" });
+    await sendLogs(channel, deps, "chat-1", undefined);
+    expect(channel.cards()).toHaveLength(1);
+    expect(JSON.stringify(channel.cards())).toContain("🪵 近期日志");
+    // The card's reply target points back at the current session.
+    expect(resolveReplyTarget("m1")).toBe("proj-logs");
+  });
+});
+
+describe("sendInputs", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("with no current project replies the short hint", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: null });
+    await sendInputs(channel, deps, "chat-1", 8);
+    expect(channel.texts()).toContain("无当前项目");
+    expect(channel.cards()).toHaveLength(0);
+  });
+
+  it("without a path mapping replies the no-path hint", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: "proj-inputs-no-path" });
+    await sendInputs(channel, deps, "chat-1", 8);
+    expect(channel.texts().some((t) => t.includes("缺少项目路径映射"))).toBe(true);
+  });
+
+  it("with a path but no transcript replies 'no inputs'", async () => {
+    const session = "proj-inputs-empty";
+    setPathForSession(session, "/tmp/no-such-inputs-dir-xyz");
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session });
+    await sendInputs(channel, deps, "chat-1", 8);
+    expect(channel.texts().some((t) => t.includes("没有可重发的输入"))).toBe(true);
+  });
+
+  it("with recorded inputs sends an inputs card and records the reply target", async () => {
+    const session = "proj-inputs-list";
+    const projectPath = "/proj/inputs/list";
+    const configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-inputs-"));
+    try {
+      const histDir = projectPathToHistoryDir(projectPath, configRoot);
+      fs.mkdirSync(histDir, { recursive: true });
+      const mkLine = (type: string, content: string) =>
+        JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+      fs.writeFileSync(
+        nodePath.join(histDir, "a.jsonl"),
+        `${[mkLine("user", "fix the failing test"), mkLine("assistant", "done")].join("\n")}\n`,
+        "utf-8",
+      );
+      setPathForSession(session, projectPath);
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        session,
+        configResolver: { resolveConfigRoot: vi.fn(async () => configRoot) },
+      });
+      await sendInputs(channel, deps, "chat-1", 8);
+      expect(channel.cards()).toHaveLength(1);
+      expect(JSON.stringify(channel.cards())).toContain("fix the failing test");
+      expect(resolveReplyTarget("m1")).toBe(session);
+    } finally {
+      fs.rmSync(configRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sendBrowse / group pickers", () => {
+  it("sendBrowse sends the directory-browser card", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ config: { cdAllowedDirs: ["/tmp"] } });
+    await sendBrowse(channel, deps, "chat-1");
+    expect(channel.cards()).toHaveLength(1);
+  });
+
+  it("sendGroupBindPicker sends a recent-project picker card", async () => {
+    const channel = fakeChannel();
+    await sendGroupBindPicker(channel, fakeDeps(), "chat-1");
+    expect(channel.cards()).toHaveLength(1);
+  });
+
+  it("sendFreeGroupPicker sends a recent-project picker card", async () => {
+    const channel = fakeChannel();
+    await sendFreeGroupPicker(channel, fakeDeps(), "chat-1");
+    expect(channel.cards()).toHaveLength(1);
+  });
+});
+
+describe("startOrPickAfterCreate", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("with multiple configured launch commands shows the flavor picker card", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      config: {
+        startCommands: [
+          { label: "claude", command: "bash" },
+          { label: "codex", command: "bash" },
+        ],
+      },
+    });
+    await startOrPickAfterCreate(channel, deps, "chat-1", "proj-pick");
+    expect(channel.cards()).toHaveLength(1);
+    expect(channel.texts()).toHaveLength(0);
+  });
+
+  it("with a single command and a running agent replies 'already running'", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      config: { startCommands: [{ label: "claude", command: "bash" }] },
+      agent: { checkIfRunning: vi.fn(async () => true) },
+    });
+    await startOrPickAfterCreate(channel, deps, "chat-1", "proj-already");
+    expect(channel.texts().some((t) => t.includes("已在运行中"))).toBe(true);
+  });
+
+  it("with a single command and no agent running starts it and confirms", async () => {
+    const channel = fakeChannel();
+    const start = vi.fn(async () => {});
+    const deps = fakeDeps({
+      config: { startCommands: [{ label: "claude", command: "bash" }] },
+      agent: { checkIfRunning: vi.fn(async () => false), start },
+    });
+    await startOrPickAfterCreate(channel, deps, "chat-1", "proj-fresh");
+    expect(start).toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("已用「claude」启动"))).toBe(true);
+  });
+});
+
+describe("addRecentBySid — created branch", () => {
+  let allowedRoot: string;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    allowedRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-rsid-create-"));
+  });
+  afterEach(() => fs.rmSync(allowedRoot, { recursive: true, force: true }));
+
+  it("creates the project then starts/confirms when the session does not yet exist", async () => {
+    const channel = fakeChannel();
+    const prefix = "tmux_proj_";
+    const sessionName = `tmux_proj_${allowedRoot.replace(/\//g, "-")}`;
+    const start = vi.fn(async () => {});
+    const deps = fakeDeps({
+      config: {
+        cdAllowedDirs: [allowedRoot],
+        projectSessionPrefix: prefix,
+        sessionWarmupMs: 0,
+        startCommands: [{ label: "claude", command: "bash" }],
+        claudeStartCommand: "bash",
+      },
+      bridge: { hasSession: vi.fn(async () => false) },
+      agent: { checkIfRunning: vi.fn(async () => false), start },
+    });
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
+    await appendRecentProject(allowedRoot, prefix);
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const sid = sessionShortId(sessionName);
+
+    await addRecentBySid(channel, deps, "chat-1", sid);
+
+    expect(deps.bridge.createSession).toHaveBeenCalled();
+    expect(channel.texts().some((t) => t.includes("项目已创建"))).toBe(true);
+    expect(start).toHaveBeenCalled();
+  });
+});
+
+describe("sendSessionsList", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("with no current project replies the short hint", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: null });
+    await sendSessionsList(channel, deps, "chat-1", undefined);
+    expect(channel.texts()).toContain("无当前项目");
+  });
+
+  it("without a path mapping replies the no-path hint", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: "proj-sess-no-path" });
+    await sendSessionsList(channel, deps, "chat-1", undefined);
+    expect(channel.texts().some((t) => t.includes("缺少项目路径映射"))).toBe(true);
+  });
+
+  it("with a path but no saved sessions replies 'no sessions'", async () => {
+    const session = "proj-sess-empty";
+    setPathForSession(session, "/tmp/no-such-sessions-dir-xyz");
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session });
+    await sendSessionsList(channel, deps, "chat-1", undefined);
+    expect(channel.texts().some((t) => t.includes("暂无保存的会话记录"))).toBe(true);
+  });
+
+  it("lists saved sessions (no arg) with a count title and resume hint", async () => {
+    const session = "proj-sess-list";
+    const projectPath = "/proj/sess/list";
+    const configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-sess-"));
+    try {
+      const histDir = projectPathToHistoryDir(projectPath, configRoot);
+      fs.mkdirSync(histDir, { recursive: true });
+      const mkLine = (type: string, content: string) =>
+        JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+      fs.writeFileSync(
+        nodePath.join(histDir, "deadbeef-1234-1234-1234-1234567890ab.jsonl"),
+        `${[mkLine("user", "q"), mkLine("assistant", "a")].join("\n")}\n`,
+        "utf-8",
+      );
+      setPathForSession(session, projectPath);
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        session,
+        configResolver: { resolveConfigRoot: vi.fn(async () => configRoot) },
+      });
+      await sendSessionsList(channel, deps, "chat-1", undefined);
+      const text = channel.texts().join("\n");
+      expect(text).toContain("个会话记录");
+      expect(text).toContain("/sessions");
+    } finally {
+      fs.rmSync(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("renders day-scale ages (formatAgo) for sessions older than a day", async () => {
+    const session = "proj-sess-old";
+    const projectPath = "/proj/sess/old";
+    const configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-sess-old-"));
+    try {
+      const histDir = projectPathToHistoryDir(projectPath, configRoot);
+      fs.mkdirSync(histDir, { recursive: true });
+      const mkLine = (type: string, content: string) =>
+        JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+      const file = nodePath.join(histDir, "cafef00d-1234-1234-1234-1234567890ab.jsonl");
+      fs.writeFileSync(file, `${[mkLine("user", "q"), mkLine("assistant", "a")].join("\n")}\n`);
+      // Backdate the transcript ~3 days so formatAgo takes its day-scale branch.
+      const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      fs.utimesSync(file, old, old);
+      setPathForSession(session, projectPath);
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        session,
+        configResolver: { resolveConfigRoot: vi.fn(async () => configRoot) },
+      });
+      await sendSessionsList(channel, deps, "chat-1", undefined);
+      // ~3d age rendered (formatAgo's `Xd` branch).
+      expect(channel.texts().some((t) => /\(\d+d\)/.test(t))).toBe(true);
+    } finally {
+      fs.rmSync(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("with an arg matching no saved session replies 'no sessions'", async () => {
+    const session = "proj-sess-arg-miss";
+    setPathForSession(session, "/tmp/no-such-sessions-dir-arg");
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session });
+    await sendSessionsList(channel, deps, "chat-1", "abc123");
+    expect(channel.texts().some((t) => t.includes("暂无保存的会话记录"))).toBe(true);
+  });
+
+  it("with an arg matching a saved session exits and resumes it", async () => {
+    const session = "proj-sess-resume";
+    const projectPath = "/proj/sess/resume";
+    const configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-sess-resume-"));
+    try {
+      const histDir = projectPathToHistoryDir(projectPath, configRoot);
+      fs.mkdirSync(histDir, { recursive: true });
+      const mkLine = (type: string, content: string) =>
+        JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+      const sessionId = "abcd1234-5678-90ab-cdef-1234567890ab";
+      fs.writeFileSync(
+        nodePath.join(histDir, `${sessionId}.jsonl`),
+        `${[mkLine("user", "q"), mkLine("assistant", "a")].join("\n")}\n`,
+        "utf-8",
+      );
+      setPathForSession(session, projectPath);
+      const sendExit = vi.fn(async () => {});
+      const startWithResume = vi.fn(async () => {});
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        session,
+        configResolver: { resolveConfigRoot: vi.fn(async () => configRoot) },
+        bridge: { sendExit },
+        agent: { startWithResume },
+      });
+      // sendSessionsList sleeps ~2s between exit and resume; allow real time.
+      await sendSessionsList(channel, deps, "chat-1", "abcd1234");
+      expect(sendExit).toHaveBeenCalledWith(session);
+      expect(startWithResume).toHaveBeenCalled();
+      expect(channel.texts().some((t) => t.includes("已恢复会话"))).toBe(true);
+    } finally {
+      fs.rmSync(configRoot, { recursive: true, force: true });
+    }
+  }, 10_000);
 });

@@ -1,8 +1,10 @@
+import { isAllowListed } from "../../core/infra/allow-list.js";
+
 /**
- * Drop messages from non-allowlisted Lark users. Empty allowlist = reject all
- * (mirrors the Telegram auth guard: an unconfigured bot serves nobody).
+ * Drop messages from non-allowlisted Lark users. Defers the fail-CLOSED rule to
+ * the shared {@link isAllowListed} (empty allowlist = reject all), so Telegram
+ * and Lark cannot drift on the security-critical invariant.
  */
 export function isOpenIdAllowed(openId: string, allowed: Set<string>): boolean {
-  if (!openId) return false;
-  return allowed.size > 0 && allowed.has(openId);
+  return isAllowListed(openId, allowed);
 }

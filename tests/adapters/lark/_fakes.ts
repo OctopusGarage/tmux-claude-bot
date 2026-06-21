@@ -133,6 +133,11 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     getSessionNames: vi.fn(() => [] as string[]),
     getLastProcessedAt: vi.fn(() => undefined),
     clearSession: vi.fn(),
+    // Per-item cancel/rewrite (the adapters call these on the queued-ack paths) —
+    // default no-ops so a test that doesn't exercise them never hits `undefined`.
+    cancelQueued: vi.fn(() => false),
+    setQueueAck: vi.fn(),
+    rewriteByAck: vi.fn(() => ({ kind: "not-found" }) as const),
     ...overrides.queue,
   } as unknown as FakeQueue;
 
@@ -148,6 +153,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
 
   const bridge = {
     capturePane: vi.fn(async () => "PANE"),
+    capturePaneColored: vi.fn(async () => "PANE"),
     listProjectSessions: vi.fn(async () => [] as string[]),
     sessionsCreatedAt: vi.fn(async () => new Map<string, number>()),
     hasSession: vi.fn(async () => false),
@@ -169,6 +175,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
 
   const output = {
     process: vi.fn((s: string) => s),
+    clean: vi.fn((s: string) => s),
     ...overrides.output,
   } as unknown as HandlerDeps["output"];
 

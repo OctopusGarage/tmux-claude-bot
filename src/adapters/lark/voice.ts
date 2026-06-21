@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { LarkChannel, NormalizedMessage, ResourceDescriptor } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import { transcribeWithCache } from "../../core/read/transcriber.js";
+import { transcribeWithCache, voiceFailMessage } from "../../core/read/transcriber.js";
 import { checkVoiceSupport, resolveWhisperLanguage } from "../../core/read/voice-support.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { voiceInstallCard } from "./cards.js";
@@ -54,16 +54,7 @@ export async function handleLarkVoice(
     download: (tmpPath) => downloadMessageResource(larkCfg, msg.messageId, audio.fileKey, tmpPath),
   });
   if (!outcome.ok) {
-    const m = messages("lark");
-    await sendText(
-      channel,
-      msg.chatId,
-      outcome.reason === "download"
-        ? m.voiceDownloadFailed
-        : outcome.reason === "transcribe"
-          ? m.voiceTranscribeFailed
-          : m.voiceEmpty,
-    );
+    await sendText(channel, msg.chatId, voiceFailMessage(outcome.reason, messages("lark")));
     return;
   }
   const transcribed = outcome.text;

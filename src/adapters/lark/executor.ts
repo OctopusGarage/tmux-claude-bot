@@ -1,15 +1,19 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import { executeMessage, type MessageAction } from "../../core/command/dispatch.js";
-import { enqueueMessage } from "../../core/command/enqueue.js";
-import type { PersistedMessage, QueuedMessage } from "../../core/command/queue.js";
+import { enqueueMessage, planQueuedAck } from "../../core/command/enqueue.js";
+import {
+  type PersistedMessage,
+  QueueCancelledError,
+  type QueuedMessage,
+} from "../../core/command/queue.js";
+import { restoreMessage } from "../../core/command/restore.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
-import { projectLabel } from "../../core/projects/project-label.js";
+import { labelForSession } from "../../core/projects/project-label.js";
 import { chatScope } from "../../core/projects/project-manager.js";
-import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { recoveryCard, resultCard } from "./cards.js";
+import { queueAckCard, recoveryCard, resultCard } from "./cards.js";
 import { markDone, markWorking } from "./reactions.js";
 import { sendCard, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
@@ -19,7 +23,7 @@ const log = createLogger("lark.executor");
 /** "📂 <friendly project>" tag stamped on every reply so the user can see which
  * tmux session received it — mirrors the Telegram adapter's project line. */
 function projectTag(session: string): string {
-  return messages("lark").projectTag(projectLabel(session, getPathBySession(session) ?? undefined));
+  return messages("lark").projectTag(labelForSession(session));
 }
 
 /**
@@ -34,14 +38,10 @@ export function createLarkRestoredMessage(
 ): QueuedMessage {
   const chatId = String(p.chatId);
   const session = p.sessionName ?? "";
-  return {
-    id: p.id,
-    text: p.text,
-    chatId: p.chatId,
-    sessionName: p.sessionName,
-    action: p.action,
-    channel: "lark",
-    resolve: (output: string) => {
+  return restoreMessage(
+    p,
+    "lark",
+    (output) => {
       void (async () => {
         const mid = await sendCard(
           channel,
@@ -51,7 +51,7 @@ export function createLarkRestoredMessage(
         if (mid) recordReplyTarget(mid, session);
       })();
     },
-    reject: (err: Error) => {
+    (err) => {
       void sendCard(
         channel,
         chatId,
@@ -61,7 +61,7 @@ export function createLarkRestoredMessage(
         ),
       );
     },
-  };
+  );
 }
 
 export async function resolveSession(
@@ -88,11 +88,6 @@ export async function resolveSession(
  * Enqueue any action (text, start, restart, exit) with acks.
  * Resolves the current session, enqueues the message, and sends
  * "received" / "queued" / queue-full replies.
- *
- * `onSettled` fires exactly once when the message can no longer produce a
- * result: run completed (resolve), run failed (reject), or it never entered
- * the queue (no session / queue full / deduped). Used by the text debounce
- * to unblock its scope.
  */
 export async function enqueueLarkAction(
   channel: LarkChannel,
@@ -102,11 +97,9 @@ export async function enqueueLarkAction(
   action: MessageAction,
   text: string,
   sessionOverride?: string,
-  onSettled?: () => void,
 ): Promise<void> {
   const session = await resolveSession(channel, deps, chatId, sessionOverride);
   if (!session) {
-    onSettled?.();
     return;
   }
 
@@ -123,7 +116,6 @@ export async function enqueueLarkAction(
       callbacks: {
         resolve: (output) => {
           log.info(`resolve session=${session} output_len=${output.length}`);
-          onSettled?.();
           void markDone(channel, messageId);
           void (async () => {
             // Only natural-language Claude results carry the control buttons; every
@@ -148,7 +140,12 @@ export async function enqueueLarkAction(
         },
         reject: (err) => {
           log.error(`reject session=${session} err=${err.message}`);
-          onSettled?.();
+          // A user-initiated cancel is not a failure — confirm it plainly, no
+          // start/restart recovery surface.
+          if (err instanceof QueueCancelledError) {
+            void sendText(channel, chatId, `🗑 ${err.message}\n${projectTag(session)}`);
+            return;
+          }
           // Errors often mean Claude died / isn't running — surface start/restart.
           void sendCard(
             channel,
@@ -162,25 +159,30 @@ export async function enqueueLarkAction(
       },
     },
     {
-      accepted: async (queueSizeBefore) => {
+      accepted: async (queueSizeBefore, msgId) => {
         log.info(`enqueued action=${action} session=${session} queueSizeBefore=${queueSizeBefore}`);
         void markWorking(channel, messageId);
         // Mirror Telegram's tone emoji (✅ received / ⏳ queued) so both channels
         // read the same — Feishu has no tone layer, so it's stamped here.
-        const ack =
-          queueSizeBefore === 0 ? `✅ ${m.ackReceived}` : `⏳ ${m.queuedAt(queueSizeBefore)}`;
-        await sendText(channel, chatId, `${ack}\n${tag}`);
+        const plan = planQueuedAck(queueSizeBefore, action, msgId);
+        if (plan.kind === "received") {
+          await sendText(channel, chatId, `✅ ${m.ackReceived}\n${tag}`);
+        } else if (plan.kind === "cancellable") {
+          // A still-waiting text message carries a ❌ to cancel it, and a reply to
+          // this ack rewrites it — both before it's typed in.
+          const mid = await sendCard(
+            channel,
+            chatId,
+            queueAckCard(`⏳ ${m.queuedAt(queueSizeBefore)}\n${tag}`, session, plan.msgId),
+          );
+          if (mid) deps.queue.setQueueAck(session, plan.msgId, mid);
+        } else {
+          await sendText(channel, chatId, `⏳ ${m.queuedAt(queueSizeBefore)}\n${tag}`);
+        }
       },
       full: async () => {
         log.warn(`queue full session=${session} max=${deps.queue.getMaxSize()}`);
-        onSettled?.();
         await sendText(channel, chatId, `⚠️ ${m.queueFull(deps.queue.getMaxSize())}\n${tag}`);
-      },
-      // Dropped without ever firing resolve/reject — settle now so a blocked
-      // debounce scope can't be jammed forever. The accepted ack still goes out
-      // (dedup has always pretended success to the sender).
-      duplicate: () => {
-        onSettled?.();
       },
     },
   );

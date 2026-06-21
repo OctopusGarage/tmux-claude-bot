@@ -8,11 +8,19 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 const logDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-logs-lark-"));
 process.env.TCB_LOG_DIR = logDir;
 
+// Write into TODAY's daily file: queryLogs defaults to the most-recent file
+// (readRecords(1)), and the live logger creates a tcb-<today>.jsonl in this same
+// dir during the test — a fixture stamped with a fixed past date would no longer
+// be "the last file" and would be skipped. Use the logger's LOCAL-date convention
+// (logger.ts: getFullYear/getMonth/getDate), not UTC, or the two diverge across a
+// timezone day boundary and the logger's later file wins the readRecords(1) pick.
+const now = new Date();
+const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
 const mkRec = (o: Record<string, unknown>): string =>
-  JSON.stringify({ ts: "2026-06-18T01:00:00Z", level: "INFO", msg: "x", ...o });
+  JSON.stringify({ ts: now.toISOString(), level: "INFO", msg: "x", ...o });
 
 fs.writeFileSync(
-  nodePath.join(logDir, "tcb-20260618.jsonl"),
+  nodePath.join(logDir, `tcb-${stamp}.jsonl`),
   `${[
     mkRec({ level: "WARN", component: "cmp", msg: "careful-now", session: "proj-1" }),
     mkRec({ level: "ERROR", component: "cmp", msg: "boom-here", session: "proj-1" }),

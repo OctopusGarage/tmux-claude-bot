@@ -112,9 +112,44 @@ describe("group lifecycle (stateful scenario)", () => {
     await handleUnbind(channel, deps, groupId, "group");
     expect(getBinding(groupId)).toBeNull();
     const sentBefore = channel.sent.length;
+    const enqueuedBefore = deps.queue.enqueued.length;
     await handler(fakeMessage({ chatType: "group" as never, chatId: groupId, content: "ghost" }));
     expect(deps.bridge.createSession).toHaveBeenCalledTimes(2); // no recreate
     expect(channel.sent.length).toBe(sentBefore); // silent
-    expect(deps.queue.enqueued).toHaveLength(0);
+    expect(deps.queue.enqueued).toHaveLength(enqueuedBefore); // ghost not enqueued (inert)
+  });
+
+  it("a disbanded group's stale binding doesn't block rebuilding the same project", async () => {
+    const { deps } = statefulDeps();
+    const channel = fakeChannel();
+
+    createBoundChat.mockResolvedValueOnce({ chatId: "oc_old", name: basename(dir) });
+    await handleNewGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+    expect(getBinding("oc_old")).toBeTruthy();
+
+    // The group is disbanded out-of-band → getChatInfo can no longer read it.
+    channel.getChatInfo = vi.fn(async () => {
+      throw new Error("chat not found");
+    });
+
+    // Rebuilding a group for the SAME project is allowed: the stale binding is
+    // auto-cleared, a fresh group is created (not blocked by "already exists").
+    createBoundChat.mockResolvedValueOnce({ chatId: "oc_new", name: basename(dir) });
+    await handleNewGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+    expect(getBinding("oc_new")).toBeTruthy(); // rebuilt
+    expect(getBinding("oc_old")).toBeNull(); // stale binding gone
+  });
+
+  it("a LIVE group still blocks a second group for the same project", async () => {
+    const { deps } = statefulDeps();
+    const channel = fakeChannel(); // getChatInfo succeeds → group reads as live
+
+    createBoundChat.mockResolvedValueOnce({ chatId: "oc_a", name: basename(dir) });
+    await handleNewGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+    createBoundChat.mockClear();
+
+    await handleNewGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
+    expect(createBoundChat).not.toHaveBeenCalled(); // refused — no second chat created
+    expect(getBinding("oc_a")).toBeTruthy();
   });
 });

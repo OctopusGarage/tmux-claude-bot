@@ -6,7 +6,12 @@ import {
   copyAttachCommand,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
-import { type MessageAction, performRestart, performStart } from "../../core/command/dispatch.js";
+import {
+  type MessageAction,
+  performRestart,
+  performStart,
+  startDisposition,
+} from "../../core/command/dispatch.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import type { ForeignAction } from "../../core/infra/status-install.js";
@@ -18,7 +23,7 @@ import {
   requestNewFolder,
   resolveBrowseAction,
 } from "../../core/projects/dir-browser.js";
-import { getBinding, isProjectGroup } from "../../core/projects/group-bindings.js";
+import { getBinding, isProjectGroup, unbindGroup } from "../../core/projects/group-bindings.js";
 import { projectLabel } from "../../core/projects/project-label.js";
 import { chatScope } from "../../core/projects/project-manager.js";
 import {
@@ -29,6 +34,7 @@ import {
   switchToProject,
 } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { DEFAULT_INPUTS, lookupInput } from "../../core/read/recent-inputs.js";
 import {
   checkVoiceSupport,
   installVoice,
@@ -38,6 +44,7 @@ import {
   setWhisperLanguage,
   VOICE_LANGS,
 } from "../../core/read/voice-support.js";
+import { recoverProjects } from "../../core/recovery/recover.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -70,14 +77,17 @@ import {
   sendAliveList,
   sendBrowse,
   sendCurrentProject,
+  sendDashboard,
   sendFreeGroupPicker,
   sendGroupBindPicker,
   sendGroupMenu,
   sendHistory,
+  sendInputs,
   sendOrphanList,
   sendPeek,
   sendQueueStatus,
   sendRecentList,
+  sendRecoverPreview,
   sendStatusInstall,
 } from "./views.js";
 
@@ -93,6 +103,11 @@ type CardValue =
       lang?: string;
       idx?: number;
       pid?: number;
+      chatId?: string;
+      token?: string;
+      /** qcancel: the session + queued-message id to cancel. */
+      s?: string;
+      id?: string;
     }
   | undefined;
 
@@ -235,6 +250,51 @@ async function handleMakeGroup(ctx: CardCtx): Promise<void> {
   await makeBoundGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
 }
 
+/** Re-run an input picked from /inputs: re-send the exact prompt to its session.
+ * The text action's precondition gate handles a dead agent. */
+/** ❌ on a "queued" ack: cancel that still-waiting message. On success the queue's
+ * (cancel-aware) reject closure posts the plain confirmation; if it's already gone
+ * (dispatched), confirm here anyway so the tap is never silent. */
+async function handleQueueCancel({ channel, deps, evt, value }: CardCtx): Promise<void> {
+  const m = messages("lark");
+  const session = value?.s;
+  const id = value?.id;
+  if (!session || !id) return;
+  // On success the queue's (cancel-aware) reject closure posts the 🗑 confirmation;
+  // on FALSE the item is already gone (dispatched, or a deduped phantom), so say so
+  // — never falsely confirm a cancellation that didn't happen.
+  if (!deps.queue.cancelQueued(session, id, m.queueItemCancelled)) {
+    await sendText(channel, evt.chatId, m.queueItemGone);
+  }
+}
+
+async function handleInputRedo({ channel, evt, value }: CardCtx): Promise<void> {
+  if (typeof value?.token !== "string" || typeof value?.idx !== "number") return;
+  const found = lookupInput(value.token, value.idx);
+  if (!found) {
+    await sendText(channel, evt.chatId, messages("lark").inputsExpired);
+    return;
+  }
+  // Don't auto-send — hand the verbatim prompt back as an editable draft so the user
+  // can tweak it before sending. Raw `{ text }` (not sendText) skips the markdown +
+  // tildeify pass, keeping the text EXACTLY as typed. Aligned with Telegram.
+  await channel.send(evt.chatId, { text: found.prompt });
+}
+
+/** Escape hatch from the private-chat group overview: clear a binding by its chat
+ * id (the group may be gone / left), so the project can be rebuilt. p2p only. */
+async function handleUnbindGroup(ctx: CardCtx): Promise<void> {
+  const { channel, deps, evt, value, chatKind } = ctx;
+  if (chatKind !== "p2p" || typeof value?.chatId !== "string") return;
+  const ok = unbindGroup(value.chatId);
+  await sendText(
+    channel,
+    evt.chatId,
+    ok ? messages("lark").groupUnbound : messages("lark").groupNotBound,
+  );
+  await sendGroupMenu(channel, deps, evt.chatId); // refresh so the cleared group disappears
+}
+
 /** Create a free parallel group — private chat only, mirroring makegroup's gate. */
 async function handleMakeFreeGroup(ctx: CardCtx): Promise<void> {
   const { channel, deps, evt, value } = ctx;
@@ -260,9 +320,18 @@ async function pickAndLaunch(
   if (!pick) return;
   const session = await resolveSession(channel, deps, evt.chatId);
   if (!session) return;
-  if (restart) await performRestart(deps, session, pick.command);
-  else await performStart(deps, session, pick.command);
-  await sendText(channel, evt.chatId, messages("lark").agentStartedWith(pick.label));
+  let msg: string;
+  if (restart) {
+    await performRestart(deps, session, pick.command);
+    msg = messages("lark").agentStartedWith(pick.label);
+  } else {
+    const r = await performStart(deps, session, pick.command);
+    msg =
+      r === "already-running"
+        ? messages("lark").agentAlreadyRunning
+        : messages("lark").agentStartedWith(pick.label);
+  }
+  await sendText(channel, evt.chatId, msg);
 }
 
 async function handleStartPick(ctx: CardCtx): Promise<void> {
@@ -288,6 +357,9 @@ async function handleAdoptShow({ channel, evt, value, chatKind }: CardCtx): Prom
 /** Confirmed adopt: SIGINT→SIGTERM→resume via the shared service, then report. */
 async function handleAdoptExec({ channel, deps, evt, value, chatKind }: CardCtx): Promise<void> {
   if (chatKind !== "p2p" || typeof value?.pid !== "number") return;
+  // Acknowledge before the (multi-second) takeover so the user isn't left waiting
+  // on a dead button — parity with the Telegram toast.
+  await sendText(channel, evt.chatId, messages("lark").adoptWorking);
   const result = await adoptOrphan(value.pid, {
     bridge: deps.bridge,
     configResolver: deps.configResolver,
@@ -305,6 +377,27 @@ async function handleAdoptExec({ channel, deps, evt, value, chatKind }: CardCtx)
     channel,
     evt.chatId,
     adoptDoneCard(outcome.body, sessionShortId(outcome.sessionName)),
+  );
+}
+
+/** Confirmed reboot recovery: recreate every gone session + relaunch its agent. */
+async function handleRecoverExec({ channel, deps, evt, chatKind }: CardCtx): Promise<void> {
+  if (chatKind !== "p2p") return;
+  // Recovery recreates + relaunches N sessions (can take 10-30s); acknowledge first
+  // so the user isn't staring at a silent chat — parity with the Telegram toast.
+  await sendText(channel, evt.chatId, messages("lark").recoverWorking);
+  const res = await recoverProjects(deps);
+  await sendText(
+    channel,
+    evt.chatId,
+    res.busy
+      ? messages("lark").recoverBusy
+      : messages("lark").recoverDone(
+          res.launched.length,
+          res.shellOnly.length,
+          res.alreadyAlive.length,
+          res.failed.length,
+        ),
   );
 }
 
@@ -386,10 +479,15 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   noop: async () => {},
   peek: ({ channel, deps, evt }) => sendPeek(channel, deps, evt.chatId),
   history: ({ channel, deps, evt }) => sendHistory(channel, deps, evt.chatId, 0),
+  inputs: ({ channel, deps, evt }) => sendInputs(channel, deps, evt.chatId, DEFAULT_INPUTS),
   listalive: ({ channel, deps, evt }) => sendAliveList(channel, deps, evt.chatId),
   recent: ({ channel, deps, evt }) => sendRecentList(channel, deps, evt.chatId),
   current: ({ channel, deps, evt }) => sendCurrentProject(channel, deps, evt.chatId),
   queuestatus: ({ channel, deps, evt }) => sendQueueStatus(channel, deps, evt.chatId),
+  // Host-wide overview — restrict to 1:1 chats (mirrors the /dashboard slash gate;
+  // the button is only rendered on non-group cards too).
+  dashboard: ({ channel, deps, evt, chatKind }) =>
+    chatKind === "p2p" ? sendDashboard(channel, deps, evt.chatId) : Promise.resolve(),
   // Voice recognition-language picker (mirrors Telegram /voice_lang).
   voicelangmenu: async ({ channel, evt }) => {
     await sendCard(channel, evt.chatId, voiceLangCard(resolveWhisperLanguage("lark")));
@@ -431,6 +529,13 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
     await sendText(channel, evt.chatId, messages("lark").adoptCancelled);
   },
   adoptattach: handleAdoptAttach,
+  // --- Reboot recovery (mirrors Telegram /recover) ---
+  recover: ({ channel, deps, evt, chatKind }) =>
+    chatKind === "p2p" ? sendRecoverPreview(channel, deps, evt.chatId) : Promise.resolve(),
+  recovergo: handleRecoverExec,
+  recovercancel: async ({ channel, evt }) => {
+    await sendText(channel, evt.chatId, messages("lark").recoverCancelled);
+  },
   // --- Project-group buttons (no typing needed) ---
   groupmenu: ({ channel, deps, evt }) => sendGroupMenu(channel, deps, evt.chatId),
   freegroupmenu: ({ channel, deps, evt }) => sendFreeGroupPicker(channel, deps, evt.chatId),
@@ -439,9 +544,12 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   bindhere: handleBindHere,
   rebind: ({ channel, deps, evt }) => sendGroupBindPicker(channel, deps, evt.chatId),
   unbind: ({ channel, deps, evt, chatKind }) => handleUnbind(channel, deps, evt.chatId, chatKind),
+  unbindgroup: handleUnbindGroup,
   restore: ({ channel, deps, evt }) => handleRestore(channel, deps, evt.chatId),
   startpick: handleStartPick,
   restartpick: handleRestartPick,
+  inputredo: handleInputRedo,
+  qcancel: handleQueueCancel,
 };
 
 /**
@@ -484,12 +592,25 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       }
       const chatKind: ChatKind = isP2p ? "p2p" : "group";
 
-      // Multi-command start/restart: show a picker instead of using the default.
-      // With a single start command, fall through to the queued-action routing.
-      if ((cmd === "start" || cmd === "restart") && deps.config.startCommands.length > 1) {
+      // start/restart: reject a start when an agent is already running (no
+      // pointless picker), else show the flavor picker (multi-command) or fall
+      // through to the queued-action routing (single command).
+      if (cmd === "start" || cmd === "restart") {
         const mode = cmd === "restart" ? "restart" : "start";
-        await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
-        return;
+        const startSession = await resolveSession(channel, deps, evt.chatId);
+        const disp = startSession
+          ? await startDisposition(deps, startSession, mode)
+          : deps.config.startCommands.length > 1
+            ? "pick"
+            : "go";
+        if (disp === "already-running") {
+          await sendText(channel, evt.chatId, messages("lark").agentAlreadyRunning);
+          return;
+        }
+        if (disp === "pick") {
+          await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
+          return;
+        }
       }
 
       const handler = CARD_HANDLERS[cmd];

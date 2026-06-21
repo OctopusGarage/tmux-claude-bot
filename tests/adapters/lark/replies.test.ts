@@ -22,6 +22,42 @@ describe("sendText", () => {
     vi.mocked(channel.send).mockRejectedValueOnce("plain string error");
     await expect(sendText(channel, "chat-1", "hi")).resolves.toBeUndefined();
   });
+
+  it("retries a send_timeout (the SDK passes it through), then succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      const channel = fakeChannel();
+      // LarkChannelError shape: a `code` from the SDK's fixed vocabulary.
+      vi.mocked(channel.send).mockRejectedValueOnce(
+        Object.assign(new Error("send timed out"), { code: "send_timeout" }),
+      );
+      const p = sendText(channel, "chat-1", "hi");
+      await vi.advanceTimersByTimeAsync(600); // backoff before the retry
+      await p;
+      expect(channel.send).toHaveBeenCalledTimes(2); // retried
+      expect(channel.texts()).toContain("hi");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT retry rate_limited (the SDK already retried+exhausted it)", async () => {
+    const channel = fakeChannel();
+    vi.mocked(channel.send).mockRejectedValueOnce(
+      Object.assign(new Error("rate limited"), { code: "rate_limited" }),
+    );
+    await sendText(channel, "chat-1", "hi");
+    expect(channel.send).toHaveBeenCalledTimes(1); // no re-retry — would just hammer the limit
+  });
+
+  it("does NOT retry a permanent error (permission_denied)", async () => {
+    const channel = fakeChannel();
+    vi.mocked(channel.send).mockRejectedValueOnce(
+      Object.assign(new Error("no permission"), { code: "permission_denied" }),
+    );
+    await sendText(channel, "chat-1", "hi");
+    expect(channel.send).toHaveBeenCalledTimes(1); // permanent — fail fast
+  });
 });
 
 describe("sendCard", () => {

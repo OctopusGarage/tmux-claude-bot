@@ -50,12 +50,18 @@ describe("resultCard", () => {
       "esc",
       "enter",
       "interrupt",
+      "tab",
+      "restart",
       "clear",
       "compact",
-      "restart",
+      "exit",
       "peek",
       "history",
+      "inputs",
+      "status",
       "queuestatus",
+      "dashboard",
+      "recover",
       "listalive",
       "adoptlist",
       "current",
@@ -74,11 +80,15 @@ describe("resultCard", () => {
       "esc",
       "enter",
       "interrupt",
+      "tab",
+      "restart",
       "clear",
       "compact",
-      "restart",
+      "exit",
       "peek",
       "history",
+      "inputs",
+      "status",
       "queuestatus",
       "current",
       "help",
@@ -96,12 +106,18 @@ describe("viewCard", () => {
       "esc",
       "enter",
       "interrupt",
+      "tab",
+      "restart",
       "clear",
       "compact",
-      "restart",
+      "exit",
       "peek",
       "history",
+      "inputs",
+      "status",
       "queuestatus",
+      "dashboard",
+      "recover",
       "listalive",
       "adoptlist",
       "current",
@@ -112,6 +128,12 @@ describe("viewCard", () => {
   it("uses the （空） placeholder for empty body", () => {
     const card = cardOf(viewCard("t", ""));
     expect(mds(card).some((d) => d.content === "（空）")).toBe(true);
+  });
+
+  it("idle (running=false): swaps control keys for start/projects/recover/help", () => {
+    const card = cardOf(viewCard("👁 tmux 画面", "pane body", false, false));
+    expect(allCmds(card)).toEqual(["start", "listalive", "recover", "help"]);
+    expect(allCmds(card)).not.toContain("esc"); // no dead control keys when idle
   });
 });
 
@@ -172,22 +194,27 @@ describe("helpCard", () => {
     expect(card.header?.title?.content).toBe("使用帮助");
 
     expect(allCmds(card)).toEqual([
-      "enter",
+      // Session rows (canonical control order: interrupts → lifecycle → nav → start/status)
       "esc",
+      "enter",
       "interrupt",
       "restart",
       "clear",
       "compact",
+      "exit",
       "up",
       "down",
       "left",
       "right",
       "tab",
-      "status",
       "start",
-      "exit",
+      "status",
+      // Projects / views (unchanged in this stage)
+      "dashboard",
+      "recover",
       "peek",
       "history",
+      "inputs",
       "queuestatus",
       "addproject",
       "listalive",

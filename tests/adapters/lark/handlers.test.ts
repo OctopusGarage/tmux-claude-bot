@@ -41,6 +41,37 @@ describe("makeMessageHandler", () => {
     expect(deps.queue.enqueued).toHaveLength(0);
   });
 
+  it("reply to a queued ack rewrites that message in place (no new enqueue)", async () => {
+    const channel = fakeChannel();
+    // rewriteByAck resolves ack "ack-1" → its item and rewrites it in one pass.
+    const rewriteByAck = vi.fn(() => ({ kind: "rewritten", session: "proj-1" }) as const);
+    const deps = fakeDeps({ session: "proj-1", queue: { rewriteByAck } });
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(fakeMessage({ content: "use TypeScript instead", replyToMessageId: "ack-1" }));
+
+    // Scoped by the ack's chat (fakeMessage's default chatId), not just the ack id.
+    expect(rewriteByAck).toHaveBeenCalledWith("ack-1", "chat-1", "use TypeScript instead");
+    expect(deps.queue.enqueued).toHaveLength(0); // replaced in place, not re-queued
+    expect(channel.texts().some((t) => t.includes("改写"))).toBe(true);
+  });
+
+  it("reply to a queued ack is TERMINAL when the rewrite is dedup-blocked (no silent re-enqueue)", async () => {
+    const channel = fakeChannel();
+    // new text duplicates another queued item → blocked
+    const rewriteByAck = vi.fn(() => ({ kind: "duplicate", session: "proj-1" }) as const);
+    const deps = fakeDeps({ session: "proj-1", queue: { rewriteByAck } });
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(fakeMessage({ content: "same as another", replyToMessageId: "ack-1" }));
+
+    expect(rewriteByAck).toHaveBeenCalled();
+    // Must report the rejection, NOT fall through and re-enqueue the edit (which
+    // dedup would then drop, losing it silently).
+    expect(deps.queue.enqueued).toHaveLength(0);
+    expect(channel.texts().some((t) => t.includes("忽略"))).toBe(true);
+  });
+
   it("ignores non-p2p chats", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
@@ -88,116 +119,79 @@ describe("makeMessageHandler", () => {
     expect(channel.texts()).toContain("暂仅支持文本和语音消息");
   });
 
-  it("enqueues plain text as a 'text' action after the debounce window", async () => {
-    vi.useFakeTimers();
-    try {
-      const channel = fakeChannel();
-      const deps = fakeDeps();
-      const handler = makeMessageHandler(channel, deps);
+  it("enqueues plain text as a 'text' action immediately (no debounce, like Telegram)", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
 
-      await handler(fakeMessage({ content: "do something" }));
-      // Inside the quiet window nothing is enqueued yet.
-      expect(deps.queue.enqueued).toHaveLength(0);
+    await handler(fakeMessage({ content: "do something" }));
 
-      await vi.advanceTimersByTimeAsync(600);
-      expect(deps.queue.enqueued).toHaveLength(1);
-      expect(deps.queue.enqueued[0]?.action).toBe("text");
-      expect(deps.queue.enqueued[0]?.text).toBe("do something");
-      expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-1");
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]?.action).toBe("text");
+    expect(deps.queue.enqueued[0]?.text).toBe("do something");
+    expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-1");
   });
 
-  it("merges rapid-fire texts into a single prompt", async () => {
-    vi.useFakeTimers();
-    try {
-      const channel = fakeChannel();
-      const deps = fakeDeps();
-      const handler = makeMessageHandler(channel, deps);
+  it("enqueues each text SEPARATELY (no merge) — aligned with Telegram", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
 
-      await handler(fakeMessage({ content: "first line" }));
-      await vi.advanceTimersByTimeAsync(200);
-      await handler(fakeMessage({ content: "second line" }));
-      await vi.advanceTimersByTimeAsync(600);
+    await handler(fakeMessage({ content: "first line" }));
+    await handler(fakeMessage({ content: "second line" }));
 
-      expect(deps.queue.enqueued).toHaveLength(1);
-      expect(deps.queue.enqueued[0]?.text).toBe("first line\nsecond line");
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(deps.queue.enqueued).toHaveLength(2);
+    expect(deps.queue.enqueued[0]?.text).toBe("first line");
+    expect(deps.queue.enqueued[1]?.text).toBe("second line");
   });
 
-  it("texts sent during an active run accumulate and land as ONE follow-up prompt", async () => {
-    vi.useFakeTimers();
-    try {
-      const channel = fakeChannel();
-      const deps = fakeDeps();
-      const handler = makeMessageHandler(channel, deps);
+  it("texts sent during an active run enqueue SEPARATELY and in order (not held/merged)", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
 
-      // First message flushes and starts a run (resolve not called yet).
-      await handler(fakeMessage({ content: "kick off" }));
-      await vi.advanceTimersByTimeAsync(600);
-      expect(deps.queue.enqueued).toHaveLength(1);
+    // First message starts a run (resolve not called yet).
+    await handler(fakeMessage({ content: "kick off" }));
+    expect(deps.queue.enqueued).toHaveLength(1);
 
-      // Messages during the run must NOT flush, however long it takes.
-      await handler(fakeMessage({ content: "also check tests" }));
-      await vi.advanceTimersByTimeAsync(1800);
-      await handler(fakeMessage({ content: "and update docs" }));
-      await vi.advanceTimersByTimeAsync(1800);
-      expect(deps.queue.enqueued).toHaveLength(1);
+    // Messages sent DURING the run each land as their own queue item — they do
+    // NOT wait for the run to settle and are NEVER merged into it. The per-session
+    // FIFO serializes them after the running one.
+    await handler(fakeMessage({ content: "also check tests" }));
+    expect(deps.queue.enqueued).toHaveLength(2);
+    expect(deps.queue.enqueued[1]?.text).toBe("also check tests");
 
-      // Run ends → fresh quiet window → one merged follow-up prompt.
-      deps.queue.resolveLast("done");
-      await vi.advanceTimersByTimeAsync(600);
-      expect(deps.queue.enqueued).toHaveLength(2);
-      expect(deps.queue.enqueued[1]?.text).toBe("also check tests\nand update docs");
-    } finally {
-      vi.useRealTimers();
-    }
+    await handler(fakeMessage({ content: "and update docs" }));
+    expect(deps.queue.enqueued).toHaveLength(3);
+    expect(deps.queue.enqueued[2]?.text).toBe("and update docs");
   });
 
-  it("a rejected run also unblocks the debounce window", async () => {
-    vi.useFakeTimers();
-    try {
-      const channel = fakeChannel();
-      const deps = fakeDeps();
-      const handler = makeMessageHandler(channel, deps);
+  it("a failed run does not jam later messages (they still enqueue)", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
 
-      await handler(fakeMessage({ content: "kick off" }));
-      await vi.advanceTimersByTimeAsync(600);
-      expect(deps.queue.enqueued).toHaveLength(1);
+    await handler(fakeMessage({ content: "kick off" }));
+    expect(deps.queue.enqueued).toHaveLength(1);
+    deps.queue.rejectLast(new Error("claude died"));
 
-      await handler(fakeMessage({ content: "follow up" }));
-      deps.queue.rejectLast(new Error("claude died"));
-      await vi.advanceTimersByTimeAsync(600);
-
-      expect(deps.queue.enqueued).toHaveLength(2);
-      expect(deps.queue.enqueued[1]?.text).toBe("follow up");
-    } finally {
-      vi.useRealTimers();
-    }
+    await handler(fakeMessage({ content: "follow up" }));
+    expect(deps.queue.enqueued).toHaveLength(2);
+    expect(deps.queue.enqueued[1]?.text).toBe("follow up");
   });
 
-  it("a flush with no current session does not jam later messages", async () => {
-    vi.useFakeTimers();
-    try {
-      const channel = fakeChannel();
-      const deps = fakeDeps({ session: null });
-      const handler = makeMessageHandler(channel, deps);
+  it("a no-current-session message still handles later messages", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: null });
+    const handler = makeMessageHandler(channel, deps);
 
-      await handler(fakeMessage({ content: "first" }));
-      await vi.advanceTimersByTimeAsync(600);
-      const cardsAfterFirst = channel.cards().length;
-      expect(cardsAfterFirst).toBeGreaterThan(0); // recovery card
+    await handler(fakeMessage({ content: "first" }));
+    const cardsAfterFirst = channel.cards().length;
+    expect(cardsAfterFirst).toBeGreaterThan(0); // recovery card
 
-      // The early-return path must not leave the scope blocked forever.
-      await handler(fakeMessage({ content: "second" }));
-      await vi.advanceTimersByTimeAsync(600);
-      expect(channel.cards().length).toBeGreaterThan(cardsAfterFirst);
-    } finally {
-      vi.useRealTimers();
-    }
+    // The no-session early return must not break subsequent messages.
+    await handler(fakeMessage({ content: "second" }));
+    expect(channel.cards().length).toBeGreaterThan(cardsAfterFirst);
   });
 
   it("ignores blank text (no enqueue)", async () => {
@@ -262,7 +256,7 @@ describe("makeMessageHandler", () => {
 
       await handler(fakeMessage({ content: "/peek" }));
 
-      expect(deps.bridge.capturePane).toHaveBeenCalledWith("proj-1");
+      expect(deps.bridge.capturePaneColored).toHaveBeenCalledWith("proj-1", expect.any(Number));
       expect(channel.cards()).toHaveLength(1);
     });
 
@@ -400,22 +394,16 @@ describe("makeMessageHandler", () => {
   });
 
   it("a reply to a session-bound bot message overrides the current session", async () => {
-    vi.useFakeTimers();
-    try {
-      const channel = fakeChannel();
-      const deps = fakeDeps({ session: "proj-current" });
-      const handler = makeMessageHandler(channel, deps);
+    const channel = fakeChannel();
+    const deps = fakeDeps({ session: "proj-current" });
+    const handler = makeMessageHandler(channel, deps);
 
-      recordReplyTarget("bot-msg-77", "proj-target");
-      await handler(fakeMessage({ content: "follow up", replyToMessageId: "bot-msg-77" }));
-      await vi.advanceTimersByTimeAsync(600);
+    recordReplyTarget("bot-msg-77", "proj-target");
+    await handler(fakeMessage({ content: "follow up", replyToMessageId: "bot-msg-77" }));
 
-      expect(deps.queue.enqueued).toHaveLength(1);
-      expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-target");
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-target");
 
-      removeReplyTargetSession("proj-target");
-    } finally {
-      vi.useRealTimers();
-    }
+    removeReplyTargetSession("proj-target");
   });
 });

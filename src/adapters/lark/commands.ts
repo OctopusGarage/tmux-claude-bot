@@ -9,12 +9,14 @@ export const QUEUED = getLarkQueued();
 export type ViewName =
   | "peek"
   | "history"
+  | "inputs"
   | "listalive"
   | "recent"
   | "queuestatus"
   | "current"
   | "addproject"
   | "adopt"
+  | "recover"
   | "statusinstall"
   | "voicelang"
   | "uilang"
@@ -22,6 +24,7 @@ export type ViewName =
   | "sessions"
   | "logs"
   | "dashboard"
+  | "sysload"
   | "doctor"
   | "newgroup"
   | "newfreegroup"
@@ -35,12 +38,14 @@ export type ViewName =
 const VIEW_COMMANDS: Record<string, ViewName> = {
   peek: "peek",
   history: "history",
+  inputs: "inputs",
   list_alive_projects: "listalive",
   list_recent_projects: "recent",
   queue_status: "queuestatus",
   current_project: "current",
   add_project: "addproject",
   adopt: "adopt",
+  recover: "recover",
   status_install: "statusinstall",
   voice_lang: "voicelang",
   lang: "uilang",
@@ -48,6 +53,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   sessions: "sessions",
   logs: "logs",
   dashboard: "dashboard",
+  sysload: "sysload",
   doctor: "doctor",
   newgroup: "newgroup",
   newfreegroup: "newfreegroup",

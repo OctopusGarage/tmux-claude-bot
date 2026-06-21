@@ -1,12 +1,13 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
-import { PendingQueue } from "../../core/command/pending-queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { createSubfolder, isAwaitingFolderName } from "../../core/projects/dir-browser.js";
 import { reconcileGroupBinding } from "../../core/projects/group-binding-ops.js";
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
 import { chatScope } from "../../core/projects/project-manager.js";
+import { parseInputsLimit } from "../../core/read/recent-inputs.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
+import { parsePeekLines } from "../../core/session/output.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
@@ -31,29 +32,22 @@ import {
   sendDashboard,
   sendDoctor,
   sendHistory,
+  sendInputs,
   sendLangPicker,
   sendLogs,
   sendOrphanList,
   sendPeek,
   sendQueueStatus,
   sendRecentList,
+  sendRecoverPreview,
   sendSessionsList,
   sendStatusInstall,
+  sendSysload,
   sendVoiceLangPicker,
 } from "./views.js";
 import { handleLarkVoice } from "./voice.js";
 
 const log = createLogger("lark.handlers");
-
-/** Quiet window for merging rapid-fire plain-text messages into one prompt. */
-const TEXT_DEBOUNCE_MS = 600;
-
-interface PendingText {
-  chatId: string;
-  messageId: string;
-  text: string;
-  replySession: string | undefined;
-}
 
 /**
  * Build the channel `message` handler. p2p text messages are parsed for
@@ -61,35 +55,6 @@ interface PendingText {
  */
 export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
   const allowed = deps.config.lark?.allowedOpenIds ?? new Set<string>();
-
-  // Plain-text messages debounce briefly so a thought split across several
-  // quick sends lands in Claude as ONE prompt. Scope includes the reply
-  // target — replies routed to different sessions must never merge.
-  // Commands and voice bypass this (parsed before reaching the queue).
-  //
-  // While a flushed batch is running, the scope is blocked: texts sent during
-  // the run accumulate and land as ONE follow-up prompt when it settles,
-  // instead of one Claude turn per message.
-  const pendingTexts = new PendingQueue<PendingText>(TEXT_DEBOUNCE_MS, async (scope, batch) => {
-    const first = batch[0];
-    const text = batch.map((b) => b.text).join("\n");
-    pendingTexts.block(scope);
-    try {
-      await enqueueLarkAction(
-        channel,
-        deps,
-        first.chatId,
-        first.messageId,
-        "text",
-        text,
-        first.replySession,
-        () => pendingTexts.unblock(scope),
-      );
-    } catch (err) {
-      pendingTexts.unblock(scope); // never leave the scope jammed
-      throw err;
-    }
-  });
 
   const handle = async (msg: NormalizedMessage): Promise<void> =>
     runWithLogContext({ traceId: newTraceId(), channel: "lark", chatId: msg.chatId }, async () => {
@@ -125,6 +90,22 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
           if (r.status === "restored") {
             await sendText(channel, msg.chatId, messages("lark").groupRestored(r.label));
           }
+        }
+      }
+
+      // Reply to a "已排队" ack with new text → rewrite that still-waiting message
+      // in place. TERMINAL unless it wasn't one of our acks (mirrors Telegram): a
+      // rewrite blocked by dedup is reported, never silently re-enqueued.
+      if (msg.replyToMessageId && msg.rawContentType === "text") {
+        const newText = (msg.content ?? "").trim();
+        const rw = newText
+          ? deps.queue.rewriteByAck(msg.replyToMessageId, msg.chatId, newText)
+          : ({ kind: "not-found" } as const);
+        if (rw.kind !== "not-found") {
+          const lm = messages("lark");
+          const out = rw.kind === "rewritten" ? lm.queueItemRewritten : lm.duplicateIgnored;
+          await sendText(channel, msg.chatId, out);
+          return;
         }
       }
 
@@ -213,7 +194,10 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         case "view":
           switch (parsed.name) {
             case "peek":
-              await sendPeek(channel, deps, msg.chatId);
+              await sendPeek(channel, deps, msg.chatId, parsePeekLines(parsed.arg));
+              break;
+            case "inputs":
+              await sendInputs(channel, deps, msg.chatId, parseInputsLimit(parsed.arg));
               break;
             case "history": {
               // Mirror Telegram: `/history` = latest (index 0); `/history N` shows
@@ -242,6 +226,10 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               // Global host op — only in 1:1 chats (a bound group is pinned to one
               // project, so cross-project adoption doesn't belong there).
               if (msg.chatType === "p2p") await sendOrphanList(channel, msg.chatId);
+              break;
+            case "recover":
+              // Reboot recovery is a host-wide op — 1:1 chats only (mirrors /adopt).
+              if (msg.chatType === "p2p") await sendRecoverPreview(channel, deps, msg.chatId);
               break;
             case "statusinstall":
               if (msg.chatType === "p2p") await sendStatusInstall(channel, msg.chatId);
@@ -274,6 +262,10 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               // Host-wide system info (every session across the host) — restrict to
               // 1:1 chats with the allow-listed owner, never to group members.
               if (msg.chatType === "p2p") await sendDashboard(channel, deps, msg.chatId);
+              break;
+            case "sysload":
+              // Machine load/heat — host-wide, p2p owner only (same gate as dashboard).
+              if (msg.chatType === "p2p") await sendSysload(channel, msg.chatId);
               break;
             case "doctor":
               await sendDoctor(channel, msg.chatId);
@@ -323,12 +315,18 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
           break;
 
         case "text":
-          pendingTexts.push(`${msg.chatId}:${replySession ?? ""}`, {
-            chatId: msg.chatId,
-            messageId: msg.messageId,
-            text: parsed.text,
+          // Enqueue each text directly — same as Telegram. The per-session queue
+          // serializes; no adapter-side debounce/merge (a desktop/Telegram message
+          // isn't merged either, so Lark must not be special here).
+          await enqueueLarkAction(
+            channel,
+            deps,
+            msg.chatId,
+            msg.messageId,
+            "text",
+            parsed.text,
             replySession,
-          });
+          );
           break;
       }
     });

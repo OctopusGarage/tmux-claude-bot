@@ -1,13 +1,15 @@
 import {
   ACTION_META,
   buildHelpBody,
-  LARK_CONTROL_ROWS,
-  LARK_HELP_RUNNING_ROWS,
+  CONTROL_INTERRUPTS,
+  CONTROL_LIFECYCLE,
+  HELP_SESSION_ROWS,
 } from "../../core/command/action-registry.js";
 import type { MessageAction } from "../../core/command/dispatch.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { BrowseView } from "../../core/projects/dir-browser.js";
 import type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+import { inputButtonLabel } from "../../core/read/recent-inputs.js";
 import { VOICE_LANGS } from "../../core/read/voice-support.js";
 import { agentGlyph } from "../../shared/types.js";
 import { signValue } from "./card-signing.js";
@@ -84,6 +86,16 @@ export function voiceInstallCard(): object {
   ]);
 }
 
+/** "Queued" ack carrying a lone ❌ so the user can cancel that still-waiting
+ * message before it's typed in. Tapping sends `qcancel` with the session + msgId.
+ * (The in-flight ▶ message is already typed — only esc/interrupt stops that.) */
+export function queueAckCard(body: string, session: string, msgId: string): object {
+  return shell("⏳", [
+    md(body),
+    gridRow([{ text: "❌", value: { cmd: "qcancel", s: session, id: msgId } }]),
+  ]);
+}
+
 /** UI-language picker — mirrors voiceLangCard. Tapping sends `uilang` with the
  * chosen Lang; the title/prompt render in the channel's CURRENT language. */
 export function langCard(current: Lang): object {
@@ -121,8 +133,24 @@ function actionRow(actions: MessageAction[]): ButtonSpec[] {
   });
 }
 
-function controlRows(group = false): ButtonSpec[][] {
+function controlRows(group = false, running = true): ButtonSpec[][] {
   const m = messages("lark");
+  if (!running) {
+    // Idle: no agent — offer launch / navigation instead of dead control keys.
+    return [
+      [{ text: m.btnStart, value: { cmd: "start" }, style: "primary" }],
+      group
+        ? [
+            { text: m.btnCurrent, value: { cmd: "current" } },
+            { text: m.btnHelp, value: { cmd: "help" } },
+          ]
+        : [
+            { text: m.btnProjects, value: { cmd: "listalive" } },
+            { text: m.btnRecover, value: { cmd: "recover" } },
+            { text: m.btnHelp, value: { cmd: "help" } },
+          ],
+    ];
+  }
   // A bound project group is pinned to one workspace, so cross-project
   // management (list-all/switch/remove) doesn't belong there — only the work
   // surface for the pinned project. Drop the "Projects" entry in groups.
@@ -138,18 +166,34 @@ function controlRows(group = false): ButtonSpec[][] {
         { text: m.btnHelp, value: { cmd: "help" } },
       ];
   return [
-    ...LARK_CONTROL_ROWS.map(actionRow),
+    // Canonical control rows — SAME order as the Telegram expanded panel
+    // (interrupts → lifecycle). `tab` rides the keypress row so it's reachable
+    // without opening /help (it's a common autocomplete/confirm key); the arrow
+    // nav keys stay help-only so the always-stamped panel doesn't bloat.
+    ...[[...CONTROL_INTERRUPTS, "tab" as MessageAction], CONTROL_LIFECYCLE].map(actionRow),
+    // Read.
     [
       { text: m.btnPeek, value: { cmd: "peek" } },
       { text: m.btnHistory, value: { cmd: "history" } },
+      { text: m.btnInputs, value: { cmd: "inputs" } },
+      { text: m.btnStatus, value: { cmd: "status" } },
       { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ],
+    // Host-wide ops — p2p only (never leak all-session info / recovery into a group).
+    ...(group
+      ? []
+      : [
+          [
+            { text: m.btnDashboard, value: { cmd: "dashboard" } },
+            { text: m.btnRecover, value: { cmd: "recover" } },
+          ],
+        ]),
     lastRow,
   ];
 }
 
-export function controlActions(group = false): object[] {
-  return controlRows(group).map(gridRow);
+export function controlActions(group = false, running = true): object[] {
+  return controlRows(group, running).map(gridRow);
 }
 
 /**
@@ -196,10 +240,29 @@ export function resultCard(output: string, title = "Agent", group = false): obje
 }
 
 /** A read-only view card (peek / history): a title, the body, then the same
- * control buttons the result card carries. */
-export function viewCard(title: string, body: string, group = false): object {
+ * control buttons the result card carries. Pass `running=false` to adapt the
+ * panel to the idle (launch/navigate) shortcuts. */
+export function viewCard(title: string, body: string, group = false, running = true): object {
   const content = body && body.trim() ? body : messages("lark").emptyPane;
-  return shell(title, [md(content), HR, ...controlActions(group)]);
+  return shell(title, [md(content), HR, ...controlActions(group, running)]);
+}
+
+/** A peek page WITHOUT the control panel — for the non-last chunks of a paged
+ * /peek (only the bottom card carries the controls). */
+export function peekChunkCard(title: string, body: string): object {
+  return shell(title, [md(body && body.trim() ? body : messages("lark").emptyPane)]);
+}
+
+/** Recent-inputs picker: one button per input; tapping fetches it back as an editable
+ * draft (does NOT auto-send). Buttons carry `inputredo` + the token/idx into the
+ * server-side input cache. */
+export function inputsCard(prompts: string[], token: string): object {
+  return shell(
+    messages("lark").inputsTitle,
+    prompts.map((p, i) =>
+      gridRow([{ text: inputButtonLabel(p, i), value: { cmd: "inputredo", token, idx: i } }]),
+    ),
+  );
 }
 
 /** Usage-reporting install result. When a foreign statusLine was found, offers
@@ -280,6 +343,18 @@ export function orphanListCard(orphans: { pid: number; label: string }[]): objec
 }
 
 /** Confirm step before adopting: tap to execute (`adoptgo`) or cancel. */
+/** Confirm step before reboot recovery (mirrors Telegram's /recover preview). */
+export function recoverConfirmCard(count: number, alive: number, list: string): object {
+  const m = messages("lark");
+  return shell("🔄", [
+    md(m.recoverPreview(count, alive, list)),
+    gridRow([
+      { text: m.btnRecoverConfirm, value: { cmd: "recovergo" }, style: "primary" },
+      { text: m.btnCancel, value: { cmd: "recovercancel" } },
+    ]),
+  ]);
+}
+
 export function adoptConfirmCard(pid: number, label: string): object {
   const m = messages("lark");
   return shell(m.adoptTitle, [
@@ -392,7 +467,7 @@ export function groupBoundCard(label: string): object {
  * + workspace path) plus a picker of recent projects that don't yet have a group
  * (each with a "new group" button). Lets you SEE your groups, not just create. */
 export function groupOverviewCard(
-  groups: ReadonlyArray<{ label: string; workspacePath: string }>,
+  groups: ReadonlyArray<{ label: string; workspacePath: string; chatId: string }>,
   projects: RecentButton[],
 ): object {
   const m = messages("lark");
@@ -400,7 +475,21 @@ export function groupOverviewCard(
   if (groups.length === 0) {
     elements.push(md(m.groupOverviewNoGroups));
   } else {
-    for (const g of groups) elements.push(md(m.groupOverviewItem(g.label, g.workspacePath)));
+    // Each existing group gets an unbind button — the fallback escape hatch so a
+    // stale binding (group left/disbanded, event missed) can be cleared from the
+    // private chat without being in the group, then the project rebuilt.
+    for (const g of groups) {
+      elements.push(md(m.groupOverviewItem(g.label, g.workspacePath)));
+      elements.push(
+        gridRow([
+          {
+            text: m.btnUnbindGroup,
+            value: { cmd: "unbindgroup", chatId: g.chatId },
+            style: "danger",
+          },
+        ]),
+      );
+    }
   }
   elements.push(
     HR,
@@ -446,12 +535,20 @@ export function helpCard(group = false, voiceInstallable = false): object {
     md(buildHelpBody("lark", "lark")),
     HR,
     md(m.helpRunning),
-    ...LARK_HELP_RUNNING_ROWS.map((row) => gridRow(actionRow(row))),
+    ...HELP_SESSION_ROWS.map((row) => gridRow(actionRow(row))),
     HR,
     md(m.helpProjects),
     gridRow([
+      // Host-wide ops — p2p only (never leak all-session info / recovery into a group).
+      ...(group
+        ? []
+        : [
+            { text: m.btnDashboard, value: { cmd: "dashboard" } },
+            { text: m.btnRecover, value: { cmd: "recover" } },
+          ]),
       { text: m.btnPeek, value: { cmd: "peek" } },
       { text: m.btnHistory, value: { cmd: "history" } },
+      { text: m.btnInputs, value: { cmd: "inputs" } },
       { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ]),
     gridRow(projectRow),

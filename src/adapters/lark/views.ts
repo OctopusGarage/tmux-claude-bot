@@ -1,6 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
 import { profileFor } from "../../core/agents/registry.js";
+import { getStartCommand } from "../../core/agents/startCommandMap.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
 import { performStart } from "../../core/command/dispatch.js";
@@ -11,6 +12,11 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
 import { type ForeignAction, runStatusInstall } from "../../core/infra/status-install.js";
+import {
+  defaultSystemLoadProbes,
+  gatherSystemLoad,
+  renderSystemLoad,
+} from "../../core/infra/system-load.js";
 import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
 import { startBrowse } from "../../core/projects/dir-browser.js";
@@ -26,9 +32,16 @@ import {
 } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
+import { getRecentInputs, storeInputList } from "../../core/read/recent-inputs.js";
 import { formatSingleConversation, type SessionEntry } from "../../core/read/transcript.js";
 import { resolveWhisperLanguage } from "../../core/read/voice-support.js";
-import { markSemantics } from "../../core/session/output.js";
+import { planRecovery } from "../../core/recovery/recover.js";
+import {
+  actionableCount,
+  aliveCount,
+  recoverPreviewList,
+} from "../../core/recovery/recover-view.js";
+import { DEFAULT_PEEK_LINES, renderPeekPaneChunks } from "../../core/session/output.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
@@ -36,10 +49,13 @@ import {
   groupBoundCard,
   groupOverviewCard,
   groupPickerCard,
+  inputsCard,
   langCard,
   orphanListCard,
+  peekChunkCard,
   projectListCard,
   recentListCard,
+  recoverConfirmCard,
   startPickerCard,
   statusInstallCard,
   viewCard,
@@ -47,6 +63,23 @@ import {
 } from "./cards.js";
 import { sendCard, sendError, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
+
+/** Resolve the chat's current project, or reply the short "no current project" hint
+ * and return null. The one place the view handlers share this guard (was inlined in
+ * every view). The enqueue path uses the richer {@link resolveSession} (recovery
+ * card) instead — views just need the lightweight text hint. */
+async function requireLarkSession(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<string | null> {
+  const session = await deps.currentProject.get(chatScope("lark", chatId));
+  if (!session) {
+    await sendText(channel, chatId, messages("lark").noCurrentProjectShort);
+    return null;
+  }
+  return session;
+}
 
 /** Send the voice recognition-language picker card (current language marked).
  * A click re-sends the picker with the ✅ moved (regular interactive card). */
@@ -116,6 +149,37 @@ export async function sendOrphanList(channel: LarkChannel, chatId: string): Prom
   }
 }
 
+/** Preview what reboot recovery would restore, with a confirm button. Mirrors
+ * Telegram's /recover (p2p-only, gated by the caller). */
+export async function sendRecoverPreview(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+): Promise<void> {
+  try {
+    const plan = await planRecovery(deps);
+    const n = actionableCount(plan);
+    if (n === 0) {
+      // Nothing to recover: nothing tracked, or everything tracked is running.
+      await sendText(
+        channel,
+        chatId,
+        plan.length === 0
+          ? messages("lark").recoverEmpty
+          : messages("lark").recoverAllRunning(plan.length, recoverPreviewList(plan)),
+      );
+      return;
+    }
+    await sendCard(
+      channel,
+      chatId,
+      recoverConfirmCard(n, aliveCount(plan), recoverPreviewList(plan)),
+    );
+  } catch (err) {
+    await sendError(channel, chatId, err);
+  }
+}
+
 /** Run the usage-reporting install and render the result card (with the
  * foreign-statusLine choice buttons when needed). Mirrors `/status_install`. */
 export async function sendStatusInstall(
@@ -136,25 +200,31 @@ export async function sendPeek(
   channel: LarkChannel,
   deps: HandlerDeps,
   chatId: string,
+  lines: number = DEFAULT_PEEK_LINES,
 ): Promise<void> {
-  const session = await deps.currentProject.get(chatScope("lark", chatId));
-  if (!session) {
-    await sendText(channel, chatId, messages("lark").noCurrentProjectShort);
-    return;
-  }
+  const session = await requireLarkSession(channel, deps, chatId);
+  if (!session) return;
   try {
-    const snapshot = await deps.bridge.capturePane(session);
-    const processed = markSemantics(deps.output.process(snapshot));
-    const mid = await sendCard(
-      channel,
-      chatId,
-      viewCard(
-        messages("lark").paneTitle,
-        processed || messages("lark").emptyPane,
-        isProjectGroup(chatId),
-      ),
-    );
-    if (mid) recordReplyTarget(mid, session);
+    const snapshot = await deps.bridge.capturePaneColored(session, lines);
+    const chunks = renderPeekPaneChunks(snapshot, deps.output, lines, deps.config.maxMessageLength);
+    const running = await deps.agent.checkIfRunning(session);
+    const group = isProjectGroup(chatId);
+    const base = messages("lark").paneTitle;
+    if (chunks.length === 0) {
+      const mid = await sendCard(channel, chatId, viewCard(base, "", group, running));
+      if (mid) recordReplyTarget(mid, session);
+      return;
+    }
+    // Page across cards; only the LAST (bottom) card carries the control panel.
+    let lastMid: string | undefined;
+    for (const [i, chunk] of chunks.entries()) {
+      const last = i === chunks.length - 1;
+      const title = chunks.length > 1 ? `${base} ${i + 1}/${chunks.length}` : base;
+      const card = last ? viewCard(title, chunk, group, running) : peekChunkCard(title, chunk);
+      const mid = await sendCard(channel, chatId, card);
+      if (last) lastMid = mid;
+    }
+    if (lastMid) recordReplyTarget(lastMid, session);
   } catch (err) {
     await sendError(channel, chatId, err);
   }
@@ -167,11 +237,8 @@ export async function sendHistory(
   chatId: string,
   index: number,
 ): Promise<void> {
-  const session = await deps.currentProject.get(chatScope("lark", chatId));
-  if (!session) {
-    await sendText(channel, chatId, messages("lark").noCurrentProjectShort);
-    return;
-  }
+  const session = await requireLarkSession(channel, deps, chatId);
+  if (!session) return;
   try {
     const projectPath = getPathBySession(session);
     if (!projectPath) {
@@ -194,8 +261,41 @@ export async function sendHistory(
     const mid = await sendCard(
       channel,
       chatId,
-      viewCard(messages("lark").historyTitle, body, isProjectGroup(chatId)),
+      viewCard(
+        messages("lark").historyTitle,
+        body,
+        isProjectGroup(chatId),
+        await deps.agent.checkIfRunning(session),
+      ),
     );
+    if (mid) recordReplyTarget(mid, session);
+  } catch (err) {
+    await sendError(channel, chatId, err);
+  }
+}
+
+/** `/inputs [N]`: list the last N inputs you sent (tap one to fetch & edit it). */
+export async function sendInputs(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  chatId: string,
+  limit: number,
+): Promise<void> {
+  const session = await requireLarkSession(channel, deps, chatId);
+  if (!session) return;
+  try {
+    const projectPath = getPathBySession(session);
+    if (!projectPath) {
+      await sendText(channel, chatId, messages("lark").noPathMapping);
+      return;
+    }
+    const inputs = await getRecentInputs(deps, session, projectPath, limit);
+    if (inputs.length === 0) {
+      await sendText(channel, chatId, messages("lark").inputsEmpty);
+      return;
+    }
+    const token = storeInputList(session, inputs);
+    const mid = await sendCard(channel, chatId, inputsCard(inputs, token));
     if (mid) recordReplyTarget(mid, session);
   } catch (err) {
     await sendError(channel, chatId, err);
@@ -243,6 +343,17 @@ export async function sendDashboard(
   );
 }
 
+/** Machine load / thermal / top CPU / runaway-orphan shells. Mirrors /dashboard;
+ * owner p2p only (the handler gates chatType). */
+export async function sendSysload(channel: LarkChannel, chatId: string): Promise<void> {
+  const report = await gatherSystemLoad(defaultSystemLoadProbes());
+  await sendCard(
+    channel,
+    chatId,
+    viewCard(messages("lark").sysloadTitle, renderSystemLoad(report), isProjectGroup(chatId)),
+  );
+}
+
 /** Build and send the message-queue status (global + per-session). No control
  * buttons — matches Telegram, where queue status is plain text. */
 export async function sendQueueStatus(
@@ -259,11 +370,8 @@ export async function sendCurrentProject(
   deps: HandlerDeps,
   chatId: string,
 ): Promise<void> {
-  const session = await deps.currentProject.get(chatScope("lark", chatId));
-  if (!session) {
-    await sendText(channel, chatId, messages("lark").noCurrentProjectShort);
-    return;
-  }
+  const session = await requireLarkSession(channel, deps, chatId);
+  if (!session) return;
   // Show the friendly label AND the full workspace directory underneath, so it's
   // clear which path the current project maps to (mirrors Telegram).
   const path = getPathBySession(session);
@@ -299,8 +407,14 @@ export async function startOrPickAfterCreate(
     return;
   }
   const only = deps.config.startCommands[0];
-  await performStart(deps, session, only?.command);
-  await sendText(channel, chatId, messages("lark").agentStartedWith(only?.label ?? "claude"));
+  const r = await performStart(deps, session, only?.command);
+  await sendText(
+    channel,
+    chatId,
+    r === "already-running"
+      ? messages("lark").agentAlreadyRunning
+      : messages("lark").agentStartedWith(only?.label ?? "claude"),
+  );
 }
 
 /** Map a `createProjectFromPath` outcome to a Lark reply — shared by the typed
@@ -404,9 +518,10 @@ export async function sendGroupMenu(
   const buttons = (await recentProjectButtons(deps, chatScope("lark", chatId))).filter(
     (b) => !grouped.has(b.sid),
   );
-  const groups = bindings.map(({ binding }) => ({
+  const groups = bindings.map(({ chatId: boundChatId, binding }) => ({
     label: binding.label,
     workspacePath: binding.workspacePath,
+    chatId: boundChatId,
   }));
   await sendCard(channel, chatId, groupOverviewCard(groups, buttons));
 }
@@ -469,11 +584,8 @@ export async function sendSessionsList(
   arg: string | undefined,
 ): Promise<void> {
   const m = messages("lark");
-  const session = await deps.currentProject.get(chatScope("lark", chatId));
-  if (!session) {
-    await sendText(channel, chatId, m.noCurrentProjectShort);
-    return;
-  }
+  const session = await requireLarkSession(channel, deps, chatId);
+  if (!session) return;
   const projectPath = getPathBySession(session);
   if (!projectPath) {
     await sendText(channel, chatId, m.noPathMapping);
@@ -497,7 +609,13 @@ export async function sendSessionsList(
     await resolveAgentKind(deps.configResolver, session);
     await deps.bridge.sendExit(session);
     await sleep(2000);
-    await deps.agent.startWithResume(session, match.sessionId);
+    // Resume with the recorded launch flavor (e.g. claude-stella), not the runner
+    // default, so the resumed session keeps its CLAUDE_CONFIG_DIR/flags.
+    await deps.agent.startWithResume(
+      session,
+      match.sessionId,
+      getStartCommand(session) ?? undefined,
+    );
     deps.configResolver.invalidate(session);
     await sendText(channel, chatId, m.resumeStarted(match.sessionId.slice(0, 8)));
     return;
