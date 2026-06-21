@@ -115,6 +115,11 @@ export interface TakeoverProbe {
 
 export interface OrphanAgent {
   pid: number;
+  /** Every PID that resumes THIS session (same agent+cwd+sessionId). One agent
+   * launched twice in a dir is multiple processes that all resume the same
+   * session; takeover must kill them all or a survivor corrupts the resumed
+   * `.jsonl`. Defaults to `[pid]` when a caller doesn't set it. */
+  pids?: number[];
   cwd: string;
   /** Claude config root the orphan used — its history lives under <root>/projects. */
   configRoot: string;
@@ -186,7 +191,20 @@ export async function listOrphansFor(
       return { pid, cwd, configRoot, sessionId, startCommand, agent: profile.kind };
     }),
   );
-  return out.filter((o): o is OrphanAgent => o !== null);
+
+  // Collapse processes that resume the SAME session (agent+cwd+sessionId) into one
+  // adoptable entry — one agent launched twice in a dir shows as multiple PIDs
+  // that all map to the same newest-on-disk session, so they'd render identically
+  // and adopting one would leave the other writing the same `.jsonl`. Keep the
+  // first as representative and carry every PID so takeover kills them all.
+  const byKey = new Map<string, OrphanAgent>();
+  for (const o of out.filter((o): o is OrphanAgent => o !== null)) {
+    const key = `${o.agent} ${o.cwd} ${o.sessionId ?? ""}`;
+    const existing = byKey.get(key);
+    if (existing) existing.pids?.push(o.pid);
+    else byKey.set(key, { ...o, pids: [o.pid] });
+  }
+  return [...byKey.values()];
 }
 
 export interface TakeoverResult {
@@ -227,22 +245,28 @@ export async function takeover(orphan: OrphanAgent, deps: TakeoverDeps): Promise
     return { ok: false, sessionName: "", resumed: false, reason: "target_session_busy" };
   }
 
-  // SIGINT first: cancels an in-flight generation (and flushes that turn to disk),
-  // harmless when idle. Settle, then escalate.
-  probe.signal(orphan.pid, "SIGINT");
-  await probe.sleep(SETTLE_MS);
-
-  if (await probe.isAlive(orphan.pid)) {
-    probe.signal(orphan.pid, "SIGTERM");
+  // Kill every process resuming this session — a survivor would corrupt the
+  // resumed `.jsonl` (two writers on one file). SIGINT first: cancels an in-flight
+  // generation (and flushes that turn to disk), harmless when idle; settle, then
+  // escalate SIGTERM→SIGKILL.
+  const killPid = async (pid: number): Promise<boolean> => {
+    probe.signal(pid, "SIGINT");
     await probe.sleep(SETTLE_MS);
-  }
-  if (await probe.isAlive(orphan.pid)) {
-    probe.signal(orphan.pid, "SIGKILL");
-    await probe.sleep(500);
-  }
-  if (await probe.isAlive(orphan.pid)) {
-    log.warn(`pid=${orphan.pid} would not die`);
-    return { ok: false, sessionName: "", resumed: false, reason: "process_would_not_die" };
+    if (await probe.isAlive(pid)) {
+      probe.signal(pid, "SIGTERM");
+      await probe.sleep(SETTLE_MS);
+    }
+    if (await probe.isAlive(pid)) {
+      probe.signal(pid, "SIGKILL");
+      await probe.sleep(500);
+    }
+    return !(await probe.isAlive(pid));
+  };
+  for (const pid of orphan.pids ?? [orphan.pid]) {
+    if (!(await killPid(pid))) {
+      log.warn(`pid=${pid} would not die`);
+      return { ok: false, sessionName: "", resumed: false, reason: "process_would_not_die" };
+    }
   }
 
   const sessionName = await deps.ensureSession(orphan.cwd);

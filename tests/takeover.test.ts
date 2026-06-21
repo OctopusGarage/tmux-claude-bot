@@ -69,6 +69,32 @@ describe("findOrphans (claude predicate)", () => {
   });
 });
 
+describe("listClaudeOrphans dedup", () => {
+  it("collapses PIDs that resume the same session into one entry carrying all pids", async () => {
+    // Two independent `claude` launches in the same dir → two PIDs, same
+    // newest-on-disk session → one adoptable entry, both pids retained for kill.
+    const rows: ProcRow[] = [
+      { pid: 21, ppid: 20, command: "claude --dangerously-skip-permissions" },
+      { pid: 22, ppid: 99, command: "claude --dangerously-skip-permissions" },
+    ];
+    const probe: TakeoverProbe = {
+      snapshot: async () => rows,
+      tmuxPanePids: async () => [], // no panes → both are orphans
+      cwdOf: async () => "/proj",
+      openSessionFile: async () => null,
+      readProcEnv: async () => "CLAUDE_CONFIG_DIR=/nonexistent-xyz", // no on-disk sessions → sessionId null
+      readShellRc: async () => "",
+      isAlive: async () => true,
+      signal: () => {},
+      sleep: async () => {},
+    };
+    const orphans = await listClaudeOrphans(probe);
+    expect(orphans).toHaveLength(1);
+    expect([...(orphans[0]?.pids ?? [])].sort()).toEqual([21, 22]);
+    expect(orphans[0]?.cwd).toBe("/proj");
+  });
+});
+
 describe("isShellForeground", () => {
   it("treats shells (incl. login -zsh and absolute paths) as idle", () => {
     for (const c of ["zsh", "bash", "-zsh", "fish", "/bin/bash", "sh"]) {

@@ -15,6 +15,7 @@ import { setAgentKind } from "./agentKindMap.js";
 import { DEFAULT_CONFIG_ROOT } from "./claude/claude-history.js";
 import { listClaudeOrphans } from "./claude/claude-takeover.js";
 import { listCodexOrphans } from "./codex/codex-takeover.js";
+import { markSessionRunning } from "./runningSessions.js";
 import {
   createTakeoverProbe,
   isClaudeProcess,
@@ -158,6 +159,12 @@ async function runAdopt(pid: number, ctx: AdoptContext): Promise<TakeoverResult 
   // Record which agent the adopted session runs, so dispatch/status route it
   // correctly afterward. Claude orphans record "claude" (the default) — harmless;
   // codex orphans record "codex", without which the session would route to claude.
-  if (result.ok) setAgentKind(result.sessionName, orphan.agent);
+  if (result.ok) {
+    setAgentKind(result.sessionName, orphan.agent);
+    // Adoption makes an agent live without going through the dispatcher's start
+    // hook, so add it to the reboot-recovery roster here (the sweep would catch
+    // it eventually, but not if a reboot lands in the gap).
+    markSessionRunning(result.sessionName);
+  }
   return result;
 }
