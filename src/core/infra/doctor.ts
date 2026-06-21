@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { appStateFile } from "../../shared/state-dir.js";
 import {
   managedRestartCommand,
   managedServiceLoadedProbe,
@@ -38,6 +39,13 @@ export interface DoctorProbes {
   /** Whether the managed service (launchd/systemd) is loaded. */
   serviceLoaded(): Promise<boolean>;
   botProcessCount(): Promise<number>;
+  /** macOS: whether the bot's keep-awake caffeinate is live RIGHT NOW. Matches the
+   * bot's unique `caffeinate -i -s -w` signature (claude uses `-i -t`, so no clash). */
+  caffeinateActive(): Promise<boolean>;
+  /** macOS: lid (clamshell) state — true=closed, false=open, null=no laptop lid. */
+  clamshellClosed(): Promise<boolean | null>;
+  /** macOS: whether `pmset disablesleep` is engaged (covers a closed lid). */
+  sleepDisabled(): Promise<boolean>;
   fileExists(path: string): boolean;
 }
 
@@ -46,7 +54,9 @@ const run = promisify(execFile);
 export function defaultProbes(root: string = process.cwd()): DoctorProbes {
   return {
     readEnv: () => {
-      const envPath = join(root, ".env");
+      // `.env` lives in the state dir; fall back to the legacy install-root path
+      // for a not-yet-migrated install.
+      const envPath = existsSync(appStateFile(".env")) ? appStateFile(".env") : join(root, ".env");
       return existsSync(envPath) ? parseEnv(readFileSync(envPath, "utf8")) : null;
     },
     onPath: async (bin) => {
@@ -75,6 +85,31 @@ export function defaultProbes(root: string = process.cwd()): DoctorProbes {
         return stdout.split("\n").filter((l) => l.trim()).length;
       } catch {
         return 0; // pgrep exits 1 when there are no matches
+      }
+    },
+    caffeinateActive: async () => {
+      try {
+        await run("pgrep", ["-f", "caffeinate -i -s -w"]);
+        return true;
+      } catch {
+        return false; // pgrep exits 1 when there are no matches
+      }
+    },
+    clamshellClosed: async () => {
+      try {
+        const { stdout } = await run("ioreg", ["-r", "-k", "AppleClamshellState"]);
+        const m = stdout.match(/"AppleClamshellState"\s*=\s*(Yes|No)/);
+        return m ? m[1] === "Yes" : null; // no key → desktop / no lid
+      } catch {
+        return null;
+      }
+    },
+    sleepDisabled: async () => {
+      try {
+        const { stdout } = await run("pmset", ["-g"]);
+        return /\bSleepDisabled\s+1\b/.test(stdout);
+      } catch {
+        return false;
       }
     },
     fileExists: (p) => existsSync(p),
@@ -146,6 +181,44 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
     ok(`voice: MLX_WHISPER_BIN points to an existing binary (language ${langPref})`);
   } else {
     bad("voice: MLX_WHISPER_BIN set but binary is missing", "run: npm run whisper:install");
+  }
+
+  // 6. keep-awake (macOS only). Opt-in flag + a live probe of the bot's caffeinate
+  // assertion, so this reports whether it's ACTUALLY asserting now, not just
+  // whether the flag is set.
+  if (process.platform === "darwin") {
+    const keepAwake = envMap?.get("TCB_KEEP_AWAKE");
+    if (keepAwake === "1" || keepAwake === "true") {
+      if (await probes.caffeinateActive()) {
+        ok("keep-awake on and active (caffeinate -i -s asserting)");
+      } else {
+        info(
+          "keep-awake on but no caffeinate running — start/restart the bot to apply (it's the bot process that holds it)",
+        );
+      }
+
+      // caffeinate -i -s does NOT cover a closed lid; only `pmset disablesleep`
+      // does. Surface the real lid + disablesleep state so closing the lid
+      // without disablesleep — which WILL sleep the Mac and drop the bot — is a
+      // hard fail rather than a silent surprise.
+      const closed = await probes.clamshellClosed();
+      if (closed !== null) {
+        if (await probes.sleepDisabled()) {
+          ok(`lid ${closed ? "closed" : "open"}, clamshell sleep disabled (pmset disablesleep on)`);
+        } else if (closed) {
+          bad(
+            "lid is CLOSED and clamshell sleep is not disabled — the Mac will sleep and drop the bot",
+            "run: sudo pmset -a disablesleep 1   (or open the lid)",
+          );
+        } else {
+          info(
+            "lid open, but clamshell sleep is not disabled — closing the lid will sleep the Mac (sudo pmset -a disablesleep 1)",
+          );
+        }
+      }
+    } else {
+      info("keep-awake off — the Mac may sleep and drop the bot (setup --reconfigure to enable)");
+    }
   }
 
   return { checks, failures: checks.filter((c) => c.status === "bad").length };

@@ -18,6 +18,8 @@ function fakeDeps(over: Record<string, unknown> = {}) {
       detectAgentKind: async () => "claude",
       resolveApiInfo: async () => ({ baseUrl: null, mode: "subscription" }),
     },
+    // Default: an agent is up (so an idle pane reads as 🟡 idle, not ⏹ stopped).
+    agent: { checkIfRunning: async () => true },
     queue: { size: () => 3 },
     config: { telegramBotToken: "x", lark: undefined },
     ...over,
@@ -72,6 +74,41 @@ describe("buildDashboard", () => {
     const r = row((await buildDashboard(deps, { paneDiffMs: 0 })).sessions, "busy_sess");
     expect(r.busy).toBe(true);
     expect(r.taskMs).toBeUndefined(); // desktop-driven → busy, but no bot-task duration
+  });
+
+  it("marks a session stopped (running=false) when no agent is alive in the pane", async () => {
+    // Idle pane + no agent process → distinguishable from an idle-but-running agent.
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: async () => ["dead_sess"],
+        sessionsCreatedAt: async () => new Map(),
+        capturePane: async () => "$ ", // a shell prompt, static
+      },
+      agent: { checkIfRunning: async () => false }, // no agent
+    });
+    const r = row((await buildDashboard(deps, { paneDiffMs: 0 })).sessions, "dead_sess");
+    expect(r.busy).toBe(false);
+    expect(r.running).toBe(false); // stopped
+  });
+
+  it("marks an idle-but-running agent running=true (NOT stopped)", async () => {
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: async () => ["idle_sess"],
+        sessionsCreatedAt: async () => new Map(),
+        capturePane: async () => "static", // not animating
+      },
+      configResolver: {
+        detectAgentKind: async () => "claude",
+        resolveApiInfo: async () => null,
+        resolveConfigRoot: async () => "/no-such-config", // no recent transcript → idle
+        resolveLiveTranscript: async () => null,
+      },
+      agent: { checkIfRunning: async () => true }, // agent up
+    });
+    const r = row((await buildDashboard(deps, { paneDiffMs: 0 })).sessions, "idle_sess");
+    expect(r.busy).toBe(false);
+    expect(r.running).toBe(true); // idle but alive
   });
 
   it("marks a session busy when the pane is animating (silent tool call / bg task, no transcript)", async () => {

@@ -1,5 +1,4 @@
 import type { AgentKind } from "../../shared/types.js";
-import { sleep } from "../../shared/utils/sleep.js";
 import { appVersion } from "../../shared/version.js";
 import { resolveAgentKind } from "../agents/agentKindMap.js";
 import { profileFor } from "../agents/registry.js";
@@ -8,36 +7,13 @@ import { instanceStartedAt } from "../infra/instance-lock.js";
 import { projectLabel } from "../projects/project-label.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
+import { PANE_DIFF_MS, paneIsAnimating } from "../session/pane-activity.js";
 import { cumulativeBusyMs as cumulativeBusyMsOf, currentTask } from "../session/task-timing.js";
 
 /** A transcript written within this window counts the session as actively
  * working. Generous so brief gaps between streamed writes don't flip to idle;
  * the cost is up to this much "busy" lag after a task actually finishes. */
 const ACTIVITY_WINDOW_MS = 60_000;
-
-/** Gap between the two pane captures used to detect activity by animation. An
- * actively-working pane has a cycling spinner and a ticking elapsed timer (main
- * turn, a silent tool call, or a running background task), so two captures this
- * far apart differ; an idle pane is static. >1s so a 1s-resolution timer is sure
- * to tick between them. */
-const PANE_DIFF_MS = 1_100;
-
-/** True if the session's pane changed across a ~PANE_DIFF_MS gap — i.e. something
- * is animating (spinner/timer/streaming), which means the agent is working even
- * when it wrote no transcript (a long silent tool call) and drove no bot task.
- * Agent-agnostic: no fragile UI-string match. Best-effort: a capture failure or a
- * static pane reads as not-busy. */
-async function paneIsAnimating(
-  deps: HandlerDeps,
-  session: string,
-  diffMs: number,
-): Promise<boolean> {
-  const a = await deps.bridge.capturePane(session).catch(() => null);
-  if (a === null) return false;
-  await sleep(diffMs);
-  const b = await deps.bridge.capturePane(session).catch(() => null);
-  return b !== null && b !== a;
-}
 
 /**
  * One live session's aggregated state for the dashboard. Neutral data only —
@@ -47,6 +23,12 @@ export type SessionRow = {
   session: string;
   label: string;
   kind: AgentKind;
+  /** Whether an agent process is alive in the pane. A tmux session can exist with
+   * NO agent (shell prompt, or the agent exited) — distinguishing that from an
+   * idle-but-running agent is why this is separate from `busy`. Independent of
+   * `busy`: a session can read `busy` from recent transcript activity yet have no
+   * live agent (it just exited), so this is process-probed, not derived. */
+  running: boolean;
   busy: boolean;
   taskMs?: number;
   cumulativeBusyMs: number;
@@ -62,6 +44,8 @@ export type DashboardSnapshot = {
     botUptimeMs: number | null;
     version: string;
     sessionCount: number;
+    /** Sessions with a live agent process (started). The rest are stopped shells. */
+    runningCount: number;
     busyCount: number;
     queueDepth: number;
     adapters: { telegram: boolean; lark: boolean };
@@ -118,7 +102,27 @@ async function gatherRow(
   // it catches a long silent tool call or a background subagent (both tick a
   // timer / spin) that writes no transcript and drove no bot task. Skipped for
   // already-busy sessions to avoid the extra captures + the diff delay.
-  if (!busy) busy = await paneIsAnimating(deps, session, paneDiffMs);
+  if (!busy) busy = await paneIsAnimating(deps.bridge, session, paneDiffMs);
+
+  // Is an agent process actually up in this pane? Probed INDEPENDENTLY of `busy`,
+  // not short-circuited by it: `busy`'s transcript-mtime arm is process-independent,
+  // so an agent that wrote its transcript then exited would be wrongly counted as
+  // running for the activity window. Guarded with .catch like every other probe here
+  // so a single tmux hiccup on one session can't sink the whole snapshot.
+  const running = await deps.agent.checkIfRunning(session).catch(() => false);
+
+  // How long the current task has run. Bot-driven tasks have a precise tracked
+  // start (ct.sinceMs); for a desktop-driven busy session derive it from the
+  // transcript — the newest round's timestamp is when this turn (the current
+  // task) started. Only read the transcript when busy without a bot timer.
+  let taskMs = ct.sinceMs;
+  if (busy && taskMs === undefined && projectPath) {
+    const rounds = await profile
+      .getRecentConversations(deps.configResolver, session, projectPath)
+      .catch(() => []);
+    const startedAt = rounds[0]?.timeMs ?? 0;
+    if (startedAt > 0) taskMs = Math.max(0, now - startedAt);
+  }
 
   const apiMode = (await deps.configResolver.resolveApiInfo?.(session).catch(() => null))?.mode;
 
@@ -126,8 +130,9 @@ async function gatherRow(
     session,
     label,
     kind,
+    running,
     busy,
-    ...(ct.sinceMs !== undefined && { taskMs: ct.sinceMs }),
+    ...(taskMs !== undefined && { taskMs }),
     cumulativeBusyMs,
     uptimeMs,
     usage,
@@ -163,6 +168,7 @@ export async function buildDashboard(
       botUptimeMs,
       version: appVersion(),
       sessionCount: rows.length,
+      runningCount: rows.filter((r) => r.running).length,
       busyCount: rows.filter((r) => r.busy).length,
       queueDepth: deps.queue.size(),
       adapters: {

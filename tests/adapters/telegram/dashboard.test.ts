@@ -28,7 +28,7 @@ function captureBot() {
 
 const replyTarget = {
   record: vi.fn(),
-  resolveReplyTarget: vi.fn((): string | null => null),
+  resolve: vi.fn((): string | null => null),
   removeSession: vi.fn(),
 };
 
@@ -55,7 +55,7 @@ function runDashboard(deps: ReturnType<typeof depsFor>) {
 describe("/dashboard (Telegram)", () => {
   beforeEach(() => replyMock.mockClear());
 
-  it("renders the global header as a code block", async () => {
+  it("renders the dashboard as plain text (no code block)", async () => {
     const deps = depsFor();
     await runDashboard(deps);
 
@@ -64,11 +64,12 @@ describe("/dashboard (Telegram)", () => {
       "view",
       expect.any(String),
       expect.objectContaining({
-        code: true,
         body: expect.stringContaining("tmux-claude-bot"),
       }),
     );
-    const body = replyMock.mock.calls.at(-1)?.[3]?.body as string;
-    expect(body).toContain("sessions");
+    // No monospace fence — the emoji + "·" lines render as clean prose.
+    const opts = replyMock.mock.calls.at(-1)?.[3];
+    expect(opts?.code).toBeUndefined();
+    expect(opts?.body as string).toContain("sessions");
   });
 });

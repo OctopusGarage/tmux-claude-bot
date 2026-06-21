@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { DoctorProbes } from "../src/core/infra/doctor.js";
 import { renderDoctorReport, runDoctorChecks } from "../src/core/infra/doctor.js";
 
@@ -11,6 +11,9 @@ function healthyProbes(over: Partial<DoctorProbes> = {}): DoctorProbes {
     onPath: async () => true,
     serviceLoaded: async () => true,
     botProcessCount: async () => 1,
+    caffeinateActive: async () => true,
+    clamshellClosed: async () => false,
+    sleepDisabled: async () => false,
     fileExists: () => true,
     ...over,
   };
@@ -180,5 +183,114 @@ describe("renderDoctorReport", () => {
 
     expect(text).toContain("cli_secret123");
     expect(text).toContain("All checks passed.");
+  });
+});
+
+describe("keep-awake check (macOS)", () => {
+  const orig = process.platform;
+  const asDarwin = (): void => {
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+  };
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: orig, configurable: true });
+  });
+  const envWith = (extra: [string, string][]) =>
+    new Map<string, string>([["TELEGRAM_BOT_TOKEN", VALID_TOKEN], ...extra]);
+
+  it("flag on + caffeinate live → ok 'on and active'", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () => envWith([["TCB_KEEP_AWAKE", "1"]]),
+        caffeinateActive: async () => true,
+      }),
+    );
+    expect(
+      report.checks.some((c) => c.status === "ok" && c.text.includes("keep-awake on and active")),
+    ).toBe(true);
+  });
+
+  it("flag on but caffeinate absent → info, not a failure", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () => envWith([["TCB_KEEP_AWAKE", "1"]]),
+        caffeinateActive: async () => false,
+      }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "info" && c.text.includes("keep-awake on but no caffeinate"),
+      ),
+    ).toBe(true);
+    expect(report.checks.some((c) => c.status === "bad" && c.text.includes("keep-awake"))).toBe(
+      false,
+    );
+  });
+
+  it("flag off → info 'keep-awake off'", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(healthyProbes({ readEnv: () => envWith([]) }));
+    expect(
+      report.checks.some((c) => c.status === "info" && c.text.includes("keep-awake off")),
+    ).toBe(true);
+  });
+
+  it("flag on + lid CLOSED + disablesleep off → fail (Mac will sleep)", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () => envWith([["TCB_KEEP_AWAKE", "1"]]),
+        clamshellClosed: async () => true,
+        sleepDisabled: async () => false,
+      }),
+    );
+    expect(report.checks.some((c) => c.status === "bad" && c.text.includes("lid is CLOSED"))).toBe(
+      true,
+    );
+    expect(report.failures).toBeGreaterThan(0);
+  });
+
+  it("flag on + lid closed + disablesleep ON → ok (clamshell covered)", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () => envWith([["TCB_KEEP_AWAKE", "1"]]),
+        clamshellClosed: async () => true,
+        sleepDisabled: async () => true,
+      }),
+    );
+    expect(
+      report.checks.some((c) => c.status === "ok" && c.text.includes("clamshell sleep disabled")),
+    ).toBe(true);
+    expect(report.checks.some((c) => c.status === "bad")).toBe(false);
+  });
+
+  it("flag on + lid open + disablesleep off → info, not a failure", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () => envWith([["TCB_KEEP_AWAKE", "1"]]),
+        clamshellClosed: async () => false,
+        sleepDisabled: async () => false,
+      }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "info" && c.text.includes("closing the lid will sleep"),
+      ),
+    ).toBe(true);
+    expect(report.checks.some((c) => c.status === "bad")).toBe(false);
+  });
+
+  it("no lid (desktop) → no clamshell line", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () => envWith([["TCB_KEEP_AWAKE", "1"]]),
+        clamshellClosed: async () => null,
+      }),
+    );
+    expect(report.checks.some((c) => c.text.includes("lid"))).toBe(false);
   });
 });
