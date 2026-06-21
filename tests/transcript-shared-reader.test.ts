@@ -109,4 +109,34 @@ describe("shared JSONL reader: junk tolerance across both transcript formats", (
       parseCodexRounds([claudeLine("user", "q"), claudeLine("assistant", "a")].join("\n")),
     ).toEqual([]);
   });
+
+  // The dashboard's "busy for N" reads round.timeMs; it MUST be the raw epoch ms
+  // of the user message, not the formatted "MM/DD HH:MM" `time` (parsing that as a
+  // date lands in ~2001 → absurd durations).
+  it("CLAUDE: round.timeMs is the user message's raw epoch ms", async () => {
+    fs.writeFileSync(
+      nodePath.join(histDir, "b.jsonl"),
+      [claudeLine("user", "q"), claudeLine("assistant", "a")].join("\n"),
+      "utf-8",
+    );
+    const rounds = await getRecentConversations(projectPath, configRoot);
+    expect(rounds[0]?.timeMs).toBe(Date.parse("2026-06-10T10:00:00Z"));
+  });
+
+  it("CODEX: round.timeMs is the user message's raw epoch ms", () => {
+    const ts = "2026-06-11T08:30:00Z";
+    const userLine = JSON.stringify({
+      timestamp: ts,
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text: "q" }] },
+    });
+    const asstLine = JSON.stringify({
+      timestamp: "2026-06-11T08:31:00Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "a" }],
+      },
+    });
+    expect(parseCodexRounds([userLine, asstLine].join("\n"))[0]?.timeMs).toBe(Date.parse(ts));
+  });
 });

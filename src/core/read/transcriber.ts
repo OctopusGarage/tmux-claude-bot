@@ -96,6 +96,22 @@ export type TranscribeOutcome =
   | { ok: true; text: string }
   | { ok: false; reason: "download" | "transcribe" | "empty" };
 
+type TranscribeReason = "download" | "transcribe" | "empty";
+
+/** Map a transcription failure stage → its user-facing message. Shared by every
+ * adapter's voice handler so the reason→message mapping can't drift (add a new
+ * reason in one place). Takes any object exposing the three voice i18n keys. */
+export function voiceFailMessage(
+  reason: TranscribeReason,
+  m: { voiceDownloadFailed: string; voiceTranscribeFailed: string; voiceEmpty: string },
+): string {
+  return reason === "download"
+    ? m.voiceDownloadFailed
+    : reason === "transcribe"
+      ? m.voiceTranscribeFailed
+      : m.voiceEmpty;
+}
+
 /**
  * Cache-aware transcription shared by both adapters: look up the audio by
  * `cacheKey`; on a miss, `download(tmpPath)` it (retried — early fetches are

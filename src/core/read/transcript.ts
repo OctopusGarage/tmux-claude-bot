@@ -12,6 +12,9 @@ export interface ConversationRound {
   user: string;
   assistant: string;
   time: string;
+  /** Raw turn-start epoch ms (the user message's timestamp), unformatted — for
+   * arithmetic like "how long has this turn run". Omitted when the source had none. */
+  timeMs?: number;
   file: string;
 }
 
