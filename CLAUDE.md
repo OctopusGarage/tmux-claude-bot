@@ -127,7 +127,12 @@ The project root directory name `tmux-claude-bot` is used as the process identit
 
 All code logs via `createLogger("<area>.<file>")` exported from
 `src/shared/utils/logger.ts`. **Do not use `console.*`** except in user-facing
-CLI/wizard stdout in `src/scripts/*` and `onboarding-wizard.ts`.
+CLI/wizard stdout: `src/cli.ts`, `src/scripts/*`, and `onboarding-wizard.ts`.
+
+**Always pass the error OBJECT, never its message** — `log.error("msg", { err })`,
+not `log.error(\`msg: ${err.message}\`)`. The logger's `errToObj` extracts
+name/message/**stack** and redacts secrets; stringifying `err.message` throws away
+the stack, which is what you need when diagnosing a failure during testing.
 
 **Log destination:** structured JSONL under `~/.tmux-claude-bot/logs/tcb-YYYYMMDD.jsonl`
 (or `TCB_LOG_DIR`). One file per day; 30-day rotation; secrets auto-redacted.
@@ -142,7 +147,12 @@ handler, queue handler, boot) and inherited by every `await` in that async scope
 Call sites write `log.info("msg", { data })` / `log.error("msg", { err })` — do not
 string-embed context fields.
 
-**Verbosity:** `LOG_LEVEL` env var (DEBUG|INFO|WARN|ERROR, default INFO).
+**Verbosity:** `LOG_LEVEL` env var (DEBUG|INFO|WARN|ERROR, default INFO). DEBUG is
+reserved for high-volume flow tracing that is noise at steady state but invaluable
+when diagnosing — notably the autopilot's degraded-signal probes (`autopilot.signal`
+logs at DEBUG when a pane/transcript read falls back, so a stalled tick reads as
+"probe failed" rather than looking identical to "genuinely idle"). Run the bot with
+`LOG_LEVEL=DEBUG` when testing why autopilot did / didn't act.
 
 **Querying:**
 - CLI: `tcb logs [--session <n>] [--trace <id>] [--level WARN] [--days N] [-n 50] [--json]`
@@ -151,6 +161,38 @@ string-embed context fields.
 
 **Logging is best-effort** — the logger never throws into the caller; a file-write
 failure falls back to the stdout mirror.
+
+### Adding logging to a new feature (design-time checklist)
+
+Every new feature owns its observability — wire logging in as you build it, not after
+a debugging session proves it missing. The test before a feature is "done": **"if this
+misbehaves during testing, can `tcb logs` / `/logs` tell me what it did and why?"** If
+not, add the log. Concretely:
+
+- **Ingress** — a new entry point (adapter handler, queue/tick handler, CLI command,
+  control-socket op) establishes ambient context ONCE via `runWithLogContext({ traceId,
+  channel, chatId, session? })` and logs receipt at INFO; everything downstream inherits
+  the context for free.
+- **Decisions** — when the feature takes a branch a tester can't see (acted / skipped /
+  paused / fell back / deduped / dropped), log WHY. "Why did it do nothing?" MUST be
+  answerable from the log. High-frequency branch → DEBUG; one-off state change → INFO.
+- **Failures** — every `catch` / `.catch()` either rethrows or logs with the error
+  OBJECT (`{ err }`, never `${err.message}` — you lose the stack). A silent swallow is
+  allowed ONLY for a genuinely ignorable best-effort; if its silence could mislead a
+  tester, add a DEBUG line naming what was skipped.
+- **Lifecycle / state** — persisted-state writes, enable/disable, start/stop, a
+  connection going up or down → INFO.
+
+**Levels:** DEBUG = high-volume flow trace (off by default; opt in with `LOG_LEVEL`);
+INFO = significant event or state change; WARN = recoverable degradation; ERROR = a
+real failure (always with `{ err }`).
+
+**Don't:** string-embed ambient fields (`session=` / `chat=`) into the message (they're
+auto-attached); log `err.message` instead of `{ err }`; use `console.*` outside the
+whitelist; or log at INFO on a per-tick / per-keystroke hot path (use DEBUG).
+
+**Working if:** a tester reproducing a problem can locate the cause from the JSONL
+without re-running under a debugger or adding logs reactively.
 
 ## Dashboard
 

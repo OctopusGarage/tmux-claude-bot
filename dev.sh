@@ -8,13 +8,18 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PROD_DIR="${TMUX_CLAUDE_BOT_DIR:-$HOME/.tmux-claude-bot}"
-PROD_ENV="$PROD_DIR/.env"
-
-if [ ! -f "$PROD_ENV" ]; then
-  echo "No deployed config at $PROD_ENV." >&2
+# Config (.env) and state live in the state/ subdir since the state-dir split;
+# fall back to the install root for pre-split installs.
+if [ -f "$PROD_DIR/state/.env" ]; then
+  STATE_DIR="$PROD_DIR/state"
+elif [ -f "$PROD_DIR/.env" ]; then
+  STATE_DIR="$PROD_DIR"
+else
+  echo "No deployed config at $PROD_DIR/state/.env (or $PROD_DIR/.env)." >&2
   echo "Install first (curl ... | bash), or set TMUX_CLAUDE_BOT_DIR to the install dir." >&2
   exit 1
 fi
+PROD_ENV="$STATE_DIR/.env"
 
 # Pause the managed service (launchd/systemd) only if it's actually up; service.sh
 # owns the per-OS "is it running" check so we don't duplicate the branch here.
@@ -39,4 +44,4 @@ echo "=> Dev mode: clone code + deployed config ($PROD_ENV) + deployed state, ho
 echo "   Edit and save -> reloads instantly. Ctrl-C to stop and resume prod."
 # Borrow prod's state dir too (recent_projects / session_path_map / current
 # project) so dev mirrors the real projects instead of the checkout's files.
-TCB_ENV_FILE="$PROD_ENV" TCB_STATE_DIR="$PROD_DIR" npm run dev
+TCB_ENV_FILE="$PROD_ENV" TCB_STATE_DIR="$STATE_DIR" npm run dev

@@ -5,6 +5,12 @@ export default defineConfig({
     globals: true,
     environment: "node",
     setupFiles: ["tests/setup.ts"],
+    exclude: [
+      // Prevent git worktrees nested under .claude/worktrees/ from being picked
+      // up as additional test suites — they are independent branches/sandboxes.
+      ".claude/worktrees/**",
+      "**/node_modules/**",
+    ],
     coverage: {
       provider: "v8",
       all: true,

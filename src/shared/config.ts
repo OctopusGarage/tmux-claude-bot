@@ -89,6 +89,32 @@ export const envSchema = z.object({
   // back instead of throwing at startup — a stray Lark line must not take down a
   // Telegram-only install.
   LARK_DOMAIN: z.enum(["feishu", "lark"]).catch("feishu"),
+  // --- Autopilot (智能模式 / keep-alive). Default loop ON but every session is
+  // opt-in; AUTOPILOT_TICK_MS=0 is the master kill (no loop runs at all). ---
+  AUTOPILOT_TICK_MS: blankTolerantNonNegativeInt(8000),
+  AUTOPILOT_IDLE_GRACE_MS: blankTolerantPositiveInt(20000),
+  AUTOPILOT_COOLDOWN_MS: blankTolerantPositiveInt(30000),
+  AUTOPILOT_MAX_ITERATIONS: blankTolerantPositiveInt(30),
+  AUTOPILOT_MAX_WALLCLOCK_MS: blankTolerantPositiveInt(3600000),
+  AUTOPILOT_IDLE_PROMPT_TEXT: blankTolerantString("请继续完成当前任务"),
+  // A distinct, clearer recovery prompt for transient API errors — so the agent
+  // retries the interrupted step rather than reading a bare "继续" as a new task.
+  AUTOPILOT_API_ERROR_PROMPT_TEXT: blankTolerantString(
+    "刚才因 API 错误中断,请重试并继续当前任务,不要开始新任务",
+  ),
+  AUTOPILOT_MAX_RECOVERY_ATTEMPTS: blankTolerantPositiveInt(5),
+  AUTOPILOT_RETRY_MAX: blankTolerantPositiveInt(5),
+  AUTOPILOT_RETRY_BASE_MS: blankTolerantPositiveInt(5000),
+  AUTOPILOT_RETRY_FACTOR: blankTolerantPositiveInt(2),
+  AUTOPILOT_RETRY_MAX_MS: blankTolerantPositiveInt(120000),
+  AUTOPILOT_RETRY_JITTER: z.string().default("true"),
+  AUTOPILOT_GOALS_DIR: z.string().default(""),
+  AUTOPILOT_USAGE_PAUSE_PCT: blankTolerantNonNegativeInt(0),
+  AUTOPILOT_KEEPALIVE_DONE_MARKER: blankTolerantString("TASK_DONE"),
+  AUTOPILOT_KEEPALIVE_DONE_PROMPT: blankTolerantString(
+    "全部完成后请单独回复一行 [TASK_DONE] 表示整个任务已完成。",
+  ),
+  AUTOPILOT_MAX_ROUNDS: blankTolerantPositiveInt(10),
 });
 
 /**
@@ -255,6 +281,28 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
     autoRecover: parsed.AUTO_RECOVER !== "false" && parsed.AUTO_RECOVER !== "0",
     keepAwake: parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true",
     lark,
+    autopilot: {
+      tickMs: parsed.AUTOPILOT_TICK_MS,
+      idleGraceMs: parsed.AUTOPILOT_IDLE_GRACE_MS,
+      cooldownMs: parsed.AUTOPILOT_COOLDOWN_MS,
+      maxIterations: parsed.AUTOPILOT_MAX_ITERATIONS,
+      maxWallClockMs: parsed.AUTOPILOT_MAX_WALLCLOCK_MS,
+      idlePromptText: parsed.AUTOPILOT_IDLE_PROMPT_TEXT,
+      apiErrorPromptText: parsed.AUTOPILOT_API_ERROR_PROMPT_TEXT,
+      maxRecoveryAttempts: parsed.AUTOPILOT_MAX_RECOVERY_ATTEMPTS,
+      retry: {
+        maxRetries: parsed.AUTOPILOT_RETRY_MAX,
+        baseDelayMs: parsed.AUTOPILOT_RETRY_BASE_MS,
+        backoffFactor: parsed.AUTOPILOT_RETRY_FACTOR,
+        maxDelayMs: parsed.AUTOPILOT_RETRY_MAX_MS,
+        jitter: parsed.AUTOPILOT_RETRY_JITTER !== "false" && parsed.AUTOPILOT_RETRY_JITTER !== "0",
+      },
+      goalsDir: parsed.AUTOPILOT_GOALS_DIR,
+      usagePausePct: parsed.AUTOPILOT_USAGE_PAUSE_PCT,
+      keepAliveDoneMarker: parsed.AUTOPILOT_KEEPALIVE_DONE_MARKER,
+      keepAliveDonePrompt: parsed.AUTOPILOT_KEEPALIVE_DONE_PROMPT,
+      maxRounds: parsed.AUTOPILOT_MAX_ROUNDS,
+    },
   };
 }
 

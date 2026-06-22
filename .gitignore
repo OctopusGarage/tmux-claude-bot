@@ -28,3 +28,4 @@ docs/superpowers/
 # Stryker mutation testing artifacts
 reports/
 .stryker-tmp/
+.superpowers/

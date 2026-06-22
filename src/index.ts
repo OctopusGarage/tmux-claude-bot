@@ -2,6 +2,7 @@ import { startControlServer } from "./adapters/control/server.js";
 import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
+import { startAutopilot } from "./core/autopilot/manager.js";
 import {
   acquireInstanceLock,
   InstanceLockHeldError,
@@ -127,11 +128,17 @@ await init();
 // sessions started/exited directly in tmux (outside the bot) are tracked too.
 startRunningSweep(deps, config.runningSweepMs);
 
+// Start the autopilot background loop (coalesced tick on transcript activity +
+// fallback interval). No-op when AUTOPILOT_TICK_MS=0.
+startAutopilot(deps);
+
 // Restore the agents that were running before a machine reboot, automatically.
 // Delayed + fire-and-forget so boot isn't held up by N agent launches; idempotent
 // (a no-op when tmux survived a plain bot restart).
 if (config.autoRecover) {
-  setTimeout(() => void autoRecoverOnBoot(deps), AUTO_RECOVER_DELAY_MS).unref?.();
+  (
+    setTimeout(() => void autoRecoverOnBoot(deps), AUTO_RECOVER_DELAY_MS) as { unref?: () => void }
+  ).unref?.();
 }
 
 // Local control transport for the terminal TUI — a unix socket that drives this

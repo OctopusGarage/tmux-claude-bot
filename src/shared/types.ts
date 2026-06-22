@@ -1,3 +1,26 @@
+export type AutopilotRuntimeConfig = {
+  tickMs: number; // fallback loop interval; 0 = master off
+  idleGraceMs: number; // min idle before an idle-nudge
+  cooldownMs: number; // min gap between nudges
+  maxIterations: number; // nudges+recoveries per run before stop
+  maxWallClockMs: number; // per-run wall-clock budget
+  idlePromptText: string; // idle/recover resume nudge, e.g. "请继续完成当前任务"
+  apiErrorPromptText: string; // distinct, clearer retry prompt for API errors
+  maxRecoveryAttempts: number;
+  retry: {
+    maxRetries: number;
+    baseDelayMs: number;
+    backoffFactor: number;
+    maxDelayMs: number;
+    jitter: boolean;
+  };
+  goalsDir: string;
+  usagePausePct: number;
+  keepAliveDoneMarker: string; // sentinel a pure keep-alive task emits when fully done
+  keepAliveDonePrompt: string; // instruction appended to the keep-alive nudge asking for the marker
+  maxRounds: number; // upper bound on goal-cycle rounds (clamp at parse time)
+};
+
 export type LarkConfig = {
   appId: string;
   appSecret: string;
@@ -67,6 +90,7 @@ export type AppConfig = {
    * laptop can't drop it off the phone. Opt-in; works for any launch path. */
   keepAwake: boolean;
   lark?: LarkConfig | undefined;
+  autopilot: AutopilotRuntimeConfig;
 };
 
 export type BotCommand = { command: string; description: string };

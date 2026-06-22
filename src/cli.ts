@@ -154,6 +154,30 @@ program
   });
 
 program
+  .command("autopilot")
+  .description("Show autopilot status across all sessions")
+  .option("--json", "output the raw snapshot as JSON")
+  .action(async (o) => {
+    try {
+      const { bootstrap } = await import("./bootstrap.js");
+      const { buildAutopilotSnapshot, formatAutopilotText } = await import(
+        "./core/autopilot/autopilot-snapshot.js"
+      );
+      const deps = bootstrap();
+      const snap = await buildAutopilotSnapshot(deps);
+      process.stdout.write(
+        o.json ? `${JSON.stringify(snap, null, 2)}\n` : `${formatAutopilotText(snap)}\n`,
+      );
+      process.exit(0); // bootstrap starts a live fs.watch (activity watcher) that would otherwise hang the process
+    } catch (err) {
+      process.stderr.write(
+        `autopilot failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exit(1);
+    }
+  });
+
+program
   .command("sysload")
   .description("show machine load, thermal state, top CPU, and runaway/orphan shells")
   .action(async () => {

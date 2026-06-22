@@ -8,6 +8,7 @@ import { ClaudeRunner } from "./core/agents/claude/claude-runner.js";
 import { parseCodexFlavorAliases } from "./core/agents/codex/codex-flavor-alias.js";
 import { CodexRunner } from "./core/agents/codex/codex-runner.js";
 import { AgentRunnerDispatcher } from "./core/agents/runner-dispatcher.js";
+import { NotifierRegistry } from "./core/autopilot/notifier.js";
 import { agentIsIdle } from "./core/command/agent-ready.js";
 import { executeMessage } from "./core/command/dispatch.js";
 import { MessageQueue } from "./core/command/queue.js";
@@ -117,6 +118,8 @@ export function bootstrap(): HandlerDeps {
   const activity = createActivityWatcher(deriveWatchRoots(homedir()));
   activity.start();
 
+  const notifier = new NotifierRegistry();
+
   const deps: HandlerDeps = {
     bridge,
     queue,
@@ -126,6 +129,7 @@ export function bootstrap(): HandlerDeps {
     currentProject,
     configResolver,
     activity,
+    notifier,
   };
 
   // The queue handler is protocol-agnostic: it runs the command and routes the
