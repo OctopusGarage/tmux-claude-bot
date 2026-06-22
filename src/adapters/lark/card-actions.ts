@@ -6,6 +6,15 @@ import {
   copyAttachCommand,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
+import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
+import { applyAutopilotVerb, goalsVerb } from "../../core/autopilot/controls.js";
+import {
+  adjustRounds,
+  clearPicker,
+  getPicker,
+  toggleGoal,
+} from "../../core/autopilot/picker-state.js";
+import { AutopilotStore } from "../../core/autopilot/state-store.js";
 import {
   type MessageAction,
   performRestart,
@@ -53,6 +62,8 @@ import { verifyValue } from "./card-signing.js";
 import {
   adoptConfirmCard,
   adoptDoneCard,
+  autopilotGoalPickerCard,
+  autopilotPanelCard,
   browseCard,
   helpCard,
   langCard,
@@ -186,7 +197,7 @@ async function isP2pChat(channel: LarkChannel, chatId: string): Promise<boolean>
   try {
     return (await channel.getChatInfo(chatId)).chatType === "p2p";
   } catch (err) {
-    log.warn(`getChatInfo failed chat=${chatId}: ${String(err)}`);
+    log.warn("getChatInfo failed", { chatId, err });
     return false;
   }
 }
@@ -269,6 +280,7 @@ async function handleQueueCancel({ channel, deps, evt, value }: CardCtx): Promis
 }
 
 async function handleInputRedo({ channel, evt, value }: CardCtx): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- eslint reads value as non-null here, but tsc types CardCtx.value as possibly-undefined, so the ?. is required to compile
   if (typeof value?.token !== "string" || typeof value?.idx !== "number") return;
   const found = lookupInput(value.token, value.idx);
   if (!found) {
@@ -466,6 +478,117 @@ async function handleBrowseCancel({ channel, evt }: CardCtx): Promise<void> {
 
 const browseIdx = (ctx: CardCtx): number => ctx.value?.idx ?? 0;
 
+// --- Autopilot handlers -----------------------------------------------------
+
+/** Resolve the session for an autopilot card action. Button-driven actions carry
+ * `value.s`; the entry button `ap_panel` resolves from the chat's current project. */
+async function apSession(ctx: CardCtx): Promise<string | undefined> {
+  const s = (ctx.value as { s?: string } | undefined)?.s;
+  if (s) return s;
+  const project = await ctx.deps.currentProject.get(chatScope("lark", ctx.evt.chatId));
+  return project ?? undefined;
+}
+
+/** Re-render the autopilot panel card for a given session. */
+async function renderApPanel(ctx: CardCtx, session: string): Promise<void> {
+  const store = new AutopilotStore();
+  const view = buildAutopilotView(store, session, messages("lark"));
+  // isProjectGroup is keyed by the RAW chatId (store.has(chatId)) — NOT a chatScope.
+  const group = isProjectGroup(ctx.evt.chatId);
+  await sendCard(ctx.channel, ctx.evt.chatId, autopilotPanelCard(view, session, group));
+}
+
+async function handleApPanel(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) {
+    await sendText(ctx.channel, ctx.evt.chatId, messages("lark").noCurrentProjectShort);
+    return;
+  }
+  await renderApPanel(ctx, session);
+}
+
+async function handleApToggle(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  const store = new AutopilotStore();
+  const m = messages("lark");
+  applyAutopilotVerb(store, session, store.get(session).enabled ? "off" : "on", m);
+  await renderApPanel(ctx, session);
+}
+
+async function handleApGlobal(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  const on = (ctx.value as { on?: boolean }).on === true;
+  const store = new AutopilotStore();
+  applyAutopilotVerb(store, session, `global ${on ? "on" : "off"}`, messages("lark"));
+  await renderApPanel(ctx, session);
+}
+
+async function handleApStop(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  applyAutopilotVerb(new AutopilotStore(), session, "stop", messages("lark"));
+  await renderApPanel(ctx, session);
+}
+
+async function handleApPick(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  const view = buildAutopilotView(new AutopilotStore(), session, messages("lark"));
+  await sendCard(ctx.channel, ctx.evt.chatId, autopilotGoalPickerCard(view, session));
+}
+
+async function handleApGoalToggle(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  const id = (ctx.value as { id?: string }).id;
+  if (id) toggleGoal(session, id);
+  const view = buildAutopilotView(new AutopilotStore(), session, messages("lark"));
+  await sendCard(ctx.channel, ctx.evt.chatId, autopilotGoalPickerCard(view, session));
+}
+
+async function handleApRounds(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  const delta = (ctx.value as { delta?: number }).delta;
+  if (delta === 1 || delta === -1)
+    adjustRounds(session, delta, ctx.deps.config.autopilot.maxRounds);
+  const view = buildAutopilotView(new AutopilotStore(), session, messages("lark"));
+  await sendCard(ctx.channel, ctx.evt.chatId, autopilotGoalPickerCard(view, session));
+}
+
+async function handleApStart(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  const picker = getPicker(session);
+  if (picker.selected.length > 0) {
+    applyAutopilotVerb(
+      new AutopilotStore(),
+      session,
+      goalsVerb(picker.selected, picker.rounds),
+      messages("lark"),
+      ctx.deps.config.autopilot.maxRounds,
+    );
+    clearPicker(session);
+  }
+  await renderApPanel(ctx, session);
+}
+
+async function handleApConfirm(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  applyAutopilotVerb(new AutopilotStore(), session, "confirm", messages("lark"));
+  await renderApPanel(ctx, session);
+}
+
+async function handleApReject(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  applyAutopilotVerb(new AutopilotStore(), session, "reject", messages("lark"));
+  await renderApPanel(ctx, session);
+}
+
 /**
  * Button `cmd` → handler. Each returns after doing its work; commands not here
  * fall through to the immediate/queued action routing (and finally a no-op for
@@ -550,6 +673,17 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   restartpick: handleRestartPick,
   inputredo: handleInputRedo,
   qcancel: handleQueueCancel,
+  // --- Autopilot panel ---
+  ap_panel: handleApPanel,
+  ap_toggle: handleApToggle,
+  ap_global: handleApGlobal,
+  ap_stop: handleApStop,
+  ap_pick: handleApPick,
+  ap_goal_toggle: handleApGoalToggle,
+  ap_rounds: handleApRounds,
+  ap_start: handleApStart,
+  ap_confirm: handleApConfirm,
+  ap_reject: handleApReject,
 };
 
 /**
@@ -567,6 +701,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
         return;
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- raw SDK ingest: a malformed event may lack action despite the type; degrade to a clean drop, not a throw
       const rawValue = evt.action?.value;
       if (!verifyValue(rawValue)) {
         log.warn(`drop cardAction: invalid signature chat=${evt.chatId}`);

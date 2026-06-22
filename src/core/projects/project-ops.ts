@@ -12,6 +12,8 @@ import { findRolloutForProject } from "../agents/codex/codex-rollout.js";
 import { clearLiveSessionId } from "../agents/live-session-id.js";
 import { markSessionStopped } from "../agents/runningSessions.js";
 import { clearStartCommand } from "../agents/startCommandMap.js";
+import { clearPicker } from "../autopilot/picker-state.js";
+import { clearAutopilotState } from "../autopilot/state-store.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { clearTaskTiming } from "../session/task-timing.js";
@@ -305,6 +307,8 @@ export async function removeProjectBySession(
   clearPathForSession(sessionName);
   clearAgentKind(sessionName);
   clearStartCommand(sessionName);
+  clearAutopilotState(sessionName); // drop autopilot record (optOut/goalId/viaGlobal) so a reused slot is clean
+  clearPicker(sessionName); // drop any in-progress goal-picker selection for a reused slot
   markSessionStopped(sessionName); // drop from the reboot-recovery roster
   // The session is gone — drop it from any channel that had it as current.
   await deps.currentProject.clearSession(sessionName);

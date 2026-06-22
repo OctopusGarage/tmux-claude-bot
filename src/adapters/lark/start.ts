@@ -5,14 +5,16 @@ import {
   type LarkChannelOptions,
   LoggerLevel,
 } from "@larksuiteoapi/node-sdk";
+import { renderNotice } from "../../core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { makeCardActionHandler } from "./card-actions.js";
+import { autopilotGateCard } from "./cards.js";
 import { createLarkRestoredMessage } from "./executor.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
-import { notifyLarkOwner } from "./resource.js";
+import { notifyLarkOwner, notifyLarkOwnerCard } from "./resource.js";
 
 const log = createLogger("lark.start");
 
@@ -99,6 +101,14 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
       await channel.connect();
     },
   });
+  // Register the Lark owner as the proactive-notification channel so the
+  // autopilot (and any other notifier.broadcast caller) can DM the owner.
+  deps.notifier.register((notice) =>
+    notice.kind === "awaitHuman"
+      ? notifyLarkOwnerCard(cfg, autopilotGateCard(notice.session))
+      : notifyLarkOwner(cfg, renderNotice(notice, messages("lark"))),
+  );
+
   channel
     .connect()
     .then(() => {
@@ -109,10 +119,8 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
         void notifyLarkOwner(
           cfg,
           messages("lark").crashRecovered(new Date().toLocaleString()),
-        ).catch((err) =>
-          log.warn(`owner crash-alert failed: ${err instanceof Error ? err.message : err}`),
-        );
+        ).catch((err) => log.warn("owner crash-alert failed", { err }));
       }
     })
-    .catch((err) => log.error(`connect failed: ${err instanceof Error ? err.message : err}`));
+    .catch((err) => log.error("connect failed", { err }));
 }

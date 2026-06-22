@@ -117,6 +117,7 @@ install dir.)
 | `tcb setup` / `tcb setup:lark` | guided setup wizard / add Feishu via QR |
 | `tcb doctor` | health checks against the install |
 | `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
+| `tcb autopilot` | autopilot status across all sessions (`--json` for raw) |
 | `tcb sysload` | machine load, thermal state, top CPU, runaway shells |
 | `tcb tui` | the terminal control panel (needs the bot running) |
 | `tcb recover` | relaunch agents that were running before a reboot |
@@ -148,7 +149,102 @@ refresh the skill. It lands at `~/.claude/skills/tmux-claude-bot/SKILL.md` and
 
 ---
 
-## 7. Managing the service
+## 7. Autopilot
+
+Autopilot keeps an agent running hands-free: it detects idle, nudges it with a
+continuation prompt, recovers from errors, and stops on a user-defined condition.
+Start it from chat with `/autopilot on` (keep-alive, no exit condition) or
+`/autopilot goal <id>` (run to a goal); `/autopilot off` (or `stop`) ends it for a
+session. Check status across all sessions with `tcb autopilot`. It is **off by
+default** and opt-in per session.
+
+To manage **every** session without enabling each one, run `/autopilot global on`
+(persisted in `AUTOPILOT_GLOBAL_KEEPALIVE`): live sessions are auto-kept-alive;
+`/autopilot off` opts one out, and `/autopilot global off` un-enrolls them.
+
+### Telegram button controls
+
+Autopilot is also fully button-drivable from Telegram. Open the inline control
+panel (the keyboard under any reply, or via the control buttons), then tap
+`🤖 Autopilot` to enter the autopilot panel. From there you can enable or disable
+autopilot for the current session, open the goal picker to select one or more goals
+with a multi-select list and set the number of rounds, then start the cycle — or
+toggle the global keep-alive on/off for all sessions, or stop autopilot outright.
+When a goal reaches a `humanGate` phase, the owner notification itself carries
+✅确认 and ▶️继续 buttons so you can confirm or continue without typing a command.
+
+### Terminal TUI controls
+
+Autopilot is also fully drivable from `tcb tui`. Press `A` to open the autopilot panel: enable or disable autopilot for the current session, pick one or more goal-cycles (multi-select + rounds) and start the cycle, toggle the global keep-alive, or stop autopilot. When a goal pauses at a `humanGate` phase, a banner appears in the TUI — press `A` again to confirm and continue in-place.
+
+### Lark/Feishu button controls
+
+Autopilot is also fully button-drivable from Lark/Feishu. In a private chat (p2p)
+the control card includes a `🤖 Autopilot` button that opens the autopilot panel
+card. From there you can enable or disable autopilot for the current session, open
+the goal picker to select one or more goals with a multi-select list and set the
+number of rounds, then start the cycle — or stop autopilot outright. The
+host-wide global keep-alive toggle is available in the panel when opened from a
+private chat; it is omitted in bound group chats. You can also open the panel
+directly with `/autopilot`. When a goal reaches a `humanGate` phase, the owner
+receives an interactive card with ✅确认 and ▶️继续 buttons.
+
+### Goals
+
+A **goal** is a named preset that tells autopilot what to do each phase and when to
+stop. Built-in goal ids (`test-coverage`, `fix-tests`, `code-review`, `add-feature`,
+`refactor-elegant`, `ui-polish`) are always available. You can also drop your own
+goal files into the goals directory.
+
+**User-defined goals** — create a `.json` file in `AUTOPILOT_GOALS_DIR` (default
+`~/.tmux-claude-bot/state/autopilot-goals`). Any `.json` file placed there appears
+in `/goals` and can be started with `/autopilot goal <id>`. Built-in ids take
+precedence — a user file with a conflicting id is ignored.
+
+Minimal goal schema:
+
+```json
+{
+  "id": "my-goal",
+  "titleKey": "My goal",
+  "phases": [
+    {
+      "id": "p1",
+      "intent": { "kind": "prompt", "text": "…" },
+      "done": { "kind": "sentinel", "marker": "GOAL_DONE" }
+    }
+  ]
+}
+```
+
+`id` must be unique and not collide with a built-in (non-empty string). `titleKey`
+is a short label (any non-empty string). Each phase needs an `intent` — either
+`{ "kind": "prompt", "text": "…" }` or `{ "kind": "skill", "name": "…", "fallback": "…" }`
+— and a `done` condition. The `done` kinds are: `sentinel` (watch the output for a
+literal `[MARKER]`), `check` (run a shell command — done on exit 0), `humanGate`
+(pause and wait for `/autopilot confirm`), and `all` / `seq` to compose them
+(`{ "kind": "all", "of": [ … ] }`). Edits to a goal file are picked up when a file is
+added/removed in the directory or the bot restarts.
+
+### Goal cycling
+
+`/autopilot goals a,b rounds N` runs the listed goals in rotation for N rounds, pausing at each `humanGate` phase for `/autopilot confirm` before continuing to the next goal. Omit `rounds` to run one round.
+
+### Completion-aware keep-alive
+
+`/autopilot on` drives the current task to completion: when the agent emits `[TASK_DONE]` in its output, autopilot stops automatically instead of nudging indefinitely.
+
+### Usage gate
+
+Set `AUTOPILOT_USAGE_PAUSE_PCT` (default `0`, disabled) to a percent threshold
+(e.g. `90`). When an active goal detects that the agent's context or rate-limit
+usage has reached that percent, autopilot pauses and notifies you — so it won't
+burn through your quota unattended. Resume with `/autopilot on` or
+`/autopilot goal <id>` once you are ready to continue.
+
+---
+
+## 8. Managing the service
 
 The bot is a managed, auto-restarting service. **Restart via the service manager**,
 not the dev scripts (the manager respawns it):
@@ -167,7 +263,7 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 - **Bot not responding** → `tcb doctor`; check exactly one bot process is running
   (multiple cause a Telegram 409); check network/proxy reachability.

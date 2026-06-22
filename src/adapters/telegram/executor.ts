@@ -49,7 +49,7 @@ export async function enqueueSessionCommand(
             void reply(ctx, "info", output, { session, replyTo });
           }),
         reject: (err: Error) => {
-          log.error(`reject callback fired session=${session} err=${err.message}`);
+          log.error("queued action reject fired", { session, err });
           // A user-initiated cancel is not a failure — confirm it plainly (🗑),
           // not with the error tone. Mirrors Lark's QueueCancelledError branch.
           const tone = err instanceof QueueCancelledError ? "ok" : "err";

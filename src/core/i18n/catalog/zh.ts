@@ -365,6 +365,67 @@ export const zh = {
   cmdSysload: "查看本机负载/发热/跑飞进程",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
+  autopilotTitle: "🤖 Autopilot",
+  autopilotNotifyPaused: (session: string, reason: string) =>
+    `🛑 autopilot 已暂停 [${session}]：${reason}`,
+  autopilotNotifyStopped: (session: string, reason: string) =>
+    `⏹️ autopilot 已停止 [${session}]：${reason}`,
+  autopilotNotifyUsage: (session: string, pct: number) =>
+    `🛑 autopilot 目标暂停 [${session}]：用量达 ${pct}% 阈值`,
+  autopilotNotifyMaxIter: (session: string) => `⏹️ autopilot 目标停止 [${session}]：已达最大迭代`,
+  autopilotNotifyWallClock: (session: string) => `⏹️ autopilot 目标停止 [${session}]：已达时长上限`,
+  autopilotNotifyAwaitHuman: (session: string) =>
+    `🎯 autopilot [${session}]：阶段判定完成，请确认（/autopilot confirm）或继续（/autopilot reject）`,
+  autopilotNotifyGoalComplete: (session: string, goalId: string) =>
+    `✅ autopilot 目标完成 [${session}]：${goalId}（请确认）`,
+  autopilotNotifyCycleComplete: (session: string, rounds: number) =>
+    `✅ autopilot 循环完成 [${session}]：已跑满 ${rounds} 轮（请确认）`,
+  autopilotNotifyKeepaliveDone: (session: string) =>
+    `✅ autopilot 保活任务完成 [${session}]：检测到完成标记`,
+  autopilotNotifyGoalAdvance: (
+    session: string,
+    goalId: string,
+    pos: number,
+    total: number,
+    round: number,
+    rounds: number,
+  ) => `➡️ autopilot [${session}]：进入目标 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 轮）`,
+  autopilotGlobal: (on: boolean): string =>
+    on
+      ? "已开启全局托管:所有活跃会话自动保活(某个会话用 /autopilot off 单独退出)"
+      : "已关闭全局托管",
+  autopilotStatus: (o: {
+    enabled: boolean;
+    pureKeepAlive: boolean;
+    iterations: number;
+    persona: string;
+    goal?: { id: string; phaseIndex: number };
+  }) =>
+    `Autopilot：${o.enabled ? "开" : "关"}（${o.pureKeepAlive ? "纯保活" : "随目标"}，已干预 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目标 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
+  autopilotUsage: (raw: string) =>
+    `未知子命令「${raw}」。用法：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
+  btnApEnable: "🤖 开启智能托管",
+  btnApDisable: "⏹ 关闭智能托管",
+  btnApPickGoals: "🎯 选目标",
+  btnApGlobalOn: "🌐 全局:开",
+  btnApGlobalOff: "🌐 全局:关",
+  btnApStop: "⏹ 停止目标",
+  btnApConfirm: "✅ 确认完成",
+  btnApContinue: "▶️ 继续打磨",
+  btnApBack: "↩︎ 返回",
+  btnApRoundsMinus: "➖",
+  btnApRoundsPlus: "➕",
+  btnApStartCycle: (n: number, rounds: number) => `▶️ 开始(${n} 个目标 · ${rounds} 轮)`,
+  apRoundsLabel: (rounds: number) => `轮数:${rounds}`,
+  goalTestCoverage: "提升测试覆盖",
+  goalFixTests: "修复测试",
+  goalCodeReview: "代码评审",
+  goalAddFeature: "添加功能",
+  goalRefactorElegant: "重构为优雅专业",
+  goalUiPolish: "打磨界面",
+  autopilotGoalStarted: (id: string) => `已启动目标：${id}`,
+  autopilotUnknownGoal: (ids: string) => `未知目标。可用：${ids}`,
+  goalsTitle: "🎯 目标预设",
   noLogsContext: "无当前项目，请先选择项目或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──

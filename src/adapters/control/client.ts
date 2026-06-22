@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
+import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import type { DashboardSnapshot } from "../../core/dashboard/dashboard.js";
 import {
   type ControlRequest,
@@ -61,7 +62,9 @@ export class ControlClient extends EventEmitter {
       if (this.closing) return;
       const conn = net.createConnection(controlSocketPath());
       conn.setEncoding("utf8");
-      conn.once("error", () => setTimeout(attempt, RECONNECT_MS).unref?.());
+      conn.once("error", () =>
+        (setTimeout(attempt, RECONNECT_MS) as { unref?: () => void }).unref?.(),
+      );
       conn.once("connect", () => {
         conn.removeAllListeners("error");
         this.decode = createLineDecoder<ServerMessage>();
@@ -69,7 +72,7 @@ export class ControlClient extends EventEmitter {
         this.emit("reconnected");
       });
     };
-    setTimeout(attempt, RECONNECT_MS).unref?.();
+    (setTimeout(attempt, RECONNECT_MS) as { unref?: () => void }).unref?.();
   }
 
   private onData(chunk: string): void {
@@ -137,6 +140,12 @@ export class ControlClient extends EventEmitter {
   }
   inputs(session: string): Promise<string[]> {
     return this.req({ op: "inputs", session }) as Promise<string[]>;
+  }
+  autopilot(session: string, verb: string): Promise<{ status: string }> {
+    return this.req({ op: "autopilot", session, verb }) as Promise<{ status: string }>;
+  }
+  autopilotView(session: string): Promise<AutopilotView> {
+    return this.req({ op: "autopilotView", session }) as Promise<AutopilotView>;
   }
 
   close(): void {

@@ -342,6 +342,55 @@ Send any text → forwarded to the agent → reply`,
   cmdSysload: "Show machine load, heat, and runaway processes",
   sysloadTitle: "🖥 System load",
   dashboardTitle: "📊 Dashboard",
+  autopilotTitle: "🤖 Autopilot",
+  autopilotNotifyPaused: (session, reason) => `🛑 autopilot paused [${session}]: ${reason}`,
+  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot stopped [${session}]: ${reason}`,
+  autopilotNotifyUsage: (session, pct) =>
+    `🛑 autopilot goal paused [${session}]: usage reached the ${pct}% threshold`,
+  autopilotNotifyMaxIter: (session) =>
+    `⏹️ autopilot goal stopped [${session}]: max iterations reached`,
+  autopilotNotifyWallClock: (session) =>
+    `⏹️ autopilot goal stopped [${session}]: time budget exhausted`,
+  autopilotNotifyAwaitHuman: (session) =>
+    `🎯 autopilot [${session}]: phase looks done — confirm with /autopilot confirm or resume with /autopilot reject`,
+  autopilotNotifyGoalComplete: (session, goalId) =>
+    `✅ autopilot goal complete [${session}]: ${goalId} (please confirm)`,
+  autopilotNotifyCycleComplete: (session, rounds) =>
+    `✅ autopilot cycle complete [${session}]: ${rounds} round(s) done (please confirm)`,
+  autopilotNotifyKeepaliveDone: (session) =>
+    `✅ autopilot keep-alive task complete [${session}]: completion marker seen`,
+  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
+    `➡️ autopilot [${session}]: starting goal ${goalId} (${pos}/${total} · round ${round}/${rounds})`,
+  autopilotGlobal: (on) =>
+    on
+      ? "Global keep-alive ON: all live sessions are auto-managed (use /autopilot off to exclude one)"
+      : "Global keep-alive OFF",
+  autopilotStatus: (o) =>
+    `Autopilot: ${o.enabled ? "on" : "off"} (${o.pureKeepAlive ? "keep-alive" : "goal-driven"}, ${o.iterations} interventions, persona=${o.persona})${o.goal ? ` (goal ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
+  autopilotUsage: (raw) =>
+    `Unknown subcommand "${raw}". Usage: /autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
+  btnApEnable: "🤖 Enable autopilot",
+  btnApDisable: "⏹ Disable autopilot",
+  btnApPickGoals: "🎯 Pick goals",
+  btnApGlobalOn: "🌐 Global: on",
+  btnApGlobalOff: "🌐 Global: off",
+  btnApStop: "⏹ Stop goal",
+  btnApConfirm: "✅ Confirm done",
+  btnApContinue: "▶️ Keep polishing",
+  btnApBack: "↩︎ Back",
+  btnApRoundsMinus: "➖",
+  btnApRoundsPlus: "➕",
+  btnApStartCycle: (n: number, rounds: number) => `▶️ Start (${n} goal(s) · ${rounds} round(s))`,
+  apRoundsLabel: (rounds: number) => `Rounds: ${rounds}`,
+  goalTestCoverage: "Raise test coverage",
+  goalFixTests: "Fix failing tests",
+  goalCodeReview: "Code review",
+  goalAddFeature: "Add feature",
+  goalRefactorElegant: "Refactor to elegant",
+  goalUiPolish: "Polish UI",
+  autopilotGoalStarted: (id) => `Goal started: ${id}`,
+  autopilotUnknownGoal: (ids) => `Unknown goal. Available: ${ids}`,
+  goalsTitle: "🎯 Goal presets",
   noLogsContext: "No current project. Select a project or specify a trace (/logs <traceId>).",
 
   // ── group binding (Feishu) ──

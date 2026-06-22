@@ -63,7 +63,7 @@ async function sendWithRetry(
       break;
     }
   }
-  log.error(`${label} failed: ${lastErr instanceof Error ? lastErr.message : lastErr}`);
+  log.error(`${label} failed`, { err: lastErr });
   return undefined;
 }
 

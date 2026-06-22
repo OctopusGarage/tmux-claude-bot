@@ -349,6 +349,56 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   cmdSysload: "Ver carga, temperatura y procesos descontrolados",
   sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",
+  autopilotTitle: "🤖 Autopilot",
+  autopilotNotifyPaused: (session, reason) => `🛑 autopilot en pausa [${session}]: ${reason}`,
+  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot detenido [${session}]: ${reason}`,
+  autopilotNotifyUsage: (session, pct) =>
+    `🛑 objetivo de autopilot en pausa [${session}]: el uso alcanzó el umbral del ${pct}%`,
+  autopilotNotifyMaxIter: (session) =>
+    `⏹️ objetivo de autopilot detenido [${session}]: máximo de iteraciones alcanzado`,
+  autopilotNotifyWallClock: (session) =>
+    `⏹️ objetivo de autopilot detenido [${session}]: presupuesto de tiempo agotado`,
+  autopilotNotifyAwaitHuman: (session) =>
+    `🎯 autopilot [${session}]: la fase parece completa — confirma con /autopilot confirm o continúa con /autopilot reject`,
+  autopilotNotifyGoalComplete: (session, goalId) =>
+    `✅ objetivo de autopilot completado [${session}]: ${goalId} (confirma por favor)`,
+  autopilotNotifyCycleComplete: (session, rounds) =>
+    `✅ ciclo de autopilot completado [${session}]: ${rounds} ronda(s) (confirma)`,
+  autopilotNotifyKeepaliveDone: (session) =>
+    `✅ tarea keep-alive de autopilot completada [${session}]: marcador de fin detectado`,
+  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
+    `➡️ autopilot [${session}]: objetivo ${goalId} (${pos}/${total} · ronda ${round}/${rounds})`,
+  autopilotGlobal: (on) =>
+    on
+      ? "Mantener activo global ACTIVADO: todas las sesiones activas se gestionan (usa /autopilot off para excluir una)"
+      : "Mantener activo global DESACTIVADO",
+  autopilotStatus: (o) =>
+    `Autopilot: ${o.enabled ? "activado" : "desactivado"} (${o.pureKeepAlive ? "mantener activo" : "por objetivo"}, ${o.iterations} intervenciones, persona=${o.persona})${o.goal ? ` (objetivo ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
+  autopilotUsage: (raw) =>
+    `Subcomando desconocido «${raw}». Uso: /autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
+  btnApEnable: "🤖 Activar autopilot",
+  btnApDisable: "⏹ Desactivar autopilot",
+  btnApPickGoals: "🎯 Elegir objetivos",
+  btnApGlobalOn: "🌐 Global: sí",
+  btnApGlobalOff: "🌐 Global: no",
+  btnApStop: "⏹ Detener objetivo",
+  btnApConfirm: "✅ Confirmar",
+  btnApContinue: "▶️ Continuar",
+  btnApBack: "↩︎ Volver",
+  btnApRoundsMinus: "➖",
+  btnApRoundsPlus: "➕",
+  btnApStartCycle: (n: number, rounds: number) =>
+    `▶️ Iniciar (${n} objetivo(s) · ${rounds} ronda(s))`,
+  apRoundsLabel: (rounds: number) => `Rondas: ${rounds}`,
+  goalTestCoverage: "Aumentar cobertura de pruebas",
+  goalFixTests: "Reparar pruebas",
+  goalCodeReview: "Revisión de código",
+  goalAddFeature: "Añadir función",
+  goalRefactorElegant: "Refactorizar con elegancia",
+  goalUiPolish: "Pulir interfaz",
+  autopilotGoalStarted: (id) => `Objetivo iniciado: ${id}`,
+  autopilotUnknownGoal: (ids) => `Objetivo desconocido. Disponibles: ${ids}`,
+  goalsTitle: "🎯 Objetivos predefinidos",
   noLogsContext:
     "No hay proyecto actual. Selecciona un proyecto o especifica un trace (/logs <traceId>).",
 

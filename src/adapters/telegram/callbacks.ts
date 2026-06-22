@@ -8,6 +8,16 @@ import {
   copyAttachCommand,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
+import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
+import { applyAutopilotVerb, goalsVerb } from "../../core/autopilot/controls.js";
+import { listGoals } from "../../core/autopilot/goals/catalog.js";
+import {
+  adjustRounds,
+  clearPicker,
+  getPicker,
+  toggleGoal,
+} from "../../core/autopilot/picker-state.js";
+import { AutopilotStore } from "../../core/autopilot/state-store.js";
 import {
   executeMessage,
   performRestart,
@@ -30,7 +40,6 @@ import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { DEFAULT_INPUTS, lookupInput } from "../../core/read/recent-inputs.js";
 import { setWhisperLanguage } from "../../core/read/voice-support.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
-import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
@@ -39,6 +48,8 @@ import { safeAnswerCallback } from "./callback-utils.js";
 import {
   buildAdoptConfirmKeyboard,
   buildAdoptDoneKeyboard,
+  buildAutopilotGoalPicker,
+  buildAutopilotPanelKeyboard,
   buildBrowseKeyboard,
   buildControlKeyboard,
   buildExpandedControlKeyboard,
@@ -59,7 +70,6 @@ import {
   resolveAliveSessionByShortId,
   switchToProject,
 } from "./project-ops.js";
-import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
@@ -108,6 +118,114 @@ export async function handleCallbackQuery(
         );
       } catch {
         /* message may be gone or unchanged */
+      }
+      return;
+    }
+    // Autopilot panel: open, toggle on/off, global on/off, stop, back.
+    if (
+      parsed.kind === "apPanel" ||
+      parsed.kind === "apToggle" ||
+      parsed.kind === "apGlobal" ||
+      parsed.kind === "apStop" ||
+      parsed.kind === "apBack"
+    ) {
+      await safeAnswerCallback(ctx);
+      const session = await resolveAliveSessionByShortId(deps, parsed.sid);
+      if (!session) return;
+      const store = new AutopilotStore();
+      const m = messages("telegram");
+      if (parsed.kind === "apToggle") {
+        applyAutopilotVerb(store, session, store.get(session).enabled ? "off" : "on", m);
+      } else if (parsed.kind === "apGlobal") {
+        applyAutopilotVerb(store, session, `global ${parsed.on ? "on" : "off"}`, m);
+      } else if (parsed.kind === "apStop") {
+        applyAutopilotVerb(store, session, "stop", m);
+      }
+      // apBack → return to the control keyboard; everything else → re-render the panel
+      const kb =
+        parsed.kind === "apBack"
+          ? buildExpandedControlKeyboard(parsed.sid)
+          : buildAutopilotPanelKeyboard(buildAutopilotView(store, session, m), parsed.sid);
+      try {
+        await timeApi("editMessageReplyMarkup", () =>
+          ctx.editMessageReplyMarkup({ reply_markup: kb }),
+        );
+      } catch {
+        /* message gone/unchanged */
+      }
+      return;
+    }
+    // Autopilot goal picker: open picker, toggle a goal, adjust rounds, start cycle.
+    if (
+      parsed.kind === "apPick" ||
+      parsed.kind === "apGoalToggle" ||
+      parsed.kind === "apRounds" ||
+      parsed.kind === "apStart"
+    ) {
+      await safeAnswerCallback(ctx);
+      const session = await resolveAliveSessionByShortId(deps, parsed.sid);
+      if (!session) return;
+      const store = new AutopilotStore();
+      const m = messages("telegram");
+      const goals = listGoals();
+      if (parsed.kind === "apGoalToggle") {
+        const g = goals[parsed.idx];
+        if (g) toggleGoal(session, g.id);
+      } else if (parsed.kind === "apRounds") {
+        adjustRounds(session, parsed.delta, deps.config.autopilot.maxRounds);
+      } else if (parsed.kind === "apStart") {
+        const sel = getPicker(session).selected;
+        if (sel.length > 0) {
+          applyAutopilotVerb(
+            store,
+            session,
+            goalsVerb(sel, getPicker(session).rounds),
+            m,
+            deps.config.autopilot.maxRounds,
+          );
+          clearPicker(session);
+          // back to the panel showing the running cycle
+          const kb = buildAutopilotPanelKeyboard(buildAutopilotView(store, session, m), parsed.sid);
+          try {
+            await timeApi("editMessageReplyMarkup", () =>
+              ctx.editMessageReplyMarkup({ reply_markup: kb }),
+            );
+          } catch {
+            /* gone/unchanged */
+          }
+          return;
+        }
+      }
+      // re-render the picker
+      const kb = buildAutopilotGoalPicker(buildAutopilotView(store, session, m), parsed.sid);
+      try {
+        await timeApi("editMessageReplyMarkup", () =>
+          ctx.editMessageReplyMarkup({ reply_markup: kb }),
+        );
+      } catch {
+        /* gone/unchanged */
+      }
+      return;
+    }
+    // Autopilot human gate: confirm (mark done) or continue (keep polishing).
+    if (parsed.kind === "apConfirm" || parsed.kind === "apContinue") {
+      await safeAnswerCallback(ctx);
+      const session = await resolveAliveSessionByShortId(deps, parsed.sid);
+      if (!session) return;
+      const store = new AutopilotStore();
+      const m = messages("telegram");
+      applyAutopilotVerb(store, session, parsed.kind === "apConfirm" ? "confirm" : "reject", m);
+      try {
+        await timeApi("editMessageReplyMarkup", () =>
+          ctx.editMessageReplyMarkup({
+            reply_markup: buildAutopilotPanelKeyboard(
+              buildAutopilotView(store, session, m),
+              parsed.sid,
+            ),
+          }),
+        );
+      } catch {
+        /* gone/unchanged */
       }
       return;
     }
@@ -494,7 +612,7 @@ export async function handleCallbackQuery(
     );
     await reply(ctx, "info", result, { session: sessionName, replyTarget });
   } catch (err) {
-    log.error(`error: ${normalizeError(err).message}`);
+    log.error("callback handler failed", { err });
     await safeAnswerCallback(ctx, messages("telegram").toastError);
   }
 }

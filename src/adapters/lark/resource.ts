@@ -31,6 +31,20 @@ export async function notifyLarkOwner(cfg: LarkConfig, text: string): Promise<vo
 }
 
 /**
+ * Best-effort proactive DM to the first allow-listed owner — same owner
+ * resolution as `notifyLarkOwner`, but sends an interactive card instead of
+ * plain text. Used for the autopilot human-gate push.
+ */
+export async function notifyLarkOwnerCard(cfg: LarkConfig, card: object): Promise<void> {
+  const owner = [...cfg.allowedOpenIds][0];
+  if (owner === undefined) return;
+  await clientFor(cfg).im.v1.message.create({
+    params: { receive_id_type: "open_id" },
+    data: { receive_id: owner, msg_type: "interactive", content: JSON.stringify(card) },
+  });
+}
+
+/**
  * Download a resource embedded in a Feishu message (voice/audio/video/file) to
  * `destPath`. Message media MUST go through `im.v1.messageResource.get` with the
  * MESSAGE_ID — the channel's `downloadResource` hits `im.v1.file.get`, which is

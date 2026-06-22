@@ -254,6 +254,8 @@ export const BOT_COMMANDS: BotCommand[] = [
     description: "Install usage reporting (statusLine snapshot) for /status",
   },
   // 🛠 Diagnostics
+  { command: "autopilot", description: "Toggle/inspect keep-alive autopilot for this session" },
+  { command: "goals", description: "List autopilot goal presets" },
   { command: "dashboard", description: "Show the global dashboard (all sessions overview)" },
   { command: "sysload", description: "Show machine load, heat, and runaway processes" },
   {

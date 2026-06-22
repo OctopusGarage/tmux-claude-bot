@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import {
   ACTION_META,
   CONTROL_INTERRUPTS,
@@ -57,7 +58,18 @@ export type CallbackAction =
   | { kind: "browse"; action: BrowseAction }
   | { kind: "browseselect" }
   | { kind: "browsenewfolder" }
-  | { kind: "browsecancel" };
+  | { kind: "browsecancel" }
+  | { kind: "apPanel"; sid: string }
+  | { kind: "apToggle"; sid: string }
+  | { kind: "apGlobal"; sid: string; on: boolean }
+  | { kind: "apStop"; sid: string }
+  | { kind: "apBack"; sid: string }
+  | { kind: "apPick"; sid: string }
+  | { kind: "apGoalToggle"; sid: string; idx: number }
+  | { kind: "apRounds"; sid: string; delta: number }
+  | { kind: "apStart"; sid: string }
+  | { kind: "apConfirm"; sid: string }
+  | { kind: "apContinue"; sid: string };
 
 /** The choices when /status_install hits a foreign statusLine. */
 export const STATUS_INSTALL_ACTIONS = ["overwrite", "wrap", "snippet", "skip"] as const;
@@ -151,6 +163,45 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (parts.length !== 2 || !STATUS_INSTALL_ACTIONS.includes(a as StatusInstallAction))
       return null;
     return { kind: "statusinstall", action: a as StatusInstallAction };
+  }
+  if (tag === "ap") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    return { kind: "apPanel", sid };
+  }
+  if (tag === "apt" || tag === "apstop" || tag === "apl") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    const kind = tag === "apt" ? "apToggle" : tag === "apstop" ? "apStop" : "apBack";
+    return { kind, sid } as CallbackAction;
+  }
+  if (tag === "apglobal") {
+    const on = parts[1];
+    const sid = parts[2];
+    if (parts.length !== 3 || (on !== "1" && on !== "0") || !sid) return null;
+    return { kind: "apGlobal", sid, on: on === "1" };
+  }
+  if (tag === "apg" || tag === "apgo") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    return { kind: tag === "apg" ? "apPick" : "apStart", sid };
+  }
+  if (tag === "apgt") {
+    const idx = Number(parts[1]);
+    const sid = parts[2];
+    if (parts.length !== 3 || !Number.isInteger(idx) || idx < 0 || !sid) return null;
+    return { kind: "apGoalToggle", sid, idx };
+  }
+  if (tag === "apr") {
+    const delta = Number(parts[1]);
+    const sid = parts[2];
+    if (parts.length !== 3 || (delta !== 1 && delta !== -1) || !sid) return null;
+    return { kind: "apRounds", sid, delta };
+  }
+  if (tag === "apc" || tag === "apx") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    return { kind: tag === "apc" ? "apConfirm" : "apContinue", sid };
   }
   if (tag === "br") return parseBrowseData(parts);
   if (tag !== undefined && tag in SID_TAGS) {
@@ -330,6 +381,7 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
     .text(m.btnQueue, "qs")
     .text(m.btnRecover, "rcv")
     .row()
+    .text("🤖 Autopilot", `ap:${sid}`)
     .text(m.btnCollapse, `l:${sid}`);
 }
 
@@ -460,4 +512,54 @@ export function buildRecentKeyboard(projects: RecentButton[]): InlineKeyboard {
     if (i < projects.length - 1) kb.row();
   });
   return kb;
+}
+
+/** Goal-cycle picker: every catalog goal as a toggle (✓ when selected), a
+ * rounds stepper, and a start button summarising the selection. Goals are keyed
+ * by catalog index (apgt:<idx>:<sid>) to fit callback_data. */
+export function buildAutopilotGoalPicker(view: AutopilotView, sid: string): InlineKeyboard {
+  const m = messages("telegram");
+  const kb = new InlineKeyboard();
+  view.goals.forEach((g, i) => {
+    kb.text(g.selected ? `✓ ${g.title}` : g.title, `apgt:${i}:${sid}`);
+    if (i % 2 === 1) kb.row();
+  });
+  kb.row();
+  kb.text(m.btnApRoundsMinus, `apr:-1:${sid}`)
+    .text(m.apRoundsLabel(view.rounds), "noop")
+    .text(m.btnApRoundsPlus, `apr:1:${sid}`)
+    .row();
+  const n = view.goals.filter((g) => g.selected).length;
+  if (n > 0) kb.text(m.btnApStartCycle(n, view.rounds), `apgo:${sid}`).row();
+  return kb.text(m.btnApBack, `ap:${sid}`); // back to the panel
+}
+
+/** The two buttons attached to a human-gate push notification. */
+export function buildAutopilotGateKeyboard(sid: string): InlineKeyboard {
+  const m = messages("telegram");
+  return new InlineKeyboard()
+    .text(m.btnApConfirm, `apc:${sid}`)
+    .text(m.btnApContinue, `apx:${sid}`);
+}
+
+/** Autopilot panel: progressive disclosure from the AutopilotView.
+ * OFF → a single "enable" button; ON → toggle/pick-goals/global/stop; a pending
+ * human gate surfaces confirm/continue at the top. Tapping routes to apt/apg/
+ * apglobal/apstop and (gate) apc/apx. */
+export function buildAutopilotPanelKeyboard(view: AutopilotView, sid: string): InlineKeyboard {
+  const m = messages("telegram");
+  const kb = new InlineKeyboard();
+  if (view.gatePending) {
+    kb.text(m.btnApConfirm, `apc:${sid}`).text(m.btnApContinue, `apx:${sid}`).row();
+  }
+  if (!view.enabled) {
+    return kb.text(m.btnApEnable, `apt:${sid}`).row().text(m.btnApBack, `apl:${sid}`);
+  }
+  kb.text(m.btnApDisable, `apt:${sid}`).text(m.btnApPickGoals, `apg:${sid}`).row();
+  kb.text(
+    view.globalOn ? m.btnApGlobalOff : m.btnApGlobalOn,
+    `apglobal:${view.globalOn ? 0 : 1}:${sid}`,
+  );
+  if (view.mode === "cycle") kb.text(m.btnApStop, `apstop:${sid}`);
+  return kb.row().text(m.btnApBack, `apl:${sid}`);
 }

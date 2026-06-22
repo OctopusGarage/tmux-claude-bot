@@ -1,4 +1,8 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
+import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
+import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
+import { formatGoalsList } from "../../core/autopilot/goals/goals-view.js";
+import { AutopilotStore } from "../../core/autopilot/state-store.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { createSubfolder, isAwaitingFolderName } from "../../core/projects/dir-browser.js";
@@ -11,7 +15,7 @@ import { parsePeekLines } from "../../core/session/output.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
-import { browseCard, helpCard } from "./cards.js";
+import { autopilotPanelCard, browseCard, helpCard } from "./cards.js";
 import { isGroupMgmtCommand, isRecoveryCommand, parseLarkInput } from "./commands.js";
 import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
 import {
@@ -299,6 +303,42 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               break;
             case "restore":
               await handleRestore(channel, deps, msg.chatId);
+              break;
+            case "autopilot": {
+              const session = await deps.currentProject.get(chatScope("lark", msg.chatId));
+              if (!session) {
+                await sendText(channel, msg.chatId, messages("lark").noCurrentProjectShort);
+                break;
+              }
+              const store = new AutopilotStore();
+              const m = messages("lark");
+              if (parsed.arg?.trim()) {
+                // text verb path (back-compat): apply + report status as text
+                await sendText(
+                  channel,
+                  msg.chatId,
+                  applyAutopilotVerb(
+                    store,
+                    session,
+                    parsed.arg,
+                    m,
+                    deps.config.autopilot.maxRounds,
+                  ),
+                );
+              }
+              await sendCard(
+                channel,
+                msg.chatId,
+                autopilotPanelCard(
+                  buildAutopilotView(store, session, m),
+                  session,
+                  isProjectGroup(msg.chatId),
+                ),
+              );
+              break;
+            }
+            case "goals":
+              await sendText(channel, msg.chatId, formatGoalsList(messages("lark")));
               break;
           }
           break;

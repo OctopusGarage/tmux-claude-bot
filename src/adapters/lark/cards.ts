@@ -1,3 +1,4 @@
+import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import {
   ACTION_META,
   buildHelpBody,
@@ -124,7 +125,8 @@ export function langCard(current: Lang): object {
 function actionRow(actions: MessageAction[]): ButtonSpec[] {
   const m = messages("lark");
   return actions.map((action) => {
-    const meta = ACTION_META[action]!;
+    const meta = ACTION_META[action];
+    if (!meta) return { text: action, value: { cmd: action } };
     return {
       text: m[meta.btnKey] as string,
       value: { cmd: action },
@@ -186,6 +188,7 @@ function controlRows(group = false, running = true): ButtonSpec[][] {
           [
             { text: m.btnDashboard, value: { cmd: "dashboard" } },
             { text: m.btnRecover, value: { cmd: "recover" } },
+            { text: "🤖 Autopilot", value: { cmd: "ap_panel" } },
           ],
         ]),
     lastRow,
@@ -235,7 +238,7 @@ export function startPickerCard(
  * and a help button. The title carries the 📂 project so the user sees which
  * session answered. */
 export function resultCard(output: string, title = "Agent", group = false): object {
-  const body = output && output.trim() ? output : messages("lark").emptyOutput;
+  const body = output?.trim() ? output : messages("lark").emptyOutput;
   return shell(title, [md(body), HR, ...controlActions(group)]);
 }
 
@@ -243,14 +246,14 @@ export function resultCard(output: string, title = "Agent", group = false): obje
  * control buttons the result card carries. Pass `running=false` to adapt the
  * panel to the idle (launch/navigate) shortcuts. */
 export function viewCard(title: string, body: string, group = false, running = true): object {
-  const content = body && body.trim() ? body : messages("lark").emptyPane;
+  const content = body?.trim() ? body : messages("lark").emptyPane;
   return shell(title, [md(content), HR, ...controlActions(group, running)]);
 }
 
 /** A peek page WITHOUT the control panel — for the non-last chunks of a paged
  * /peek (only the bottom card carries the controls). */
 export function peekChunkCard(title: string, body: string): object {
-  return shell(title, [md(body && body.trim() ? body : messages("lark").emptyPane)]);
+  return shell(title, [md(body?.trim() ? body : messages("lark").emptyPane)]);
 }
 
 /** Recent-inputs picker: one button per input; tapping fetches it back as an editable
@@ -570,5 +573,97 @@ export function helpCard(group = false, voiceInstallable = false): object {
           ]),
         ]
       : []),
+  ]);
+}
+
+/** Autopilot panel card: progressive disclosure from the AutopilotView. Every
+ * button carries the session in its signed value. Mirrors the Telegram panel.
+ * Pass `group=true` in a bound group to omit the host-wide global toggle. */
+export function autopilotPanelCard(view: AutopilotView, session: string, group = false): object {
+  const m = messages("lark");
+  const rows: ButtonSpec[][] = [];
+  if (view.gatePending) {
+    rows.push([
+      { text: m.btnApConfirm, value: { cmd: "ap_confirm", s: session }, style: "primary" },
+      { text: m.btnApContinue, value: { cmd: "ap_reject", s: session } },
+    ]);
+  }
+  if (!view.enabled) {
+    rows.push([{ text: m.btnApEnable, value: { cmd: "ap_toggle", s: session }, style: "primary" }]);
+  } else {
+    rows.push([
+      { text: m.btnApDisable, value: { cmd: "ap_toggle", s: session } },
+      { text: m.btnApPickGoals, value: { cmd: "ap_pick", s: session } },
+    ]);
+    // The global toggle is host-wide: omit it in bound groups where the chat is
+    // scoped to a single project (same policy as the host-wide buttons elsewhere).
+    if (!group) {
+      const globalRow: ButtonSpec[] = [
+        {
+          text: view.globalOn ? m.btnApGlobalOff : m.btnApGlobalOn,
+          value: { cmd: "ap_global", s: session, on: !view.globalOn },
+        },
+      ];
+      if (view.mode === "cycle")
+        globalRow.push({
+          text: m.btnApStop,
+          value: { cmd: "ap_stop", s: session },
+          style: "danger",
+        });
+      rows.push(globalRow);
+    } else if (view.mode === "cycle") {
+      // In a group: keep the stop button (per-session op) but drop global toggle.
+      rows.push([{ text: m.btnApStop, value: { cmd: "ap_stop", s: session }, style: "danger" }]);
+    }
+  }
+  return shell(m.autopilotTitle, [md(view.statusLine), HR, ...rows.map(gridRow)]);
+}
+
+/** Goal-cycle picker card: a toggle button per catalog goal (✓ when selected), a
+ * rounds stepper, a start button. Re-sent on every toggle (Feishu can't update). */
+export function autopilotGoalPickerCard(view: AutopilotView, session: string): object {
+  const m = messages("lark");
+  const goalRows: ButtonSpec[][] = [];
+  view.goals.forEach((g, i) => {
+    const spec: ButtonSpec = {
+      text: g.selected ? `✓ ${g.title}` : g.title,
+      value: { cmd: "ap_goal_toggle", s: session, id: g.id },
+    };
+    if (i % 2 === 0) goalRows.push([spec]);
+    else goalRows.at(-1)?.push(spec);
+  });
+  const n = view.goals.filter((g) => g.selected).length;
+  const elements: object[] = [md(m.autopilotTitle), ...goalRows.map(gridRow)];
+  elements.push(
+    gridRow([
+      { text: m.btnApRoundsMinus, value: { cmd: "ap_rounds", s: session, delta: -1 } },
+      { text: m.apRoundsLabel(view.rounds), value: { cmd: "noop" } },
+      { text: m.btnApRoundsPlus, value: { cmd: "ap_rounds", s: session, delta: 1 } },
+    ]),
+  );
+  if (n > 0)
+    elements.push(
+      gridRow([
+        {
+          text: m.btnApStartCycle(n, view.rounds),
+          value: { cmd: "ap_start", s: session },
+          style: "primary",
+        },
+      ]),
+    );
+  elements.push(gridRow([{ text: m.btnApBack, value: { cmd: "ap_panel", s: session } }]));
+  return shell(m.autopilotTitle, elements);
+}
+
+/** The interactive human-gate card pushed to the owner: confirm / continue,
+ * carrying the gated session. */
+export function autopilotGateCard(session: string): object {
+  const m = messages("lark");
+  return shell(m.autopilotTitle, [
+    md(m.autopilotNotifyAwaitHuman(session)),
+    gridRow([
+      { text: m.btnApConfirm, value: { cmd: "ap_confirm", s: session }, style: "primary" },
+      { text: m.btnApContinue, value: { cmd: "ap_reject", s: session } },
+    ]),
   ]);
 }

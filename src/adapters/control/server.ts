@@ -1,9 +1,13 @@
 import { existsSync, unlinkSync } from "node:fs";
 import net from "node:net";
+import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
+import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
+import { AutopilotStore } from "../../core/autopilot/state-store.js";
 import { performStart } from "../../core/command/dispatch.js";
 import { newMessageId } from "../../core/command/enqueue.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
 import type { HandlerDeps } from "../../core/deps.js";
+import { messages } from "../../core/i18n/index.js";
 import {
   defaultSystemLoadProbes,
   gatherSystemLoad,
@@ -52,6 +56,13 @@ export function startControlServer(deps: HandlerDeps): net.Server {
     log.warn("could not remove stale control socket", { err });
   }
 
+  // Per-connection send fns; registered once per connect, removed on close.
+  // The pusher is registered ONCE (not per-connection) so it doesn't leak.
+  const clients = new Set<(m: ServerMessage) => void>();
+  deps.notifier.register(async (notice) => {
+    for (const s of clients) s({ event: "autopilot", session: notice.session, kind: notice.kind });
+  });
+
   const server = net.createServer((conn) => {
     conn.setEncoding("utf8");
     const decode = createLineDecoder<ControlRequest>();
@@ -59,6 +70,7 @@ export function startControlServer(deps: HandlerDeps): net.Server {
       if (!conn.writable) return;
       conn.write(encodeLine(msg));
     };
+    clients.add(send);
 
     // Coalesce the fs-watch storm into one "refresh" nudge.
     let activityTimer: NodeJS.Timeout | undefined;
@@ -68,7 +80,7 @@ export function startControlServer(deps: HandlerDeps): net.Server {
         activityTimer = undefined;
         send({ event: "activity" });
       }, ACTIVITY_DEBOUNCE_MS);
-      activityTimer.unref?.();
+      (activityTimer as { unref?: () => void }).unref?.();
     });
 
     conn.on("data", (chunk: string) => {
@@ -76,6 +88,7 @@ export function startControlServer(deps: HandlerDeps): net.Server {
     });
     const cleanup = (): void => {
       if (activityTimer) clearTimeout(activityTimer);
+      clients.delete(send);
       unsubscribe();
     };
     conn.on("close", cleanup);
@@ -154,6 +167,27 @@ async function handleRequest(
             req.session,
             getPathBySession(req.session) ?? req.session,
             12,
+          ),
+        );
+        return;
+      case "autopilot": {
+        const status = applyAutopilotVerb(
+          new AutopilotStore(),
+          req.session,
+          req.verb,
+          messages("telegram"),
+          deps.config.autopilot.maxRounds,
+        );
+        ok({ status });
+        return;
+      }
+      case "autopilotView":
+        ok(
+          buildAutopilotView(
+            new AutopilotStore(),
+            req.session,
+            messages("telegram"),
+            deps.config.autopilot.maxRounds,
           ),
         );
         return;

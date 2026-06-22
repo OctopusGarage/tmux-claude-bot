@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlClient } from "../../../src/adapters/control/client.js";
 import { startControlServer } from "../../../src/adapters/control/server.js";
+import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 
@@ -62,6 +63,7 @@ function fakeDeps(enqueue?: (m: QueuedMessage) => EnqueueVerdict): HandlerDeps {
         }),
     },
     activity: { onActivity: () => () => {} },
+    notifier: new NotifierRegistry(),
   } as unknown as HandlerDeps;
 }
 

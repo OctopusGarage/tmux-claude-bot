@@ -2,6 +2,7 @@ import type { AgentKind } from "../../shared/types.js";
 import { appVersion } from "../../shared/version.js";
 import { resolveAgentKind } from "../agents/agentKindMap.js";
 import { profileFor } from "../agents/registry.js";
+import { AutopilotStore } from "../autopilot/state-store.js";
 import type { HandlerDeps } from "../deps.js";
 import { instanceStartedAt } from "../infra/instance-lock.js";
 import { projectLabel } from "../projects/project-label.js";
@@ -14,6 +15,8 @@ import { cumulativeBusyMs as cumulativeBusyMsOf, currentTask } from "../session/
  * working. Generous so brief gaps between streamed writes don't flip to idle;
  * the cost is up to this much "busy" lag after a task actually finishes. */
 const ACTIVITY_WINDOW_MS = 60_000;
+
+const autopilotStore = new AutopilotStore();
 
 /**
  * One live session's aggregated state for the dashboard. Neutral data only —
@@ -35,6 +38,8 @@ export type SessionRow = {
   uptimeMs: number;
   usage: UsageSnapshot | null;
   apiMode?: "api" | "subscription";
+  /** Present only when autopilot is enabled for this session. */
+  autopilot?: { enabled: boolean; pureKeepAlive: boolean; iterations: number };
 };
 
 /** A global snapshot: every live session plus bot-level totals. */
@@ -49,6 +54,7 @@ export type DashboardSnapshot = {
     busyCount: number;
     queueDepth: number;
     adapters: { telegram: boolean; lark: boolean };
+    autopilotCount: number;
   };
   generatedAt: number;
 };
@@ -126,6 +132,18 @@ async function gatherRow(
 
   const apiMode = (await deps.configResolver.resolveApiInfo?.(session).catch(() => null))?.mode;
 
+  // Best-effort autopilot state: wrap in try/catch so a store read failure
+  // degrades to no autopilot field rather than sinking the whole row.
+  let autopilot: SessionRow["autopilot"];
+  try {
+    const ap = autopilotStore.get(session);
+    if (ap.enabled) {
+      autopilot = { enabled: true, pureKeepAlive: ap.pureKeepAlive, iterations: ap.iterations };
+    }
+  } catch {
+    // degraded: leave autopilot undefined
+  }
+
   return {
     session,
     label,
@@ -137,6 +155,7 @@ async function gatherRow(
     uptimeMs,
     usage,
     ...(apiMode !== undefined && { apiMode }),
+    ...(autopilot && { autopilot }),
   };
 }
 
@@ -175,6 +194,7 @@ export async function buildDashboard(
         telegram: Boolean(deps.config.telegramBotToken),
         lark: Boolean(deps.config.lark),
       },
+      autopilotCount: rows.filter((r) => r.autopilot).length,
     },
     generatedAt: now,
   };

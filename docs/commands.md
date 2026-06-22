@@ -37,6 +37,8 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `inputs` | List your recent inputs (`/inputs N` for the last N) — tap one to fetch & edit it |
 | `sessions` | List resumable sessions for the current project's agent (tap one to resume) |
 | `logs` | Show recent WARN/ERROR logs for the current session; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
+| `autopilot` | Toggle/inspect keep-alive autopilot for the current session: `/autopilot [on\|off\|keepalive on\|off\|stop\|goal <id>\|goals <id,id,…> [rounds N]\|confirm\|reject\|global on\|off]` — `goals` runs several goals in rotation for N rounds (default 1); `global` toggles auto-managing every session |
+| `goals` | List autopilot goal presets |
 | `dashboard` | Show the global dashboard: every live session plus bot-level totals (version, uptime, queue depth). Owner-only (Lark: 1:1 chat only). |
 | `sysload` | Show machine load, thermal state, top CPU, and runaway/orphan shells (with a `kill -9` hint). Owner-only (Lark: 1:1 chat only). |
 | `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |

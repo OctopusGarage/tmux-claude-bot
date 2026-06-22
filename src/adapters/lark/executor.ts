@@ -139,7 +139,7 @@ export async function enqueueLarkAction(
           void sendText(channel, chatId, `${text}\n\n${projectTag(session)}`);
         },
         reject: (err) => {
-          log.error(`reject session=${session} err=${err.message}`);
+          log.error("queued action reject fired", { session, err });
           // A user-initiated cancel is not a failure — confirm it plainly, no
           // start/restart recovery surface.
           if (err instanceof QueueCancelledError) {
@@ -222,7 +222,7 @@ export async function runImmediateLarkAction(
     await sendText(channel, chatId, `${result}\n\n${projectTag(session)}`);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    log.error(`immediate action failed action=${action} session=${session} err=${errMsg}`);
+    log.error("immediate action failed", { session, data: { action }, err });
     await sendCard(
       channel,
       chatId,

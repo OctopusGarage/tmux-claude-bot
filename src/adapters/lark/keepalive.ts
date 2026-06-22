@@ -1,4 +1,3 @@
-import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
 
 const log = createLogger("lark.keepalive");
@@ -113,14 +112,14 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       try {
         await deps.forceReconnect();
       } catch (err) {
-        log.error(`force-reconnect failed: ${normalizeError(err).message}`);
+        log.error("force-reconnect failed", { err });
       }
     }
   };
 
   // (1) Independent timer, untied from the SDK's internal ping cadence.
   const timer = setInterval(() => {
-    void tick().catch((err) => log.error(`tick failed: ${normalizeError(err).message}`));
+    void tick().catch((err) => log.error("keepalive tick failed", { err }));
   }, intervalMs);
 
   return {

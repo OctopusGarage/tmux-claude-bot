@@ -62,6 +62,7 @@ TUI is open, the TUI auto-reconnects.
 | `c` | controls overlay — the full action set (interrupt / clear / compact / esc / enter / restart / ↑ / ↓ / tab); press the number, `Esc` to close |
 | `s` | **projects** overlay — every project (live `●` + stopped `◌`, recents included); `Enter` **opens + starts** the selected one (switch to a project / start a stopped one), `Esc` to close |
 | `R` | **recover** — reboot recovery: relaunch the agents that were running before a restart (status shows launched / shell-only / already-alive counts) |
+| `A` | **autopilot** panel — enable or disable autopilot for the current session; pick one or more goal-cycles with a multi-select list and set the number of rounds; toggle the global keep-alive; stop autopilot. When a goal pauses at a `humanGate` phase, a banner appears — press `A` to confirm and continue in-place. |
 | `a` | **attach** — drop into the session's real, fully-interactive tmux pane; the TUI resumes when you detach (`Ctrl-b d`). Inside tmux it `switch-client`s instead |
 | `q` | quit the TUI (the bot keeps running) |
 

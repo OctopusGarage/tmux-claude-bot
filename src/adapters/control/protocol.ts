@@ -25,7 +25,9 @@ export type ControlRequest =
   | { id: number; op: "recover" }
   | { id: number; op: "logs"; session: string }
   | { id: number; op: "sysload" }
-  | { id: number; op: "inputs"; session: string };
+  | { id: number; op: "inputs"; session: string }
+  | { id: number; op: "autopilot"; session: string; verb: string }
+  | { id: number; op: "autopilotView"; session: string };
 
 export type ControlResponse =
   | { id: number; ok: true; data: unknown }
@@ -38,7 +40,8 @@ export type ControlEvent =
   | { event: "activity" }
   | { event: "reply"; session: string; output: string }
   | { event: "notify"; session: string; text: string }
-  | { event: "error"; session: string; error: string };
+  | { event: "error"; session: string; error: string }
+  | { event: "autopilot"; session: string; kind: string };
 
 export type ServerMessage = ControlResponse | ControlEvent;
 

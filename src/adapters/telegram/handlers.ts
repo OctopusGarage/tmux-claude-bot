@@ -3,6 +3,9 @@ import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
 import { profileFor } from "../../core/agents/registry.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
+import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
+import { formatGoalsList } from "../../core/autopilot/goals/goals-view.js";
+import { AutopilotStore } from "../../core/autopilot/state-store.js";
 import { buildHelpBody, getTelegramActions } from "../../core/command/action-registry.js";
 import { startDisposition } from "../../core/command/dispatch.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
@@ -343,6 +346,38 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     const report = await gatherSystemLoad(defaultSystemLoadProbes());
     await reply(ctx, "view", messages("telegram").sysloadTitle, {
       body: renderSystemLoad(report),
+      replyTarget,
+    });
+  });
+
+  // Per-session autopilot control: /autopilot [on|off|keepalive on|off|stop]
+  // Resolve the target session the same way /logs does (reply-routing first,
+  // then the chat's current project), so it works from any reply context.
+  bot.command("autopilot", async (ctx) => {
+    const session = await resolveSessionFromReply(ctx, replyTarget, deps);
+    if (!session) {
+      await reply(ctx, "err", MSG.noSession);
+      return;
+    }
+    const arg = (ctx.match ?? "").toString();
+    const body = applyAutopilotVerb(
+      new AutopilotStore(),
+      session,
+      arg,
+      messages("telegram"),
+      deps.config.autopilot.maxRounds,
+    );
+    await reply(ctx, "view", messages("telegram").autopilotTitle, {
+      session,
+      body,
+      replyTarget,
+    });
+  });
+
+  bot.command("goals", async (ctx) => {
+    const body = formatGoalsList(messages("telegram"));
+    await reply(ctx, "view", messages("telegram").goalsTitle, {
+      body,
       replyTarget,
     });
   });

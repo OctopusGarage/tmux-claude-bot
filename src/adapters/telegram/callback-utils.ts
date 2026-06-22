@@ -19,6 +19,6 @@ export async function safeAnswerCallback(ctx: AnswerableCtx, text?: string): Pro
       ctx.answerCallbackQuery(text !== undefined ? { text } : undefined),
     );
   } catch (err) {
-    log.warn(`answerCallbackQuery failed: ${err instanceof Error ? err.message : err}`);
+    log.warn("answerCallbackQuery failed", { err });
   }
 }

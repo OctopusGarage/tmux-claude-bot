@@ -380,7 +380,11 @@ async function boundGroupStillLive(channel: LarkChannel, chatId: string): Promis
       await channel.getChatInfo(chatId);
       return true;
     } catch (err) {
-      log.warn(`getChatInfo failed for bound chat=${chatId} (try ${attempt + 1}): ${String(err)}`);
+      log.warn("getChatInfo failed for bound chat", {
+        chatId,
+        data: { attempt: attempt + 1 },
+        err,
+      });
       if (attempt === 0) await sleep(500);
     }
   }

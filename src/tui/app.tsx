@@ -1,9 +1,11 @@
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ControlClient } from "../adapters/control/client.js";
+import type { AutopilotView } from "../core/autopilot/autopilot-view.js";
 import type { SessionRow } from "../core/dashboard/dashboard.js";
 import { formatHeader } from "../core/dashboard/dashboard-view.js";
 import { agentGlyph } from "../shared/types.js";
+import { autopilotActionList, goalsVerb } from "./autopilot-panel.js";
 import {
   type ComposerState,
   composerStep,
@@ -39,6 +41,7 @@ const HELP: [string, string][] = [
   ["e / x / r", "esc / enter / restart"],
   ["s", "projects — switch / start a project"],
   ["R", "recover (relaunch pre-restart agents)"],
+  ["A", "autopilot panel"],
   ["a", "attach to the real tmux pane"],
   ["q", "quit (the bot keeps running)"],
 ];
@@ -54,7 +57,16 @@ const fmtDur = (ms: number): string => {
 
 const shortLabel = (s: SessionRow): string => s.label || s.session;
 
-type Mode = "list" | "input" | "controls" | "projects" | "logs" | "sysload" | "inputs" | "help";
+type Mode =
+  | "list"
+  | "input"
+  | "controls"
+  | "projects"
+  | "logs"
+  | "sysload"
+  | "inputs"
+  | "help"
+  | "autopilot";
 type Project = { sid: string; label: string; alive: boolean; active: boolean };
 
 export function App({
@@ -90,6 +102,13 @@ export function App({
   const [inputsList, setInputsList] = useState<string[]>([]);
   const [inputSel, setInputSel] = useState(0);
   const refreshTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Autopilot panel state
+  const [apView, setApView] = useState<AutopilotView | null>(null);
+  const [apSel, setApSel] = useState(0);
+  const [apPick, setApPick] = useState(false); // goal sub-picker open?
+  const [apGoals, setApGoals] = useState<Set<string>>(new Set());
+  const [apRounds, setApRounds] = useState(1);
 
   const selected = rows[Math.min(sel, Math.max(0, rows.length - 1))];
   // Keep both panes within the terminal (the 2-line fleet summary + status line +
@@ -138,6 +157,10 @@ export function App({
     [client],
   );
 
+  const loadAp = useCallback(async () => {
+    if (selected) setApView(await client.autopilotView(selected.session));
+  }, [client, selected]);
+
   useEffect(() => {
     void loadSnapshot();
     const onActivity = (): void => {
@@ -172,6 +195,20 @@ export function App({
       client.off("reconnected", onReconn);
     };
   }, [client, loadSnapshot, loadPeek, selected?.session]);
+
+  // Autopilot push gets its OWN effect so it doesn't re-register on every
+  // `selected` change (which would briefly drop an event between off() and on()).
+  useEffect(() => {
+    // Any autopilot push refreshes the selected session's view; the gate banner
+    // is driven by that view's gatePending (per-session) — never a cross-session flag.
+    const onAp = (): void => {
+      void loadAp();
+    };
+    client.on("autopilot", onAp);
+    return () => {
+      client.off("autopilot", onAp);
+    };
+  }, [client, loadAp]);
 
   // Periodic refresh so the top fleet summary + busy timers stay live even when no
   // server activity event fires. Self-scheduling (not setInterval) so a slow
@@ -389,6 +426,75 @@ export function App({
         }
         return;
       }
+      if (mode === "autopilot") {
+        if (key.escape || ch === "A") {
+          setMode("list");
+          return;
+        }
+        const view = apView;
+        if (!view) return;
+        if (apPick) {
+          // goal sub-picker: space toggles, +/- rounds, Enter starts, Esc backs out
+          if (key.escape) {
+            setApPick(false);
+            return;
+          }
+          if (ch === " ") {
+            const goal = view.goals[apSel];
+            if (goal) {
+              setApGoals((prev) => {
+                const next = new Set(prev);
+                if (next.has(goal.id)) next.delete(goal.id);
+                else next.add(goal.id);
+                return next;
+              });
+            }
+            return;
+          }
+          if (ch === "+" || ch === "=") {
+            // honour the configured cap (carried in the view) so the picker can't
+            // promise more rounds than the engine will run.
+            const cap = apView?.maxRounds ?? 10;
+            setApRounds((r) => Math.min(cap, r + 1));
+            return;
+          }
+          if (ch === "-") {
+            setApRounds((r) => Math.max(1, r - 1));
+            return;
+          }
+          if (key.return) {
+            if (apGoals.size && selected) {
+              void client
+                .autopilot(selected.session, goalsVerb([...apGoals], apRounds))
+                .then(loadAp);
+            }
+            setApPick(false);
+            return;
+          }
+          // j/k move within goal list
+          if (key.upArrow || ch === "k") setApSel((i) => Math.max(0, i - 1));
+          else if (key.downArrow || ch === "j")
+            setApSel((i) => Math.min(view.goals.length - 1, i + 1));
+        } else {
+          const actions = autopilotActionList(view);
+          if (key.return) {
+            const a = actions[apSel];
+            if (a?.key === "pick") {
+              setApPick(true);
+              setApGoals(new Set());
+              setApRounds(1);
+              setApSel(0);
+            } else if (a && "verb" in a && selected) {
+              void client.autopilot(selected.session, a.verb).then(loadAp);
+            }
+            return;
+          }
+          if (key.upArrow || ch === "k") setApSel((i) => Math.max(0, i - 1));
+          else if (key.downArrow || ch === "j")
+            setApSel((i) => Math.min(actions.length - 1, i + 1));
+        }
+        return;
+      }
       // list mode
       if (ch === "q") {
         client.close();
@@ -402,7 +508,12 @@ export function App({
       } else if (ch === "c") setMode("controls");
       else if (ch === "s") void openProjects();
       else if (ch === "R") void doRecover();
-      else if (ch === "l" && selected)
+      else if (ch === "A") {
+        setApSel(0);
+        setApPick(false);
+        void loadAp();
+        setMode("autopilot");
+      } else if (ch === "l" && selected)
         void showText("logs", `Logs · ${shortLabel(selected)}`, () =>
           client.logs(selected.session),
         );
@@ -538,20 +649,61 @@ export function App({
                     </Text>,
                     <Text>{overlayWindow}</Text>,
                   )
-                : pane(
-                    <Text bold wrap="truncate">
-                      {selected ? shortLabel(selected) : "—"}{" "}
-                      <Text color={selected?.busy ? "green" : "gray"}>
-                        {selected?.busy ? "busy" : "idle"}
-                      </Text>
-                      <Text color="gray">
-                        {selected
-                          ? ` · up ${fmtDur(selected.uptimeMs)} · Σ ${fmtDur(selected.cumulativeBusyMs)}`
-                          : ""}
-                      </Text>
-                    </Text>,
-                    <Text>{peek ? peek.split("\n").slice(-peekRows).join("\n") : "(empty)"}</Text>,
-                  )}
+                : mode === "autopilot"
+                  ? pane(
+                      <Text bold color="magenta" wrap="truncate">
+                        Autopilot · {selected ? shortLabel(selected) : "—"} · Esc close
+                      </Text>,
+                      apView === null ? (
+                        <Text color="gray">loading…</Text>
+                      ) : (
+                        <Box flexDirection="column">
+                          {apView.gatePending ? (
+                            <Text color="yellow">
+                              {"⏸"} gate pending — Enter Confirm / Keep going
+                            </Text>
+                          ) : null}
+                          <Text color="gray">{apView.statusLine}</Text>
+                          {apPick ? (
+                            <Box flexDirection="column">
+                              <Text color="cyan">
+                                Pick goals (Space toggle) · rounds: {apRounds} (+/-)
+                              </Text>
+                              {apView.goals.map((g, i) => (
+                                <Text key={g.id} inverse={i === apSel} wrap="truncate">
+                                  {apGoals.has(g.id) ? "[x] " : "[ ] "}
+                                  {g.title}
+                                </Text>
+                              ))}
+                            </Box>
+                          ) : (
+                            <Box flexDirection="column">
+                              {autopilotActionList(apView).map((a, i) => (
+                                <Text key={a.key} inverse={i === apSel} wrap="truncate">
+                                  {a.label}
+                                </Text>
+                              ))}
+                            </Box>
+                          )}
+                        </Box>
+                      ),
+                    )
+                  : pane(
+                      <Text bold wrap="truncate">
+                        {selected ? shortLabel(selected) : "—"}{" "}
+                        <Text color={selected?.busy ? "green" : "gray"}>
+                          {selected?.busy ? "busy" : "idle"}
+                        </Text>
+                        <Text color="gray">
+                          {selected
+                            ? ` · up ${fmtDur(selected.uptimeMs)} · Σ ${fmtDur(selected.cumulativeBusyMs)}`
+                            : ""}
+                        </Text>
+                      </Text>,
+                      <Text>
+                        {peek ? peek.split("\n").slice(-peekRows).join("\n") : "(empty)"}
+                      </Text>,
+                    )}
         </Box>
       )}
 
@@ -567,9 +719,15 @@ export function App({
         <Text color="gray">j/k scroll · Esc close</Text>
       ) : mode === "help" ? (
         <Text color="gray">any key to close</Text>
+      ) : mode === "autopilot" ? (
+        <Text color="gray">
+          {apPick
+            ? "Space toggle · +/- rounds · Enter start · Esc back"
+            : "j/k move · Enter select · A/Esc close"}
+        </Text>
       ) : (
         <Text color="gray">
-          j/k move · i prompt · a attach · s projects · u inputs · ? more keys · q quit
+          j/k move · i prompt · a attach · s projects · A autopilot · ? more keys · q quit
         </Text>
       )}
     </Box>

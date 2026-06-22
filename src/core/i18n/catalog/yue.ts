@@ -338,6 +338,52 @@ export const yue: Messages = {
   cmdSysload: "查看本機負載/發熱/失控進程",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
+  autopilotTitle: "🤖 Autopilot",
+  autopilotNotifyPaused: (session, reason) => `🛑 autopilot 已暫停 [${session}]：${reason}`,
+  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot 已停止 [${session}]：${reason}`,
+  autopilotNotifyUsage: (session, pct) => `🛑 autopilot 目標暫停 [${session}]：用量達 ${pct}% 門檻`,
+  autopilotNotifyMaxIter: (session) => `⏹️ autopilot 目標停止 [${session}]：已達最大迭代`,
+  autopilotNotifyWallClock: (session) => `⏹️ autopilot 目標停止 [${session}]：已達時長上限`,
+  autopilotNotifyAwaitHuman: (session) =>
+    `🎯 autopilot [${session}]：階段判定完成，請確認（/autopilot confirm）或繼續（/autopilot reject）`,
+  autopilotNotifyGoalComplete: (session, goalId) =>
+    `✅ autopilot 目標完成 [${session}]：${goalId}（請確認）`,
+  autopilotNotifyCycleComplete: (session, rounds) =>
+    `✅ autopilot 循環完成 [${session}]：已跑滿 ${rounds} 輪（請確認）`,
+  autopilotNotifyKeepaliveDone: (session) =>
+    `✅ autopilot 保活任務完成 [${session}]：偵測到完成標記`,
+  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
+    `➡️ autopilot [${session}]：進入目標 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 輪）`,
+  autopilotGlobal: (on) =>
+    on
+      ? "已開啟全域託管:所有活躍工作階段自動保活(某個工作階段用 /autopilot off 單獨退出)"
+      : "已關閉全域託管",
+  autopilotStatus: (o) =>
+    `Autopilot：${o.enabled ? "開" : "關"}（${o.pureKeepAlive ? "純保活" : "隨目標"}，已干預 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
+  autopilotUsage: (raw) =>
+    `未知子命令「${raw}」。用法：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
+  btnApEnable: "🤖 開啟智能托管",
+  btnApDisable: "⏹ 關閉智能托管",
+  btnApPickGoals: "🎯 選目標",
+  btnApGlobalOn: "🌐 全域:開",
+  btnApGlobalOff: "🌐 全域:關",
+  btnApStop: "⏹ 停止目標",
+  btnApConfirm: "✅ 確認完成",
+  btnApContinue: "▶️ 繼續打磨",
+  btnApBack: "↩︎ 返回",
+  btnApRoundsMinus: "➖",
+  btnApRoundsPlus: "➕",
+  btnApStartCycle: (n: number, rounds: number) => `▶️ 開始(${n} 個目標 · ${rounds} 輪)`,
+  apRoundsLabel: (rounds: number) => `輪數:${rounds}`,
+  goalTestCoverage: "提升測試覆蓋",
+  goalFixTests: "修復測試",
+  goalCodeReview: "程式碼審查",
+  goalAddFeature: "新增功能",
+  goalRefactorElegant: "重構為優雅專業",
+  goalUiPolish: "打磨介面",
+  autopilotGoalStarted: (id) => `已啟動目標：${id}`,
+  autopilotUnknownGoal: (ids) => `未知目標。可用：${ids}`,
+  goalsTitle: "🎯 目標預設",
   noLogsContext: "沒有當前項目，請先選擇項目或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──

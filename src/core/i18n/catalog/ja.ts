@@ -347,6 +347,53 @@ export const ja: Messages = {
   cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
+  autopilotTitle: "🤖 Autopilot",
+  autopilotNotifyPaused: (session, reason) => `🛑 autopilot を一時停止 [${session}]：${reason}`,
+  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot を停止 [${session}]：${reason}`,
+  autopilotNotifyUsage: (session, pct) =>
+    `🛑 autopilot 目標を一時停止 [${session}]：使用量が ${pct}% に到達`,
+  autopilotNotifyMaxIter: (session) => `⏹️ autopilot 目標を停止 [${session}]：最大反復回数に到達`,
+  autopilotNotifyWallClock: (session) => `⏹️ autopilot 目標を停止 [${session}]：時間上限に到達`,
+  autopilotNotifyAwaitHuman: (session) =>
+    `🎯 autopilot [${session}]：フェーズ完了の可能性 — /autopilot confirm で確認、/autopilot reject で続行`,
+  autopilotNotifyGoalComplete: (session, goalId) =>
+    `✅ autopilot 目標完了 [${session}]：${goalId}（確認してください）`,
+  autopilotNotifyCycleComplete: (session, rounds) =>
+    `✅ autopilot サイクル完了 [${session}]：${rounds} 周回完了（確認してください）`,
+  autopilotNotifyKeepaliveDone: (session) =>
+    `✅ autopilot キープアライブ完了 [${session}]：完了マーカーを検出`,
+  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
+    `➡️ autopilot [${session}]：目標 ${goalId} を開始（${pos}/${total} · ${round}/${rounds} 周）`,
+  autopilotGlobal: (on) =>
+    on
+      ? "グローバル保活をオン:すべてのアクティブなセッションを自動管理(個別に除外するには /autopilot off)"
+      : "グローバル保活をオフ",
+  autopilotStatus: (o) =>
+    `Autopilot：${o.enabled ? "オン" : "オフ"}（${o.pureKeepAlive ? "キープアライブ" : "目標駆動"}、介入 ${o.iterations} 回、persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
+  autopilotUsage: (raw) =>
+    `不明なサブコマンド「${raw}」。使い方：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
+  btnApEnable: "🤖 autopilot を有効化",
+  btnApDisable: "⏹ autopilot を無効化",
+  btnApPickGoals: "🎯 目標を選択",
+  btnApGlobalOn: "🌐 グローバル:オン",
+  btnApGlobalOff: "🌐 グローバル:オフ",
+  btnApStop: "⏹ 目標を停止",
+  btnApConfirm: "✅ 完了を確認",
+  btnApContinue: "▶️ 続行",
+  btnApBack: "↩︎ 戻る",
+  btnApRoundsMinus: "➖",
+  btnApRoundsPlus: "➕",
+  btnApStartCycle: (n: number, rounds: number) => `▶️ 開始(${n} 個の目標 · ${rounds} 周)`,
+  apRoundsLabel: (rounds: number) => `周回数:${rounds}`,
+  goalTestCoverage: "テストカバレッジ向上",
+  goalFixTests: "テスト修正",
+  goalCodeReview: "コードレビュー",
+  goalAddFeature: "機能追加",
+  goalRefactorElegant: "エレガントにリファクタリング",
+  goalUiPolish: "UI を磨く",
+  autopilotGoalStarted: (id) => `目標を開始：${id}`,
+  autopilotUnknownGoal: (ids) => `不明な目標。利用可能：${ids}`,
+  goalsTitle: "🎯 目標プリセット",
   noLogsContext:
     "現在のプロジェクトがありません。プロジェクトを選択するか trace を指定してください（/logs <traceId>）。",
 

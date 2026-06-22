@@ -3,6 +3,7 @@ import type { DashboardSnapshot } from "../src/core/dashboard/dashboard.js";
 import {
   formatDashboardForChat,
   formatDashboardText,
+  formatHeader,
 } from "../src/core/dashboard/dashboard-view.js";
 
 const snap: DashboardSnapshot = {
@@ -56,6 +57,7 @@ const snap: DashboardSnapshot = {
     busyCount: 1,
     queueDepth: 1,
     adapters: { telegram: true, lark: false },
+    autopilotCount: 0,
   },
   generatedAt: 0,
 };
@@ -104,5 +106,47 @@ describe("dashboard-view", () => {
       generatedAt: 0,
     };
     expect(formatDashboardText(empty)).toMatch(/0 sessions/);
+  });
+
+  it("renders the ✈️ auto·N tag when a session has autopilot enabled", () => {
+    const withAuto: DashboardSnapshot = {
+      ...snap,
+      sessions: [
+        {
+          session: "tmux_proj_a",
+          label: "proj-a",
+          kind: "claude" as const,
+          running: true,
+          busy: true,
+          taskMs: 72_000,
+          cumulativeBusyMs: 3_600_000,
+          uptimeMs: 10_800_000,
+          usage: snap.sessions[0]!.usage,
+          apiMode: "subscription" as const,
+          autopilot: { enabled: true, pureKeepAlive: true, iterations: 7 },
+        },
+        ...snap.sessions.slice(1),
+      ],
+      global: { ...snap.global, autopilotCount: 1 },
+    };
+    const out = formatDashboardText(withAuto);
+    expect(out).toContain("✈️ auto·7");
+  });
+
+  it("omits the autopilot tag when autopilot is not set on a session", () => {
+    const out = formatDashboardText(snap); // snap has no autopilot fields
+    expect(out).not.toContain("✈️ auto");
+  });
+
+  it("formatHeader appends ✈️ N auto when autopilotCount > 0", () => {
+    const withAuto: DashboardSnapshot = {
+      ...snap,
+      global: { ...snap.global, autopilotCount: 2 },
+    };
+    expect(formatHeader(withAuto)).toContain("✈️ 2 auto");
+  });
+
+  it("formatHeader omits the autopilot suffix when autopilotCount is 0", () => {
+    expect(formatHeader(snap)).not.toContain("auto");
   });
 });
