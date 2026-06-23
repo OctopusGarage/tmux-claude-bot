@@ -12,6 +12,13 @@ const cfg = {
   apiErrorPromptText: "重试",
   maxRecoveryAttempts: 2,
   retry: { maxRetries: 2, baseDelayMs: 1000, backoffFactor: 2, maxDelayMs: 8000, jitter: false },
+  retryBusy: {
+    maxRetries: 2,
+    baseDelayMs: 180000,
+    backoffFactor: 2,
+    maxDelayMs: 600000,
+    jitter: false,
+  },
   goalsDir: "",
   usagePausePct: 0,
   keepAliveDoneMarker: "TASK_DONE",
@@ -24,12 +31,12 @@ const sig = (digest = "d1", progressAt = 0): SessionSignal => ({
   idleForMs: 999999,
   queueEmpty: true,
   turnFinished: false,
-  pane: { inputPromptWaiting: false, apiError: false, hardStop: false },
+  pane: { inputPromptWaiting: false, apiError: false, serverBusy: false, hardStop: false },
   progressAt,
   sentinels: [],
   // digest is derived inside govern from the signal; emulate by varying pane:
   ...(digest === "d2"
-    ? { pane: { inputPromptWaiting: true, apiError: false, hardStop: false } }
+    ? { pane: { inputPromptWaiting: true, apiError: false, serverBusy: false, hardStop: false } }
     : {}),
 });
 const ctx = (over = {}) => ({
@@ -214,5 +221,73 @@ describe("govern", () => {
     );
     expect(g.action.kind).toBe("nudge");
     expect(g.state.apiRetries).toBe(0);
+  });
+
+  it("server-busy api-error first nudge uses the busy base delay (~180000ms)", () => {
+    // apiRetries=0, lastNudgeAt=undefined → backoff elapsed; serverBusy=true → retryBusy policy
+    const busySig: SessionSignal = {
+      session: "s1",
+      busy: false,
+      idleForMs: 999999,
+      queueEmpty: true,
+      turnFinished: false,
+      pane: { inputPromptWaiting: false, apiError: true, serverBusy: true, hardStop: false },
+      progressAt: 0,
+      sentinels: [],
+    };
+    const g = govern(
+      { ruleId: "api-error", action: { kind: "nudge", text: "重试" } },
+      busySig,
+      ctx({ apiRetries: 0 }),
+    );
+    expect(g.action.kind).toBe("nudge");
+    expect(g.state.apiRetries).toBe(1);
+    // The busy policy base is 180000; cooldown is set to now + cooldownMs (not the backoff).
+    // Verify the *next* nudge with the same state is suppressed until 180000ms has passed.
+    const tooSoon = govern(
+      { ruleId: "api-error", action: { kind: "nudge", text: "重试" } },
+      busySig,
+      { state: { ...g.state }, config: cfg, now: 1_000_000 + 1000 },
+    );
+    expect(tooSoon.action.kind).toBe("none"); // still in the 180000ms busy backoff window
+  });
+
+  it("non-busy transient api-error first nudge uses the transient base delay (~30000ms)", () => {
+    // apiRetries=0, lastNudgeAt=undefined → backoff elapsed; serverBusy=false → retry policy
+    const transientSig: SessionSignal = {
+      session: "s1",
+      busy: false,
+      idleForMs: 999999,
+      queueEmpty: true,
+      turnFinished: false,
+      pane: { inputPromptWaiting: false, apiError: true, serverBusy: false, hardStop: false },
+      progressAt: 0,
+      sentinels: [],
+    };
+    const g = govern(
+      { ruleId: "api-error", action: { kind: "nudge", text: "重试" } },
+      transientSig,
+      ctx({ apiRetries: 0 }),
+    );
+    expect(g.action.kind).toBe("nudge");
+    expect(g.state.apiRetries).toBe(1);
+    // After 31000ms the transient backoff (30000ms base) should have elapsed → nudge allowed.
+    const afterTransient = govern(
+      { ruleId: "api-error", action: { kind: "nudge", text: "重试" } },
+      transientSig,
+      { state: { ...g.state }, config: cfg, now: 1_000_000 + 31000 },
+    );
+    expect(afterTransient.action.kind).toBe("nudge");
+    // But a busy signal at the same time would still be suppressed (180000ms base).
+    const busySig: SessionSignal = {
+      ...transientSig,
+      pane: { inputPromptWaiting: false, apiError: true, serverBusy: true, hardStop: false },
+    };
+    const busyStillWaiting = govern(
+      { ruleId: "api-error", action: { kind: "nudge", text: "重试" } },
+      busySig,
+      { state: { ...g.state }, config: cfg, now: 1_000_000 + 31000 },
+    );
+    expect(busyStillWaiting.action.kind).toBe("none");
   });
 });

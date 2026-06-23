@@ -11,7 +11,14 @@ const cfg = {
   idlePromptText: "继续",
   apiErrorPromptText: "重试",
   maxRecoveryAttempts: 5,
-  retry: { maxRetries: 5, baseDelayMs: 5000, backoffFactor: 2, maxDelayMs: 120000, jitter: false },
+  retry: { maxRetries: 5, baseDelayMs: 30000, backoffFactor: 2, maxDelayMs: 120000, jitter: false },
+  retryBusy: {
+    maxRetries: 5,
+    baseDelayMs: 180000,
+    backoffFactor: 2,
+    maxDelayMs: 600000,
+    jitter: false,
+  },
   goalsDir: "",
   usagePausePct: 0,
   keepAliveDoneMarker: "TASK_DONE",
@@ -29,7 +36,7 @@ const sig = (over: Partial<SessionSignal>): SessionSignal => ({
   idleForMs: 999999,
   queueEmpty: true,
   turnFinished: false,
-  pane: { inputPromptWaiting: false, apiError: false, hardStop: false },
+  pane: { inputPromptWaiting: false, apiError: false, serverBusy: false, hardStop: false },
   progressAt: 0,
   sentinels: [],
   ...over,
@@ -38,7 +45,9 @@ const sig = (over: Partial<SessionSignal>): SessionSignal => ({
 describe("decide", () => {
   it("hard stop → pauseNotify", () => {
     const d = decide(
-      sig({ pane: { inputPromptWaiting: false, apiError: false, hardStop: true } }),
+      sig({
+        pane: { inputPromptWaiting: false, apiError: false, serverBusy: false, hardStop: true },
+      }),
       ctx(),
     );
     expect(d.action.kind).toBe("pauseNotify");
@@ -46,7 +55,9 @@ describe("decide", () => {
 
   it("api error → nudge (governor adds backoff later)", () => {
     const d = decide(
-      sig({ pane: { inputPromptWaiting: false, apiError: true, hardStop: false } }),
+      sig({
+        pane: { inputPromptWaiting: false, apiError: true, serverBusy: false, hardStop: false },
+      }),
       ctx(),
     );
     expect(d).toEqual({ ruleId: "api-error", action: { kind: "nudge", text: "重试" } });
@@ -54,7 +65,9 @@ describe("decide", () => {
 
   it("waiting prompt → recover", () => {
     const d = decide(
-      sig({ pane: { inputPromptWaiting: true, apiError: false, hardStop: false } }),
+      sig({
+        pane: { inputPromptWaiting: true, apiError: false, serverBusy: false, hardStop: false },
+      }),
       ctx(),
     );
     expect(d.action.kind).toBe("recover");

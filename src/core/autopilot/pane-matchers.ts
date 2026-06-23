@@ -11,6 +11,10 @@ const API_ERROR_RE =
 const RATE_LIMIT_RE =
   /\brate.?limit(ed)?\b|temporarily limiting|not your usage limit|too many requests/i;
 
+// Server-side busy/overload — back off HARDER than a plain transient blip.
+const SERVER_BUSY_RE =
+  /\b(429|500|502|503|529)\b|\boverloaded\b|internal server error|service unavailable|temporarily (limiting|overloaded|unavailable)/i;
+
 // Hard stops: no point auto-continuing; conservative persona pauses + notifies.
 const HARD_STOP_RE =
   /\bout of credits\b|\busage limit\b|\bquota\b|\bcontext (window )?(low|exceeded|limit)\b|\brun \/compact\b/i;
@@ -27,8 +31,13 @@ export function paneSemantics(paneText: string): PaneSemantics {
   // A transient rate limit overrides the usage-cap hard stop (see RATE_LIMIT_RE).
   const rateLimited = RATE_LIMIT_RE.test(text);
   const hardStop = HARD_STOP_RE.test(text) && !rateLimited;
+  // serverBusy is a subset of apiError — HTTP 4xx/5xx overloads and rate limits
+  // get the slower backoff curve; other transient errors (socket closed, terminated)
+  // use the faster curve.
+  const serverBusy = (SERVER_BUSY_RE.test(text) || rateLimited) && !hardStop;
   return {
-    apiError: (API_ERROR_RE.test(text) || rateLimited) && !hardStop,
+    apiError: (API_ERROR_RE.test(text) || serverBusy) && !hardStop,
+    serverBusy,
     hardStop,
     inputPromptWaiting: !working && (CONFIRM_RE.test(text) || INPUT_BOX_RE.test(text)),
   };

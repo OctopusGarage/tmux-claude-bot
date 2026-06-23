@@ -3,6 +3,9 @@ export type AutopilotPersona = "conservative" | "aggressive";
 export type PaneSemantics = {
   inputPromptWaiting: boolean;
   apiError: boolean;
+  /** Subset of apiError: HTTP 4xx/5xx overloads, rate limits, and service-unavailable
+   * messages that warrant a much longer backoff than a plain transient connection blip. */
+  serverBusy: boolean;
   hardStop: boolean;
 };
 

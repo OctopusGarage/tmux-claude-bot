@@ -12,9 +12,16 @@ describe("autopilot config", () => {
     expect(cfg.autopilot.apiErrorPromptText).toContain("重试"); // distinct from the idle nudge
     expect(cfg.autopilot.retry).toEqual({
       maxRetries: 5,
-      baseDelayMs: 5000,
+      baseDelayMs: 30000,
       backoffFactor: 2,
       maxDelayMs: 120000,
+      jitter: true,
+    });
+    expect(cfg.autopilot.retryBusy).toEqual({
+      maxRetries: 5,
+      baseDelayMs: 180000,
+      backoffFactor: 2,
+      maxDelayMs: 600000,
       jitter: true,
     });
     expect(cfg.autopilot.usagePausePct).toBe(0);

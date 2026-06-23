@@ -11,7 +11,7 @@ const sig = (over: Partial<SessionSignal> = {}): SessionSignal => ({
   idleForMs: 9e9,
   queueEmpty: true,
   turnFinished: false,
-  pane: { inputPromptWaiting: false, apiError: false, hardStop: false },
+  pane: { inputPromptWaiting: false, apiError: false, serverBusy: false, hardStop: false },
   progressAt: 0,
   sentinels: [],
   ...over,
