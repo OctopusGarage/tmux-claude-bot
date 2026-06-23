@@ -31,6 +31,7 @@ const autopilotCfg = {
   keepAliveDoneMarker: "TASK_DONE",
   keepAliveDonePrompt: "完成后回复 [TASK_DONE]",
   maxRounds: 10,
+  betweenGoals: "compact" as const,
 };
 
 function makeDeps(pane: string) {
@@ -48,7 +49,7 @@ function makeDeps(pane: string) {
       },
       queue: { size: () => 0, isSessionProcessing: () => false, enqueue },
       notifier: { broadcast },
-      configResolver: { detectAgentKind: async () => null },
+      configResolver: { detectAgentKind: async () => null, invalidate: vi.fn() },
     } as never,
   };
 }
@@ -510,5 +511,126 @@ describe("runSupervisorTick", () => {
     });
     expect(action.kind).toBe("pauseNotify");
     expect(store.get("s1").enabled).toBe(false);
+  });
+
+  // --- Between-goals context reset tests ---
+
+  it("between-goals compact: finalizing non-last goal stores pendingContextOp=compact", async () => {
+    // betweenGoals defaults to "compact" in autopilotCfg
+    store.set("s1", startCycleState(defaultState(), ["fix-tests", "code-review"], 1));
+    const { deps } = makeDeps("");
+    await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: true }),
+      recentAssistant: async () => "[GOAL_DONE]",
+    });
+    const s = store.get("s1");
+    expect(s.goalId).toBe("code-review");
+    expect(s.pendingContextOp).toBe("compact");
+  });
+
+  it("between-goals compact: next idle tick sends /compact, clears flag, returns none without injecting", async () => {
+    store.set("s1", {
+      ...startCycleState(defaultState(), ["fix-tests", "code-review"], 1),
+      // Simulate the state after goal 1 finalized: we're now on code-review with the flag set
+      goalId: "code-review",
+      queuePos: 1,
+      pendingContextOp: "compact" as const,
+    });
+    const { deps } = makeDeps("");
+    const sendKeys = (deps as never as { bridge: { sendKeys: ReturnType<typeof vi.fn> } }).bridge
+      .sendKeys;
+    const invalidate = (
+      deps as never as { configResolver: { invalidate: ReturnType<typeof vi.fn> } }
+    ).configResolver.invalidate;
+    const action = await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: false }),
+    });
+    expect(action.kind).toBe("none");
+    expect(sendKeys).toHaveBeenCalledWith("/compact", "s1");
+    expect(invalidate).toHaveBeenCalledWith("s1");
+    expect(store.get("s1").pendingContextOp).toBeUndefined();
+    // No goal inject should have happened: enqueue not called for a nudge
+    const enqueueStub = (deps as never as { queue: { enqueue: ReturnType<typeof vi.fn> } }).queue
+      .enqueue;
+    expect(enqueueStub).not.toHaveBeenCalled();
+  });
+
+  it("between-goals clear: finalizing non-last goal stores pendingContextOp=clear", async () => {
+    const { deps } = makeDeps("");
+    (deps as never as { config: { autopilot: typeof autopilotCfg } }).config = {
+      autopilot: { ...autopilotCfg, betweenGoals: "clear" as typeof autopilotCfg.betweenGoals },
+    };
+    store.set("s1", startCycleState(defaultState(), ["fix-tests", "code-review"], 1));
+    await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: true }),
+      recentAssistant: async () => "[GOAL_DONE]",
+    });
+    expect(store.get("s1").pendingContextOp).toBe("clear");
+  });
+
+  it("between-goals none: finalize→next stores no pendingContextOp", async () => {
+    const { deps } = makeDeps("");
+    (deps as never as { config: { autopilot: typeof autopilotCfg } }).config = {
+      autopilot: { ...autopilotCfg, betweenGoals: "none" as typeof autopilotCfg.betweenGoals },
+    };
+    store.set("s1", startCycleState(defaultState(), ["fix-tests", "code-review"], 1));
+    await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: true }),
+      recentAssistant: async () => "[GOAL_DONE]",
+    });
+    const s = store.get("s1");
+    expect(s.pendingContextOp).toBeUndefined();
+    expect(s.goalId).toBe("code-review");
+  });
+
+  it("between-goals: pendingContextOp set but busy → does NOT call sendKeys (waits for idle)", async () => {
+    store.set("s1", {
+      ...startCycleState(defaultState(), ["fix-tests", "code-review"], 1),
+      goalId: "code-review",
+      queuePos: 1,
+      pendingContextOp: "compact" as const,
+    });
+    const { deps } = makeDeps("");
+    const sendKeys = (deps as never as { bridge: { sendKeys: ReturnType<typeof vi.fn> } }).bridge
+      .sendKeys;
+    // Simulate busy: queue has an item in flight
+    (
+      deps as never as {
+        queue: {
+          size: () => number;
+          isSessionProcessing: () => boolean;
+          enqueue: ReturnType<typeof vi.fn>;
+        };
+      }
+    ).queue = {
+      size: () => 1,
+      isSessionProcessing: () => true,
+      enqueue: vi.fn(() => "queued" as const),
+    };
+    const action = await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: false }),
+    });
+    expect(action.kind).toBe("none");
+    expect(sendKeys).not.toHaveBeenCalled();
+    expect(store.get("s1").pendingContextOp).toBe("compact"); // flag not cleared
+  });
+
+  it("between-goals: last goal finalizing (cycle done) stores no pendingContextOp", async () => {
+    // Single goal cycle, 1 round → completing it is a cycle done (not "next")
+    store.set("s1", startGoalState(defaultState(), "fix-tests"));
+    const { deps } = makeDeps("");
+    await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: true }),
+      recentAssistant: async () => "[GOAL_DONE]",
+    });
+    const s = store.get("s1");
+    expect(s.enabled).toBe(false); // cycle done → disabled
+    expect(s.pendingContextOp).toBeUndefined();
   });
 });

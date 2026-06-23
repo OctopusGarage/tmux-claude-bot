@@ -24,6 +24,7 @@ const cfg = {
   keepAliveDoneMarker: "TASK_DONE",
   keepAliveDonePrompt: "完成后回复 [TASK_DONE]",
   maxRounds: 10,
+  betweenGoals: "compact" as const,
 };
 const sig = (digest = "d1", progressAt = 0): SessionSignal => ({
   session: "s1",

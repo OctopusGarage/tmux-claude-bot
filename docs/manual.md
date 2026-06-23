@@ -247,6 +247,14 @@ added/removed in the directory or the bot restarts.
 
 `/autopilot on` drives the current task to completion: when the agent emits `[TASK_DONE]` in its output, autopilot stops automatically instead of nudging indefinitely.
 
+### Between-goals context reset
+
+Set `AUTOPILOT_BETWEEN_GOALS` (`none | compact | clear`, default `compact`) to
+control what autopilot does between goals in a cycle. With `compact` (the
+default), autopilot runs `/compact` on the agent before the next goal's first
+prompt to free up context. Use `clear` to run `/clear` instead (full reset), or
+`none` to skip the reset entirely.
+
 ### Usage gate
 
 Set `AUTOPILOT_USAGE_PAUSE_PCT` (default `0`, disabled) to a percent threshold

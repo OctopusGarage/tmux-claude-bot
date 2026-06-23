@@ -20,6 +20,12 @@ describe("goal-state", () => {
     const s = startGoalState({ ...defaultState(), optOut: true }, "fix-tests");
     expect(s.optOut).toBe(false);
   });
+  it("startGoalState drops a stale pendingContextOp from the previous goal", () => {
+    const prev = { ...defaultState(), pendingContextOp: "compact" as const };
+    const s = startGoalState(prev, "code-review");
+    expect(s.pendingContextOp).toBeUndefined();
+    expect(s.goalId).toBe("code-review"); // other fields intact
+  });
   it("advancePhaseState bumps the phase and resets per-phase gate/seq", () => {
     const s = advancePhaseState({
       ...startGoalState(defaultState(), "code-review"),
@@ -42,6 +48,19 @@ describe("goal cycle state", () => {
     expect(s.roundsDone).toBe(0);
     expect(s.goalId).toBe("fix-tests"); // mirror of the active goal
     expect(s.phaseIndex).toBe(0);
+  });
+
+  it("advanceCycle (resetForGoal) drops a stale pendingContextOp from the previous goal", () => {
+    // Simulate betweenGoals="none": pendingContextOp was never set on finalize,
+    // but if it somehow existed on prev (stale), resetForGoal must not carry it forward.
+    let s = startCycleState(defaultState(), ["fix-tests", "code-review"], 1);
+    s = { ...s, pendingContextOp: "compact" as const }; // inject stale flag
+    const step = advanceCycle(s);
+    expect(step.kind).toBe("next");
+    if (step.kind === "next") {
+      expect(step.state.pendingContextOp).toBeUndefined();
+      expect(step.state.goalId).toBe("code-review");
+    }
   });
 
   it("advanceCycle walks queue then rounds then done", () => {

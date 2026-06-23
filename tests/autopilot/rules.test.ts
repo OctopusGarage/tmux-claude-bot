@@ -24,6 +24,7 @@ const cfg = {
   keepAliveDoneMarker: "TASK_DONE",
   keepAliveDonePrompt: "完成后回复 [TASK_DONE]",
   maxRounds: 10,
+  betweenGoals: "compact" as const,
 };
 const ctx = (over = {}) => ({
   state: { ...defaultState(), pureKeepAlive: true, ...over },

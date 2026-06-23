@@ -1,8 +1,9 @@
 import type { AutopilotState } from "../types.js";
 
 export function startGoalState(prev: AutopilotState, goalId: string): AutopilotState {
+  const { pendingContextOp: _drop, ...base } = prev;
   return {
-    ...prev,
+    ...base,
     enabled: true,
     optOut: false, // starting a goal is an explicit engage — clear any prior `/autopilot off` opt-out
     goalId,
@@ -67,8 +68,9 @@ function resetForGoal(
   pos: number,
   roundsDone: number,
 ): AutopilotState {
+  const { pendingContextOp: _drop, ...base } = prev;
   return {
-    ...prev,
+    ...base,
     goalQueue: queue,
     queuePos: pos,
     roundsDone,

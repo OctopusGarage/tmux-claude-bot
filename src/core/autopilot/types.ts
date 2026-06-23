@@ -52,6 +52,7 @@ export type AutopilotState = {
   rounds?: number; // how many times to cycle the whole queue (>=1)
   queuePos?: number; // index of the active goal within goalQueue
   roundsDone?: number; // completed full cycles
+  pendingContextOp?: "compact" | "clear"; // op to run before the next goal's first prompt; cleared once sent
   // Ownership flags. viaGlobal and viaScheduler are mutually-exclusive enrollment
   // sources; if a third owner ever appears, collapse these into a single
   // `owner?: "global" | "scheduler"` enum rather than adding another boolean + guards.

@@ -24,6 +24,7 @@ export type AutopilotRuntimeConfig = {
   keepAliveDoneMarker: string; // sentinel a pure keep-alive task emits when fully done
   keepAliveDonePrompt: string; // instruction appended to the keep-alive nudge asking for the marker
   maxRounds: number; // upper bound on goal-cycle rounds (clamp at parse time)
+  betweenGoals: "none" | "compact" | "clear";
 };
 
 export type LarkConfig = {

@@ -54,4 +54,37 @@ describe("autopilot config", () => {
     expect(cfg.keepAliveDonePrompt).toContain("TASK_DONE");
     expect(cfg.maxRounds).toBe(10);
   });
+
+  it("AUTOPILOT_BETWEEN_GOALS defaults to compact", () => {
+    const cfg = loadConfig({} as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("compact");
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS=clear parses to clear", () => {
+    const cfg = loadConfig({
+      AUTOPILOT_BETWEEN_GOALS: "clear",
+    } as unknown as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("clear");
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS=none parses to none", () => {
+    const cfg = loadConfig({
+      AUTOPILOT_BETWEEN_GOALS: "none",
+    } as unknown as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("none");
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS=xyz falls back to compact", () => {
+    const cfg = loadConfig({
+      AUTOPILOT_BETWEEN_GOALS: "xyz",
+    } as unknown as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("compact");
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS='' falls back to compact", () => {
+    const cfg = loadConfig({
+      AUTOPILOT_BETWEEN_GOALS: "",
+    } as unknown as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("compact");
+  });
 });
