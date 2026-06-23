@@ -91,6 +91,7 @@ export type AppConfig = {
   keepAwake: boolean;
   lark?: LarkConfig | undefined;
   autopilot: AutopilotRuntimeConfig;
+  scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
 };
 
 export type BotCommand = { command: string; description: string };

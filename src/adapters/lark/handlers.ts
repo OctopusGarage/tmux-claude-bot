@@ -11,6 +11,7 @@ import { isProjectGroup } from "../../core/projects/group-bindings.js";
 import { chatScope } from "../../core/projects/project-manager.js";
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
+import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -339,6 +340,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             }
             case "goals":
               await sendText(channel, msg.chatId, formatGoalsList(messages("lark")));
+              break;
+            case "batch":
+              // Host-wide op — p2p owner only (same gate as dashboard/logs).
+              if (msg.chatType === "p2p")
+                await sendText(channel, msg.chatId, runBatchCommand(parsed.arg ?? ""));
               break;
           }
           break;

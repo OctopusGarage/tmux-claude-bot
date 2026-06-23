@@ -346,6 +346,8 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
 
   // ── dashboard ──
   cmdDashboard: "Ver el panel global (resumen de todas las sesiones)",
+  cmdBatch:
+    "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",
   cmdSysload: "Ver carga, temperatura y procesos descontrolados",
   sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",
@@ -368,6 +370,11 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
     `✅ tarea keep-alive de autopilot completada [${session}]: marcador de fin detectado`,
   autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
     `➡️ autopilot [${session}]: objetivo ${goalId} (${pos}/${total} · ronda ${round}/${rounds})`,
+  batchRunStarted: (planId, tasks) =>
+    `🚀 Ejecución de lote iniciada: plan ${planId}, ${tasks} tarea(s)`,
+  batchPoolPaused: (agent, resumeAt) =>
+    `⏸ Pool de lote pausado [${agent}]: cuota alcanzada, reanudación en ${resumeAt}`,
+  batchRunComplete: (summary) => `✅ Ejecución de lote completada\n${summary}`,
   autopilotGlobal: (on) =>
     on
       ? "Mantener activo global ACTIVADO: todas las sesiones activas se gestionan (usa /autopilot off para excluir una)"

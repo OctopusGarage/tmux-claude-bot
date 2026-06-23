@@ -129,7 +129,10 @@ export async function runSupervisorTick(
 
       // Usage gate only at an idle boundary — decideGoal can't act while busy, so
       // reading usage on every busy tick is wasted I/O.
-      if (idle && cfg.usagePausePct > 0) {
+      // Bug #3: viaScheduler sessions are governed by the scheduler's pool-level quota
+      // authority (pausePool/resumePool). The supervisor's per-session usage-gate must
+      // not fire for them — it would race and clobber the scheduler's account.
+      if (idle && cfg.usagePausePct > 0 && !state.viaScheduler) {
         const readUsage =
           probes?.readUsage ??
           ((s: string) =>

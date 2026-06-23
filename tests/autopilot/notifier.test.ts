@@ -33,4 +33,28 @@ describe("NotifierRegistry + renderNotice", () => {
       ),
     ).toContain("gy");
   });
+
+  it("renders the 3 new batch milestone notice kinds to non-empty text (en)", () => {
+    const m = en;
+    const started = renderNotice(
+      { kind: "batchRunStarted", runId: "r1", planId: "plan-a", tasks: 5 },
+      m,
+    );
+    expect(started.length).toBeGreaterThan(0);
+    expect(started).toContain("plan-a");
+
+    const paused = renderNotice(
+      { kind: "batchPoolPaused", runId: "r1", agent: "claude", resumeAt: 9999 },
+      m,
+    );
+    expect(paused.length).toBeGreaterThan(0);
+    expect(paused).toContain("claude");
+
+    const complete = renderNotice(
+      { kind: "batchRunComplete", runId: "r1", summary: "Batch r1 done: 3 done, 0 failed" },
+      m,
+    );
+    expect(complete.length).toBeGreaterThan(0);
+    expect(complete).toContain("Batch r1 done");
+  });
 });

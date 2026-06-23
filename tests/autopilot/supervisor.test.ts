@@ -430,4 +430,78 @@ describe("runSupervisorTick", () => {
     expect(store.get("s1").enabled).toBe(false); // not resurrected
     expect(store.get("s1").optOut).toBe(true);
   });
+
+  // Bug #3: a viaScheduler=true session at/over usagePausePct must NOT be disabled
+  // by the supervisor's per-session usage-gate (the scheduler's pool-level quota
+  // authority governs it instead).
+  it("usage gate: viaScheduler session at/over threshold is NOT disabled by supervisor", async () => {
+    store.set("s1", { ...startGoalState(defaultState(), "fix-tests"), viaScheduler: true });
+    const enqueue = vi.fn(() => "queued" as const);
+    const broadcast = vi.fn(async () => {});
+    const deps90 = {
+      config: { autopilot: { ...autopilotCfg, usagePausePct: 90 } },
+      bridge: {
+        capturePane: async () => "",
+        sendRawKey: vi.fn(async () => {}),
+        sendKeys: vi.fn(async () => {}),
+      },
+      queue: { size: () => 0, isSessionProcessing: () => false, enqueue },
+      notifier: { broadcast },
+      configResolver: { detectAgentKind: async () => null },
+    } as never;
+    const readUsage = vi.fn(async () => ({
+      sessionId: "s",
+      contextPct: null,
+      fiveHourPct: 95, // above 90% threshold
+      fiveHourReset: null,
+      sevenDayPct: null,
+      sevenDayReset: null,
+      updatedAt: Date.now() / 1000,
+    }));
+    const runCheck = vi.fn(async () => ({ ok: false }));
+    const action = await runSupervisorTick(deps90, store, "s1", 1_000_000, {
+      ...probes,
+      readUsage,
+      runCheck,
+    });
+    // The usage gate is skipped for viaScheduler sessions — goal continues normally.
+    expect(action.kind).not.toBe("pauseNotify");
+    expect(store.get("s1").enabled).toBe(true); // not disabled by the usage gate
+    expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "usage" }));
+    // readUsage should NOT even be called (the gate is skipped before the read).
+    expect(readUsage).not.toHaveBeenCalled();
+  });
+
+  // Contrast: a non-viaScheduler goal session at/over threshold IS still disabled.
+  it("usage gate: non-viaScheduler session at/over threshold IS disabled", async () => {
+    store.set("s1", startGoalState(defaultState(), "fix-tests")); // viaScheduler defaults to undefined
+    const enqueue = vi.fn(() => "queued" as const);
+    const broadcast = vi.fn(async () => {});
+    const deps90 = {
+      config: { autopilot: { ...autopilotCfg, usagePausePct: 90 } },
+      bridge: {
+        capturePane: async () => "",
+        sendRawKey: vi.fn(async () => {}),
+        sendKeys: vi.fn(async () => {}),
+      },
+      queue: { size: () => 0, isSessionProcessing: () => false, enqueue },
+      notifier: { broadcast },
+      configResolver: { detectAgentKind: async () => null },
+    } as never;
+    const readUsage = vi.fn(async () => ({
+      sessionId: "s",
+      contextPct: null,
+      fiveHourPct: 95,
+      fiveHourReset: null,
+      sevenDayPct: null,
+      sevenDayReset: null,
+      updatedAt: Date.now() / 1000,
+    }));
+    const action = await runSupervisorTick(deps90, store, "s1", 1_000_000, {
+      ...probes,
+      readUsage,
+    });
+    expect(action.kind).toBe("pauseNotify");
+    expect(store.get("s1").enabled).toBe(false);
+  });
 });

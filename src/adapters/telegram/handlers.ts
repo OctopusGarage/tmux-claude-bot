@@ -31,6 +31,7 @@ import { createFreeProject, createProjectFromPath } from "../../core/projects/pr
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
+import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
@@ -372,6 +373,13 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       body,
       replyTarget,
     });
+  });
+
+  // Owner-only: batch scheduler status and control.
+  bot.command("batch", async (ctx) => {
+    const arg = (ctx.match ?? "").toString();
+    const body = runBatchCommand(arg);
+    await reply(ctx, "view", "Batch", { body, replyTarget });
   });
 
   bot.command("goals", async (ctx) => {

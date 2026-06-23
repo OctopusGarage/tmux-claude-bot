@@ -14,6 +14,7 @@ import { managedRestartCommand } from "./core/platform/service-hints.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { autoRecoverOnBoot } from "./core/recovery/recover.js";
 import { startRunningSweep } from "./core/recovery/running-sweep.js";
+import { startScheduler } from "./core/scheduler/scheduler-loop.js";
 import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 
@@ -131,6 +132,7 @@ startRunningSweep(deps, config.runningSweepMs);
 // Start the autopilot background loop (coalesced tick on transcript activity +
 // fallback interval). No-op when AUTOPILOT_TICK_MS=0.
 startAutopilot(deps);
+startScheduler(deps);
 
 // Restore the agents that were running before a machine reboot, automatically.
 // Delayed + fire-and-forget so boot isn't held up by N agent launches; idempotent
