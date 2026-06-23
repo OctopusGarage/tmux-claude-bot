@@ -48,6 +48,7 @@ function formatSessionBlock(row: SessionRow): string {
   // (no agent in the pane — a shell, or the agent exited). The middle/last were
   // previously both ⚪, so a stopped session looked the same as an idle one.
   const dot = row.busy ? "🟢" : row.running ? "🟡" : "⚫";
+  const label = row.operator ? `🏠 ${row.label}` : row.label;
   // api vs subscription matters operationally (which sessions burn API credits).
   const apiTag = row.apiMode ? `/${row.apiMode === "subscription" ? "sub" : "api"}` : "";
   const kind = `🤖 ${row.kind}${apiTag}`;
@@ -67,7 +68,7 @@ function formatSessionBlock(row: SessionRow): string {
   const auto = row.autopilot ? `✈️ auto·${row.autopilot.iterations}` : "";
 
   const detail = [kind, state, uptime, usage, total, auto].filter(Boolean).join(" · ");
-  return `${dot} ${row.label}\n   ↳ ${detail}`;
+  return `${dot} ${label}\n   ↳ ${detail}`;
 }
 
 /** The compact fleet summary line(s) shown at the top of the dashboard / TUI:

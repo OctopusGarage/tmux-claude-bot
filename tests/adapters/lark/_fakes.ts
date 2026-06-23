@@ -192,6 +192,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     maxQueueSize: 30,
     claudeStartCommand: "bash",
     startCommands: [{ label: "claude", command: "bash" }],
+    homeOperator: { enabled: false, dir: "/home/user", agent: "claude" as const },
     lark: { allowedOpenIds },
     ...overrides.config,
   } as unknown as HandlerDeps["config"];

@@ -51,9 +51,13 @@ vi.mock("../../../src/core/projects/sessionPathMap.js", () => ({
 }));
 
 type EnqueueVerdict = "queued" | "duplicate" | false;
-function fakeDeps(enqueue?: (m: QueuedMessage) => EnqueueVerdict): HandlerDeps {
+function fakeDeps(
+  enqueue?: (m: QueuedMessage) => EnqueueVerdict,
+  prefix = "tmux_proj_",
+): HandlerDeps {
   return {
     bridge: { capturePaneColored: async (s: string) => `PANE for ${s}` },
+    config: { projectSessionPrefix: prefix },
     queue: {
       enqueue:
         enqueue ??
@@ -158,5 +162,18 @@ describe("control server op dispatch (real unix socket)", () => {
     await settle();
     const fresh = new ControlClient();
     await expect(fresh.snapshot()).rejects.toThrow("not connected");
+  });
+
+  it("send to the operator session is refused with a clear error", async () => {
+    const c = await connected(fakeDeps(undefined, "tmux_proj_"));
+    await expect(c.send("tmux_proj_home", "hello")).rejects.toThrow(
+      "cannot send to the operator session",
+    );
+  });
+
+  it("send to a normal project is NOT refused by the operator guard", async () => {
+    const c = await connected(fakeDeps(undefined, "tmux_proj_"));
+    const ack = await c.send("tmux_proj_myapp", "hello");
+    expect(ack.status).toBe("queued");
   });
 });

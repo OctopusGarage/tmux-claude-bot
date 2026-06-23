@@ -5,6 +5,7 @@ import {
   sessionRunningSince,
 } from "../agents/runningSessions.js";
 import type { HandlerDeps } from "../deps.js";
+import { listUserProjectSessions } from "../projects/operator.js";
 
 const log = createLogger("recovery.sweep");
 
@@ -27,7 +28,7 @@ const log = createLogger("recovery.sweep");
 export async function runRunningSweep(deps: HandlerDeps, bootAt: number): Promise<void> {
   let sessions: string[];
   try {
-    sessions = await deps.bridge.listProjectSessions();
+    sessions = await listUserProjectSessions(deps);
   } catch (err) {
     log.warn("sweep: could not list sessions", { err });
     return;

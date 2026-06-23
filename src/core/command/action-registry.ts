@@ -168,6 +168,7 @@ const PROJECTS: readonly HelpRow[] = [
 ];
 
 const SETTINGS: readonly HelpRow[] = [
+  [{ cmds: ["home"], descKey: "cmdHome" }],
   [{ cmds: ["lang"], descKey: "cmdLang" }],
   [{ cmds: ["voice_lang"], descKey: "cmdVoiceLang" }],
   [{ cmds: ["voice_install"], descKey: "cmdVoiceInstall" }],
@@ -247,6 +248,7 @@ export const BOT_COMMANDS: BotCommand[] = [
   { command: "adopt", description: "Take over an agent running outside tmux" },
   { command: "recover", description: "Recover all projects after a reboot (recreate + relaunch)" },
   // ⚙️ Settings
+  { command: "home", description: "Switch to the home operator session" },
   { command: "lang", description: "Set interface language (en/zh/zh-TW/yue/ja/es)" },
   { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },

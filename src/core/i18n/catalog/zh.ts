@@ -361,6 +361,9 @@ export const zh = {
   logsTitle: "🪵 近期日志",
 
   // ── dashboard / batch ──
+  cmdHome: "切换到主控操作员会话（未选项目时的默认目标）",
+  homeOperatorDisabled: "未启用主控操作员会话",
+  homeOperatorSwitched: "🏠 已切换到主控操作员会话",
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
   cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
   cmdSysload: "查看本机负载/发热/跑飞进程",

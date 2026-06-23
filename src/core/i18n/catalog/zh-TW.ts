@@ -331,6 +331,9 @@ export const zhTW: Messages = {
   logsTitle: "🪵 近期日誌",
 
   // ── dashboard ──
+  cmdHome: "切換至主控操作員工作階段（未選擇專案時的預設目標）",
+  homeOperatorDisabled: "未啟用主控操作員工作階段",
+  homeOperatorSwitched: "🏠 已切換至主控操作員工作階段",
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
   cmdBatch: "批次排程器：查看狀態或控制批次執行（start/pause/resume/stop/report）",
   cmdSysload: "查看本機負載/發熱/失控程序",

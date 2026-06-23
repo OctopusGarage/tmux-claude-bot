@@ -10,6 +10,7 @@ import { restoreMessage } from "../../core/command/restore.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
+import { resolveTargetSession } from "../../core/projects/operator.js";
 import { labelForSession } from "../../core/projects/project-label.js";
 import { chatScope } from "../../core/projects/project-manager.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -69,8 +70,15 @@ export async function resolveSession(
   deps: HandlerDeps,
   chatId: string,
   sessionOverride?: string,
+  operatorFallbackOk = false,
 ): Promise<string | null> {
-  const session = sessionOverride ?? (await deps.currentProject.get(chatScope("lark", chatId)));
+  const resolvedSession =
+    sessionOverride ?? (await deps.currentProject.get(chatScope("lark", chatId)));
+  const session = resolveTargetSession(
+    resolvedSession,
+    deps.config.homeOperator.enabled && operatorFallbackOk,
+    deps.config.projectSessionPrefix,
+  );
   if (!session) {
     // No "/" discovery on Feishu — give buttons (projects/recent via the panel)
     // instead of a text hint pointing at commands they'd have to type.
@@ -97,8 +105,9 @@ export async function enqueueLarkAction(
   action: MessageAction,
   text: string,
   sessionOverride?: string,
+  operatorFallbackOk = false,
 ): Promise<void> {
-  const session = await resolveSession(channel, deps, chatId, sessionOverride);
+  const session = await resolveSession(channel, deps, chatId, sessionOverride, operatorFallbackOk);
   if (!session) {
     return;
   }
@@ -198,8 +207,9 @@ export async function runImmediateLarkAction(
   messageId: string,
   action: MessageAction,
   sessionOverride?: string,
+  operatorFallbackOk = false,
 ): Promise<void> {
-  const session = await resolveSession(channel, deps, chatId, sessionOverride);
+  const session = await resolveSession(channel, deps, chatId, sessionOverride, operatorFallbackOk);
   if (!session) return;
 
   const msg: QueuedMessage = {

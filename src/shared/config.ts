@@ -119,6 +119,13 @@ export const envSchema = z.object({
   AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
   AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
   AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
+  // --- Home operator session ---
+  HOME_OPERATOR_ENABLED: blankTolerantString("false"),
+  HOME_OPERATOR_DIR: z.string().default(""),
+  HOME_OPERATOR_AGENT: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["claude", "codex"]).default("claude"),
+  ),
 });
 
 /**
@@ -311,6 +318,11 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       tickMs: parsed.AUTOPILOT_SCHEDULER_TICK_MS,
       quotaPct: parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
       reprobeMs: parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
+    },
+    homeOperator: {
+      enabled: parsed.HOME_OPERATOR_ENABLED !== "false" && parsed.HOME_OPERATOR_ENABLED !== "0",
+      dir: parsed.HOME_OPERATOR_DIR,
+      agent: parsed.HOME_OPERATOR_AGENT,
     },
   };
 }

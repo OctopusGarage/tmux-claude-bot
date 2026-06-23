@@ -14,6 +14,7 @@ function fakeDeps(): { deps: HandlerDeps; enqueued: QueuedMessage[] } {
   const enqueued: QueuedMessage[] = [];
   const deps = {
     bridge: { capturePaneColored: async (s: string) => `PANE for ${s}` },
+    config: { projectSessionPrefix: "tmux_proj_" },
     output: new OutputProcessor({ maxOutputLines: 100, maxMessageLength: 4000 }),
     queue: {
       enqueue: (msg: QueuedMessage) => {

@@ -62,6 +62,10 @@ export interface SetupMessages {
   keepAwakeIntro: string;
   keepAwakePrompt: string;
   keepAwakeClamshellHint: string;
+  // Home operator
+  homeOperatorIntro: string;
+  homeOperatorPrompt: string;
+  homeOperatorAgentPrompt: string;
   // Finish
   dryRunComplete: string;
   wroteEnv: (path: string) => string;
@@ -127,6 +131,10 @@ const en: SetupMessages = {
   keepAwakePrompt: "Keep the Mac awake while the bot runs? (y/N)",
   keepAwakeClamshellHint:
     "Note: works with the lid OPEN or an external display. For lid-closed (clamshell) use, also run: sudo pmset -a disablesleep 1",
+  homeOperatorIntro:
+    "Home operator: a default agent session you chat with when no project is selected — it manages your projects via the tcb CLI.",
+  homeOperatorPrompt: "Enable the home operator session? (y/N)",
+  homeOperatorAgentPrompt: "Agent for the home operator (claude/codex)",
   dryRunComplete: "[dry-run] flow complete. Resolved config (NOT written, secrets masked):",
   wroteEnv: (path) => `Wrote ${path}`,
   telegramIds: (ids) => `Telegram ids: ${ids}`,
@@ -187,6 +195,10 @@ const zh: SetupMessages = {
   keepAwakePrompt: "运行期间保持 Mac 唤醒？(y/N)",
   keepAwakeClamshellHint:
     "提示：仅在开盖或接外接显示器时有效。合盖（clamshell）使用还需手动执行：sudo pmset -a disablesleep 1",
+  homeOperatorIntro:
+    "主控 Agent：当没有选中项目时，你与之对话的默认 Agent 会话，通过 tcb CLI 管理你的项目。",
+  homeOperatorPrompt: "启用主控 Agent 会话？(y/N)",
+  homeOperatorAgentPrompt: "主控 Agent 类型（claude/codex）",
   dryRunComplete: "[dry-run] 流程完成。解析后的配置（未写入，密钥已遮蔽）：",
   wroteEnv: (path) => `已写入 ${path}`,
   telegramIds: (ids) => `Telegram id：${ids}`,
@@ -247,6 +259,10 @@ const yue: SetupMessages = {
   keepAwakePrompt: "運行期間保持 Mac 喚醒？(y/N)",
   keepAwakeClamshellHint:
     "提示：僅在開蓋或接外接顯示器時有效。合蓋（clamshell）使用還需手動執行：sudo pmset -a disablesleep 1",
+  homeOperatorIntro:
+    "主控 Agent：在未選取專案時，與你對話的預設 Agent 會話，透過 tcb CLI 管理你的專案。",
+  homeOperatorPrompt: "是否啟用主控 Agent 會話？(y/N)",
+  homeOperatorAgentPrompt: "主控 Agent 類型（claude/codex）",
   dryRunComplete: "[dry-run] 流程完成。解析後嘅設定（未寫入，密鑰已遮蔽）：",
   wroteEnv: (path) => `已寫入 ${path}`,
   telegramIds: (ids) => `Telegram id：${ids}`,
@@ -307,6 +323,10 @@ const zhTW: SetupMessages = {
   keepAwakePrompt: "執行期間保持 Mac 喚醒？(y/N)",
   keepAwakeClamshellHint:
     "提示：僅在開蓋或接外接顯示器時有效。闔蓋（clamshell）使用還需手動執行：sudo pmset -a disablesleep 1",
+  homeOperatorIntro:
+    "主控 Agent：在沒有選取專案時，你與之對話的預設 Agent 會話，透過 tcb CLI 管理你的專案。",
+  homeOperatorPrompt: "啟用主控 Agent 會話？(y/N)",
+  homeOperatorAgentPrompt: "主控 Agent 類型（claude/codex）",
   dryRunComplete: "[dry-run] 流程完成。解析後的設定（未寫入，密鑰已遮蔽）：",
   wroteEnv: (path) => `已寫入 ${path}`,
   telegramIds: (ids) => `Telegram id：${ids}`,
@@ -371,6 +391,10 @@ const ja: SetupMessages = {
   keepAwakePrompt: "bot の実行中は Mac をスリープさせない？(y/N)",
   keepAwakeClamshellHint:
     "注意：ふたを開けた状態または外部ディスプレイ接続時に有効です。ふたを閉じた（クラムシェル）運用には別途 sudo pmset -a disablesleep 1 を実行してください。",
+  homeOperatorIntro:
+    "ホームオペレーター：プロジェクト未選択時にチャットする既定のエージェントセッションで、tcb CLI でプロジェクトを管理します。",
+  homeOperatorPrompt: "ホームオペレーターセッションを有効にしますか？(y/N)",
+  homeOperatorAgentPrompt: "ホームオペレーターのエージェント種別（claude/codex）",
   dryRunComplete: "[dry-run] フロー完了。解決済みの設定（未書き込み、秘密情報はマスク）：",
   wroteEnv: (path) => `${path} を書き込みました`,
   telegramIds: (ids) => `Telegram id：${ids}`,
@@ -437,6 +461,10 @@ const es: SetupMessages = {
   keepAwakePrompt: "¿Mantener el Mac despierto mientras el bot está en marcha? (y/N)",
   keepAwakeClamshellHint:
     "Nota: funciona con la tapa abierta o una pantalla externa. Para uso con la tapa cerrada (clamshell), ejecuta también: sudo pmset -a disablesleep 1",
+  homeOperatorIntro:
+    "Operador principal: la sesión de agente predeterminada con la que charlas cuando no hay ningún proyecto seleccionado; gestiona tus proyectos a través de la CLI tcb.",
+  homeOperatorPrompt: "¿Habilitar la sesión del operador principal? (y/N)",
+  homeOperatorAgentPrompt: "Agente para el operador principal (claude/codex)",
   dryRunComplete:
     "[dry-run] flujo completado. Config resuelta (NO escrita, secretos enmascarados):",
   wroteEnv: (path) => `Se escribió ${path}`,

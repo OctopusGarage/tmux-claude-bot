@@ -248,7 +248,34 @@ burn through your quota unattended. Resume with `/autopilot on` or
 
 ---
 
-## 8. Batch scheduler
+## 8. Home operator
+
+When `HOME_OPERATOR_ENABLED=true`, the bot auto-starts a dedicated agent session
+(Claude Code or Codex) in a fixed home directory. That session becomes the default
+chat target whenever no project is selected — so you can manage the whole fleet by
+talking to it directly: it drives `tcb send`, `tcb open`, and the rest of the CLI,
+plus the `tmux-claude-bot` AI skill.
+
+**Enable it** during setup (the wizard asks, default no) or manually:
+
+```bash
+HOME_OPERATOR_ENABLED=true    # enable
+HOME_OPERATOR_AGENT=claude    # claude (default) or codex
+HOME_OPERATOR_DIR=            # blank → <state-dir>/home (auto-created)
+```
+
+**Usage notes:**
+
+- `/home` — switch a Telegram or Feishu/Lark channel back to the operator at any time.
+- The operator runs `--dangerously-skip-permissions` (it can't respond to interactive
+  prompts — messages to it go straight to the agent).
+- It is excluded from autopilot and the global keep-alive scheduler; `tcb send`
+  and relay commands refuse it as a target to avoid loops.
+- The dashboard shows it as "home operator", not a work project.
+
+---
+
+## 9. Batch scheduler
 
 Run a set of agent tasks across multiple projects on a schedule (cron, one-shot, or immediate).
 
@@ -273,7 +300,7 @@ Run a set of agent tasks across multiple projects on a schedule (cron, one-shot,
 
 ---
 
-## 9. Managing the service
+## 10. Managing the service
 
 The bot is a managed, auto-restarting service. **Restart via the service manager**,
 not the dev scripts (the manager respawns it):
@@ -292,7 +319,7 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 - **Bot not responding** → `tcb doctor`; check exactly one bot process is running
   (multiple cause a Telegram 409); check network/proxy reachability.
