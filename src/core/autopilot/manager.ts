@@ -32,7 +32,13 @@ export async function tickAllEnabled(
     // its startedAt, so it is never resurrected → no runaway.
     for (const session of live) {
       const st = store.get(session);
-      if (st.enabled || st.optOut || st.goalId !== undefined || st.startedAt !== undefined)
+      if (
+        st.enabled ||
+        st.optOut ||
+        st.goalId !== undefined ||
+        st.startedAt !== undefined ||
+        st.viaScheduler
+      )
         continue;
       store.set(session, {
         ...defaultState(st.persona),

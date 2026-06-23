@@ -344,6 +344,8 @@ export const ja: Messages = {
 
   // ── dashboard ──
   cmdDashboard: "グローバルダッシュボードを表示（全セッションの状態概要）",
+  cmdBatch:
+    "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",
   cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
@@ -364,6 +366,11 @@ export const ja: Messages = {
     `✅ autopilot キープアライブ完了 [${session}]：完了マーカーを検出`,
   autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
     `➡️ autopilot [${session}]：目標 ${goalId} を開始（${pos}/${total} · ${round}/${rounds} 周）`,
+  batchRunStarted: (planId, tasks) =>
+    `🚀 バッチ実行を開始しました：プラン ${planId}、${tasks} 件のタスク`,
+  batchPoolPaused: (agent, resumeAt) =>
+    `⏸ バッチプールを一時停止 [${agent}]：クォータ上限に達しました。再開予定：${resumeAt}`,
+  batchRunComplete: (summary) => `✅ バッチ実行完了\n${summary}`,
   autopilotGlobal: (on) =>
     on
       ? "グローバル保活をオン:すべてのアクティブなセッションを自動管理(個別に除外するには /autopilot off)"

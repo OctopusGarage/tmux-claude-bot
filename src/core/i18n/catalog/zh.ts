@@ -360,8 +360,9 @@ export const zh = {
   cmdLogs: "查看近期警告/错误日志（/logs <traceId|N>）",
   logsTitle: "🪵 近期日志",
 
-  // ── dashboard ──
+  // ── dashboard / batch ──
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
+  cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
   cmdSysload: "查看本机负载/发热/跑飞进程",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
@@ -390,6 +391,11 @@ export const zh = {
     round: number,
     rounds: number,
   ) => `➡️ autopilot [${session}]：进入目标 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 轮）`,
+  batchRunStarted: (planId: string, tasks: number) =>
+    `🚀 批次运行已启动：计划 ${planId}，共 ${tasks} 个任务`,
+  batchPoolPaused: (agent: string, resumeAt: string) =>
+    `⏸ 批次池已暂停 [${agent}]：额度已达上限，预计恢复 ${resumeAt}`,
+  batchRunComplete: (summary: string) => `✅ 批次运行完成\n${summary}`,
   autopilotGlobal: (on: boolean): string =>
     on
       ? "已开启全局托管:所有活跃会话自动保活(某个会话用 /autopilot off 单独退出)"

@@ -332,6 +332,7 @@ export const zhTW: Messages = {
 
   // ── dashboard ──
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
+  cmdBatch: "批次排程器：查看狀態或控制批次執行（start/pause/resume/stop/report）",
   cmdSysload: "查看本機負載/發熱/失控程序",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
@@ -351,6 +352,10 @@ export const zhTW: Messages = {
     `✅ autopilot 保活任務完成 [${session}]：偵測到完成標記`,
   autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
     `➡️ autopilot [${session}]：進入目標 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 輪）`,
+  batchRunStarted: (planId, tasks) => `🚀 批次執行已啟動：計劃 ${planId}，共 ${tasks} 個任務`,
+  batchPoolPaused: (agent, resumeAt) =>
+    `⏸ 批次池已暫停 [${agent}]：額度已達上限，預計恢復 ${resumeAt}`,
+  batchRunComplete: (summary) => `✅ 批次執行完成\n${summary}`,
   autopilotGlobal: (on) =>
     on
       ? "已開啟全域託管:所有活躍工作階段自動保活(某個工作階段用 /autopilot off 單獨退出)"

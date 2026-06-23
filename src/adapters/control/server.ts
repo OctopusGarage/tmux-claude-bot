@@ -60,6 +60,7 @@ export function startControlServer(deps: HandlerDeps): net.Server {
   // The pusher is registered ONCE (not per-connection) so it doesn't leak.
   const clients = new Set<(m: ServerMessage) => void>();
   deps.notifier.register(async (notice) => {
+    if (!("session" in notice)) return;
     for (const s of clients) s({ event: "autopilot", session: notice.session, kind: notice.kind });
   });
 

@@ -118,6 +118,7 @@ install dir.)
 | `tcb doctor` | health checks against the install |
 | `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
 | `tcb autopilot` | autopilot status across all sessions (`--json` for raw) |
+| `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
 | `tcb sysload` | machine load, thermal state, top CPU, runaway shells |
 | `tcb tui` | the terminal control panel (needs the bot running) |
 | `tcb recover` | relaunch agents that were running before a reboot |
@@ -247,7 +248,32 @@ burn through your quota unattended. Resume with `/autopilot on` or
 
 ---
 
-## 8. Managing the service
+## 8. Batch scheduler
+
+Run a set of agent tasks across multiple projects on a schedule (cron, one-shot, or immediate).
+
+**Quick start:**
+
+1. Define a YAML plan file (see `docs/batch-plan.example.yml` for the full schema).
+2. `tcb batch load <file>` — parse, validate, and save the plan.
+3. `tcb batch start <id>` — materialise and activate a run immediately.
+4. `tcb batch status` — print the live task table for the active run.
+5. `tcb batch report` — print a completion summary (done/failed/skipped counts).
+
+**Other controls:**
+
+| Command | Effect |
+|---------|--------|
+| `tcb batch export <id> [file]` | dump the saved plan back to YAML |
+| `tcb batch pause` | pause the active run (tasks already in flight continue) |
+| `tcb batch resume` | resume a paused run |
+| `tcb batch stop` | cancel and clear the active run |
+
+**Cron notes:** schedule expressions are five fields (`min hour dom month dow`), matched in **UTC**. Both `dom` and `dow` must match (they are ANDed, not ORed — non-standard vs. vixie cron).
+
+---
+
+## 9. Managing the service
 
 The bot is a managed, auto-restarting service. **Restart via the service manager**,
 not the dev scripts (the manager respawns it):
@@ -266,7 +292,7 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - **Bot not responding** → `tcb doctor`; check exactly one bot process is running
   (multiple cause a Telegram 409); check network/proxy reachability.

@@ -25,7 +25,10 @@ export type AutopilotNotice =
       total: number;
       round: number;
       rounds: number;
-    };
+    }
+  | { kind: "batchRunStarted"; runId: string; planId: string; tasks: number }
+  | { kind: "batchPoolPaused"; runId: string; agent: string; resumeAt: number }
+  | { kind: "batchRunComplete"; runId: string; summary: string };
 
 export type OwnerPush = (notice: AutopilotNotice) => Promise<void>;
 
@@ -54,6 +57,12 @@ export function renderNotice(n: AutopilotNotice, m: Messages): string {
       return m.autopilotNotifyKeepaliveDone(n.session);
     case "goalAdvance":
       return m.autopilotNotifyGoalAdvance(n.session, n.goalId, n.pos, n.total, n.round, n.rounds);
+    case "batchRunStarted":
+      return m.batchRunStarted(n.planId, n.tasks);
+    case "batchPoolPaused":
+      return m.batchPoolPaused(n.agent, new Date(n.resumeAt).toLocaleTimeString());
+    case "batchRunComplete":
+      return m.batchRunComplete(n.summary);
   }
 }
 

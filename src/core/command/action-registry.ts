@@ -175,6 +175,7 @@ const SETTINGS: readonly HelpRow[] = [
 ];
 
 const DIAGNOSTICS: readonly HelpRow[] = [
+  [{ cmds: ["batch"], descKey: "cmdBatch", argHint: " [start <id>|pause|resume|stop|report]" }],
   [{ cmds: ["dashboard"], descKey: "cmdDashboard" }],
   [{ cmds: ["sysload"], descKey: "cmdSysload" }],
   [{ cmds: ["logs"], descKey: "cmdLogs", argHint: " [traceId|N]" }],
@@ -254,6 +255,10 @@ export const BOT_COMMANDS: BotCommand[] = [
     description: "Install usage reporting (statusLine snapshot) for /status",
   },
   // 🛠 Diagnostics
+  {
+    command: "batch",
+    description: "Batch scheduler status or control (/batch start <id>|pause|resume|stop|report)",
+  },
   { command: "autopilot", description: "Toggle/inspect keep-alive autopilot for this session" },
   { command: "goals", description: "List autopilot goal presets" },
   { command: "dashboard", description: "Show the global dashboard (all sessions overview)" },

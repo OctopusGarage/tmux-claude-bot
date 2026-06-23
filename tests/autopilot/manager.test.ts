@@ -124,4 +124,11 @@ describe("tickAllEnabled — global keep-alive", () => {
     expect(st.enabled).toBe(false);
     expect(st.viaGlobal).toBe(false);
   });
+
+  it("does NOT enroll a scheduler-owned session (viaScheduler)", async () => {
+    process.env.AUTOPILOT_GLOBAL_KEEPALIVE = "true";
+    store.set("owned", { ...defaultState(), viaScheduler: true }); // present, not enabled, no startedAt
+    await tickAllEnabled(deps(["owned"]), store, 1_000_000);
+    expect(store.get("owned").enabled).toBe(false); // scheduler owns it; global left it alone
+  });
 });

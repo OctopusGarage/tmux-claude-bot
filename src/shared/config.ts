@@ -115,6 +115,10 @@ export const envSchema = z.object({
     "全部完成后请单独回复一行 [TASK_DONE] 表示整个任务已完成。",
   ),
   AUTOPILOT_MAX_ROUNDS: blankTolerantPositiveInt(10),
+  // --- Batch scheduler. AUTOPILOT_SCHEDULER_TICK_MS=0 disables the loop. ---
+  AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
+  AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
+  AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
 });
 
 /**
@@ -302,6 +306,11 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       keepAliveDoneMarker: parsed.AUTOPILOT_KEEPALIVE_DONE_MARKER,
       keepAliveDonePrompt: parsed.AUTOPILOT_KEEPALIVE_DONE_PROMPT,
       maxRounds: parsed.AUTOPILOT_MAX_ROUNDS,
+    },
+    scheduler: {
+      tickMs: parsed.AUTOPILOT_SCHEDULER_TICK_MS,
+      quotaPct: parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
+      reprobeMs: parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
     },
   };
 }

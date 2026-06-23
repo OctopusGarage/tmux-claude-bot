@@ -339,6 +339,7 @@ Send any text → forwarded to the agent → reply`,
 
   // ── dashboard ──
   cmdDashboard: "View the global dashboard (overview of all sessions)",
+  cmdBatch: "Batch scheduler: view status or control a batch run (start/pause/resume/stop/report)",
   cmdSysload: "Show machine load, heat, and runaway processes",
   sysloadTitle: "🖥 System load",
   dashboardTitle: "📊 Dashboard",
@@ -361,6 +362,10 @@ Send any text → forwarded to the agent → reply`,
     `✅ autopilot keep-alive task complete [${session}]: completion marker seen`,
   autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
     `➡️ autopilot [${session}]: starting goal ${goalId} (${pos}/${total} · round ${round}/${rounds})`,
+  batchRunStarted: (planId, tasks) => `🚀 Batch run started: plan ${planId}, ${tasks} task(s)`,
+  batchPoolPaused: (agent, resumeAt) =>
+    `⏸ Batch pool paused [${agent}]: quota reached, resuming at ${resumeAt}`,
+  batchRunComplete: (summary) => `✅ Batch run complete\n${summary}`,
   autopilotGlobal: (on) =>
     on
       ? "Global keep-alive ON: all live sessions are auto-managed (use /autopilot off to exclude one)"
