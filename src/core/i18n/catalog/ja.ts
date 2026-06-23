@@ -342,6 +342,22 @@ export const ja: Messages = {
   cmdLogs: "最近の警告・エラーログを表示（/logs <traceId|N>）",
   logsTitle: "🪵 最近のログ",
 
+  // ── prompt library ──
+  cmdPrompts: "保存済みプロンプトの閲覧",
+  promptsDisabled:
+    "プロンプトライブラリが無効です（.env に PROMPT_MCP_COMMAND を設定してください）",
+  promptsEmpty: "一致するプロンプトがありません",
+  promptsError: "プロンプトライブラリへの接続に失敗しました。後ほど再試行してください",
+  promptsGone: "そのプロンプトは存在しません。再度検索してください",
+  promptsTitle: (n) => `🔖 プロンプトライブラリ (${n})`,
+  promptsOpen: "表示/コピー",
+  promptsSearchTitle: (q, n) => `🔖 「${q}」— ${n} 件`,
+  promptsRefine: (shown, total) =>
+    `全 ${total} 件、先頭 ${shown} 件のみ表示 — /prompts <キーワード> で絞り込む`,
+  promptsAll: "✖ すべて",
+  promptsPrev: "◀ 前へ",
+  promptsNext: "次へ ▶",
+
   // ── dashboard ──
   cmdHome: "ホームオペレーターセッションに切り替え（プロジェクト未選択時のデフォルト対象）",
   homeOperatorDisabled: "ホームオペレーターセッションは有効ではありません",

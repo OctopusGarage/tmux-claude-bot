@@ -37,6 +37,11 @@ import {
 import { clearFreeLabel, requestFreeLabel } from "../../core/projects/free-label-prompt.js";
 import { createProjectFromPath } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import {
+  makePromptLib,
+  resolvePromptByShortId,
+  resolveTagByShortId,
+} from "../../core/promptlib/promptlib.js";
 import { DEFAULT_INPUTS, lookupInput } from "../../core/read/recent-inputs.js";
 import { setWhisperLanguage } from "../../core/read/voice-support.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
@@ -70,6 +75,7 @@ import {
   resolveAliveSessionByShortId,
   switchToProject,
 } from "./project-ops.js";
+import { sendPromptsPage } from "./prompts.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
@@ -515,6 +521,36 @@ export async function handleCallbackQuery(
       // keeps the text EXACTLY as typed and cleanly copyable.
       await safeAnswerCallback(ctx, messages("telegram").inputDraftToast);
       await ctx.reply(found.prompt);
+      return;
+    }
+    if (parsed.kind === "promptget") {
+      await safeAnswerCallback(ctx);
+      const lib = makePromptLib(deps.config);
+      if (!lib.isEnabled()) {
+        await reply(ctx, "info", messages("telegram").promptsDisabled, { replyTarget });
+        return;
+      }
+      const name = await resolvePromptByShortId(lib, parsed.sid);
+      if (!name) {
+        await reply(ctx, "err", messages("telegram").promptsGone, { replyTarget });
+        return;
+      }
+      const body = await lib.get(name);
+      await reply(ctx, "result", name, { replyTarget, body, code: true });
+      return;
+    }
+    if (parsed.kind === "promptfilter" || parsed.kind === "promptpage") {
+      await safeAnswerCallback(ctx);
+      const lib = makePromptLib(deps.config);
+      if (!lib.isEnabled()) {
+        await reply(ctx, "info", messages("telegram").promptsDisabled, { replyTarget });
+        return;
+      }
+      const tags = await lib.listTags();
+      const tagSid = parsed.kind === "promptfilter" ? parsed.tagSid : (parsed.tagSid ?? "");
+      const tagFilter = tagSid ? ((await resolveTagByShortId(lib, tagSid, tags)) ?? "") : "";
+      const page = parsed.kind === "promptpage" ? parsed.page : 0;
+      await sendPromptsPage(ctx, lib, page, tagFilter, replyTarget, tags);
       return;
     }
     const sessionName = await resolveAliveSessionByShortId(deps, parsed.sid);

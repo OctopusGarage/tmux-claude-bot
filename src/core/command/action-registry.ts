@@ -173,6 +173,7 @@ const SETTINGS: readonly HelpRow[] = [
   [{ cmds: ["voice_lang"], descKey: "cmdVoiceLang" }],
   [{ cmds: ["voice_install"], descKey: "cmdVoiceInstall" }],
   [{ cmds: ["status_install"], descKey: "cmdStatusInstall" }],
+  [{ cmds: ["prompts"], descKey: "cmdPrompts" }],
 ];
 
 const DIAGNOSTICS: readonly HelpRow[] = [
@@ -255,6 +256,10 @@ export const BOT_COMMANDS: BotCommand[] = [
   {
     command: "status_install",
     description: "Install usage reporting (statusLine snapshot) for /status",
+  },
+  {
+    command: "prompts",
+    description: "Browse saved prompts (read-only; needs PROMPT_MCP_* configured)",
   },
   // 🛠 Diagnostics
   {

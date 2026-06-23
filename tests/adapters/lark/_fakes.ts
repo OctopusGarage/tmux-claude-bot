@@ -194,6 +194,7 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     startCommands: [{ label: "claude", command: "bash" }],
     homeOperator: { enabled: false, dir: "/home/user", agent: "claude" as const },
     lark: { allowedOpenIds },
+    promptMcp: { command: "", args: [] },
     ...overrides.config,
   } as unknown as HandlerDeps["config"];
 

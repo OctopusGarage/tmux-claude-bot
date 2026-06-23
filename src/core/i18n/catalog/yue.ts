@@ -333,6 +333,21 @@ export const yue: Messages = {
   cmdLogs: "查看近期警告/錯誤日誌（/logs <traceId|N>）",
   logsTitle: "🪵 近期日誌",
 
+  // ── prompt library ──
+  cmdPrompts: "瀏覽收藏的提示詞",
+  promptsDisabled: "提示詞庫未啟用（需在 .env 設定 PROMPT_MCP_COMMAND）",
+  promptsEmpty: "沒有符合的提示詞",
+  promptsError: "提示詞庫連線失敗，請稍後重試",
+  promptsGone: "該提示詞已不存在，請重新搜尋",
+  promptsTitle: (n) => `🔖 提示詞庫 (${n})`,
+  promptsOpen: "查看/複製",
+  promptsSearchTitle: (q, n) => `🔖 「${q}」符合 ${n} 條`,
+  promptsRefine: (shown, total) =>
+    `共 ${total} 條，僅顯示前 ${shown} 條 — 用 /prompts <關鍵詞> 縮小範圍`,
+  promptsAll: "✖ 全部",
+  promptsPrev: "◀ 上一頁",
+  promptsNext: "下一頁 ▶",
+
   // ── dashboard ──
   cmdHome: "切換至主控操作員工作階段（未選擇項目時的預設目標）",
   homeOperatorDisabled: "主控操作員工作階段未啟用",

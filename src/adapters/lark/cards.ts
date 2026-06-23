@@ -10,9 +10,11 @@ import type { MessageAction } from "../../core/command/dispatch.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { BrowseView } from "../../core/projects/dir-browser.js";
 import type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+import type { PromptsView } from "../../core/promptlib/view.js";
 import { inputButtonLabel } from "../../core/read/recent-inputs.js";
 import { VOICE_LANGS } from "../../core/read/voice-support.js";
 import { agentGlyph } from "../../shared/types.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 import { signValue } from "./card-signing.js";
 
 /** A card button spec. `value` is echoed back in cardAction.action.value. */
@@ -666,4 +668,44 @@ export function autopilotGateCard(session: string): object {
       { text: m.btnApContinue, value: { cmd: "ap_reject", s: session } },
     ]),
   ]);
+}
+
+export type { PromptsView } from "../../core/promptlib/view.js";
+
+/** Prompt library browse card: tag filter row, one button per prompt, paging nav. */
+export function promptsCard(
+  items: Array<{ name: string; tags: string[]; description: string }>,
+  tags: Array<{ tag: string; count: number }>,
+  view: PromptsView,
+): object {
+  const m = messages("lark");
+  const els: object[] = [];
+  // Tag filter row
+  const tagBtns: ButtonSpec[] = tags.slice(0, 6).map((t) => ({
+    text: `${t.tag === view.tagFilter ? "✅ " : "🏷 "}${t.tag} (${t.count})`,
+    value: { cmd: "pfilter", tagSid: sessionShortId(t.tag) },
+  }));
+  if (view.tagFilter)
+    tagBtns.push({ text: m.promptsAll, value: { cmd: "ppage", page: 0, tagSid: "" } });
+  if (tagBtns.length) els.push(gridRow(tagBtns));
+  // One row per prompt: name+tags+description as md, then a "view/copy" button
+  for (const p of items) {
+    els.push(
+      md(
+        `**${p.name}**${p.tags.length ? `  \`${p.tags.join(", ")}\`` : ""}${p.description ? ` — ${p.description}` : ""}`,
+      ),
+    );
+    els.push(
+      gridRow([{ text: m.promptsOpen, value: { cmd: "pget", sid: sessionShortId(p.name) } }]),
+    );
+  }
+  // Paging nav
+  const f = view.tagFilter ? sessionShortId(view.tagFilter) : "";
+  const nav: ButtonSpec[] = [];
+  if (view.page > 0)
+    nav.push({ text: "◀", value: { cmd: "ppage", page: view.page - 1, tagSid: f } });
+  if (view.page < view.totalPages - 1)
+    nav.push({ text: "▶", value: { cmd: "ppage", page: view.page + 1, tagSid: f } });
+  if (nav.length) els.push(gridRow(nav));
+  return shell(m.promptsTitle(items.length), els);
 }

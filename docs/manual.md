@@ -68,10 +68,19 @@ peek · history · projects · queue. It adapts to whether an agent is running.
   were running before a reboot.
 - **Feishu project groups**: bind a Feishu group to one project so you switch projects
   by switching groups (no `/cd`); works without `@bot`.
-- **Settings**: `/lang` (UI language), voice language, status-line install.
+- **Settings**: `/lang` (UI language), voice language, status-line install, `/prompts` (browse saved prompts).
 - **Diagnostics**: `/dashboard` (every session at a glance) · `/sysload` (machine
   load / heat / runaway processes) · `/logs` · `/doctor`. Owner-only; on Feishu these
   are 1:1-chat only.
+
+### Prompt Library (`/prompts`)
+
+Browse and copy prompts saved in a configured MCP prompt server.
+
+- `/prompts` — list all prompts with tag filters and paging
+- `/prompts <keyword>` — search by keyword
+
+Requires `PROMPT_MCP_COMMAND` (and optionally `PROMPT_MCP_ARGS`, `PROMPT_MCP_CWD`) in `.env`. Works with any MCP server that implements `search_prompts`, `get_prompt`, and `list_prompt_tags`. Owner-only (private chat only).
 
 ---
 

@@ -47,6 +47,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `voice_lang` | Set voice recognition language (zh/en/yue/ja/es/auto) |
 | `home` | Switch to the home operator session (the default target when no project is selected). Owner-only. |
 | `lang` | Set interface language (en/zh/zh-TW/yue/ja/es) |
+| `prompts` | Browse saved prompts (read-only; needs PROMPT_MCP_* configured). Owner-only (private chat only). |
 
 ## Feishu/Lark Group-Binding Commands
 
