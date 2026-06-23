@@ -9,10 +9,12 @@ import { isMessageAction, type MessageAction } from "../../core/command/dispatch
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { BrowseAction, BrowseView } from "../../core/projects/dir-browser.js";
 import type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+import type { PromptsView } from "../../core/promptlib/view.js";
 import { inputButtonLabel } from "../../core/read/recent-inputs.js";
 import type { SessionEntry } from "../../core/read/transcript.js";
 import { VOICE_LANGS } from "../../core/read/voice-support.js";
 import { agentGlyph } from "../../shared/types.js";
+import { sessionShortId } from "../../shared/utils/hash.js";
 
 export type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
 export type { SessionEntry } from "../../core/read/transcript.js";
@@ -69,7 +71,10 @@ export type CallbackAction =
   | { kind: "apRounds"; sid: string; delta: number }
   | { kind: "apStart"; sid: string }
   | { kind: "apConfirm"; sid: string }
-  | { kind: "apContinue"; sid: string };
+  | { kind: "apContinue"; sid: string }
+  | { kind: "promptget"; sid: string }
+  | { kind: "promptfilter"; tagSid: string }
+  | { kind: "promptpage"; page: number; tagSid: string };
 
 /** The choices when /status_install hits a foreign statusLine. */
 export const STATUS_INSTALL_ACTIONS = ["overwrite", "wrap", "snippet", "skip"] as const;
@@ -105,6 +110,22 @@ export function parseCallbackData(data: string): CallbackAction | null {
   if (data === "recx") return { kind: "recovercancel" };
   const parts = data.split(":");
   const [tag] = parts;
+  if (tag === "pp") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    return { kind: "promptget", sid };
+  }
+  if (tag === "pf") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    return { kind: "promptfilter", tagSid: sid };
+  }
+  if (tag === "pn") {
+    const page = Number(parts[1]);
+    const tagSid = parts[2] ?? "_";
+    if (parts.length !== 3 || !Number.isInteger(page) || page < 0) return null;
+    return { kind: "promptpage", page, tagSid: tagSid === "_" ? "" : tagSid };
+  }
   if (tag === "a") {
     const action = parts[1];
     const sid = parts[2];
@@ -562,4 +583,34 @@ export function buildAutopilotPanelKeyboard(view: AutopilotView, sid: string): I
   );
   if (view.mode === "cycle") kb.text(m.btnApStop, `apstop:${sid}`);
   return kb.row().text(m.btnApBack, `apl:${sid}`);
+}
+
+export { PROMPTS_PAGE_SIZE, type PromptsView } from "../../core/promptlib/view.js";
+
+/** List keyboard: tag-filter row + one button per prompt + paging row. items is current page ≤8 items. */
+export function buildPromptsKeyboard(
+  items: Array<{ name: string; tags: string[] }>,
+  tags: Array<{ tag: string; count: number }>,
+  view: PromptsView,
+): InlineKeyboard {
+  const m = messages("telegram");
+  const kb = new InlineKeyboard();
+  // Tag filter row (show up to 6 tags + "All" clear)
+  const shownTags = tags.slice(0, 6);
+  shownTags.forEach((t) => {
+    const active = t.tag === view.tagFilter;
+    kb.text(`${active ? "✅ " : "🏷 "}${t.tag} (${t.count})`, `pf:${sessionShortId(t.tag)}`);
+  });
+  if (view.tagFilter) kb.text(m.promptsAll, "pn:0:_");
+  if (shownTags.length > 0 || view.tagFilter) kb.row();
+  // One button per prompt
+  items.forEach((p) => {
+    const label = p.tags.length ? `${p.name}  [${p.tags.join(", ")}]` : p.name;
+    kb.text(label, `pp:${sessionShortId(p.name)}`).row();
+  });
+  // Paging row
+  const f = view.tagFilter ? sessionShortId(view.tagFilter) : "_";
+  if (view.page > 0) kb.text(m.promptsPrev, `pn:${view.page - 1}:${f}`);
+  if (view.page < view.totalPages - 1) kb.text(m.promptsNext, `pn:${view.page + 1}:${f}`);
+  return kb;
 }

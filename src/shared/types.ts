@@ -93,6 +93,7 @@ export type AppConfig = {
   autopilot: AutopilotRuntimeConfig;
   scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
   homeOperator: { enabled: boolean; dir: string; agent: "claude" | "codex" };
+  promptMcp: { command: string; args: string[]; cwd?: string };
 };
 
 export type BotCommand = { command: string; description: string };

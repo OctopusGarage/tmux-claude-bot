@@ -31,6 +31,7 @@ import { homeCommandResult, resolveTargetSession } from "../../core/projects/ope
 import { createFreeProject, createProjectFromPath } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
+import { makePromptLib } from "../../core/promptlib/promptlib.js";
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
 import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
@@ -43,9 +44,11 @@ import {
   buildIdleKeyboard,
   buildLangKeyboard,
   buildOrphanKeyboard,
+  buildPromptsKeyboard,
   buildRecentKeyboard,
   buildSessionsKeyboard,
   buildStartPickerKeyboard,
+  PROMPTS_PAGE_SIZE,
 } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
@@ -57,6 +60,7 @@ import {
   switchToProject,
 } from "./project-ops.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
+import { sendPromptsPage } from "./prompts.js";
 import type { Tone } from "./replies.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
@@ -341,6 +345,43 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     }
     await deps.currentProject.set(tgScope(ctx), result.session);
     await reply(ctx, "view", messages("telegram").homeOperatorSwitched, { replyTarget });
+  });
+
+  // Owner-only: browse prompts saved in the configured MCP prompt server.
+  // Private chat only (mirrors /home). Supports keyword search and tag filtering
+  // via inline-button callbacks (pp / pf / pn).
+  bot.command("prompts", async (ctx) => {
+    if (ctx.chat?.type !== "private") return;
+    const promptLib = makePromptLib(deps.config);
+    if (!promptLib.isEnabled()) {
+      await reply(ctx, "info", messages("telegram").promptsDisabled, { replyTarget });
+      return;
+    }
+    const arg = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
+    try {
+      if (arg) {
+        const items = await promptLib.search(arg, "");
+        if (items.length === 0) {
+          await reply(ctx, "list", messages("telegram").promptsEmpty, { replyTarget });
+          return;
+        }
+        const shown = items.slice(0, PROMPTS_PAGE_SIZE);
+        const note =
+          items.length > PROMPTS_PAGE_SIZE
+            ? messages("telegram").promptsRefine(PROMPTS_PAGE_SIZE, items.length)
+            : "";
+        await reply(ctx, "list", messages("telegram").promptsSearchTitle(arg, items.length), {
+          replyTarget,
+          body: note || undefined,
+          replyMarkup: buildPromptsKeyboard(shown, [], { page: 0, totalPages: 1, tagFilter: "" }),
+        });
+      } else {
+        await sendPromptsPage(ctx, promptLib, 0, "", replyTarget);
+      }
+    } catch (err) {
+      log.warn("/prompts failed", { err });
+      await reply(ctx, "err", messages("telegram").promptsError, { replyTarget });
+    }
   });
 
   // Owner-only (the auth guard drops non-allowlisted users before this runs).

@@ -126,6 +126,10 @@ export const envSchema = z.object({
     (v) => (v === "" ? undefined : v),
     z.enum(["claude", "codex"]).default("claude"),
   ),
+  // --- Prompt library (optional; browse saved prompts via /prompts) ---
+  PROMPT_MCP_COMMAND: z.string().default(""),
+  PROMPT_MCP_ARGS: z.string().default(""),
+  PROMPT_MCP_CWD: z.string().default(""),
 });
 
 /**
@@ -323,6 +327,11 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       enabled: parsed.HOME_OPERATOR_ENABLED !== "false" && parsed.HOME_OPERATOR_ENABLED !== "0",
       dir: parsed.HOME_OPERATOR_DIR,
       agent: parsed.HOME_OPERATOR_AGENT,
+    },
+    promptMcp: {
+      command: parsed.PROMPT_MCP_COMMAND.trim(),
+      args: parsed.PROMPT_MCP_ARGS.split(/\s+/).filter(Boolean),
+      ...(parsed.PROMPT_MCP_CWD ? { cwd: parsed.PROMPT_MCP_CWD } : {}),
     },
   };
 }

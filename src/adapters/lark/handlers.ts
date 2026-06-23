@@ -27,6 +27,7 @@ import {
   handleRestore,
   handleUnbind,
 } from "./group-commands.js";
+import { sendPrompts } from "./prompts.js";
 import { sendCard, sendText } from "./replies.js";
 import { resolveReplyTarget } from "./reply-target.js";
 import {
@@ -364,6 +365,9 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               // Host-wide op — p2p owner only (same gate as dashboard/logs).
               if (msg.chatType === "p2p")
                 await sendText(channel, msg.chatId, runBatchCommand(parsed.arg ?? ""));
+              break;
+            case "prompts":
+              if (msg.chatType === "p2p") await sendPrompts(channel, deps, msg.chatId, parsed.arg);
               break;
           }
           break;

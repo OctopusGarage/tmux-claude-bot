@@ -43,6 +43,11 @@ import {
   switchToProject,
 } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import {
+  makePromptLib,
+  resolvePromptByShortId,
+  resolveTagByShortId,
+} from "../../core/promptlib/promptlib.js";
 import { DEFAULT_INPUTS, lookupInput } from "../../core/read/recent-inputs.js";
 import {
   checkVoiceSupport,
@@ -80,6 +85,7 @@ import {
   makeBoundGroupBySid,
   makeFreeGroupBySid,
 } from "./group-commands.js";
+import { sendPrompts } from "./prompts.js";
 import { sendCard, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
 import {
@@ -119,6 +125,9 @@ type CardValue =
       /** qcancel: the session + queued-message id to cancel. */
       s?: string;
       id?: string;
+      /** prompts: short-id for pget; tag short-id for pfilter/ppage; page number for ppage. */
+      tagSid?: string;
+      page?: number;
     }
   | undefined;
 
@@ -684,6 +693,60 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   ap_start: handleApStart,
   ap_confirm: handleApConfirm,
   ap_reject: handleApReject,
+  // --- Prompt library (mirrors Telegram pp/pf/pn callbacks) ---
+  pget: async ({ channel, deps, evt, value, chatKind }) => {
+    if (chatKind !== "p2p") return;
+    const lib = makePromptLib(deps.config);
+    if (!lib.isEnabled()) {
+      await sendText(channel, evt.chatId, messages("lark").promptsDisabled);
+      return;
+    }
+    try {
+      const name = await resolvePromptByShortId(lib, String(value?.sid ?? ""));
+      if (!name) {
+        await sendText(channel, evt.chatId, messages("lark").promptsGone);
+        return;
+      }
+      const body = await lib.get(name);
+      await sendText(channel, evt.chatId, `\`\`\`\n${body}\n\`\`\``);
+    } catch (err) {
+      log.warn("prompt card action failed", { err, data: { cmd: "pget" } });
+      await sendText(channel, evt.chatId, messages("lark").promptsError);
+    }
+  },
+  pfilter: async ({ channel, deps, evt, value, chatKind }) => {
+    if (chatKind !== "p2p") return;
+    const lib = makePromptLib(deps.config);
+    if (!lib.isEnabled()) {
+      await sendText(channel, evt.chatId, messages("lark").promptsDisabled);
+      return;
+    }
+    try {
+      const tags = await lib.listTags();
+      const tag = (await resolveTagByShortId(lib, String(value?.tagSid ?? ""), tags)) ?? "";
+      await sendPrompts(channel, deps, evt.chatId, undefined, 0, tag, tags);
+    } catch (err) {
+      log.warn("prompt card action failed", { err, data: { cmd: "pfilter" } });
+      await sendText(channel, evt.chatId, messages("lark").promptsError);
+    }
+  },
+  ppage: async ({ channel, deps, evt, value, chatKind }) => {
+    if (chatKind !== "p2p") return;
+    const lib = makePromptLib(deps.config);
+    if (!lib.isEnabled()) {
+      await sendText(channel, evt.chatId, messages("lark").promptsDisabled);
+      return;
+    }
+    try {
+      const tags = await lib.listTags();
+      const tagSid = String(value?.tagSid ?? "");
+      const tag = tagSid ? ((await resolveTagByShortId(lib, tagSid, tags)) ?? "") : "";
+      await sendPrompts(channel, deps, evt.chatId, undefined, Number(value?.page ?? 0), tag, tags);
+    } catch (err) {
+      log.warn("prompt card action failed", { err, data: { cmd: "ppage" } });
+      await sendText(channel, evt.chatId, messages("lark").promptsError);
+    }
+  },
 };
 
 /**

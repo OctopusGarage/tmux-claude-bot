@@ -360,6 +360,21 @@ export const zh = {
   cmdLogs: "查看近期警告/错误日志（/logs <traceId|N>）",
   logsTitle: "🪵 近期日志",
 
+  // ── prompt library ──
+  cmdPrompts: "浏览收藏的提示词",
+  promptsDisabled: "提示词库未启用（需在 .env 配置 PROMPT_MCP_COMMAND）",
+  promptsEmpty: "没有匹配的提示词",
+  promptsError: "提示词库连接失败，请稍后重试",
+  promptsGone: "该提示词已不存在，请重新搜索",
+  promptsTitle: (n: number) => `🔖 提示词库 (${n})`,
+  promptsOpen: "查看/复制",
+  promptsSearchTitle: (q: string, n: number) => `🔖 「${q}」匹配 ${n} 条`,
+  promptsRefine: (shown: number, total: number) =>
+    `共 ${total} 条，仅显示前 ${shown} 条 — 用 /prompts <关键词> 缩小`,
+  promptsAll: "✖ 全部",
+  promptsPrev: "◀ 上一页",
+  promptsNext: "下一页 ▶",
+
   // ── dashboard / batch ──
   cmdHome: "切换到主控操作员会话（未选项目时的默认目标）",
   homeOperatorDisabled: "未启用主控操作员会话",

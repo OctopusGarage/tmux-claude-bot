@@ -337,6 +337,21 @@ Send any text → forwarded to the agent → reply`,
   cmdLogs: "View recent warning/error logs (/logs <traceId|N>)",
   logsTitle: "🪵 Recent logs",
 
+  // ── prompt library ──
+  cmdPrompts: "Browse saved prompts",
+  promptsDisabled: "Prompt library not enabled (set PROMPT_MCP_COMMAND in .env)",
+  promptsEmpty: "No matching prompts",
+  promptsError: "Prompt library connection failed — try again later",
+  promptsGone: "That prompt no longer exists — search again",
+  promptsTitle: (n) => `🔖 Prompt library (${n})`,
+  promptsOpen: "View/Copy",
+  promptsSearchTitle: (q, n) => `🔖 "${q}" — ${n} match${n === 1 ? "" : "es"}`,
+  promptsRefine: (shown, total) =>
+    `${total} total — showing first ${shown}. Use /prompts <keyword> to narrow`,
+  promptsAll: "✖ All",
+  promptsPrev: "◀ Prev",
+  promptsNext: "Next ▶",
+
   // ── dashboard ──
   cmdHome: "Switch to the home operator session (default target when no project is selected)",
   homeOperatorDisabled: "Home operator session is not enabled",

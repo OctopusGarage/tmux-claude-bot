@@ -35,7 +35,8 @@ export type ViewName =
   | "restore"
   | "autopilot"
   | "goals"
-  | "batch";
+  | "batch"
+  | "prompts";
 
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
  * Lark command surface matches Telegram's. */
@@ -69,6 +70,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   autopilot: "autopilot",
   goals: "goals",
   batch: "batch",
+  prompts: "prompts",
 };
 
 export type ParsedInput =
