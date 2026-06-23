@@ -27,6 +27,7 @@ import {
 } from "../../core/projects/dir-browser.js";
 import { consumeFreeLabel, isAwaitingFreeLabel } from "../../core/projects/free-label-prompt.js";
 import { FREE_PROJECT_LIMIT } from "../../core/projects/free-projects.js";
+import { homeCommandResult, resolveTargetSession } from "../../core/projects/operator.js";
 import { createFreeProject, createProjectFromPath } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
@@ -327,6 +328,21 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     });
   });
 
+  // Owner-only: switch the channel's current project back to the operator session.
+  bot.command("home", async (ctx) => {
+    if (ctx.chat?.type !== "private") return; // private chat only (mirrors Lark p2p) — don't point a group's scope at the operator
+    const result = homeCommandResult(
+      deps.config.homeOperator.enabled,
+      deps.config.projectSessionPrefix,
+    );
+    if (!result.ok) {
+      await reply(ctx, "view", messages("telegram").homeOperatorDisabled, { replyTarget });
+      return;
+    }
+    await deps.currentProject.set(tgScope(ctx), result.session);
+    await reply(ctx, "view", messages("telegram").homeOperatorSwitched, { replyTarget });
+  });
+
   // Owner-only (the auth guard drops non-allowlisted users before this runs).
   // Renders the global dashboard — every live session plus bot-level totals — as
   // plain text: the emoji + "·"-separated lines read cleanly in Telegram's
@@ -522,7 +538,12 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
 
-    const currentSessionName = targetSession ?? (await deps.currentProject.get(tgScope(ctx)));
+    const resolved = targetSession ?? (await deps.currentProject.get(tgScope(ctx)));
+    const currentSessionName = resolveTargetSession(
+      resolved,
+      deps.config.homeOperator.enabled && ctx.chat?.type === "private",
+      deps.config.projectSessionPrefix,
+    );
     if (!currentSessionName) {
       log.warn(`no current session chat=${chatId}`);
       await reply(ctx, "err", MSG.noSession);

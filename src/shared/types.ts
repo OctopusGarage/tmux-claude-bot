@@ -92,6 +92,7 @@ export type AppConfig = {
   lark?: LarkConfig | undefined;
   autopilot: AutopilotRuntimeConfig;
   scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
+  homeOperator: { enabled: boolean; dir: string; agent: "claude" | "codex" };
 };
 
 export type BotCommand = { command: string; description: string };

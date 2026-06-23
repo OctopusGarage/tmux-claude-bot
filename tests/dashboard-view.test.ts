@@ -149,4 +149,35 @@ describe("dashboard-view", () => {
   it("formatHeader omits the autopilot suffix when autopilotCount is 0", () => {
     expect(formatHeader(snap)).not.toContain("auto");
   });
+
+  it("prefixes the operator row label with 🏠", () => {
+    const opSnap: DashboardSnapshot = {
+      sessions: [
+        {
+          session: "tmux_proj_home",
+          label: "home",
+          kind: "claude",
+          running: true,
+          busy: false,
+          cumulativeBusyMs: 0,
+          uptimeMs: 5_000,
+          usage: null,
+          operator: true,
+        },
+      ],
+      global: {
+        botUptimeMs: 0,
+        version: "0.0.0",
+        sessionCount: 0,
+        runningCount: 0,
+        busyCount: 0,
+        queueDepth: 0,
+        adapters: { telegram: false, lark: false },
+        autopilotCount: 0,
+      },
+      generatedAt: 0,
+    };
+    const out = formatDashboardText(opSnap);
+    expect(out).toContain("🏠 home");
+  });
 });

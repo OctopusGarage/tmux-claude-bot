@@ -343,6 +343,9 @@ export const ja: Messages = {
   logsTitle: "🪵 最近のログ",
 
   // ── dashboard ──
+  cmdHome: "ホームオペレーターセッションに切り替え（プロジェクト未選択時のデフォルト対象）",
+  homeOperatorDisabled: "ホームオペレーターセッションは有効ではありません",
+  homeOperatorSwitched: "🏠 ホームオペレーターセッションに切り替えました",
   cmdDashboard: "グローバルダッシュボードを表示（全セッションの状態概要）",
   cmdBatch:
     "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",

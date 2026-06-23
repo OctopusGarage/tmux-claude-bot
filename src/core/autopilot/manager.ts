@@ -1,5 +1,6 @@
 import { createLogger } from "../../shared/utils/logger.js";
 import type { HandlerDeps } from "../deps.js";
+import { listUserProjectSessions } from "../projects/operator.js";
 import { isGlobalKeepAlive } from "./global-flag.js";
 import { AutopilotStore } from "./state-store.js";
 import { runSupervisorTick } from "./supervisor.js";
@@ -19,7 +20,7 @@ export async function tickAllEnabled(
 
   let live: string[];
   try {
-    live = await deps.bridge.listProjectSessions();
+    live = await listUserProjectSessions(deps);
   } catch (err) {
     log.warn("could not list sessions", { err });
     return;

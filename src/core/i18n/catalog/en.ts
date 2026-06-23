@@ -338,6 +338,9 @@ Send any text → forwarded to the agent → reply`,
   logsTitle: "🪵 Recent logs",
 
   // ── dashboard ──
+  cmdHome: "Switch to the home operator session (default target when no project is selected)",
+  homeOperatorDisabled: "Home operator session is not enabled",
+  homeOperatorSwitched: "🏠 Switched to the home operator session",
   cmdDashboard: "View the global dashboard (overview of all sessions)",
   cmdBatch: "Batch scheduler: view status or control a batch run (start/pause/resume/stop/report)",
   cmdSysload: "Show machine load, heat, and runaway processes",

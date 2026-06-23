@@ -203,4 +203,27 @@ describe("recoverProjects", () => {
     expect(res.failed[0]?.item.session).toBe("tmux_proj_h1");
     expect(res.launched.map((i) => i.session)).toEqual(["tmux_proj_h2"]);
   });
+
+  it("never recovers the operator session, even when marked running with a path", async () => {
+    // Operator is marked running (as would happen if startOperator ran before a
+    // restart) and has a recorded path — generic recovery must leave it alone.
+    setPathForSession("tmux_proj_home", realDir);
+    markSessionRunning("tmux_proj_home");
+    setStartCommand("tmux_proj_home", "claude --dangerously-skip-permissions");
+    // A real user project alongside it — to confirm the operator filter doesn't
+    // drop everything.
+    setPathForSession("tmux_proj_real", realDir);
+    markSessionRunning("tmux_proj_real");
+    setStartCommand("tmux_proj_real", "claude");
+    const deps = recoverDeps({ paneAlive: false });
+
+    const res = await recoverProjects(deps, { staggerMs: 0 });
+
+    const sessionNames = res.launched.map((i) => i.session);
+    expect(sessionNames).not.toContain("tmux_proj_home");
+    expect(sessionNames).toContain("tmux_proj_real");
+    // No createSession/start calls for the operator
+    expect(deps.bridge.createSession).not.toHaveBeenCalledWith("tmux_proj_home", expect.anything());
+    expect(deps.agent.start).not.toHaveBeenCalledWith("tmux_proj_home", expect.anything());
+  });
 });

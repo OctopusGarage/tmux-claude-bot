@@ -324,13 +324,13 @@ async function handleBindHere(ctx: CardCtx): Promise<void> {
 }
 
 async function pickAndLaunch(
-  { channel, deps, evt, value }: CardCtx,
+  { channel, deps, evt, value, chatKind }: CardCtx,
   restart: boolean,
 ): Promise<void> {
   if (typeof value?.idx !== "number") return;
   const pick = deps.config.startCommands[value.idx];
   if (!pick) return;
-  const session = await resolveSession(channel, deps, evt.chatId);
+  const session = await resolveSession(channel, deps, evt.chatId, undefined, chatKind === "p2p");
   if (!session) return;
   let msg: string;
   if (restart) {
@@ -732,7 +732,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       // through to the queued-action routing (single command).
       if (cmd === "start" || cmd === "restart") {
         const mode = cmd === "restart" ? "restart" : "start";
-        const startSession = await resolveSession(channel, deps, evt.chatId);
+        const startSession = await resolveSession(channel, deps, evt.chatId, undefined, isP2p);
         const disp = startSession
           ? await startDisposition(deps, startSession, mode)
           : deps.config.startCommands.length > 1
@@ -761,6 +761,8 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
           evt.chatId,
           evt.messageId,
           cmd as MessageAction,
+          undefined,
+          isP2p,
         );
         return;
       }
@@ -773,6 +775,8 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
           evt.messageId,
           cmd as MessageAction,
           cmd,
+          undefined,
+          isP2p,
         );
         return;
       }

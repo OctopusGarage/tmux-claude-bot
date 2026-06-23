@@ -23,6 +23,7 @@ export type ViewName =
   | "ws"
   | "sessions"
   | "logs"
+  | "home"
   | "dashboard"
   | "sysload"
   | "doctor"
@@ -55,6 +56,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   ws: "ws",
   sessions: "sessions",
   logs: "logs",
+  home: "home",
   dashboard: "dashboard",
   sysload: "sysload",
   doctor: "doctor",

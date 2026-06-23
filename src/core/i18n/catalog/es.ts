@@ -345,6 +345,10 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   logsTitle: "🪵 Registros recientes",
 
   // ── dashboard ──
+  cmdHome:
+    "Cambiar a la sesión del operador principal (destino predeterminado sin proyecto seleccionado)",
+  homeOperatorDisabled: "La sesión del operador principal no está habilitada",
+  homeOperatorSwitched: "🏠 Cambiado a la sesión del operador principal",
   cmdDashboard: "Ver el panel global (resumen de todas las sesiones)",
   cmdBatch:
     "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",

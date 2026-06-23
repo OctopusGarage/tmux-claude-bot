@@ -70,5 +70,6 @@ export async function handleLarkVoice(
     "text",
     transcribed,
     replySession,
+    msg.chatType === "p2p",
   );
 }

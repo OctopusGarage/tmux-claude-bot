@@ -23,6 +23,7 @@ afterEach(() => {
 function fakeDeps(liveSessions: string[] = []) {
   return {
     bridge: { listProjectSessions: async () => liveSessions },
+    config: { projectSessionPrefix: "tmux_proj_" },
   } as never;
 }
 

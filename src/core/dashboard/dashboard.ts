@@ -5,6 +5,7 @@ import { profileFor } from "../agents/registry.js";
 import { AutopilotStore } from "../autopilot/state-store.js";
 import type { HandlerDeps } from "../deps.js";
 import { instanceStartedAt } from "../infra/instance-lock.js";
+import { isOperator } from "../projects/operator.js";
 import { projectLabel } from "../projects/project-label.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
@@ -40,6 +41,8 @@ export type SessionRow = {
   apiMode?: "api" | "subscription";
   /** Present only when autopilot is enabled for this session. */
   autopilot?: { enabled: boolean; pureKeepAlive: boolean; iterations: number };
+  /** True when this row is the reserved operator (home) session. */
+  operator?: boolean;
 };
 
 /** A global snapshot: every live session plus bot-level totals. */
@@ -144,6 +147,8 @@ async function gatherRow(
     // degraded: leave autopilot undefined
   }
 
+  const operatorFlag = isOperator(session, deps.config.projectSessionPrefix);
+
   return {
     session,
     label,
@@ -156,6 +161,7 @@ async function gatherRow(
     usage,
     ...(apiMode !== undefined && { apiMode }),
     ...(autopilot && { autopilot }),
+    ...(operatorFlag && { operator: true }),
   };
 }
 
@@ -174,6 +180,7 @@ export async function buildDashboard(
   // Two independent tmux reads — run them concurrently rather than back-to-back.
   const [created, names] = await Promise.all([
     deps.bridge.sessionsCreatedAt(),
+    // raw (not listUserProjectSessions): the dashboard intentionally shows the operator, flagged operator:true
     deps.bridge.listProjectSessions(),
   ]);
   const rows = await Promise.all(names.map((s) => gatherRow(deps, s, created, now, paneDiffMs)));
@@ -186,9 +193,9 @@ export async function buildDashboard(
     global: {
       botUptimeMs,
       version: appVersion(),
-      sessionCount: rows.length,
-      runningCount: rows.filter((r) => r.running).length,
-      busyCount: rows.filter((r) => r.busy).length,
+      sessionCount: rows.filter((r) => !r.operator).length,
+      runningCount: rows.filter((r) => r.running && !r.operator).length,
+      busyCount: rows.filter((r) => r.busy && !r.operator).length,
       queueDepth: deps.queue.size(),
       adapters: {
         telegram: Boolean(deps.config.telegramBotToken),

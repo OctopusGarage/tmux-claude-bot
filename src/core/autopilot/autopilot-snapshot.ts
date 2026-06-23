@@ -1,4 +1,5 @@
 import type { HandlerDeps } from "../deps.js";
+import { listUserProjectSessions } from "../projects/operator.js";
 import { projectLabel } from "../projects/project-label.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { AutopilotStore } from "./state-store.js";
@@ -29,7 +30,7 @@ export async function buildAutopilotSnapshot(deps: HandlerDeps): Promise<Autopil
 
   let liveSessions: string[] = [];
   try {
-    liveSessions = await deps.bridge.listProjectSessions();
+    liveSessions = await listUserProjectSessions(deps);
   } catch {
     // degraded: fall back to the recorded enabled set only
   }

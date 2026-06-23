@@ -281,6 +281,8 @@ export async function schedulerTick(ctx: TickCtx): Promise<void> {
   }
 
   run = resumeUngatedTasks(run, ctx.isGated);
+  // The operator session is never a plan target: plans specify explicit project
+  // paths, and the operator has no project path. No exclusion code needed here.
   run = reconcile(run, caps, pools, {
     autopilot: ctx.autopilot,
     resolveSession: ctx.resolveSession,

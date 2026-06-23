@@ -28,6 +28,7 @@ import {
   setFreeProject,
 } from "./free-projects.js";
 import { bindingForSession, unbindGroup } from "./group-bindings.js";
+import { listUserProjectSessions } from "./operator.js";
 import { projectLabel } from "./project-label.js";
 import { channelFromScope } from "./project-manager.js";
 import { appendRecentProject, readRecentProjectLines } from "./recentProjects.js";
@@ -204,7 +205,7 @@ export async function resolveAliveSessionByShortId(
   deps: HandlerDeps,
   id: string,
 ): Promise<string | null> {
-  const sessions = (await deps.bridge.listProjectSessions()).slice().sort();
+  const sessions = (await listUserProjectSessions(deps)).slice().sort();
   return sessions.find((s) => sessionShortId(s) === id) ?? null;
 }
 
@@ -339,7 +340,7 @@ export async function aliveProjectButtons(
   channel: string,
 ): Promise<ProjectButton[]> {
   const prefix = deps.config.projectSessionPrefix;
-  const sessions = await deps.bridge.listProjectSessions();
+  const sessions = await listUserProjectSessions(deps);
   const valid = sessions.filter((session) => {
     if (freeSlotOf(session, prefix) !== null) return true; // free sessions always listed
     const projectPath = getPathBySession(session);
@@ -533,7 +534,7 @@ async function projectChoices(
   const prefix = deps.config.projectSessionPrefix;
   // One `tmux list-sessions` for the liveness lookup, instead of spawning a
   // `tmux has-session` subprocess per recent path (up to 15).
-  const live = new Set(await deps.bridge.listProjectSessions());
+  const live = new Set(await listUserProjectSessions(deps));
   // Raw set, NOT filtered by on-disk existence — resolution must accept any sid a
   // picker could show (the caller / create path handles a missing dir). The button
   // builder applies the existence filter for display only.
