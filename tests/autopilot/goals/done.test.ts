@@ -77,14 +77,20 @@ describe("evaluateDone", () => {
     }
   });
 
-  it("detectCheck: undetectable project pends a human gate", async () => {
+  it("detectCheck: undetectable project pends a human gate, and a confirm releases it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-done-nodetect-"));
     try {
-      const r = await evaluateDone(
+      const pend = await evaluateDone(
         { kind: "detectCheck", purpose: "coverage" },
         { ...base, cwd: dir, runCheck: okRunner },
       );
-      expect(r).toMatchObject({ satisfied: false, pendingHumanGate: true });
+      expect(pend).toMatchObject({ satisfied: false, pendingHumanGate: true });
+      // A /autopilot confirm sets humanConfirmed → the fallback gate must release.
+      const confirmed = await evaluateDone(
+        { kind: "detectCheck", purpose: "coverage" },
+        { ...base, cwd: dir, runCheck: okRunner, humanConfirmed: true },
+      );
+      expect(confirmed).toMatchObject({ satisfied: true, pendingHumanGate: false });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

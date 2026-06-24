@@ -8,7 +8,7 @@ import { startGoalState } from "../../../src/core/autopilot/goals/goal-state.js"
 import { defaultState, type SessionSignal } from "../../../src/core/autopilot/types.js";
 
 describe("goal catalog", () => {
-  it("exposes the six built-in goals, each with at least one phase and a done condition", () => {
+  it("exposes the seven built-in goals, each with at least one phase and a done condition", () => {
     const goals = listGoals();
     const ids = goals.map((g) => g.id).sort();
     expect(ids).toEqual(
@@ -16,6 +16,7 @@ describe("goal catalog", () => {
         "add-feature",
         "code-review",
         "fix-tests",
+        "improve-architecture",
         "refactor-elegant",
         "test-coverage",
         "ui-polish",
@@ -111,7 +112,7 @@ describe("goal catalog — user goals", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("includes a valid user goal alongside all six built-ins", () => {
+  it("includes a valid user goal alongside all seven built-ins", () => {
     writeFileSync(join(tmpDir, "ug.json"), ugJson);
     const ids = listGoals()
       .map((g) => g.id)
@@ -121,6 +122,7 @@ describe("goal catalog — user goals", () => {
         "add-feature",
         "code-review",
         "fix-tests",
+        "improve-architecture",
         "refactor-elegant",
         "test-coverage",
         "ug",

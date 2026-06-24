@@ -447,6 +447,7 @@ export const zh = {
   goalAddFeature: "添加功能",
   goalRefactorElegant: "重构为优雅专业",
   goalUiPolish: "打磨界面",
+  goalImproveArchitecture: "提升架构质量",
   autopilotGoalStarted: (id: string) => `已启动目标：${id}`,
   autopilotUnknownGoal: (ids: string) => `未知目标。可用：${ids}`,
   goalsTitle: "🎯 目标预设",

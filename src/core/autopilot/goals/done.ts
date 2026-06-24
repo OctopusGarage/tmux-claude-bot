@@ -26,7 +26,12 @@ async function one(
       return { satisfied: (await ctx.runCheck(cond.cmd, ctx.cwd)).ok, pendingHumanGate: false };
     case "detectCheck": {
       const cmd = detectCheckCommand(cond.purpose, ctx.cwd);
-      if (cmd === null) return { satisfied: false, pendingHumanGate: true };
+      // Undetectable project → fall back to a human gate. Mirror the humanGate
+      // case (consult humanConfirmed) so a /autopilot confirm actually releases
+      // it; a bare pendingHumanGate:true would re-notify every tick and never
+      // be satisfied, trapping the goal in a confirm loop.
+      if (cmd === null)
+        return { satisfied: ctx.humanConfirmed, pendingHumanGate: !ctx.humanConfirmed };
       return { satisfied: (await ctx.runCheck(cmd, ctx.cwd)).ok, pendingHumanGate: false };
     }
     case "humanGate":
