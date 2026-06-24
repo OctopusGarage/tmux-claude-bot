@@ -389,6 +389,22 @@ describe("aliveProjectButtons", () => {
     });
     expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).not.toContain("⚠️");
   });
+
+  it("excludes the operator session from the project list", async () => {
+    const userSession = "tmux_proj_-my-app";
+    const operatorSession = "tmux_proj_home";
+    setPathForSession(userSession, dir);
+    setPathForSession(operatorSession, dir);
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: vi.fn(async () => [operatorSession, userSession]),
+      },
+    });
+    const buttons = await aliveProjectButtons(deps, "telegram");
+    const sids = buttons.map((b) => b.sid);
+    expect(sids).not.toContain(sessionShortId(operatorSession));
+    expect(sids).toContain(sessionShortId(userSession));
+  });
 });
 
 describe("recentProjectButtons", () => {
@@ -458,5 +474,17 @@ describe("recentProjectButtons", () => {
     expect(buttons).toHaveLength(1);
     expect(buttons[0]?.alive).toBe(true);
     expect(buttons[0]?.active).toBe(true);
+  });
+
+  it("excludes the operator from the live-project set used by the recent picker", async () => {
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
+    vi.mocked(readRecentProjectLines).mockResolvedValueOnce([]);
+    // Operator has a recorded path but must not appear in the picker.
+    setPathForSession("tmux_proj_home", dir);
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_home"]) },
+    });
+    const buttons = await recentProjectButtons(deps, "telegram");
+    expect(buttons).toHaveLength(0);
   });
 });

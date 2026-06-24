@@ -104,10 +104,13 @@ export const envSchema = z.object({
   ),
   AUTOPILOT_MAX_RECOVERY_ATTEMPTS: blankTolerantPositiveInt(5),
   AUTOPILOT_RETRY_MAX: blankTolerantPositiveInt(5),
-  AUTOPILOT_RETRY_BASE_MS: blankTolerantPositiveInt(5000),
+  AUTOPILOT_RETRY_BASE_MS: blankTolerantPositiveInt(30000),
   AUTOPILOT_RETRY_FACTOR: blankTolerantPositiveInt(2),
   AUTOPILOT_RETRY_MAX_MS: blankTolerantPositiveInt(120000),
   AUTOPILOT_RETRY_JITTER: z.string().default("true"),
+  // Server-busy / overload / rate-limit errors get a much slower backoff curve.
+  AUTOPILOT_RETRY_BUSY_BASE_MS: blankTolerantPositiveInt(180000),
+  AUTOPILOT_RETRY_BUSY_MAX_MS: blankTolerantPositiveInt(600000),
   AUTOPILOT_GOALS_DIR: z.string().default(""),
   AUTOPILOT_USAGE_PAUSE_PCT: blankTolerantNonNegativeInt(0),
   AUTOPILOT_KEEPALIVE_DONE_MARKER: blankTolerantString("TASK_DONE"),
@@ -115,6 +118,25 @@ export const envSchema = z.object({
     "全部完成后请单独回复一行 [TASK_DONE] 表示整个任务已完成。",
   ),
   AUTOPILOT_MAX_ROUNDS: blankTolerantPositiveInt(10),
+  AUTOPILOT_BETWEEN_GOALS: z.preprocess(
+    (v) => (v === "" ? "compact" : v),
+    z.enum(["none", "compact", "clear"]).catch("compact"),
+  ),
+  // --- Batch scheduler. AUTOPILOT_SCHEDULER_TICK_MS=0 disables the loop. ---
+  AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
+  AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
+  AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
+  // --- Home operator session ---
+  HOME_OPERATOR_ENABLED: blankTolerantString("false"),
+  HOME_OPERATOR_DIR: z.string().default(""),
+  HOME_OPERATOR_AGENT: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["claude", "codex"]).default("claude"),
+  ),
+  // --- Prompt library (optional; browse saved prompts via /prompts) ---
+  PROMPT_MCP_COMMAND: z.string().default(""),
+  PROMPT_MCP_ARGS: z.string().default(""),
+  PROMPT_MCP_CWD: z.string().default(""),
 });
 
 /**
@@ -297,11 +319,34 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
         maxDelayMs: parsed.AUTOPILOT_RETRY_MAX_MS,
         jitter: parsed.AUTOPILOT_RETRY_JITTER !== "false" && parsed.AUTOPILOT_RETRY_JITTER !== "0",
       },
+      retryBusy: {
+        maxRetries: parsed.AUTOPILOT_RETRY_MAX,
+        baseDelayMs: parsed.AUTOPILOT_RETRY_BUSY_BASE_MS,
+        backoffFactor: parsed.AUTOPILOT_RETRY_FACTOR,
+        maxDelayMs: parsed.AUTOPILOT_RETRY_BUSY_MAX_MS,
+        jitter: parsed.AUTOPILOT_RETRY_JITTER !== "false" && parsed.AUTOPILOT_RETRY_JITTER !== "0",
+      },
       goalsDir: parsed.AUTOPILOT_GOALS_DIR,
       usagePausePct: parsed.AUTOPILOT_USAGE_PAUSE_PCT,
       keepAliveDoneMarker: parsed.AUTOPILOT_KEEPALIVE_DONE_MARKER,
       keepAliveDonePrompt: parsed.AUTOPILOT_KEEPALIVE_DONE_PROMPT,
       maxRounds: parsed.AUTOPILOT_MAX_ROUNDS,
+      betweenGoals: parsed.AUTOPILOT_BETWEEN_GOALS,
+    },
+    scheduler: {
+      tickMs: parsed.AUTOPILOT_SCHEDULER_TICK_MS,
+      quotaPct: parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
+      reprobeMs: parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
+    },
+    homeOperator: {
+      enabled: parsed.HOME_OPERATOR_ENABLED !== "false" && parsed.HOME_OPERATOR_ENABLED !== "0",
+      dir: parsed.HOME_OPERATOR_DIR,
+      agent: parsed.HOME_OPERATOR_AGENT,
+    },
+    promptMcp: {
+      command: parsed.PROMPT_MCP_COMMAND.trim(),
+      args: parsed.PROMPT_MCP_ARGS.split(/\s+/).filter(Boolean),
+      ...(parsed.PROMPT_MCP_CWD ? { cwd: parsed.PROMPT_MCP_CWD } : {}),
     },
   };
 }

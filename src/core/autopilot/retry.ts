@@ -1,6 +1,4 @@
-import type { AutopilotRuntimeConfig } from "./types.js";
-
-type RetryPolicy = AutopilotRuntimeConfig["retry"];
+import type { RetryPolicy } from "../../shared/types.js";
 
 /** Exponential backoff for the (0-based) `attempt`th retry, clamped to
  * `maxDelayMs`. With jitter, adds `rng()` × the base step on top of the clamped

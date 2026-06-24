@@ -1,11 +1,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getGoal, listGoals } from "../../../src/core/autopilot/goals/catalog.js";
+import { decideGoal } from "../../../src/core/autopilot/goals/goal-decision.js";
+import { startGoalState } from "../../../src/core/autopilot/goals/goal-state.js";
+import { defaultState, type SessionSignal } from "../../../src/core/autopilot/types.js";
 
 describe("goal catalog", () => {
-  it("exposes the six built-in goals, each with at least one phase and a done condition", () => {
+  it("exposes the seven built-in goals, each with at least one phase and a done condition", () => {
     const goals = listGoals();
     const ids = goals.map((g) => g.id).sort();
     expect(ids).toEqual(
@@ -13,6 +16,7 @@ describe("goal catalog", () => {
         "add-feature",
         "code-review",
         "fix-tests",
+        "improve-architecture",
         "refactor-elegant",
         "test-coverage",
         "ui-polish",
@@ -27,6 +31,67 @@ describe("goal catalog", () => {
   it("getGoal resolves by id and returns undefined for unknown", () => {
     expect(getGoal("fix-tests")?.id).toBe("fix-tests");
     expect(getGoal("nope")).toBeUndefined();
+  });
+
+  it("test-coverage and fix-tests gate on sentinel-then-detectCheck", () => {
+    for (const [id, purpose] of [
+      ["test-coverage", "coverage"],
+      ["fix-tests", "test"],
+    ] as const) {
+      const g = getGoal(id);
+      if (!g) throw new Error(`${id} not found`);
+      const done = g.phases[0]?.done;
+      expect(done).toMatchObject({
+        kind: "all",
+        of: [
+          { kind: "sentinel", marker: "GOAL_DONE" },
+          { kind: "detectCheck", purpose },
+        ],
+      });
+    }
+  });
+
+  it("refactor-elegant and add-feature gate on a green suite before the human gate", () => {
+    for (const id of ["refactor-elegant", "add-feature"] as const) {
+      const g = getGoal(id);
+      if (!g) throw new Error(`${id} not found`);
+      expect(g.phases[0]?.done).toMatchObject({
+        kind: "seq",
+        of: [
+          {
+            kind: "all",
+            of: [
+              { kind: "sentinel", marker: "GOAL_DONE" },
+              { kind: "detectCheck", purpose: "test" },
+            ],
+          },
+          { kind: "humanGate" },
+        ],
+      });
+    }
+  });
+
+  it("does not run the check before the agent emits the done sentinel (short-circuit)", async () => {
+    const g = getGoal("fix-tests");
+    if (!g) throw new Error("fix-tests not found");
+    const runCheck = vi.fn(async () => ({ ok: true }));
+    const sig: SessionSignal = {
+      session: "s1",
+      busy: false,
+      idleForMs: 9e9,
+      queueEmpty: true,
+      turnFinished: false,
+      pane: { inputPromptWaiting: false, apiError: false, serverBusy: false, hardStop: false },
+      progressAt: 0,
+      sentinels: [], // agent has NOT emitted GOAL_DONE
+    };
+    const out = await decideGoal(g, sig, startGoalState(defaultState(), "fix-tests"), {
+      agentKind: "claude",
+      runCheck,
+      cwd: undefined,
+    });
+    expect(out.kind).toBe("inject");
+    expect(runCheck).not.toHaveBeenCalled();
   });
 });
 
@@ -67,7 +132,7 @@ describe("goal catalog — user goals", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("includes a valid user goal alongside all six built-ins", () => {
+  it("includes a valid user goal alongside all seven built-ins", () => {
     writeFileSync(join(tmpDir, "ug.json"), ugJson);
     const ids = listGoals()
       .map((g) => g.id)
@@ -77,6 +142,7 @@ describe("goal catalog — user goals", () => {
         "add-feature",
         "code-review",
         "fix-tests",
+        "improve-architecture",
         "refactor-elegant",
         "test-coverage",
         "ug",

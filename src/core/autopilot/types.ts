@@ -3,6 +3,9 @@ export type AutopilotPersona = "conservative" | "aggressive";
 export type PaneSemantics = {
   inputPromptWaiting: boolean;
   apiError: boolean;
+  /** Subset of apiError: HTTP 4xx/5xx overloads, rate limits, and service-unavailable
+   * messages that warrant a much longer backoff than a plain transient connection blip. */
+  serverBusy: boolean;
   hardStop: boolean;
 };
 
@@ -49,8 +52,13 @@ export type AutopilotState = {
   rounds?: number; // how many times to cycle the whole queue (>=1)
   queuePos?: number; // index of the active goal within goalQueue
   roundsDone?: number; // completed full cycles
+  pendingContextOp?: "compact" | "clear"; // op to run before the next goal's first prompt; cleared once sent
+  // Ownership flags. viaGlobal and viaScheduler are mutually-exclusive enrollment
+  // sources; if a third owner ever appears, collapse these into a single
+  // `owner?: "global" | "scheduler"` enum rather than adding another boolean + guards.
   optOut?: boolean; // user ran `/autopilot off` → global keep-alive won't auto-enroll this session
   viaGlobal?: boolean; // auto-enrolled by global keep-alive (so global-off can un-enroll it)
+  viaScheduler?: boolean; // owned by the batch scheduler → global keep-alive must not enroll/touch it
 };
 
 export type GoalOutcome =

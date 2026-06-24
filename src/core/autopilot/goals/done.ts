@@ -1,4 +1,5 @@
 import type { CheckRunner } from "../check-runner.js";
+import { detectCheckCommand } from "./detect-check.js";
 import type { DoneCondition } from "./types.js";
 
 export type DoneCtx = {
@@ -23,6 +24,16 @@ async function one(
       return { satisfied: ctx.sentinels.includes(cond.marker), pendingHumanGate: false };
     case "check":
       return { satisfied: (await ctx.runCheck(cond.cmd, ctx.cwd)).ok, pendingHumanGate: false };
+    case "detectCheck": {
+      const cmd = detectCheckCommand(cond.purpose, ctx.cwd);
+      // Undetectable project → fall back to a human gate. Mirror the humanGate
+      // case (consult humanConfirmed) so a /autopilot confirm actually releases
+      // it; a bare pendingHumanGate:true would re-notify every tick and never
+      // be satisfied, trapping the goal in a confirm loop.
+      if (cmd === null)
+        return { satisfied: ctx.humanConfirmed, pendingHumanGate: !ctx.humanConfirmed };
+      return { satisfied: (await ctx.runCheck(cmd, ctx.cwd)).ok, pendingHumanGate: false };
+    }
     case "humanGate":
       return { satisfied: ctx.humanConfirmed, pendingHumanGate: !ctx.humanConfirmed };
     case "all": {

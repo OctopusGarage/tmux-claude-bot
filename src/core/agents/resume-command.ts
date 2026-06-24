@@ -5,6 +5,8 @@ import { DEFAULT_CONFIG_ROOT } from "./claude/claude-history.js";
 // user's behalf — we only carry it over when the original process already had it,
 // so a takeover can't silently escalate a cautious session's permissions.
 export const SKIP_PERMS = "--dangerously-skip-permissions";
+/** Codex's auto-approve flag — its equivalent of claude's skip-permissions. */
+export const CODEX_SKIP_PERMS = "--yolo";
 
 /** Codex's default config root — CODEX_HOME is prefixed only for a non-default one. */
 export const DEFAULT_CODEX_ROOT = `${homedir()}/.codex`;

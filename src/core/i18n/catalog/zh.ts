@@ -360,8 +360,27 @@ export const zh = {
   cmdLogs: "查看近期警告/错误日志（/logs <traceId|N>）",
   logsTitle: "🪵 近期日志",
 
-  // ── dashboard ──
+  // ── prompt library ──
+  cmdPrompts: "浏览收藏的提示词",
+  promptsDisabled: "提示词库未启用（需在 .env 配置 PROMPT_MCP_COMMAND）",
+  promptsEmpty: "没有匹配的提示词",
+  promptsError: "提示词库连接失败，请稍后重试",
+  promptsGone: "该提示词已不存在，请重新搜索",
+  promptsTitle: (n: number) => `🔖 提示词库 (${n})`,
+  promptsOpen: "查看/复制",
+  promptsSearchTitle: (q: string, n: number) => `🔖 「${q}」匹配 ${n} 条`,
+  promptsRefine: (shown: number, total: number) =>
+    `共 ${total} 条，仅显示前 ${shown} 条 — 用 /prompts <关键词> 缩小`,
+  promptsAll: "✖ 全部",
+  promptsPrev: "◀ 上一页",
+  promptsNext: "下一页 ▶",
+
+  // ── dashboard / batch ──
+  cmdHome: "切换到主控操作员会话（未选项目时的默认目标）",
+  homeOperatorDisabled: "未启用主控操作员会话",
+  homeOperatorSwitched: "🏠 已切换到主控操作员会话",
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
+  cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
   cmdSysload: "查看本机负载/发热/跑飞进程",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
@@ -390,6 +409,11 @@ export const zh = {
     round: number,
     rounds: number,
   ) => `➡️ autopilot [${session}]：进入目标 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 轮）`,
+  batchRunStarted: (planId: string, tasks: number) =>
+    `🚀 批次运行已启动：计划 ${planId}，共 ${tasks} 个任务`,
+  batchPoolPaused: (agent: string, resumeAt: string) =>
+    `⏸ 批次池已暂停 [${agent}]：额度已达上限，预计恢复 ${resumeAt}`,
+  batchRunComplete: (summary: string) => `✅ 批次运行完成\n${summary}`,
   autopilotGlobal: (on: boolean): string =>
     on
       ? "已开启全局托管:所有活跃会话自动保活(某个会话用 /autopilot off 单独退出)"
@@ -423,6 +447,7 @@ export const zh = {
   goalAddFeature: "添加功能",
   goalRefactorElegant: "重构为优雅专业",
   goalUiPolish: "打磨界面",
+  goalImproveArchitecture: "提升架构质量",
   autopilotGoalStarted: (id: string) => `已启动目标：${id}`,
   autopilotUnknownGoal: (ids: string) => `未知目标。可用：${ids}`,
   goalsTitle: "🎯 目标预设",

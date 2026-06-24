@@ -168,13 +168,16 @@ const PROJECTS: readonly HelpRow[] = [
 ];
 
 const SETTINGS: readonly HelpRow[] = [
+  [{ cmds: ["home"], descKey: "cmdHome" }],
   [{ cmds: ["lang"], descKey: "cmdLang" }],
   [{ cmds: ["voice_lang"], descKey: "cmdVoiceLang" }],
   [{ cmds: ["voice_install"], descKey: "cmdVoiceInstall" }],
   [{ cmds: ["status_install"], descKey: "cmdStatusInstall" }],
+  [{ cmds: ["prompts"], descKey: "cmdPrompts" }],
 ];
 
 const DIAGNOSTICS: readonly HelpRow[] = [
+  [{ cmds: ["batch"], descKey: "cmdBatch", argHint: " [start <id>|pause|resume|stop|report]" }],
   [{ cmds: ["dashboard"], descKey: "cmdDashboard" }],
   [{ cmds: ["sysload"], descKey: "cmdSysload" }],
   [{ cmds: ["logs"], descKey: "cmdLogs", argHint: " [traceId|N]" }],
@@ -246,6 +249,7 @@ export const BOT_COMMANDS: BotCommand[] = [
   { command: "adopt", description: "Take over an agent running outside tmux" },
   { command: "recover", description: "Recover all projects after a reboot (recreate + relaunch)" },
   // ⚙️ Settings
+  { command: "home", description: "Switch to the home operator session" },
   { command: "lang", description: "Set interface language (en/zh/zh-TW/yue/ja/es)" },
   { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },
   { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
@@ -253,7 +257,15 @@ export const BOT_COMMANDS: BotCommand[] = [
     command: "status_install",
     description: "Install usage reporting (statusLine snapshot) for /status",
   },
+  {
+    command: "prompts",
+    description: "Browse saved prompts (read-only; needs PROMPT_MCP_* configured)",
+  },
   // 🛠 Diagnostics
+  {
+    command: "batch",
+    description: "Batch scheduler status or control (/batch start <id>|pause|resume|stop|report)",
+  },
   { command: "autopilot", description: "Toggle/inspect keep-alive autopilot for this session" },
   { command: "goals", description: "List autopilot goal presets" },
   { command: "dashboard", description: "Show the global dashboard (all sessions overview)" },

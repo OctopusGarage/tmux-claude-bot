@@ -337,8 +337,27 @@ Send any text → forwarded to the agent → reply`,
   cmdLogs: "View recent warning/error logs (/logs <traceId|N>)",
   logsTitle: "🪵 Recent logs",
 
+  // ── prompt library ──
+  cmdPrompts: "Browse saved prompts",
+  promptsDisabled: "Prompt library not enabled (set PROMPT_MCP_COMMAND in .env)",
+  promptsEmpty: "No matching prompts",
+  promptsError: "Prompt library connection failed — try again later",
+  promptsGone: "That prompt no longer exists — search again",
+  promptsTitle: (n) => `🔖 Prompt library (${n})`,
+  promptsOpen: "View/Copy",
+  promptsSearchTitle: (q, n) => `🔖 "${q}" — ${n} match${n === 1 ? "" : "es"}`,
+  promptsRefine: (shown, total) =>
+    `${total} total — showing first ${shown}. Use /prompts <keyword> to narrow`,
+  promptsAll: "✖ All",
+  promptsPrev: "◀ Prev",
+  promptsNext: "Next ▶",
+
   // ── dashboard ──
+  cmdHome: "Switch to the home operator session (default target when no project is selected)",
+  homeOperatorDisabled: "Home operator session is not enabled",
+  homeOperatorSwitched: "🏠 Switched to the home operator session",
   cmdDashboard: "View the global dashboard (overview of all sessions)",
+  cmdBatch: "Batch scheduler: view status or control a batch run (start/pause/resume/stop/report)",
   cmdSysload: "Show machine load, heat, and runaway processes",
   sysloadTitle: "🖥 System load",
   dashboardTitle: "📊 Dashboard",
@@ -361,6 +380,10 @@ Send any text → forwarded to the agent → reply`,
     `✅ autopilot keep-alive task complete [${session}]: completion marker seen`,
   autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
     `➡️ autopilot [${session}]: starting goal ${goalId} (${pos}/${total} · round ${round}/${rounds})`,
+  batchRunStarted: (planId, tasks) => `🚀 Batch run started: plan ${planId}, ${tasks} task(s)`,
+  batchPoolPaused: (agent, resumeAt) =>
+    `⏸ Batch pool paused [${agent}]: quota reached, resuming at ${resumeAt}`,
+  batchRunComplete: (summary) => `✅ Batch run complete\n${summary}`,
   autopilotGlobal: (on) =>
     on
       ? "Global keep-alive ON: all live sessions are auto-managed (use /autopilot off to exclude one)"
@@ -388,6 +411,7 @@ Send any text → forwarded to the agent → reply`,
   goalAddFeature: "Add feature",
   goalRefactorElegant: "Refactor to elegant",
   goalUiPolish: "Polish UI",
+  goalImproveArchitecture: "Improve architecture",
   autopilotGoalStarted: (id) => `Goal started: ${id}`,
   autopilotUnknownGoal: (ids) => `Unknown goal. Available: ${ids}`,
   goalsTitle: "🎯 Goal presets",

@@ -344,8 +344,29 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   cmdLogs: "Ver registros recientes de advertencia/error (/logs <traceId|N>)",
   logsTitle: "🪵 Registros recientes",
 
+  // ── prompt library ──
+  cmdPrompts: "Explorar prompts guardados",
+  promptsDisabled: "Biblioteca de prompts no habilitada (configura PROMPT_MCP_COMMAND en .env)",
+  promptsEmpty: "Sin prompts coincidentes",
+  promptsError: "Error de conexión con la biblioteca de prompts — inténtalo más tarde",
+  promptsGone: "Ese prompt ya no existe — busca de nuevo",
+  promptsTitle: (n) => `🔖 Biblioteca de prompts (${n})`,
+  promptsOpen: "Ver/Copiar",
+  promptsSearchTitle: (q, n) => `🔖 "${q}" — ${n} resultado${n === 1 ? "" : "s"}`,
+  promptsRefine: (shown, total) =>
+    `${total} en total — mostrando los primeros ${shown}. Usa /prompts <término> para filtrar`,
+  promptsAll: "✖ Todos",
+  promptsPrev: "◀ Anterior",
+  promptsNext: "Siguiente ▶",
+
   // ── dashboard ──
+  cmdHome:
+    "Cambiar a la sesión del operador principal (destino predeterminado sin proyecto seleccionado)",
+  homeOperatorDisabled: "La sesión del operador principal no está habilitada",
+  homeOperatorSwitched: "🏠 Cambiado a la sesión del operador principal",
   cmdDashboard: "Ver el panel global (resumen de todas las sesiones)",
+  cmdBatch:
+    "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",
   cmdSysload: "Ver carga, temperatura y procesos descontrolados",
   sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",
@@ -368,6 +389,11 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
     `✅ tarea keep-alive de autopilot completada [${session}]: marcador de fin detectado`,
   autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
     `➡️ autopilot [${session}]: objetivo ${goalId} (${pos}/${total} · ronda ${round}/${rounds})`,
+  batchRunStarted: (planId, tasks) =>
+    `🚀 Ejecución de lote iniciada: plan ${planId}, ${tasks} tarea(s)`,
+  batchPoolPaused: (agent, resumeAt) =>
+    `⏸ Pool de lote pausado [${agent}]: cuota alcanzada, reanudación en ${resumeAt}`,
+  batchRunComplete: (summary) => `✅ Ejecución de lote completada\n${summary}`,
   autopilotGlobal: (on) =>
     on
       ? "Mantener activo global ACTIVADO: todas las sesiones activas se gestionan (usa /autopilot off para excluir una)"
@@ -396,6 +422,7 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   goalAddFeature: "Añadir función",
   goalRefactorElegant: "Refactorizar con elegancia",
   goalUiPolish: "Pulir interfaz",
+  goalImproveArchitecture: "Mejorar la arquitectura",
   autopilotGoalStarted: (id) => `Objetivo iniciado: ${id}`,
   autopilotUnknownGoal: (ids) => `Objetivo desconocido. Disponibles: ${ids}`,
   goalsTitle: "🎯 Objetivos predefinidos",

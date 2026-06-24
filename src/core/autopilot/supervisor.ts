@@ -1,6 +1,7 @@
 import { createLogger } from "../../shared/utils/logger.js";
 import { resolveAgentKind } from "../agents/agentKindMap.js";
 import { profileFor } from "../agents/registry.js";
+import { sendContextReset } from "../command/context-reset.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
@@ -127,9 +128,31 @@ export async function runSupervisorTick(
         return { kind: "stop", reason: "goal wall-clock budget exhausted" };
       }
 
+      // Between-goals context reset: a prior goal finalized and queued an op.
+      // Run it at the idle boundary, before the next goal's first prompt. The
+      // next-goal inject is busy-gated in decideGoal, so the op always precedes it.
+      if (state.pendingContextOp) {
+        if (!idle) return { kind: "none" }; // wait until the just-finalized agent is idle
+        if (userChangedSince(store, session, state)) return { kind: "none" };
+        const op = state.pendingContextOp;
+        await sendContextReset(deps, session, op).catch((err) =>
+          log.warn("autopilot context reset failed", { err, data: { session, op } }),
+        );
+        const { pendingContextOp: _done, ...rest } = store.get(session);
+        store.set(session, rest);
+        log.info("autopilot context reset before next goal", {
+          session,
+          data: { op, goalId: state.goalId },
+        });
+        return { kind: "none" };
+      }
+
       // Usage gate only at an idle boundary — decideGoal can't act while busy, so
       // reading usage on every busy tick is wasted I/O.
-      if (idle && cfg.usagePausePct > 0) {
+      // Bug #3: viaScheduler sessions are governed by the scheduler's pool-level quota
+      // authority (pausePool/resumePool). The supervisor's per-session usage-gate must
+      // not fire for them — it would race and clobber the scheduler's account.
+      if (idle && cfg.usagePausePct > 0 && !state.viaScheduler) {
         const readUsage =
           probes?.readUsage ??
           ((s: string) =>
@@ -233,13 +256,18 @@ export async function runSupervisorTick(
         case "finalize": {
           const step = advanceCycle(outcome.nextState);
           if (step.kind === "next") {
-            store.set(session, step.state);
+            const nextState =
+              cfg.betweenGoals === "none"
+                ? step.state
+                : { ...step.state, pendingContextOp: cfg.betweenGoals };
+            store.set(session, nextState);
             log.info("autopilot goal complete, advancing cycle", {
               session,
               data: {
                 from: goal.id,
                 to: step.state.goalId,
                 round: (step.state.roundsDone ?? 0) + 1,
+                contextOp: nextState.pendingContextOp ?? "none",
               },
             });
             await deps.notifier.broadcast({

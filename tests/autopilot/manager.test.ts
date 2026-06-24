@@ -15,7 +15,14 @@ const autopilotCfg = {
   idlePromptText: "继续",
   apiErrorPromptText: "重试",
   maxRecoveryAttempts: 5,
-  retry: { maxRetries: 5, baseDelayMs: 5000, backoffFactor: 2, maxDelayMs: 120000, jitter: false },
+  retry: { maxRetries: 5, baseDelayMs: 30000, backoffFactor: 2, maxDelayMs: 120000, jitter: false },
+  retryBusy: {
+    maxRetries: 5,
+    baseDelayMs: 180000,
+    backoffFactor: 2,
+    maxDelayMs: 600000,
+    jitter: false,
+  },
   goalsDir: "",
   usagePausePct: 0,
 };
@@ -123,5 +130,12 @@ describe("tickAllEnabled — global keep-alive", () => {
     const st = store.get("s1");
     expect(st.enabled).toBe(false);
     expect(st.viaGlobal).toBe(false);
+  });
+
+  it("does NOT enroll a scheduler-owned session (viaScheduler)", async () => {
+    process.env.AUTOPILOT_GLOBAL_KEEPALIVE = "true";
+    store.set("owned", { ...defaultState(), viaScheduler: true }); // present, not enabled, no startedAt
+    await tickAllEnabled(deps(["owned"]), store, 1_000_000);
+    expect(store.get("owned").enabled).toBe(false); // scheduler owns it; global left it alone
   });
 });

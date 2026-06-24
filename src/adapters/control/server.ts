@@ -15,6 +15,7 @@ import {
 } from "../../core/infra/system-load.js";
 import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
+import { isOperator } from "../../core/projects/operator.js";
 import { openRecentProjectBySid, recentProjectButtons } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { getRecentInputs } from "../../core/read/recent-inputs.js";
@@ -60,6 +61,7 @@ export function startControlServer(deps: HandlerDeps): net.Server {
   // The pusher is registered ONCE (not per-connection) so it doesn't leak.
   const clients = new Set<(m: ServerMessage) => void>();
   deps.notifier.register(async (notice) => {
+    if (!("session" in notice)) return;
     for (const s of clients) s({ event: "autopilot", session: notice.session, kind: notice.kind });
   });
 
@@ -123,6 +125,10 @@ async function handleRequest(
         return;
       }
       case "send":
+        if (isOperator(req.session, deps.config.projectSessionPrefix)) {
+          fail("cannot send to the operator session");
+          return;
+        }
         enqueueControl(deps, req.session, "text", req.text, send, ok, fail);
         return;
       case "control":

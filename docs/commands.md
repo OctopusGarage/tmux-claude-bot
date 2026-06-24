@@ -39,12 +39,15 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `logs` | Show recent WARN/ERROR logs for the current session; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
 | `autopilot` | Toggle/inspect keep-alive autopilot for the current session: `/autopilot [on\|off\|keepalive on\|off\|stop\|goal <id>\|goals <id,id,…> [rounds N]\|confirm\|reject\|global on\|off]` — `goals` runs several goals in rotation for N rounds (default 1); `global` toggles auto-managing every session |
 | `goals` | List autopilot goal presets |
+| `batch` | Batch scheduler status and control. `/batch` → current run status; `/batch start <planId>` → start a plan; `/batch pause\|resume\|stop` → control the active run; `/batch report` → summary. Owner-only (Lark: 1:1 chat only). |
 | `dashboard` | Show the global dashboard: every live session plus bot-level totals (version, uptime, queue depth). Owner-only (Lark: 1:1 chat only). |
 | `sysload` | Show machine load, thermal state, top CPU, and runaway/orphan shells (with a `kill -9` hint). Owner-only (Lark: 1:1 chat only). |
 | `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |
 | `voice_install` | Install voice transcription (Apple Silicon) |
 | `voice_lang` | Set voice recognition language (zh/en/yue/ja/es/auto) |
+| `home` | Switch to the home operator session (the default target when no project is selected). Owner-only. |
 | `lang` | Set interface language (en/zh/zh-TW/yue/ja/es) |
+| `prompts` | Browse saved prompts (read-only; needs PROMPT_MCP_* configured). Owner-only (private chat only). |
 
 ## Feishu/Lark Group-Binding Commands
 

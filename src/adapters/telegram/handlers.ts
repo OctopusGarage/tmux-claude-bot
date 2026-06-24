@@ -27,10 +27,13 @@ import {
 } from "../../core/projects/dir-browser.js";
 import { consumeFreeLabel, isAwaitingFreeLabel } from "../../core/projects/free-label-prompt.js";
 import { FREE_PROJECT_LIMIT } from "../../core/projects/free-projects.js";
+import { homeCommandResult, resolveTargetSession } from "../../core/projects/operator.js";
 import { createFreeProject, createProjectFromPath } from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
+import { makePromptLib } from "../../core/promptlib/promptlib.js";
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
+import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
@@ -41,9 +44,11 @@ import {
   buildIdleKeyboard,
   buildLangKeyboard,
   buildOrphanKeyboard,
+  buildPromptsKeyboard,
   buildRecentKeyboard,
   buildSessionsKeyboard,
   buildStartPickerKeyboard,
+  PROMPTS_PAGE_SIZE,
 } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
@@ -55,6 +60,7 @@ import {
   switchToProject,
 } from "./project-ops.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
+import { sendPromptsPage } from "./prompts.js";
 import type { Tone } from "./replies.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
@@ -326,6 +332,58 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     });
   });
 
+  // Owner-only: switch the channel's current project back to the operator session.
+  bot.command("home", async (ctx) => {
+    if (ctx.chat?.type !== "private") return; // private chat only (mirrors Lark p2p) — don't point a group's scope at the operator
+    const result = homeCommandResult(
+      deps.config.homeOperator.enabled,
+      deps.config.projectSessionPrefix,
+    );
+    if (!result.ok) {
+      await reply(ctx, "view", messages("telegram").homeOperatorDisabled, { replyTarget });
+      return;
+    }
+    await deps.currentProject.set(tgScope(ctx), result.session);
+    await reply(ctx, "view", messages("telegram").homeOperatorSwitched, { replyTarget });
+  });
+
+  // Owner-only: browse prompts saved in the configured MCP prompt server.
+  // Private chat only (mirrors /home). Supports keyword search and tag filtering
+  // via inline-button callbacks (pp / pf / pn).
+  bot.command("prompts", async (ctx) => {
+    if (ctx.chat?.type !== "private") return;
+    const promptLib = makePromptLib(deps.config);
+    if (!promptLib.isEnabled()) {
+      await reply(ctx, "info", messages("telegram").promptsDisabled, { replyTarget });
+      return;
+    }
+    const arg = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
+    try {
+      if (arg) {
+        const items = await promptLib.search(arg, "");
+        if (items.length === 0) {
+          await reply(ctx, "list", messages("telegram").promptsEmpty, { replyTarget });
+          return;
+        }
+        const shown = items.slice(0, PROMPTS_PAGE_SIZE);
+        const note =
+          items.length > PROMPTS_PAGE_SIZE
+            ? messages("telegram").promptsRefine(PROMPTS_PAGE_SIZE, items.length)
+            : "";
+        await reply(ctx, "list", messages("telegram").promptsSearchTitle(arg, items.length), {
+          replyTarget,
+          body: note || undefined,
+          replyMarkup: buildPromptsKeyboard(shown, [], { page: 0, totalPages: 1, tagFilter: "" }),
+        });
+      } else {
+        await sendPromptsPage(ctx, promptLib, 0, "", replyTarget);
+      }
+    } catch (err) {
+      log.warn("/prompts failed", { err });
+      await reply(ctx, "err", messages("telegram").promptsError, { replyTarget });
+    }
+  });
+
   // Owner-only (the auth guard drops non-allowlisted users before this runs).
   // Renders the global dashboard — every live session plus bot-level totals — as
   // plain text: the emoji + "·"-separated lines read cleanly in Telegram's
@@ -372,6 +430,13 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       body,
       replyTarget,
     });
+  });
+
+  // Owner-only: batch scheduler status and control.
+  bot.command("batch", async (ctx) => {
+    const arg = (ctx.match ?? "").toString();
+    const body = runBatchCommand(arg);
+    await reply(ctx, "view", "Batch", { body, replyTarget });
   });
 
   bot.command("goals", async (ctx) => {
@@ -514,7 +579,12 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
 
-    const currentSessionName = targetSession ?? (await deps.currentProject.get(tgScope(ctx)));
+    const resolved = targetSession ?? (await deps.currentProject.get(tgScope(ctx)));
+    const currentSessionName = resolveTargetSession(
+      resolved,
+      deps.config.homeOperator.enabled && ctx.chat?.type === "private",
+      deps.config.projectSessionPrefix,
+    );
     if (!currentSessionName) {
       log.warn(`no current session chat=${chatId}`);
       await reply(ctx, "err", MSG.noSession);

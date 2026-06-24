@@ -7,6 +7,7 @@ import { getLastLiveSessionId } from "../agents/live-session-id.js";
 import { allRunningSessions } from "../agents/runningSessions.js";
 import { getStartCommand } from "../agents/startCommandMap.js";
 import type { HandlerDeps } from "../deps.js";
+import { isOperator } from "../projects/operator.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 
 const log = createLogger("recovery.recover");
@@ -71,8 +72,11 @@ export async function planRecovery(deps: HandlerDeps): Promise<RecoverItem[]> {
   // Roster = the sessions the bot last knew to be RUNNING (not every recorded
   // project), so recovery restores the pre-reboot running state rather than
   // blindly relaunching everything. A running session with no recorded path
-  // can't be recreated, so drop it.
+  // can't be recreated, so drop it. The operator is excluded — its lifecycle
+  // is owned by startOperator at boot, not by the generic recovery path.
+  const prefix = deps.config.projectSessionPrefix;
   const roster = allRunningSessions()
+    .filter((session) => !isOperator(session, prefix))
     .map((session) => ({ session, path: getPathBySession(session) }))
     .filter((r): r is { session: string; path: string } => r.path !== null);
   // Each session's classification is independent and each does its own tmux /

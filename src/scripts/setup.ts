@@ -295,6 +295,20 @@ async function main(): Promise<void> {
       if (on) C.info(M.keepAwakeClamshellHint);
     }
 
+    // 6. Home operator session (opt-in, default No).
+    C.info(M.homeOperatorIntro);
+    const defOperator = existing.get("HOME_OPERATOR_ENABLED") === "true" ? "y" : "n";
+    const wantOperator = /^y/i.test(await ask(M.homeOperatorPrompt, defOperator));
+    if (wantOperator) {
+      values.HOME_OPERATOR_ENABLED = "true";
+      values.HOME_OPERATOR_AGENT = await ask(
+        M.homeOperatorAgentPrompt,
+        existing.get("HOME_OPERATOR_AGENT") ?? "claude",
+      );
+    } else {
+      values.HOME_OPERATOR_ENABLED = "false";
+    }
+
     if (DRY_RUN) {
       C.ok(M.dryRunComplete);
       for (const [k, v] of Object.entries(values)) {

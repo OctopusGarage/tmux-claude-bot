@@ -330,8 +330,27 @@ export const zhTW: Messages = {
   cmdLogs: "查看近期警告/錯誤日誌（/logs <traceId|N>）",
   logsTitle: "🪵 近期日誌",
 
+  // ── prompt library ──
+  cmdPrompts: "瀏覽收藏的提示詞",
+  promptsDisabled: "提示詞庫未啟用（需在 .env 設定 PROMPT_MCP_COMMAND）",
+  promptsEmpty: "沒有符合的提示詞",
+  promptsError: "提示詞庫連線失敗，請稍後重試",
+  promptsGone: "該提示詞已不存在，請重新搜尋",
+  promptsTitle: (n) => `🔖 提示詞庫 (${n})`,
+  promptsOpen: "查看/複製",
+  promptsSearchTitle: (q, n) => `🔖 「${q}」符合 ${n} 筆`,
+  promptsRefine: (shown, total) =>
+    `共 ${total} 筆，僅顯示前 ${shown} 筆 — 用 /prompts <關鍵詞> 縮小範圍`,
+  promptsAll: "✖ 全部",
+  promptsPrev: "◀ 上一頁",
+  promptsNext: "下一頁 ▶",
+
   // ── dashboard ──
+  cmdHome: "切換至主控操作員工作階段（未選擇專案時的預設目標）",
+  homeOperatorDisabled: "未啟用主控操作員工作階段",
+  homeOperatorSwitched: "🏠 已切換至主控操作員工作階段",
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
+  cmdBatch: "批次排程器：查看狀態或控制批次執行（start/pause/resume/stop/report）",
   cmdSysload: "查看本機負載/發熱/失控程序",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
@@ -351,6 +370,10 @@ export const zhTW: Messages = {
     `✅ autopilot 保活任務完成 [${session}]：偵測到完成標記`,
   autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
     `➡️ autopilot [${session}]：進入目標 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 輪）`,
+  batchRunStarted: (planId, tasks) => `🚀 批次執行已啟動：計劃 ${planId}，共 ${tasks} 個任務`,
+  batchPoolPaused: (agent, resumeAt) =>
+    `⏸ 批次池已暫停 [${agent}]：額度已達上限，預計恢復 ${resumeAt}`,
+  batchRunComplete: (summary) => `✅ 批次執行完成\n${summary}`,
   autopilotGlobal: (on) =>
     on
       ? "已開啟全域託管:所有活躍工作階段自動保活(某個工作階段用 /autopilot off 單獨退出)"
@@ -378,6 +401,7 @@ export const zhTW: Messages = {
   goalAddFeature: "新增功能",
   goalRefactorElegant: "重構為優雅專業",
   goalUiPolish: "打磨介面",
+  goalImproveArchitecture: "提升架構品質",
   autopilotGoalStarted: (id) => `已啟動目標：${id}`,
   autopilotUnknownGoal: (ids) => `未知目標。可用：${ids}`,
   goalsTitle: "🎯 目標預設",

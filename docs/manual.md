@@ -68,10 +68,19 @@ peek · history · projects · queue. It adapts to whether an agent is running.
   were running before a reboot.
 - **Feishu project groups**: bind a Feishu group to one project so you switch projects
   by switching groups (no `/cd`); works without `@bot`.
-- **Settings**: `/lang` (UI language), voice language, status-line install.
+- **Settings**: `/lang` (UI language), voice language, status-line install, `/prompts` (browse saved prompts).
 - **Diagnostics**: `/dashboard` (every session at a glance) · `/sysload` (machine
   load / heat / runaway processes) · `/logs` · `/doctor`. Owner-only; on Feishu these
   are 1:1-chat only.
+
+### Prompt Library (`/prompts`)
+
+Browse and copy prompts saved in a configured MCP prompt server.
+
+- `/prompts` — list all prompts with tag filters and paging
+- `/prompts <keyword>` — search by keyword
+
+Requires `PROMPT_MCP_COMMAND` (and optionally `PROMPT_MCP_ARGS`, `PROMPT_MCP_CWD`) in `.env`. Works with any MCP server that implements `search_prompts`, `get_prompt`, and `list_prompt_tags`. Owner-only (private chat only).
 
 ---
 
@@ -118,6 +127,7 @@ install dir.)
 | `tcb doctor` | health checks against the install |
 | `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
 | `tcb autopilot` | autopilot status across all sessions (`--json` for raw) |
+| `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
 | `tcb sysload` | machine load, thermal state, top CPU, runaway shells |
 | `tcb tui` | the terminal control panel (needs the bot running) |
 | `tcb recover` | relaunch agents that were running before a reboot |
@@ -161,6 +171,9 @@ default** and opt-in per session.
 To manage **every** session without enabling each one, run `/autopilot global on`
 (persisted in `AUTOPILOT_GLOBAL_KEEPALIVE`): live sessions are auto-kept-alive;
 `/autopilot off` opts one out, and `/autopilot global off` un-enrolls them.
+
+> Autopilot's drive-loop is descended from **[ForgeFlow](https://github.com/Kingson4Wu/ForgeFlow)** —
+> see [Acknowledgements](#acknowledgements).
 
 ### Telegram button controls
 
@@ -234,6 +247,14 @@ added/removed in the directory or the bot restarts.
 
 `/autopilot on` drives the current task to completion: when the agent emits `[TASK_DONE]` in its output, autopilot stops automatically instead of nudging indefinitely.
 
+### Between-goals context reset
+
+Set `AUTOPILOT_BETWEEN_GOALS` (`none | compact | clear`, default `compact`) to
+control what autopilot does between goals in a cycle. With `compact` (the
+default), autopilot runs `/compact` on the agent before the next goal's first
+prompt to free up context. Use `clear` to run `/clear` instead (full reset), or
+`none` to skip the reset entirely.
+
 ### Usage gate
 
 Set `AUTOPILOT_USAGE_PAUSE_PCT` (default `0`, disabled) to a percent threshold
@@ -244,7 +265,59 @@ burn through your quota unattended. Resume with `/autopilot on` or
 
 ---
 
-## 8. Managing the service
+## 8. Home operator
+
+When `HOME_OPERATOR_ENABLED=true`, the bot auto-starts a dedicated agent session
+(Claude Code or Codex) in a fixed home directory. That session becomes the default
+chat target whenever no project is selected — so you can manage the whole fleet by
+talking to it directly: it drives `tcb send`, `tcb open`, and the rest of the CLI,
+plus the `tmux-claude-bot` AI skill.
+
+**Enable it** during setup (the wizard asks, default no) or manually:
+
+```bash
+HOME_OPERATOR_ENABLED=true    # enable
+HOME_OPERATOR_AGENT=claude    # claude (default) or codex
+HOME_OPERATOR_DIR=            # blank → <state-dir>/home (auto-created)
+```
+
+**Usage notes:**
+
+- `/home` — switch a Telegram or Feishu/Lark channel back to the operator at any time.
+- The operator runs `--dangerously-skip-permissions` (it can't respond to interactive
+  prompts — messages to it go straight to the agent).
+- It is excluded from autopilot and the global keep-alive scheduler; `tcb send`
+  and relay commands refuse it as a target to avoid loops.
+- The dashboard shows it as "home operator", not a work project.
+
+---
+
+## 9. Batch scheduler
+
+Run a set of agent tasks across multiple projects on a schedule (cron, one-shot, or immediate).
+
+**Quick start:**
+
+1. Define a YAML plan file (see `docs/batch-plan.example.yml` for the full schema).
+2. `tcb batch load <file>` — parse, validate, and save the plan.
+3. `tcb batch start <id>` — materialise and activate a run immediately.
+4. `tcb batch status` — print the live task table for the active run.
+5. `tcb batch report` — print a completion summary (done/failed/skipped counts).
+
+**Other controls:**
+
+| Command | Effect |
+|---------|--------|
+| `tcb batch export <id> [file]` | dump the saved plan back to YAML |
+| `tcb batch pause` | pause the active run (tasks already in flight continue) |
+| `tcb batch resume` | resume a paused run |
+| `tcb batch stop` | cancel and clear the active run |
+
+**Cron notes:** schedule expressions are five fields (`min hour dom month dow`), matched in **UTC**. Both `dom` and `dow` must match (they are ANDed, not ORed — non-standard vs. vixie cron).
+
+---
+
+## 10. Managing the service
 
 The bot is a managed, auto-restarting service. **Restart via the service manager**,
 not the dev scripts (the manager respawns it):
@@ -263,7 +336,7 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
 
 ---
 
-## 9. Troubleshooting
+## 11. Troubleshooting
 
 - **Bot not responding** → `tcb doctor`; check exactly one bot process is running
   (multiple cause a Telegram 409); check network/proxy reachability.
@@ -273,6 +346,25 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
   service.
 - **Machine warm / slow** → `/sysload` or `tcb sysload` to spot a runaway process.
 - **Logs** → `tcb logs` (CLI) or `/logs` (chat, owner-only).
+
+---
+
+## Acknowledgements
+
+Autopilot's core idea — engineering a feedback loop that watches a coding agent in
+its tmux pane and keeps nudging it forward so it never stalls mid-task — is owed to
+**[ForgeFlow](https://github.com/Kingson4Wu/ForgeFlow)**, an earlier project that
+pioneered exactly this "loop engineering": observe the pane → decide by rules →
+recover from stalls → repeat, driving an AI CLI (Claude / Gemini / Codex) through
+long programming tasks unattended.
+
+ForgeFlow runs that loop **locally** — one session, in the foreground, at the
+machine. tmux-claude-bot carries the same idea to its **remote** form: the loop
+becomes a long-running service you start, observe, and steer from anywhere —
+Telegram, Feishu/Lark, or a terminal UI — across many projects at once, surviving
+restarts, and grown with goal cycling, completion sentinels, human-in-the-loop
+gates, usage and wall-clock budgets, and a safety governor. Where ForgeFlow is the
+local origin of the loop, this is its remote, chat-native evolution. With thanks.
 
 ---
 

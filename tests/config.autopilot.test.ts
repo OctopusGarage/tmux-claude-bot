@@ -12,9 +12,16 @@ describe("autopilot config", () => {
     expect(cfg.autopilot.apiErrorPromptText).toContain("重试"); // distinct from the idle nudge
     expect(cfg.autopilot.retry).toEqual({
       maxRetries: 5,
-      baseDelayMs: 5000,
+      baseDelayMs: 30000,
       backoffFactor: 2,
       maxDelayMs: 120000,
+      jitter: true,
+    });
+    expect(cfg.autopilot.retryBusy).toEqual({
+      maxRetries: 5,
+      baseDelayMs: 180000,
+      backoffFactor: 2,
+      maxDelayMs: 600000,
       jitter: true,
     });
     expect(cfg.autopilot.usagePausePct).toBe(0);
@@ -46,5 +53,38 @@ describe("autopilot config", () => {
     expect(cfg.keepAliveDoneMarker).toBe("TASK_DONE");
     expect(cfg.keepAliveDonePrompt).toContain("TASK_DONE");
     expect(cfg.maxRounds).toBe(10);
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS defaults to compact", () => {
+    const cfg = loadConfig({} as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("compact");
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS=clear parses to clear", () => {
+    const cfg = loadConfig({
+      AUTOPILOT_BETWEEN_GOALS: "clear",
+    } as unknown as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("clear");
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS=none parses to none", () => {
+    const cfg = loadConfig({
+      AUTOPILOT_BETWEEN_GOALS: "none",
+    } as unknown as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("none");
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS=xyz falls back to compact", () => {
+    const cfg = loadConfig({
+      AUTOPILOT_BETWEEN_GOALS: "xyz",
+    } as unknown as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("compact");
+  });
+
+  it("AUTOPILOT_BETWEEN_GOALS='' falls back to compact", () => {
+    const cfg = loadConfig({
+      AUTOPILOT_BETWEEN_GOALS: "",
+    } as unknown as NodeJS.ProcessEnv).autopilot;
+    expect(cfg.betweenGoals).toBe("compact");
   });
 });

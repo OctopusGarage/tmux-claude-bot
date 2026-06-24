@@ -1,3 +1,11 @@
+export type RetryPolicy = {
+  maxRetries: number;
+  baseDelayMs: number;
+  backoffFactor: number;
+  maxDelayMs: number;
+  jitter: boolean;
+};
+
 export type AutopilotRuntimeConfig = {
   tickMs: number; // fallback loop interval; 0 = master off
   idleGraceMs: number; // min idle before an idle-nudge
@@ -7,18 +15,16 @@ export type AutopilotRuntimeConfig = {
   idlePromptText: string; // idle/recover resume nudge, e.g. "请继续完成当前任务"
   apiErrorPromptText: string; // distinct, clearer retry prompt for API errors
   maxRecoveryAttempts: number;
-  retry: {
-    maxRetries: number;
-    baseDelayMs: number;
-    backoffFactor: number;
-    maxDelayMs: number;
-    jitter: boolean;
-  };
+  /** Retry policy for other-transient API errors (connection closed, terminated, etc.) */
+  retry: RetryPolicy;
+  /** Retry policy for server-busy/overload/rate-limit errors — slower, longer backoff. */
+  retryBusy: RetryPolicy;
   goalsDir: string;
   usagePausePct: number;
   keepAliveDoneMarker: string; // sentinel a pure keep-alive task emits when fully done
   keepAliveDonePrompt: string; // instruction appended to the keep-alive nudge asking for the marker
   maxRounds: number; // upper bound on goal-cycle rounds (clamp at parse time)
+  betweenGoals: "none" | "compact" | "clear";
 };
 
 export type LarkConfig = {
@@ -91,6 +97,9 @@ export type AppConfig = {
   keepAwake: boolean;
   lark?: LarkConfig | undefined;
   autopilot: AutopilotRuntimeConfig;
+  scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
+  homeOperator: { enabled: boolean; dir: string; agent: "claude" | "codex" };
+  promptMcp: { command: string; args: string[]; cwd?: string };
 };
 
 export type BotCommand = { command: string; description: string };

@@ -342,8 +342,29 @@ export const ja: Messages = {
   cmdLogs: "最近の警告・エラーログを表示（/logs <traceId|N>）",
   logsTitle: "🪵 最近のログ",
 
+  // ── prompt library ──
+  cmdPrompts: "保存済みプロンプトの閲覧",
+  promptsDisabled:
+    "プロンプトライブラリが無効です（.env に PROMPT_MCP_COMMAND を設定してください）",
+  promptsEmpty: "一致するプロンプトがありません",
+  promptsError: "プロンプトライブラリへの接続に失敗しました。後ほど再試行してください",
+  promptsGone: "そのプロンプトは存在しません。再度検索してください",
+  promptsTitle: (n) => `🔖 プロンプトライブラリ (${n})`,
+  promptsOpen: "表示/コピー",
+  promptsSearchTitle: (q, n) => `🔖 「${q}」— ${n} 件`,
+  promptsRefine: (shown, total) =>
+    `全 ${total} 件、先頭 ${shown} 件のみ表示 — /prompts <キーワード> で絞り込む`,
+  promptsAll: "✖ すべて",
+  promptsPrev: "◀ 前へ",
+  promptsNext: "次へ ▶",
+
   // ── dashboard ──
+  cmdHome: "ホームオペレーターセッションに切り替え（プロジェクト未選択時のデフォルト対象）",
+  homeOperatorDisabled: "ホームオペレーターセッションは有効ではありません",
+  homeOperatorSwitched: "🏠 ホームオペレーターセッションに切り替えました",
   cmdDashboard: "グローバルダッシュボードを表示（全セッションの状態概要）",
+  cmdBatch:
+    "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",
   cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
@@ -364,6 +385,11 @@ export const ja: Messages = {
     `✅ autopilot キープアライブ完了 [${session}]：完了マーカーを検出`,
   autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
     `➡️ autopilot [${session}]：目標 ${goalId} を開始（${pos}/${total} · ${round}/${rounds} 周）`,
+  batchRunStarted: (planId, tasks) =>
+    `🚀 バッチ実行を開始しました：プラン ${planId}、${tasks} 件のタスク`,
+  batchPoolPaused: (agent, resumeAt) =>
+    `⏸ バッチプールを一時停止 [${agent}]：クォータ上限に達しました。再開予定：${resumeAt}`,
+  batchRunComplete: (summary) => `✅ バッチ実行完了\n${summary}`,
   autopilotGlobal: (on) =>
     on
       ? "グローバル保活をオン:すべてのアクティブなセッションを自動管理(個別に除外するには /autopilot off)"
@@ -391,6 +417,7 @@ export const ja: Messages = {
   goalAddFeature: "機能追加",
   goalRefactorElegant: "エレガントにリファクタリング",
   goalUiPolish: "UI を磨く",
+  goalImproveArchitecture: "アーキテクチャ品質向上",
   autopilotGoalStarted: (id) => `目標を開始：${id}`,
   autopilotUnknownGoal: (ids) => `不明な目標。利用可能：${ids}`,
   goalsTitle: "🎯 目標プリセット",

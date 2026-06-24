@@ -8,9 +8,11 @@ import { messages } from "../../core/i18n/index.js";
 import { createSubfolder, isAwaitingFolderName } from "../../core/projects/dir-browser.js";
 import { reconcileGroupBinding } from "../../core/projects/group-binding-ops.js";
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
+import { homeCommandResult } from "../../core/projects/operator.js";
 import { chatScope } from "../../core/projects/project-manager.js";
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
+import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -25,6 +27,7 @@ import {
   handleRestore,
   handleUnbind,
 } from "./group-commands.js";
+import { sendPrompts } from "./prompts.js";
 import { sendCard, sendText } from "./replies.js";
 import { resolveReplyTarget } from "./reply-target.js";
 import {
@@ -181,6 +184,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               msg.messageId,
               parsed.action,
               replySession,
+              msg.chatType === "p2p",
             );
           } else {
             await enqueueLarkAction(
@@ -191,6 +195,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               parsed.action,
               text.trim(),
               replySession,
+              msg.chatType === "p2p",
             );
           }
           break;
@@ -262,6 +267,22 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               // 1:1 chats with the allow-listed owner, never to group members.
               if (msg.chatType === "p2p") await sendLogs(channel, deps, msg.chatId, parsed.arg);
               break;
+            case "home": {
+              // Owner-only: switch the channel's current project to the operator session.
+              // p2p only, like /dashboard.
+              if (msg.chatType !== "p2p") break;
+              const result = homeCommandResult(
+                deps.config.homeOperator.enabled,
+                deps.config.projectSessionPrefix,
+              );
+              if (!result.ok) {
+                await sendText(channel, msg.chatId, messages("lark").homeOperatorDisabled);
+                break;
+              }
+              await deps.currentProject.set(chatScope("lark", msg.chatId), result.session);
+              await sendText(channel, msg.chatId, messages("lark").homeOperatorSwitched);
+              break;
+            }
             case "dashboard":
               // Host-wide system info (every session across the host) — restrict to
               // 1:1 chats with the allow-listed owner, never to group members.
@@ -340,6 +361,14 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             case "goals":
               await sendText(channel, msg.chatId, formatGoalsList(messages("lark")));
               break;
+            case "batch":
+              // Host-wide op — p2p owner only (same gate as dashboard/logs).
+              if (msg.chatType === "p2p")
+                await sendText(channel, msg.chatId, runBatchCommand(parsed.arg ?? ""));
+              break;
+            case "prompts":
+              if (msg.chatType === "p2p") await sendPrompts(channel, deps, msg.chatId, parsed.arg);
+              break;
           }
           break;
 
@@ -366,6 +395,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             "text",
             parsed.text,
             replySession,
+            msg.chatType === "p2p",
           );
           break;
       }

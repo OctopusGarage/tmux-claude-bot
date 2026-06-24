@@ -314,6 +314,132 @@ program
     }
   });
 
+const batch = program.command("batch").description("manage batch scheduler plans and runs");
+
+batch
+  .command("load <file>")
+  .description("parse and save a YAML batch plan")
+  .action(async (file: string) => {
+    const { readFileSync } = await import("node:fs");
+    const { parsePlanYaml } = await import("./core/scheduler/plan-yaml.js");
+    const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
+    try {
+      const plan = parsePlanYaml(readFileSync(file, "utf8"));
+      new SchedulerStore().savePlan(plan);
+      console.log(`loaded ${plan.id}`);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+batch
+  .command("export <id> [file]")
+  .description("export a saved plan to YAML (stdout or file)")
+  .action(async (id: string, file: string | undefined) => {
+    const { writeFileSync } = await import("node:fs");
+    const { planToYaml } = await import("./core/scheduler/plan-yaml.js");
+    const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
+    const { tildeifyHome } = await import("./shared/utils/path.js");
+    const plan = new SchedulerStore().getPlan(id);
+    if (!plan) {
+      console.error(`unknown plan "${id}"`);
+      process.exit(1);
+    }
+    const yaml = planToYaml(plan);
+    if (file) {
+      // Bug #6 fix: write real paths to the file (it must be loadable back), but
+      // tildeify only the confirmation message printed to the terminal.
+      writeFileSync(file, yaml, "utf8");
+      console.log(`exported ${id} -> ${tildeifyHome(file)}`);
+    } else {
+      // Bug #6 fix: tildeify home paths in the YAML printed to stdout.
+      console.log(tildeifyHome(yaml));
+    }
+  });
+
+batch
+  .command("start [id]")
+  .description("start a batch run for the given plan id")
+  .action(async (id: string | undefined) => {
+    const { startPlan } = await import("./core/scheduler/controls.js");
+    const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
+    if (!id) {
+      console.error("plan id required");
+      process.exit(1);
+    }
+    const result = startPlan(new SchedulerStore(), id, Date.now());
+    if (result.ok) {
+      console.log(`started run for plan "${id}"`);
+    } else {
+      console.error(result.error);
+      process.exit(1);
+    }
+  });
+
+batch
+  .command("status")
+  .description("show the active batch run status")
+  .action(async () => {
+    const { renderStatus } = await import("./core/scheduler/report.js");
+    const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
+    const { tildeifyHome } = await import("./shared/utils/path.js");
+    console.log(tildeifyHome(renderStatus(new SchedulerStore().getActiveRun())));
+  });
+
+batch
+  .command("report")
+  .description("show a summary report of the active run")
+  .action(async () => {
+    const { renderSummary } = await import("./core/scheduler/report.js");
+    const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
+    const { tildeifyHome } = await import("./shared/utils/path.js");
+    const run = new SchedulerStore().getActiveRun();
+    if (!run) {
+      console.log("No active batch run.");
+      return;
+    }
+    console.log(tildeifyHome(renderSummary(run)));
+  });
+
+batch
+  .command("pause")
+  .description("pause the active batch run")
+  .action(async () => {
+    const { pauseRun } = await import("./core/scheduler/controls.js");
+    const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
+    const result = pauseRun(new SchedulerStore());
+    if (result.ok) console.log("run paused");
+    else {
+      console.error(result.error);
+      process.exit(1);
+    }
+  });
+
+batch
+  .command("resume")
+  .description("resume a paused batch run")
+  .action(async () => {
+    const { resumeRun } = await import("./core/scheduler/controls.js");
+    const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
+    const result = resumeRun(new SchedulerStore());
+    if (result.ok) console.log("run resumed");
+    else {
+      console.error(result.error);
+      process.exit(1);
+    }
+  });
+
+batch
+  .command("stop")
+  .description("cancel and clear the active batch run")
+  .action(async () => {
+    const { stopRun } = await import("./core/scheduler/controls.js");
+    const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
+    stopRun(new SchedulerStore());
+    console.log("run stopped");
+  });
+
 program.parseAsync().catch((err) => {
   // An async action (e.g. `run`) rejecting would otherwise be an unhandled
   // rejection — surface it cleanly and exit non-zero instead.

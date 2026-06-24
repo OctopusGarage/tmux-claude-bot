@@ -23,6 +23,7 @@ export type ViewName =
   | "ws"
   | "sessions"
   | "logs"
+  | "home"
   | "dashboard"
   | "sysload"
   | "doctor"
@@ -33,7 +34,9 @@ export type ViewName =
   | "unbind"
   | "restore"
   | "autopilot"
-  | "goals";
+  | "goals"
+  | "batch"
+  | "prompts";
 
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
  * Lark command surface matches Telegram's. */
@@ -54,6 +57,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   ws: "ws",
   sessions: "sessions",
   logs: "logs",
+  home: "home",
   dashboard: "dashboard",
   sysload: "sysload",
   doctor: "doctor",
@@ -65,6 +69,8 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   restore: "restore",
   autopilot: "autopilot",
   goals: "goals",
+  batch: "batch",
+  prompts: "prompts",
 };
 
 export type ParsedInput =

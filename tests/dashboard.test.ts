@@ -197,4 +197,28 @@ describe("buildDashboard", () => {
     // sess_b has no enabled autopilot → no field
     expect(row(snap.sessions, "sess_b").autopilot).toBeUndefined();
   });
+
+  it("excludes operator row from sessionCount/runningCount/busyCount", async () => {
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: async () => ["tmux_proj_home", "sess_work"],
+        sessionsCreatedAt: async () => new Map(),
+        capturePane: async () => "",
+      },
+      config: {
+        telegramBotToken: "x",
+        lark: undefined,
+        projectSessionPrefix: "tmux_proj_",
+      },
+    });
+    const snap = await buildDashboard(deps, { paneDiffMs: 0 });
+    expect(snap.sessions).toHaveLength(2); // both rows present in sessions array
+    expect(snap.global.sessionCount).toBe(1); // operator excluded
+    expect(snap.global.runningCount).toBe(1); // operator excluded (agent.checkIfRunning returns true for both, but operator filtered)
+    expect(snap.global.busyCount).toBe(0); // no busy sessions (no transcript activity)
+    const opRow = snap.sessions.find((r) => r.session === "tmux_proj_home");
+    expect(opRow?.operator).toBe(true);
+    const workRow = snap.sessions.find((r) => r.session === "sess_work");
+    expect(workRow?.operator).toBeUndefined();
+  });
 });

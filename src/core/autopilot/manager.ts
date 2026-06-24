@@ -1,5 +1,6 @@
 import { createLogger } from "../../shared/utils/logger.js";
 import type { HandlerDeps } from "../deps.js";
+import { listUserProjectSessions } from "../projects/operator.js";
 import { isGlobalKeepAlive } from "./global-flag.js";
 import { AutopilotStore } from "./state-store.js";
 import { runSupervisorTick } from "./supervisor.js";
@@ -19,7 +20,7 @@ export async function tickAllEnabled(
 
   let live: string[];
   try {
-    live = await deps.bridge.listProjectSessions();
+    live = await listUserProjectSessions(deps);
   } catch (err) {
     log.warn("could not list sessions", { err });
     return;
@@ -32,7 +33,13 @@ export async function tickAllEnabled(
     // its startedAt, so it is never resurrected → no runaway.
     for (const session of live) {
       const st = store.get(session);
-      if (st.enabled || st.optOut || st.goalId !== undefined || st.startedAt !== undefined)
+      if (
+        st.enabled ||
+        st.optOut ||
+        st.goalId !== undefined ||
+        st.startedAt !== undefined ||
+        st.viaScheduler
+      )
         continue;
       store.set(session, {
         ...defaultState(st.persona),
@@ -74,6 +81,8 @@ export function startAutopilot(deps: HandlerDeps): () => void {
     return () => {};
   }
   const store = new AutopilotStore();
+  // Transient run-intent must not survive a restart and fire spuriously on the first idle tick.
+  store.clearPendingContextOps();
   let running = false;
   const tick = (): void => {
     if (running) return; // coalesce overlapping ticks

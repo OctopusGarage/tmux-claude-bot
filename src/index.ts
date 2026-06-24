@@ -11,9 +11,11 @@ import {
 import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
 import { startKeepAwake, stopKeepAwake } from "./core/platform/keep-awake.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
+import { startOperator } from "./core/projects/operator-home.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { autoRecoverOnBoot } from "./core/recovery/recover.js";
 import { startRunningSweep } from "./core/recovery/running-sweep.js";
+import { startScheduler } from "./core/scheduler/scheduler-loop.js";
 import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 
@@ -131,6 +133,10 @@ startRunningSweep(deps, config.runningSweepMs);
 // Start the autopilot background loop (coalesced tick on transcript activity +
 // fallback interval). No-op when AUTOPILOT_TICK_MS=0.
 startAutopilot(deps);
+startScheduler(deps);
+// Boot the home operator session (provision home dir + create session + start agent).
+// Fire-and-forget — must not block boot. No-op when HOME_OPERATOR_ENABLED=false.
+void startOperator(deps);
 
 // Restore the agents that were running before a machine reboot, automatically.
 // Delayed + fire-and-forget so boot isn't held up by N agent launches; idempotent

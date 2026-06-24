@@ -33,6 +33,28 @@ describe("parseGoal", () => {
     };
     expect(parseGoal(g).ok).toBe(true);
   });
+  it("accepts detectCheck done conditions", () => {
+    const g = {
+      id: "g3",
+      titleKey: "G3",
+      phases: [
+        {
+          id: "p",
+          intent: { kind: "prompt", text: "do it" },
+          done: {
+            kind: "all",
+            of: [
+              { kind: "sentinel", marker: "GOAL_DONE" },
+              { kind: "detectCheck", purpose: "coverage" },
+            ],
+          },
+        },
+      ],
+    };
+    expect(parseGoal(g).ok).toBe(true);
+    const bad = { ...g, phases: [{ ...g.phases[0], done: { kind: "detectCheck", purpose: "x" } }] };
+    expect(parseGoal(bad).ok).toBe(false);
+  });
   it("rejects a malformed goal with an error message", () => {
     expect(parseGoal({ id: "x" }).ok).toBe(false);
     expect(parseGoal({ id: "x", titleKey: "X", phases: [] }).ok).toBe(false); // empty phases

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,7 @@ import { AutopilotStore } from "../../src/core/autopilot/state-store.js";
 import { runSupervisorTick } from "../../src/core/autopilot/supervisor.js";
 import { defaultState } from "../../src/core/autopilot/types.js";
 import { messages } from "../../src/core/i18n/index.js";
+import { clearPathForSession, setPathForSession } from "../../src/core/projects/sessionPathMap.js";
 
 const autopilotCfg = {
   tickMs: 8000,
@@ -18,12 +19,20 @@ const autopilotCfg = {
   idlePromptText: "继续",
   apiErrorPromptText: "重试",
   maxRecoveryAttempts: 5,
-  retry: { maxRetries: 5, baseDelayMs: 5000, backoffFactor: 2, maxDelayMs: 120000, jitter: false },
+  retry: { maxRetries: 5, baseDelayMs: 30000, backoffFactor: 2, maxDelayMs: 120000, jitter: false },
+  retryBusy: {
+    maxRetries: 5,
+    baseDelayMs: 180000,
+    backoffFactor: 2,
+    maxDelayMs: 600000,
+    jitter: false,
+  },
   goalsDir: "",
   usagePausePct: 0,
   keepAliveDoneMarker: "TASK_DONE",
   keepAliveDonePrompt: "完成后回复 [TASK_DONE]",
   maxRounds: 10,
+  betweenGoals: "compact" as const,
 };
 
 function makeDeps(pane: string) {
@@ -41,7 +50,7 @@ function makeDeps(pane: string) {
       },
       queue: { size: () => 0, isSessionProcessing: () => false, enqueue },
       notifier: { broadcast },
-      configResolver: { detectAgentKind: async () => null },
+      configResolver: { detectAgentKind: async () => null, invalidate: vi.fn() },
     } as never,
   };
 }
@@ -52,9 +61,15 @@ let store: AutopilotStore;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tcb-sup-"));
   process.env.TCB_STATE_DIR = dir;
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ scripts: { test: "true", "test:coverage": "true" } }),
+  );
+  setPathForSession("s1", dir);
   store = new AutopilotStore();
 });
 afterEach(() => {
+  clearPathForSession("s1");
   delete process.env.TCB_STATE_DIR;
   rmSync(dir, { recursive: true, force: true });
 });
@@ -343,10 +358,14 @@ describe("runSupervisorTick", () => {
   });
 
   it("cycle with a human-gate goal: gate pauses mid-cycle, confirm advances to the next goal", async () => {
-    // add-feature is a single phase: done = seq[sentinel GOAL_DONE, humanGate]
+    // add-feature done = seq[ all[sentinel GOAL_DONE, detectCheck test], humanGate ]
     store.set("s1", startCycleState(defaultState(), ["add-feature", "fix-tests"], 1));
     const { deps, broadcast } = makeDeps("");
-    const apProbes = { ...probes, recentAssistant: async () => "[GOAL_DONE]" };
+    const apProbes = {
+      ...probes,
+      recentAssistant: async () => "[GOAL_DONE]",
+      runCheck: async () => ({ ok: true }),
+    };
     // tick 1: agent claims done -> seq advances to humanGate -> awaitHuman (paused, still on add-feature)
     await runSupervisorTick(deps, store, "s1", 1_000_000, apProbes);
     expect(store.get("s1").humanGatePending).toBe(true);
@@ -364,9 +383,13 @@ describe("runSupervisorTick", () => {
   });
 
   it("reject ('keep going') re-prompts the agent next tick instead of re-arming the gate", async () => {
-    store.set("s1", startGoalState(defaultState(), "add-feature")); // seq[sentinel GOAL_DONE, humanGate]
+    store.set("s1", startGoalState(defaultState(), "add-feature")); // seq[ all[sentinel, detectCheck test], humanGate ]
     const { deps, enqueue } = makeDeps("");
-    const apProbes = { ...probes, recentAssistant: async () => "[GOAL_DONE]" };
+    const apProbes = {
+      ...probes,
+      recentAssistant: async () => "[GOAL_DONE]",
+      runCheck: async () => ({ ok: true }),
+    };
     await runSupervisorTick(deps, store, "s1", 1_000_000, apProbes); // → awaitHuman
     expect(store.get("s1").humanGatePending).toBe(true);
     // user rejects ("keep polishing")
@@ -387,7 +410,7 @@ describe("runSupervisorTick", () => {
   });
 
   it("a confirm landing DURING the awaitHuman broadcast is not clobbered (write-before-broadcast)", async () => {
-    store.set("s1", startGoalState(defaultState(), "add-feature")); // seq[sentinel GOAL_DONE, humanGate]
+    store.set("s1", startGoalState(defaultState(), "add-feature")); // seq[ all[sentinel, detectCheck test], humanGate ]
     // the gate broadcast simulates the owner tapping Confirm while the notice is in flight
     const broadcast = vi.fn(async (n: { kind: string }) => {
       if (n.kind === "awaitHuman") applyAutopilotVerb(store, "s1", "confirm", messages("telegram"));
@@ -406,6 +429,7 @@ describe("runSupervisorTick", () => {
     await runSupervisorTick(deps, store, "s1", 1_000_000, {
       ...probes,
       recentAssistant: async () => "[GOAL_DONE]",
+      runCheck: async () => ({ ok: true }),
     });
     // the confirm wins: gate cleared + confirmed, not overwritten back to pending
     expect(store.get("s1").humanGatePending).toBe(false);
@@ -429,5 +453,200 @@ describe("runSupervisorTick", () => {
     expect(enqueue).not.toHaveBeenCalled();
     expect(store.get("s1").enabled).toBe(false); // not resurrected
     expect(store.get("s1").optOut).toBe(true);
+  });
+
+  // Bug #3: a viaScheduler=true session at/over usagePausePct must NOT be disabled
+  // by the supervisor's per-session usage-gate (the scheduler's pool-level quota
+  // authority governs it instead).
+  it("usage gate: viaScheduler session at/over threshold is NOT disabled by supervisor", async () => {
+    store.set("s1", { ...startGoalState(defaultState(), "fix-tests"), viaScheduler: true });
+    const enqueue = vi.fn(() => "queued" as const);
+    const broadcast = vi.fn(async () => {});
+    const deps90 = {
+      config: { autopilot: { ...autopilotCfg, usagePausePct: 90 } },
+      bridge: {
+        capturePane: async () => "",
+        sendRawKey: vi.fn(async () => {}),
+        sendKeys: vi.fn(async () => {}),
+      },
+      queue: { size: () => 0, isSessionProcessing: () => false, enqueue },
+      notifier: { broadcast },
+      configResolver: { detectAgentKind: async () => null },
+    } as never;
+    const readUsage = vi.fn(async () => ({
+      sessionId: "s",
+      contextPct: null,
+      fiveHourPct: 95, // above 90% threshold
+      fiveHourReset: null,
+      sevenDayPct: null,
+      sevenDayReset: null,
+      updatedAt: Date.now() / 1000,
+    }));
+    const runCheck = vi.fn(async () => ({ ok: false }));
+    const action = await runSupervisorTick(deps90, store, "s1", 1_000_000, {
+      ...probes,
+      readUsage,
+      runCheck,
+    });
+    // The usage gate is skipped for viaScheduler sessions — goal continues normally.
+    expect(action.kind).not.toBe("pauseNotify");
+    expect(store.get("s1").enabled).toBe(true); // not disabled by the usage gate
+    expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "usage" }));
+    // readUsage should NOT even be called (the gate is skipped before the read).
+    expect(readUsage).not.toHaveBeenCalled();
+  });
+
+  // Contrast: a non-viaScheduler goal session at/over threshold IS still disabled.
+  it("usage gate: non-viaScheduler session at/over threshold IS disabled", async () => {
+    store.set("s1", startGoalState(defaultState(), "fix-tests")); // viaScheduler defaults to undefined
+    const enqueue = vi.fn(() => "queued" as const);
+    const broadcast = vi.fn(async () => {});
+    const deps90 = {
+      config: { autopilot: { ...autopilotCfg, usagePausePct: 90 } },
+      bridge: {
+        capturePane: async () => "",
+        sendRawKey: vi.fn(async () => {}),
+        sendKeys: vi.fn(async () => {}),
+      },
+      queue: { size: () => 0, isSessionProcessing: () => false, enqueue },
+      notifier: { broadcast },
+      configResolver: { detectAgentKind: async () => null },
+    } as never;
+    const readUsage = vi.fn(async () => ({
+      sessionId: "s",
+      contextPct: null,
+      fiveHourPct: 95,
+      fiveHourReset: null,
+      sevenDayPct: null,
+      sevenDayReset: null,
+      updatedAt: Date.now() / 1000,
+    }));
+    const action = await runSupervisorTick(deps90, store, "s1", 1_000_000, {
+      ...probes,
+      readUsage,
+    });
+    expect(action.kind).toBe("pauseNotify");
+    expect(store.get("s1").enabled).toBe(false);
+  });
+
+  // --- Between-goals context reset tests ---
+
+  it("between-goals compact: finalizing non-last goal stores pendingContextOp=compact", async () => {
+    // betweenGoals defaults to "compact" in autopilotCfg
+    store.set("s1", startCycleState(defaultState(), ["fix-tests", "code-review"], 1));
+    const { deps } = makeDeps("");
+    await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: true }),
+      recentAssistant: async () => "[GOAL_DONE]",
+    });
+    const s = store.get("s1");
+    expect(s.goalId).toBe("code-review");
+    expect(s.pendingContextOp).toBe("compact");
+  });
+
+  it("between-goals compact: next idle tick sends /compact, clears flag, returns none without injecting", async () => {
+    store.set("s1", {
+      ...startCycleState(defaultState(), ["fix-tests", "code-review"], 1),
+      // Simulate the state after goal 1 finalized: we're now on code-review with the flag set
+      goalId: "code-review",
+      queuePos: 1,
+      pendingContextOp: "compact" as const,
+    });
+    const { deps } = makeDeps("");
+    const sendKeys = (deps as never as { bridge: { sendKeys: ReturnType<typeof vi.fn> } }).bridge
+      .sendKeys;
+    const invalidate = (
+      deps as never as { configResolver: { invalidate: ReturnType<typeof vi.fn> } }
+    ).configResolver.invalidate;
+    const action = await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: false }),
+    });
+    expect(action.kind).toBe("none");
+    expect(sendKeys).toHaveBeenCalledWith("/compact", "s1");
+    expect(invalidate).toHaveBeenCalledWith("s1");
+    expect(store.get("s1").pendingContextOp).toBeUndefined();
+    // No goal inject should have happened: enqueue not called for a nudge
+    const enqueueStub = (deps as never as { queue: { enqueue: ReturnType<typeof vi.fn> } }).queue
+      .enqueue;
+    expect(enqueueStub).not.toHaveBeenCalled();
+  });
+
+  it("between-goals clear: finalizing non-last goal stores pendingContextOp=clear", async () => {
+    const { deps } = makeDeps("");
+    (deps as never as { config: { autopilot: typeof autopilotCfg } }).config = {
+      autopilot: { ...autopilotCfg, betweenGoals: "clear" as typeof autopilotCfg.betweenGoals },
+    };
+    store.set("s1", startCycleState(defaultState(), ["fix-tests", "code-review"], 1));
+    await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: true }),
+      recentAssistant: async () => "[GOAL_DONE]",
+    });
+    expect(store.get("s1").pendingContextOp).toBe("clear");
+  });
+
+  it("between-goals none: finalize→next stores no pendingContextOp", async () => {
+    const { deps } = makeDeps("");
+    (deps as never as { config: { autopilot: typeof autopilotCfg } }).config = {
+      autopilot: { ...autopilotCfg, betweenGoals: "none" as typeof autopilotCfg.betweenGoals },
+    };
+    store.set("s1", startCycleState(defaultState(), ["fix-tests", "code-review"], 1));
+    await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: true }),
+      recentAssistant: async () => "[GOAL_DONE]",
+    });
+    const s = store.get("s1");
+    expect(s.pendingContextOp).toBeUndefined();
+    expect(s.goalId).toBe("code-review");
+  });
+
+  it("between-goals: pendingContextOp set but busy → does NOT call sendKeys (waits for idle)", async () => {
+    store.set("s1", {
+      ...startCycleState(defaultState(), ["fix-tests", "code-review"], 1),
+      goalId: "code-review",
+      queuePos: 1,
+      pendingContextOp: "compact" as const,
+    });
+    const { deps } = makeDeps("");
+    const sendKeys = (deps as never as { bridge: { sendKeys: ReturnType<typeof vi.fn> } }).bridge
+      .sendKeys;
+    // Simulate busy: queue has an item in flight
+    (
+      deps as never as {
+        queue: {
+          size: () => number;
+          isSessionProcessing: () => boolean;
+          enqueue: ReturnType<typeof vi.fn>;
+        };
+      }
+    ).queue = {
+      size: () => 1,
+      isSessionProcessing: () => true,
+      enqueue: vi.fn(() => "queued" as const),
+    };
+    const action = await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: false }),
+    });
+    expect(action.kind).toBe("none");
+    expect(sendKeys).not.toHaveBeenCalled();
+    expect(store.get("s1").pendingContextOp).toBe("compact"); // flag not cleared
+  });
+
+  it("between-goals: last goal finalizing (cycle done) stores no pendingContextOp", async () => {
+    // Single goal cycle, 1 round → completing it is a cycle done (not "next")
+    store.set("s1", startGoalState(defaultState(), "fix-tests"));
+    const { deps } = makeDeps("");
+    await runSupervisorTick(deps, store, "s1", 1_000_000, {
+      ...probes,
+      runCheck: async () => ({ ok: true }),
+      recentAssistant: async () => "[GOAL_DONE]",
+    });
+    const s = store.get("s1");
+    expect(s.enabled).toBe(false); // cycle done → disabled
+    expect(s.pendingContextOp).toBeUndefined();
   });
 });
