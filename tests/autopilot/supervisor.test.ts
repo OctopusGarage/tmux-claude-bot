@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,7 @@ import { AutopilotStore } from "../../src/core/autopilot/state-store.js";
 import { runSupervisorTick } from "../../src/core/autopilot/supervisor.js";
 import { defaultState } from "../../src/core/autopilot/types.js";
 import { messages } from "../../src/core/i18n/index.js";
+import { clearPathForSession, setPathForSession } from "../../src/core/projects/sessionPathMap.js";
 
 const autopilotCfg = {
   tickMs: 8000,
@@ -60,9 +61,15 @@ let store: AutopilotStore;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tcb-sup-"));
   process.env.TCB_STATE_DIR = dir;
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ scripts: { test: "true", "test:coverage": "true" } }),
+  );
+  setPathForSession("s1", dir);
   store = new AutopilotStore();
 });
 afterEach(() => {
+  clearPathForSession("s1");
   delete process.env.TCB_STATE_DIR;
   rmSync(dir, { recursive: true, force: true });
 });

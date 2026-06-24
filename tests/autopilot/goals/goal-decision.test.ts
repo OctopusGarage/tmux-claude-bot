@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getGoal } from "../../../src/core/autopilot/goals/catalog.js";
 import { decideGoal } from "../../../src/core/autopilot/goals/goal-decision.js";
 import { startGoalState } from "../../../src/core/autopilot/goals/goal-state.js";
@@ -16,7 +19,20 @@ const sig = (over: Partial<SessionSignal> = {}): SessionSignal => ({
   sentinels: [],
   ...over,
 });
-const ctx = { agentKind: "claude" as const, runCheck: async () => ({ ok: true }), cwd: undefined };
+let projectDir: string;
+const ctx = {
+  agentKind: "claude" as const,
+  runCheck: async () => ({ ok: true }),
+  cwd: undefined as string | undefined,
+};
+beforeAll(() => {
+  projectDir = mkdtempSync(join(tmpdir(), "tcb-gd-proj-"));
+  writeFileSync(join(projectDir, "package.json"), JSON.stringify({ scripts: { test: "true" } }));
+  ctx.cwd = projectDir;
+});
+afterAll(() => {
+  rmSync(projectDir, { recursive: true, force: true });
+});
 
 describe("decideGoal", () => {
   it("busy → none", async () => {

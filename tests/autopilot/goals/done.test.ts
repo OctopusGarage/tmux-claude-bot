@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { evaluateDone } from "../../../src/core/autopilot/goals/done.js";
 import type { DoneCondition } from "../../../src/core/autopilot/goals/types.js";
@@ -53,5 +56,37 @@ describe("evaluateDone", () => {
     expect(r0).toMatchObject({ satisfied: false, seqIndex: 1 });
     const r1 = await evaluateDone(cond, { ...base, sentinels: ["Y"], seqIndex: 1 });
     expect(r1.satisfied).toBe(true);
+  });
+
+  it("detectCheck: detected command runs through runCheck", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-done-detect-"));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { test: "true" } }));
+    try {
+      const okr = await evaluateDone(
+        { kind: "detectCheck", purpose: "test" },
+        { ...base, cwd: dir, runCheck: okRunner },
+      );
+      expect(okr).toMatchObject({ satisfied: true, pendingHumanGate: false });
+      const failr = await evaluateDone(
+        { kind: "detectCheck", purpose: "test" },
+        { ...base, cwd: dir, runCheck: failRunner },
+      );
+      expect(failr).toMatchObject({ satisfied: false, pendingHumanGate: false });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detectCheck: undetectable project pends a human gate", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-done-nodetect-"));
+    try {
+      const r = await evaluateDone(
+        { kind: "detectCheck", purpose: "coverage" },
+        { ...base, cwd: dir, runCheck: okRunner },
+      );
+      expect(r).toMatchObject({ satisfied: false, pendingHumanGate: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

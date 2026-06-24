@@ -1,4 +1,5 @@
 import type { CheckRunner } from "../check-runner.js";
+import { detectCheckCommand } from "./detect-check.js";
 import type { DoneCondition } from "./types.js";
 
 export type DoneCtx = {
@@ -23,6 +24,11 @@ async function one(
       return { satisfied: ctx.sentinels.includes(cond.marker), pendingHumanGate: false };
     case "check":
       return { satisfied: (await ctx.runCheck(cond.cmd, ctx.cwd)).ok, pendingHumanGate: false };
+    case "detectCheck": {
+      const cmd = detectCheckCommand(cond.purpose, ctx.cwd);
+      if (cmd === null) return { satisfied: false, pendingHumanGate: true };
+      return { satisfied: (await ctx.runCheck(cmd, ctx.cwd)).ok, pendingHumanGate: false };
+    }
     case "humanGate":
       return { satisfied: ctx.humanConfirmed, pendingHumanGate: !ctx.humanConfirmed };
     case "all": {

@@ -14,13 +14,13 @@ const GOALS: Goal[] = [
         id: "raise-coverage",
         intent: {
           kind: "prompt",
-          text: "Continue raising test coverage. Run the coverage report, add tests for the lowest-covered files, and re-run until coverage stops improving. When the coverage threshold is met, output the marker [GOAL_DONE].",
+          text: "Detect this project's test and coverage tooling first (the test runner and how to produce a coverage report). Then continue raising test coverage: run the coverage report, add tests for the lowest-covered files, and re-run until coverage stops improving. Aim for roughly 80% line coverage as a target. When the target is met and tests pass, output the marker [GOAL_DONE].",
         },
         done: {
           kind: "all",
           of: [
             { kind: "sentinel", marker: "GOAL_DONE" },
-            { kind: "check", cmd: "npm run test:coverage" },
+            { kind: "detectCheck", purpose: "coverage" },
           ],
         },
       },
@@ -34,13 +34,13 @@ const GOALS: Goal[] = [
         id: "make-green",
         intent: {
           kind: "prompt",
-          text: "Find and fix the failing tests. Run the test suite, diagnose each failure, fix the root cause, and re-run until all tests pass. When green, output the marker [GOAL_DONE].",
+          text: "Detect this project's test command first. Then find and fix the failing tests: run the suite, diagnose each failure, fix the root cause, and re-run until all tests pass. When green, output the marker [GOAL_DONE].",
         },
         done: {
           kind: "all",
           of: [
             { kind: "sentinel", marker: "GOAL_DONE" },
-            { kind: "check", cmd: "npm test" },
+            { kind: "detectCheck", purpose: "test" },
           ],
         },
       },
