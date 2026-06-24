@@ -162,6 +162,9 @@ To manage **every** session without enabling each one, run `/autopilot global on
 (persisted in `AUTOPILOT_GLOBAL_KEEPALIVE`): live sessions are auto-kept-alive;
 `/autopilot off` opts one out, and `/autopilot global off` un-enrolls them.
 
+> Autopilot's drive-loop is descended from **[ForgeFlow](https://github.com/Kingson4Wu/ForgeFlow)** —
+> see [Acknowledgements](#acknowledgements).
+
 ### Telegram button controls
 
 Autopilot is also fully button-drivable from Telegram. Open the inline control
@@ -273,6 +276,25 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
   service.
 - **Machine warm / slow** → `/sysload` or `tcb sysload` to spot a runaway process.
 - **Logs** → `tcb logs` (CLI) or `/logs` (chat, owner-only).
+
+---
+
+## Acknowledgements
+
+Autopilot's core idea — engineering a feedback loop that watches a coding agent in
+its tmux pane and keeps nudging it forward so it never stalls mid-task — is owed to
+**[ForgeFlow](https://github.com/Kingson4Wu/ForgeFlow)**, an earlier project that
+pioneered exactly this "loop engineering": observe the pane → decide by rules →
+recover from stalls → repeat, driving an AI CLI (Claude / Gemini / Codex) through
+long programming tasks unattended.
+
+ForgeFlow runs that loop **locally** — one session, in the foreground, at the
+machine. tmux-claude-bot carries the same idea to its **remote** form: the loop
+becomes a long-running service you start, observe, and steer from anywhere —
+Telegram, Feishu/Lark, or a terminal UI — across many projects at once, surviving
+restarts, and grown with goal cycling, completion sentinels, human-in-the-loop
+gates, usage and wall-clock budgets, and a safety governor. Where ForgeFlow is the
+local origin of the loop, this is its remote, chat-native evolution. With thanks.
 
 ---
 
