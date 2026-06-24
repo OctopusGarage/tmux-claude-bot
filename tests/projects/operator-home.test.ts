@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/shared/utils/logger.js", () => {
   const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -59,6 +59,26 @@ describe("operatorHomeDir", () => {
 
 describe("startOperator", () => {
   const makeDir = () => mkdtempSync(join(tmpdir(), "op-"));
+
+  // performStart asserts the launcher binary is on PATH (assertClaudeBinaryAccessible).
+  // CI runners have neither `claude` nor `codex` installed, so without this the start
+  // step throws (swallowed by startOperator) and agent.start is never reached. Put
+  // executable stubs on PATH so the real start path runs hermetically everywhere.
+  let binDir: string;
+  let origPath: string | undefined;
+  beforeAll(() => {
+    binDir = mkdtempSync(join(tmpdir(), "op-bin-"));
+    for (const b of ["claude", "codex"]) {
+      const p = join(binDir, b);
+      writeFileSync(p, "#!/bin/sh\n");
+      chmodSync(p, 0o755);
+    }
+    origPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+  });
+  afterAll(() => {
+    process.env.PATH = origPath;
+  });
 
   const makeDeps = (enabled: boolean, alive: boolean) => {
     const dir = makeDir();
