@@ -87,6 +87,26 @@ describe("materializeRun", () => {
     expect(run.tasks[1]).toMatchObject({ project: "/b", rounds: 1, priority: 5 });
   });
 });
+describe("nextCronFire — step without an explicit range end", () => {
+  it("treats `N/step` as N..max step (e.g. minute 5/15 → 5,20,35,50)", () => {
+    // 2026-01-01T00:00:00Z is the anchor; first match strictly after it.
+    const base = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const fire = nextCronFire("5/15 * * * *", base);
+    expect(fire).not.toBeNull();
+    expect(new Date(fire as number).getUTCMinutes()).toBe(5);
+    // the following match is minute 20
+    const next = nextCronFire("5/15 * * * *", fire as number);
+    expect(new Date(next as number).getUTCMinutes()).toBe(20);
+  });
+});
+
+describe("nextFire — at schedule", () => {
+  it("returns the timestamp when it is still in the future, else null", () => {
+    expect(nextFire({ kind: "at", at: 5000 }, 1000)).toBe(5000);
+    expect(nextFire({ kind: "at", at: 1000 }, 5000)).toBeNull();
+  });
+});
+
 describe("hasActiveRun", () => {
   it("true for running/paused, false otherwise", () => {
     expect(hasActiveRun(undefined)).toBe(false);
