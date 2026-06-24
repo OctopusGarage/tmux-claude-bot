@@ -52,13 +52,14 @@ export function govern(decision: Decision, signal: SessionSignal, ctx: RuleConte
 
   // API-error backoff + conservative cap.
   if (ruleId === "api-error" && action.kind === "nudge") {
-    if (s.apiRetries >= config.retry.maxRetries) {
+    const policy = signal.pane.serverBusy ? config.retryBusy : config.retry;
+    if (s.apiRetries >= policy.maxRetries) {
       return {
         action: { kind: "pauseNotify", reason: "API errors persisted past the retry budget" },
         state: { ...s, lastActionKind: "pauseNotify" },
       };
     }
-    const wait = nextDelayMs(config.retry, s.apiRetries);
+    const wait = nextDelayMs(policy, s.apiRetries);
     if (s.lastNudgeAt !== undefined && now - s.lastNudgeAt < wait) {
       return { action: { kind: "none" }, state: s }; // still backing off
     }

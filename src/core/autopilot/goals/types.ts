@@ -5,6 +5,7 @@ export type Intent =
 export type DoneCondition =
   | { kind: "sentinel"; marker: string }
   | { kind: "check"; cmd: string }
+  | { kind: "detectCheck"; purpose: "coverage" | "test" }
   | { kind: "humanGate" }
   | { kind: "all"; of: DoneCondition[] }
   | { kind: "seq"; of: DoneCondition[] };

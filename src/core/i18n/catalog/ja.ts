@@ -417,6 +417,7 @@ export const ja: Messages = {
   goalAddFeature: "機能追加",
   goalRefactorElegant: "エレガントにリファクタリング",
   goalUiPolish: "UI を磨く",
+  goalImproveArchitecture: "アーキテクチャ品質向上",
   autopilotGoalStarted: (id) => `目標を開始：${id}`,
   autopilotUnknownGoal: (ids) => `不明な目標。利用可能：${ids}`,
   goalsTitle: "🎯 目標プリセット",

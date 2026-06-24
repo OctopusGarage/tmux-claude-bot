@@ -401,6 +401,7 @@ export const zhTW: Messages = {
   goalAddFeature: "新增功能",
   goalRefactorElegant: "重構為優雅專業",
   goalUiPolish: "打磨介面",
+  goalImproveArchitecture: "提升架構品質",
   autopilotGoalStarted: (id) => `已啟動目標：${id}`,
   autopilotUnknownGoal: (ids) => `未知目標。可用：${ids}`,
   goalsTitle: "🎯 目標預設",

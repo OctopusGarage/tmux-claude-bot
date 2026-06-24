@@ -13,6 +13,7 @@ import { setStartCommand } from "../agents/startCommandMap.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
+import { sendContextReset } from "./context-reset.js";
 import type { QueuedMessage } from "./queue.js";
 
 const log = createLogger("command.dispatch");
@@ -332,17 +333,12 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     }
     case "clear": {
       log.info(`sending /clear session=${session}`);
-      await deps.bridge.sendKeys("/clear", session);
-      // /clear starts a fresh session → a NEW transcript file; drop the cached
-      // open-transcript so the next read/usage re-detects it (the resolver's
-      // documented invalidation trigger).
-      deps.configResolver.invalidate(session);
+      await sendContextReset(deps, session, "clear");
       return m.clearedContext;
     }
     case "compact": {
       log.info(`sending /compact session=${session}`);
-      await deps.bridge.sendKeys("/compact", session);
-      deps.configResolver.invalidate(session);
+      await sendContextReset(deps, session, "compact");
       return m.compactedContext;
     }
     case "enter": {

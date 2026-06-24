@@ -21,6 +21,17 @@ export class AutopilotStore {
       .map(([name]) => name);
   }
 
+  /** Drop any persisted pendingContextOp at boot — it is a transient run-intent
+   * that must not survive a restart and fire spuriously on the first idle tick. */
+  clearPendingContextOps(): void {
+    for (const [session, entry] of this.store.sortedEntries()) {
+      if (entry.pendingContextOp !== undefined) {
+        const { pendingContextOp: _drop, ...rest } = entry;
+        this.store.set(session, rest);
+      }
+    }
+  }
+
   clear(session: string): void {
     this.store.delete(session);
   }

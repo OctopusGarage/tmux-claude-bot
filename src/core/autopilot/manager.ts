@@ -81,6 +81,8 @@ export function startAutopilot(deps: HandlerDeps): () => void {
     return () => {};
   }
   const store = new AutopilotStore();
+  // Transient run-intent must not survive a restart and fire spuriously on the first idle tick.
+  store.clearPendingContextOps();
   let running = false;
   const tick = (): void => {
     if (running) return; // coalesce overlapping ticks

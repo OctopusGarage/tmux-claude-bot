@@ -10,6 +10,7 @@ const doneSchema: z.ZodType = z.lazy(() =>
   z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("sentinel"), marker: z.string().min(1) }),
     z.object({ kind: z.literal("check"), cmd: z.string().min(1) }),
+    z.object({ kind: z.literal("detectCheck"), purpose: z.enum(["coverage", "test"]) }),
     z.object({ kind: z.literal("humanGate") }),
     z.object({ kind: z.literal("all"), of: z.array(doneSchema).min(1) }),
     z.object({ kind: z.literal("seq"), of: z.array(doneSchema).min(1) }),

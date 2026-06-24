@@ -40,4 +40,23 @@ describe("AutopilotStore", () => {
     expect(after.optOut).toBeUndefined();
     expect(after.goalId).toBeUndefined(); // back to defaultState — a reused slot is clean
   });
+
+  it("clearPendingContextOps strips the flag and keeps all other fields; untouched sessions are unaffected", () => {
+    const store = new AutopilotStore();
+    store.set("s1", {
+      ...store.get("s1"),
+      enabled: true,
+      goalId: "fix-tests",
+      pendingContextOp: "compact" as const,
+    });
+    store.set("s2", { ...store.get("s2"), enabled: true, goalId: "code-review" }); // no flag
+    store.clearPendingContextOps();
+    const s1 = store.get("s1");
+    expect(s1.pendingContextOp).toBeUndefined(); // flag cleared
+    expect(s1.enabled).toBe(true); // other fields intact
+    expect(s1.goalId).toBe("fix-tests");
+    const s2 = store.get("s2");
+    expect(s2.goalId).toBe("code-review"); // untouched session unaffected
+    expect(s2.pendingContextOp).toBeUndefined();
+  });
 });

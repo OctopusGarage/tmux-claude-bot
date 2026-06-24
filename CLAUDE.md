@@ -365,3 +365,11 @@ Defaults: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `w
 ### Domain docs
 
 Single-context: one `CONTEXT.md` at repo root + `docs/adr/`. See `docs/agents/domain.md`.
+
+### Skills the autopilot goals rely on
+
+Some goals drive the agent by asking it to run a skill (`use your code-review /
+simplify / improve-codebase-architecture skill if available`). Those skills live
+in the agent's environment, not this repo. `docs/agents/skills.md` is the
+registry of their sources + install/update steps; add a row when a new
+skill-backed goal is introduced.

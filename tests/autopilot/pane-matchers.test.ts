@@ -34,6 +34,38 @@ describe("paneSemantics", () => {
     const s = paneSemantics("You've reached your usage limit. Resets at 5pm.");
     expect(s.hardStop).toBe(true);
     expect(s.apiError).toBe(false);
+    expect(s.serverBusy).toBe(false);
+  });
+
+  it("classifies server-busy/overload texts as serverBusy (a subset of apiError)", () => {
+    const busy = [
+      "⏺ API Error: 500 Internal server error — please retry",
+      "⏺ API Error: 529 Overloaded. The service is temporarily unavailable.",
+      "⏺ API Error: 429 Too Many Requests",
+      "⏺ API Error: 503 Service Unavailable",
+      // The rate-limit notice is also server-busy.
+      "⏺ API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    ];
+    for (const t of busy) {
+      const s = paneSemantics(t);
+      expect(s.apiError, t).toBe(true);
+      expect(s.serverBusy, t).toBe(true);
+      expect(s.hardStop, t).toBe(false);
+    }
+  });
+
+  it("classifies plain transient errors (connection/terminated) as apiError but NOT serverBusy", () => {
+    const transient = [
+      "⏺ API Error: Connection closed mid-response. The response above may be incomplete.",
+      "⏺ API Error: The socket connection was closed unexpectedly.",
+      "⏺ API Error: terminated",
+    ];
+    for (const t of transient) {
+      const s = paneSemantics(t);
+      expect(s.apiError, t).toBe(true);
+      expect(s.serverBusy, t).toBe(false);
+      expect(s.hardStop, t).toBe(false);
+    }
   });
 
   it("detects a waiting input prompt", () => {
