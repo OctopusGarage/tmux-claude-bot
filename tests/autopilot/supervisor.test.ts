@@ -358,10 +358,14 @@ describe("runSupervisorTick", () => {
   });
 
   it("cycle with a human-gate goal: gate pauses mid-cycle, confirm advances to the next goal", async () => {
-    // add-feature is a single phase: done = seq[sentinel GOAL_DONE, humanGate]
+    // add-feature done = seq[ all[sentinel GOAL_DONE, detectCheck test], humanGate ]
     store.set("s1", startCycleState(defaultState(), ["add-feature", "fix-tests"], 1));
     const { deps, broadcast } = makeDeps("");
-    const apProbes = { ...probes, recentAssistant: async () => "[GOAL_DONE]" };
+    const apProbes = {
+      ...probes,
+      recentAssistant: async () => "[GOAL_DONE]",
+      runCheck: async () => ({ ok: true }),
+    };
     // tick 1: agent claims done -> seq advances to humanGate -> awaitHuman (paused, still on add-feature)
     await runSupervisorTick(deps, store, "s1", 1_000_000, apProbes);
     expect(store.get("s1").humanGatePending).toBe(true);
@@ -379,9 +383,13 @@ describe("runSupervisorTick", () => {
   });
 
   it("reject ('keep going') re-prompts the agent next tick instead of re-arming the gate", async () => {
-    store.set("s1", startGoalState(defaultState(), "add-feature")); // seq[sentinel GOAL_DONE, humanGate]
+    store.set("s1", startGoalState(defaultState(), "add-feature")); // seq[ all[sentinel, detectCheck test], humanGate ]
     const { deps, enqueue } = makeDeps("");
-    const apProbes = { ...probes, recentAssistant: async () => "[GOAL_DONE]" };
+    const apProbes = {
+      ...probes,
+      recentAssistant: async () => "[GOAL_DONE]",
+      runCheck: async () => ({ ok: true }),
+    };
     await runSupervisorTick(deps, store, "s1", 1_000_000, apProbes); // → awaitHuman
     expect(store.get("s1").humanGatePending).toBe(true);
     // user rejects ("keep polishing")
@@ -402,7 +410,7 @@ describe("runSupervisorTick", () => {
   });
 
   it("a confirm landing DURING the awaitHuman broadcast is not clobbered (write-before-broadcast)", async () => {
-    store.set("s1", startGoalState(defaultState(), "add-feature")); // seq[sentinel GOAL_DONE, humanGate]
+    store.set("s1", startGoalState(defaultState(), "add-feature")); // seq[ all[sentinel, detectCheck test], humanGate ]
     // the gate broadcast simulates the owner tapping Confirm while the notice is in flight
     const broadcast = vi.fn(async (n: { kind: string }) => {
       if (n.kind === "awaitHuman") applyAutopilotVerb(store, "s1", "confirm", messages("telegram"));
@@ -421,6 +429,7 @@ describe("runSupervisorTick", () => {
     await runSupervisorTick(deps, store, "s1", 1_000_000, {
       ...probes,
       recentAssistant: async () => "[GOAL_DONE]",
+      runCheck: async () => ({ ok: true }),
     });
     // the confirm wins: gate cleared + confirmed, not overwritten back to pending
     expect(store.get("s1").humanGatePending).toBe(false);

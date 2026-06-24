@@ -51,6 +51,26 @@ describe("goal catalog", () => {
     }
   });
 
+  it("refactor-elegant and add-feature gate on a green suite before the human gate", () => {
+    for (const id of ["refactor-elegant", "add-feature"] as const) {
+      const g = getGoal(id);
+      if (!g) throw new Error(`${id} not found`);
+      expect(g.phases[0]?.done).toMatchObject({
+        kind: "seq",
+        of: [
+          {
+            kind: "all",
+            of: [
+              { kind: "sentinel", marker: "GOAL_DONE" },
+              { kind: "detectCheck", purpose: "test" },
+            ],
+          },
+          { kind: "humanGate" },
+        ],
+      });
+    }
+  });
+
   it("does not run the check before the agent emits the done sentinel (short-circuit)", async () => {
     const g = getGoal("fix-tests");
     if (!g) throw new Error("fix-tests not found");

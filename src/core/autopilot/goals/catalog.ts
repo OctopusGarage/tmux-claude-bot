@@ -91,7 +91,16 @@ const GOALS: Goal[] = [
         },
         done: {
           kind: "seq",
-          of: [{ kind: "sentinel", marker: "GOAL_DONE" }, { kind: "humanGate" }],
+          of: [
+            {
+              kind: "all",
+              of: [
+                { kind: "sentinel", marker: "GOAL_DONE" },
+                { kind: "detectCheck", purpose: "test" },
+              ],
+            },
+            { kind: "humanGate" },
+          ],
         },
       },
     ],
@@ -108,7 +117,16 @@ const GOALS: Goal[] = [
         },
         done: {
           kind: "seq",
-          of: [{ kind: "sentinel", marker: "GOAL_DONE" }, { kind: "humanGate" }],
+          of: [
+            {
+              kind: "all",
+              of: [
+                { kind: "sentinel", marker: "GOAL_DONE" },
+                { kind: "detectCheck", purpose: "test" },
+              ],
+            },
+            { kind: "humanGate" },
+          ],
         },
       },
     ],
