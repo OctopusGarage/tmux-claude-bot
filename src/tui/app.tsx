@@ -1,4 +1,6 @@
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
+// React 19 / @types/react 19 dropped the global `JSX` namespace — import it.
+import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ControlClient } from "../adapters/control/client.js";
 import type { AutopilotView } from "../core/autopilot/autopilot-view.js";
