@@ -13,6 +13,13 @@ import type { HandlerDeps } from "../../../src/core/deps.js";
 // transport's DISPATCH + wiring, not re-testing dashboard/recovery/logs internals.
 const h = vi.hoisted(() => ({
   openResult: { status: "switched", sessionName: "sOpen" } as unknown,
+  openPathResult: { status: "created", sessionName: "sNew", projectPath: "/p" } as unknown,
+  orphans: [{ pid: 111 }, { pid: 222 }] as { pid: number }[],
+  adoptOutcome: { ok: true, body: "adopted proj", sessionName: "sAdopt" } as {
+    ok: boolean;
+    body: string;
+    sessionName: string;
+  },
 }));
 
 vi.mock("../../../src/core/dashboard/dashboard.js", () => ({
@@ -23,9 +30,19 @@ vi.mock("../../../src/core/projects/project-ops.js", () => ({
     { sid: "p1", label: "Proj", alive: true, active: false },
   ]),
   openRecentProjectBySid: vi.fn(async () => h.openResult),
+  createProjectFromPath: vi.fn(async () => h.openPathResult),
 }));
 vi.mock("../../../src/core/command/dispatch.js", () => ({
   performStart: vi.fn(async () => "running"),
+}));
+// Mock the takeover modules — the real ones inspect/kill live processes.
+vi.mock("../../../src/core/agents/takeover.js", () => ({
+  orphanLabel: (o: { pid: number }) => `claude pid=${o.pid}`,
+}));
+vi.mock("../../../src/core/agents/takeover-service.js", () => ({
+  findAdoptableOrphans: vi.fn(async () => h.orphans),
+  adoptOrphan: vi.fn(async () => ({ ok: h.adoptOutcome.ok })),
+  composeAdoptOutcome: vi.fn(() => h.adoptOutcome),
 }));
 vi.mock("../../../src/core/recovery/recover.js", () => ({
   recoverProjects: vi.fn(async () => ({ launched: [1, 2], shellOnly: [3], alreadyAlive: [] })),
@@ -68,6 +85,7 @@ function fakeDeps(
     },
     activity: { onActivity: () => () => {} },
     notifier: new NotifierRegistry(),
+    currentProject: { set: vi.fn(async () => {}) },
   } as unknown as HandlerDeps;
 }
 
@@ -82,6 +100,9 @@ describe("control server op dispatch (real unix socket)", () => {
     dir = mkdtempSync(join(tmpdir(), "tcb-ctlops-"));
     process.env.TCB_STATE_DIR = dir;
     h.openResult = { status: "switched", sessionName: "sOpen" };
+    h.openPathResult = { status: "created", sessionName: "sNew", projectPath: "/p" };
+    h.orphans = [{ pid: 111 }, { pid: 222 }];
+    h.adoptOutcome = { ok: true, body: "adopted proj", sessionName: "sAdopt" };
   });
   afterEach(async () => {
     client?.close();
@@ -120,6 +141,29 @@ describe("control server op dispatch (real unix socket)", () => {
     expect(switched).toMatchObject({ status: "switched", session: "sOpen", started: "running" });
     h.openResult = { status: "not-found" };
     expect(await c.open("nope")).toEqual({ status: "not-found" });
+  });
+
+  it("openPath: created/switched starts the agent; invalid passes through", async () => {
+    const c = await connected();
+    const created = await c.openPath("/some/dir");
+    expect(created).toMatchObject({ status: "created", session: "sNew", started: "running" });
+    h.openPathResult = { status: "invalid", error: "not-allowed", resolvedPath: "/x" };
+    expect(await c.openPath("/x")).toEqual({
+      status: "invalid",
+      error: "not-allowed",
+      resolvedPath: "/x",
+    });
+  });
+
+  it("orphans lists adoptable processes; adopt runs the takeover", async () => {
+    const c = await connected();
+    expect(await c.orphans()).toEqual([
+      { pid: 111, label: "claude pid=111" },
+      { pid: 222, label: "claude pid=222" },
+    ]);
+    expect(await c.adopt(111)).toEqual({ ok: true, body: "adopted proj", session: "sAdopt" });
+    h.adoptOutcome = { ok: false, body: "target busy", sessionName: "" };
+    expect(await c.adopt(222)).toEqual({ ok: false, body: "target busy" });
   });
 
   it("surfaces a handler throw as a failed response", async () => {

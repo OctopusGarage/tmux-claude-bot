@@ -154,10 +154,13 @@ program
   });
 
 program
-  .command("autopilot")
-  .description("Show autopilot status across all sessions")
-  .option("--json", "output the raw snapshot as JSON")
-  .action(async (o) => {
+  .command("autopilot [project] [verb...]")
+  .description(
+    "no args: status across sessions · <project>: its autopilot view · <project> <verb>: drive it (on|off|stop|`goal <id>`|`goals <id,id> [rounds N]`|confirm|reject)",
+  )
+  .option("--json", "output JSON")
+  .action(async (project: string | undefined, verb: string[], o) => {
+    if (project) return (await ctl()).cmdAutopilot(project, verb, o);
     try {
       const { bootstrap } = await import("./bootstrap.js");
       const { buildAutopilotSnapshot, formatAutopilotText } = await import(
@@ -230,9 +233,19 @@ program
 
 program
   .command("open <project>")
-  .description("switch to / start a project (by name; includes stopped ones)")
+  .description(
+    "switch to / start a project — by name (incl. stopped) or a filesystem path to create a new one",
+  )
   .option("--json", "output JSON")
   .action(async (project, o) => (await ctl()).cmdOpen(project, o));
+
+program
+  .command("adopt [pid]")
+  .description(
+    "list claude/codex running outside tmux, or adopt one by PID (stops it, resumes under management)",
+  )
+  .option("--json", "output JSON")
+  .action(async (pid, o) => (await ctl()).cmdAdopt(pid, o));
 
 program
   .command("control <project> <action>")

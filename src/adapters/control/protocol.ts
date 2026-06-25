@@ -22,6 +22,9 @@ export type ControlRequest =
   | { id: number; op: "control"; session: string; action: string }
   | { id: number; op: "projects" }
   | { id: number; op: "open"; sid: string }
+  | { id: number; op: "openPath"; path: string }
+  | { id: number; op: "orphans" }
+  | { id: number; op: "adopt"; pid: number }
   | { id: number; op: "recover" }
   | { id: number; op: "logs"; session: string }
   | { id: number; op: "sysload" }

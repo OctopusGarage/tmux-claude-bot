@@ -1,5 +1,7 @@
+import { resolve } from "node:path";
 import { ControlClient } from "../adapters/control/client.js";
 import type { SessionRow } from "../core/dashboard/dashboard.js";
+import { expandTilde } from "../shared/utils/path.js";
 
 /**
  * One-shot CLI clients of the bot's control socket — so an AI agent (or a script)
@@ -153,10 +155,58 @@ export async function cmdSend(
 
 export async function cmdOpen(ref: string, opts: { json?: boolean }): Promise<void> {
   await withClient(async (c) => {
-    const sid = await resolveProjectSid(c, ref);
-    const res = await c.open(sid);
+    // A known (live/recent) project by name or short-id → switch / start it.
+    const sid = await resolveProjectSid(c, ref).then(
+      (s) => s,
+      () => null,
+    );
+    if (sid) {
+      const res = await c.open(sid);
+      if (opts.json) return json(res);
+      out(`open ${ref}: ${res.status}${res.started ? ` (${res.started})` : ""}`);
+      return;
+    }
+    // Otherwise treat ref as a filesystem path (~, relative, or absolute) and
+    // create the project there — parity with the chat /add_project flow. Resolve
+    // against the SHELL cwd here: the bot would resolve a relative path against
+    // its own working dir, not the user's.
+    const abs = resolve(process.cwd(), expandTilde(ref));
+    const res = await c.openPath(abs);
     if (opts.json) return json(res);
-    out(`open ${ref}: ${res.status}${res.started ? ` (${res.started})` : ""}`);
+    if (res.status === "created" || res.status === "switched") {
+      out(`open ${ref}: ${res.status}${res.started ? ` (${res.started})` : ""}`);
+    } else if (res.status === "invalid") {
+      fail(new Error(`cannot open "${ref}": ${res.error} (${res.resolvedPath})`));
+    } else {
+      fail(new Error(res.message ?? `open failed: ${res.status}`));
+    }
+  }).catch(fail);
+}
+
+/** List claude/codex running outside tmux, or adopt one by PID (stop it, then
+ * resume it under a managed tmux session). Mirrors the chat /adopt flow. */
+export async function cmdAdopt(pid: string | undefined, opts: { json?: boolean }): Promise<void> {
+  await withClient(async (c) => {
+    if (pid === undefined) {
+      const orphans = await c.orphans();
+      if (opts.json) return json(orphans);
+      if (orphans.length === 0) {
+        out("no adoptable processes (no claude/codex running outside tmux)");
+        return;
+      }
+      for (const o of orphans) out(`${o.pid}\t${o.label}`);
+      out("\nadopt one: tcb adopt <pid>");
+      return;
+    }
+    const n = Number(pid);
+    if (!Number.isInteger(n) || n <= 0) {
+      fail(new Error(`invalid pid: ${pid}`));
+      return;
+    }
+    const res = await c.adopt(n);
+    if (opts.json) return json(res);
+    out(res.body);
+    if (!res.ok) process.exitCode = 1;
   }).catch(fail);
 }
 
@@ -170,5 +220,36 @@ export async function cmdControl(
     const ack = await c.control(session, action);
     if (opts.json) return json({ session, action, ...ack });
     out(`${action} → ${ref}: ${ack.status}`);
+  }).catch(fail);
+}
+
+/** Drive a session's autopilot: no verb prints its view; a verb (on|off|stop|
+ * `goal <id>` | `goals <id,id> [rounds N]` | confirm | reject | global on/off)
+ * is applied — the same verbs the chat panel and TUI use. */
+export async function cmdAutopilot(
+  ref: string,
+  verbParts: string[],
+  opts: { json?: boolean },
+): Promise<void> {
+  await withClient(async (c) => {
+    const session = await resolveSession(c, ref);
+    const verb = (verbParts ?? []).join(" ").trim();
+    if (verb) {
+      const res = await c.autopilot(session, verb);
+      if (opts.json) return json(res);
+      out(res.status);
+      return;
+    }
+    const view = await c.autopilotView(session);
+    if (opts.json) return json(view);
+    out(view.statusLine);
+    if (view.cycle) {
+      const cy = view.cycle;
+      out(
+        `goal ${cy.goalId} (${cy.pos}/${cy.total}, round ${cy.round}/${cy.rounds})${
+          view.gatePending ? " — awaiting confirm (tcb autopilot <project> confirm)" : ""
+        }`,
+      );
+    }
   }).catch(fail);
 }

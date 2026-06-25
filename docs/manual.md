@@ -144,7 +144,8 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 | `tcb projects` | list projects (live + recent); `tcb open <name>` to start one |
 | `tcb send <project> "<prompt>"` | send a prompt to a project's agent; **waits for the reply** (`--no-wait` / `--timeout <s>`) |
 | `tcb peek <project>` | print a snapshot of its tmux pane |
-| `tcb open <project>` | switch to / start a project (incl. stopped ones) |
+| `tcb open <project>` | switch to / start a project — by name (incl. stopped) or a filesystem path to create a new one |
+| `tcb adopt [pid]` | list claude/codex running outside tmux, or adopt one by PID (stops it, resumes under management) |
 | `tcb control <project> <esc\|enter\|restart\|…>` | send a control action |
 | `tcb skill install` | install the AI operating skill into Claude Code / Codex (`--tool` for one) |
 

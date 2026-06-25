@@ -1,5 +1,11 @@
 import { existsSync, unlinkSync } from "node:fs";
 import net from "node:net";
+import { orphanLabel } from "../../core/agents/takeover.js";
+import {
+  adoptOrphan,
+  composeAdoptOutcome,
+  findAdoptableOrphans,
+} from "../../core/agents/takeover-service.js";
 import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
 import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
@@ -16,7 +22,11 @@ import {
 import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
 import { isOperator } from "../../core/projects/operator.js";
-import { openRecentProjectBySid, recentProjectButtons } from "../../core/projects/project-ops.js";
+import {
+  createProjectFromPath,
+  openRecentProjectBySid,
+  recentProjectButtons,
+} from "../../core/projects/project-ops.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { getRecentInputs } from "../../core/read/recent-inputs.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
@@ -147,6 +157,43 @@ async function handleRequest(
         } else {
           ok(res);
         }
+        return;
+      }
+      case "openPath": {
+        // Start (or switch to) a project by filesystem path — parity with the
+        // chat /add_project flow, for a path the bot doesn't yet know. Same
+        // create-then-start as `open`; invalid/error pass through for the client.
+        const res = await createProjectFromPath(deps, CONTROL_SCOPE, req.path);
+        if (res.status === "created" || res.status === "switched") {
+          const started = await performStart(deps, res.sessionName);
+          ok({ status: res.status, session: res.sessionName, started });
+        } else {
+          ok(res);
+        }
+        return;
+      }
+      case "orphans": {
+        // Claude/Codex running OUTSIDE tmux that the bot could adopt.
+        const orphans = await findAdoptableOrphans();
+        ok(orphans.map((o) => ({ pid: o.pid, label: orphanLabel(o) })));
+        return;
+      }
+      case "adopt": {
+        // Stop the orphan and resume it under a managed tmux session — the same
+        // takeover the chat /adopt button runs.
+        const result = await adoptOrphan(req.pid, {
+          bridge: deps.bridge,
+          configResolver: deps.configResolver,
+          projectSessionPrefix: deps.config.projectSessionPrefix,
+          warmupMs: deps.config.sessionWarmupMs,
+        });
+        const outcome = composeAdoptOutcome(result, CONTROL_SCOPE);
+        if (outcome.ok) await deps.currentProject.set(CONTROL_SCOPE, outcome.sessionName);
+        ok({
+          ok: outcome.ok,
+          body: outcome.body,
+          ...(outcome.ok ? { session: outcome.sessionName } : {}),
+        });
         return;
       }
       case "recover": {
