@@ -41,6 +41,19 @@ describe("controls", () => {
     autopilotDisable(store, "s1");
     expect(autopilotStatusText(store, "s1", messages("telegram"))).toContain("关");
   });
+
+  it("intervention count shows goalIterations in goal mode (not the keep-alive counter)", () => {
+    // Goal mode injects via goalIterations; the keep-alive `iterations` stays 0,
+    // so the status must read goalIterations or it's stuck at "intervened 0 times".
+    store.set("s1", {
+      ...store.get("s1"),
+      enabled: true,
+      goalId: "fix-tests",
+      iterations: 0,
+      goalIterations: 3,
+    });
+    expect(autopilotStatusText(store, "s1", messages("telegram"))).toContain("已干预 3 次");
+  });
 });
 
 describe("autopilot verb: goals cycle", () => {

@@ -65,6 +65,21 @@ describe("detectCheckCommand", () => {
     expect(detectCheckCommand("test", dir)).toBe("pytest");
   });
 
+  it("uv project → uv run pytest (so it uses the project venv + plugins)", () => {
+    writeFileSync(join(dir, "pyproject.toml"), "[project]\n");
+    writeFileSync(join(dir, "uv.lock"), "");
+    expect(detectCheckCommand("test", dir)).toBe("uv run pytest");
+    expect(detectCheckCommand("coverage", dir)).toBe(
+      "uv run pytest --cov --cov-report=term-missing",
+    );
+  });
+
+  it("poetry project → poetry run pytest", () => {
+    writeFileSync(join(dir, "pyproject.toml"), "[tool.poetry]\n");
+    writeFileSync(join(dir, "poetry.lock"), "");
+    expect(detectCheckCommand("test", dir)).toBe("poetry run pytest");
+  });
+
   it("go.mod → go test", () => {
     writeFileSync(join(dir, "go.mod"), "module x\n");
     expect(detectCheckCommand("coverage", dir)).toBe("go test -cover ./...");

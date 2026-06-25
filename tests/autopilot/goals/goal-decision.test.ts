@@ -78,6 +78,38 @@ describe("decideGoal", () => {
     expect(r.kind).toBe("inject");
     if (r.kind === "inject") expect(r.text).toContain("failing tests");
   });
+  it("an in-flight check (pending, not yet failed) waits instead of re-injecting", async () => {
+    // The agent emitted GOAL_DONE but the gating check's first run hasn't returned
+    // (cache miss → pending). Must NOT re-inject the phase prompt — wait a tick.
+    const g = getGoal("fix-tests");
+    if (!g) throw new Error("goal not found");
+    const r = await decideGoal(
+      g,
+      sig({ sentinels: ["GOAL_DONE"] }),
+      startGoalState(defaultState(), "fix-tests"),
+      {
+        ...ctx,
+        runCheck: async () => ({ ok: false, pending: true }),
+      },
+    );
+    expect(r.kind).toBe("none");
+  });
+
+  it("a genuinely failing check (not pending) still injects to keep the agent working", async () => {
+    const g = getGoal("fix-tests");
+    if (!g) throw new Error("goal not found");
+    const r = await decideGoal(
+      g,
+      sig({ sentinels: ["GOAL_DONE"] }),
+      startGoalState(defaultState(), "fix-tests"),
+      {
+        ...ctx,
+        runCheck: async () => ({ ok: false }),
+      },
+    );
+    expect(r.kind).toBe("inject");
+  });
+
   it("sentinel + check satisfied on a single-phase goal → finalize", async () => {
     const g = getGoal("fix-tests");
     if (!g) throw new Error("goal not found");
@@ -188,6 +220,92 @@ describe("decideGoal", () => {
       runCheck: async () => ({ ok: false }),
     });
     expect(r.kind).toBe("inject");
+  });
+
+  it("harden-standards chains assess → harden (test-gated) → human confirm", async () => {
+    const g = getGoal("harden-standards");
+    if (!g) throw new Error("goal not found");
+    expect(g.phases.map((p) => p.id)).toEqual(["assess", "harden"]);
+
+    // assess (phase 0): [ASSESS_DONE] → advance to harden
+    const r0 = await decideGoal(
+      g,
+      sig({ sentinels: ["ASSESS_DONE"] }),
+      startGoalState(defaultState(), "harden-standards"),
+      ctx,
+    );
+    expect(r0.kind).toBe("advance");
+    if (r0.kind !== "advance") return;
+    expect(r0.nextState.phaseIndex).toBe(1);
+
+    // harden (phase 1): [GOAL_DONE] + green detectCheck reaches the human gate
+    const r1 = await decideGoal(g, sig({ sentinels: ["GOAL_DONE"] }), r0.nextState, ctx);
+    expect(r1.kind).toBe("awaitHuman");
+    if (r1.kind !== "awaitHuman") return;
+
+    const r2 = await decideGoal(
+      g,
+      sig({ sentinels: ["GOAL_DONE"] }),
+      { ...r1.nextState, humanConfirmed: true, humanGatePending: false },
+      ctx,
+    );
+    expect(r2.kind).toBe("finalize");
+  });
+
+  it("polish-github chains audit → polish (test-gated) → human confirm", async () => {
+    const g = getGoal("polish-github");
+    if (!g) throw new Error("goal not found");
+    expect(g.phases.map((p) => p.id)).toEqual(["audit", "polish"]);
+
+    const r0 = await decideGoal(
+      g,
+      sig({ sentinels: ["AUDIT_DONE"] }),
+      startGoalState(defaultState(), "polish-github"),
+      ctx,
+    );
+    expect(r0.kind).toBe("advance");
+    if (r0.kind !== "advance") return;
+    expect(r0.nextState.phaseIndex).toBe(1);
+
+    const r1 = await decideGoal(g, sig({ sentinels: ["GOAL_DONE"] }), r0.nextState, ctx);
+    expect(r1.kind).toBe("awaitHuman");
+    if (r1.kind !== "awaitHuman") return;
+
+    const r2 = await decideGoal(
+      g,
+      sig({ sentinels: ["GOAL_DONE"] }),
+      { ...r1.nextState, humanConfirmed: true, humanGatePending: false },
+      ctx,
+    );
+    expect(r2.kind).toBe("finalize");
+  });
+
+  it("sync-docs chains audit → align (test-gated) → human confirm", async () => {
+    const g = getGoal("sync-docs");
+    if (!g) throw new Error("goal not found");
+    expect(g.phases.map((p) => p.id)).toEqual(["audit", "align"]);
+
+    const r0 = await decideGoal(
+      g,
+      sig({ sentinels: ["AUDIT_DONE"] }),
+      startGoalState(defaultState(), "sync-docs"),
+      ctx,
+    );
+    expect(r0.kind).toBe("advance");
+    if (r0.kind !== "advance") return;
+    expect(r0.nextState.phaseIndex).toBe(1);
+
+    const r1 = await decideGoal(g, sig({ sentinels: ["GOAL_DONE"] }), r0.nextState, ctx);
+    expect(r1.kind).toBe("awaitHuman");
+    if (r1.kind !== "awaitHuman") return;
+
+    const r2 = await decideGoal(
+      g,
+      sig({ sentinels: ["GOAL_DONE"] }),
+      { ...r1.nextState, humanConfirmed: true, humanGatePending: false },
+      ctx,
+    );
+    expect(r2.kind).toBe("finalize");
   });
 
   it("a seq with two human gates requires a fresh confirm for each (one-shot confirm)", async () => {

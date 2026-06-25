@@ -224,6 +224,10 @@ export async function runSupervisorTick(
             return { kind: "stop", reason: "goal max iterations" };
           }
           if (state.cooldownUntil !== undefined && now < state.cooldownUntil) {
+            log.debug("autopilot goal inject suppressed (cooldown)", {
+              session,
+              data: { goalId: goal.id, cooldownForMs: state.cooldownUntil - now },
+            });
             return { kind: "none" };
           }
           deps.queue.enqueue({
@@ -237,6 +241,17 @@ export async function runSupervisorTick(
             reject: () => {},
           });
           store.set(session, { ...outcome.nextState, cooldownUntil: now + cfg.cooldownMs });
+          // A re-inject of the SAME phase (iteration climbing without an `advance`)
+          // means the agent hadn't picked up the previous prompt before the cooldown
+          // lapsed — visible here as repeated lines with the same phaseIndex.
+          log.info("autopilot goal prompt injected", {
+            session,
+            data: {
+              goalId: goal.id,
+              phaseIndex: state.phaseIndex ?? 0,
+              iteration: outcome.nextState.goalIterations ?? 0,
+            },
+          });
           return { kind: "nudge", text: outcome.text };
         }
         case "advance":

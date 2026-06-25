@@ -53,10 +53,14 @@ export function autopilotStatusText(
   msgs: Messages,
 ): string {
   const s = store.get(session);
+  // In goal mode the bot intervenes via goal-prompt injections (goalIterations);
+  // the keep-alive `iterations` counter stays 0 there. Show the mode-relevant
+  // count so the status isn't stuck at "intervened 0 times" while a goal runs.
+  const iterations = s.goalId !== undefined ? (s.goalIterations ?? 0) : s.iterations;
   return msgs.autopilotStatus({
     enabled: s.enabled,
     pureKeepAlive: s.pureKeepAlive,
-    iterations: s.iterations,
+    iterations,
     persona: s.persona,
     ...(s.goalId !== undefined && { goal: { id: s.goalId, phaseIndex: s.phaseIndex ?? 0 } }),
   });
