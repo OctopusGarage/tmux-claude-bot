@@ -11,6 +11,7 @@ export async function sendTelegramAttachment(
   caption?: string,
 ): Promise<void> {
   const id = Number(chatId);
+  if (!chatId || !Number.isInteger(id)) throw new Error(`invalid telegram chatId: ${chatId}`);
   const file = new InputFile(filePath);
   const extra = caption !== undefined ? { caption } : {};
   if (kind === "image") await api.sendPhoto(id, file, extra);

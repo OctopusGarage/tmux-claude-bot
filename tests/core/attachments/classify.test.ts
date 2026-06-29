@@ -24,14 +24,28 @@ describe("validateAttachment", () => {
     expect(r).toEqual({ ok: false, error: expect.stringContaining("not found") });
   });
   it("fails when over the size limit", () => {
-    const r = validateAttachment("/big.zip", () => MAX_ATTACHMENT_BYTES + 1);
+    const r = validateAttachment("/big.zip", () => ({
+      size: MAX_ATTACHMENT_BYTES + 1,
+      isFile: true,
+    }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("too large");
   });
   it("passes a valid image and reports its kind", () => {
-    expect(validateAttachment("/ok.png", () => 1234)).toEqual({ ok: true, kind: "image" });
+    expect(validateAttachment("/ok.png", () => ({ size: 1234, isFile: true }))).toEqual({
+      ok: true,
+      kind: "image",
+    });
   });
   it("passes a valid document", () => {
-    expect(validateAttachment("/ok.pdf", () => 1234)).toEqual({ ok: true, kind: "file" });
+    expect(validateAttachment("/ok.pdf", () => ({ size: 1234, isFile: true }))).toEqual({
+      ok: true,
+      kind: "file",
+    });
+  });
+  it("FIX4: fails when path is a directory (isFile: false)", () => {
+    const r = validateAttachment("/some/dir", () => ({ size: 4096, isFile: false }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/not a regular file/);
   });
 });

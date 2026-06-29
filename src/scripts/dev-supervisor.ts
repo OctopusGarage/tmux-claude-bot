@@ -70,6 +70,8 @@ function spawnChild(
 export function startSupervisor(deps: SupervisorDeps): { stop(): void } {
   const crashes: number[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let running = false;
+  let pending = false;
   let current = spawnChild(deps, crashes, (next) => {
     current = next;
   });
@@ -88,6 +90,7 @@ export function startSupervisor(deps: SupervisorDeps): { stop(): void } {
     }
     current.markIntentional();
     current.child.kill();
+    crashes.length = 0;
     current = spawnChild(deps, crashes, (next) => {
       current = next;
     });
@@ -97,10 +100,26 @@ export function startSupervisor(deps: SupervisorDeps): { stop(): void } {
     log.info("reloaded after clean typecheck");
   }
 
+  async function maybeRun(): Promise<void> {
+    if (running) return;
+    while (pending) {
+      pending = false;
+      running = true;
+      try {
+        await onSettled();
+      } finally {
+        running = false;
+      }
+    }
+  }
+
   const unwatch = deps.watchSrc((rel) => {
     if (!shouldTriggerReload(rel)) return;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void onSettled(), deps.debounceMs);
+    timer = setTimeout(() => {
+      pending = true;
+      void maybeRun();
+    }, deps.debounceMs);
   });
 
   return {

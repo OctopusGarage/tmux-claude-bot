@@ -29,6 +29,24 @@ describe("sendLarkAttachment", () => {
     expect(JSON.parse(msg.data.content)).toEqual({ image_key: "img_1" });
   });
 
+  it("FIX3: throws when image upload returns no image_key", async () => {
+    const c = fakeClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    c.im.v1.image.create = vi.fn(async () => ({}) as any);
+    await expect(
+      sendLarkAttachment(c as never, "oc_x", "/d.png", "image", undefined, () => "STREAM"),
+    ).rejects.toThrow(/image_key/);
+  });
+
+  it("FIX3: throws when file upload returns no file_key", async () => {
+    const c = fakeClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    c.im.v1.file.create = vi.fn(async () => ({}) as any);
+    await expect(
+      sendLarkAttachment(c as never, "oc_x", "/r.pdf", "file", undefined, () => "STREAM"),
+    ).rejects.toThrow(/file_key/);
+  });
+
   it("uploads a file then sends a file message, plus a caption text message", async () => {
     const c = fakeClient();
     await sendLarkAttachment(c as never, "oc_x", "/r.pdf", "file", "see attached", () => "STREAM");

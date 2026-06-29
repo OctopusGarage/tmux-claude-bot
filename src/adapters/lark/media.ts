@@ -42,12 +42,16 @@ export async function sendLarkAttachment(
     const up = await client.im.v1.image.create({
       data: { image_type: "message", image: openStream(filePath) },
     });
-    await sendMessage(client, chatId, "image", { image_key: up.image_key ?? up.data?.image_key });
+    const imageKey = up.image_key ?? up.data?.image_key;
+    if (!imageKey) throw new Error("lark image upload returned no image_key");
+    await sendMessage(client, chatId, "image", { image_key: imageKey });
   } else {
     const up = await client.im.v1.file.create({
       data: { file_type: "stream", file_name: basename(filePath), file: openStream(filePath) },
     });
-    await sendMessage(client, chatId, "file", { file_key: up.file_key ?? up.data?.file_key });
+    const fileKey = up.file_key ?? up.data?.file_key;
+    if (!fileKey) throw new Error("lark file upload returned no file_key");
+    await sendMessage(client, chatId, "file", { file_key: fileKey });
   }
   if (caption) await sendMessage(client, chatId, "text", { text: caption });
 }

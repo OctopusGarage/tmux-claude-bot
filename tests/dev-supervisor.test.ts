@@ -158,6 +158,91 @@ describe("startSupervisor", () => {
     expect(startChild).toHaveBeenCalledTimes(1);
   });
 
+  it("FIX1: concurrent onSettled — a second change during an in-flight typecheck does NOT start a second concurrent run", async () => {
+    // Bug: debounce fires → void onSettled() starts → timer still holds old handle.
+    // A second change sets a new timer → second void onSettled() starts concurrently →
+    // two kill/respawn sequences race on `current`.
+    // Fix: running+pending flags; maybeRun loops after the first finishes.
+    let resolveFirst!: (v: number) => void;
+    let callCount = 0;
+    const runTypecheck = vi.fn(
+      () =>
+        new Promise<number>((res) => {
+          callCount++;
+          resolveFirst = res;
+        }),
+    );
+    const { deps, startChild, fire } = makeDeps({ runTypecheck });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    // First change — debounce fires → typecheck starts (slow, not yet resolved).
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await Promise.resolve();
+    expect(callCount).toBe(1); // one typecheck in flight
+
+    // Second change arrives while first typecheck is still running.
+    fire("core/y.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await Promise.resolve();
+    // Must still be only ONE concurrent typecheck in flight.
+    expect(callCount).toBe(1);
+
+    // Resolve the first typecheck.
+    resolveFirst(0);
+    await flushAll();
+    // The pending flag should trigger a second run after the first completes.
+    // Provide the resolver for the second run.
+    resolveFirst(0);
+    await flushAll();
+
+    // Total: exactly 2 typecheck calls (one per settled batch), never concurrent.
+    expect(runTypecheck).toHaveBeenCalledTimes(2);
+    // Two restarts: one per completed typecheck batch.
+    expect(startChild).toHaveBeenCalledTimes(2);
+  });
+
+  it("FIX2: crash after successful reload does NOT trigger crash-wait (counter reset on reload)", async () => {
+    // Bug: crashes[] is never cleared on a successful reload, so accumulated
+    // pre-reload crashes count toward the post-reload window.
+    // Fix: crashes.length = 0 after a clean respawn.
+    const now = 1000;
+    let fireChange!: (rel: string) => void;
+    const { deps, children, startChild, statuses } = makeDeps({
+      now: () => now,
+      backoff: { windowMs: 10_000, maxInWindow: 3, delayMs: 10 },
+      watchSrc: (cb: (rel: string) => void) => {
+        fireChange = cb;
+        return () => {};
+      },
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    // Accumulate maxInWindow-1 = 2 crashes (below the wait threshold).
+    for (let i = 0; i < 2; i++) {
+      children.at(-1)!.fireExit();
+      await vi.advanceTimersByTimeAsync(15);
+    }
+    expect(startChild).toHaveBeenCalledTimes(2); // two respawns, still going
+    startChild.mockClear();
+    statuses.length = 0;
+
+    // Perform a clean reload — this should reset the crash counter.
+    fireChange("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+    expect(startChild).toHaveBeenCalledTimes(1); // one respawn on reload
+    startChild.mockClear();
+
+    // A single crash after the reload should respawn (NOT enter crash-wait).
+    children.at(-1)!.fireExit();
+    await vi.advanceTimersByTimeAsync(15);
+    expect(startChild).toHaveBeenCalledTimes(1); // respawned
+    expect(statuses.find((s) => s.state === "crash-wait")).toBeUndefined();
+  });
+
   it("enough crashes in the window → nextCrashAction returns wait → no respawn, crash-wait status written", async () => {
     const now = 1000;
     const { deps, children, startChild, statuses } = makeDeps({

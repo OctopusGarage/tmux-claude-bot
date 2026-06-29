@@ -12,6 +12,18 @@ describe("sendTelegramAttachment", () => {
     expect(a.sendPhoto).toHaveBeenCalledWith(55, expect.any(InputFile), { caption: "cap" });
     expect(a.sendDocument).not.toHaveBeenCalled();
   });
+  it("FIX5: throws on empty chatId", async () => {
+    const a = api();
+    await expect(sendTelegramAttachment(a as never, "", "/a.png", "image")).rejects.toThrow(
+      /invalid telegram chatId/,
+    );
+  });
+  it("FIX5: throws on non-numeric chatId", async () => {
+    const a = api();
+    await expect(
+      sendTelegramAttachment(a as never, "not-a-number", "/a.png", "image"),
+    ).rejects.toThrow(/invalid telegram chatId/);
+  });
   it("sends a file via sendDocument", async () => {
     const a = api();
     await sendTelegramAttachment(a as never, "55", "/x.pdf", "file");

@@ -18,7 +18,7 @@ describe("handleSendAttachment", () => {
     const res = await handleSendAttachment(depsWith(new ChannelSenderRegistry()), {
       session: "s1",
       filePath: "/a.png",
-      statSize: () => 10,
+      statInfo: () => ({ size: 10, isFile: true }),
     });
     expect(res).toEqual({ ok: false, error: expect.stringContaining("no chat is bound") });
   });
@@ -28,7 +28,7 @@ describe("handleSendAttachment", () => {
     const res = await handleSendAttachment(depsWith(new ChannelSenderRegistry()), {
       session: "s1",
       filePath: "/missing.png",
-      statSize: () => null,
+      statInfo: () => null,
     });
     expect(res.ok).toBe(false);
   });
@@ -42,7 +42,7 @@ describe("handleSendAttachment", () => {
       session: "s1",
       filePath: "/diagram.png",
       caption: "arch",
-      statSize: () => 100,
+      statInfo: () => ({ size: 100, isFile: true }),
     });
     expect(res).toEqual({ ok: true, status: "sent" });
     expect(tg).toHaveBeenCalledWith("55", "/diagram.png", "image", "arch");
@@ -55,7 +55,7 @@ describe("handleSendAttachment", () => {
     const res = await handleSendAttachment(depsWith(reg), {
       session: "s1",
       filePath: "/a.png",
-      statSize: () => 10,
+      statInfo: () => ({ size: 10, isFile: true }),
     });
     expect(res).toEqual({ ok: false, error: "network fail" });
   });

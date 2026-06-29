@@ -125,21 +125,22 @@ export async function handleSendAttachment(
     session: string;
     filePath: string;
     caption?: string;
-    statSize?: (p: string) => number | null;
+    statInfo?: (p: string) => { size: number; isFile: boolean } | null;
   },
 ): Promise<{ ok: true; status: string } | { ok: false; error: string }> {
-  const statSize =
-    req.statSize ??
+  const statInfo =
+    req.statInfo ??
     ((p: string) => {
       try {
-        return statSync(p).size;
+        const st = statSync(p);
+        return { size: st.size, isFile: st.isFile() };
       } catch {
         return null;
       }
     });
   const target = resolveReplyTarget(req.session);
   if (!target) return { ok: false, error: "no chat is bound to this session" };
-  const v = validateAttachment(req.filePath, statSize);
+  const v = validateAttachment(req.filePath, statInfo);
   if (!v.ok) return { ok: false, error: v.error };
   try {
     await deps.channelSenders.send(

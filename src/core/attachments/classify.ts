@@ -12,12 +12,16 @@ export function classifyKind(filePath: string): AttachmentKind {
 
 export function validateAttachment(
   filePath: string,
-  statSize: (p: string) => number | null,
+  statInfo: (p: string) => { size: number; isFile: boolean } | null,
 ): { ok: true; kind: AttachmentKind } | { ok: false; error: string } {
-  const size = statSize(filePath);
-  if (size === null) return { ok: false, error: `file not found: ${basename(filePath)}` };
-  if (size > MAX_ATTACHMENT_BYTES) {
-    return { ok: false, error: `file too large (${size} bytes; max ${MAX_ATTACHMENT_BYTES})` };
+  const info = statInfo(filePath);
+  if (info === null) return { ok: false, error: `file not found: ${basename(filePath)}` };
+  if (!info.isFile) return { ok: false, error: `${basename(filePath)} is not a regular file` };
+  if (info.size > MAX_ATTACHMENT_BYTES) {
+    return {
+      ok: false,
+      error: `file too large (${info.size} bytes; max ${MAX_ATTACHMENT_BYTES})`,
+    };
   }
   return { ok: true, kind: classifyKind(filePath) };
 }

@@ -78,11 +78,13 @@ case "$cmd" in
   dev)
     REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
     "$REPO_DIR/scripts/install-launchd.sh" --dev
+    launchctl kickstart -k "$DOMAIN/$LABEL" 2>/dev/null || true
     echo "switched to DEV (hot-reload from $REPO_DIR)"
     ;;
   prod)
     PROD_DIR="${TMUX_CLAUDE_BOT_DIR:-$HOME/.tmux-claude-bot}"
     "$PROD_DIR/scripts/install-launchd.sh"
+    launchctl kickstart -k "$DOMAIN/$LABEL" 2>/dev/null || true
     echo "switched to PROD (bundled dist at $PROD_DIR)"
     ;;
   mode) detect_mode ;;
