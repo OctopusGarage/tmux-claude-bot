@@ -8,10 +8,17 @@ UNIT="tmux-claude-bot"
 UNIT_DIR="$HOME/.config/systemd/user"
 TARGET="$UNIT_DIR/$UNIT.service"
 
+WRAPPER="systemd-wrapper.sh"
+if [ "${1:-}" = "--dev" ]; then
+  WRAPPER="dev-systemd-wrapper.sh"
+  echo "[install-systemd] DEV mode: service will hot-reload from $PROJECT_DIR"
+fi
+
 mkdir -p "$UNIT_DIR"
 mkdir -p "$PROJECT_DIR/logs"
 
-sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$SCRIPT_DIR/$UNIT.service" > "$TARGET"
+sed -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" -e "s|__WRAPPER__|$WRAPPER|g" \
+  "$SCRIPT_DIR/$UNIT.service" > "$TARGET"
 echo "[install-systemd] Installed unit to $TARGET"
 
 systemctl --user daemon-reload

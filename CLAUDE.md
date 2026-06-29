@@ -51,6 +51,47 @@ If any matches are found, refactor to use `process.env`, `os.homedir()`, or gene
 
 **Only ONE bot instance should run at a time.** Multiple instances cause 409 Conflict with Telegram API.
 
+### Run & dev modes (overview)
+
+The bot can run in several modes. They differ on four axes: **what executes**
+(compiled `dist` vs `tsx` source), **hot-reload** (does saving a `src/` edit take
+effect live?), **persistence** (does it survive terminal close / reboot / crash?),
+and **config+state source** (the deployed prod profile vs a repo-local one). The
+hard invariant across all of them: **one instance per state dir** — the runtime
+instance lock (`src/core/infra/instance-lock.ts`) refuses a second instance
+sharing a `TCB_STATE_DIR`, so modes that share the prod state are mutually
+exclusive.
+
+| Mode | What runs | Hot-reload | Persist / auto-restart | Config+state | Start / switch | Use when |
+|------|-----------|-----------|------------------------|--------------|----------------|----------|
+| **Managed — prod** (default) | `dist/cli.js` (built) | No (runs last build) | Yes (launchd KeepAlive / systemd `Restart=always` + reboot) | prod `~/.tmux-claude-bot/state` | `node dist/cli.js install` (deploy); `npm run service:prod` (switch back) | Stable production runtime |
+| **Managed — dev** (hot-reload) | supervisor → `tsx src/index.ts` | **Yes, `tsc`-gated** | Yes (KeepAlive + supervisor crash-backoff + reboot) | borrows prod `~/.tmux-claude-bot/state` | `npm run service:dev` ⇄ `npm run service:prod` | Self-evolving dev: improve the bot live while using it (rule in gitignored `CLAUDE.local.md`) |
+| **`npm run dev`** | `tsx watch src/index.ts` | Yes (raw, no `tsc` gate) | No (foreground; dies with terminal) | borrows prod by default; `TCB_DEV_LOCAL=1` = repo-local; explicit `TCB_STATE_DIR`/`TCB_ENV_FILE` wins | `npm run dev` | One-off foreground dev. NOTE: borrowing prod state hits the instance lock while the managed service is up — use `./dev.sh` instead |
+| **`./dev.sh`** | `npm run dev` (borrow prod) | Yes (raw) | No (foreground) | borrows prod | `./dev.sh` | Quick interactive dev against the real profile — auto-pauses the managed service and resumes it on exit |
+| **`npm run tui`** (`tcb tui`) | Ink client of the control socket | n/a | n/a | connects to a running bot | `npm run tui` | NOT a bot instance — a third client surface onto whichever bot is already running |
+
+**Switching cheatsheet:**
+
+```
+prod  -> dev (hot-reload):   npm run service:dev      # repoints managed service at the repo supervisor
+dev   -> prod (stable dist): npm run service:prod     # repoints back at the deployed dist
+update prod with new source: node dist/cli.js install # build + deploy to the managed prod instance
+quick interactive session:   ./dev.sh                 # auto pause/resume the managed service
+inspect a running bot:       npm run tui              # control-socket client (no new instance)
+which mode is live?:         scripts/service.sh mode  # prints prod|dev|none (also in `service:status`)
+```
+
+**Profile (config+state) resolution** is owned by `scripts/dev-env.sh` (used by
+`npm run dev`): default borrows the deployed prod `~/.tmux-claude-bot/state`
+(+`.env`) so dev mirrors real projects/sessions; `TCB_DEV_LOCAL=1` forces the
+repo's own `.env` + local state; an explicit `TCB_STATE_DIR`/`TCB_ENV_FILE`
+overrides everything (how `dev.sh`, the managed-dev wrapper, and tests pin their
+dirs). The managed-dev wrapper (`scripts/dev-launchd-wrapper.sh`) borrows prod
+the same way.
+
+The subsections below detail each manager (launchd / systemd / dev-service /
+manual scripts).
+
 ### launchd is the real manager — restart via launchctl, NOT the scripts
 
 On this machine the bot is installed as a launchd service (`~/Library/LaunchAgents/com.octopusgarage.tmux-claude-bot.plist`, label `com.octopusgarage.tmux-claude-bot`) with **`KeepAlive=true`**. That means:
@@ -87,21 +128,27 @@ which dispatch by OS). The instance is identified the same way:
 
 ### Dev-service mode (hot-reload from source)
 
-`npm run service:dev` repoints the managed launchd service at the repo's
-hot-reload supervisor (`scripts/dev-launchd-wrapper.sh` -> `tsx
-src/scripts/dev-supervisor.ts`) instead of the bundled `dist`. Editing `src/`
-then takes effect live, gated by `tsc` (a failing typecheck keeps the last-good
-process up; see `src/core/dev/supervisor-core.ts`). `npm run service:prod`
-switches back to the deployed dist. Only one of the two runs at a time (instance
-lock). KeepAlive still covers crash-respawn and boot-autostart.
+`npm run service:dev` repoints the managed service at the repo's hot-reload
+supervisor (macOS: `scripts/dev-launchd-wrapper.sh`; Linux:
+`scripts/dev-systemd-wrapper.sh` -> `tsx src/scripts/dev-supervisor.ts`) instead
+of the bundled `dist`. Editing `src/` then takes effect live, gated by `tsc` (a
+failing typecheck keeps the last-good process up; see
+`src/core/dev/supervisor-core.ts`). `npm run service:prod` switches back to the
+deployed dist. Both platforms are supported (the `--dev` install path +
+`service:dev`/`service:prod` switch exist for launchd and systemd alike). Only
+one of the two runs at a time (instance lock). KeepAlive / `Restart=always` still
+covers crash-respawn and boot-autostart.
 
-### Scripts (manual/dev only — NOT for the launchd-managed instance)
+Check which mode is live with `npm run service:status` (its output includes a
+`mode: prod|dev|none` line) or the quick `scripts/service.sh mode`.
 
-```bash
-./scripts/start.sh    # start a foreground/dev instance — only when launchd service is NOT loaded
-./scripts/stop.sh     # stop manual instances (no effect on launchd's KeepAlive instance)
-./scripts/status.sh   # check running instances
-```
+### Manual / local dev (no managed service)
+
+Use `./dev.sh` (auto-pauses/resumes the managed service) or `npm run dev` for a
+foreground dev instance, and `npm run service:status` to inspect the managed one.
+(The legacy `scripts/start.sh`/`stop.sh`/`status.sh` + the `.bot.pid` file were
+removed — superseded by `dev.sh` + `service.sh`, and the instance lock now
+prevents the duplicate-instance trap they half-guarded against.)
 
 ### How to identify the correct process
 
