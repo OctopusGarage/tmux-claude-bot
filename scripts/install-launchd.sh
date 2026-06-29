@@ -7,10 +7,17 @@ PLIST_NAME="com.octopusgarage.tmux-claude-bot.plist"
 LABEL="com.octopusgarage.tmux-claude-bot"
 TARGET="$HOME/Library/LaunchAgents/$PLIST_NAME"
 
+WRAPPER="launchd-wrapper.sh"
+if [ "${1:-}" = "--dev" ]; then
+  WRAPPER="dev-launchd-wrapper.sh"
+  echo "[install-launchd] DEV mode: service will hot-reload from $PROJECT_DIR"
+fi
+
 mkdir -p "$HOME/Library/LaunchAgents"
 mkdir -p "$PROJECT_DIR/logs"
 
-sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$SCRIPT_DIR/tmux-claude-bot.plist" > "$TARGET"
+sed -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" -e "s|__WRAPPER__|$WRAPPER|g" \
+  "$SCRIPT_DIR/tmux-claude-bot.plist" > "$TARGET"
 
 echo "[install-launchd] Installed to $TARGET"
 

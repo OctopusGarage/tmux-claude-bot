@@ -85,6 +85,16 @@ manage it via `systemctl --user` (or `npm run service:pause|resume|restart`,
 which dispatch by OS). The instance is identified the same way:
 `tmux-claude-bot.*(src/index.ts|dist/cli.js)`.
 
+### Dev-service mode (hot-reload from source)
+
+`npm run service:dev` repoints the managed launchd service at the repo's
+hot-reload supervisor (`scripts/dev-launchd-wrapper.sh` -> `tsx
+src/scripts/dev-supervisor.ts`) instead of the bundled `dist`. Editing `src/`
+then takes effect live, gated by `tsc` (a failing typecheck keeps the last-good
+process up; see `src/core/dev/supervisor-core.ts`). `npm run service:prod`
+switches back to the deployed dist. Only one of the two runs at a time (instance
+lock). KeepAlive still covers crash-respawn and boot-autostart.
+
 ### Scripts (manual/dev only — NOT for the launchd-managed instance)
 
 ```bash

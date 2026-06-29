@@ -1,7 +1,7 @@
 #!/bin/bash
 # Control the tmux-claude-bot managed service.
 #   macOS:  launchd agent       Linux: systemd --user unit
-#   scripts/service.sh <status|running|pause|resume|restart|logs>
+#   scripts/service.sh <status|running|pause|resume|restart|logs|dev|prod>
 #     running  exit 0 if the managed service is loaded/active (quiet; for dev.sh)
 set -euo pipefail
 
@@ -9,7 +9,7 @@ LABEL="com.octopusgarage.tmux-claude-bot"
 UNIT="tmux-claude-bot"
 LOGDIR="${TMUX_CLAUDE_BOT_DIR:-$HOME/.tmux-claude-bot}/logs"
 PROC_PAT="tmux-claude-bot.*(src/index.ts|dist/cli.js)"
-USAGE="usage: scripts/service.sh <status|running|pause|resume|restart|logs>"
+USAGE="usage: scripts/service.sh <status|running|pause|resume|restart|logs|dev|prod>"
 cmd="${1:-status}"
 
 if [ "$(uname)" = "Linux" ]; then
@@ -23,6 +23,7 @@ if [ "$(uname)" = "Linux" ]; then
     resume)  systemctl --user start "$UNIT" && echo "resumed" ;;
     restart) systemctl --user restart "$UNIT" && echo "restarted" ;;
     logs)    journalctl --user -u "$UNIT" -f ;;
+    dev|prod) echo "dev/prod switch is macOS-only for now" >&2; exit 1 ;;
     *) echo "$USAGE" >&2; exit 1 ;;
   esac
   exit 0
@@ -53,6 +54,16 @@ case "$cmd" in
     ;;
   logs)
     tail -f "$LOGDIR/launchd.out.log" "$LOGDIR/launchd.err.log"
+    ;;
+  dev)
+    REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+    "$REPO_DIR/scripts/install-launchd.sh" --dev
+    echo "switched to DEV (hot-reload from $REPO_DIR)"
+    ;;
+  prod)
+    PROD_DIR="${TMUX_CLAUDE_BOT_DIR:-$HOME/.tmux-claude-bot}"
+    "$PROD_DIR/scripts/install-launchd.sh"
+    echo "switched to PROD (bundled dist at $PROD_DIR)"
     ;;
   *)
     echo "$USAGE" >&2
