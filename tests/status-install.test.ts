@@ -215,6 +215,17 @@ describe("runStatusInstall", () => {
     expect(readFileSync(sidecar, "utf8")).toBe(foreignCmd);
   });
 
+  it("wrap preserves other statusLine fields (e.g. refreshInterval)", async () => {
+    const dir = makeConfigDir("wrap-keep", {
+      statusLine: { type: "command", command: "~/mine.sh", refreshInterval: 60 },
+    });
+    dirsInUse.value = [dir];
+    await runStatusInstall("telegram", "wrap");
+    const sl = readSettings(dir).statusLine as { command?: string; refreshInterval?: number };
+    expect(sl.command?.startsWith(`${scriptPath()} `)).toBe(true);
+    expect(sl.refreshInterval).toBe(60);
+  });
+
   it("snippet leaves settings untouched and returns the paste-in jq block", async () => {
     const foreignCmd = "~/mine.sh";
     const dir = makeConfigDir("snip", { statusLine: { type: "command", command: foreignCmd } });
