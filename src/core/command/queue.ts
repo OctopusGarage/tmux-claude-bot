@@ -5,7 +5,9 @@ import { runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { Queue } from "../../shared/utils/queue.js";
 import type { Channel } from "../projects/project-manager.js";
+import { recordReplyTarget } from "../projects/session-reply-target.js";
 import { taskEnded, taskStarted } from "../session/task-timing.js";
+import { replyTargetFromMessage } from "./reply-target-from-message.js";
 
 const log = createLogger("command.queue");
 
@@ -401,6 +403,10 @@ export class MessageQueue {
     // clears. Keying on presence (not a "global" sentinel) keeps the decision in
     // the types and lets a session literally named "global" time correctly.
     if (sessionName !== undefined) taskStarted(sessionName);
+    if (sessionName !== undefined) {
+      const target = replyTargetFromMessage(msg);
+      if (target) recordReplyTarget(sessionName, target);
+    }
     const label = sessionName ?? "global";
     try {
       await runWithLogContext(

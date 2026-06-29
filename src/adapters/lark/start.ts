@@ -14,7 +14,8 @@ import { autopilotGateCard } from "./cards.js";
 import { createLarkRestoredMessage } from "./executor.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
-import { notifyLarkOwner, notifyLarkOwnerCard } from "./resource.js";
+import { type LarkMediaClient, sendLarkAttachment } from "./media.js";
+import { clientFor, notifyLarkOwner, notifyLarkOwnerCard } from "./resource.js";
 
 const log = createLogger("lark.start");
 
@@ -107,6 +108,16 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
     notice.kind === "awaitHuman"
       ? notifyLarkOwnerCard(cfg, autopilotGateCard(notice.session))
       : notifyLarkOwner(cfg, renderNotice(notice, messages("lark"))),
+  );
+
+  deps.channelSenders.register("lark", (chatId, filePath, kind, caption) =>
+    sendLarkAttachment(
+      clientFor(cfg) as unknown as LarkMediaClient,
+      chatId,
+      filePath,
+      kind,
+      caption,
+    ),
   );
 
   channel

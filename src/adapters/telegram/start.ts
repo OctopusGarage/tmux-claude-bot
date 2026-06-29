@@ -14,6 +14,7 @@ import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
 import { registerHandlers } from "./handlers.js";
 import { buildAutopilotGateKeyboard } from "./keyboards.js";
+import { sendTelegramAttachment } from "./media.js";
 import { createReplyTargetMap } from "./reply-target.js";
 import { createRouteHealthStore, type RouteName } from "./transport/route-health.js";
 import { createSmartFetch, type SmartFetchRoute } from "./transport/smart-fetch.js";
@@ -222,6 +223,12 @@ export async function startTelegram(
       return bot.api.sendMessage(owner, text, reply_markup ? { reply_markup } : {}).then(() => {});
     });
   }
+
+  // Register the Telegram channel sender so the attachment-dispatch layer can
+  // push images/files to a chat via bot.api without importing grammy directly.
+  deps.channelSenders.register("telegram", (chatId, filePath, kind, caption) =>
+    sendTelegramAttachment(bot.api, chatId, filePath, kind, caption),
+  );
 
   // grammy's long-poll loop blocks until the bot is stopped. Through a flaky
   // proxy, getUpdates fails transiently — most often a 409 when a previous

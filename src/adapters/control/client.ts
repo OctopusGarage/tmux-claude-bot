@@ -179,6 +179,16 @@ export class ControlClient extends EventEmitter {
   autopilotView(session: string): Promise<AutopilotView> {
     return this.req({ op: "autopilotView", session }) as Promise<AutopilotView>;
   }
+  sendAttachment(session: string, filePath: string, caption?: string): Promise<{ status: string }> {
+    return this.req({
+      op: "sendAttachment",
+      session,
+      filePath,
+      ...(caption !== undefined ? { caption } : {}),
+    }) as Promise<{
+      status: string;
+    }>;
+  }
 
   close(): void {
     this.closing = true;

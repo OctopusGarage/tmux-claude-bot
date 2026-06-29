@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, statSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import {
@@ -6,6 +6,7 @@ import {
   composeAdoptOutcome,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
+import { validateAttachment } from "../../core/attachments/classify.js";
 import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
 import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
@@ -27,6 +28,7 @@ import {
   openRecentProjectBySid,
   recentProjectButtons,
 } from "../../core/projects/project-ops.js";
+import { resolveReplyTarget } from "../../core/projects/session-reply-target.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { getRecentInputs } from "../../core/read/recent-inputs.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
@@ -115,6 +117,43 @@ export function startControlServer(deps: HandlerDeps): net.Server {
   server.on("error", (err) => log.error("control server error", { err }));
   server.listen(sockPath, () => log.info(`control server listening`, { data: { sock: sockPath } }));
   return server;
+}
+
+export async function handleSendAttachment(
+  deps: Pick<HandlerDeps, "channelSenders">,
+  req: {
+    session: string;
+    filePath: string;
+    caption?: string;
+    statSize?: (p: string) => number | null;
+  },
+): Promise<{ ok: true; status: string } | { ok: false; error: string }> {
+  const statSize =
+    req.statSize ??
+    ((p: string) => {
+      try {
+        return statSync(p).size;
+      } catch {
+        return null;
+      }
+    });
+  const target = resolveReplyTarget(req.session);
+  if (!target) return { ok: false, error: "no chat is bound to this session" };
+  const v = validateAttachment(req.filePath, statSize);
+  if (!v.ok) return { ok: false, error: v.error };
+  try {
+    await deps.channelSenders.send(
+      target.channel,
+      target.chatId,
+      req.filePath,
+      v.kind,
+      req.caption,
+    );
+    return { ok: true, status: "sent" };
+  } catch (err) {
+    log.warn("attachment send failed", { err });
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 async function handleRequest(
@@ -244,6 +283,16 @@ async function handleRequest(
           ),
         );
         return;
+      case "sendAttachment": {
+        const res = await handleSendAttachment(deps, {
+          session: req.session,
+          filePath: req.filePath,
+          ...(req.caption !== undefined ? { caption: req.caption } : {}),
+        });
+        if (res.ok) ok({ status: res.status });
+        else fail(res.error);
+        return;
+      }
       default:
         fail(`unknown op: ${(req as { op: string }).op}`);
     }

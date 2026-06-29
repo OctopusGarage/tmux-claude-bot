@@ -30,7 +30,8 @@ export type ControlRequest =
   | { id: number; op: "sysload" }
   | { id: number; op: "inputs"; session: string }
   | { id: number; op: "autopilot"; session: string; verb: string }
-  | { id: number; op: "autopilotView"; session: string };
+  | { id: number; op: "autopilotView"; session: string }
+  | { id: number; op: "sendAttachment"; session: string; filePath: string; caption?: string };
 
 export type ControlResponse =
   | { id: number; ok: true; data: unknown }

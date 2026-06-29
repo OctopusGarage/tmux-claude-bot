@@ -147,6 +147,7 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 | `tcb open <project>` | switch to / start a project — by name (incl. stopped) or a filesystem path to create a new one |
 | `tcb adopt [pid]` | list claude/codex running outside tmux, or adopt one by PID (stops it, resumes under management) |
 | `tcb control <project> <esc\|enter\|restart\|…>` | send a control action |
+| `tcb attach <file...>` | send an image/file to the session's chat; defaults to the current tmux session (`--to <project>`, `--caption <text>`) |
 | `tcb skill install` | install the AI operating skill into Claude Code / Codex (`--tool` for one) |
 
 This is what the **AI skill** (`skills/tmux-claude-bot/SKILL.md`, the AI-facing

@@ -111,6 +111,7 @@ export async function runPromptWithProgress(
     id: msgId,
     text,
     chatId,
+    channel: "telegram",
     sessionName: session,
     action: "text",
     resolve: (output: string) => {

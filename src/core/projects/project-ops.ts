@@ -32,6 +32,7 @@ import { listUserProjectSessions } from "./operator.js";
 import { projectLabel } from "./project-label.js";
 import { channelFromScope } from "./project-manager.js";
 import { appendRecentProject, readRecentProjectLines } from "./recentProjects.js";
+import { clearReplyTarget } from "./session-reply-target.js";
 import {
   clearPathForSession,
   getPathBySession,
@@ -311,6 +312,7 @@ export async function removeProjectBySession(
   clearAutopilotState(sessionName); // drop autopilot record (optOut/goalId/viaGlobal) so a reused slot is clean
   clearPicker(sessionName); // drop any in-progress goal-picker selection for a reused slot
   markSessionStopped(sessionName); // drop from the reboot-recovery roster
+  clearReplyTarget(sessionName); // drop stored reply target so a reused slot reads nothing
   // The session is gone — drop it from any channel that had it as current.
   await deps.currentProject.clearSession(sessionName);
   // A free project owns a registry slot — free it so the number can be reused.

@@ -14,6 +14,7 @@ import { executeMessage } from "./core/command/dispatch.js";
 import { MessageQueue } from "./core/command/queue.js";
 import type { HandlerDeps } from "./core/deps.js";
 import { migrateLegacyStateDir } from "./core/infra/state-migration.js";
+import { ChannelSenderRegistry } from "./core/projects/channel-sender.js";
 import { createProjectManager } from "./core/projects/project-manager.js";
 import { createActivityWatcher } from "./core/session/activity-watcher.js";
 import { OutputProcessor } from "./core/session/output.js";
@@ -130,6 +131,7 @@ export function bootstrap(): HandlerDeps {
     configResolver,
     activity,
     notifier,
+    channelSenders: new ChannelSenderRegistry(),
   };
 
   // The queue handler is protocol-agnostic: it runs the command and routes the

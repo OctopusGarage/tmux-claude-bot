@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { ControlClient } from "../adapters/control/client.js";
 import type { SessionRow } from "../core/dashboard/dashboard.js";
@@ -220,6 +221,40 @@ export async function cmdControl(
     const ack = await c.control(session, action);
     if (opts.json) return json({ session, action, ...ack });
     out(`${action} → ${ref}: ${ack.status}`);
+  }).catch(fail);
+}
+
+export function currentTmuxSession(
+  run: () => string = () =>
+    execFileSync("tmux", ["display-message", "-p", "#S"], { encoding: "utf8" }),
+): string | null {
+  try {
+    const s = run().trim();
+    return s || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function cmdSendAttachment(
+  files: string[],
+  opts: { to?: string; caption?: string; json?: boolean },
+): Promise<void> {
+  await withClient(async (c) => {
+    const session = opts.to ? await resolveSession(c, opts.to) : currentTmuxSession();
+    if (!session) {
+      fail("not inside a tmux session and no --to given");
+      return;
+    }
+    const results: Array<{ file: string; status: string }> = [];
+    let i = 0;
+    for (const file of files) {
+      const ack = await c.sendAttachment(session, file, i === 0 ? opts.caption : undefined);
+      results.push({ file, status: ack.status });
+      i++;
+    }
+    if (opts.json) return json({ session, results });
+    out(results.map((r) => `${r.status} → ${r.file}`).join("\n"));
   }).catch(fail);
 }
 

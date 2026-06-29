@@ -254,6 +254,14 @@ program
   .action(async (project, action, o) => (await ctl()).cmdControl(project, action, o));
 
 program
+  .command("attach <file...>")
+  .description("send an image/file to the session's chat (defaults to the current tmux session)")
+  .option("--to <project>", "target a specific project instead of the current tmux session")
+  .option("--caption <text>", "optional caption (attached to the first file)")
+  .option("--json", "output JSON")
+  .action(async (files, o) => (await ctl()).cmdSendAttachment(files, o));
+
+program
   .command("skill")
   .description(
     "install the AI operating skill into Claude Code / Codex (so an agent can drive the bot)",
