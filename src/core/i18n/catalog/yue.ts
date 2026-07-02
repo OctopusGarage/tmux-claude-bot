@@ -78,6 +78,7 @@ export const yue: Messages = {
   adoptConfirmPrompt: (label: string) =>
     `確認接管？將先中斷並結束原程序，再在 tmux 中續接：\n${label}`,
   btnAdoptConfirm: "🧲 接管",
+  btnAdoptAsFree: "🆓 接管為自由項目",
   btnAdoptCancel: "✕ 取消",
   adoptCancelled: "已取消接管",
   adoptWorking: "正在接管…",
@@ -104,6 +105,8 @@ export const yue: Messages = {
   adoptFailed: "接管失敗：程序無法結束或未能啟動",
   adoptBusy:
     "目標 tmux 工作階段中已有程式在前台運行（另一個 agent 或其他程式）。已中止，未動原程序——請先至該處退出，再重新接管。",
+  adoptProjectRunning:
+    "已有相同項目正在運行 Claude/Codex。已中止，未動原程序——如需並行接管，請選擇「接管為自由項目」。",
   btnAdoptAttach: "💻 在電腦終端查看（可選）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接入指令已複製到「電腦」的剪貼簿（不必在手機上複製）。回到電腦後，在終端直接貼上並按 Enter 即可進入查看——此步驟為可選。\n指令：${cmd}`,

@@ -443,6 +443,19 @@ describe("handleCallbackQuery", () => {
       expect(ctx.replies.length).toBeGreaterThan(0);
     });
 
+    it("adoptexec free (af) passes the free target to takeover", async () => {
+      adoptOrphanMock.mockResolvedValueOnce({
+        ok: true,
+        sessionName: SESSION,
+        resumed: true,
+      } as never);
+      const ctx = fakeCtx({ callbackData: "af:4242" });
+
+      await handleCallbackQuery(ctx, fakeDeps(), replyTarget);
+
+      expect(adoptOrphanMock).toHaveBeenCalledWith(4242, expect.any(Object), { target: "free" });
+    });
+
     it("adoptcancel (ac) just toasts", async () => {
       const ctx = fakeCtx({ callbackData: "ac" });
       await handleCallbackQuery(ctx, fakeDeps(), replyTarget);

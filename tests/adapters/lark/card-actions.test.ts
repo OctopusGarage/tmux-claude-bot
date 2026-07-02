@@ -502,6 +502,30 @@ describe("makeCardActionHandler", () => {
       expect(deps.agent.start).toHaveBeenCalledWith("proj-1", expect.stringContaining("bash"));
       expect(channel.texts().some((t) => t.includes("B"))).toBe(true);
     });
+
+    it("startpick → reports preflight failures instead of going silent", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        config: {
+          startCommands: [
+            {
+              label: "Codex YOLO",
+              command: "__tcb_missing_codex_for_lark_preflight__ --yolo",
+              agent: "codex",
+            },
+          ],
+        },
+        agent: { checkIfRunning: vi.fn(async () => false) },
+      });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "startpick", idx: 0 }));
+
+      expect(deps.agent.start).not.toHaveBeenCalled();
+      expect(channel.texts()).toHaveLength(1);
+      expect(
+        channel.texts().some((t) => t.includes("__tcb_missing_codex_for_lark_preflight__")),
+      ).toBe(true);
+    });
   });
 
   describe("directory browser", () => {

@@ -76,6 +76,7 @@ export const es: Messages = {
   adoptConfirmPrompt: (label: string) =>
     `¿Tomar el control? Primero se interrumpe y termina el proceso original, luego se reanuda en tmux:\n${label}`,
   btnAdoptConfirm: "🧲 Adoptar",
+  btnAdoptAsFree: "🆓 Adoptar como proyecto libre",
   btnAdoptCancel: "✕ Cancelar",
   adoptCancelled: "Adopción cancelada",
   adoptWorking: "Adoptando…",
@@ -104,6 +105,8 @@ export const es: Messages = {
   adoptFailed: "Fallo al adoptar: el proceso no terminó o el agente no se inició",
   adoptBusy:
     "La sesión de tmux destino ya tiene un programa en primer plano (otro agente u otra cosa). Se canceló sin tocar el original — sal de ahí primero y vuelve a adoptar.",
+  adoptProjectRunning:
+    "Ya hay un proyecto con la misma ruta ejecutando Claude/Codex. Se canceló sin tocar el original — usa “Adoptar como proyecto libre” si quieres una adopción paralela.",
   btnAdoptAttach: "💻 Ver en la terminal del computador (opcional)",
   adoptAttachHint: (cmd: string) =>
     `✅ El comando de conexión ya está en el portapapeles de tu COMPUTADOR (no hace falta copiar nada en el móvil). Al volver, solo pégalo en una terminal y pulsa Enter para entrar — este paso es opcional.\nComando: ${cmd}`,

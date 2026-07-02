@@ -14,7 +14,10 @@ import type { HandlerDeps } from "../../../src/core/deps.js";
 const h = vi.hoisted(() => ({
   openResult: { status: "switched", sessionName: "sOpen" } as unknown,
   openPathResult: { status: "created", sessionName: "sNew", projectPath: "/p" } as unknown,
-  orphans: [{ pid: 111 }, { pid: 222 }] as { pid: number }[],
+  orphans: [
+    { pid: 111, agent: "claude", busy: null },
+    { pid: 222, agent: "codex", busy: true },
+  ] as { pid: number; agent: "claude" | "codex"; busy: boolean | null }[],
   adoptOutcome: { ok: true, body: "adopted proj", sessionName: "sAdopt" } as {
     ok: boolean;
     body: string;
@@ -37,7 +40,10 @@ vi.mock("../../../src/core/command/dispatch.js", () => ({
 }));
 // Mock the takeover modules — the real ones inspect/kill live processes.
 vi.mock("../../../src/core/agents/takeover.js", () => ({
-  orphanLabel: (o: { pid: number }) => `claude pid=${o.pid}`,
+  orphanBusyState: (o: { busy?: boolean | null }) =>
+    o.busy === true ? "busy" : o.busy === false ? "idle" : "unknown",
+  orphanLabel: (o: { pid: number; agent: string; busy?: boolean | null }) =>
+    `${o.agent} pid=${o.pid} task=${o.busy === true ? "busy" : o.busy === false ? "idle" : "unknown"}`,
 }));
 vi.mock("../../../src/core/agents/takeover-service.js", () => ({
   findAdoptableOrphans: vi.fn(async () => h.orphans),
@@ -101,7 +107,10 @@ describe("control server op dispatch (real unix socket)", () => {
     process.env.TCB_STATE_DIR = dir;
     h.openResult = { status: "switched", sessionName: "sOpen" };
     h.openPathResult = { status: "created", sessionName: "sNew", projectPath: "/p" };
-    h.orphans = [{ pid: 111 }, { pid: 222 }];
+    h.orphans = [
+      { pid: 111, agent: "claude", busy: null },
+      { pid: 222, agent: "codex", busy: true },
+    ];
     h.adoptOutcome = { ok: true, body: "adopted proj", sessionName: "sAdopt" };
   });
   afterEach(async () => {
@@ -158,8 +167,8 @@ describe("control server op dispatch (real unix socket)", () => {
   it("orphans lists adoptable processes; adopt runs the takeover", async () => {
     const c = await connected();
     expect(await c.orphans()).toEqual([
-      { pid: 111, label: "claude pid=111" },
-      { pid: 222, label: "claude pid=222" },
+      { pid: 111, agent: "claude", busy: "unknown", label: "claude pid=111 task=unknown" },
+      { pid: 222, agent: "codex", busy: "busy", label: "codex pid=222 task=busy" },
     ]);
     expect(await c.adopt(111)).toEqual({ ok: true, body: "adopted proj", session: "sAdopt" });
     h.adoptOutcome = { ok: false, body: "target busy", sessionName: "" };

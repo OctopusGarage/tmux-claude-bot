@@ -86,7 +86,7 @@ import {
   makeFreeGroupBySid,
 } from "./group-commands.js";
 import { sendPrompts } from "./prompts.js";
-import { sendCard, sendText } from "./replies.js";
+import { sendCard, sendError, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
 import {
   addRecentBySid,
@@ -376,17 +376,24 @@ async function handleAdoptShow({ channel, evt, value, chatKind }: CardCtx): Prom
 }
 
 /** Confirmed adopt: SIGINT→SIGTERM→resume via the shared service, then report. */
-async function handleAdoptExec({ channel, deps, evt, value, chatKind }: CardCtx): Promise<void> {
+async function runAdoptExec(
+  { channel, deps, evt, value, chatKind }: CardCtx,
+  target: "path" | "free",
+): Promise<void> {
   if (chatKind !== "p2p" || typeof value?.pid !== "number") return;
   // Acknowledge before the (multi-second) takeover so the user isn't left waiting
   // on a dead button — parity with the Telegram toast.
   await sendText(channel, evt.chatId, messages("lark").adoptWorking);
-  const result = await adoptOrphan(value.pid, {
-    bridge: deps.bridge,
-    configResolver: deps.configResolver,
-    projectSessionPrefix: deps.config.projectSessionPrefix,
-    warmupMs: deps.config.sessionWarmupMs,
-  });
+  const result = await adoptOrphan(
+    value.pid,
+    {
+      bridge: deps.bridge,
+      configResolver: deps.configResolver,
+      projectSessionPrefix: deps.config.projectSessionPrefix,
+      warmupMs: deps.config.sessionWarmupMs,
+    },
+    { target },
+  );
   const outcome = composeAdoptOutcome(result, chatScope("lark", evt.chatId));
   if (!outcome.ok) {
     await sendText(channel, evt.chatId, outcome.body);
@@ -399,6 +406,14 @@ async function handleAdoptExec({ channel, deps, evt, value, chatKind }: CardCtx)
     evt.chatId,
     adoptDoneCard(outcome.body, sessionShortId(outcome.sessionName)),
   );
+}
+
+async function handleAdoptExec(ctx: CardCtx): Promise<void> {
+  await runAdoptExec(ctx, "path");
+}
+
+async function handleAdoptFreeExec(ctx: CardCtx): Promise<void> {
+  await runAdoptExec(ctx, "free");
 }
 
 /** Confirmed reboot recovery: recreate every gone session + relaunch its agent. */
@@ -657,6 +672,7 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
     chatKind === "p2p" ? sendOrphanList(channel, evt.chatId) : Promise.resolve(),
   adopt: handleAdoptShow,
   adoptgo: handleAdoptExec,
+  adoptfree: handleAdoptFreeExec,
   adoptcancel: async ({ channel, evt }) => {
     await sendText(channel, evt.chatId, messages("lark").adoptCancelled);
   },
@@ -777,73 +793,78 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
 
       log.info(`cardAction cmd=${cmd} chat=${evt.chatId}`);
 
-      // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
-      // groups are serviced (serviceableChat). An unbound group — including one
-      // whose binding was lost — is ignored, so its (possibly stale) buttons do
-      // nothing. Bound is a cheap local check; only hit the chat API otherwise.
-      // Resolve the chat kind ONCE here and thread it into the handlers so the
-      // per-action policy (chat-policy.ts) is enforced symmetrically with text.
-      const isP2p = isProjectGroup(evt.chatId) ? false : await isP2pChat(channel, evt.chatId);
-      if (!serviceableChat(isP2p, evt.chatId)) {
-        log.info(`ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
-        return;
-      }
-      const chatKind: ChatKind = isP2p ? "p2p" : "group";
-
-      // start/restart: reject a start when an agent is already running (no
-      // pointless picker), else show the flavor picker (multi-command) or fall
-      // through to the queued-action routing (single command).
-      if (cmd === "start" || cmd === "restart") {
-        const mode = cmd === "restart" ? "restart" : "start";
-        const startSession = await resolveSession(channel, deps, evt.chatId, undefined, isP2p);
-        const disp = startSession
-          ? await startDisposition(deps, startSession, mode)
-          : deps.config.startCommands.length > 1
-            ? "pick"
-            : "go";
-        if (disp === "already-running") {
-          await sendText(channel, evt.chatId, messages("lark").agentAlreadyRunning);
+      try {
+        // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
+        // groups are serviced (serviceableChat). An unbound group — including one
+        // whose binding was lost — is ignored, so its (possibly stale) buttons do
+        // nothing. Bound is a cheap local check; only hit the chat API otherwise.
+        // Resolve the chat kind ONCE here and thread it into the handlers so the
+        // per-action policy (chat-policy.ts) is enforced symmetrically with text.
+        const isP2p = isProjectGroup(evt.chatId) ? false : await isP2pChat(channel, evt.chatId);
+        if (!serviceableChat(isP2p, evt.chatId)) {
+          log.info(`ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
           return;
         }
-        if (disp === "pick") {
-          await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
+        const chatKind: ChatKind = isP2p ? "p2p" : "group";
+
+        // start/restart: reject a start when an agent is already running (no
+        // pointless picker), else show the flavor picker (multi-command) or fall
+        // through to the queued-action routing (single command).
+        if (cmd === "start" || cmd === "restart") {
+          const mode = cmd === "restart" ? "restart" : "start";
+          const startSession = await resolveSession(channel, deps, evt.chatId, undefined, isP2p);
+          const disp = startSession
+            ? await startDisposition(deps, startSession, mode)
+            : deps.config.startCommands.length > 1
+              ? "pick"
+              : "go";
+          if (disp === "already-running") {
+            await sendText(channel, evt.chatId, messages("lark").agentAlreadyRunning);
+            return;
+          }
+          if (disp === "pick") {
+            await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
+            return;
+          }
+        }
+
+        const handler = CARD_HANDLERS[cmd];
+        if (handler) {
+          await handler({ channel, deps, evt, value, chatKind });
           return;
         }
-      }
 
-      const handler = CARD_HANDLERS[cmd];
-      if (handler) {
-        await handler({ channel, deps, evt, value, chatKind });
-        return;
-      }
+        if (IMMEDIATE.has(cmd as MessageAction)) {
+          await runImmediateLarkAction(
+            channel,
+            deps,
+            evt.chatId,
+            evt.messageId,
+            cmd as MessageAction,
+            undefined,
+            isP2p,
+          );
+          return;
+        }
 
-      if (IMMEDIATE.has(cmd as MessageAction)) {
-        await runImmediateLarkAction(
-          channel,
-          deps,
-          evt.chatId,
-          evt.messageId,
-          cmd as MessageAction,
-          undefined,
-          isP2p,
-        );
-        return;
-      }
+        if (QUEUED.has(cmd as MessageAction)) {
+          await enqueueLarkAction(
+            channel,
+            deps,
+            evt.chatId,
+            evt.messageId,
+            cmd as MessageAction,
+            cmd,
+            undefined,
+            isP2p,
+          );
+          return;
+        }
 
-      if (QUEUED.has(cmd as MessageAction)) {
-        await enqueueLarkAction(
-          channel,
-          deps,
-          evt.chatId,
-          evt.messageId,
-          cmd as MessageAction,
-          cmd,
-          undefined,
-          isP2p,
-        );
-        return;
+        log.info(`unknown cardAction cmd=${cmd}`);
+      } catch (err) {
+        log.warn("cardAction failed", { err, data: { cmd } });
+        await sendError(channel, evt.chatId, err);
       }
-
-      log.info(`unknown cardAction cmd=${cmd}`);
     });
 }

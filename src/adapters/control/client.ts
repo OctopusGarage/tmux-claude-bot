@@ -145,8 +145,17 @@ export class ControlClient extends EventEmitter {
     }>;
   }
   /** Claude/Codex processes running OUTSIDE tmux that the bot could adopt. */
-  orphans(): Promise<{ pid: number; label: string }[]> {
-    return this.req({ op: "orphans" }) as Promise<{ pid: number; label: string }[]>;
+  orphans(): Promise<
+    { pid: number; agent: "claude" | "codex"; busy: "busy" | "idle" | "unknown"; label: string }[]
+  > {
+    return this.req({ op: "orphans" }) as Promise<
+      {
+        pid: number;
+        agent: "claude" | "codex";
+        busy: "busy" | "idle" | "unknown";
+        label: string;
+      }[]
+    >;
   }
   /** Adopt an orphan by PID: stop it, then resume it under a managed tmux
    * session (via its session-id). Mirrors the chat /adopt flow. */

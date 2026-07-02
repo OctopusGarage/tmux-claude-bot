@@ -1,6 +1,6 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import net from "node:net";
-import { orphanLabel } from "../../core/agents/takeover.js";
+import { orphanBusyState, orphanLabel } from "../../core/agents/takeover.js";
 import {
   adoptOrphan,
   composeAdoptOutcome,
@@ -215,7 +215,14 @@ async function handleRequest(
       case "orphans": {
         // Claude/Codex running OUTSIDE tmux that the bot could adopt.
         const orphans = await findAdoptableOrphans();
-        ok(orphans.map((o) => ({ pid: o.pid, label: orphanLabel(o) })));
+        ok(
+          orphans.map((o) => ({
+            pid: o.pid,
+            agent: o.agent,
+            busy: orphanBusyState(o),
+            label: orphanLabel(o),
+          })),
+        );
         return;
       }
       case "adopt": {

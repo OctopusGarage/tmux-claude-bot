@@ -1,0 +1,15 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "tmux-claude-bot",
+  "description": "Remote-control Claude Code and Codex agents running in tmux from Telegram, Feishu/Lark, CLI, and TUI.",
+  "folders": ["docs", "skills"],
+  "excludeFolders": ["docs/superpowers", "docs/research"],
+  "excludeFiles": ["CHANGELOG.md"],
+  "rules": [
+    "Prefer docs/agents/usage-guide.md for AI assistant task recipes.",
+    "Prefer docs/manual.md for user workflows and CLI usage.",
+    "Prefer docs/commands.md for Telegram and Feishu/Lark command behavior.",
+    "Prefer docs/tui.md for terminal UI workflows.",
+    "Do not infer undocumented commands or flags before checking the documented references."
+  ]
+}

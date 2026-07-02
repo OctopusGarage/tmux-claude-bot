@@ -76,6 +76,7 @@ export const en: Messages = {
   adoptConfirmPrompt: (label: string) =>
     `Take over? The original process is interrupted and ended first, then resumed in tmux:\n${label}`,
   btnAdoptConfirm: "🧲 Take over",
+  btnAdoptAsFree: "🆓 Take over as free project",
   btnAdoptCancel: "✕ Cancel",
   adoptCancelled: "Takeover cancelled",
   adoptWorking: "Taking over…",
@@ -102,6 +103,8 @@ export const en: Messages = {
   adoptFailed: "Takeover failed: process would not end, or the agent did not start",
   adoptBusy:
     "The target tmux session already has a program in the foreground (another agent or something else). Aborted without touching the original — please exit it there first, then adopt again.",
+  adoptProjectRunning:
+    "A same-path project is already running Claude/Codex. Aborted without touching the original — use “Take over as free project” if you want a parallel takeover.",
   btnAdoptAttach: "💻 View in computer terminal (optional)",
   adoptAttachHint: (cmd: string) =>
     `✅ The attach command is now on your COMPUTER's clipboard (nothing to copy on your phone). Back at the computer, just paste it in a terminal and press Enter to go in — this step is optional.\nCommand: ${cmd}`,

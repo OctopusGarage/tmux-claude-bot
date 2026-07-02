@@ -388,12 +388,16 @@ export async function handleCallbackQuery(
     }
     if (parsed.kind === "adoptexec") {
       await safeAnswerCallback(ctx, messages("telegram").adoptWorking);
-      const result = await adoptOrphan(parsed.pid, {
-        bridge: deps.bridge,
-        configResolver: deps.configResolver,
-        projectSessionPrefix: deps.config.projectSessionPrefix,
-        warmupMs: deps.config.sessionWarmupMs,
-      });
+      const result = await adoptOrphan(
+        parsed.pid,
+        {
+          bridge: deps.bridge,
+          configResolver: deps.configResolver,
+          projectSessionPrefix: deps.config.projectSessionPrefix,
+          warmupMs: deps.config.sessionWarmupMs,
+        },
+        { target: parsed.target },
+      );
       const outcome = composeAdoptOutcome(result, tgScope(ctx));
       if (!outcome.ok) {
         await reply(ctx, "err", outcome.body, { replyTarget });

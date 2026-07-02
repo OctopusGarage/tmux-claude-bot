@@ -85,6 +85,7 @@ export const zh = {
   adoptConfirmPrompt: (label: string) =>
     `确认接管？将先中断并结束原进程，再在 tmux 中续接：\n${label}`,
   btnAdoptConfirm: "🧲 接管",
+  btnAdoptAsFree: "🆓 接管为自由项目",
   btnAdoptCancel: "✕ 取消",
   adoptCancelled: "已取消接管",
   adoptWorking: "正在接管…",
@@ -111,6 +112,8 @@ export const zh = {
   adoptFailed: "接管失败：进程无法结束或未能启动",
   adoptBusy:
     "目标 tmux 会话里已有程序在前台运行（另一个 agent 或其他程序）。已中止，未动原进程——请先去那边退出，再重新接管。",
+  adoptProjectRunning:
+    "已有相同项目正在运行 Claude/Codex。已中止，未动原进程——如需并行接管，请选择「接管为自由项目」。",
   btnAdoptAttach: "💻 在电脑终端查看（可选）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接入命令已经放进「电脑」的剪贴板了（不用在手机上复制）。回到电脑后，在任务终端里直接粘贴回车，就能进去查看——这一步是可选的。\n命令：${cmd}`,

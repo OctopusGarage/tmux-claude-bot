@@ -1,7 +1,13 @@
-import { basename } from "node:path";
+import { basename, resolve as resolvePath } from "node:path";
 import { sleep } from "../../shared/utils/sleep.js";
 import { messages } from "../i18n/index.js";
 import { copyToClipboard } from "../platform/clipboard.js";
+import {
+  allocateFreeSlot,
+  FREE_PROJECT_LIMIT,
+  freeSessionName,
+  setFreeProject,
+} from "../projects/free-projects.js";
 import { channelFromScope } from "../projects/project-manager.js";
 import { botSelfRepoWarning } from "../projects/project-ops.js";
 import {
@@ -87,6 +93,13 @@ export interface AdoptOutcome {
   sessionName: string;
 }
 
+export type AdoptTarget = "path" | "free";
+
+export interface AdoptOptions {
+  /** `path` reuses the canonical project session; `free` creates a parallel free_N session. */
+  target?: AdoptTarget;
+}
+
 /**
  * Map an `adoptOrphan` result to what the user should see — shared by both
  * adapters so the gone/busy/failed/done decision (and the nesting warning) can't
@@ -96,7 +109,10 @@ export function composeAdoptOutcome(result: TakeoverResult | null, scope: string
   const m = messages(channelFromScope(scope));
   if (!result) return { ok: false, body: m.adoptGone, sessionName: "" };
   if (!result.ok) {
-    const body = result.reason === "target_session_busy" ? m.adoptBusy : m.adoptFailed;
+    let body = m.adoptFailed;
+    if (result.reason === "target_session_busy") body = m.adoptBusy;
+    else if (result.reason === "project_agent_running") body = m.adoptProjectRunning;
+    else if (result.reason === "free_project_limit") body = m.freeProjectLimit(FREE_PROJECT_LIMIT);
     return { ok: false, body, sessionName: result.sessionName };
   }
   const path = getPathBySession(result.sessionName);
@@ -112,11 +128,15 @@ export function composeAdoptOutcome(result: TakeoverResult | null, scope: string
  * has since exited or moved into tmux resolves to null rather than acting on the
  * wrong process. The tmux/claude side-effects are wired from the bot's bridge.
  */
-export async function adoptOrphan(pid: number, ctx: AdoptContext): Promise<TakeoverResult | null> {
+export async function adoptOrphan(
+  pid: number,
+  ctx: AdoptContext,
+  options: AdoptOptions = {},
+): Promise<TakeoverResult | null> {
   if (adoptInFlight.has(pid)) return null; // a takeover of this pid is already running
   adoptInFlight.add(pid);
   try {
-    return await runAdopt(pid, ctx);
+    return await runAdopt(pid, ctx, options);
   } finally {
     adoptInFlight.delete(pid);
   }
@@ -126,11 +146,24 @@ export async function adoptOrphan(pid: number, ctx: AdoptContext): Promise<Takeo
  * kill/resume sequences on the same process. */
 const adoptInFlight = new Set<number>();
 
-async function runAdopt(pid: number, ctx: AdoptContext): Promise<TakeoverResult | null> {
+type AdoptTargetSession =
+  | { kind: "path"; sessionName: string }
+  | { kind: "free"; sessionName: string; slot: number };
+
+async function runAdopt(
+  pid: number,
+  ctx: AdoptContext,
+  options: AdoptOptions,
+): Promise<TakeoverResult | null> {
   const probe = createTakeoverProbe();
   const [claudes, codexes] = await Promise.all([listClaudeOrphans(probe), listCodexOrphans(probe)]);
   const orphan = [...claudes, ...codexes].find((o) => o.pid === pid);
   if (!orphan) return null;
+
+  const target = await resolveAdoptTarget(orphan, ctx, options.target ?? "path");
+  if ("reason" in target) {
+    return { ok: false, sessionName: target.sessionName, resumed: false, reason: target.reason };
+  }
 
   const isAgentRunning =
     orphan.agent === "codex"
@@ -139,17 +172,17 @@ async function runAdopt(pid: number, ctx: AdoptContext): Promise<TakeoverResult 
 
   const result = await takeover(orphan, {
     probe,
-    isTargetBusy: async (cwd) => {
-      const name = sessionNameFromPath(cwd, ctx.projectSessionPrefix);
-      if (!(await ctx.bridge.hasSession(name))) return false;
-      return isPaneBusy(await ctx.bridge.paneCurrentCommand(name));
+    isTargetBusy: async () => {
+      if (!(await ctx.bridge.hasSession(target.sessionName))) return false;
+      return isPaneBusy(await ctx.bridge.paneCurrentCommand(target.sessionName));
     },
     ensureSession: async (cwd) => {
-      const name = sessionNameFromPath(cwd, ctx.projectSessionPrefix);
+      const name = target.sessionName;
       if (!(await ctx.bridge.hasSession(name))) {
         await ctx.bridge.createSession(name, cwd);
         await sleep(ctx.warmupMs);
       }
+      if (target.kind === "free") setFreeProject(target.slot, { label: null });
       setPathForSession(name, cwd);
       return name;
     },
@@ -167,4 +200,41 @@ async function runAdopt(pid: number, ctx: AdoptContext): Promise<TakeoverResult 
     markSessionRunning(result.sessionName);
   }
   return result;
+}
+
+async function resolveAdoptTarget(
+  orphan: OrphanAgent,
+  ctx: AdoptContext,
+  target: AdoptTarget,
+): Promise<
+  | AdoptTargetSession
+  | { reason: "project_agent_running" | "free_project_limit"; sessionName: string }
+> {
+  if (target === "free") {
+    const slot = allocateFreeSlot();
+    if (slot === null) return { reason: "free_project_limit", sessionName: "" };
+    return { kind: "free", slot, sessionName: freeSessionName(ctx.projectSessionPrefix, slot) };
+  }
+
+  const running = await sameProjectRunningAgentSession(orphan.cwd, ctx);
+  if (running) return { reason: "project_agent_running", sessionName: running };
+  return { kind: "path", sessionName: sessionNameFromPath(orphan.cwd, ctx.projectSessionPrefix) };
+}
+
+async function sameProjectRunningAgentSession(
+  cwd: string,
+  ctx: AdoptContext,
+): Promise<string | null> {
+  const wanted = resolvePath(cwd);
+  const sessions = await ctx.bridge.listProjectSessions();
+  for (const session of sessions) {
+    const path = getPathBySession(session);
+    if (!path || resolvePath(path) !== wanted) continue;
+    const [claudeRunning, codexRunning] = await Promise.all([
+      ctx.configResolver.isClaudeRunning(session),
+      ctx.configResolver.isCodexRunning(session),
+    ]);
+    if (claudeRunning || codexRunning) return session;
+  }
+  return null;
 }
