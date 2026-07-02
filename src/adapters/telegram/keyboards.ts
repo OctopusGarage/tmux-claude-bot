@@ -53,7 +53,7 @@ export type CallbackAction =
   | { kind: "restartpick"; idx: number; sid: string }
   | { kind: "qcancel"; sid: string; msgId: string }
   | { kind: "adoptshow"; pid: number }
-  | { kind: "adoptexec"; pid: number }
+  | { kind: "adoptexec"; pid: number; target: "path" | "free" }
   | { kind: "adoptcancel" }
   | { kind: "adoptattach"; sid: string }
   | { kind: "statusinstall"; action: StatusInstallAction }
@@ -169,10 +169,11 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (parts.length !== 3 || !sid || !msgId) return null;
     return { kind: "qcancel", sid, msgId };
   }
-  if (tag === "as" || tag === "ae") {
+  if (tag === "as" || tag === "ae" || tag === "af") {
     const pid = Number(parts[1]);
     if (parts.length !== 2 || !Number.isInteger(pid) || pid <= 0) return null;
-    return tag === "as" ? { kind: "adoptshow", pid } : { kind: "adoptexec", pid };
+    if (tag === "as") return { kind: "adoptshow", pid };
+    return { kind: "adoptexec", pid, target: tag === "af" ? "free" : "path" };
   }
   if (tag === "aa") {
     const sid = parts[1];
@@ -478,6 +479,9 @@ export function buildRecoverConfirmKeyboard(): InlineKeyboard {
 export function buildAdoptConfirmKeyboard(pid: number): InlineKeyboard {
   return new InlineKeyboard()
     .text(messages("telegram").btnAdoptConfirm, `ae:${pid}`)
+    .row()
+    .text(messages("telegram").btnAdoptAsFree, `af:${pid}`)
+    .row()
     .text(messages("telegram").btnAdoptCancel, "ac");
 }
 

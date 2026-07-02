@@ -22,12 +22,16 @@ export type ControlRequest =
   | { id: number; op: "control"; session: string; action: string }
   | { id: number; op: "projects" }
   | { id: number; op: "open"; sid: string }
+  | { id: number; op: "openPath"; path: string }
+  | { id: number; op: "orphans" }
+  | { id: number; op: "adopt"; pid: number }
   | { id: number; op: "recover" }
   | { id: number; op: "logs"; session: string }
   | { id: number; op: "sysload" }
   | { id: number; op: "inputs"; session: string }
   | { id: number; op: "autopilot"; session: string; verb: string }
-  | { id: number; op: "autopilotView"; session: string };
+  | { id: number; op: "autopilotView"; session: string }
+  | { id: number; op: "sendAttachment"; session: string; filePath: string; caption?: string };
 
 export type ControlResponse =
   | { id: number; ok: true; data: unknown }

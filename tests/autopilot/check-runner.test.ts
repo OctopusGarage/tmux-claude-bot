@@ -23,11 +23,12 @@ describe("createCachingCheckRunner", () => {
     let t = 0;
     const runner = createCachingCheckRunner(base, 1000, () => t);
 
-    // First call: no cache yet → kicks off base in the background, returns not-done now.
-    expect(await runner("npm test", undefined)).toEqual({ ok: false });
+    // First call: no cache yet → kicks off base in the background, returns
+    // pending (not done, but distinguishable from a real failure) right now.
+    expect(await runner("npm test", undefined)).toEqual({ ok: false, pending: true });
     await flush(); // let the background base resolve into the cache
 
-    // Within TTL: returns the cached pass without re-running base.
+    // Within TTL: returns the cached pass (no pending flag) without re-running base.
     expect(await runner("npm test", undefined)).toEqual({ ok: true });
     expect(calls).toBe(1);
 

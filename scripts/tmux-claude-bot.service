@@ -5,7 +5,7 @@ After=default.target
 [Service]
 Type=simple
 WorkingDirectory=__PROJECT_DIR__
-ExecStart=__PROJECT_DIR__/scripts/systemd-wrapper.sh
+ExecStart=__PROJECT_DIR__/scripts/__WRAPPER__
 Restart=always
 RestartSec=10
 

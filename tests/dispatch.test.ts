@@ -73,11 +73,13 @@ describe("assertClaudeBinaryAccessible", () => {
     }
   });
 
-  it("treats an unset PATH as 'binary not found' (process.env.PATH ?? '')", () => {
+  it("still rejects an unknown binary when PATH is unset", () => {
     const orig = process.env.PATH;
-    delete process.env.PATH; // exercises the `?? ""` nullish fallback
+    delete process.env.PATH;
     try {
-      expect(() => assertClaudeBinaryAccessible("sh")).toThrow(/not found in PATH/);
+      expect(() => assertClaudeBinaryAccessible("__no_such_binary_xyz_1234__")).toThrow(
+        /not found in PATH/,
+      );
     } finally {
       process.env.PATH = orig;
     }
@@ -110,6 +112,29 @@ describe("assertClaudeBinaryAccessible", () => {
     withRcFiles({ ".bashrc": 'my-launcher() {\n  claude "$@"\n}\n' }, () => {
       expect(() => assertClaudeBinaryAccessible("my-launcher")).not.toThrow();
     });
+  });
+
+  it("accepts a binary resolved by the user's interactive shell PATH", () => {
+    const origHome = process.env.HOME;
+    const origPath = process.env.PATH;
+    const origShell = process.env.SHELL;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "interactive-path-"));
+    const binDir = path.join(tmp, "bin");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(path.join(binDir, "codex-test-bin"), "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(path.join(binDir, "codex-test-bin"), 0o755);
+    fs.writeFileSync(path.join(tmp, ".bash_profile"), 'export PATH="$HOME/bin:$PATH"\n');
+    process.env.HOME = tmp;
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.SHELL = "/bin/bash";
+    try {
+      expect(() => assertClaudeBinaryAccessible("codex-test-bin --yolo")).not.toThrow();
+    } finally {
+      process.env.HOME = origHome;
+      process.env.PATH = origPath;
+      process.env.SHELL = origShell;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("still throws when a name is neither on PATH nor defined in any rc file", () => {

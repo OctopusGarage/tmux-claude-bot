@@ -2,7 +2,7 @@
   "name": "@octopusgarage/tmux-claude-bot",
   "version": "0.2.1",
   "license": "MIT",
-  "description": "Telegram/Feishu bot that drives Claude Code in tmux sessions on macOS and Linux",
+  "description": "Drive Claude Code & Codex agents in tmux from Telegram, Feishu/Lark, a CLI or a TUI — multi-project sessions, voice prompts, and goal-driven autopilot. macOS & Linux",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/OctopusGarage/tmux-claude-bot.git"
@@ -46,6 +46,8 @@
     "service:resume": "scripts/service.sh resume",
     "service:restart": "scripts/service.sh restart",
     "service:logs": "scripts/service.sh logs",
+    "service:dev": "scripts/service.sh dev",
+    "service:prod": "scripts/service.sh prod",
     "release": "scripts/release.sh",
     "lint:types": "tsc --noEmit",
     "lint:types:tests": "tsc -p tsconfig.tests.json --noEmit",

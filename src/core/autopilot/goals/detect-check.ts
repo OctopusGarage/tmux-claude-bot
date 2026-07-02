@@ -69,7 +69,18 @@ export function detectCheckCommand(
     exists(join(cwd, "pytest.ini")) ||
     exists(join(cwd, "tox.ini"))
   ) {
-    return purpose === "coverage" ? "pytest --cov --cov-report=term-missing" : "pytest";
+    // Run pytest through the project's package manager so it uses that project's
+    // venv (with its plugins, e.g. pytest-cov) — a bare `pytest` often resolves
+    // to a global interpreter that then errors on the project's addopts
+    // (`--cov`, `--cov-fail-under`, …). Mirrors preferring an existing npm script.
+    const runner = exists(join(cwd, "uv.lock"))
+      ? "uv run "
+      : exists(join(cwd, "poetry.lock"))
+        ? "poetry run "
+        : "";
+    return purpose === "coverage"
+      ? `${runner}pytest --cov --cov-report=term-missing`
+      : `${runner}pytest`;
   }
 
   if (exists(join(cwd, "go.mod"))) {

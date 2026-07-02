@@ -60,6 +60,13 @@ export async function decideGoal(
       return { kind: "none" };
     }
 
+    // A gating check is still in flight (its first run hasn't returned). The agent
+    // has already emitted its done sentinel, so do NOT re-inject the phase prompt —
+    // that re-prompts a finished agent on every detectCheck-gated goal. Wait one
+    // tick for the cached result; a real failure (ok:false, not pending) still
+    // falls through to inject below and keeps the agent working.
+    if (result.pendingCheck) return { kind: "none" };
+
     // If seqIndex advanced (seq step satisfied, not yet done), loop to re-evaluate
     // the next seq step in the same tick. Clear humanConfirmed so a confirmation is
     // one-shot: a later humanGate in the same seq must be confirmed afresh rather

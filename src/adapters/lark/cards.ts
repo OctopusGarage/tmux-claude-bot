@@ -22,6 +22,7 @@ interface ButtonSpec {
   text: string;
   value: object;
   style?: string;
+  hoverText?: string;
 }
 
 // --- Feishu card schema 2.0 primitives ---
@@ -31,12 +32,15 @@ interface ButtonSpec {
 
 const md = (content: string): object => ({ tag: "markdown", content });
 
-const button = ({ text, value, style }: ButtonSpec): object => ({
+const button = ({ text, value, style, hoverText }: ButtonSpec): object => ({
   tag: "button",
   text: { tag: "plain_text", content: text },
   type: style ?? "default",
+  hover_tips: { tag: "plain_text", content: hoverText ?? text },
   behaviors: [{ type: "callback", value: signValue(value) }],
 });
+
+const MAX_BUTTONS_PER_ROW = 3;
 
 /** One row of buttons as a column_set — each button in its own auto-width column
  * so they sit side by side. Each Telegram keyboard row maps to one gridRow, so
@@ -51,6 +55,14 @@ const gridRow = (btns: ButtonSpec[]): object => ({
     elements: [button(b)],
   })),
 });
+
+function gridRows(btns: ButtonSpec[], maxPerRow = MAX_BUTTONS_PER_ROW): object[] {
+  const rows: object[] = [];
+  for (let i = 0; i < btns.length; i += maxPerRow) {
+    rows.push(gridRow(btns.slice(i, i + maxPerRow)));
+  }
+  return rows;
+}
 
 const HR = { tag: "hr" } as const;
 
@@ -68,7 +80,7 @@ export function voiceLangCard(current: string): object {
   const mv = messages("lark");
   return shell(mv.voiceLangTitle, [
     md(mv.voiceLangCardPrompt(current === "auto" ? mv.autoDetect : current)),
-    gridRow(
+    ...gridRows(
       VOICE_LANGS.map((l) =>
         l.code === current
           ? { text: `✅ ${l.label}`, value: { cmd: "noop" } }
@@ -106,7 +118,7 @@ export function langCard(current: Lang): object {
   const label = UI_LANGS.find((l) => l.code === current)?.label ?? current;
   return shell(m.uiLangTitle, [
     md(m.uiLangCurrent(label)),
-    gridRow(
+    ...gridRows(
       UI_LANGS.map((l) =>
         l.code === current
           ? { text: `✅ ${l.label}`, value: { cmd: "noop" } }
@@ -198,7 +210,7 @@ function controlRows(group = false, running = true): ButtonSpec[][] {
 }
 
 export function controlActions(group = false, running = true): object[] {
-  return controlRows(group, running).map(gridRow);
+  return controlRows(group, running).flatMap((row) => gridRows(row));
 }
 
 /**
@@ -325,7 +337,7 @@ export function browseCard(view: BrowseView): object {
       value: { cmd: "browsepage", idx: Math.min(view.totalPages - 1, view.page + 1) },
     });
   }
-  if (nav.length > 0) elements.push(gridRow(nav));
+  if (nav.length > 0) elements.push(...gridRows(nav));
   if (view.canCreate) {
     elements.push(
       gridRow([
@@ -364,8 +376,9 @@ export function adoptConfirmCard(pid: number, label: string): object {
   const m = messages("lark");
   return shell(m.adoptTitle, [
     md(m.adoptConfirmPrompt(label)),
-    gridRow([
+    ...gridRows([
       { text: m.btnAdoptConfirm, value: { cmd: "adoptgo", pid }, style: "primary" },
+      { text: m.btnAdoptAsFree, value: { cmd: "adoptfree", pid } },
       { text: m.btnAdoptCancel, value: { cmd: "adoptcancel" } },
     ]),
   ]);
@@ -540,10 +553,10 @@ export function helpCard(group = false, voiceInstallable = false): object {
     md(buildHelpBody("lark", "lark")),
     HR,
     md(m.helpRunning),
-    ...HELP_SESSION_ROWS.map((row) => gridRow(actionRow(row))),
+    ...HELP_SESSION_ROWS.flatMap((row) => gridRows(actionRow(row))),
     HR,
     md(m.helpProjects),
-    gridRow([
+    ...gridRows([
       // Host-wide ops — p2p only (never leak all-session info / recovery into a group).
       ...(group
         ? []
@@ -556,12 +569,12 @@ export function helpCard(group = false, voiceInstallable = false): object {
       { text: m.btnInputs, value: { cmd: "inputs" } },
       { text: m.btnQueue, value: { cmd: "queuestatus" } },
     ]),
-    gridRow(projectRow),
+    ...gridRows(projectRow),
     ...(group ? [] : [gridRow([{ text: m.btnStatusInstall, value: { cmd: "statusinstall" } }])]),
     ...(voiceInstallable
       ? [gridRow([{ text: m.btnVoiceInstall, value: { cmd: "voiceinstall" }, style: "primary" }])]
       : []),
-    ...prefsRows.map((row) => gridRow(row)),
+    ...prefsRows.flatMap((row) => gridRows(row)),
     // In a group, surface binding management at the bottom (restore / rebind /
     // unbind) so the group's home menu is self-sufficient — no need to hunt for a
     // separate card. Secondary emphasis; unbind is the only destructive one.
@@ -618,7 +631,11 @@ export function autopilotPanelCard(view: AutopilotView, session: string, group =
       rows.push([{ text: m.btnApStop, value: { cmd: "ap_stop", s: session }, style: "danger" }]);
     }
   }
-  return shell(m.autopilotTitle, [md(view.statusLine), HR, ...rows.map(gridRow)]);
+  return shell(m.autopilotTitle, [
+    md(view.statusLine),
+    HR,
+    ...rows.flatMap((row) => gridRows(row)),
+  ]);
 }
 
 /** Goal-cycle picker card: a toggle button per catalog goal (✓ when selected), a
@@ -635,7 +652,7 @@ export function autopilotGoalPickerCard(view: AutopilotView, session: string): o
     else goalRows.at(-1)?.push(spec);
   });
   const n = view.goals.filter((g) => g.selected).length;
-  const elements: object[] = [md(m.autopilotTitle), ...goalRows.map(gridRow)];
+  const elements: object[] = [md(m.autopilotTitle), ...goalRows.flatMap((row) => gridRows(row))];
   elements.push(
     gridRow([
       { text: m.btnApRoundsMinus, value: { cmd: "ap_rounds", s: session, delta: -1 } },
@@ -687,7 +704,7 @@ export function promptsCard(
   }));
   if (view.tagFilter)
     tagBtns.push({ text: m.promptsAll, value: { cmd: "ppage", page: 0, tagSid: "" } });
-  if (tagBtns.length) els.push(gridRow(tagBtns));
+  if (tagBtns.length) els.push(...gridRows(tagBtns));
   // One row per prompt: name+tags+description as md, then a "view/copy" button
   for (const p of items) {
     els.push(

@@ -76,6 +76,7 @@ export const zhTW: Messages = {
   adoptConfirmPrompt: (label: string) =>
     `確認接管？將先中斷並結束原程序，再在 tmux 中續接：\n${label}`,
   btnAdoptConfirm: "🧲 接管",
+  btnAdoptAsFree: "🆓 接管為自由專案",
   btnAdoptCancel: "✕ 取消",
   adoptCancelled: "已取消接管",
   adoptWorking: "正在接管…",
@@ -102,6 +103,8 @@ export const zhTW: Messages = {
   adoptFailed: "接管失敗：程序無法結束或未能啟動",
   adoptBusy:
     "目標 tmux 工作階段裡已有程式在前台運行（另一個 agent 或其他程式）。已中止，未動原程序——請先去那邊退出，再重新接管。",
+  adoptProjectRunning:
+    "已有相同專案正在執行 Claude/Codex。已中止，未動原程序——如需平行接管，請選擇「接管為自由專案」。",
   btnAdoptAttach: "💻 在電腦終端查看（可選）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接入指令已經放進「電腦」的剪貼簿了（不用在手機上複製）。回到電腦後，在終端裡直接貼上按 Enter，就能進去查看——這一步是可選的。\n指令：${cmd}`,
@@ -402,6 +405,9 @@ export const zhTW: Messages = {
   goalRefactorElegant: "重構為優雅專業",
   goalUiPolish: "打磨介面",
   goalImproveArchitecture: "提升架構品質",
+  goalHardenStandards: "加固工程規範與門禁",
+  goalPolishGithub: "GitHub 專業化",
+  goalSyncDocs: "文件與程式碼對齊",
   autopilotGoalStarted: (id) => `已啟動目標：${id}`,
   autopilotUnknownGoal: (ids) => `未知目標。可用：${ids}`,
   goalsTitle: "🎯 目標預設",

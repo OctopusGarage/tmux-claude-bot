@@ -48,3 +48,15 @@ matches; pick the right one or ask the user.
 - When you can't resolve a request to one of these commands, say so and run `tcb doctor`;
   don't invent flags. `tcb --help` and `tcb <command> --help` are the authoritative,
   always-current reference — consult them rather than guessing.
+
+## Sending an image or file to the user
+
+Text replies reach the user automatically. To send an **image or file** (a
+screenshot, a generated diagram, a report, a log), run:
+
+    tcb attach <path> [--caption "<short description>"]
+
+It uploads the file and sends it to the chat that asked. You can pass multiple
+paths: `tcb attach a.png b.pdf`. This only works for chat-originated sessions; if
+it prints "no chat is bound to this session", the work wasn't started from chat —
+just describe the file's location in your text reply instead.

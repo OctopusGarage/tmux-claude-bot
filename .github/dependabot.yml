@@ -3,12 +3,13 @@ updates:
   # npm dependencies
   - package-ecosystem: npm
     directory: "/"
+    target-branch: dev
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
-      # One PR per week for all minor/patch bumps — these auto-merge once CI is green.
-      # Major bumps are left ungrouped so each gets its own PR for manual review.
+      # One PR per week for all minor/patch bumps. All Dependabot PRs target dev
+      # and auto-merge there once CI is green; main stays manually promoted.
       npm-minor-patch:
         update-types:
           - minor
@@ -17,6 +18,7 @@ updates:
   # GitHub Actions versions used in workflows
   - package-ecosystem: github-actions
     directory: "/"
+    target-branch: dev
     schedule:
       interval: weekly
     groups:

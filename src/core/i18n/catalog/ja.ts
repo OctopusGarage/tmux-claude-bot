@@ -76,6 +76,7 @@ export const ja: Messages = {
   adoptConfirmPrompt: (label: string) =>
     `引き継ぎますか？元のプロセスを中断・終了してから tmux で再開します:\n${label}`,
   btnAdoptConfirm: "🧲 引き継ぐ",
+  btnAdoptAsFree: "🆓 フリープロジェクトとして引き継ぐ",
   btnAdoptCancel: "✕ キャンセル",
   adoptCancelled: "引き継ぎをキャンセルしました",
   adoptWorking: "引き継ぎ中…",
@@ -104,6 +105,8 @@ export const ja: Messages = {
   adoptFailed: "引き継ぎ失敗: プロセスを終了できないか、エージェントが起動しませんでした",
   adoptBusy:
     "対象の tmux セッションのフォアグラウンドで既にプログラムが動作中です（別のエージェントなど）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
+  adoptProjectRunning:
+    "同じプロジェクトで Claude/Codex が既に実行中です。元のプロセスには触れず中止しました。並行して引き継ぐ場合は「フリープロジェクトとして引き継ぐ」を選んでください。",
   btnAdoptAttach: "💻 PC のターミナルで見る（任意）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接続コマンドは「PC」のクリップボードにコピー済みです（スマホ側でコピーする必要はありません）。PC に戻ったらターミナルに貼り付けて Enter を押すだけで入れます。この手順は任意です。\nコマンド: ${cmd}`,
@@ -418,6 +421,9 @@ export const ja: Messages = {
   goalRefactorElegant: "エレガントにリファクタリング",
   goalUiPolish: "UI を磨く",
   goalImproveArchitecture: "アーキテクチャ品質向上",
+  goalHardenStandards: "規約とゲートを強化",
+  goalPolishGithub: "GitHub プロジェクトを整備",
+  goalSyncDocs: "ドキュメントとコードの整合",
   autopilotGoalStarted: (id) => `目標を開始：${id}`,
   autopilotUnknownGoal: (ids) => `不明な目標。利用可能：${ids}`,
   goalsTitle: "🎯 目標プリセット",

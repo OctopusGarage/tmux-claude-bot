@@ -52,6 +52,35 @@ describe("docs contract", () => {
     expect(manual).toContain("tui.md"); // terminal-UI guide
   });
 
+  it("llms.txt points agents and documentation indexers at the primary docs", () => {
+    const llms = read("llms.txt");
+    for (const doc of [
+      "docs/manual.md",
+      "docs/commands.md",
+      "docs/tui.md",
+      "docs/agents/usage-guide.md",
+      "docs/TESTING.md",
+    ]) {
+      expect(llms, `missing ${doc} in llms.txt`).toContain(doc);
+    }
+  });
+
+  it("context7.json narrows Context7 parsing to maintained docs", () => {
+    const config = JSON.parse(read("context7.json")) as {
+      projectTitle?: string;
+      folders?: string[];
+      excludeFolders?: string[];
+      rules?: string[];
+    };
+
+    expect(config.projectTitle).toBe("tmux-claude-bot");
+    expect(config.folders).toEqual(expect.arrayContaining(["docs", "skills"]));
+    expect(config.excludeFolders).toEqual(
+      expect.arrayContaining(["docs/superpowers", "docs/research"]),
+    );
+    expect(config.rules?.join("\n")).toContain("docs/agents/usage-guide.md");
+  });
+
   it("README documents the operational entry points", () => {
     const readme = read("README.md");
     for (const phrase of [

@@ -3,6 +3,7 @@ import type { ConfigResolver } from "./agents/agent-config-resolver.js";
 import type { AgentRunner } from "./agents/runner.js";
 import type { NotifierRegistry } from "./autopilot/notifier.js";
 import type { MessageQueue } from "./command/queue.js";
+import type { ChannelSenderRegistry } from "./projects/channel-sender.js";
 import type { CurrentProjectManager } from "./projects/project-manager.js";
 import type { ActivityWatcher } from "./session/activity-watcher.js";
 import type { OutputProcessor } from "./session/output.js";
@@ -28,4 +29,6 @@ export type HandlerDeps = {
   activity: ActivityWatcher;
   /** Proactive owner-notification fan-out; adapters register their push fn. */
   notifier: NotifierRegistry;
+  /** Per-channel attachment sender; adapters register their send fn. */
+  channelSenders: ChannelSenderRegistry;
 };

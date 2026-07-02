@@ -101,7 +101,13 @@ function installStatusLine(
   const settingsFile = join(dir, "settings.json");
   const backup = fs.existsSync(settingsFile) ? backupSettings(settingsFile) : null;
   fs.mkdirSync(dir, { recursive: true });
-  settings.statusLine = { type: "command", command };
+  // Preserve any sibling statusLine fields (e.g. refreshInterval) — only type
+  // and command are ours to set; replacing the whole object would drop them.
+  const prev =
+    settings.statusLine && typeof settings.statusLine === "object"
+      ? (settings.statusLine as Record<string, unknown>)
+      : {};
+  settings.statusLine = { ...prev, type: "command", command };
   writeFileAtomicSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
   return backup;
 }

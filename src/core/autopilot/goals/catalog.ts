@@ -182,6 +182,108 @@ const GOALS: Goal[] = [
       },
     ],
   },
+  {
+    id: "harden-standards",
+    titleKey: "goalHardenStandards",
+    phases: [
+      {
+        id: "assess",
+        intent: {
+          kind: "prompt",
+          text: "Audit this project's engineering standards and quality gates, and write the gaps to a markdown plan (one item each, with a concrete fix). Adapting to the project's language and toolchain, check whether each of these exists AND is wired into both a git hook (pre-commit/pre-push) and CI: a linter, a formatter, a type checker, security static analysis (SAST), a dependency-vulnerability audit, a test runner, and a coverage threshold — and whether the tests assert real behavior rather than padding coverage. Also check: an AI-assistant guide at the root (CLAUDE.md or AGENTS.md) that is non-empty and covers the common commands, conventions, architecture, and workflow; a substantive README plus the key docs (how to develop/run, architecture, deploy); a .gitignore covering the stack's build/temp/secret files; and sane repo conventions (default branch main). List only real, actionable gaps — do not invent issues. When the audit is complete, output the marker [ASSESS_DONE].",
+        },
+        done: { kind: "sentinel", marker: "ASSESS_DONE" },
+      },
+      {
+        id: "harden",
+        intent: {
+          kind: "prompt",
+          text: "Work through the audit plan one item at a time. Add or strengthen each missing quality gate (lint / format / type-check / SAST / dependency audit / tests / coverage) and wire it into a git hook AND CI; fill the documentation, .gitignore, and convention gaps. Match the project's existing tooling and style, keep the test suite green, and don't change product behavior. If you add or change a CI workflow or git hook, run the EXACT commands each of its jobs/steps will run locally (invoked the same way) and confirm every one passes before claiming done — your done-check only runs the test suite, so a workflow you don't run yourself is unverified and may fail on the first real CI run. For anything you deliberately skip, record the reason in the plan and a brief note so it isn't re-litigated. Update the plan as you go. When every item is addressed, output the marker [GOAL_DONE].",
+        },
+        done: {
+          kind: "seq",
+          of: [
+            {
+              kind: "all",
+              of: [
+                { kind: "sentinel", marker: "GOAL_DONE" },
+                { kind: "detectCheck", purpose: "test" },
+              ],
+            },
+            { kind: "humanGate" },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "polish-github",
+    titleKey: "goalPolishGithub",
+    phases: [
+      {
+        id: "audit",
+        intent: {
+          kind: "prompt",
+          text: "Audit how professional and trustworthy this project looks on GitHub, and write the gaps to a markdown plan (one item each, with a concrete fix). Check: a README that opens with a one-line description, then status / coverage / license / version badges that point at REAL checks, a quick-start, and links to the deeper docs; community-health files (LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, and issue + PR templates); security and quality CI workflows that are visible and actually run — dependency-vulnerability scanning, secret scanning, and static analysis (CodeQL or equivalent); and a clear repo description plus topics. Flag a badge as a gap if it is decorative (points at a check that doesn't exist). List only real, actionable gaps — do not invent issues. When the audit is complete, output the marker [AUDIT_DONE].",
+        },
+        done: { kind: "sentinel", marker: "AUDIT_DONE" },
+      },
+      {
+        id: "polish",
+        intent: {
+          kind: "prompt",
+          text: "Work through the audit plan one item at a time. Refresh the README (one-line description, badges that link to real CI / coverage / license / version, quick-start, doc links), add the missing community-health files (LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, issue + PR templates), and add the security and quality CI workflows (dependency + secret + static-analysis scanning). Wire a check FIRST, then add its badge — never add a badge for a check that doesn't run. Match the project's stack and existing style, keep the test suite green, and don't change product behavior. For every CI workflow or git hook you add or change, run the EXACT commands each of its jobs/steps will run locally (invoked the same way) and confirm every one passes before claiming done — your done-check only runs the test suite, so a workflow you don't run yourself is unverified and may fail on the first real CI run, and a badge pointing at a red check is worse than none. For anything you deliberately skip, record the reason in the plan. Update the plan as you go. When every item is addressed, output the marker [GOAL_DONE].",
+        },
+        done: {
+          kind: "seq",
+          of: [
+            {
+              kind: "all",
+              of: [
+                { kind: "sentinel", marker: "GOAL_DONE" },
+                { kind: "detectCheck", purpose: "test" },
+              ],
+            },
+            { kind: "humanGate" },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "sync-docs",
+    titleKey: "goalSyncDocs",
+    phases: [
+      {
+        id: "audit",
+        intent: {
+          kind: "prompt",
+          text: "Read the actual code and reconcile it against the project's documentation and config. Find every place they diverge and write the gaps to a markdown plan (one item each, with the concrete fix). Check: commands / flags / options the docs describe but the code renamed, removed, or changed (and real ones in the code missing from the docs); config the code actually reads vs the config samples and docs (a key in code missing from .env.example or equivalent, a documented key the code no longer reads, a wrong default); described behavior that differs from the implementation; stale code comments and docstrings; quick-starts or examples that no longer run. The CODE is the source of truth — flag a doc as a gap when it describes something the code does not do. The ONE exception: when a doc describes intended behavior that the code violates, that is a suspected CODE BUG — list it SEPARATELY as a bug to be decided; do NOT plan to rewrite the doc to match the broken code. Do not invent aspirational docs; list only real divergences. When the audit is complete, output the marker [AUDIT_DONE].",
+        },
+        done: { kind: "sentinel", marker: "AUDIT_DONE" },
+      },
+      {
+        id: "align",
+        intent: {
+          kind: "prompt",
+          text: "Work through the audit plan one item at a time, bringing the docs and config into line with what the code actually does (code is the source of truth): fix renamed / removed / changed commands, flags, and options; reconcile the config samples and docs with the keys the code reads (add missing, drop removed, correct defaults); correct described behavior, stale comments and docstrings, and broken examples. For each item flagged as a suspected code bug, leave the doc describing the intended behavior and record the bug in the plan for a human to decide — do NOT paper over it by editing the doc to match the broken code. Don't invent new documentation beyond filling a real gap, and don't change product behavior. Keep the test suite green; if the project has a docs-contract test (asserting every command / config key is documented), make it pass. Update the plan as you go. When every item is addressed, output the marker [GOAL_DONE].",
+        },
+        done: {
+          kind: "seq",
+          of: [
+            {
+              kind: "all",
+              of: [
+                { kind: "sentinel", marker: "GOAL_DONE" },
+                { kind: "detectCheck", purpose: "test" },
+              ],
+            },
+            { kind: "humanGate" },
+          ],
+        },
+      },
+    ],
+  },
 ];
 
 let userCache: { dir: string; mtimeMs: number; goals: Goal[] } | null = null;

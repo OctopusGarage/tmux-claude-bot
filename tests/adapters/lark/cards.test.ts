@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adoptConfirmCard,
   groupBoundCard,
   groupPickerCard,
   helpCard,
@@ -19,6 +20,8 @@ interface Card {
 interface Element {
   tag: string;
   content?: string;
+  text?: { content?: string };
+  hover_tips?: { content?: string };
   behaviors?: { value?: { cmd?: string; sid?: string; idx?: number } }[];
   columns?: { elements?: Element[] }[];
 }
@@ -39,6 +42,7 @@ function collectButtons(elements: Element[]): Element[] {
 }
 const allCmds = (c: Card): (string | undefined)[] =>
   collectButtons(c.body.elements).map((b) => b.behaviors?.[0]?.value?.cmd);
+const buttonRows = (c: Card): Element[] => c.body.elements.filter((e) => e.tag === "column_set");
 
 describe("resultCard", () => {
   it("carries the full inline control panel (Feishu has no / discovery)", () => {
@@ -96,6 +100,15 @@ describe("resultCard", () => {
     ]);
     expect(allCmds(card)).not.toContain("listalive");
   });
+
+  it("adds PC hover tips and avoids dense button rows", () => {
+    const card = cardOf(resultCard("hi"));
+    const buttons = collectButtons(card.body.elements);
+
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(buttons.every((b) => b.hover_tips?.content === b.text?.content)).toBe(true);
+    expect(Math.max(...buttonRows(card).map((r) => r.columns?.length ?? 0))).toBeLessThanOrEqual(3);
+  });
 });
 
 describe("viewCard", () => {
@@ -136,6 +149,15 @@ describe("viewCard", () => {
     const card = cardOf(viewCard("👁 tmux 画面", "pane body", false, false));
     expect(allCmds(card)).toEqual(["start", "listalive", "recover", "help"]);
     expect(allCmds(card)).not.toContain("esc"); // no dead control keys when idle
+  });
+});
+
+describe("adoptConfirmCard", () => {
+  it("offers both normal takeover and free-project takeover", () => {
+    const card = cardOf(adoptConfirmCard(4242, "Claude · proj · sess · task idle"));
+
+    expect(allCmds(card)).toContain("adoptgo");
+    expect(allCmds(card)).toContain("adoptfree");
   });
 });
 

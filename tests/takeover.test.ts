@@ -70,6 +70,8 @@ describe("findOrphans (claude predicate)", () => {
 });
 
 describe("listClaudeOrphans dedup", () => {
+  afterEach(() => vi.mocked(listClaudeSessions).mockReset());
+
   it("collapses PIDs that resume the same session into one entry carrying all pids", async () => {
     // Two independent `claude` launches in the same dir → two PIDs, same
     // newest-on-disk session → one adoptable entry, both pids retained for kill.
@@ -92,6 +94,35 @@ describe("listClaudeOrphans dedup", () => {
     expect(orphans).toHaveLength(1);
     expect([...(orphans[0]?.pids ?? [])].sort()).toEqual([21, 22]);
     expect(orphans[0]?.cwd).toBe("/proj");
+  });
+
+  it("marks task state from recent transcript activity when observable", async () => {
+    const rows: ProcRow[] = [
+      { pid: 21, ppid: 20, command: "claude --dangerously-skip-permissions" },
+      { pid: 22, ppid: 20, command: "claude --dangerously-skip-permissions" },
+    ];
+    const probe: TakeoverProbe = {
+      snapshot: async () => rows,
+      tmuxPanePids: async () => [],
+      cwdOf: async (pid) => `/proj-${pid}`,
+      openSessionFile: async () => null,
+      readProcEnv: async () => "CLAUDE_CONFIG_DIR=/home/u/.claude",
+      readShellRc: async () => "",
+      isAlive: async () => true,
+      signal: () => {},
+      sleep: async () => {},
+    };
+    vi.mocked(listClaudeSessions).mockImplementation(async (projectPath) => [
+      {
+        sessionId: `${projectPath}-session`,
+        mtime: new Date(Date.now() - (projectPath === "/proj-21" ? 1_000 : 120_000)),
+      },
+    ]);
+
+    const orphans = await listClaudeOrphans(probe);
+
+    expect(orphans.find((o) => o.pid === 21)?.busy).toBe(true);
+    expect(orphans.find((o) => o.pid === 22)?.busy).toBe(false);
   });
 });
 
@@ -369,7 +400,7 @@ describe("orphanLabel", () => {
         startCommand: "claude",
         agent: "claude",
       }),
-    ).toBe("my-project · 12345678");
+    ).toBe("Claude · my-project · 12345678 · task unknown");
   });
 
   it("marks a fresh (no-session) orphan as new", () => {
@@ -382,7 +413,21 @@ describe("orphanLabel", () => {
         startCommand: "claude",
         agent: "claude",
       }),
-    ).toBe("my-project · new");
+    ).toBe("Claude · my-project · new · task unknown");
+  });
+
+  it("shows codex and known task state when available", () => {
+    expect(
+      orphanLabel({
+        pid: 1,
+        cwd: "/home/u/my-project",
+        configRoot: "/home/u/.codex",
+        sessionId: "87654321-aaaa-bbbb-cccc-dddddddddddd",
+        startCommand: "codex resume 87654321-aaaa-bbbb-cccc-dddddddddddd",
+        agent: "codex",
+        busy: true,
+      }),
+    ).toBe("Codex · my-project · 87654321 · task busy");
   });
 });
 

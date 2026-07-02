@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -52,6 +53,27 @@ function definedInShellRc(bin: string): boolean {
   return false;
 }
 
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+function visibleToInteractiveShell(bin: string): boolean {
+  const shells = [...new Set([process.env.SHELL, "/bin/zsh", "/bin/bash"].filter(Boolean))];
+  for (const shell of shells) {
+    try {
+      execFileSync(shell as string, ["-lic", `command -v -- ${shellQuote(bin)} >/dev/null 2>&1`], {
+        stdio: "ignore",
+        timeout: 3000,
+        env: process.env,
+      });
+      return true;
+    } catch {
+      // Shell missing, rc error, or command unavailable there — try the next shell.
+    }
+  }
+  return false;
+}
+
 export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
   const bin = claudeBinFromStartCommand(claudeStartCommand);
   if (nodePath.isAbsolute(bin)) {
@@ -59,7 +81,7 @@ export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
       accessSync(bin, constants.X_OK);
       return;
     } catch {
-      throw new Error(`Claude binary not found or not executable: ${bin}`);
+      throw new Error(`Agent binary not found or not executable: ${bin}`);
     }
   }
   for (const dir of (process.env.PATH ?? "").split(":")) {
@@ -71,11 +93,13 @@ export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
       // continue searching
     }
   }
-  // Not an executable on PATH — but a shell alias/function (e.g. in ~/.zshrc) is
-  // a valid launcher too, since the command runs in the session's interactive
-  // shell. Accept it rather than failing the pre-flight.
+  // Not an executable on the bot process PATH — but the command runs in the
+  // target tmux pane's interactive shell. Accept launchers that are either
+  // explicit aliases/functions or binaries made visible by shell startup files
+  // (common with nvm-installed `codex`).
   if (definedInShellRc(bin)) return;
-  throw new Error(`Claude binary "${bin}" not found in PATH`);
+  if (visibleToInteractiveShell(bin)) return;
+  throw new Error(`Agent binary "${bin}" not found in PATH`);
 }
 
 /**
