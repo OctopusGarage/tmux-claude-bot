@@ -1,3 +1,4 @@
+import type { PromptTranslateCommandResult } from "../../core/read/prompt-translation.js";
 import { appStateFile } from "../../shared/state-dir.js";
 
 /**
@@ -29,6 +30,7 @@ export type ControlRequest =
   | { id: number; op: "logs"; session: string }
   | { id: number; op: "sysload" }
   | { id: number; op: "inputs"; session: string }
+  | { id: number; op: "promptTranslate"; arg: string }
   | { id: number; op: "autopilot"; session: string; verb: string }
   | { id: number; op: "autopilotView"; session: string }
   | { id: number; op: "sendAttachment"; session: string; filePath: string; caption?: string };
@@ -36,6 +38,11 @@ export type ControlRequest =
 export type ControlResponse =
   | { id: number; ok: true; data: unknown }
   | { id: number; ok: false; error: string };
+
+export type PromptTranslateControlResponse = {
+  body: string;
+  status: PromptTranslateCommandResult;
+};
 
 /** Server → client, unsolicited. `activity` means "something changed, re-snapshot";
  * `reply`/`notify`/`error` carry a queued prompt's eventual outcome by session. */

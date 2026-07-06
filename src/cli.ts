@@ -44,7 +44,7 @@ const program = new Command();
 
 program
   .name("tmux-claude-bot")
-  .description("Telegram/Feishu bot that drives Claude Code in tmux sessions")
+  .description("Telegram/Feishu bot that drives Claude Code in managed sessions")
   .version(appVersion(), "-v, --version");
 
 program
@@ -225,8 +225,16 @@ program
   .action(async (project, text, o) => (await ctl()).cmdSend(project, text, o));
 
 program
+  .command("prompt-translate [args...]")
+  .description(
+    "view or change prompt translation for local control input: status | off | on [from] [to]",
+  )
+  .option("--json", "output JSON")
+  .action(async (args, o) => (await ctl()).cmdPromptTranslate(args ?? [], o));
+
+program
   .command("peek <project>")
-  .description("print a snapshot of a project's tmux pane")
+  .description("print a snapshot of a project's session pane")
   .option("--lines <n>", "lines of scrollback")
   .option("--json", "output JSON")
   .action(async (project, o) => (await ctl()).cmdPeek(project, o));
@@ -242,7 +250,7 @@ program
 program
   .command("adopt [pid]")
   .description(
-    "list claude/codex running outside tmux, or adopt one by PID (stops it, resumes under management)",
+    "list unmanaged claude/codex processes, or adopt one by PID (stops it, resumes under management)",
   )
   .option("--json", "output JSON")
   .action(async (pid, o) => (await ctl()).cmdAdopt(pid, o));
@@ -250,13 +258,14 @@ program
 program
   .command("control <project> <action>")
   .description("send a control action (esc|enter|interrupt|restart|clear|compact|…)")
+  .option("-y, --yes", "confirm dangerous control actions without prompting")
   .option("--json", "output JSON")
   .action(async (project, action, o) => (await ctl()).cmdControl(project, action, o));
 
 program
   .command("attach <file...>")
-  .description("send an image/file to the session's chat (defaults to the current tmux session)")
-  .option("--to <project>", "target a specific project instead of the current tmux session")
+  .description("send an image/file to the session's chat (defaults to the current session)")
+  .option("--to <project>", "target a specific project instead of the current session")
   .option("--caption <text>", "optional caption (attached to the first file)")
   .option("--json", "output JSON")
   .action(async (files, o) => (await ctl()).cmdSendAttachment(files, o));
@@ -288,7 +297,7 @@ program
 
 program
   .command("recover")
-  .description("Recreate every project's tmux session and relaunch its agent (after a reboot)")
+  .description("Recreate every project's session and relaunch its agent (after a reboot)")
   .option("--dry-run", "show what would be recovered without doing it")
   .option("--json", "output the plan/result as JSON")
   .action(async (o) => {

@@ -4,10 +4,10 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAgentKind } from "../src/core/agents/agentKindMap.js";
 import { projectPathToHistoryDir } from "../src/core/agents/claude/claude-history.js";
+import type { MessageAction } from "../src/core/command/actions.js";
 import {
   assertClaudeBinaryAccessible,
   executeMessage,
-  type MessageAction,
   performRestart,
   performStart,
 } from "../src/core/command/dispatch.js";
@@ -33,6 +33,8 @@ function deps(claudeOver: Record<string, unknown> = {}) {
   return fakeDeps({
     agent: {
       checkIfRunning: vi.fn(async () => true),
+      waitUntilReady: vi.fn(async () => {}),
+      waitUntilInputReady: vi.fn(async () => {}),
       waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE" })),
       start: vi.fn(async () => {}),
       interrupt: vi.fn(async () => {}),
@@ -108,6 +110,15 @@ describe("assertClaudeBinaryAccessible", () => {
     });
   });
 
+  it("accepts a name defined as a shell alias in ~/.zsh_aliases (not on PATH)", () => {
+    withRcFiles(
+      { ".zsh_aliases": 'alias claude-dernan="CLAUDE_CONFIG_DIR=~/.x claude --foo"\n' },
+      () => {
+        expect(() => assertClaudeBinaryAccessible("claude-dernan")).not.toThrow();
+      },
+    );
+  });
+
   it("accepts a name defined as a shell function in ~/.bashrc", () => {
     withRcFiles({ ".bashrc": 'my-launcher() {\n  claude "$@"\n}\n' }, () => {
       expect(() => assertClaudeBinaryAccessible("my-launcher")).not.toThrow();
@@ -129,6 +140,27 @@ describe("assertClaudeBinaryAccessible", () => {
     process.env.SHELL = "/bin/bash";
     try {
       expect(() => assertClaudeBinaryAccessible("codex-test-bin --yolo")).not.toThrow();
+    } finally {
+      process.env.HOME = origHome;
+      process.env.PATH = origPath;
+      process.env.SHELL = origShell;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("waits long enough for a slow interactive shell to resolve a launcher", () => {
+    const origHome = process.env.HOME;
+    const origPath = process.env.PATH;
+    const origShell = process.env.SHELL;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "slow-shell-"));
+    const shell = path.join(tmp, "shell");
+    fs.writeFileSync(shell, "#!/bin/sh\nsleep 1\nexit 0\n");
+    fs.chmodSync(shell, 0o755);
+    process.env.HOME = tmp;
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.SHELL = shell;
+    try {
+      expect(() => assertClaudeBinaryAccessible("slow-shell-launcher")).not.toThrow();
     } finally {
       process.env.HOME = origHome;
       process.env.PATH = origPath;
@@ -323,6 +355,66 @@ describe("executeMessage — text action with history", () => {
     expect(out).toBe("feature built");
   });
 
+  it("sends the delivered prompt and matches history against it", async () => {
+    const projectPath = "/proj/translated";
+    setPathForSession("proj-1", projectPath);
+    const histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(histDir, { recursive: true });
+    const line = (type: string, content: string) =>
+      JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+    fs.writeFileSync(
+      path.join(histDir, "a.jsonl"),
+      `${[line("user", "Ship the feature now"), line("assistant", "feature shipped")].join("\n")}\n`,
+    );
+
+    const d = deps();
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    const out = await executeMessage(
+      msg("text", {
+        text: "Ship the feature now",
+        origin: "user",
+        promptSource: "telegram",
+        sourceText: "把功能做完",
+        transform: {
+          kind: "translation",
+          provider: "argos",
+          from: "zh",
+          to: "en",
+          sourceText: "把功能做完",
+          deliveredText: "Ship the feature now",
+        },
+      }),
+      d,
+    );
+
+    expect(d.bridge.sendKeys).toHaveBeenCalledWith("Ship the feature now", "proj-1");
+    expect(out).toBe("feature shipped");
+  });
+
+  it("does not translate a system text action", async () => {
+    const fakePython = path.join(configRoot, "fake-python");
+    fs.writeFileSync(fakePython, "#!/bin/sh\ncat >/dev/null\nprintf 'Continue in English'\n");
+    fs.chmodSync(fakePython, 0o755);
+    const oldEnv = {
+      mode: process.env.PROMPT_TRANSLATE_MODE,
+      python: process.env.ARGOS_TRANSLATE_PYTHON,
+    };
+    process.env.PROMPT_TRANSLATE_MODE = "argos";
+    process.env.ARGOS_TRANSLATE_PYTHON = fakePython;
+
+    try {
+      const d = deps();
+
+      await executeMessage(msg("text", { text: "继续", origin: "system" }), d);
+
+      expect(d.bridge.sendKeys).toHaveBeenCalledWith("继续", "proj-1");
+    } finally {
+      process.env.PROMPT_TRANSLATE_MODE = oldEnv.mode;
+      process.env.ARGOS_TRANSLATE_PYTHON = oldEnv.python;
+    }
+  });
+
   it("truncates an over-long history reply", async () => {
     const projectPath = "/proj/big";
     setPathForSession("proj-1", projectPath);
@@ -410,6 +502,33 @@ describe("executeMessage — text action with history", () => {
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "another unmatched prompt abc" }), d);
     expect(out).toBe("返回空内容 · 用 /peek 查看画面");
+  });
+
+  it("waits for the agent input surface before sending text", async () => {
+    const calls: string[] = [];
+    const d = fakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilInputReady: vi.fn(async () => {
+          calls.push("ready");
+        }),
+        waitUntilDone: vi.fn(async () => {
+          calls.push("done");
+          return { done: true, output: "PANE" };
+        }),
+      } as never,
+      bridge: {
+        sendKeys: vi.fn(async () => {
+          calls.push("send");
+        }),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    await executeMessage(msg("text", { text: "build the feature" }), d);
+
+    expect(calls).toEqual(["ready", "send", "done"]);
+    expect(d.agent.waitUntilInputReady).toHaveBeenCalledWith("proj-1");
   });
 
   it("keeps waiting across timeout rounds and notifies once, then resolves the real result", async () => {

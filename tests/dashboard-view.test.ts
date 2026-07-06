@@ -11,6 +11,10 @@ const snap: DashboardSnapshot = {
     {
       session: "tmux_proj_a",
       label: "proj-a",
+      sessionKind: "regular",
+      workspacePath: "/work/proj-a",
+      independentSlot: null,
+      group: { chatId: "oc_a", label: "Proj A Group" },
       kind: "claude",
       running: true,
       busy: true,
@@ -31,6 +35,10 @@ const snap: DashboardSnapshot = {
     {
       session: "tmux_proj_b",
       label: "proj-b",
+      sessionKind: "independent",
+      workspacePath: "/work/proj-b",
+      independentSlot: 2,
+      group: null,
       kind: "codex",
       running: true, // agent up but idle
       busy: false,
@@ -41,6 +49,10 @@ const snap: DashboardSnapshot = {
     {
       session: "tmux_proj_c",
       label: "proj-c",
+      sessionKind: "regular",
+      workspacePath: null,
+      independentSlot: null,
+      group: null,
       kind: "claude",
       running: false, // no agent in the pane → stopped
       busy: false,
@@ -68,13 +80,22 @@ describe("dashboard-view", () => {
     expect(out).toContain("0.1.9"); // version
     expect(out).toContain("proj-a");
     expect(out).toContain("proj-b");
-    expect(out).toContain("claude");
-    expect(out).toContain("codex");
-    expect(out).toContain("claude/sub"); // apiMode "subscription" rendered next to the kind
+    expect(out).toContain("🟠 Claude/sub"); // apiMode "subscription" rendered next to the kind
+    expect(out).toContain("🔘 Codex");
+    expect(out).toContain("🧩 independent #2");
+    expect(out).toContain("🗂 Proj A Group");
+    expect(out).toContain("📍 /work/proj-a");
     expect(out).toMatch(/busy/i);
     expect(out).toMatch(/idle/i);
     expect(out).toContain("47"); // context %
     expect(out).toMatch(/3 sessions/); // session count in header
+  });
+
+  it("can hide Lark-only project-group details for Telegram", () => {
+    const out = formatDashboardForChat(snap, { maxChars: 3500, showGroups: false });
+    expect(out).toContain("proj-a");
+    expect(out).not.toContain("Proj A Group");
+    expect(out).not.toContain("🗂 Proj A Group");
   });
 
   it("distinguishes the three states: busy 🟢, idle-running 🟡, stopped ⏹/⚫", () => {
@@ -115,13 +136,17 @@ describe("dashboard-view", () => {
         {
           session: "tmux_proj_a",
           label: "proj-a",
+          sessionKind: "regular",
+          workspacePath: "/work/proj-a",
+          independentSlot: null,
+          group: null,
           kind: "claude" as const,
           running: true,
           busy: true,
           taskMs: 72_000,
           cumulativeBusyMs: 3_600_000,
           uptimeMs: 10_800_000,
-          usage: snap.sessions[0]!.usage,
+          usage: snap.sessions[0]?.usage ?? null,
           apiMode: "subscription" as const,
           autopilot: { enabled: true, pureKeepAlive: true, iterations: 7 },
         },
@@ -156,6 +181,10 @@ describe("dashboard-view", () => {
         {
           session: "tmux_proj_home",
           label: "home",
+          sessionKind: "operator",
+          workspacePath: null,
+          independentSlot: null,
+          group: null,
           kind: "claude",
           running: true,
           busy: false,

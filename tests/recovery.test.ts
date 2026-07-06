@@ -73,6 +73,41 @@ describe("recoverProjects", () => {
     expect(deps.agent.startWithResume).not.toHaveBeenCalled();
   });
 
+  it("uses the codex session's last recorded model when recovering with an exact id", async () => {
+    const codexHome = fs.mkdtempSync(join(os.tmpdir(), "tcb-recover-codex-home-"));
+    const rolloutDir = join(codexHome, "sessions", "2026", "07", "05");
+    fs.mkdirSync(rolloutDir, { recursive: true });
+    fs.writeFileSync(
+      join(rolloutDir, "rollout-2026-07-05T00-00-00-uuid-codex.jsonl"),
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: { id: "uuid-codex", cwd: realDir },
+        }),
+        JSON.stringify({
+          type: "turn_context",
+          payload: { cwd: realDir, model: "gpt-5.4-mini" },
+        }),
+      ].join("\n"),
+    );
+    setPathForSession("tmux_proj_codex", realDir);
+    markSessionRunning("tmux_proj_codex");
+    setAgentKind("tmux_proj_codex", "codex");
+    setStartCommand("tmux_proj_codex", `CODEX_HOME=${codexHome} codex --model gpt-5.5`);
+    recordLiveSessionId("tmux_proj_codex", "uuid-codex");
+    const deps = recoverDeps({ paneAlive: false });
+
+    await recoverProjects(deps, { staggerMs: 0 });
+
+    expect(deps.agent.startWithResume).toHaveBeenCalledWith(
+      "tmux_proj_codex",
+      "uuid-codex",
+      `CODEX_HOME=${codexHome} codex --model gpt-5.4-mini`,
+    );
+
+    fs.rmSync(codexHome, { recursive: true, force: true });
+  });
+
   it("leaves an alive session whose agent is running untouched (idempotent)", async () => {
     setPathForSession("tmux_proj_c", realDir);
     markSessionRunning("tmux_proj_c");

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExecFileLike, ExecResult } from "../src/core/session/tmux.js";
 import { TmuxBridge } from "../src/core/session/tmux.js";
+import { TERMINAL_MODE_RESET_SEQUENCE } from "../src/shared/utils/terminal-modes.js";
 
 type MockExecFile = ExecFileLike & ReturnType<typeof vi.fn>;
 
@@ -13,6 +14,7 @@ function createMockExecFile(results: {
   killSession?: ExecResult;
   listSessions?: ExecResult;
   displayMessage?: ExecResult;
+  listClients?: ExecResult;
 }): MockExecFile {
   return vi.fn().mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
     if (cmd === "tmux") {
@@ -34,6 +36,8 @@ function createMockExecFile(results: {
           return results.listSessions ?? { stdout: "", stderr: "" };
         case "display-message":
           return results.displayMessage ?? { stdout: "", stderr: "" };
+        case "list-clients":
+          return results.listClients ?? { stdout: "", stderr: "" };
       }
     }
     throw new Error(`Unexpected execFile call: ${cmd} ${args.join(" ")}`);
@@ -126,7 +130,7 @@ describe("TmuxBridge", () => {
   });
 
   describe("sendKeys", () => {
-    it("sends single line literally (-l) with Enter", async () => {
+    it("sends single line literally (-l) and submits with C-m", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("echo hello");
@@ -140,7 +144,52 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         2,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "Enter"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
+        { timeout: 10000 },
+      );
+    });
+
+    it("waits briefly after literal text before submitting", async () => {
+      const sleeps: number[] = [];
+      mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
+      const bridge = new TmuxBridge({
+        execFile: mockExecFile,
+        getSessionName,
+        submitSettleMs: 50,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+      });
+
+      await bridge.sendKeys("echo hello");
+
+      expect(sleeps).toEqual([50]);
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        2,
+        "tmux",
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
+        { timeout: 10000 },
+      );
+    });
+
+    it("does not wait before a raw newline submit with no literal text", async () => {
+      const sleeps: number[] = [];
+      mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
+      const bridge = new TmuxBridge({
+        execFile: mockExecFile,
+        getSessionName,
+        submitSettleMs: 50,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+      });
+
+      await bridge.sendKeys("\n");
+
+      expect(sleeps).toEqual([]);
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "tmux",
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
     });
@@ -161,16 +210,16 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         2,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "Enter"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
     });
 
-    it("sends multiple lines sequentially with Enter after each", async () => {
+    it("sends multiple lines sequentially with C-m after each", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("line1\nline2\nline3");
-      // Each non-empty line gets content + Enter; last line also gets Enter
+      // Each non-empty line gets content + C-m; last line also gets C-m
       expect(mockExecFile).toHaveBeenCalledTimes(6);
       expect(mockExecFile).toHaveBeenNthCalledWith(
         1,
@@ -181,7 +230,7 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         2,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "Enter"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
@@ -193,7 +242,7 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         4,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "Enter"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
@@ -205,32 +254,32 @@ describe("TmuxBridge", () => {
       expect(mockExecFile).toHaveBeenNthCalledWith(
         6,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "Enter"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
     });
 
-    it("skips empty lines but still sends Enter on last iteration", async () => {
+    it("skips empty lines but still sends C-m on last iteration", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("line1\n\nline2");
       // Split gives ["line1", "", "line2"], length=3
-      // i=0: line="line1" truthy -> send-keys, Enter
-      // i=1: line="" falsy -> skip (no Enter, not last line)
-      // i=2: line="line2" truthy, isLastLine=true -> send-keys, Enter
+      // i=0: line="line1" truthy -> send-keys, C-m
+      // i=1: line="" falsy -> skip (no C-m, not last line)
+      // i=2: line="line2" truthy, isLastLine=true -> send-keys, C-m
       expect(mockExecFile).toHaveBeenCalledTimes(4);
     });
 
-    it("handles single newline - sends Enter only", async () => {
+    it("handles single newline - sends C-m only", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("\n");
       // Split gives [""], length=1
-      // i=0: line="" falsy, isLastLine=true -> send Enter
+      // i=0: line="" falsy, isLastLine=true -> send C-m
       expect(mockExecFile).toHaveBeenCalledTimes(1);
       expect(mockExecFile).toHaveBeenCalledWith(
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "Enter"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
     });
@@ -240,9 +289,9 @@ describe("TmuxBridge", () => {
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("line1\n   \nline2");
       // Split: ["line1", "   ", "line2"], length=3
-      // i=0: "line1" truthy -> send-keys, Enter
-      // i=1: "   " truthy -> send-keys, Enter
-      // i=2: "line2" truthy, isLastLine=true -> send-keys, Enter
+      // i=0: "line1" truthy -> send-keys, C-m
+      // i=1: "   " truthy -> send-keys, C-m
+      // i=2: "line2" truthy, isLastLine=true -> send-keys, C-m
       expect(mockExecFile).toHaveBeenCalledTimes(6);
     });
   });
@@ -335,12 +384,43 @@ describe("TmuxBridge", () => {
       const done = bridge.sendExit();
       // Before advancing time: C-c should have been sent, /exit not yet
       const callsBefore = mockExecFile.mock.calls.length;
-      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(350);
       await done;
       vi.useRealTimers();
 
       // After the 300ms delay, /exit should have been sent (more calls than before)
       expect(mockExecFile.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+
+    it("resets enhanced keyboard modes on attached tmux client terminals after /exit", async () => {
+      vi.useFakeTimers();
+      const writes: Array<{ path: string; data: string }> = [];
+      mockExecFile = createMockExecFile({
+        sendKeys: { stdout: "", stderr: "" },
+        listClients: { stdout: "/dev/ttys016\n/dev/ttys016\n/dev/ttys020\n", stderr: "" },
+      });
+      const bridge = new TmuxBridge({
+        execFile: mockExecFile,
+        getSessionName,
+        writeFile: async (path, data) => {
+          writes.push({ path, data });
+        },
+      });
+
+      const done = bridge.sendExit();
+      await vi.advanceTimersByTimeAsync(350);
+      await done;
+      vi.useRealTimers();
+
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "tmux",
+        ["list-clients", "-t", "tmux_proj_test", "-F", "#{client_tty}"],
+        { timeout: 5000 },
+      );
+      expect(writes).toEqual([
+        { path: "/dev/ttys016", data: TERMINAL_MODE_RESET_SEQUENCE },
+        { path: "/dev/ttys020", data: TERMINAL_MODE_RESET_SEQUENCE },
+      ]);
     });
   });
 

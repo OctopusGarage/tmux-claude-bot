@@ -1,0 +1,4 @@
+interface:
+  display_name: "Arch Loop"
+  short_description: "Run this repo's architecture deepening loop."
+  default_prompt: "Run the architecture deepening loop for this repo."

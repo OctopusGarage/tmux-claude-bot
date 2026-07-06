@@ -89,6 +89,32 @@ export const envSchema = z.object({
   // back instead of throwing at startup — a stray Lark line must not take down a
   // Telegram-only install.
   LARK_DOMAIN: z.enum(["feishu", "lark"]).catch("feishu"),
+  // --- Optional local prompt translation ---
+  PROMPT_TRANSLATE_MODE: z.string().default("off"),
+  PROMPT_TRANSLATE_FROM: blankTolerantString("zh"),
+  PROMPT_TRANSLATE_TO: blankTolerantString("en"),
+  PROMPT_TRANSLATE_TIMEOUT_MS: blankTolerantPositiveInt(15000),
+  TELEGRAM_PROMPT_TRANSLATE_MODE: z.string().default(""),
+  TELEGRAM_PROMPT_TRANSLATE_FROM: z.string().default(""),
+  TELEGRAM_PROMPT_TRANSLATE_TO: z.string().default(""),
+  LARK_PROMPT_TRANSLATE_MODE: z.string().default(""),
+  LARK_PROMPT_TRANSLATE_FROM: z.string().default(""),
+  LARK_PROMPT_TRANSLATE_TO: z.string().default(""),
+  CONTROL_PROMPT_TRANSLATE_MODE: z.string().default(""),
+  CONTROL_PROMPT_TRANSLATE_FROM: z.string().default(""),
+  CONTROL_PROMPT_TRANSLATE_TO: z.string().default(""),
+  // Legacy aliases kept so existing voice-translation setups continue to boot.
+  VOICE_TRANSLATE_MODE: z.string().default("off"),
+  VOICE_TRANSLATE_FROM: blankTolerantString("zh"),
+  VOICE_TRANSLATE_TO: blankTolerantString("en"),
+  VOICE_TRANSLATE_TIMEOUT_MS: blankTolerantPositiveInt(15000),
+  TELEGRAM_VOICE_TRANSLATE_MODE: z.string().default(""),
+  TELEGRAM_VOICE_TRANSLATE_FROM: z.string().default(""),
+  TELEGRAM_VOICE_TRANSLATE_TO: z.string().default(""),
+  LARK_VOICE_TRANSLATE_MODE: z.string().default(""),
+  LARK_VOICE_TRANSLATE_FROM: z.string().default(""),
+  LARK_VOICE_TRANSLATE_TO: z.string().default(""),
+  ARGOS_TRANSLATE_PYTHON: z.string().default(""),
   // --- Autopilot (智能模式 / keep-alive). Default loop ON but every session is
   // opt-in; AUTOPILOT_TICK_MS=0 is the master kill (no loop runs at all). ---
   AUTOPILOT_TICK_MS: blankTolerantNonNegativeInt(8000),

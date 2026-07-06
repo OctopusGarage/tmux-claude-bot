@@ -1,3 +1,5 @@
+import { UI_ICONS } from "../../../shared/ui/icons.js";
+
 /**
  * Canonical message catalog (Chinese). This file DEFINES the message shape —
  * `Messages = typeof zh` — so every other language must implement exactly these
@@ -10,7 +12,7 @@ export const zh = {
   ackReceived: "已接收",
   queuedAt: (pos: number) => `已排队 · 第 ${pos} 位`,
   queueFull: (max: number) => `队列已满（上限 ${max}），请稍后再试`,
-  noCurrentProject: "无当前项目，请先用 /list_alive_projects 选择或 /add_project 新建",
+  noCurrentProject: "无当前会话，请先用 /list_alive_projects 选择或 /add_project 新建",
   errorPrefix: (msg: string) => `错误：${msg}`,
   projectTag: (project: string) => `📂 ${project}`,
 
@@ -19,13 +21,37 @@ export const zh = {
   voiceLangCardPrompt: (lang: string) => `当前(飞书)：**${lang}** · 点按钮切换`,
   autoDetect: "自动检测",
   voiceHeard: (text: string) => `🎙️ 你说的是：「${text}」`,
+  voiceHeardTranslated: (original: string, translated: string) =>
+    `🎙️ 你说的是：「${original}」\n🌐 发送英文：「${translated}」`,
+  promptTranslateTitle: `${UI_ICONS.feature.translate} 翻译模式`,
+  promptTranslateCardPrompt: (mode: string) => `当前：**${mode}** · 点按钮切换`,
   voiceTranscribeFailed: "转写失败 · 请重试或改发文字",
+  voiceTranslateFailed: "翻译失败 · 请重试或改发文字",
+  promptTranslateFailed: "翻译失败 · 请重试或关闭 prompt 翻译",
+  promptTranslatedSent: (from: string, to: string) => `已翻译并发送 ${from}->${to}`,
+  promptTranslateAlreadyInstalled: "🌐 prompt 翻译依赖已就绪",
+  promptTranslateInstalling: "🌐 正在安装 prompt 翻译依赖 · 首次需下载模型，请稍候…",
+  promptTranslateInstallOk: "🌐 prompt 翻译依赖已就绪 · 现在可以开启翻译模式",
+  promptTranslateInstallFailed: (e: string) =>
+    `🌐 安装失败 · ${e} · 可在主机运行 npm run translate:install 查看详情`,
   voiceEmpty: "没听清 · 请再说一遍或改发文字",
   voiceUnsupported: "语音转写仅支持 Apple Silicon",
   voiceNotInstalled: "语音转写未安装（在仓库运行 npm run whisper:install）",
 
   // ── project switch / remove / current ──
-  currentProjectIs: (project: string) => `📂 当前项目：${project}`,
+  currentProjectIs: (project: string) => `${UI_ICONS.session.current} 当前会话：${project}`,
+  projectStatusSession: (alive: boolean) =>
+    `${alive ? UI_ICONS.session.active : UI_ICONS.session.stopped} 会话：${alive ? "运行中" : "未运行"}`,
+  projectStatusAgent: (agent: string | null, running: boolean, busy: boolean) =>
+    agent
+      ? `${running ? (busy ? UI_ICONS.session.busy : UI_ICONS.agent.generic) : UI_ICONS.session.stopped} Agent：${agent}${running ? (busy ? " 忙碌" : " 空闲") : " 未运行"}`
+      : `${UI_ICONS.agent.none} Agent：无`,
+  projectStatusType: (isFree: boolean) =>
+    `${isFree ? UI_ICONS.session.independent : UI_ICONS.session.regular} 类型：${isFree ? "独立会话" : "常规会话"}`,
+  projectStatusGroup: (label: string | null) =>
+    `${label ? UI_ICONS.group.projectGroup : UI_ICONS.group.none} 群：${label ?? "无"}`,
+  projectStatusLine: (session: string, agent: string, type: string, group: string) =>
+    `${session} · ${agent} · ${type} · ${group}`,
   switched: "已切换",
   switchedTo: (project: string) => `已切换：${project}`,
   removed: "已移除",
@@ -45,10 +71,10 @@ export const zh = {
   // ── buttons (control keyboard / help card / project lists) ──
   btnEnter: "⏎ 回车",
   btnEsc: "⎋ Esc",
-  btnInterrupt: "✋ 中断",
+  btnInterrupt: `${UI_ICONS.action.interrupt} 中断`,
   btnRestart: "🔄 重启",
-  btnClear: "🧹 clear",
-  btnCompact: "🗜 compact",
+  btnClear: `${UI_ICONS.action.clear} clear`,
+  btnCompact: `${UI_ICONS.action.compact} compact`,
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
@@ -56,15 +82,15 @@ export const zh = {
   btnTab: "⇥ Tab",
   btnStatus: "📊 状态",
   btnStart: "🚀 启动",
-  btnExit: "🚪 退出",
+  btnExit: `${UI_ICONS.action.exit} 退出`,
   btnPeek: "👁 peek",
   btnHistory: "📜 历史",
   btnInputs: "🔁 重发",
-  btnQueue: "📋 队列",
+  btnQueue: `${UI_ICONS.tone.queue} 队列`,
   btnDashboard: "📊 仪表盘",
-  btnProjects: "📁 项目",
+  btnProjects: "🟢 活跃会话",
   btnRecent: "🕘 近期",
-  btnCurrent: "📌 当前",
+  btnCurrent: "📌 当前会话",
   btnAddProject: "➕ 新建项目",
   btnSwitch: "🔀 切换",
   btnRemove: "🗑 删除",
@@ -72,20 +98,30 @@ export const zh = {
   btnHelp: "💡 帮助",
   btnVoiceLang: "🎙️ 语音语言",
   btnVoiceInstall: "🎙️ 安装语音",
+  btnPromptTranslate: `${UI_ICONS.feature.translate} 翻译模式`,
+  btnPromptTranslateOff: "⏻ 关闭",
+  btnPromptTranslateInstall: `${UI_ICONS.feature.translate} 安装翻译`,
   btnUiLang: "🌐 界面语言",
   btnActiveMarker: "✅ 当前",
   btnMore: "⌨️ 更多控制 ▾",
   btnCollapse: "▴ 收起",
   btnCancel: "✕ 取消",
+  btnConfirmAction: (action: string) => `确认 ${action}`,
   btnDeleteMode: "🗑 删除…",
+  confirmActionBody: (action: string, impact: string, target: string) =>
+    `确认执行：${action}\n\n目标：${target}\n影响：${impact}\n\n请确认后继续。`,
+  confirmImpactExit: "退出当前 Agent，并清空该会话等待中的队列。",
+  confirmImpactRestart: "中断并重启当前 Agent，当前未保存的输入可能丢失。",
+  confirmImpactClear: "发送 /clear，清空当前 Agent 上下文。",
+  confirmImpactCompact: "发送 /compact，压缩当前 Agent 上下文。",
 
-  // ── adopt (take over a non-tmux agent) ──
-  adoptTitle: "🧲 可接管的进程（不在 tmux 中）",
+  // ── adopt (take over an unmanaged agent) ──
+  adoptTitle: "🧲 可接管的未纳管进程",
   adoptEmpty: "没有发现可接管的进程",
   adoptConfirmPrompt: (label: string) =>
-    `确认接管？将先中断并结束原进程，再在 tmux 中续接：\n${label}`,
+    `确认接管？将先中断并结束原进程，再在纳管会话中续接：\n${label}`,
   btnAdoptConfirm: "🧲 接管",
-  btnAdoptAsFree: "🆓 接管为自由项目",
+  btnAdoptAsFree: `${UI_ICONS.session.independent} 接管为独立会话`,
   btnAdoptCancel: "✕ 取消",
   adoptCancelled: "已取消接管",
   adoptWorking: "正在接管…",
@@ -106,14 +142,14 @@ export const zh = {
   recoverBusy: "已有一个恢复正在进行,请稍候。",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 恢复完成\n\n🔁 重启 ${launched}${shellOnly > 0 ? ` · 🐚 重建 ${shellOnly}` : ""} · 🟢 运行中 ${alive}${failed > 0 ? ` · ⚠️ 失败 ${failed}` : ""}`,
-  adoptGone: "该进程已不在可接管列表（已退出或已在 tmux 中）",
+  adoptGone: "该进程已不在可接管列表（已退出或已被纳管）",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管并续接会话：${proj}` : `✅ 已接管并新建会话：${proj}`,
   adoptFailed: "接管失败：进程无法结束或未能启动",
   adoptBusy:
-    "目标 tmux 会话里已有程序在前台运行（另一个 agent 或其他程序）。已中止，未动原进程——请先去那边退出，再重新接管。",
+    "目标会话里已有程序在前台运行（另一个 agent 或其他程序）。已中止，未动原进程——请先去那边退出，再重新接管。",
   adoptProjectRunning:
-    "已有相同项目正在运行 Claude/Codex。已中止，未动原进程——如需并行接管，请选择「接管为自由项目」。",
+    "已有相同项目正在运行 Claude/Codex。已中止，未动原进程——如需并行接管，请选择「接管为独立会话」。",
   btnAdoptAttach: "💻 在电脑终端查看（可选）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接入命令已经放进「电脑」的剪贴板了（不用在手机上复制）。回到电脑后，在任务终端里直接粘贴回车，就能进去查看——这一步是可选的。\n命令：${cmd}`,
@@ -190,11 +226,11 @@ export const zh = {
   queueLastDone: (s: number) => `上次完成： ${s}s 前`,
   queueItemCancelled: "已取消该排队消息",
   queueItemRewritten: "已改写该排队消息",
-  queueItemGone: "该消息已不在队列（可能正在执行，可用 ✋ 中断停止）",
+  queueItemGone: `该消息已不在队列（可能正在执行，可用 ${UI_ICONS.action.interrupt} 中断停止）`,
   queueTitle: "队列状态",
 
   // ── history / peek / placeholders ──
-  paneTitle: "👁 tmux 画面",
+  paneTitle: "👁 会话画面",
   emptyPane: "（空）",
   historyTitle: "📜 历史记录",
   historyTitleShort: "历史记录",
@@ -204,9 +240,9 @@ export const zh = {
   emptyOutput: "(无输出)",
 
   // ── project lists ──
-  noCurrentProjectShort: "无当前项目",
-  aliveListTitle: (n: number) => `活跃项目 (${n})`,
-  aliveListEmpty: "没有活跃项目，用 /add_project <路径> 新建",
+  noCurrentProjectShort: "无当前会话",
+  aliveListTitle: (n: number) => `活跃会话 (${n})`,
+  aliveListEmpty: "没有活跃会话，用 /add_project <路径> 新建",
   recentListTitle: "近期项目",
   recentListTitleN: (n: number) => `近期项目 (${n})`,
   recentListEmpty: "没有近期项目，用 /add_project <路径> 添加",
@@ -234,13 +270,12 @@ export const zh = {
   browseNewFolderExists: "❌ 该名称已存在",
   browseNewFolderError: "❌ 新建文件夹失败",
   shortIdNotFound: (id: string) => `未找到短 id：${id}`,
-  noCurrentProjectSet: "未设置当前项目\n\n用 /add_project <路径> 设置一个",
-  currentActive: "✅ 当前活跃",
-  currentNotFound: "🔴 未找到",
-  currentProjectTitle: "当前项目",
+  noCurrentProjectSet: "未设置当前会话\n\n用 /add_project <路径> 设置一个",
+  currentProjectTitle: "当前会话",
   noRecentProjects: "没有近期项目\n\n用 /add_project <路径> 添加一个",
   messageTooLong: (len: number, max: number) => `消息过长 · ${len} > ${max} 字符`,
   onlyTextVoice: "暂仅支持文本和语音消息",
+  handlerErrorTelegram: "⚠️ 处理消息时出错，请重试。",
   handlerError: "⚠️ 处理消息时出错，请重试；若群组无响应，可发送 /restore 重新连接项目。",
   unknownCommand: (name: string) => `未知命令：/${name}（发送 /help 查看命令）`,
 
@@ -289,7 +324,7 @@ export const zh = {
 发任意文字 → 转给 agent → 返回结果
 🎙️ 语音转写为可选功能 · /voice_install 启用（仅 Apple Silicon）· /voice_lang 设识别语言
 
-提示：消息会收到 👀（已接收）/👍（完成）回应；处理中就地显示进度并编辑成结果；结果下方有 ⏎/✋/⎋/🔄 快捷按钮。`,
+提示：消息会收到 👀（已接收）/👍（完成）回应；处理中就地显示进度并编辑成结果；结果下方有 ⏎/${UI_ICONS.action.interrupt}/⎋/🔄 快捷按钮。`,
 
   helpIntroLark: `🤖 tmux-claude (Lark)
 
@@ -305,22 +340,24 @@ export const zh = {
   helpSectionIdle: "🚀 未运行",
 
   // ── command descriptions (used by command-catalog.ts to build help text) ──
-  cmdCurrentProject: "当前项目",
-  cmdListAlive: "活跃项目（点按切换/删除）",
+  cmdCurrentProject: "当前会话",
+  cmdListAlive: "活跃会话（点按切换/删除）",
   cmdListRecent: "近期项目",
   cmdAddProject: "新建项目",
-  cmdNewFree: "新建自由项目（同目录可并行）",
-  freeProjectLimit: (max: number) => `自由项目已达上限 ${max} 个，请先删除一个再试。`,
+  cmdNewFree: "新建独立会话（同工作区可并行）",
+  freeProjectLimit: (max: number) => `独立会话已达上限 ${max} 个，请先删除一个再试。`,
   freeProjectCreated: (slot: number, label: string | null) =>
-    `🆓 已创建自由项目 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目录并自行启动 agent；/list_alive_projects 可切回。`,
-  btnNewFree: "🆓 新建自由项目",
-  freeLabelPrompt: "请输入自由项目名称（发送 - 跳过命名）",
+    `${UI_ICONS.session.independent} 已创建独立会话 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目录并自行启动 agent；/list_alive_projects 可切回。`,
+  btnNewFree: `${UI_ICONS.session.independent} 新建独立会话`,
+  freeLabelPrompt: "请输入独立会话名称（发送 - 跳过命名）",
   freeLabelCancelled: "已取消",
-  cmdAdopt: "接管 tmux 外的 agent",
+  cmdAdopt: "接管未纳管 agent",
   cmdQueueStatus: "队列状态",
   cmdHistory: "对话历史（默认最近一条）",
-  cmdPeek: "查看 tmux 画面",
+  cmdPeek: "查看会话画面",
   cmdVoiceLang: "语音识别语言（英/中/粤/日/西/自动）",
+  cmdPromptTranslate: "prompt 翻译（status/off/on 源语言 目标语言）",
+  cmdTranslateInstall: "安装 prompt 翻译依赖",
   cmdLang: "界面语言（英/简/繁/粤/日/西）",
   cmdEnter: "回车",
   cmdEsc: "Escape",
@@ -345,7 +382,7 @@ export const zh = {
   wsRemoved: (name: string) => `✅ 已删除工作区「${name}」`,
   wsNotFound: (name: string) => `工作区「${name}」不存在`,
   wsSessionGone: (name: string) => `工作区「${name}」对应的会话已不存在`,
-  wsNoCurrentProject: "无当前项目，请先用 /add_project 新建项目",
+  wsNoCurrentProject: "无当前会话，请先用 /add_project 新建项目",
   wsListEmpty: "暂无保存的工作区",
   wsListTitle: "📎 工作区",
   wsListItem: (name: string, session: string) => `• **${name}** → ${session}`,
@@ -384,10 +421,12 @@ export const zh = {
   homeOperatorSwitched: "🏠 已切换到主控操作员会话",
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
   cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
+  cmdAutopilot: "管理会话智能托管（目标/保活/全局托管）",
+  cmdGoals: "列出 autopilot 目标预设",
   cmdSysload: "查看本机负载/发热/跑飞进程",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
-  autopilotTitle: "🤖 Autopilot",
+  autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotNotifyPaused: (session: string, reason: string) =>
     `🛑 autopilot 已暂停 [${session}]：${reason}`,
   autopilotNotifyStopped: (session: string, reason: string) =>
@@ -431,7 +470,7 @@ export const zh = {
     `Autopilot：${o.enabled ? "开" : "关"}（${o.pureKeepAlive ? "纯保活" : "随目标"}，已干预 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目标 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw: string) =>
     `未知子命令「${raw}」。用法：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: "🤖 开启智能托管",
+  btnApEnable: `${UI_ICONS.feature.autopilot} 开启智能托管`,
   btnApDisable: "⏹ 关闭智能托管",
   btnApPickGoals: "🎯 选目标",
   btnApGlobalOn: "🌐 全局:开",
@@ -457,7 +496,7 @@ export const zh = {
   autopilotGoalStarted: (id: string) => `已启动目标：${id}`,
   autopilotUnknownGoal: (ids: string) => `未知目标。可用：${ids}`,
   goalsTitle: "🎯 目标预设",
-  noLogsContext: "无当前项目，请先选择项目或指定 trace（/logs <traceId>）。",
+  noLogsContext: "无当前会话，请先选择项目或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label: string, path: string) =>
@@ -483,19 +522,22 @@ export const zh = {
   groupBindPickerTitle: "🔗 绑定本群 — 选一个项目",
   groupBoundCardTitle: (label: string) => `🗂 本群已绑定：${label}`,
   groupMenuNoProjects: "暂无近期项目。先在私聊用 `/add_project <路径>` 添加一个。",
+  groupNoNewGroupProjects: "暂无可新建项目群的常规项目（已有群或独立会话会隐藏）。",
+  groupNoBindableProjects: "暂无可绑定的常规项目。先在私聊用 `/add_project <路径>` 添加一个。",
+  groupNoParallelProjects: "暂无可新建并行项目群的常规项目。先添加一个常规项目。",
   groupCreatedShort: (label: string) => `✓ 已新建项目群「${label}」，去新群里继续。`,
   groupAlreadyExists: (label: string) =>
     `⚠️ 项目「${label}」已经有绑定群了，去那个群里用即可，无需重复创建。`,
   groupPinnedNoSwitch: (label: string) =>
     `🔒 本群已固定绑定「${label}」，不能切换到其他项目。如需更换，请用 🗂 → 改绑。`,
   groupNoRemoveInGroup: "🔒 在群里不能删除项目（会影响他人）。请到与机器人的私聊里删除。",
-  groupFreePickerTitle: "🆓 新建自由项目群（可与现有群同目录）",
+  groupFreePickerTitle: `${UI_ICONS.session.independent} 新建并行项目群（新建独立会话）`,
   groupOverviewTitle: "🗂 项目群",
   groupOverviewExisting: "已有项目群：",
   groupOverviewNoGroups: "暂无项目群。",
   groupOverviewItem: (label: string, path: string) => `• **${label}** — \`${path}\``,
-  btnFreeGroup: "🆓 平行群",
-  freeGroupCreated: (label: string) => `🆓 已创建平行群「${label}」`,
+  btnFreeGroup: `${UI_ICONS.session.independent} 新建并行群`,
+  freeGroupCreated: (label: string) => `${UI_ICONS.session.independent} 已创建并行群「${label}」`,
 };
 
 // No `as const`: Messages widens to string / function types so other languages

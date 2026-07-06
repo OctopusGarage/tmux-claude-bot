@@ -56,6 +56,19 @@ export interface EnqueueRequest {
   channel: Channel;
   action: string;
   text: string;
+  origin?: "user" | "system" | undefined;
+  promptSource?: "telegram" | "lark" | "control" | undefined;
+  sourceText?: string | undefined;
+  transform?:
+    | {
+        kind: "translation";
+        provider: string;
+        from: string;
+        to: string;
+        sourceText: string;
+        deliveredText: string;
+      }
+    | undefined;
   callbacks: MessageCallbacks;
 }
 
@@ -84,6 +97,10 @@ export async function enqueueMessage(
     channel: req.channel,
     sessionName: req.session,
     action: req.action,
+    origin: req.origin,
+    promptSource: req.promptSource,
+    sourceText: req.sourceText,
+    transform: req.transform,
     ...(traceId !== undefined && { traceId }),
     resolve: req.callbacks.resolve,
     reject: req.callbacks.reject,

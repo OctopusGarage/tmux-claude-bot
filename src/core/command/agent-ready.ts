@@ -1,5 +1,4 @@
-import { resolveAgentKind } from "../agents/agentKindMap.js";
-import { profileFor } from "../agents/registry.js";
+import { readAgentLastActivityAt } from "../agents/read.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { paneIsAnimating } from "../session/pane-activity.js";
@@ -39,9 +38,7 @@ const GATE_PANE_DIFF_MS = 450;
 export async function agentIsIdle(deps: HandlerDeps, session: string): Promise<boolean> {
   try {
     const projectPath = getPathBySession(session) ?? session;
-    const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
-    const last =
-      (await profile.lastActivityAt?.(deps.configResolver, session, projectPath)) ?? null;
+    const last = await readAgentLastActivityAt(deps.configResolver, session, projectPath);
     if (last === null) return true; // never wrote → idle
     const age = Date.now() - last;
     if (age < RECENT_ACTIVITY_MS) return false; // streaming → busy

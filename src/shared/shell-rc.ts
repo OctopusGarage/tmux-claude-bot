@@ -6,6 +6,7 @@ export const SHELL_RC_FILES = [
   ".bashrc",
   ".zprofile",
   ".bash_profile",
+  ".profile",
   ".aliases",
   ".zsh_aliases",
 ] as const;

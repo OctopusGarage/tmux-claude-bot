@@ -8,6 +8,7 @@ import {
   getLatestAssistantReply,
   getRecentConversations,
   listClaudeSessions,
+  projectPathToHistoryDir,
 } from "./claude-history.js";
 import { isClaudeProcess } from "./claude-process.js";
 import { buildStatusReport, readUsageSnapshot } from "./claude-status.js";
@@ -64,6 +65,15 @@ export const claudeProfile: AgentProfile = {
     const configRoot = await resolver.resolveConfigRoot(session);
     const [newest] = await listClaudeSessions(projectPath, configRoot, 1);
     return newest ? newest.mtime.getTime() : null;
+  },
+  resolveTranscriptPath: async (resolver, session, projectPath) => {
+    const live = await resolver.resolveLiveTranscript?.(session);
+    if (live) return live.path;
+    const configRoot = await resolver.resolveConfigRoot(session);
+    const [newest] = await listClaudeSessions(projectPath, configRoot, 1);
+    return newest
+      ? `${projectPathToHistoryDir(projectPath, configRoot)}/${newest.sessionId}.jsonl`
+      : null;
   },
   buildStatusReport: (deps, session, channel, running) =>
     buildStatusReport(deps, session, channel, running),

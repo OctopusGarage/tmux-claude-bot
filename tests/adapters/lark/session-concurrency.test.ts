@@ -10,7 +10,7 @@ import { fakeDeps } from "./_fakes.js";
 /**
  * Concurrency stress for the session-create race (the TOCTOU that crashed
  * handlers with "duplicate session"). Many messages can hit the same scope at
- * once — each may try to (re)create the same tmux session. The contract:
+ * once — each may try to (re)create the same managed session. The contract:
  *
  *   createSession is race-safe (only one caller "creates", the rest get false),
  *   and the new pane is started directly in the project dir via `new-session -c`.

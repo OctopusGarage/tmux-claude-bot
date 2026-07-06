@@ -60,8 +60,6 @@ export async function handleLarkVoice(
   const transcribed = outcome.text;
 
   log.info(`voice transcribed chat=${msg.chatId} len=${transcribed.length}`);
-  // Echo the transcription (like Telegram), then process it as a normal prompt.
-  await sendText(channel, msg.chatId, messages("lark").voiceHeard(transcribed));
   await enqueueLarkAction(
     channel,
     deps,
@@ -71,5 +69,6 @@ export async function handleLarkVoice(
     transcribed,
     replySession,
     msg.chatType === "p2p",
+    "voice",
   );
 }

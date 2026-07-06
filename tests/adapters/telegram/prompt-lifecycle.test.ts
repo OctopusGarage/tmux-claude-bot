@@ -128,8 +128,10 @@ describe("runPromptWithProgress — ack routing (queuePosition decision)", () =>
     // On a real "queued" verdict with a cancel kb + progress, the ack is bound so a
     // reply rewrites THIS item. Bound to the session + the progress message id.
     expect(deps.queue.setQueueAck).toHaveBeenCalledTimes(1);
-    const [session, , ackMsgId] = (deps.queue.setQueueAck as ReturnType<typeof vi.fn>).mock
-      .calls[0]!;
+    const ackCall = (deps.queue.setQueueAck as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(ackCall).toBeDefined();
+    if (ackCall === undefined) throw new Error("setQueueAck call was not recorded");
+    const [session, , ackMsgId] = ackCall;
     expect(session).toBe("tmux_proj_x");
     expect(ackMsgId).toBe("42"); // String(progress.messageId)
   });

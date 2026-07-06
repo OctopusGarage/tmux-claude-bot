@@ -3,32 +3,64 @@ import { sleep } from "../../shared/utils/sleep.js";
 import type { OutputProcessor } from "../session/output.js";
 import type { TmuxBridge } from "../session/tmux.js";
 import type { ConfigResolver } from "./agent-config-resolver.js";
-import { pollUntilIdle, pollUntilReady } from "./pane-poll.js";
+import { pollUntilIdle, pollUntilReady, type ReadyVerdict } from "./pane-poll.js";
 import type { AgentRunner } from "./runner.js";
 
 /** Grace period after `/exit` before relaunching on a restart. */
 const EXIT_GRACE_MS = 2000;
 
-/** A blocking confirm gate that Enter accepts is on screen — type the default-Yes
- * Enter to clear it. Shared by both agents. Covers the known first-launch gates by
- * their live-verified wording PLUS a structural cue so a future re-word still
- * clears:
+/** A blocking confirm gate is currently active near the bottom of the pane.
+ * Shared by both agents. Covers the known first-launch gates by their
+ * live-verified wording PLUS a structural cue so a future re-word still clears:
  *   - codex directory-trust:  "Do you trust the contents of this directory?"
  *   - claude directory-trust: "...one you trust?" / menu "1. Yes, I trust this folder"
  *   - claude bypass-permissions accept (first --dangerously-skip-permissions run):
  *     "Yes, I accept"
- *   - generic: the "Enter to confirm" hint these menus print at the bottom — a
- *     structural signal that survives prose changes (the ready composer has no
- *     such hint).
+ *   - generic: the "Enter to confirm" hint these menus print near the bottom.
  * Best-effort: a gate this misses is still caught by the stability fallback in
  * pollUntilReady (it won't hang), it just won't be auto-accepted. */
 export function paneNeedsConfirm(pane: string): boolean {
-  return (
-    pane.includes("Do you trust") ||
-    pane.includes("I trust this folder") ||
-    pane.includes("Yes, I accept") ||
-    pane.includes("Enter to confirm")
+  return paneConfirmAction(pane) !== "wait";
+}
+
+export function paneConfirmAction(pane: string): ReadyVerdict {
+  if (!activeConfirmGate(pane)) return "wait";
+  if (pane.includes("Bypass Permissions mode") && pane.includes("Yes, I accept")) {
+    if (/❯\s*2\.\s*Yes, I accept/.test(pane)) return { sendRawKey: "Enter" };
+    return { sendRawKeys: ["Down", "Enter"] };
+  }
+  return { sendRawKey: "Enter" };
+}
+
+function activeConfirmGate(pane: string): boolean {
+  const lines = pane.split("\n");
+  const lastNonBlank = findLastNonBlankLine(lines);
+  if (lastNonBlank < 0) return false;
+
+  const hintLine = findLastLine(lines, (line) =>
+    /(?:Enter|Press enter) to (?:confirm|continue)/i.test(line),
   );
+  if (hintLine >= 0) return hintLine === lastNonBlank;
+
+  const gateLine = findLastLine(
+    lines,
+    (line) =>
+      line.includes("Do you trust") ||
+      line.includes("I trust this folder") ||
+      line.includes("Yes, I accept"),
+  );
+  return gateLine >= 0 && lastNonBlank - gateLine <= 3;
+}
+
+function findLastNonBlankLine(lines: readonly string[]): number {
+  return findLastLine(lines, (line) => line.trim().length > 0);
+}
+
+function findLastLine(lines: readonly string[], pred: (line: string) => boolean): number {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (pred(lines[i] ?? "")) return i;
+  }
+  return -1;
 }
 
 export type AgentRunnerOptions = {
@@ -87,6 +119,14 @@ export abstract class AgentRunnerBase implements AgentRunner {
   /** Resume the most recent session: `claude --continue` / `codex resume --last`. */
   protected abstract continueCommand(command: string): string;
 
+  /** A pane marker that means the agent is still working even when the visible
+   * screen bytes are stable. Both Claude and Codex expose this TUI hint while a
+   * turn is active; without this guard, the queue can type the next message into
+   * Codex's composer before the previous turn is actually done. */
+  protected activeTurnMarker(pane: string): boolean {
+    return /esc to interrupt/i.test(pane);
+  }
+
   /** After a launch: clear the trust-directory gate (BOTH agents show it on first
    * launch in a dir, blocking input) and wait for the composer. Best-effort —
    * swallow a slow/failed boot so the caller's action still completes (the user
@@ -138,16 +178,42 @@ export abstract class AgentRunnerBase implements AgentRunner {
       sessionName,
       logTag: this.logTag,
       notReadyError: this.notReadyError,
-      // Confirm gate FIRST (shared, both agents) — answer Yes with Enter; otherwise
-      // defer to the agent's positive ready marker so a gate screen is never a
-      // false "ready".
+      // Confirm gate FIRST (shared, both agents) — select the affirmative action
+      // when needed, then confirm; otherwise defer to the agent's positive ready
+      // marker so a gate screen is never a false "ready".
       classify: (pane) => {
-        if (paneNeedsConfirm(pane)) return { sendRawKey: "Enter" };
+        const confirm = paneConfirmAction(pane);
+        if (confirm !== "wait") return confirm;
+        if (this.activeTurnMarker(pane)) return "wait";
         return this.readyMarker(pane) ? "ready" : "wait";
       },
+      isActiveTurn: (pane) => this.activeTurnMarker(pane),
       // Prose-agnostic fallback: if the marker never matches (UI re-skin), a pane
       // stable for idlePollTicks polls — with the agent process alive and real
       // content on screen — is ready. Survives a restyle and can't hang.
+      stableReady: {
+        ticks: this.idlePollTicks,
+        minLines: 3,
+        isAlive: () => this.isRunning(resolved),
+      },
+    });
+  }
+
+  async waitUntilInputReady(sessionName?: string): Promise<void> {
+    const resolved = await this.bridge.resolveSessionName(sessionName);
+    const blocksInput = (pane: string) => this.activeTurnMarker(pane) || paneNeedsConfirm(pane);
+    return pollUntilReady({
+      bridge: this.bridge,
+      pollIntervalMs: this.pollIntervalMs,
+      maxWaitReadyMs: this.maxWaitReadyMs,
+      sessionName,
+      logTag: this.logTag,
+      notReadyError: this.notReadyError,
+      classify: (pane) => {
+        if (blocksInput(pane)) return "wait";
+        return this.readyMarker(pane) ? "ready" : "wait";
+      },
+      isActiveTurn: blocksInput,
       stableReady: {
         ticks: this.idlePollTicks,
         minLines: 3,
@@ -165,6 +231,7 @@ export abstract class AgentRunnerBase implements AgentRunner {
       maxWaitDoneMs: this.maxWaitDoneMs,
       sessionName,
       logTag: this.logTag,
+      isActiveTurn: (pane) => this.activeTurnMarker(pane),
     });
   }
 

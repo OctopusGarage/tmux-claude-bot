@@ -1,6 +1,5 @@
 import type { Bot } from "grammy";
-import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
-import { profileFor } from "../../core/agents/registry.js";
+import { readAgentSessions } from "../../core/agents/read.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
 import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
@@ -29,10 +28,26 @@ import { consumeFreeLabel, isAwaitingFreeLabel } from "../../core/projects/free-
 import { FREE_PROJECT_LIMIT } from "../../core/projects/free-projects.js";
 import { homeCommandResult, resolveTargetSession } from "../../core/projects/operator.js";
 import { createFreeProject, createProjectFromPath } from "../../core/projects/project-ops.js";
+import {
+  currentSelectionRow,
+  projectPickerRows,
+} from "../../core/projects/project-session-picker.js";
+import {
+  formatCurrentProjectSummary,
+  formatProjectSummaryBlock,
+} from "../../core/projects/project-summary-view.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
 import { makePromptLib } from "../../core/promptlib/promptlib.js";
+import { runOptionalFeatureInstall } from "../../core/read/optional-feature-install.js";
+import {
+  applyPromptTranslateCommand,
+  formatPromptTranslateCommandResult,
+  installPromptTranslation,
+  promptTranslateStatus,
+} from "../../core/read/prompt-translation.js";
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
+import { rewriteUserPromptByAck } from "../../core/read/user-prompt-intake.js";
 import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
 import { normalizeError } from "../../shared/utils/error.js";
@@ -45,6 +60,7 @@ import {
   buildLangKeyboard,
   buildOrphanKeyboard,
   buildPromptsKeyboard,
+  buildPromptTranslateKeyboard,
   buildRecentKeyboard,
   buildSessionsKeyboard,
   buildStartPickerKeyboard,
@@ -53,7 +69,6 @@ import {
 import { MSG } from "./messages.js";
 import {
   addRecentProjectBySid,
-  recentProjectButtons,
   removeProjectBySession,
   resolveAliveSessionByShortId,
   startOrPickAfterCreate,
@@ -115,6 +130,45 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     }
     setUiLang("telegram", code);
     await reply(ctx, "info", messages("telegram").uiLangSet(labelOf(code)), { replyTarget });
+  });
+
+  bot.command("prompt_translate", async (ctx) => {
+    const raw = ctx.message?.text ?? "";
+    const firstToken = raw.trim().split(/\s+/)[0] ?? "";
+    const arg = raw.trim().slice(firstToken.length).trim();
+    if (!arg) {
+      await reply(
+        ctx,
+        "info",
+        formatPromptTranslateCommandResult(promptTranslateStatus("telegram")),
+        {
+          replyTarget,
+          replyMarkup: buildPromptTranslateKeyboard(),
+        },
+      );
+      return;
+    }
+    const result = await applyPromptTranslateCommand("telegram", arg);
+    await reply(ctx, result.ok ? "info" : "err", formatPromptTranslateCommandResult(result), {
+      replyTarget,
+    });
+  });
+
+  bot.command("translate_install", async (ctx) => {
+    const m = messages("telegram");
+    await runOptionalFeatureInstall({
+      copy: {
+        installing: m.promptTranslateInstalling,
+        ok: m.promptTranslateInstallOk,
+        alreadyReady: m.promptTranslateAlreadyInstalled,
+        inProgress: m.promptTranslateInstalling,
+        failed: m.promptTranslateInstallFailed,
+      },
+      install: () => installPromptTranslation(),
+      send: async (notice) => {
+        await reply(ctx, notice.tone, notice.text, { replyTarget });
+      },
+    });
   });
 
   bot.command("help", async (ctx) => {
@@ -180,7 +234,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     await sendInputs(ctx, deps, session, replyTarget, parseInputsLimit(arg));
   });
 
-  // List claude processes running outside tmux; tap one to take it over.
+  // List unmanaged claude processes; tap one to take it over.
   bot.command("adopt", async (ctx) => {
     const orphans = await findAdoptableOrphans();
     if (orphans.length === 0) {
@@ -229,19 +283,15 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("current_project", async (ctx) => {
-    const session = await deps.currentProject.get(tgScope(ctx));
-    if (!session) {
+    const summary = await currentSelectionRow(deps, tgScope(ctx));
+    if (!summary) {
       await reply(ctx, "err", messages("telegram").noCurrentProjectSet);
       return;
     }
-    const exists = await deps.bridge.hasSession(session);
-    const pathPart = getPathBySession(session) ?? session;
-    const status = exists
-      ? messages("telegram").currentActive
-      : messages("telegram").currentNotFound;
+    const m = messages("telegram");
     await reply(ctx, "list", messages("telegram").currentProjectTitle, {
-      session,
-      body: `${pathPart}\n${status}`,
+      session: summary.sessionName,
+      body: formatCurrentProjectSummary(m, summary),
     });
   });
 
@@ -250,13 +300,13 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("list_recent_projects", async (ctx) => {
-    const buttons = await recentProjectButtons(deps, tgScope(ctx));
+    const buttons = await projectPickerRows(deps, tgScope(ctx), "recent-projects");
     if (buttons.length === 0) {
       await reply(ctx, "list", messages("telegram").noRecentProjects);
       return;
     }
-    // No body — the buttons already show each project name + status (✅/🔀/➕).
     await reply(ctx, "list", messages("telegram").recentListTitleN(buttons.length), {
+      body: formatProjectSummaryBlock(buttons),
       replyMarkup: buildRecentKeyboard(buttons),
     });
   });
@@ -282,8 +332,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       await reply(ctx, "err", messages("telegram").noPathMapping);
       return;
     }
-    const profile = profileFor(await resolveAgentKind(deps.configResolver, sessionName));
-    const sessions = await profile.listSessions(deps.configResolver, sessionName, projectPath);
+    const sessions = await readAgentSessions(deps.configResolver, sessionName, projectPath);
     if (sessions.length === 0) {
       await reply(ctx, "list", messages("telegram").noSessions);
       return;
@@ -391,7 +440,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   // separator-based, not column-aligned, so it needs no monospace).
   bot.command("dashboard", async (ctx) => {
     const snap = await buildDashboard(deps);
-    const body = formatDashboardForChat(snap, { maxChars: 3500 });
+    const body = formatDashboardForChat(snap, { maxChars: 3500, showGroups: false });
     await reply(ctx, "view", messages("telegram").dashboardTitle, {
       body,
       replyTarget,
@@ -479,8 +528,8 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
 
-    // Free-project naming: if a "🆓 new free project" label is awaited for this
-    // chat, this message IS the label — create the free project ("-" = skip name).
+    // Independent-session naming: if a new independent-session label is awaited
+    // for this chat, this message IS the label ("-" = skip name).
     if (isAwaitingFreeLabel(tgScope(ctx))) {
       const scope = tgScope(ctx);
       consumeFreeLabel(scope);
@@ -519,7 +568,18 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       // in place (keeps its queue position). TERMINAL unless it wasn't one of our
       // acks: a rewrite blocked by dedup is reported, never silently re-enqueued as a
       // fresh prompt (which dedup would then drop, losing the edit).
-      const rw = deps.queue.rewriteByAck(String(replyToMsg.message_id), ctx.chat?.id ?? 0, text);
+      const ackMsgId = String(replyToMsg.message_id);
+      const chatId = ctx.chat?.id ?? 0;
+      const rw = await rewriteUserPromptByAck(deps.queue, {
+        source: "telegram",
+        ackMsgId,
+        chatId,
+        text,
+      });
+      if (rw.kind === "failed") {
+        await reply(ctx, "err", messages("telegram").promptTranslateFailed, { replyTarget });
+        return;
+      }
       if (rw.kind !== "not-found") {
         const m = messages("telegram");
         const ok = rw.kind === "rewritten";
@@ -612,7 +672,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
 /**
  * Shared `/new_free [label]` logic, decoupled from grammY so it can be tested with
- * a plain reply sink. Creates a bare free project and reports the outcome.
+ * a plain reply sink. Creates a bare independent session and reports the outcome.
  */
 export async function handleNewFreeCommand(
   ctx: { message?: { text?: string | undefined } | undefined },
@@ -624,7 +684,7 @@ export async function handleNewFreeCommand(
   return createFreeAndReply(deps, scope, label, send);
 }
 
-/** Create a free project for `label` (empty = unnamed) and report via `send`.
+/** Create an independent session for `label` (empty = unnamed) and report via `send`.
  * Returns the new session name when created (for the caller's start/pick step),
  * else null. Shared by `/new_free` and the button-driven label-capture flow. */
 export async function createFreeAndReply(

@@ -69,12 +69,16 @@ function resetForGoal(
   roundsDone: number,
 ): AutopilotState {
   const { pendingContextOp: _drop, ...base } = prev;
+  const goalId = queue[pos];
+  if (goalId === undefined) {
+    throw new Error(`goal queue position ${pos} is out of range`);
+  }
   return {
     ...base,
     goalQueue: queue,
     queuePos: pos,
     roundsDone,
-    goalId: queue[pos]!,
+    goalId,
     phaseIndex: 0,
     seqIndex: 0,
     humanGatePending: false,

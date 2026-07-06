@@ -105,7 +105,7 @@ describe("handleCallbackQuery", () => {
 
     await handleCallbackQuery(ctx, deps, replyTarget);
 
-    expect(ctx.texts().some((t) => t.includes("没有活跃项目"))).toBe(true);
+    expect(ctx.texts().some((t) => t.includes("没有活跃会话"))).toBe(true);
   });
 
   it("queuestatus (qs) renders the queue-status view", async () => {
@@ -117,6 +117,29 @@ describe("handleCallbackQuery", () => {
     await handleCallbackQuery(ctx, deps, replyTarget);
 
     expect(ctx.texts().some((t) => t.includes("队列状态"))).toBe(true);
+  });
+
+  it("dangerous control button asks for confirmation before executing", async () => {
+    const exit = vi.fn(async () => {});
+    const ctx = fakeCtx({ callbackData: `a:exit:${SID}` });
+    const deps = aliveDeps({ agent: { exit } });
+
+    await handleCallbackQuery(ctx, deps, replyTarget);
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(ctx.texts().some((t) => t.includes("确认") && t.includes("退出"))).toBe(true);
+    expect(JSON.stringify(ctx.replies)).toContain(`cf:exit:${SID}`);
+  });
+
+  it("confirmed dangerous control button executes the original action", async () => {
+    const exit = vi.fn(async () => {});
+    const ctx = fakeCtx({ callbackData: `cf:exit:${SID}` });
+    const deps = aliveDeps({ agent: { exit } });
+
+    await handleCallbackQuery(ctx, deps, replyTarget);
+
+    expect(exit).toHaveBeenCalledWith(SESSION);
+    expect(ctx.texts().some((t) => t.includes("已退出"))).toBe(true);
   });
 
   it("voicelang (vl:) sets the env var and refreshes the picker", async () => {
@@ -269,7 +292,7 @@ describe("handleCallbackQuery", () => {
       const ctx = fakeCtx({ callbackData: "nf" });
       await handleCallbackQuery(ctx, fakeDeps(), replyTarget);
       expect(ctx.answerCallbackQuery).toHaveBeenCalled();
-      expect(ctx.texts().some((t) => t.includes("请输入自由项目名称"))).toBe(true);
+      expect(ctx.texts().some((t) => t.includes("请输入独立会话名称"))).toBe(true);
     });
 
     it("newfreecancel (nfx) clears the capture, toasts, and drops the keyboard", async () => {

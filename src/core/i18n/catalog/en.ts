@@ -1,3 +1,4 @@
+import { UI_ICONS } from "../../../shared/ui/icons.js";
 import type { Messages } from "./zh.js";
 
 /** English catalog. Typed `: Messages`, so it must implement every key in zh.ts. */
@@ -6,7 +7,7 @@ export const en: Messages = {
   queuedAt: (pos) => `Queued · #${pos}`,
   queueFull: (max) => `Queue full (max ${max}) — try again shortly`,
   noCurrentProject:
-    "No current project — pick one with /list_alive_projects or create one with /add_project",
+    "No current session — pick one with /list_alive_projects or create one with /add_project",
   errorPrefix: (msg) => `Error: ${msg}`,
   projectTag: (project) => `📂 ${project}`,
 
@@ -14,12 +15,37 @@ export const en: Messages = {
   voiceLangCardPrompt: (lang) => `Current (Feishu): **${lang}** · tap to switch`,
   autoDetect: "auto-detect",
   voiceHeard: (text) => `🎙️ You said: “${text}”`,
+  voiceHeardTranslated: (original, translated) =>
+    `🎙️ You said: “${original}”\n🌐 Sending English: “${translated}”`,
+  promptTranslateTitle: `${UI_ICONS.feature.translate} Translation mode`,
+  promptTranslateCardPrompt: (mode) => `Current: **${mode}** · tap to switch`,
   voiceTranscribeFailed: "Transcription failed · retry or send text",
+  voiceTranslateFailed: "Translation failed · retry or send text",
+  promptTranslateFailed: "Translation failed · retry or disable prompt translation",
+  promptTranslatedSent: (from, to) => `Translated and sent ${from}->${to}`,
+  promptTranslateAlreadyInstalled: "🌐 Prompt translation dependencies are ready",
+  promptTranslateInstalling:
+    "🌐 Installing prompt translation dependencies · first run downloads the model, hold on…",
+  promptTranslateInstallOk:
+    "🌐 Prompt translation dependencies are ready · you can enable translation mode now",
+  promptTranslateInstallFailed: (e) =>
+    `🌐 Install failed · ${e} · run npm run translate:install on the host for details`,
   voiceEmpty: "Didn’t catch that · say it again or send text",
   voiceUnsupported: "Voice transcription needs Apple Silicon",
   voiceNotInstalled: "Voice not installed (run `npm run whisper:install` in the repo)",
 
-  currentProjectIs: (project) => `📂 Current project: ${project}`,
+  currentProjectIs: (project) => `${UI_ICONS.session.current} Current session: ${project}`,
+  projectStatusSession: (alive) =>
+    `${alive ? UI_ICONS.session.active : UI_ICONS.session.stopped} Session: ${alive ? "running" : "stopped"}`,
+  projectStatusAgent: (agent, running, busy) =>
+    agent
+      ? `${running ? (busy ? UI_ICONS.session.busy : UI_ICONS.agent.generic) : UI_ICONS.session.stopped} Agent: ${agent}${running ? (busy ? " busy" : " idle") : " stopped"}`
+      : `${UI_ICONS.agent.none} Agent: none`,
+  projectStatusType: (isFree) =>
+    `${isFree ? UI_ICONS.session.independent : UI_ICONS.session.regular} Type: ${isFree ? "independent session" : "regular session"}`,
+  projectStatusGroup: (label) =>
+    `${label ? UI_ICONS.group.projectGroup : UI_ICONS.group.none} Group: ${label ?? "none"}`,
+  projectStatusLine: (session, agent, type, group) => `${session} · ${agent} · ${type} · ${group}`,
   switched: "Switched",
   switchedTo: (project) => `Switched to: ${project}`,
   removed: "Removed",
@@ -36,10 +62,10 @@ export const en: Messages = {
 
   btnEnter: "⏎ Enter",
   btnEsc: "⎋ Esc",
-  btnInterrupt: "✋ Interrupt",
+  btnInterrupt: `${UI_ICONS.action.interrupt} Interrupt`,
   btnRestart: "🔄 Restart",
-  btnClear: "🧹 clear",
-  btnCompact: "🗜 compact",
+  btnClear: `${UI_ICONS.action.clear} clear`,
+  btnCompact: `${UI_ICONS.action.compact} compact`,
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
@@ -47,15 +73,15 @@ export const en: Messages = {
   btnTab: "⇥ Tab",
   btnStatus: "📊 Status",
   btnStart: "🚀 Start",
-  btnExit: "🚪 Exit",
+  btnExit: `${UI_ICONS.action.exit} Exit`,
   btnPeek: "👁 peek",
   btnHistory: "📜 History",
   btnInputs: "🔁 Re-run",
-  btnQueue: "📋 Queue",
+  btnQueue: `${UI_ICONS.tone.queue} Queue`,
   btnDashboard: "📊 Dashboard",
-  btnProjects: "📁 Projects",
+  btnProjects: "🟢 Active sessions",
   btnRecent: "🕘 Recent",
-  btnCurrent: "📌 Current",
+  btnCurrent: "📌 Current session",
   btnAddProject: "➕ New project",
   btnSwitch: "🔀 Switch",
   btnRemove: "🗑 Delete",
@@ -63,20 +89,30 @@ export const en: Messages = {
   btnHelp: "💡 Help",
   btnVoiceLang: "🎙️ Voice",
   btnVoiceInstall: "🎙️ Install voice",
+  btnPromptTranslate: `${UI_ICONS.feature.translate} Translate`,
+  btnPromptTranslateOff: "⏻ Off",
+  btnPromptTranslateInstall: `${UI_ICONS.feature.translate} Install translation`,
   btnUiLang: "🌐 Language",
   btnActiveMarker: "✅ Current",
   btnMore: "⌨️ More ▾",
   btnCollapse: "▴ Collapse",
   btnCancel: "✕ Cancel",
+  btnConfirmAction: (action) => `Confirm ${action}`,
   btnDeleteMode: "🗑 Delete…",
+  confirmActionBody: (action, impact, target) =>
+    `Confirm action: ${action}\n\nTarget: ${target}\nImpact: ${impact}\n\nConfirm to continue.`,
+  confirmImpactExit: "Exits the current agent and clears that session's waiting queue.",
+  confirmImpactRestart: "Interrupts and restarts the current agent; unsent input may be lost.",
+  confirmImpactClear: "Sends /clear and resets the current agent context.",
+  confirmImpactCompact: "Sends /compact and compacts the current agent context.",
 
-  // ── adopt (take over a non-tmux agent) ──
-  adoptTitle: "🧲 Adoptable processes (not in tmux)",
+  // ── adopt (take over an unmanaged agent) ──
+  adoptTitle: "🧲 Adoptable unmanaged processes",
   adoptEmpty: "No adoptable processes found",
   adoptConfirmPrompt: (label: string) =>
-    `Take over? The original process is interrupted and ended first, then resumed in tmux:\n${label}`,
+    `Take over? The original process is interrupted and ended first, then resumed in a managed session:\n${label}`,
   btnAdoptConfirm: "🧲 Take over",
-  btnAdoptAsFree: "🆓 Take over as free project",
+  btnAdoptAsFree: `${UI_ICONS.session.independent} Take over as independent session`,
   btnAdoptCancel: "✕ Cancel",
   adoptCancelled: "Takeover cancelled",
   adoptWorking: "Taking over…",
@@ -97,14 +133,14 @@ export const en: Messages = {
   recoverBusy: "A recovery is already in progress.",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 Recovery complete\n\n🔁 ${launched} relaunched${shellOnly > 0 ? ` · 🐚 ${shellOnly} recreated` : ""} · 🟢 ${alive} running${failed > 0 ? ` · ⚠️ ${failed} failed` : ""}`,
-  adoptGone: "That process is no longer adoptable (exited or now in tmux)",
+  adoptGone: "That process is no longer adoptable (exited or already managed)",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ Adopted and resumed session: ${proj}` : `✅ Adopted and started fresh: ${proj}`,
   adoptFailed: "Takeover failed: process would not end, or the agent did not start",
   adoptBusy:
-    "The target tmux session already has a program in the foreground (another agent or something else). Aborted without touching the original — please exit it there first, then adopt again.",
+    "The target session already has a program in the foreground (another agent or something else). Aborted without touching the original — please exit it there first, then adopt again.",
   adoptProjectRunning:
-    "A same-path project is already running Claude/Codex. Aborted without touching the original — use “Take over as free project” if you want a parallel takeover.",
+    "A same-path project is already running Claude/Codex. Aborted without touching the original — use “Take over as independent session” if you want a parallel takeover.",
   btnAdoptAttach: "💻 View in computer terminal (optional)",
   adoptAttachHint: (cmd: string) =>
     `✅ The attach command is now on your COMPUTER's clipboard (nothing to copy on your phone). Back at the computer, just paste it in a terminal and press Enter to go in — this step is optional.\nCommand: ${cmd}`,
@@ -172,11 +208,10 @@ export const en: Messages = {
   queueLastDone: (s) => `last done ${s}s ago`,
   queueItemCancelled: "queued message cancelled",
   queueItemRewritten: "queued message rewritten",
-  queueItemGone:
-    "that message is no longer queued (it may be running — use ✋ interrupt to stop it)",
+  queueItemGone: `that message is no longer queued (it may be running — use ${UI_ICONS.action.interrupt} interrupt to stop it)`,
   queueTitle: "Queue status",
 
-  paneTitle: "👁 tmux pane",
+  paneTitle: "👁 Session pane",
   emptyPane: "(empty)",
   historyTitle: "📜 History",
   historyTitleShort: "History",
@@ -185,9 +220,9 @@ export const en: Messages = {
   onlyNRounds: (n) => `Only ${n} conversation(s)`,
   emptyOutput: "(no output)",
 
-  noCurrentProjectShort: "No current project",
-  aliveListTitle: (n) => `Active projects (${n})`,
-  aliveListEmpty: "No active projects — create one with /add_project <path>",
+  noCurrentProjectShort: "No current session",
+  aliveListTitle: (n) => `Active sessions (${n})`,
+  aliveListEmpty: "No active sessions — create one with /add_project <path>",
   recentListTitle: "Recent projects",
   recentListTitleN: (n) => `Recent projects (${n})`,
   recentListEmpty: "No recent projects — add one with /add_project <path>",
@@ -214,13 +249,12 @@ export const en: Messages = {
   browseNewFolderExists: "❌ That name already exists",
   browseNewFolderError: "❌ Failed to create the folder",
   shortIdNotFound: (id) => `Short id not found: ${id}`,
-  noCurrentProjectSet: "No current project set\n\nSet one with /add_project <path>",
-  currentActive: "✅ active",
-  currentNotFound: "🔴 not found",
-  currentProjectTitle: "Current project",
+  noCurrentProjectSet: "No current session set\n\nSet one with /add_project <path>",
+  currentProjectTitle: "Current session",
   noRecentProjects: "No recent projects\n\nAdd one with /add_project <path>",
   messageTooLong: (len, max) => `Message too long · ${len} > ${max} chars`,
   onlyTextVoice: "Only text and voice messages are supported",
+  handlerErrorTelegram: "⚠️ Something went wrong handling that message; please retry.",
   handlerError:
     "⚠️ Something went wrong handling that message; please retry. If the group stops responding, send /restore to reconnect the project.",
   unknownCommand: (name) => `Unknown command: /${name} (send /help for the list)`,
@@ -268,7 +302,7 @@ export const en: Messages = {
 Send any text → forwarded to the agent → reply
 🎙️ Voice transcription is optional · /voice_install to enable (Apple Silicon only) · /voice_lang to set the language
 
-Tip: messages get 👀 (received) / 👍 (done) reactions; progress shows in place and is edited into the result; the result has ⏎/✋/⎋/🔄 shortcut buttons below it.`,
+Tip: messages get 👀 (received) / 👍 (done) reactions; progress shows in place and is edited into the result; the result has ⏎/${UI_ICONS.action.interrupt}/⎋/🔄 shortcut buttons below it.`,
 
   helpIntroLark: `🤖 tmux-claude (Lark)
 
@@ -282,22 +316,24 @@ Send any text → forwarded to the agent → reply`,
   helpSectionRunning: "⚡ Running",
   helpSectionIdle: "🚀 Not running",
 
-  cmdCurrentProject: "current project",
-  cmdListAlive: "active projects (tap to switch/delete)",
+  cmdCurrentProject: "current session",
+  cmdListAlive: "active sessions (tap to switch/delete)",
   cmdListRecent: "recent projects",
   cmdAddProject: "create a project",
-  cmdNewFree: "New free project (parallel, same dir OK)",
-  freeProjectLimit: (max) => `Free-project limit reached (${max}). Remove one first.`,
+  cmdNewFree: "New independent session (parallel, same workspace OK)",
+  freeProjectLimit: (max) => `Independent-session limit reached (${max}). Remove one first.`,
   freeProjectCreated: (slot, label) =>
-    `🆓 Free project #${slot}${label ? ` (${label})` : ""} created.\n/cd anywhere and start the agent yourself; /list_alive_projects to switch back.`,
-  btnNewFree: "🆓 New free project",
-  freeLabelPrompt: "Send a name for the free project (send - to skip naming)",
+    `${UI_ICONS.session.independent} Independent session #${slot}${label ? ` (${label})` : ""} created.\n/cd anywhere and start the agent yourself; /list_alive_projects to switch back.`,
+  btnNewFree: `${UI_ICONS.session.independent} New independent session`,
+  freeLabelPrompt: "Send a name for the independent session (send - to skip naming)",
   freeLabelCancelled: "Cancelled",
-  cmdAdopt: "adopt an agent running outside tmux",
+  cmdAdopt: "adopt an unmanaged agent",
   cmdQueueStatus: "queue status",
   cmdHistory: "conversation history (latest by default)",
-  cmdPeek: "view the tmux pane",
+  cmdPeek: "view the session pane",
   cmdVoiceLang: "voice recognition language (en/zh/yue/ja/es/auto)",
+  cmdPromptTranslate: "prompt translation (status/off/on from to)",
+  cmdTranslateInstall: "install prompt translation dependencies",
   cmdLang: "interface language (en/zh/zh-TW/yue/ja/es)",
   cmdEnter: "Enter",
   cmdEsc: "Escape",
@@ -322,7 +358,7 @@ Send any text → forwarded to the agent → reply`,
   wsRemoved: (name) => `✅ Removed workspace "${name}"`,
   wsNotFound: (name) => `Workspace "${name}" not found`,
   wsSessionGone: (name) => `Workspace "${name}" session no longer exists`,
-  wsNoCurrentProject: "No current project — use /add_project first",
+  wsNoCurrentProject: "No current session — use /add_project first",
   wsListEmpty: "No saved workspaces",
   wsListTitle: "📎 Workspaces",
   wsListItem: (name, session) => `• **${name}** → ${session}`,
@@ -361,10 +397,12 @@ Send any text → forwarded to the agent → reply`,
   homeOperatorSwitched: "🏠 Switched to the home operator session",
   cmdDashboard: "View the global dashboard (overview of all sessions)",
   cmdBatch: "Batch scheduler: view status or control a batch run (start/pause/resume/stop/report)",
+  cmdAutopilot: "Manage session autopilot (goals, keep-alive, global management)",
+  cmdGoals: "List autopilot goal presets",
   cmdSysload: "Show machine load, heat, and runaway processes",
   sysloadTitle: "🖥 System load",
   dashboardTitle: "📊 Dashboard",
-  autopilotTitle: "🤖 Autopilot",
+  autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotNotifyPaused: (session, reason) => `🛑 autopilot paused [${session}]: ${reason}`,
   autopilotNotifyStopped: (session, reason) => `⏹️ autopilot stopped [${session}]: ${reason}`,
   autopilotNotifyUsage: (session, pct) =>
@@ -395,7 +433,7 @@ Send any text → forwarded to the agent → reply`,
     `Autopilot: ${o.enabled ? "on" : "off"} (${o.pureKeepAlive ? "keep-alive" : "goal-driven"}, ${o.iterations} interventions, persona=${o.persona})${o.goal ? ` (goal ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
   autopilotUsage: (raw) =>
     `Unknown subcommand "${raw}". Usage: /autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: "🤖 Enable autopilot",
+  btnApEnable: `${UI_ICONS.feature.autopilot} Enable autopilot`,
   btnApDisable: "⏹ Disable autopilot",
   btnApPickGoals: "🎯 Pick goals",
   btnApGlobalOn: "🌐 Global: on",
@@ -421,7 +459,7 @@ Send any text → forwarded to the agent → reply`,
   autopilotGoalStarted: (id) => `Goal started: ${id}`,
   autopilotUnknownGoal: (ids) => `Unknown goal. Available: ${ids}`,
   goalsTitle: "🎯 Goal presets",
-  noLogsContext: "No current project. Select a project or specify a trace (/logs <traceId>).",
+  noLogsContext: "No current session. Select a project or specify a trace (/logs <traceId>).",
 
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label, path) =>
@@ -448,6 +486,12 @@ Send any text → forwarded to the agent → reply`,
   groupBoundCardTitle: (label) => `🗂 This group is bound to: ${label}`,
   groupMenuNoProjects:
     "No recent projects yet. Add one in a private chat with `/add_project <path>`.",
+  groupNoNewGroupProjects:
+    "No regular project is eligible for a new group (already-grouped projects and independent sessions are hidden).",
+  groupNoBindableProjects:
+    "No regular project is available to bind. Add one in a private chat with `/add_project <path>`.",
+  groupNoParallelProjects:
+    "No regular project is available for a new parallel group. Add one first.",
   groupCreatedShort: (label) => `✓ Created project group "${label}" — continue in the new group.`,
   groupAlreadyExists: (label) =>
     `⚠️ Project "${label}" already has a bound group — use that one; no need to create another.`,
@@ -455,11 +499,11 @@ Send any text → forwarded to the agent → reply`,
     `🔒 This group is pinned to "${label}" — switching projects is disabled here. Use 🗂 → Rebind to change it.`,
   groupNoRemoveInGroup:
     "🔒 Removing projects isn't allowed in a group (it affects others). Do it in a private chat with the bot.",
-  groupFreePickerTitle: "🆓 New free-project group (same dir allowed)",
+  groupFreePickerTitle: `${UI_ICONS.session.independent} New parallel project group (creates an independent session)`,
   groupOverviewTitle: "🗂 Project groups",
   groupOverviewExisting: "Existing project groups:",
   groupOverviewNoGroups: "No project groups yet.",
   groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
-  btnFreeGroup: "🆓 Parallel group",
-  freeGroupCreated: (label) => `🆓 Parallel group "${label}" created`,
+  btnFreeGroup: `${UI_ICONS.session.independent} New parallel group`,
+  freeGroupCreated: (label) => `${UI_ICONS.session.independent} Parallel group "${label}" created`,
 };

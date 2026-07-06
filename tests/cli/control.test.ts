@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchRef } from "../../src/cli/control.js";
+import { confirmCliDangerousControl, matchRef } from "../../src/cli/control.js";
 
 type Item = { key: string; label: string };
 const items: Item[] = [
@@ -51,5 +51,50 @@ describe("matchRef", () => {
         "x",
       ).key,
     ).toBe("a");
+  });
+});
+
+describe("confirmCliDangerousControl", () => {
+  it("does not prompt for safe actions", async () => {
+    await expect(
+      confirmCliDangerousControl("enter", "proj", {
+        yes: false,
+        isTty: false,
+        ask: async () => "n",
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("requires --yes for dangerous actions in non-interactive use", async () => {
+    await expect(
+      confirmCliDangerousControl("exit", "proj", {
+        yes: false,
+        isTty: false,
+        ask: async () => "y",
+      }),
+    ).rejects.toThrow(/--yes/);
+  });
+
+  it("accepts explicit --yes for dangerous actions", async () => {
+    await expect(
+      confirmCliDangerousControl("exit", "proj", { yes: true, isTty: false, ask: async () => "n" }),
+    ).resolves.toBe(true);
+  });
+
+  it("prompts in a TTY and only accepts yes", async () => {
+    await expect(
+      confirmCliDangerousControl("clear", "proj", {
+        yes: false,
+        isTty: true,
+        ask: async () => "yes",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      confirmCliDangerousControl("clear", "proj", {
+        yes: false,
+        isTty: true,
+        ask: async () => "no",
+      }),
+    ).resolves.toBe(false);
   });
 });

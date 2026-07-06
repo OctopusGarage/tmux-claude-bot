@@ -12,6 +12,7 @@ export interface AgentRunner {
     command?: string,
   ): Promise<void>;
   waitUntilReady(sessionName?: string): Promise<void>;
+  waitUntilInputReady(sessionName?: string): Promise<void>;
   waitUntilDone(sessionName?: string): Promise<{ done: boolean; output: string }>;
   interrupt(sessionName?: string): Promise<void>;
   /** Stop the running agent: Ctrl-C to interrupt any in-flight turn, then `/exit`.

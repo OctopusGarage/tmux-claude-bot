@@ -312,6 +312,9 @@ The active session name is stored in `.current_project` (gitignored).
 | `up` / `down` | agent running | Send arrow keys |
 | `help` | always | Show all commands |
 
+Buttons and TUI shortcuts confirm before `exit`, `restart`, `clear`, or `compact`.
+For CLI automation, use `tcb control <project> <action> --yes` for those actions.
+
 #### Natural language
 
 When the agent is running, any text message is sent to it and the result is returned.
@@ -347,6 +350,26 @@ short note telling you how to turn it on — it never fails silently.
 Japanese, so transcription forces a language — **`zh` by default**. Switch any
 time from Telegram with `/voice_lang <zh|en|yue|ja|es|auto>` (`auto` re-enables detection);
 it persists to `.env`. Override the default with `WHISPER_LANGUAGE` in `.env`.
+
+**Optional prompt translation.** If you prefer writing or speaking Chinese but
+want the agent to receive English prompts, install the local Argos Translate package:
+
+```bash
+npm run translate:install
+```
+
+Or install from chat with `/translate_install` (Telegram/Feishu); Feishu also
+shows an install button in the help card when Argos is not present.
+
+Then set `PROMPT_TRANSLATE_MODE=argos`, `PROMPT_TRANSLATE_FROM=zh`, and
+`PROMPT_TRANSLATE_TO=en` in `.env` (or set the `TELEGRAM_...` / `LARK_...` /
+`CONTROL_...` overrides for one source). Runtime controls are
+`/prompt_translate status|off|on [from] [to]` in Telegram/Feishu and
+`tcb prompt-translate status|off|on [from] [to]` locally; the TUI `T` key toggles
+control zh→en. The legacy `VOICE_TRANSLATE_MODE=argos_zh_en` alias still works.
+When enabled, chat text, voice transcriptions, TUI input, and `tcb send` are
+translated before they enter tmux. Leave `PROMPT_TRANSLATE_MODE=off` for the
+default behavior.
 
 ### Agent Running Detection
 
@@ -449,5 +472,6 @@ Distributed under the MIT License. See [LICENSE](LICENSE) for details.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — the CLI this bot drives
 - [grammY](https://grammy.dev) & [Feishu/Lark Node SDK](https://github.com/larksuite/node-sdk) — the chat adapters
 - [mlx-whisper](https://pypi.org/project/mlx-whisper/) & [uv](https://docs.astral.sh/uv/) — local voice transcription
+- [Argos Translate](https://github.com/argosopentech/argos-translate) — optional local prompt translation
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

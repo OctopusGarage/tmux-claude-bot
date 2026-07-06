@@ -4,16 +4,16 @@ import { accessSync, constants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 import { claudeBinFromStartCommand, claudeStartCommandWithSessionId } from "../../shared/config.js";
+import { SHELL_RC_FILES } from "../../shared/shell-rc.js";
 import type { AgentKind } from "../../shared/types.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { resolveAgentKind, setAgentKind } from "../agents/agentKindMap.js";
-import { recordLiveSessionId } from "../agents/live-session-id.js";
-import { profileFor } from "../agents/registry.js";
-import { setStartCommand } from "../agents/startCommandMap.js";
+import { recordAgentLaunch } from "../agents/agent-runtime-records.js";
+import { buildAgentStatusReport, readAgentLatestReply } from "../agents/read.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
+import { getActionPrecondition, isMessageAction } from "./actions.js";
 import { sendContextReset } from "./context-reset.js";
 import type { QueuedMessage } from "./queue.js";
 
@@ -24,10 +24,6 @@ function agentKindForCommand(deps: HandlerDeps, command: string | undefined): Ag
   if (command === undefined) return "claude";
   return deps.config.startCommands.find((c) => c.command === command)?.agent ?? "claude";
 }
-
-// Shell startup files a user's interactive shell sources — where an alias or
-// function (e.g. `alias claude-stella=…`) is typically defined.
-const SHELL_RC_FILES = [".zshrc", ".bashrc", ".bash_profile", ".zprofile", ".profile"] as const;
 
 /**
  * True when `bin` is defined as a shell alias or function in one of the user's
@@ -57,20 +53,27 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+const INTERACTIVE_SHELL_LOOKUP_TIMEOUT_MS = 1700;
+const interactiveShellVisibilityCache = new Map<string, boolean>();
+
 function visibleToInteractiveShell(bin: string): boolean {
-  const shells = [...new Set([process.env.SHELL, "/bin/zsh", "/bin/bash"].filter(Boolean))];
+  const cached = interactiveShellVisibilityCache.get(bin);
+  if (cached !== undefined) return cached;
+  const shells = process.env.SHELL ? [process.env.SHELL] : ["/bin/zsh", "/bin/bash"];
   for (const shell of shells) {
     try {
       execFileSync(shell as string, ["-lic", `command -v -- ${shellQuote(bin)} >/dev/null 2>&1`], {
         stdio: "ignore",
-        timeout: 3000,
+        timeout: INTERACTIVE_SHELL_LOOKUP_TIMEOUT_MS,
         env: process.env,
       });
+      interactiveShellVisibilityCache.set(bin, true);
       return true;
     } catch {
       // Shell missing, rc error, or command unavailable there — try the next shell.
     }
   }
+  interactiveShellVisibilityCache.set(bin, false);
   return false;
 }
 
@@ -94,7 +97,7 @@ export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
     }
   }
   // Not an executable on the bot process PATH — but the command runs in the
-  // target tmux pane's interactive shell. Accept launchers that are either
+  // target session pane's interactive shell. Accept launchers that are either
   // explicit aliases/functions or binaries made visible by shell startup files
   // (common with nvm-installed `codex`).
   if (definedInShellRc(bin)) return;
@@ -118,20 +121,23 @@ export async function performStart(
   const baseCommand = command ?? deps.config.claudeStartCommand;
   assertClaudeBinaryAccessible(baseCommand);
   const kind = agentKindForCommand(deps, command);
-  setAgentKind(session, kind);
-  // Record the EXACT launch command (flavor), so reboot recovery relaunches this
-  // one, not the primary default. Persist the base command (without --session-id).
-  setStartCommand(session, baseCommand);
   // Claude lets us pin the conversation id at launch (`--session-id`), so the bot
-  // OWNS the exact id deterministically — no fragile lsof capture, and Free
-  // Projects sharing a cwd stay unambiguous on resume. Codex can't pre-assign;
+  // OWNS the exact id deterministically — no fragile lsof capture, and
+  // independent sessions sharing a cwd stay unambiguous on resume. Codex can't pre-assign;
   // its id is read from the live rollout after start (resolveLiveTranscript).
   let launchCommand = baseCommand;
+  let liveSessionId: string | null;
   if (kind === "claude") {
-    const sessionId = randomUUID();
-    launchCommand = claudeStartCommandWithSessionId(baseCommand, sessionId);
-    recordLiveSessionId(session, sessionId);
+    liveSessionId = randomUUID();
+    launchCommand = claudeStartCommandWithSessionId(baseCommand, liveSessionId);
+  } else {
+    liveSessionId = null;
   }
+  recordAgentLaunch(session, {
+    kind,
+    startCommand: baseCommand,
+    liveSessionId,
+  });
   await deps.agent.start(session, launchCommand);
   deps.configResolver.invalidate(session); // new process → re-detect config dir
   return "started";
@@ -160,8 +166,10 @@ export async function performRestart(
 ): Promise<void> {
   const baseCommand = command ?? deps.config.claudeStartCommand;
   assertClaudeBinaryAccessible(baseCommand);
-  setAgentKind(session, agentKindForCommand(deps, command));
-  setStartCommand(session, baseCommand); // keep the recorded flavor in sync
+  recordAgentLaunch(session, {
+    kind: agentKindForCommand(deps, command),
+    startCommand: baseCommand,
+  }); // keep the recorded flavor in sync
   await deps.agent.gracefulRestartWithContinue(session, command);
   deps.configResolver.invalidate(session); // new process → re-detect config dir
 }
@@ -173,59 +181,6 @@ export async function performRestart(
  * grammy, chats, or rendering — adapters wrap this and present the string.
  */
 
-export const MESSAGE_ACTIONS = [
-  "text",
-  "start",
-  "exit",
-  "restart",
-  "esc",
-  "interrupt",
-  "clear",
-  "compact",
-  "enter",
-  "up",
-  "down",
-  "left",
-  "right",
-  "tab",
-  "status",
-] as const;
-
-export type MessageAction = (typeof MESSAGE_ACTIONS)[number];
-
-export function isMessageAction(action: string): action is MessageAction {
-  return (MESSAGE_ACTIONS as readonly string[]).includes(action);
-}
-
-/**
- * Precondition each action requires of the live agent, enforced in one place:
- *   "running" — needs a live agent because acting on a bare shell is harmful or
- *               confusing: a prompt or a "/clear" typed into a shell RUNS as a
- *               shell command, and there's nothing to exit.
- *   "absent"  — must have NO live agent (start would spawn a second one).
- *   null      — tolerant. Raw keys and interrupts are harmless on a bare pane AND
- *               are the user's escape hatch precisely when agent-state is uncertain
- *               (a startup prompt, a stuck pane) — guarding them would block it.
- *               restart resumes whether alive or dead; status is read-only.
- */
-const ACTION_PRECONDITION: Record<MessageAction, "running" | "absent" | null> = {
-  text: "running",
-  start: "absent",
-  exit: "running",
-  clear: "running",
-  compact: "running",
-  restart: null,
-  esc: null,
-  interrupt: null,
-  enter: null,
-  up: null,
-  down: null,
-  left: null,
-  right: null,
-  tab: null,
-  status: null,
-};
-
 export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Promise<string> {
   const m = messages(msg.channel ?? "telegram");
   const session = msg.sessionName;
@@ -236,9 +191,9 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
 
   log.info(`action=${msg.action} session=${session} text_len=${msg.text?.length ?? 0}`);
 
-  // Single precondition gate for every mutating action (see ACTION_PRECONDITION):
+  // Single precondition gate for every mutating action (see getActionPrecondition):
   // never type into a wrong-state pane, never spawn a second agent.
-  const precond = ACTION_PRECONDITION[msg.action];
+  const precond = getActionPrecondition(msg.action);
   if (precond !== null) {
     const running = await deps.agent.checkIfRunning(session);
     if (precond === "running" && !running) {
@@ -253,8 +208,10 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
 
   switch (msg.action) {
     case "text": {
+      await deps.agent.waitUntilInputReady(session);
+      const promptText = msg.text ?? "";
       log.info(`sending keys session=${session}`);
-      await deps.bridge.sendKeys(msg.text, session);
+      await deps.bridge.sendKeys(promptText, session);
       log.info(`keys sent, waiting for done session=${session}`);
 
       // Wait in maxWaitDoneMs rounds up to maxWaitDoneTotalMs total. The first
@@ -298,13 +255,12 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       // Read the reply from the agent's transcript (cleaner than scraping the
       // ANSI pane). claude: <CLAUDE_CONFIG_DIR>/projects JSONL; codex: the rollout
       // under <CODEX_HOME>/sessions. Either may return null → pane fallback below.
-      const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
       log.info(`looking up history session=${session} path=${projectPath}`);
-      const historyReply = await profile.getLatestReply(
+      const historyReply = await readAgentLatestReply(
         deps.configResolver,
         session,
         projectPath,
-        msg.text,
+        promptText,
       );
       if (historyReply?.trim()) {
         log.info(`history reply found len=${historyReply.length}`);
@@ -399,8 +355,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       log.info(`checking status session=${session}`);
       const running = await deps.agent.checkIfRunning(session);
       const channel = msg.channel ?? "telegram";
-      const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
-      return profile.buildStatusReport(deps, session, channel, running);
+      return buildAgentStatusReport(deps, session, channel, running);
     }
     default: {
       const _exhaustive: never = msg.action;

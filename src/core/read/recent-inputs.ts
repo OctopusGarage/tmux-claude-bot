@@ -1,5 +1,4 @@
-import { resolveAgentKind } from "../agents/agentKindMap.js";
-import { profileFor } from "../agents/registry.js";
+import { readAgentRecentConversations } from "../agents/read.js";
 import type { HandlerDeps } from "../deps.js";
 
 /** A leading interrupt marker the agent writes into the transcript when you stop a
@@ -69,8 +68,7 @@ export async function getRecentInputs(
   projectPath: string,
   limit: number,
 ): Promise<string[]> {
-  const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
-  const rounds = await profile.getRecentConversations(deps.configResolver, session, projectPath);
+  const rounds = await readAgentRecentConversations(deps.configResolver, session, projectPath);
   const inputs: string[] = [];
   for (const round of rounds) {
     const u = sanitizeRecentInput(round.user);

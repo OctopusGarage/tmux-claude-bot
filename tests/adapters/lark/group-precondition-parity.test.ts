@@ -60,7 +60,7 @@ describe("group-op precondition parity (card surface == text surface)", () => {
     expect(createBoundChat).not.toHaveBeenCalled(); // neither surface created a group
   });
 
-  it("creating a FREE parallel group is private-chat only on BOTH surfaces (refused in a group, same message)", async () => {
+  it("creating an independent-session parallel group is private-chat only on BOTH surfaces (refused in a group, same message)", async () => {
     // text surface: /newfreegroup in a group
     const tChannel = fakeChannel();
     await handleNewFreeGroup(tChannel, fakeDeps(), "oc_grp", "group", "ou_me", "/some/path");

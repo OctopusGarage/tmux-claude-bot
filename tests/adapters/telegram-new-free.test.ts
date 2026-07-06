@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleNewFreeCommand } from "../../src/adapters/telegram/handlers.js";
 import * as ops from "../../src/core/projects/project-ops.js";
+import { UI_ICONS } from "../../src/shared/ui/icons.js";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("handleNewFreeCommand", () => {
-  it("creates a free project and replies success", async () => {
+  it("creates an independent session and replies success", async () => {
     vi.spyOn(ops, "createFreeProject").mockResolvedValue({
       status: "created",
       sessionName: "tmux_proj_free_1",
@@ -16,7 +17,7 @@ describe("handleNewFreeCommand", () => {
     await handleNewFreeCommand(ctx, {} as never, "telegram:1", (kind, text) => {
       replies.push({ kind, text });
     });
-    expect(replies[0]?.text).toContain("🆓");
+    expect(replies[0]?.text).toContain(UI_ICONS.session.independent);
     expect(replies[0]?.text).toContain("#1");
   });
 

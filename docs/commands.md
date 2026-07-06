@@ -11,7 +11,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `help` | Show all commands |
 | `start` | Start the agent |
 | `status` | Check agent status |
-| `peek` | Capture tmux pane |
+| `peek` | Capture the session pane |
 | `esc` | Send Escape key |
 | `interrupt` | Send Ctrl-C |
 | `clear` | Send /clear command |
@@ -26,16 +26,16 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `restart` | Restart the agent (Claude `--continue` / Codex `resume --last`) |
 | `list_alive_projects` | List alive projects |
 | `list_recent_projects` | List recent projects |
-| `current_project` | Show current project |
+| `current_project` | Show current session |
 | `add_project` | Add a new project: `add_project <path>` creates it directly; with no path, opens a tap-to-navigate directory browser |
-| `new_free` | Create a free (parallel) project: `new_free [label]` opens a bare tmux session decoupled from any path, so multiple agents can run in the same directory |
-| `adopt` | Take over an agent (Claude or Codex) running outside tmux |
-| `recover` | Recover all projects after a reboot: recreate each tmux session + relaunch its agent, resuming the conversation. Previews then confirms |
+| `new_free` | Create an independent session: `new_free [label]` opens a bare project session decoupled from any path, so multiple agents can run in the same directory |
+| `adopt` | Take over an unmanaged agent (Claude or Codex) |
+| `recover` | Recover all projects after a reboot: recreate each project session + relaunch its agent, resuming the conversation. Previews then confirms |
 | `status_install` | Install usage reporting (statusLine snapshot) for /status |
 | `queue_status` | Show message queue status |
 | `history` | Show recent conversation history (`/history N` for the Nth recent round) |
 | `inputs` | List your recent inputs (`/inputs N` for the last N) — tap one to fetch & edit it |
-| `sessions` | List resumable sessions for the current project's agent (tap one to resume) |
+| `sessions` | List resumable conversations for the current session's agent (tap one to resume) |
 | `logs` | Show recent WARN/ERROR logs for the current session; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
 | `autopilot` | Toggle/inspect keep-alive autopilot for the current session: `/autopilot [on\|off\|keepalive on\|off\|stop\|goal <id>\|goals <id,id,…> [rounds N]\|confirm\|reject\|global on\|off]` — `goals` runs several goals in rotation for N rounds (default 1); `global` toggles auto-managing every session |
 | `goals` | List autopilot goal presets |
@@ -45,6 +45,8 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |
 | `voice_install` | Install voice transcription (Apple Silicon) |
 | `voice_lang` | Set voice recognition language (zh/en/yue/ja/es/auto) |
+| `prompt_translate` | Set prompt translation for this source: `/prompt_translate status\|off\|on [from] [to]` |
+| `translate_install` | Install local prompt translation dependencies (Argos Translate) |
 | `home` | Switch to the home operator session (the default target when no project is selected). Owner-only. |
 | `lang` | Set interface language (en/zh/zh-TW/yue/ja/es) |
 | `prompts` | Browse saved prompts (read-only; needs PROMPT_MCP_* configured). Owner-only (private chat only). |
@@ -57,15 +59,15 @@ to one workspace so you can type without `@`-mentioning the bot.
 | Command | Where | Description |
 |---------|-------|-------------|
 | `/newgroup <path\|name>` | Private chat (p2p) | Auto-create a private Feishu group bound to the given workspace (path or saved workspace name). Requires the `im:chat` scope; without it a friendly error is shown and `/bind` can be used instead after manually creating the group. |
-| `/newfreegroup <path\|name>` | Private chat (p2p) | Like `/newgroup`, but binds the new group to a fresh free session (`tmux_proj_free_<n>`) so it can sit on a directory that already has a group — multiple parallel agents on one workspace. Typed-path counterpart of the 🆓 Parallel group button (which is limited to recent projects). |
+| `/newfreegroup <path\|name>` | Private chat (p2p) | Like `/newgroup`, but binds the new group to a fresh numbered independent session so it can sit on a directory that already has a group — multiple parallel agents on one workspace. Typed-path counterpart of the 🧩 Parallel group button (which is limited to recent projects). |
 | `/bind <path\|name>` | Inside a group | Bind the current group to a workspace (for manually-created groups). |
 | `/rebind <path\|name>` | Inside a group | Change an existing group's binding to a new workspace. |
 | `/unbind` | Inside a group | Remove this group's binding (group messages are ignored afterwards). |
-| `/restore` | Inside a group | Manually trigger re-anchoring: re-asserts the binding's session pointer and recreates the tmux session if it died. |
+| `/restore` | Inside a group | Manually trigger re-anchoring: re-asserts the binding's session pointer and recreates the project session if it died. |
 
 No typing needed: the help card's **🗂 Project groups** button opens a context-aware menu — in a private chat it lists recent projects (tap to create a bound group); inside a bound group it offers **Restore / Rebind / Unbind**.
 
-The help card's **🆓 Parallel group** button (private chat) creates a *second* group on a recent project, bound to a fresh free session (`tmux_proj_free_<n>`). This is the free-projects counterpart for Feishu: it bypasses the one-workspace-one-group rule so the same directory can host multiple parallel agents, one per group.
+The help card's **🧩 Parallel group** button (private chat) creates a *second* group on a recent project, bound to a fresh numbered independent session. This bypasses the one-workspace-one-group rule so the same directory can host multiple parallel agents, one per group.
 
 **Required Feishu app scopes** for group-binding:
 - `im:message.group_msg` — "获取群组中所有消息" (a *sensitive* scope) — receive **all** messages in a bound project group, enabling no-`@` typing. Without it the bot only receives `@`-mentions in groups (`im:message.group_at_msg:readonly`), so a bound group would require `@bot` on every message.
@@ -77,8 +79,11 @@ The help card's **🆓 Parallel group** button (private chat) creates a *second*
 
 | Message | Condition | Implementation |
 |---------|-----------|----------------|
-| `/switch_<id>` | `<id>` = 6-char session short id | Resolve alive session by short id → switch current project |
-| Any text | Agent **running** | Send to tmux → `waitUntilDone()` rounds (one-time "still running" notice past `MAX_WAIT_DONE_MS`, give up at `MAX_WAIT_DONE_TOTAL_MS`) → clean and reply |
+| `/switch_<id>` | `<id>` = 6-char session short id | Resolve alive session by short id → switch the current session |
+| Any text | Agent **running** | Send to the session → `waitUntilDone()` rounds (one-time "still running" notice past `MAX_WAIT_DONE_MS`, give up at `MAX_WAIT_DONE_TOTAL_MS`) → clean and reply |
+
+Button and TUI shortcuts ask for confirmation before `exit`, `restart`, `clear`, or
+`compact`. Typed slash commands are treated as explicit intent and run directly.
 
 ## Agent Running Detection
 

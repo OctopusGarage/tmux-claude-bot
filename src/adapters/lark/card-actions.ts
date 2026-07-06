@@ -15,12 +15,9 @@ import {
   toggleGoal,
 } from "../../core/autopilot/picker-state.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
-import {
-  type MessageAction,
-  performRestart,
-  performStart,
-  startDisposition,
-} from "../../core/command/dispatch.js";
+import { requiresActionConfirmation } from "../../core/command/action-registry.js";
+import type { MessageAction } from "../../core/command/actions.js";
+import { performRestart, performStart, startDisposition } from "../../core/command/dispatch.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import type { ForeignAction } from "../../core/infra/status-install.js";
@@ -48,6 +45,13 @@ import {
   resolvePromptByShortId,
   resolveTagByShortId,
 } from "../../core/promptlib/promptlib.js";
+import { runOptionalFeatureInstall } from "../../core/read/optional-feature-install.js";
+import {
+  applyPromptTranslateCommand,
+  formatPromptTranslateCommandResult,
+  installPromptTranslation,
+  isPromptTranslateInstallable,
+} from "../../core/read/prompt-translation.js";
 import { DEFAULT_INPUTS, lookupInput } from "../../core/read/recent-inputs.js";
 import {
   checkVoiceSupport,
@@ -65,6 +69,7 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
 import { verifyValue } from "./card-signing.js";
 import {
+  actionConfirmationCard,
   adoptConfirmCard,
   adoptDoneCard,
   autopilotGoalPickerCard,
@@ -83,6 +88,7 @@ import {
   handleRestore,
   handleUnbind,
   makeBoundGroupBySid,
+  makeExistingFreeGroupBySid,
   makeFreeGroupBySid,
 } from "./group-commands.js";
 import { sendPrompts } from "./prompts.js";
@@ -102,6 +108,7 @@ import {
   sendInputs,
   sendOrphanList,
   sendPeek,
+  sendPromptTranslatePicker,
   sendQueueStatus,
   sendRecentList,
   sendRecoverPreview,
@@ -118,10 +125,12 @@ type CardValue =
       title?: string;
       view?: boolean;
       lang?: string;
+      arg?: string;
       idx?: number;
       pid?: number;
       chatId?: string;
       token?: string;
+      action?: string;
       /** qcancel: the session + queued-message id to cancel. */
       s?: string;
       id?: string;
@@ -160,35 +169,61 @@ async function handleVoiceLang({ channel, evt, value }: CardCtx): Promise<void> 
  *  project op). */
 async function handleVoiceInstall({ channel, evt }: CardCtx): Promise<void> {
   const m = messages("lark");
-  if (checkVoiceSupport().ready) {
-    await sendText(channel, evt.chatId, m.voiceAlreadyInstalled);
+  await runOptionalFeatureInstall({
+    copy: {
+      installing: m.voiceInstalling,
+      ok: m.voiceInstallOk,
+      alreadyReady: m.voiceAlreadyInstalled,
+      inProgress: m.voiceInstalling,
+      unsupported: m.voiceUnsupported,
+      failed: m.voiceInstallFailed,
+    },
+    precheck: () => {
+      if (checkVoiceSupport().ready) return { status: "already-ready" };
+      if (!isVoicePlatformSupported()) return { status: "unsupported" };
+      return null;
+    },
+    install: () => installVoice(),
+    send: (notice) => sendText(channel, evt.chatId, notice.text),
+    background: true,
+    onResult: (result) => {
+      if (result.status === "ok") {
+        log.info("voice feature installed and enabled");
+      } else if (result.status === "failed") {
+        log.error("voice install failed", { data: { message: result.message } });
+      }
+    },
+  });
+}
+
+async function handlePromptTranslateInstall({ channel, evt }: CardCtx): Promise<void> {
+  const m = messages("lark");
+  await runOptionalFeatureInstall({
+    copy: {
+      installing: m.promptTranslateInstalling,
+      ok: m.promptTranslateInstallOk,
+      alreadyReady: m.promptTranslateAlreadyInstalled,
+      inProgress: m.promptTranslateInstalling,
+      failed: m.promptTranslateInstallFailed,
+    },
+    install: () => installPromptTranslation(),
+    send: (notice) => sendText(channel, evt.chatId, notice.text),
+    background: true,
+  });
+}
+
+async function handlePromptTranslate({ channel, evt, value }: CardCtx): Promise<void> {
+  const arg = value?.arg?.trim() ?? "";
+  if (!arg) {
+    await sendPromptTranslatePicker(channel, evt.chatId);
     return;
   }
-  if (!isVoicePlatformSupported()) {
-    await sendText(channel, evt.chatId, m.voiceUnsupported);
+  const result = await applyPromptTranslateCommand("lark", arg);
+  if (!result.ok) {
+    await sendText(channel, evt.chatId, formatPromptTranslateCommandResult(result));
     return;
   }
-  await sendText(channel, evt.chatId, m.voiceInstalling); // ack; the install can take minutes
-  const result = await installVoice();
-  switch (result.status) {
-    case "ok":
-      log.info("voice feature installed and enabled");
-      await sendText(channel, evt.chatId, m.voiceInstallOk);
-      break;
-    case "failed":
-      log.error(`voice-install failed: ${result.message}`);
-      await sendText(channel, evt.chatId, m.voiceInstallFailed(result.message));
-      break;
-    case "already-ready":
-      await sendText(channel, evt.chatId, m.voiceAlreadyInstalled);
-      break;
-    case "unsupported":
-      await sendText(channel, evt.chatId, m.voiceUnsupported);
-      break;
-    case "in-progress":
-      await sendText(channel, evt.chatId, m.voiceInstalling);
-      break;
-  }
+  await sendPromptTranslatePicker(channel, evt.chatId);
 }
 
 async function handleUiLang({ channel, evt, value }: CardCtx): Promise<void> {
@@ -246,7 +281,7 @@ async function handleSwitch(ctx: CardCtx): Promise<void> {
 async function handleRemove(ctx: CardCtx): Promise<void> {
   const { channel, deps, evt, value } = ctx;
   if (!value?.sid) return;
-  // Removing a project kills its tmux session — too destructive for a shared
+  // Removing a project kills its project session — too destructive for a shared
   // group (it could be someone else's project); private chat only per policy.
   if (!(await gateAction(ctx, "remove"))) return;
   const session = await resolveAliveSessionByShortId(deps, value.sid);
@@ -316,12 +351,20 @@ async function handleUnbindGroup(ctx: CardCtx): Promise<void> {
   await sendGroupMenu(channel, deps, evt.chatId); // refresh so the cleared group disappears
 }
 
-/** Create a free parallel group — private chat only, mirroring makegroup's gate. */
+/** Create a parallel project group — private chat only, mirroring makegroup's gate. */
 async function handleMakeFreeGroup(ctx: CardCtx): Promise<void> {
   const { channel, deps, evt, value } = ctx;
   if (!value?.sid) return;
   if (!(await gateAction(ctx, "createGroup"))) return;
   await makeFreeGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
+}
+
+/** Create a group for an already-running independent session, reusing that session. */
+async function handleMakeExistingFreeGroup(ctx: CardCtx): Promise<void> {
+  const { channel, deps, evt, value } = ctx;
+  if (!value?.sid) return;
+  if (!(await gateAction(ctx, "createGroup"))) return;
+  await makeExistingFreeGroupBySid(channel, deps, evt.chatId, value.sid, evt.operator.openId);
 }
 
 /** Bind the current chat to a project — group only per policy, mirroring `/bind`. */
@@ -621,7 +664,11 @@ async function handleApReject(ctx: CardCtx): Promise<void> {
  */
 const CARD_HANDLERS: Record<string, CardHandler> = {
   help: async ({ channel, evt }) => {
-    await sendCard(channel, evt.chatId, helpCard(isProjectGroup(evt.chatId), isVoiceInstallable()));
+    await sendCard(
+      channel,
+      evt.chatId,
+      helpCard(isProjectGroup(evt.chatId), isVoiceInstallable(), isPromptTranslateInstallable()),
+    );
   },
   noop: async () => {},
   peek: ({ channel, deps, evt }) => sendPeek(channel, deps, evt.chatId),
@@ -641,6 +688,8 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   },
   voicelang: handleVoiceLang,
   voiceinstall: handleVoiceInstall,
+  prompttranslate: handlePromptTranslate,
+  translateinstall: handlePromptTranslateInstall,
   // UI-language picker (/lang).
   uilangmenu: async ({ channel, evt }) => {
     await sendCard(channel, evt.chatId, langCard(resolveUiLang("lark")));
@@ -667,7 +716,7 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   browsecreate: handleBrowseCreate,
   browsenewfolder: handleBrowseNewFolder,
   browsecancel: handleBrowseCancel,
-  // --- Adopt a non-tmux claude (mirrors Telegram /adopt) ---
+  // --- Adopt an unmanaged claude (mirrors Telegram /adopt) ---
   adoptlist: ({ channel, evt, chatKind }) =>
     chatKind === "p2p" ? sendOrphanList(channel, evt.chatId) : Promise.resolve(),
   adopt: handleAdoptShow,
@@ -689,6 +738,7 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   freegroupmenu: ({ channel, deps, evt }) => sendFreeGroupPicker(channel, deps, evt.chatId),
   makegroup: handleMakeGroup,
   makefreegroup: handleMakeFreeGroup,
+  makefreeprojectgroup: handleMakeExistingFreeGroup,
   bindhere: handleBindHere,
   rebind: ({ channel, deps, evt }) => sendGroupBindPicker(channel, deps, evt.chatId),
   unbind: ({ channel, deps, evt, chatKind }) => handleUnbind(channel, deps, evt.chatId, chatKind),
@@ -788,7 +838,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       }
 
       const value = rawValue as CardValue;
-      const cmd = value?.cmd;
+      let cmd = value?.cmd;
       if (!cmd) return;
 
       log.info(`cardAction cmd=${cmd} chat=${evt.chatId}`);
@@ -806,6 +856,26 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
           return;
         }
         const chatKind: ChatKind = isP2p ? "p2p" : "group";
+
+        if (cmd === "noop") return;
+
+        if (cmd === "confirm") {
+          const action = value?.action;
+          if (
+            !action ||
+            (!QUEUED.has(action as MessageAction) && !IMMEDIATE.has(action as MessageAction))
+          )
+            return;
+          cmd = action as MessageAction;
+        } else if (
+          (QUEUED.has(cmd as MessageAction) || IMMEDIATE.has(cmd as MessageAction)) &&
+          requiresActionConfirmation(cmd)
+        ) {
+          const session = await resolveSession(channel, deps, evt.chatId, undefined, isP2p);
+          if (!session) return;
+          await sendCard(channel, evt.chatId, actionConfirmationCard(cmd, session, !isP2p));
+          return;
+        }
 
         // start/restart: reject a start when an agent is already running (no
         // pointless picker), else show the flavor picker (multi-command) or fall

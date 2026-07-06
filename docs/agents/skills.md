@@ -3,7 +3,7 @@
 Some built-in autopilot goals (`src/core/autopilot/goals/catalog.ts`) drive the
 coding agent by asking it to run a **skill** — e.g. *"use your code-review skill
 if one is available."* The skill lives in the **agent's** environment (Claude
-Code / Codex running in the tmux session), **not** in this repo, so it is not
+Code / Codex running in the project session), **not** in this repo, so it is not
 installed by `npm install` / the deploy. This file is the registry of those
 skills and where to get them, so they can be installed and kept up to date.
 

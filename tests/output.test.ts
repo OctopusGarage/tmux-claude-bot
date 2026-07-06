@@ -205,7 +205,7 @@ describe("OutputProcessor", () => {
       // maxContent = 50 - 8 = 42; input is 61 chars with a newline at index 30
       // start = 61 - 42 = 19; firstNewline at 30 >= 19 → take slice from 31
       const processor = new OutputProcessor({ maxOutputLines: 100, maxMessageLength: 50 });
-      const input = "a".repeat(30) + "\n" + "b".repeat(30);
+      const input = `${"a".repeat(30)}\n${"b".repeat(30)}`;
       const result = processor.process(input);
       expect(result).toBe("b".repeat(30));
     });

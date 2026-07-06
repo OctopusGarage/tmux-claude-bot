@@ -21,6 +21,7 @@ import {
   sendLogs,
   sendOrphanList,
   sendPeek,
+  sendPromptTranslatePicker,
   sendQueueStatus,
   sendRecentList,
   sendRecoverPreview,
@@ -33,6 +34,12 @@ import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import { bindGroup, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
+
+vi.mock("../../../src/core/read/voice-support.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/core/read/voice-support.js")>()),
+  checkVoiceSupport: vi.fn(() => ({ ready: false, reason: "not-installed" })),
+  isVoicePlatformSupported: vi.fn(() => true),
+}));
 
 const qmsg = (text: string): QueuedMessage =>
   ({ id: "x", text, chatId: "c", action: "text", resolve() {}, reject() {} }) as QueuedMessage;
@@ -54,23 +61,85 @@ describe("sendGroupMenu — project-group overview (feature C)", () => {
     expect(cards).toContain("/proj/alpha"); // ...with its workspace path
   });
 
-  it("from inside a bound group, still shows the bound-group management card", async () => {
+  it("from a private chat, shows existing group runtime status when the session is live", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-group-status-"));
+    const pathA = nodePath.join(root, "alpha");
+    fs.mkdirSync(pathA);
+    const sessionName = "tmux_proj_alpha_status";
+    setPathForSession(sessionName, pathA);
     bindGroup(BOUND, {
-      workspacePath: "/proj/alpha",
-      sessionName: "tmux_proj_alpha",
+      workspacePath: pathA,
+      sessionName,
       label: "alpha",
     });
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
+      configResolver: { detectAgentKind: vi.fn(async () => "codex" as const) },
+    });
+
     const channel = fakeChannel();
-    await sendGroupMenu(channel, fakeDeps(), BOUND); // the bound chat itself
-    expect(JSON.stringify(channel.cards())).toContain("本群已绑定");
+    await sendGroupMenu(channel, deps, "ou_dm_unbound");
+
+    const cards = JSON.stringify(channel.cards());
+    expect(cards).toContain("会话：运行中");
+    expect(cards).toContain("Agent：Codex");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("from a private chat, builds the group overview from one project picker read", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-group-one-read-"));
+    const pathA = nodePath.join(root, "alpha");
+    fs.mkdirSync(pathA);
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => []) },
+    });
+    await appendRecentProject(pathA, deps.config.projectSessionPrefix);
+
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, deps, "ou_dm_unbound");
+
+    expect(deps.bridge.listProjectSessions).toHaveBeenCalledTimes(1);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("from inside a bound group, still shows the bound-group management card", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-bound-card-"));
+    const pathA = nodePath.join(root, "alpha");
+    fs.mkdirSync(pathA);
+    const sessionName = "tmux_proj_bound_alpha";
+    setPathForSession(sessionName, pathA);
+    bindGroup(BOUND, {
+      workspacePath: pathA,
+      sessionName,
+      label: "alpha",
+    });
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
+      configResolver: { detectAgentKind: vi.fn(async () => "codex" as const) },
+    });
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, deps, BOUND); // the bound chat itself
+    const cards = JSON.stringify(channel.cards());
+    expect(cards).toContain("本群已绑定");
+    expect(cards).toContain(pathA);
+    expect(cards).toContain("会话：运行中");
+    expect(cards).toContain("Agent：Codex");
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });
 
 describe("language pickers go out as regular cards", () => {
-  it("sendVoiceLangPicker sends the voice-language picker card", async () => {
+  it("sendVoiceLangPicker sends the voice-install card when voice is unavailable", async () => {
     const channel = fakeChannel();
     await sendVoiceLangPicker(channel, "oc_chat");
-    expect(JSON.stringify(channel.cards())).toContain("语音识别语言");
+    expect(JSON.stringify(channel.cards())).toContain("voiceinstall");
+  });
+
+  it("sendPromptTranslatePicker sends the prompt-translation picker card", async () => {
+    const channel = fakeChannel();
+    await sendPromptTranslatePicker(channel, "oc_chat");
+    expect(JSON.stringify(channel.cards())).toContain("翻译模式");
   });
 
   it("sendLangPicker sends the UI-language picker card", async () => {
@@ -155,6 +224,33 @@ describe("sendAliveList / sendRecentList", () => {
     expect(channel.cards()).toHaveLength(1);
   });
 
+  it("sendAliveList keeps project-group status visible on Lark", async () => {
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-alive-group-"));
+    const session = "tmux_proj_lark_alive_group";
+    setPathForSession(session, dir);
+    bindGroup("oc_lark_alive_group", {
+      workspacePath: dir,
+      sessionName: session,
+      label: "lark-project-group",
+    });
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      configResolver: { detectAgentKind: vi.fn(async () => "claude" as const) },
+    });
+
+    try {
+      await sendAliveList(channel, deps, "chat-1");
+
+      const card = JSON.stringify(channel.cards());
+      expect(card).toContain("群：lark-project-group");
+      expect(card).toContain("类型：常规会话");
+    } finally {
+      unbindGroup("oc_lark_alive_group");
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("sendRecentList sends a recent list card", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
@@ -186,7 +282,7 @@ describe("sendPeek / sendHistory record reply targets", () => {
 
     await sendPeek(channel, deps, "chat-1");
 
-    expect(channel.texts()).toContain("无当前项目");
+    expect(channel.texts()).toContain("无当前会话");
     expect(channel.cards()).toHaveLength(0);
   });
 
@@ -378,7 +474,7 @@ describe("sendCurrentProject", () => {
 
     await sendCurrentProject(channel, deps, "chat-1");
 
-    expect(channel.texts().some((t) => t.includes("当前项目"))).toBe(true);
+    expect(channel.texts().some((t) => t.includes("当前会话"))).toBe(true);
   });
 
   it("reports none when unset", async () => {
@@ -387,7 +483,7 @@ describe("sendCurrentProject", () => {
 
     await sendCurrentProject(channel, deps, "chat-1");
 
-    expect(channel.texts()).toContain("无当前项目");
+    expect(channel.texts()).toContain("无当前会话");
   });
 
   it("also shows the mapped workspace directory", async () => {
@@ -398,6 +494,20 @@ describe("sendCurrentProject", () => {
     await sendCurrentProject(channel, deps, "chat-1");
 
     expect(channel.texts().some((t) => t.includes("/Users/me/work/proj-cur"))).toBe(true);
+  });
+
+  it("shows whether the current project is free and which agent it runs", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      session: "tmux_proj_free_2",
+      configResolver: { detectAgentKind: vi.fn(async () => "codex" as const) },
+    });
+
+    await sendCurrentProject(channel, deps, "chat-1");
+
+    const text = channel.texts().join("\n");
+    expect(text).toContain("类型：独立会话");
+    expect(text).toContain("Agent：Codex");
   });
 });
 
@@ -537,7 +647,7 @@ describe("handleWsCommand", () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ session: null });
     await handleWsCommand(channel, deps, "chat-1", "save my-ws");
-    expect(channel.texts().some((t) => t.includes("无当前项目"))).toBe(true);
+    expect(channel.texts().some((t) => t.includes("无当前会话"))).toBe(true);
   });
 
   it("save → invalid name → error", async () => {
@@ -639,12 +749,77 @@ describe("sendGroupMenu", () => {
     expect(card).not.toContain(sidA); // alpha already has a group → hidden
     fs.rmSync(root, { recursive: true, force: true });
   });
+
+  it("omits live independent sessions whose workspace path already has a group", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-gm-free-"));
+    const pathA = nodePath.join(root, "alpha");
+    const pathB = nodePath.join(root, "beta");
+    fs.mkdirSync(pathA);
+    fs.mkdirSync(pathB);
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
+    const { sessionNameFromPath } = await import("../../../src/core/projects/sessionPathMap.js");
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_free_9"]) },
+    });
+    const prefix = deps.config.projectSessionPrefix;
+    await appendRecentProject(pathA, prefix);
+    await appendRecentProject(pathB, prefix);
+    setPathForSession("tmux_proj_free_9", pathA);
+    const freeSid = sessionShortId("tmux_proj_free_9");
+    const sidB = sessionShortId(sessionNameFromPath(pathB, prefix));
+    bindGroup("oc_alpha", {
+      workspacePath: pathA,
+      sessionName: sessionNameFromPath(pathA, prefix),
+      label: "alpha",
+    });
+
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, deps, "oc_fresh");
+
+    const card = JSON.stringify(channel.cards());
+    expect(card).toContain(sidB);
+    expect(card).not.toContain(freeSid);
+    unbindGroup("oc_alpha");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("omits live independent sessions from the regular project-group picker", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-gm-free-only-"));
+    const regularPath = nodePath.join(root, "regular");
+    const freePath = nodePath.join(root, "free");
+    fs.mkdirSync(regularPath);
+    fs.mkdirSync(freePath);
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
+    const { sessionNameFromPath } = await import("../../../src/core/projects/sessionPathMap.js");
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const { setFreeProject } = await import("../../../src/core/projects/free-projects.js");
+
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_free_7"]) },
+    });
+    const prefix = deps.config.projectSessionPrefix;
+    await appendRecentProject(regularPath, prefix);
+    setFreeProject(7, { label: "free-live" });
+    setPathForSession("tmux_proj_free_7", freePath);
+    const regularSid = sessionShortId(sessionNameFromPath(regularPath, prefix));
+    const freeSid = sessionShortId("tmux_proj_free_7");
+
+    const channel = fakeChannel();
+    await sendGroupMenu(channel, deps, "oc_fresh");
+
+    const card = JSON.stringify(channel.cards());
+    expect(card).toContain(regularSid);
+    expect(card).not.toContain(freeSid);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
 });
 
 describe("sendOrphanList", () => {
   it("replies the empty-text hint when no adoptable processes are found", async () => {
     const channel = fakeChannel();
-    // In the test host no orphan claude/codex outside tmux is expected; assert
+    // In the test host no unmanaged claude/codex process is expected; assert
     // the path lands on one of the two valid branches and observably replied.
     await sendOrphanList(channel, "chat-1");
     const repliedEmpty = channel.texts().includes("没有发现可接管的进程");
@@ -707,7 +882,7 @@ describe("sendLogs", () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ session: null });
     await sendLogs(channel, deps, "chat-1", undefined);
-    expect(channel.texts().some((t) => t.includes("无当前项目"))).toBe(true);
+    expect(channel.texts().some((t) => t.includes("无当前会话"))).toBe(true);
     expect(channel.cards()).toHaveLength(0);
   });
 
@@ -729,7 +904,7 @@ describe("sendInputs", () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ session: null });
     await sendInputs(channel, deps, "chat-1", 8);
-    expect(channel.texts()).toContain("无当前项目");
+    expect(channel.texts()).toContain("无当前会话");
     expect(channel.cards()).toHaveLength(0);
   });
 
@@ -797,6 +972,36 @@ describe("sendBrowse / group pickers", () => {
     const channel = fakeChannel();
     await sendFreeGroupPicker(channel, fakeDeps(), "chat-1");
     expect(channel.cards()).toHaveLength(1);
+  });
+
+  it("sendFreeGroupPicker offers regular projects, not existing independent sessions", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-free-picker-"));
+    const regularPath = nodePath.join(root, "regular");
+    const freePath = nodePath.join(root, "free");
+    fs.mkdirSync(regularPath);
+    fs.mkdirSync(freePath);
+    const { appendRecentProject } = await import("../../../src/core/projects/recentProjects.js");
+    const { sessionNameFromPath } = await import("../../../src/core/projects/sessionPathMap.js");
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const { setFreeProject } = await import("../../../src/core/projects/free-projects.js");
+
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_free_8"]) },
+    });
+    const prefix = deps.config.projectSessionPrefix;
+    await appendRecentProject(regularPath, prefix);
+    setFreeProject(8, { label: "free-live" });
+    setPathForSession("tmux_proj_free_8", freePath);
+    const regularSid = sessionShortId(sessionNameFromPath(regularPath, prefix));
+    const freeSid = sessionShortId("tmux_proj_free_8");
+
+    const channel = fakeChannel();
+    await sendFreeGroupPicker(channel, deps, "chat-1");
+
+    const card = JSON.stringify(channel.cards());
+    expect(card).toContain(regularSid);
+    expect(card).not.toContain(freeSid);
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });
 
@@ -885,7 +1090,7 @@ describe("sendSessionsList", () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ session: null });
     await sendSessionsList(channel, deps, "chat-1", undefined);
-    expect(channel.texts()).toContain("无当前项目");
+    expect(channel.texts()).toContain("无当前会话");
   });
 
   it("without a path mapping replies the no-path hint", async () => {

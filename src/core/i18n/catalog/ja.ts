@@ -1,3 +1,4 @@
+import { UI_ICONS } from "../../../shared/ui/icons.js";
 import type { Messages } from "./zh.js";
 
 /** Japanese catalog. Typed `: Messages`, so it must implement every key in zh.ts. */
@@ -6,7 +7,7 @@ export const ja: Messages = {
   queuedAt: (pos) => `キュー投入 · ${pos} 番目`,
   queueFull: (max) => `キューが満杯です（上限 ${max}）· しばらくして再試行してください`,
   noCurrentProject:
-    "現在のプロジェクトがありません · /list_alive_projects で選択するか /add_project で作成してください",
+    "現在のセッションがありません · /list_alive_projects で選択するか /add_project で作成してください",
   errorPrefix: (msg) => `エラー：${msg}`,
   projectTag: (project) => `📂 ${project}`,
 
@@ -14,12 +15,37 @@ export const ja: Messages = {
   voiceLangCardPrompt: (lang) => `現在(Feishu)：**${lang}** · タップで切替`,
   autoDetect: "自動検出",
   voiceHeard: (text) => `🎙️ 認識結果：「${text}」`,
+  voiceHeardTranslated: (original, translated) =>
+    `🎙️ 認識結果：「${original}」\n🌐 英語で送信：「${translated}」`,
+  promptTranslateTitle: `${UI_ICONS.feature.translate} 翻訳モード`,
+  promptTranslateCardPrompt: (mode) => `現在: **${mode}** · タップで切替`,
   voiceTranscribeFailed: "文字起こしに失敗 · 再試行するかテキストを送信してください",
+  voiceTranslateFailed: "翻訳に失敗 · 再試行するかテキストを送信してください",
+  promptTranslateFailed: "翻訳に失敗 · 再試行するかプロンプト翻訳を無効にしてください",
+  promptTranslatedSent: (from, to) => `翻訳して送信しました ${from}->${to}`,
+  promptTranslateAlreadyInstalled: "🌐 プロンプト翻訳の依存関係は準備済みです",
+  promptTranslateInstalling:
+    "🌐 プロンプト翻訳の依存関係をインストール中 · 初回はモデルをダウンロードします…",
+  promptTranslateInstallOk:
+    "🌐 プロンプト翻訳の依存関係が準備できました · 翻訳モードを有効化できます",
+  promptTranslateInstallFailed: (e) =>
+    `🌐 インストール失敗 · ${e} · ホストで npm run translate:install を実行して詳細を確認してください`,
   voiceEmpty: "聞き取れませんでした · もう一度話すかテキストを送信してください",
   voiceUnsupported: "音声の文字起こしは Apple Silicon のみ対応",
   voiceNotInstalled: "音声未インストール（リポジトリで npm run whisper:install を実行）",
 
-  currentProjectIs: (project) => `📂 現在のプロジェクト：${project}`,
+  currentProjectIs: (project) => `${UI_ICONS.session.current} 現在のセッション：${project}`,
+  projectStatusSession: (alive) =>
+    `${alive ? UI_ICONS.session.active : UI_ICONS.session.stopped} セッション：${alive ? "実行中" : "停止中"}`,
+  projectStatusAgent: (agent, running, busy) =>
+    agent
+      ? `${running ? (busy ? UI_ICONS.session.busy : UI_ICONS.agent.generic) : UI_ICONS.session.stopped} Agent：${agent}${running ? (busy ? " 作業中" : " 待機中") : " 停止中"}`
+      : `${UI_ICONS.agent.none} Agent：なし`,
+  projectStatusType: (isFree) =>
+    `${isFree ? UI_ICONS.session.independent : UI_ICONS.session.regular} 種別：${isFree ? "独立セッション" : "通常セッション"}`,
+  projectStatusGroup: (label) =>
+    `${label ? UI_ICONS.group.projectGroup : UI_ICONS.group.none} グループ：${label ?? "なし"}`,
+  projectStatusLine: (session, agent, type, group) => `${session} · ${agent} · ${type} · ${group}`,
   switched: "切り替えました",
   switchedTo: (project) => `切り替えました：${project}`,
   removed: "削除しました",
@@ -36,10 +62,10 @@ export const ja: Messages = {
 
   btnEnter: "⏎ Enter",
   btnEsc: "⎋ Esc",
-  btnInterrupt: "✋ 中断",
+  btnInterrupt: `${UI_ICONS.action.interrupt} 中断`,
   btnRestart: "🔄 再起動",
-  btnClear: "🧹 clear",
-  btnCompact: "🗜 compact",
+  btnClear: `${UI_ICONS.action.clear} clear`,
+  btnCompact: `${UI_ICONS.action.compact} compact`,
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
@@ -47,15 +73,15 @@ export const ja: Messages = {
   btnTab: "⇥ Tab",
   btnStatus: "📊 状態",
   btnStart: "🚀 起動",
-  btnExit: "🚪 終了",
+  btnExit: `${UI_ICONS.action.exit} 終了`,
   btnPeek: "👁 peek",
   btnHistory: "📜 履歴",
   btnInputs: "🔁 再送",
-  btnQueue: "📋 キュー",
+  btnQueue: `${UI_ICONS.tone.queue} キュー`,
   btnDashboard: "📊 ダッシュボード",
-  btnProjects: "📁 プロジェクト",
+  btnProjects: "🟢 アクティブセッション",
   btnRecent: "🕘 最近",
-  btnCurrent: "📌 現在",
+  btnCurrent: "📌 現在のセッション",
   btnAddProject: "➕ 新規プロジェクト",
   btnSwitch: "🔀 切替",
   btnRemove: "🗑 削除",
@@ -63,20 +89,31 @@ export const ja: Messages = {
   btnHelp: "💡 ヘルプ",
   btnVoiceLang: "🎙️ 音声言語",
   btnVoiceInstall: "🎙️ 音声を導入",
+  btnPromptTranslate: `${UI_ICONS.feature.translate} 翻訳`,
+  btnPromptTranslateOff: "⏻ オフ",
+  btnPromptTranslateInstall: `${UI_ICONS.feature.translate} 翻訳を導入`,
   btnUiLang: "🌐 言語",
   btnActiveMarker: "✅ 現在",
   btnMore: "⌨️ さらに ▾",
   btnCollapse: "▴ 折りたたむ",
   btnCancel: "✕ キャンセル",
+  btnConfirmAction: (action) => `${action} を確認`,
   btnDeleteMode: "🗑 削除…",
+  confirmActionBody: (action, impact, target) =>
+    `実行を確認：${action}\n\n対象：${target}\n影響：${impact}\n\n確認すると続行します。`,
+  confirmImpactExit: "現在の Agent を終了し、このセッションの待機中キューを消去します。",
+  confirmImpactRestart:
+    "現在の Agent を中断して再起動します。未送信の入力は失われる場合があります。",
+  confirmImpactClear: "/clear を送信し、現在の Agent のコンテキストを消去します。",
+  confirmImpactCompact: "/compact を送信し、現在の Agent のコンテキストを圧縮します。",
 
-  // ── adopt (take over a non-tmux agent) ──
-  adoptTitle: "🧲 引き継ぎ可能なプロセス（tmux 外）",
+  // ── adopt (take over an unmanaged agent) ──
+  adoptTitle: "🧲 引き継ぎ可能な未管理プロセス",
   adoptEmpty: "引き継ぎ可能なプロセスは見つかりません",
   adoptConfirmPrompt: (label: string) =>
-    `引き継ぎますか？元のプロセスを中断・終了してから tmux で再開します:\n${label}`,
+    `引き継ぎますか？元のプロセスを中断・終了してから管理セッションで再開します:\n${label}`,
   btnAdoptConfirm: "🧲 引き継ぐ",
-  btnAdoptAsFree: "🆓 フリープロジェクトとして引き継ぐ",
+  btnAdoptAsFree: `${UI_ICONS.session.independent} 独立セッションとして引き継ぐ`,
   btnAdoptCancel: "✕ キャンセル",
   adoptCancelled: "引き継ぎをキャンセルしました",
   adoptWorking: "引き継ぎ中…",
@@ -97,16 +134,16 @@ export const ja: Messages = {
   recoverBusy: "別の復元が進行中です。しばらくお待ちください。",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 復元完了\n\n🔁 再起動 ${launched}${shellOnly > 0 ? ` · 🐚 再作成 ${shellOnly}` : ""} · 🟢 実行中 ${alive}${failed > 0 ? ` · ⚠️ 失敗 ${failed}` : ""}`,
-  adoptGone: "このプロセスは引き継ぎ対象ではありません（終了済み、または tmux 内）",
+  adoptGone: "このプロセスは引き継ぎ対象ではありません（終了済み、または管理済み）",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed
       ? `✅ 引き継ぎ、セッションを再開しました: ${proj}`
       : `✅ 引き継ぎ、新規開始しました: ${proj}`,
   adoptFailed: "引き継ぎ失敗: プロセスを終了できないか、エージェントが起動しませんでした",
   adoptBusy:
-    "対象の tmux セッションのフォアグラウンドで既にプログラムが動作中です（別のエージェントなど）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
+    "対象のセッションのフォアグラウンドで既にプログラムが動作中です（別のエージェントなど）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
   adoptProjectRunning:
-    "同じプロジェクトで Claude/Codex が既に実行中です。元のプロセスには触れず中止しました。並行して引き継ぐ場合は「フリープロジェクトとして引き継ぐ」を選んでください。",
+    "同じプロジェクトで Claude/Codex が既に実行中です。元のプロセスには触れず中止しました。並行して引き継ぐ場合は「独立セッションとして引き継ぐ」を選んでください。",
   btnAdoptAttach: "💻 PC のターミナルで見る（任意）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接続コマンドは「PC」のクリップボードにコピー済みです（スマホ側でコピーする必要はありません）。PC に戻ったらターミナルに貼り付けて Enter を押すだけで入れます。この手順は任意です。\nコマンド: ${cmd}`,
@@ -175,10 +212,10 @@ export const ja: Messages = {
   queueLastDone: (s) => `最終完了： ${s}秒前`,
   queueItemCancelled: "キュー内のメッセージをキャンセルしました",
   queueItemRewritten: "キュー内のメッセージを書き換えました",
-  queueItemGone: "このメッセージはキューにありません（実行中の場合は ✋ 中断で停止できます）",
+  queueItemGone: `このメッセージはキューにありません（実行中の場合は ${UI_ICONS.action.interrupt} 中断で停止できます）`,
   queueTitle: "キューの状態",
 
-  paneTitle: "👁 tmux ペイン",
+  paneTitle: "👁 セッションペイン",
   emptyPane: "（空）",
   historyTitle: "📜 履歴",
   historyTitleShort: "履歴",
@@ -187,9 +224,9 @@ export const ja: Messages = {
   onlyNRounds: (n) => `会話は ${n} 件のみです`,
   emptyOutput: "(出力なし)",
 
-  noCurrentProjectShort: "現在のプロジェクトなし",
-  aliveListTitle: (n) => `アクティブなプロジェクト (${n})`,
-  aliveListEmpty: "アクティブなプロジェクトがありません · /add_project <パス> で作成",
+  noCurrentProjectShort: "現在のセッションなし",
+  aliveListTitle: (n) => `アクティブセッション (${n})`,
+  aliveListEmpty: "アクティブセッションがありません · /add_project <パス> で作成",
   recentListTitle: "最近のプロジェクト",
   recentListTitleN: (n) => `最近のプロジェクト (${n})`,
   recentListEmpty: "最近のプロジェクトがありません · /add_project <パス> で追加",
@@ -216,13 +253,12 @@ export const ja: Messages = {
   browseNewFolderExists: "❌ その名前はすでに存在します",
   browseNewFolderError: "❌ フォルダの作成に失敗しました",
   shortIdNotFound: (id) => `短縮 id が見つかりません：${id}`,
-  noCurrentProjectSet: "現在のプロジェクトが未設定です\n\n/add_project <パス> で設定してください",
-  currentActive: "✅ アクティブ",
-  currentNotFound: "🔴 見つかりません",
-  currentProjectTitle: "現在のプロジェクト",
+  noCurrentProjectSet: "現在のセッションが未設定です\n\n/add_project <パス> で設定してください",
+  currentProjectTitle: "現在のセッション",
   noRecentProjects: "最近のプロジェクトがありません\n\n/add_project <パス> で追加してください",
   messageTooLong: (len, max) => `メッセージが長すぎます · ${len} > ${max} 文字`,
   onlyTextVoice: "テキストと音声メッセージのみ対応しています",
+  handlerErrorTelegram: "⚠️ メッセージの処理中にエラーが発生しました。再試行してください。",
   handlerError:
     "⚠️ メッセージの処理中にエラーが発生しました。再試行してください。グループが応答しない場合は /restore でプロジェクトに再接続できます。",
   unknownCommand: (name) => `不明なコマンド：/${name}（/help で一覧を表示）`,
@@ -272,7 +308,7 @@ export const ja: Messages = {
 任意のテキストを送信 → エージェントに転送 → 返信
 🎙️ 音声の文字起こしは任意機能 · /voice_install で有効化（Apple Silicon のみ）· /voice_lang で言語を設定
 
-ヒント：メッセージには 👀（受信）/👍（完了）のリアクションが付きます。処理中はその場に進捗が表示され、結果に編集されます。結果の下に ⏎/✋/⎋/🔄 のショートカットボタンがあります。`,
+ヒント：メッセージには 👀（受信）/👍（完了）のリアクションが付きます。処理中はその場に進捗が表示され、結果に編集されます。結果の下に ⏎/${UI_ICONS.action.interrupt}/⎋/🔄 のショートカットボタンがあります。`,
 
   helpIntroLark: `🤖 tmux-claude (Lark)
 
@@ -286,23 +322,25 @@ export const ja: Messages = {
   helpSectionRunning: "⚡ 実行中",
   helpSectionIdle: "🚀 停止中",
 
-  cmdCurrentProject: "現在のプロジェクト",
-  cmdListAlive: "アクティブなプロジェクト（タップで切替/削除）",
+  cmdCurrentProject: "現在のセッション",
+  cmdListAlive: "アクティブセッション（タップで切替/削除）",
   cmdListRecent: "最近のプロジェクト",
   cmdAddProject: "プロジェクトを作成",
-  cmdNewFree: "フリープロジェクトを作成（同一ディレクトリで並行可）",
+  cmdNewFree: "独立セッションを作成（同一ワークスペースで並行可）",
   freeProjectLimit: (max) =>
-    `フリープロジェクトは上限 ${max} 件です。1件削除してから再試行してください。`,
+    `独立セッションは上限 ${max} 件です。1件削除してから再試行してください。`,
   freeProjectCreated: (slot, label) =>
-    `🆓 フリープロジェクト #${slot}${label ? `（${label}）` : ""} を作成しました。\n任意のディレクトリへ /cd し、エージェントをご自身で起動してください。/list_alive_projects で戻れます。`,
-  btnNewFree: "🆓 フリープロジェクト作成",
-  freeLabelPrompt: "フリープロジェクトの名前を送信してください（- で命名をスキップ）",
+    `${UI_ICONS.session.independent} 独立セッション #${slot}${label ? `（${label}）` : ""} を作成しました。\n任意のディレクトリへ /cd し、エージェントをご自身で起動してください。/list_alive_projects で戻れます。`,
+  btnNewFree: `${UI_ICONS.session.independent} 独立セッション作成`,
+  freeLabelPrompt: "独立セッションの名前を送信してください（- で命名をスキップ）",
   freeLabelCancelled: "キャンセルしました",
-  cmdAdopt: "tmux 外のエージェントを引き継ぐ",
+  cmdAdopt: "未管理エージェントを引き継ぐ",
   cmdQueueStatus: "キューの状態",
   cmdHistory: "会話履歴（既定は最新の1件）",
-  cmdPeek: "tmux ペインを表示",
+  cmdPeek: "セッションペインを表示",
   cmdVoiceLang: "音声認識の言語（英/中/広東/日/西/自動）",
+  cmdPromptTranslate: "プロンプト翻訳（status/off/on 元言語 先言語）",
+  cmdTranslateInstall: "プロンプト翻訳の依存関係をインストール",
   cmdLang: "表示言語（英/簡/繁/広東/日/西）",
   cmdEnter: "Enter",
   cmdEsc: "Escape",
@@ -327,7 +365,7 @@ export const ja: Messages = {
   wsRemoved: (name) => `✅ ワークスペース「${name}」を削除しました`,
   wsNotFound: (name) => `ワークスペース「${name}」が見つかりません`,
   wsSessionGone: (name) => `ワークスペース「${name}」のセッションは既に存在しません`,
-  wsNoCurrentProject: "現在のプロジェクトがありません · まず /add_project で作成してください",
+  wsNoCurrentProject: "現在のセッションがありません · まず /add_project で作成してください",
   wsListEmpty: "保存されたワークスペースはありません",
   wsListTitle: "📎 ワークスペース",
   wsListItem: (name, session) => `• **${name}** → ${session}`,
@@ -368,10 +406,12 @@ export const ja: Messages = {
   cmdDashboard: "グローバルダッシュボードを表示（全セッションの状態概要）",
   cmdBatch:
     "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",
+  cmdAutopilot: "セッション autopilot を管理（目標、キープアライブ、グローバル管理）",
+  cmdGoals: "autopilot 目標プリセットを一覧表示",
   cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
-  autopilotTitle: "🤖 Autopilot",
+  autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotNotifyPaused: (session, reason) => `🛑 autopilot を一時停止 [${session}]：${reason}`,
   autopilotNotifyStopped: (session, reason) => `⏹️ autopilot を停止 [${session}]：${reason}`,
   autopilotNotifyUsage: (session, pct) =>
@@ -401,7 +441,7 @@ export const ja: Messages = {
     `Autopilot：${o.enabled ? "オン" : "オフ"}（${o.pureKeepAlive ? "キープアライブ" : "目標駆動"}、介入 ${o.iterations} 回、persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw) =>
     `不明なサブコマンド「${raw}」。使い方：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: "🤖 autopilot を有効化",
+  btnApEnable: `${UI_ICONS.feature.autopilot} autopilot を有効化`,
   btnApDisable: "⏹ autopilot を無効化",
   btnApPickGoals: "🎯 目標を選択",
   btnApGlobalOn: "🌐 グローバル:オン",
@@ -428,7 +468,7 @@ export const ja: Messages = {
   autopilotUnknownGoal: (ids) => `不明な目標。利用可能：${ids}`,
   goalsTitle: "🎯 目標プリセット",
   noLogsContext:
-    "現在のプロジェクトがありません。プロジェクトを選択するか trace を指定してください（/logs <traceId>）。",
+    "現在のセッションがありません。プロジェクトを選択するか trace を指定してください（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label, path) =>
@@ -457,6 +497,12 @@ export const ja: Messages = {
   groupBoundCardTitle: (label) => `🗂 このグループの紐付け先：${label}`,
   groupMenuNoProjects:
     "最近のプロジェクトがまだありません。プライベートチャットで `/add_project <パス>` を追加してください。",
+  groupNoNewGroupProjects:
+    "新規グループを作成できる通常プロジェクトがありません（既にグループ済み/独立セッションは非表示）。",
+  groupNoBindableProjects:
+    "紐付け可能な通常プロジェクトがありません。プライベートチャットで `/add_project <パス>` を追加してください。",
+  groupNoParallelProjects:
+    "並行グループを作成できる通常プロジェクトがありません。先に通常プロジェクトを追加してください。",
   groupCreatedShort: (label) =>
     `✓ プロジェクトグループ「${label}」を作成 — 新しいグループで続けてください。`,
   groupAlreadyExists: (label) =>
@@ -465,11 +511,12 @@ export const ja: Messages = {
     `🔒 このグループは「${label}」に固定されています。プロジェクトの切替は無効です。変更は 🗂 → 紐付け直す から。`,
   groupNoRemoveInGroup:
     "🔒 グループ内ではプロジェクトを削除できません（他のメンバーに影響します）。bot とのプライベートチャットで行ってください。",
-  groupFreePickerTitle: "🆓 フリープロジェクトのグループを作成（同一ディレクトリ可）",
+  groupFreePickerTitle: `${UI_ICONS.session.independent} 並行プロジェクトグループを新規作成（独立セッションを作成）`,
   groupOverviewTitle: "🗂 プロジェクトグループ",
   groupOverviewExisting: "既存のプロジェクトグループ：",
   groupOverviewNoGroups: "プロジェクトグループはまだありません。",
   groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
-  btnFreeGroup: "🆓 並行グループ",
-  freeGroupCreated: (label) => `🆓 並行グループ「${label}」を作成しました`,
+  btnFreeGroup: `${UI_ICONS.session.independent} 並行グループを新規作成`,
+  freeGroupCreated: (label) =>
+    `${UI_ICONS.session.independent} 並行グループ「${label}」を作成しました`,
 };

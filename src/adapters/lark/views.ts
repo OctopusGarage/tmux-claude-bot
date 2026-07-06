@@ -1,7 +1,7 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
+import { getAgentRuntimeRecord } from "../../core/agents/agent-runtime-records.js";
 import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
-import { profileFor } from "../../core/agents/registry.js";
-import { getStartCommand } from "../../core/agents/startCommandMap.js";
+import { readAgentRecentConversations, readAgentSessions } from "../../core/agents/read.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
 import { performStart } from "../../core/command/dispatch.js";
@@ -21,15 +21,18 @@ import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
 import { startBrowse } from "../../core/projects/dir-browser.js";
 import { getBinding, isProjectGroup, listBindings } from "../../core/projects/group-bindings.js";
-import { projectLabel } from "../../core/projects/project-label.js";
 import { chatScope } from "../../core/projects/project-manager.js";
 import {
-  aliveProjectButtons,
   type CreateProjectResult,
   createProjectFromPath,
   openRecentProjectBySid,
-  recentProjectButtons,
 } from "../../core/projects/project-ops.js";
+import {
+  currentSelectionRow,
+  projectPickerRows,
+  projectPickerRowsFromRecentRows,
+} from "../../core/projects/project-session-picker.js";
+import { formatCurrentProjectSummary } from "../../core/projects/project-summary-view.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
 import { getRecentInputs, storeInputList } from "../../core/read/recent-inputs.js";
@@ -42,7 +45,6 @@ import {
   recoverPreviewList,
 } from "../../core/recovery/recover-view.js";
 import { DEFAULT_PEEK_LINES, renderPeekPaneChunks } from "../../core/session/output.js";
-import { sessionShortId } from "../../shared/utils/hash.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
   browseCard,
@@ -54,6 +56,7 @@ import {
   orphanListCard,
   peekChunkCard,
   projectListCard,
+  promptTranslateCard,
   recentListCard,
   recoverConfirmCard,
   startPickerCard,
@@ -87,6 +90,14 @@ export async function sendVoiceLangPicker(channel: LarkChannel, chatId: string):
   await sendCard(channel, chatId, voiceLangCard(resolveWhisperLanguage("lark")));
 }
 
+/** Send the prompt-translation picker card (current mode marked). */
+export async function sendPromptTranslatePicker(
+  channel: LarkChannel,
+  chatId: string,
+): Promise<void> {
+  await sendCard(channel, chatId, promptTranslateCard());
+}
+
 /** Send the UI-language picker card (current language marked). */
 export async function sendLangPicker(channel: LarkChannel, chatId: string): Promise<void> {
   await sendCard(channel, chatId, langCard(resolveUiLang("lark")));
@@ -112,7 +123,7 @@ export async function sendAliveList(
   chatId: string,
 ): Promise<void> {
   try {
-    const buttons = await aliveProjectButtons(deps, chatScope("lark", chatId));
+    const buttons = await projectPickerRows(deps, chatScope("lark", chatId), "project-sessions");
     await sendCard(channel, chatId, projectListCard(buttons, isProjectGroup(chatId)));
   } catch (err) {
     await sendError(channel, chatId, err);
@@ -126,14 +137,14 @@ export async function sendRecentList(
   chatId: string,
 ): Promise<void> {
   try {
-    const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
+    const buttons = await projectPickerRows(deps, chatScope("lark", chatId), "recent-projects");
     await sendCard(channel, chatId, recentListCard(buttons, isProjectGroup(chatId)));
   } catch (err) {
     await sendError(channel, chatId, err);
   }
 }
 
-/** List claude processes running outside tmux; each card row offers a take-over
+/** List unmanaged claude processes; each card row offers a take-over
  * button. Mirrors Telegram's `/adopt`. */
 export async function sendOrphanList(channel: LarkChannel, chatId: string): Promise<void> {
   try {
@@ -195,7 +206,7 @@ export async function sendStatusInstall(
   }
 }
 
-/** Capture and send the current session's tmux pane in a view card. */
+/** Capture and send the current session pane in a view card. */
 export async function sendPeek(
   channel: LarkChannel,
   deps: HandlerDeps,
@@ -245,8 +256,7 @@ export async function sendHistory(
       await sendText(channel, chatId, messages("lark").noPathMapping);
       return;
     }
-    const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
-    const rounds = await profile.getRecentConversations(deps.configResolver, session, projectPath);
+    const rounds = await readAgentRecentConversations(deps.configResolver, session, projectPath);
     if (rounds.length === 0) {
       await sendText(channel, chatId, messages("lark").noHistory);
       return;
@@ -374,9 +384,10 @@ export async function sendCurrentProject(
   if (!session) return;
   // Show the friendly label AND the full workspace directory underneath, so it's
   // clear which path the current project maps to (mirrors Telegram).
-  const path = getPathBySession(session);
-  const line = messages("lark").currentProjectIs(projectLabel(session, path ?? undefined));
-  await sendText(channel, chatId, path ? `${line}\n${path}` : line);
+  const m = messages("lark");
+  const summary = await currentSelectionRow(deps, chatScope("lark", chatId));
+  if (!summary) return;
+  await sendText(channel, chatId, formatCurrentProjectSummary(m, summary));
 }
 
 /** Validate + create a project from a raw path (the typed `/add_project <path>`). */
@@ -506,7 +517,17 @@ export async function sendGroupMenu(
 ): Promise<void> {
   const binding = getBinding(chatId);
   if (binding) {
-    await sendCard(channel, chatId, groupBoundCard(binding.label));
+    const summary = (
+      await projectPickerRows(deps, chatScope("lark", chatId), "recent-projects")
+    ).find((b) => b.sessionName === binding.sessionName);
+    await sendCard(
+      channel,
+      chatId,
+      groupBoundCard(binding.label, {
+        path: binding.workspacePath,
+        ...(summary?.statusLine ? { statusLine: summary.statusLine } : {}),
+      }),
+    );
     return;
   }
   // From a private chat: show the EXISTING groups (so you can see what you have)
@@ -514,15 +535,18 @@ export async function sendGroupMenu(
   // group" for already-grouped projects (one workspace ↔ one group); the handler
   // also rejects it, but don't even offer the button.
   const bindings = listBindings();
-  const grouped = new Set(bindings.map(({ binding: b }) => sessionShortId(b.sessionName)));
-  const buttons = (await recentProjectButtons(deps, chatScope("lark", chatId))).filter(
-    (b) => !grouped.has(b.sid),
-  );
-  const groups = bindings.map(({ chatId: boundChatId, binding }) => ({
-    label: binding.label,
-    workspacePath: binding.workspacePath,
-    chatId: boundChatId,
-  }));
+  const allButtons = await projectPickerRows(deps, chatScope("lark", chatId), "recent-projects");
+  const bySession = new Map(allButtons.map((b) => [b.sessionName, b]));
+  const buttons = projectPickerRowsFromRecentRows(allButtons, "project-group-create");
+  const groups = bindings.map(({ chatId: boundChatId, binding }) => {
+    const statusLine = bySession.get(binding.sessionName)?.statusLine;
+    return {
+      label: binding.label,
+      workspacePath: binding.workspacePath,
+      chatId: boundChatId,
+      ...(statusLine ? { statusLine } : {}),
+    };
+  });
   await sendCard(channel, chatId, groupOverviewCard(groups, buttons));
 }
 
@@ -533,19 +557,23 @@ export async function sendGroupBindPicker(
   deps: HandlerDeps,
   chatId: string,
 ): Promise<void> {
-  const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
+  const buttons = await projectPickerRows(deps, chatScope("lark", chatId), "project-group-bind");
   await sendCard(channel, chatId, groupPickerCard(buttons, "bind"));
 }
 
-/** Private-chat picker for "free parallel group": every recent project (including
- * ones that already have a group) gets a 🆓 button that creates a NEW group on a
- * fresh free session in that directory. */
+/** Private-chat picker for "parallel project group": every recent project (including
+ * ones that already have a group) gets an independent-session button that creates a NEW group on a
+ * fresh independent session in that directory. */
 export async function sendFreeGroupPicker(
   channel: LarkChannel,
   deps: HandlerDeps,
   chatId: string,
 ): Promise<void> {
-  const buttons = await recentProjectButtons(deps, chatScope("lark", chatId));
+  const buttons = await projectPickerRows(
+    deps,
+    chatScope("lark", chatId),
+    "parallel-project-group",
+  );
   await sendCard(channel, chatId, groupPickerCard(buttons, "free"));
 }
 
@@ -592,8 +620,7 @@ export async function sendSessionsList(
     return;
   }
   const listSessions = async (): Promise<SessionEntry[]> => {
-    const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
-    return profile.listSessions(deps.configResolver, session, projectPath);
+    return readAgentSessions(deps.configResolver, session, projectPath);
   };
 
   if (arg) {
@@ -614,7 +641,7 @@ export async function sendSessionsList(
     await deps.agent.startWithResume(
       session,
       match.sessionId,
-      getStartCommand(session) ?? undefined,
+      getAgentRuntimeRecord(session).startCommand ?? undefined,
     );
     deps.configResolver.invalidate(session);
     await sendText(channel, chatId, m.resumeStarted(match.sessionId.slice(0, 8)));

@@ -10,7 +10,15 @@ import { reconcileGroupBinding } from "../../core/projects/group-binding-ops.js"
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
 import { homeCommandResult } from "../../core/projects/operator.js";
 import { chatScope } from "../../core/projects/project-manager.js";
+import { runOptionalFeatureInstall } from "../../core/read/optional-feature-install.js";
+import {
+  applyPromptTranslateCommand,
+  formatPromptTranslateCommandResult,
+  installPromptTranslation,
+  isPromptTranslateInstallable,
+} from "../../core/read/prompt-translation.js";
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
+import { rewriteUserPromptByAck } from "../../core/read/user-prompt-intake.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
 import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
@@ -44,6 +52,7 @@ import {
   sendLogs,
   sendOrphanList,
   sendPeek,
+  sendPromptTranslatePicker,
   sendQueueStatus,
   sendRecentList,
   sendRecoverPreview,
@@ -105,9 +114,16 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       // rewrite blocked by dedup is reported, never silently re-enqueued.
       if (msg.replyToMessageId && msg.rawContentType === "text") {
         const newText = (msg.content ?? "").trim();
-        const rw = newText
-          ? deps.queue.rewriteByAck(msg.replyToMessageId, msg.chatId, newText)
-          : ({ kind: "not-found" } as const);
+        const rw = await rewriteUserPromptByAck(deps.queue, {
+          source: "lark",
+          ackMsgId: msg.replyToMessageId,
+          chatId: msg.chatId,
+          text: newText,
+        });
+        if (rw.kind === "failed") {
+          await sendText(channel, msg.chatId, messages("lark").promptTranslateFailed);
+          return;
+        }
         if (rw.kind !== "not-found") {
           const lm = messages("lark");
           const out = rw.kind === "rewritten" ? lm.queueItemRewritten : lm.duplicateIgnored;
@@ -171,7 +187,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
           await sendCard(
             channel,
             msg.chatId,
-            helpCard(isProjectGroup(msg.chatId), isVoiceInstallable()),
+            helpCard(
+              isProjectGroup(msg.chatId),
+              isVoiceInstallable(),
+              isPromptTranslateInstallable(),
+            ),
           );
           break;
 
@@ -246,6 +266,31 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
             case "voicelang":
               await sendVoiceLangPicker(channel, msg.chatId);
               break;
+            case "prompttranslate": {
+              if (!parsed.arg?.trim()) {
+                await sendPromptTranslatePicker(channel, msg.chatId);
+                break;
+              }
+              const result = await applyPromptTranslateCommand("lark", parsed.arg ?? "");
+              await sendText(channel, msg.chatId, formatPromptTranslateCommandResult(result));
+              break;
+            }
+            case "translateinstall": {
+              const m = messages("lark");
+              await runOptionalFeatureInstall({
+                copy: {
+                  installing: m.promptTranslateInstalling,
+                  ok: m.promptTranslateInstallOk,
+                  alreadyReady: m.promptTranslateAlreadyInstalled,
+                  inProgress: m.promptTranslateInstalling,
+                  failed: m.promptTranslateInstallFailed,
+                },
+                install: () => installPromptTranslation(),
+                send: (notice) => sendText(channel, msg.chatId, notice.text),
+                background: true,
+              });
+              break;
+            }
             case "uilang":
               await sendLangPicker(channel, msg.chatId);
               break;
@@ -379,7 +424,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
           await sendCard(
             channel,
             msg.chatId,
-            helpCard(isProjectGroup(msg.chatId), isVoiceInstallable()),
+            helpCard(
+              isProjectGroup(msg.chatId),
+              isVoiceInstallable(),
+              isPromptTranslateInstallable(),
+            ),
           );
           break;
 

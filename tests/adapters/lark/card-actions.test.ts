@@ -42,11 +42,25 @@ describe("makeCardActionHandler", () => {
     vi.clearAllMocks();
   });
 
-  it("voicelangmenu → sends the voice-language picker as a regular card", async () => {
+  it("voicelangmenu → sends the voice-install card when voice is missing", async () => {
     const channel = fakeChannel();
     const handle = makeCardActionHandler(channel, fakeDeps());
     await handle(evt({ cmd: "voicelangmenu" }));
-    expect(JSON.stringify(channel.cards())).toContain("语音识别语言");
+    expect(JSON.stringify(channel.cards())).toContain("voiceinstall");
+  });
+
+  it("prompttranslate → sends the translation picker as a regular card", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+    await handle(evt({ cmd: "prompttranslate" }));
+    expect(JSON.stringify(channel.cards())).toContain("翻译模式");
+  });
+
+  it("prompttranslate off → re-sends the translation picker card", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+    await handle(evt({ cmd: "prompttranslate", arg: "off" }));
+    expect(JSON.stringify(channel.cards())).toContain("翻译模式");
   });
 
   it("qcancel → cancels that queued message by (session, id)", async () => {
@@ -69,6 +83,28 @@ describe("makeCardActionHandler", () => {
     expect(channel.texts().some((t) => t.includes("已取消"))).toBe(false);
   });
 
+  it("dangerous control button asks for confirmation before enqueueing", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "exit" }));
+
+    expect(deps.queue.enqueued).toHaveLength(0);
+    expect(JSON.stringify(channel.cards())).toContain("确认");
+    expect(JSON.stringify(channel.cards())).toContain('"cmd":"confirm"');
+    expect(JSON.stringify(channel.cards())).toContain('"action":"exit"');
+  });
+
+  it("confirmed dangerous control button enqueues the original action", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "confirm", action: "exit" }));
+
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]).toMatchObject({ sessionName: "proj-1", action: "exit" });
+  });
+
   it("voiceinstall → runs the core install and replies the result (Feishu parity with Telegram)", async () => {
     installVoiceMock.mockResolvedValueOnce({ status: "ok", bin: "/x/mlx_whisper" });
     const channel = fakeChannel();
@@ -86,7 +122,7 @@ describe("makeCardActionHandler", () => {
     expect(channel.texts().some((t) => t.includes("boom"))).toBe(true);
   });
 
-  it("voicelang → sets WHISPER_LANGUAGE and re-sends the picker with the ✅ moved", async () => {
+  it("voicelang → sets WHISPER_LANGUAGE and falls back to install when voice is missing", async () => {
     const prev = process.env.LARK_WHISPER_LANGUAGE;
     try {
       const channel = fakeChannel();
@@ -95,8 +131,7 @@ describe("makeCardActionHandler", () => {
       await handle(evt({ cmd: "voicelang", lang: "yue" }));
 
       expect(process.env.LARK_WHISPER_LANGUAGE).toBe("yue");
-      // Regular card re-send (no CardKit in-place update).
-      expect(JSON.stringify(channel.cards())).toContain("语音识别语言");
+      expect(JSON.stringify(channel.cards())).toContain("voiceinstall");
     } finally {
       if (prev === undefined) delete process.env.LARK_WHISPER_LANGUAGE;
       else process.env.LARK_WHISPER_LANGUAGE = prev;
@@ -336,12 +371,12 @@ describe("makeCardActionHandler", () => {
     expect(channel.texts().some((t) => t.includes("运行中"))).toBe(true);
   });
 
-  it("a QUEUED cmd is enqueued", async () => {
+  it("a confirmed QUEUED cmd is enqueued", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
     const handler = makeCardActionHandler(channel, deps);
 
-    await handler(evt({ cmd: "restart" }));
+    await handler(evt({ cmd: "confirm", action: "restart" }));
 
     expect(deps.queue.enqueued).toHaveLength(1);
     expect(deps.queue.enqueued[0]?.action).toBe("restart");
@@ -627,7 +662,7 @@ describe("makeCardActionHandler", () => {
     it("restart with >1 command → sends the picker (mode=restart) instead of restarting", async () => {
       const channel = fakeChannel();
       const deps = fakeDeps(multi);
-      await makeCardActionHandler(channel, deps)(evt({ cmd: "restart" }));
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "confirm", action: "restart" }));
       expect(JSON.stringify(channel.cards())).toContain("选择启动方式");
       // It is the picker, not the queued-action path.
       expect(deps.queue.enqueued).toHaveLength(0);
@@ -658,7 +693,7 @@ describe("makeCardActionHandler", () => {
     });
   });
 
-  // --- adopt (non-tmux agent takeover) ---
+  // --- adopt (unmanaged agent takeover) ---
   describe("adopt", () => {
     it("adoptcancel → acknowledges the cancellation", async () => {
       const channel = fakeChannel();
@@ -831,7 +866,7 @@ describe("makeCardActionHandler", () => {
     it("freegroupmenu → sends the free-parallel-group picker card (p2p)", async () => {
       const channel = fakeChannel();
       await makeCardActionHandler(channel, fakeDeps())(evt({ cmd: "freegroupmenu" }));
-      expect(JSON.stringify(channel.cards())).toContain("自由项目群");
+      expect(JSON.stringify(channel.cards())).toContain("新建并行项目群");
     });
 
     it("makegroup in a bound group → refused (createGroup is p2p-only), no group created", async () => {

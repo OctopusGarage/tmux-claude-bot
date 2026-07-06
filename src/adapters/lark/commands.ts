@@ -1,8 +1,8 @@
-import { getImmediateActions, getLarkQueued } from "../../core/command/action-registry.js";
-import type { MessageAction } from "../../core/command/dispatch.js";
+import { getImmediateActions, getQueuedActions } from "../../core/command/action-registry.js";
+import type { MessageAction } from "../../core/command/actions.js";
 
 export const IMMEDIATE = getImmediateActions();
-export const QUEUED = getLarkQueued();
+export const QUEUED = getQueuedActions();
 
 /** Read-side / project-management commands that render or mutate project state
  * rather than driving the Claude session. */
@@ -19,6 +19,8 @@ export type ViewName =
   | "recover"
   | "statusinstall"
   | "voicelang"
+  | "prompttranslate"
+  | "translateinstall"
   | "uilang"
   | "ws"
   | "sessions"
@@ -53,6 +55,8 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   recover: "recover",
   status_install: "statusinstall",
   voice_lang: "voicelang",
+  prompt_translate: "prompttranslate",
+  translate_install: "translateinstall",
   lang: "uilang",
   ws: "ws",
   sessions: "sessions",

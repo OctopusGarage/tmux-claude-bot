@@ -7,6 +7,7 @@ import {
   controlSocketPath,
   createLineDecoder,
   encodeLine,
+  type PromptTranslateControlResponse,
   type ServerMessage,
 } from "./protocol.js";
 
@@ -181,6 +182,15 @@ export class ControlClient extends EventEmitter {
   }
   inputs(session: string): Promise<string[]> {
     return this.req({ op: "inputs", session }) as Promise<string[]>;
+  }
+  promptTranslate(arg: string): Promise<PromptTranslateControlResponse> {
+    return this.req({ op: "promptTranslate", arg }) as Promise<PromptTranslateControlResponse>;
+  }
+  async togglePromptTranslate(): Promise<PromptTranslateControlResponse> {
+    const current = await this.promptTranslate("status");
+    return await this.promptTranslate(
+      current.status.ok && current.status.mode === "argos" ? "off" : "on zh en",
+    );
   }
   autopilot(session: string, verb: string): Promise<{ status: string }> {
     return this.req({ op: "autopilot", session, verb }) as Promise<{ status: string }>;

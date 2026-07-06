@@ -106,7 +106,7 @@ export async function startTelegram(
   bot.catch(async (err) => {
     log.error(`handler error on update ${err.ctx.update.update_id}`, { err: err.error });
     try {
-      await err.ctx.reply(messages("telegram").handlerError);
+      await err.ctx.reply(messages("telegram").handlerErrorTelegram);
     } catch (replyErr) {
       log.error(`failed to send handler-error reply: ${String(replyErr)}`);
     }

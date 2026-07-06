@@ -10,3 +10,5 @@ configuration, the TUI, chat workflows, autopilot, or troubleshooting, check
 follow its links to `docs/manual.md`, `docs/commands.md`, or `docs/tui.md` as needed.
 Do not read source code to infer user-facing commands or flags until those
 documentation references have been checked.
+
+@RTK.md

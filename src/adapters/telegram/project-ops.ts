@@ -51,7 +51,7 @@ export {
 } from "../../core/projects/project-ops.js";
 
 /**
- * Switch to a recent project by its short id, creating the tmux session (and
+ * Switch to a recent project by its short id, creating the project session (and
  * cd-ing into the directory) if it isn't running yet. Shared by the
  * `/add_project_<id>` command and the recent-list "add" button.
  */

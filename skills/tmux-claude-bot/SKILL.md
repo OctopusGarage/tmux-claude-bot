@@ -1,11 +1,11 @@
 ---
 name: tmux-claude-bot
-description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed tmux session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Operated through the `tcb` CLI.
+description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Operated through the `tcb` CLI.
 ---
 
 # Operating tmux-claude-bot
 
-tmux-claude-bot runs coding agents (Claude Code / Codex) inside **tmux** sessions on
+tmux-claude-bot runs coding agents (Claude Code / Codex) inside managed sessions on
 this machine — one per project, several in parallel. You drive it through the **`tcb`
 CLI**. The bot must be running; if a command says it can't reach the control socket,
 tell the user to start it (`tcb service start`). You are the **operator**, a separate
@@ -19,14 +19,14 @@ process — not one of the managed sessions.
   the prompt into that project's agent and **waits for the reply, then prints it**.
   Use `--no-wait` to fire-and-forget, `--timeout <seconds>` to bound the wait
   (default 120s; raise it for long tasks).
-- **Look** — `tcb peek <project>` prints a snapshot of its tmux pane.
+- **Look** — `tcb peek <project>` prints a snapshot of its session pane.
 - **Start / switch a project** — `tcb open <project>` (works for stopped projects too).
 - **Control keys** — `tcb control <project> <esc|enter|interrupt|restart|clear|compact|up|down|tab>`.
 - **Status / health** — `tcb dashboard` (all sessions), `tcb sysload` (machine load /
   heat / runaway processes), `tcb doctor` (install health).
 
 **Reference a project by name** — a unique substring works (`geo` → `geo-backend`).
-Never type the raw `tmux_proj_…` session id. If a name is ambiguous, the CLI lists the
+Never type the raw internal session id. If a name is ambiguous, the CLI lists the
 matches; pick the right one or ask the user.
 
 ## Mapping requests → commands

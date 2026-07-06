@@ -9,6 +9,12 @@ import {
   managedServiceName,
   tmuxInstallHint,
 } from "../platform/service-hints.js";
+import {
+  promptTranslationReadiness,
+  voiceTranscriptionReadiness,
+} from "../read/capability-readiness.js";
+import { ARGOS_VENV_PYTHON, resolvePromptTranslateConfig } from "../read/prompt-translation.js";
+import { WHISPER_VENV_BIN } from "../read/voice-support.js";
 import { parseEnv, validateTokenShape } from "./onboarding.js";
 
 /**
@@ -172,18 +178,65 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
       `more than one instance (409 risk). Kill the stray PIDs, then: ${restartHint}`,
     );
 
+  const envObj = Object.fromEntries(envMap ?? []) as Record<string, string | undefined>;
+
   // 5. optional voice transcription (mlx_whisper). Not configured == not a failure.
   const mlxBin = envMap?.get("MLX_WHISPER_BIN") ?? "";
   const langPref = envMap?.get("WHISPER_LANGUAGE") || "zh";
   if (!mlxBin) {
     info("voice transcription disabled (MLX_WHISPER_BIN empty; npm run whisper:install)");
-  } else if (probes.fileExists(mlxBin)) {
-    ok(`voice: MLX_WHISPER_BIN points to an existing binary (language ${langPref})`);
   } else {
-    bad("voice: MLX_WHISPER_BIN set but binary is missing", "run: npm run whisper:install");
+    const voice = voiceTranscriptionReadiness({
+      env: envObj,
+      fallbackBin: WHISPER_VENV_BIN,
+      platformSupported: true,
+      probes: { pathExists: probes.fileExists },
+    });
+    if (voice.status === "ready") {
+      ok(`voice: MLX_WHISPER_BIN points to an existing binary (language ${langPref})`);
+    } else {
+      bad(
+        `voice: MLX_WHISPER_BIN set but binary is ${voice.status === "not-executable" ? "not executable" : "missing"}`,
+        "run: npm run whisper:install",
+      );
+    }
   }
 
-  // 6. keep-awake (macOS only). Opt-in flag + a live probe of the bot's caffeinate
+  // 6. optional prompt translation (Argos Translate). Not enabled == not a failure.
+  const promptTranslateConfigs = [
+    ["telegram", resolvePromptTranslateConfig("telegram", envObj)] as const,
+    ["lark", resolvePromptTranslateConfig("lark", envObj)] as const,
+    ["control", resolvePromptTranslateConfig("control", envObj)] as const,
+  ].filter((entry) => entry[1].enabled);
+  if (promptTranslateConfigs.length > 0) {
+    const argos = promptTranslationReadiness({
+      env: envObj,
+      fallbackPython: ARGOS_VENV_PYTHON,
+      probes: { pathExists: probes.fileExists },
+    });
+    if (argos.status === "ready") {
+      for (const [channel, cfg] of promptTranslateConfigs) {
+        if (cfg.enabled) {
+          ok(`prompt translation: ${channel} argos ${cfg.from}->${cfg.to} python is configured`);
+        }
+      }
+    } else {
+      for (const [channel, cfg] of promptTranslateConfigs) {
+        if (cfg.enabled) {
+          bad(
+            `prompt translation: ${channel} argos ${cfg.from}->${cfg.to} python is ${
+              argos.status === "not-executable" ? "not executable" : "missing"
+            }`,
+            "run: npm run translate:install",
+          );
+        }
+      }
+    }
+  } else {
+    info("prompt translation disabled (PROMPT_TRANSLATE_MODE off)");
+  }
+
+  // 7. keep-awake (macOS only). Opt-in flag + a live probe of the bot's caffeinate
   // assertion, so this reports whether it's ACTUALLY asserting now, not just
   // whether the flag is set.
   if (process.platform === "darwin") {

@@ -1,12 +1,13 @@
 import { basename } from "node:path";
+import { UI_ICONS } from "../../shared/ui/icons.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 
-/** Hard cap on concurrent free projects (slots 1..N). */
+/** Hard cap on concurrent independent sessions (legacy free slots 1..N). */
 export const FREE_PROJECT_LIMIT = 10;
 
 const FREE_INFIX = "free_";
 
-/** Registry row for one free slot. The directory (when a free session has one)
+/** Registry row for one independent-session slot. The directory (when it has one)
  * lives in session_path_map.json keyed by the session name, the single source of
  * truth — so only the user-given label is stored here. */
 export interface FreeProjectEntry {
@@ -21,7 +22,7 @@ export function freeSessionName(prefix: string, slot: number): string {
   return `${prefix}${FREE_INFIX}${slot}`;
 }
 
-/** The slot number if `session` is a free session under `prefix`, else null.
+/** The slot number if `session` is an independent session under `prefix`, else null.
  * Requires the WHOLE post-prefix remainder to be `free_<digits>`, so a path-
  * derived session that merely contains "free_1" does not match. */
 export function freeSlotOf(session: string, prefix: string): number | null {
@@ -60,12 +61,13 @@ export function releaseFreeSlot(slot: number): boolean {
 }
 
 /**
- * List label for a free session: `🆓 <label|Free #n>[ · <basename>]`.
+ * List label for an independent session:
+ * `<independent icon> <label|Independent #n>[ · <basename>]`.
  *
  * Deliberately surfaced only by LIST views (aliveProjectButtons). Reply/queue
  * headers keep the plain `projectLabel` — which already shows the directory
  * basename once the user has `cd`'d — rather than thread the configurable session
- * prefix (needed to detect a free session) into those low-level formatters. The
+ * prefix (needed to detect an independent session) into those low-level formatters. The
  * coupling cost outweighs an emoji on a transient bare-session state.
  */
 export function freeLabel(
@@ -73,7 +75,9 @@ export function freeLabel(
   entry: FreeProjectEntry | null,
   path: string | null,
 ): string {
-  const name = entry?.label ?? `Free #${slot}`;
+  const name = entry?.label ?? `Independent #${slot}`;
   const base = path ? basename(path.replace(/\/+$/, "")) : null;
-  return base ? `🆓 ${name} · ${base}` : `🆓 ${name}`;
+  return base
+    ? `${UI_ICONS.session.independent} ${name} · ${base}`
+    : `${UI_ICONS.session.independent} ${name}`;
 }

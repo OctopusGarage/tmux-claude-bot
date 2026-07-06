@@ -4,6 +4,7 @@ import type { Bot, Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { chatScope } from "../../core/projects/project-manager.js";
+import { runOptionalFeatureInstall } from "../../core/read/optional-feature-install.js";
 import { transcribeWithCache, voiceFailMessage } from "../../core/read/transcriber.js";
 import {
   checkVoiceSupport,
@@ -13,7 +14,7 @@ import {
   setWhisperLanguage,
 } from "../../core/read/voice-support.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { buildVoiceLangKeyboard } from "./keyboards.js";
+import { buildVoiceInstallKeyboard, buildVoiceLangKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { runPromptWithProgress } from "./prompt-lifecycle.js";
 import { reply } from "./replies.js";
@@ -21,6 +22,36 @@ import { resolveSessionForMessage } from "./reply-routing.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 
 const log = createLogger("telegram.voice-handler");
+
+async function runVoiceInstall(ctx: Context, replyTarget: ReplyTargetMap): Promise<void> {
+  await runOptionalFeatureInstall({
+    copy: {
+      installing: MSG.voiceInstalling,
+      ok: MSG.voiceInstallOk,
+      alreadyReady: MSG.voiceAlreadyInstalled,
+      inProgress: MSG.voiceInstalling,
+      unsupported: MSG.voiceUnsupported,
+      failed: MSG.voiceInstallFailed,
+    },
+    precheck: () => {
+      if (checkVoiceSupport().ready) return { status: "already-ready" };
+      if (!isVoicePlatformSupported()) return { status: "unsupported" };
+      return null;
+    },
+    install: () => installVoice(),
+    send: async (notice) => {
+      await reply(ctx, notice.tone, notice.text, { replyTarget });
+    },
+    background: true,
+    onResult: (result) => {
+      if (result.status === "ok") {
+        log.info("voice feature installed and enabled");
+      } else if (result.status === "failed") {
+        log.error("voice install failed", { data: { message: result.message } });
+      }
+    },
+  });
+}
 
 export function registerVoiceHandler<TContext extends Context>(
   bot: Bot<TContext>,
@@ -31,37 +62,7 @@ export function registerVoiceHandler<TContext extends Context>(
   // The install orchestration + single-flight guard live in core (installVoice),
   // shared with the Feishu adapter so the two can't drift.
   bot.command("voice_install", async (ctx: Context) => {
-    // Cheap pre-checks just to drive the "installing…" ack (the slow path can
-    // take minutes); installVoice() re-checks these authoritatively.
-    if (checkVoiceSupport().ready) {
-      await reply(ctx, "info", MSG.voiceAlreadyInstalled, { replyTarget });
-      return;
-    }
-    if (!isVoicePlatformSupported()) {
-      await reply(ctx, "err", MSG.voiceUnsupported, { replyTarget });
-      return;
-    }
-    await reply(ctx, "info", MSG.voiceInstalling, { replyTarget });
-    const result = await installVoice();
-    switch (result.status) {
-      case "ok":
-        log.info("voice feature installed and enabled");
-        await reply(ctx, "info", MSG.voiceInstallOk, { replyTarget });
-        break;
-      case "failed":
-        log.error(`failed: ${result.message}`);
-        await reply(ctx, "err", MSG.voiceInstallFailed(result.message), { replyTarget });
-        break;
-      case "already-ready":
-        await reply(ctx, "info", MSG.voiceAlreadyInstalled, { replyTarget });
-        break;
-      case "unsupported":
-        await reply(ctx, "err", MSG.voiceUnsupported, { replyTarget });
-        break;
-      case "in-progress":
-        await reply(ctx, "info", MSG.voiceInstalling, { replyTarget });
-        break;
-    }
+    await runVoiceInstall(ctx, replyTarget);
   });
 
   // Set/show the forced recognition language. Works any time (even before the
@@ -71,6 +72,13 @@ export function registerVoiceHandler<TContext extends Context>(
     if (!arg) {
       // No arg → show a button picker; tapping is handled in handleCallbackQuery.
       const current = resolveWhisperLanguage("telegram");
+      if (!checkVoiceSupport().ready) {
+        await reply(ctx, "info", MSG.voiceNotInstalled, {
+          replyTarget,
+          replyMarkup: buildVoiceInstallKeyboard(),
+        });
+        return;
+      }
       await reply(ctx, "info", MSG.voiceLangCurrent(current), {
         replyTarget,
         replyMarkup: buildVoiceLangKeyboard(current),
@@ -165,12 +173,6 @@ export function registerVoiceHandler<TContext extends Context>(
     const msgId = msg.message_id;
     replyTarget.record(msgId, currentSession);
 
-    // Confirm transcription to user
-    await reply(ctx, "info", messages("telegram").voiceHeard(transcribed), {
-      session: currentSession,
-      replyTarget,
-    });
-
-    await runPromptWithProgress(ctx, deps, currentSession, transcribed, replyTarget);
+    await runPromptWithProgress(ctx, deps, currentSession, transcribed, replyTarget, "voice");
   });
 }

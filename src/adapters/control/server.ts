@@ -30,7 +30,15 @@ import {
 } from "../../core/projects/project-ops.js";
 import { resolveReplyTarget } from "../../core/projects/session-reply-target.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import {
+  applyPromptTranslateCommand,
+  formatPromptTranslateCommandResult,
+} from "../../core/read/prompt-translation.js";
 import { getRecentInputs } from "../../core/read/recent-inputs.js";
+import {
+  prepareUserPromptDelivery,
+  userPromptQueueFields,
+} from "../../core/read/user-prompt-intake.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
 import { renderPeekPane } from "../../core/session/output.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -179,10 +187,10 @@ async function handleRequest(
           fail("cannot send to the operator session");
           return;
         }
-        enqueueControl(deps, req.session, "text", req.text, send, ok, fail);
+        await enqueueControl(deps, req.session, "text", req.text, send, ok, fail);
         return;
       case "control":
-        enqueueControl(deps, req.session, req.action, "", send, ok, fail);
+        await enqueueControl(deps, req.session, req.action, "", send, ok, fail);
         return;
       case "projects":
         ok(await recentProjectButtons(deps, CONTROL_SCOPE));
@@ -226,7 +234,7 @@ async function handleRequest(
         return;
       }
       case "adopt": {
-        // Stop the orphan and resume it under a managed tmux session — the same
+        // Stop the orphan and resume it under a managed session — the same
         // takeover the chat /adopt button runs.
         const result = await adoptOrphan(req.pid, {
           bridge: deps.bridge,
@@ -270,6 +278,11 @@ async function handleRequest(
           ),
         );
         return;
+      case "promptTranslate": {
+        const status = await applyPromptTranslateCommand("control", req.arg);
+        ok({ body: formatPromptTranslateCommandResult(status), status });
+        return;
+      }
       case "autopilot": {
         const status = applyAutopilotVerb(
           new AutopilotStore(),
@@ -311,7 +324,7 @@ async function handleRequest(
 
 /** Enqueue a prompt/control action through the bot's single queue. Acked
  * immediately; the eventual reply/notify/error arrives as an event by session. */
-function enqueueControl(
+async function enqueueControl(
   deps: HandlerDeps,
   session: string,
   action: string,
@@ -319,10 +332,20 @@ function enqueueControl(
   send: (msg: ServerMessage) => void,
   ok: (data: unknown) => void,
   fail: (error: string) => void,
-): void {
+): Promise<void> {
+  const prepared =
+    action === "text"
+      ? await prepareUserPromptDelivery("control", text, "text")
+      : ({ ok: true, text } as const);
+  if (!prepared.ok) {
+    fail(messages("telegram").promptTranslateFailed);
+    return;
+  }
   const verdict = deps.queue.enqueue({
     id: newMessageId(),
-    text,
+    ...(action === "text" && "preview" in prepared
+      ? userPromptQueueFields(prepared)
+      : { text: prepared.text }),
     chatId: "control",
     sessionName: session,
     action,

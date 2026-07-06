@@ -15,6 +15,13 @@ class FakeChild {
   }
 }
 
+function expectChild(children: FakeChild[], index: number): FakeChild {
+  const child = children.at(index);
+  expect(child).toBeDefined();
+  if (child === undefined) throw new Error(`expected child at index ${index}`);
+  return child;
+}
+
 function makeDeps(over: Partial<Parameters<typeof startSupervisor>[0]> = {}) {
   let onChange: ((rel: string) => void) | null = null;
   const children: FakeChild[] = [];
@@ -74,7 +81,7 @@ describe("startSupervisor", () => {
     const { deps, children } = makeDeps();
     startSupervisor(deps);
     expect(deps.startChild).toHaveBeenCalledTimes(1);
-    expect(children.at(0)!.kill).not.toHaveBeenCalled();
+    expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
   });
 
   it("on a clean typecheck after a source change, restarts the child", async () => {
@@ -85,7 +92,7 @@ describe("startSupervisor", () => {
     await vi.advanceTimersByTimeAsync(60); // past debounce
     await flushAll();
     expect(runTypecheck).toHaveBeenCalledTimes(1);
-    expect(children.at(0)!.kill).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledTimes(1);
     expect(startChild).toHaveBeenCalledTimes(1); // respawned
   });
 
@@ -98,7 +105,7 @@ describe("startSupervisor", () => {
     fire("core/x.ts");
     await vi.advanceTimersByTimeAsync(60);
     await flushAll();
-    expect(children.at(0)!.kill).not.toHaveBeenCalled();
+    expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
     expect(startChild).not.toHaveBeenCalled();
     expect(statuses.at(-1)?.state).toBe("typecheck-failed");
   });
@@ -136,7 +143,7 @@ describe("startSupervisor", () => {
     startChild.mockClear();
 
     // Now simulate the OLD (killed) child's async exit event arriving AFTER reload.
-    children.at(0)!.fireExit();
+    expectChild(children, 0).fireExit();
     // Advance past the backoff delay — any spurious respawn setTimeout would fire here.
     await vi.advanceTimersByTimeAsync(15);
 
@@ -151,7 +158,7 @@ describe("startSupervisor", () => {
     startChild.mockClear();
 
     // Simulate an unintentional crash of the boot child.
-    children.at(0)!.fireExit();
+    expectChild(children, 0).fireExit();
 
     // After the backoff delay (10ms in test deps), the child should be respawned.
     await vi.advanceTimersByTimeAsync(15);
@@ -222,7 +229,7 @@ describe("startSupervisor", () => {
 
     // Accumulate maxInWindow-1 = 2 crashes (below the wait threshold).
     for (let i = 0; i < 2; i++) {
-      children.at(-1)!.fireExit();
+      expectChild(children, -1).fireExit();
       await vi.advanceTimersByTimeAsync(15);
     }
     expect(startChild).toHaveBeenCalledTimes(2); // two respawns, still going
@@ -237,7 +244,7 @@ describe("startSupervisor", () => {
     startChild.mockClear();
 
     // A single crash after the reload should respawn (NOT enter crash-wait).
-    children.at(-1)!.fireExit();
+    expectChild(children, -1).fireExit();
     await vi.advanceTimersByTimeAsync(15);
     expect(startChild).toHaveBeenCalledTimes(1); // respawned
     expect(statuses.find((s) => s.state === "crash-wait")).toBeUndefined();
@@ -255,13 +262,13 @@ describe("startSupervisor", () => {
     // Fire 3 crashes in quick succession — all within the window.
     // After each crash startChild is called (respawn); the next child is children[N].
     for (let i = 0; i < 3; i++) {
-      children.at(-1)!.fireExit();
+      expectChild(children, -1).fireExit();
       // Advance past the backoff delay so the respawn setTimeout fires (for crashes 1 & 2).
       await vi.advanceTimersByTimeAsync(15);
     }
 
     // 3rd crash hits maxInWindow → wait; no additional respawn.
-    children.at(-1)!.fireExit();
+    expectChild(children, -1).fireExit();
     await vi.advanceTimersByTimeAsync(15);
 
     // Only 2 respawns should have happened (crashes 1 and 2 respawn; crash 3 waits).

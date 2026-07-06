@@ -4,9 +4,13 @@ import type { OutputProcessor } from "../session/output.js";
 import type { TmuxBridge } from "../session/tmux.js";
 
 /** What a per-agent readiness classifier wants the poll loop to do for a pane:
- * `"ready"` (stop, done) | `"wait"` (keep polling) | `{ sendRawKey }` (send a
- * key — e.g. the trust-gate Enter — then keep polling). */
-export type ReadyVerdict = "ready" | "wait" | { sendRawKey: string };
+ * `"ready"` (stop, done) | `"wait"` (keep polling) | `{ sendRawKey(s) }` (send
+ * one or more keys — e.g. a confirm gate's selection + Enter — then keep polling). */
+export type ReadyVerdict =
+  | "ready"
+  | "wait"
+  | { sendRawKey: string }
+  | { sendRawKeys: readonly string[] };
 
 /**
  * Prose-agnostic readiness fallback for `pollUntilReady`. When the positive
@@ -42,6 +46,7 @@ export async function pollUntilReady(opts: {
   logTag: string;
   notReadyError: string;
   classify(pane: string): ReadyVerdict;
+  isActiveTurn?: (pane: string) => boolean;
   stableReady?: StableReady;
 }): Promise<void> {
   const { bridge, pollIntervalMs, maxWaitReadyMs, sessionName, logTag, notReadyError, classify } =
@@ -68,10 +73,11 @@ export async function pollUntilReady(opts: {
       return;
     }
     if (typeof verdict === "object") {
+      const keys = "sendRawKeys" in verdict ? verdict.sendRawKeys : [verdict.sendRawKey];
       logger.info(
-        `${logTag} waitUntilReady session=${sess} sending ${verdict.sendRawKey} at iter=${i}`,
+        `${logTag} waitUntilReady session=${sess} sending ${keys.join(",")} at iter=${i}`,
       );
-      await bridge.sendRawKey(verdict.sendRawKey, sessionName);
+      for (const key of keys) await bridge.sendRawKey(key, sessionName);
       stable = 0; // a gate that auto-clears must never count toward "stable = ready"
       lastPane = pane;
       await sleep(pollIntervalMs);
@@ -79,6 +85,12 @@ export async function pollUntilReady(opts: {
     }
     // verdict === "wait": fall back to stability when the marker can't decide.
     const sr = opts.stableReady;
+    if (opts.isActiveTurn?.(pane)) {
+      stable = 0;
+      lastPane = pane;
+      await sleep(pollIntervalMs);
+      continue;
+    }
     if (sr && lastPane !== null && pane === lastPane) {
       stable++;
       if (stable >= sr.ticks && nonBlankLineCount(pane) >= sr.minLines && (await sr.isAlive())) {
@@ -113,9 +125,18 @@ export async function pollUntilIdle(opts: {
   maxWaitDoneMs: number;
   sessionName?: string | undefined;
   logTag: string;
+  isActiveTurn?: (pane: string) => boolean;
 }): Promise<{ done: boolean; output: string }> {
-  const { bridge, output, idlePollTicks, pollIntervalMs, maxWaitDoneMs, sessionName, logTag } =
-    opts;
+  const {
+    bridge,
+    output,
+    idlePollTicks,
+    pollIntervalMs,
+    maxWaitDoneMs,
+    sessionName,
+    logTag,
+    isActiveTurn,
+  } = opts;
   let identicalCount = 0;
   let lastContent = "";
   const maxIterations = Math.ceil(maxWaitDoneMs / pollIntervalMs);
@@ -132,6 +153,16 @@ export async function pollUntilIdle(opts: {
       logger.error(
         `${logTag} waitUntilDone capturePane failed iter=${i}: ${err instanceof Error ? err.message : err}`,
       );
+      await sleep(pollIntervalMs);
+      continue;
+    }
+
+    if (isActiveTurn?.(pane)) {
+      if (i % 30 === 0 || identicalCount > 0) {
+        logger.info(`${logTag} waitUntilDone session=${sess} iter=${i} active turn marker`);
+      }
+      identicalCount = 0;
+      lastContent = pane;
       await sleep(pollIntervalMs);
       continue;
     }

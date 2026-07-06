@@ -82,6 +82,31 @@ describe("codexProfile read side — home + live rollout", () => {
   });
 });
 
+describe("codexProfile read side — default CODEX_HOME + live rollout", () => {
+  it("getRecentConversations reads the live rollout even when CODEX_HOME is unset", async () => {
+    const path = writeRollout([userMsg("history please"), asstMsg("Here is history.")]);
+    const rounds = await codexProfile.getRecentConversations(
+      resolver({ home: null, rolloutPath: path }),
+      "sess",
+      "/proj",
+    );
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.user).toBe("history please");
+    expect(rounds[0]?.assistant).toBe("Here is history.");
+  });
+
+  it("getLatestReply reads the live rollout even when CODEX_HOME is unset", async () => {
+    const path = writeRollout([userMsg("reply please"), asstMsg("Here is the reply.")]);
+    const reply = await codexProfile.getLatestReply(
+      resolver({ home: null, rolloutPath: path }),
+      "sess",
+      "/proj",
+      "reply please",
+    );
+    expect(reply).toBe("Here is the reply.");
+  });
+});
+
 describe("codexProfile.listSessions — walks CODEX_HOME/sessions for cwd-matched rollouts", () => {
   it("returns the session id of a rollout whose session_meta.cwd matches the project", async () => {
     const home = fs.mkdtempSync(join(tmpdir(), "tcb-cxhome-"));

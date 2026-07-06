@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -118,6 +118,9 @@ describe("control server op dispatch (real unix socket)", () => {
     await new Promise<void>((r) => server.close(() => r()));
     rmSync(dir, { recursive: true, force: true });
     process.env.TCB_STATE_DIR = undefined;
+    delete process.env.CONTROL_PROMPT_TRANSLATE_MODE;
+    delete process.env.CONTROL_PROMPT_TRANSLATE_FROM;
+    delete process.env.CONTROL_PROMPT_TRANSLATE_TO;
   });
 
   async function connected(deps = fakeDeps()): Promise<ControlClient> {
@@ -228,5 +231,50 @@ describe("control server op dispatch (real unix socket)", () => {
     const c = await connected(fakeDeps(undefined, "tmux_proj_"));
     const ack = await c.send("tmux_proj_myapp", "hello");
     expect(ack.status).toBe("queued");
+  });
+
+  it("handles prompt translation status and off through the control socket", async () => {
+    process.env.CONTROL_PROMPT_TRANSLATE_MODE = "argos";
+    process.env.CONTROL_PROMPT_TRANSLATE_FROM = "zh";
+    process.env.CONTROL_PROMPT_TRANSLATE_TO = "en";
+    const c = await connected();
+
+    expect((await c.promptTranslate("status")).body).toContain("argos zh->en");
+    expect((await c.promptTranslate("off")).body).toContain("disabled");
+    expect(process.env.CONTROL_PROMPT_TRANSLATE_MODE).toBe("off");
+  });
+
+  it("transforms control user prompts before enqueueing and preserves source metadata", async () => {
+    const fakePython = join(dir, "fake-python");
+    writeFileSync(fakePython, "#!/bin/sh\ncat >/dev/null\nprintf 'Ship the feature'\n");
+    chmodSync(fakePython, 0o755);
+    const oldEnv = {
+      mode: process.env.PROMPT_TRANSLATE_MODE,
+      python: process.env.ARGOS_TRANSLATE_PYTHON,
+    };
+    process.env.PROMPT_TRANSLATE_MODE = "argos";
+    process.env.ARGOS_TRANSLATE_PYTHON = fakePython;
+    const enqueued: QueuedMessage[] = [];
+
+    try {
+      const c = await connected(
+        fakeDeps((m) => {
+          enqueued.push(m);
+          return "queued";
+        }),
+      );
+
+      expect(await c.send("sX", "把功能做完")).toEqual({ status: "queued" });
+      expect(enqueued[0]).toMatchObject({
+        text: "Ship the feature",
+        origin: "user",
+        promptSource: "control",
+        sourceText: "把功能做完",
+        transform: { kind: "translation", provider: "argos", from: "zh", to: "en" },
+      });
+    } finally {
+      process.env.PROMPT_TRANSLATE_MODE = oldEnv.mode;
+      process.env.ARGOS_TRANSLATE_PYTHON = oldEnv.python;
+    }
   });
 });

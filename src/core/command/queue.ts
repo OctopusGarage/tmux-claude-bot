@@ -23,6 +23,19 @@ export type QueuedMessage = {
   channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
+  origin?: "user" | "system" | undefined;
+  promptSource?: "telegram" | "lark" | "control" | undefined;
+  sourceText?: string | undefined;
+  transform?:
+    | {
+        kind: "translation";
+        provider: string;
+        from: string;
+        to: string;
+        sourceText: string;
+        deliveredText: string;
+      }
+    | undefined;
   traceId?: string | undefined;
   resolve: (output: string) => void;
   reject: (err: Error) => void;
@@ -48,6 +61,19 @@ export type PersistedMessage = {
   channel?: Channel | undefined;
   sessionName?: string | undefined;
   action: string;
+  origin?: "user" | "system" | undefined;
+  promptSource?: "telegram" | "lark" | "control" | undefined;
+  sourceText?: string | undefined;
+  transform?:
+    | {
+        kind: "translation";
+        provider: string;
+        from: string;
+        to: string;
+        sourceText: string;
+        deliveredText: string;
+      }
+    | undefined;
   traceId?: string | undefined;
   ackMsgId?: string | undefined;
 };
@@ -135,6 +161,10 @@ export class MessageQueue {
         channel: msg.channel,
         sessionName: msg.sessionName,
         action: msg.action,
+        origin: msg.origin,
+        promptSource: msg.promptSource,
+        sourceText: msg.sourceText,
+        transform: msg.transform,
         traceId: msg.traceId,
         ackMsgId: msg.ackMsgId,
       });
@@ -340,6 +370,14 @@ export class MessageQueue {
     this.persist();
   }
 
+  sessionByAck(ackMsgId: string, chatId: string | number): string | null {
+    for (const [session, queue] of this.sessionQueues) {
+      const msg = queue.toArray().find((m) => m.ackMsgId === ackMsgId && m.chatId === chatId);
+      if (msg) return session;
+    }
+    return null;
+  }
+
   /** Rewrite, in ONE pass, the still-waiting item whose "queued" ack has id
    * `ackMsgId` in chat `chatId` — the single op the reply-to-rewrite handlers need
    * (resolve + rewrite are one logical step). Returns the owning session plus:
@@ -360,6 +398,9 @@ export class MessageQueue {
     ackMsgId: string,
     chatId: string | number,
     newText: string,
+    patch: Partial<
+      Pick<QueuedMessage, "origin" | "promptSource" | "sourceText" | "transform">
+    > = {},
   ): { kind: "rewritten" | "duplicate"; session: string } | { kind: "not-found" } {
     for (const [session, queue] of this.sessionQueues) {
       const msg = queue.toArray().find((m) => m.ackMsgId === ackMsgId && m.chatId === chatId);
@@ -368,6 +409,7 @@ export class MessageQueue {
         return { kind: "duplicate", session };
       }
       msg.text = newText;
+      Object.assign(msg, patch);
       this.persist();
       return { kind: "rewritten", session };
     }
@@ -397,7 +439,7 @@ export class MessageQueue {
    * replay — re-running it would type the same prompt into the pane again.
    */
   private async runHandler(msg: QueuedMessage, sessionName: string | undefined): Promise<void> {
-    // A real tmux session times its task; the bot-level pseudo-queue (sessionName
+    // A real project session times its task; the bot-level pseudo-queue (sessionName
     // undefined) does not — timing it would persist a key into the per-session
     // task-time store that clearTaskTiming, seeing only real session names, never
     // clears. Keying on presence (not a "global" sentinel) keeps the decision in
@@ -486,7 +528,12 @@ export class MessageQueue {
       return;
     }
 
-    const msg = queue.dequeue()!;
+    const msg = queue.dequeue();
+    if (!msg) {
+      this.processingSessions.delete(sessionName);
+      this.sessionQueues.delete(sessionName);
+      return;
+    }
     this.currentSessionMessage.set(sessionName, msg);
     log.info(`processing session=${sessionName} action=${msg.action} msgId=${msg.id}`);
 
@@ -522,7 +569,8 @@ export class MessageQueue {
 
     try {
       while (!this.globalQueue.isEmpty()) {
-        const msg = this.globalQueue.dequeue()!;
+        const msg = this.globalQueue.dequeue();
+        if (!msg) break;
         this.currentGlobalMessage = msg;
         log.info(`processing global action=${msg.action} msgId=${msg.id}`);
 

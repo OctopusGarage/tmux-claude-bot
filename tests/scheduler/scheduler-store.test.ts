@@ -60,7 +60,7 @@ describe("SchedulerStore", () => {
     s.setPools({ codex: { paused: false } });
     const loaded = new SchedulerStore().getPools();
     expect(loaded).toEqual({ codex: { paused: false } });
-    expect(loaded["claude"]).toBeUndefined();
+    expect(loaded.claude).toBeUndefined();
   });
 
   // Bug #7 — stale lastFired blocks a re-added `now`-plan with the same id.
@@ -71,11 +71,11 @@ describe("SchedulerStore", () => {
 
     // Simulate a previous run having recorded a fire time for plan "p".
     s.setLastFired({ p: 12345 });
-    expect(new SchedulerStore().getLastFired()["p"]).toBe(12345);
+    expect(new SchedulerStore().getLastFired().p).toBe(12345);
 
     // Loading the plan with the same id must reset the anchor.
     s.savePlan({ id: "p", name: "n", pools: { claude: 1 }, projects: [] });
-    expect(new SchedulerStore().getLastFired()["p"]).toBeUndefined();
+    expect(new SchedulerStore().getLastFired().p).toBeUndefined();
   });
 
   it("savePlan does not clear lastFired for unrelated plan ids", () => {
@@ -83,6 +83,6 @@ describe("SchedulerStore", () => {
     s.setLastFired({ p: 111, other: 222 });
     s.savePlan({ id: "p", name: "n", pools: { claude: 1 }, projects: [] });
     // Only "p" cleared; "other" must be preserved.
-    expect(new SchedulerStore().getLastFired()["other"]).toBe(222);
+    expect(new SchedulerStore().getLastFired().other).toBe(222);
   });
 });

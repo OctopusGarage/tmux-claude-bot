@@ -21,6 +21,10 @@ export function restoreMessage(
     sessionName: p.sessionName,
     action: p.action,
     channel,
+    origin: p.origin,
+    promptSource: p.promptSource,
+    sourceText: p.sourceText,
+    transform: p.transform,
     ackMsgId: p.ackMsgId,
     // Carry the ingress trace so a recovered message's execution logs still
     // correlate to its original trace instead of starting blank.

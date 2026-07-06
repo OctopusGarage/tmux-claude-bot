@@ -178,7 +178,7 @@ describe("createSmartFetch", () => {
     await expect(smart("https://api/send", {})).rejects.toThrow("no routes configured");
   });
 
-  it("does NOT fail over for a long-poll (getUpdates) call", async () => {
+  it("fails over to the next route when a long-poll call errors", async () => {
     const health = fakeHealth("proxy");
     const direct = vi.fn().mockResolvedValue({ status: 200, via: "direct" });
     const smart = createSmartFetch({
@@ -190,8 +190,10 @@ describe("createSmartFetch", () => {
       timeoutMs: 1000,
       isLongPoll: (url) => url.includes("/getUpdates"),
     });
-    await expect(smart("https://api/getUpdates", {})).rejects.toThrow();
-    expect(direct).not.toHaveBeenCalled(); // long poll never fails over
+    const res = (await smart("https://api/getUpdates", {})) as { via: string };
+    expect(res.via).toBe("direct");
+    expect(direct).toHaveBeenCalled();
     expect(health.failures).toEqual(["proxy"]);
+    expect(health.successes[0]).toEqual(["direct", undefined]);
   });
 });

@@ -1,6 +1,7 @@
 import type { Bot, Context } from "grammy";
 import { getImmediateActions } from "../../core/command/action-registry.js";
-import { executeMessage, type MessageAction } from "../../core/command/dispatch.js";
+import type { MessageAction } from "../../core/command/actions.js";
+import { executeMessage } from "../../core/command/dispatch.js";
 import { enqueueMessage, planQueuedAck } from "../../core/command/enqueue.js";
 import {
   type PersistedMessage,

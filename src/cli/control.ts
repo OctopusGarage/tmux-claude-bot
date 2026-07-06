@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { ControlClient } from "../adapters/control/client.js";
+import { requiresActionConfirmation } from "../core/command/action-registry.js";
 import type { SessionRow } from "../core/dashboard/dashboard.js";
 import { expandTilde } from "../shared/utils/path.js";
 
@@ -80,6 +82,33 @@ const fail = (err: unknown): never => {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 };
+
+export async function confirmCliDangerousControl(
+  action: string,
+  target: string,
+  opts: {
+    yes?: boolean;
+    isTty?: boolean;
+    ask?: (question: string) => Promise<string>;
+  } = {},
+): Promise<boolean> {
+  if (!requiresActionConfirmation(action)) return true;
+  if (opts.yes) return true;
+  const isTty = opts.isTty ?? Boolean(process.stdin.isTTY);
+  if (!isTty) throw new Error(`"${action}" requires --yes in non-interactive mode`);
+  const ask =
+    opts.ask ??
+    (async (question: string) => {
+      const rl = createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        return await rl.question(question);
+      } finally {
+        rl.close();
+      }
+    });
+  const answer = (await ask(`Confirm ${action} for ${target}? Type yes to continue: `)).trim();
+  return answer === "yes";
+}
 
 export async function cmdSessions(opts: { json?: boolean }): Promise<void> {
   await withClient(async (c) => {
@@ -184,15 +213,15 @@ export async function cmdOpen(ref: string, opts: { json?: boolean }): Promise<vo
   }).catch(fail);
 }
 
-/** List claude/codex running outside tmux, or adopt one by PID (stop it, then
- * resume it under a managed tmux session). Mirrors the chat /adopt flow. */
+/** List unmanaged claude/codex processes, or adopt one by PID (stop it, then
+ * resume it under a managed session). Mirrors the chat /adopt flow. */
 export async function cmdAdopt(pid: string | undefined, opts: { json?: boolean }): Promise<void> {
   await withClient(async (c) => {
     if (pid === undefined) {
       const orphans = await c.orphans();
       if (opts.json) return json(orphans);
       if (orphans.length === 0) {
-        out("no adoptable processes (no claude/codex running outside tmux)");
+        out("no adoptable unmanaged claude/codex processes");
         return;
       }
       for (const o of orphans) out(`${o.pid}\t${o.label}`);
@@ -214,10 +243,15 @@ export async function cmdAdopt(pid: string | undefined, opts: { json?: boolean }
 export async function cmdControl(
   ref: string,
   action: string,
-  opts: { json?: boolean },
+  opts: { json?: boolean; yes?: boolean },
 ): Promise<void> {
   await withClient(async (c) => {
     const session = await resolveSession(c, ref);
+    if (!(await confirmCliDangerousControl(action, ref, opts))) {
+      if (opts.json) return json({ session, action, status: "cancelled" });
+      out(`${action} → ${ref}: cancelled`);
+      return;
+    }
     const ack = await c.control(session, action);
     if (opts.json) return json({ session, action, ...ack });
     out(`${action} → ${ref}: ${ack.status}`);
@@ -243,7 +277,7 @@ export async function cmdSendAttachment(
   await withClient(async (c) => {
     const session = opts.to ? await resolveSession(c, opts.to) : currentTmuxSession();
     if (!session) {
-      fail("not inside a tmux session and no --to given");
+      fail("no current session context and no --to given");
       return;
     }
     const results: Array<{ file: string; status: string }> = [];
@@ -255,6 +289,14 @@ export async function cmdSendAttachment(
     }
     if (opts.json) return json({ session, results });
     out(results.map((r) => `${r.status} → ${r.file}`).join("\n"));
+  }).catch(fail);
+}
+
+export async function cmdPromptTranslate(words: string[], opts: { json?: boolean }): Promise<void> {
+  await withClient(async (c) => {
+    const res = await c.promptTranslate((words ?? []).join(" "));
+    if (opts.json) return json(res.status);
+    out(res.body);
   }).catch(fail);
 }
 

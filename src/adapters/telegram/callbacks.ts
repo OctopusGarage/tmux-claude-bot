@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
+import { getAgentRuntimeRecord } from "../../core/agents/agent-runtime-records.js";
 import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
-import { getStartCommand } from "../../core/agents/startCommandMap.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import {
   adoptOrphan,
@@ -18,6 +18,7 @@ import {
   toggleGoal,
 } from "../../core/autopilot/picker-state.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
+import { requiresActionConfirmation } from "../../core/command/action-registry.js";
 import {
   executeMessage,
   performRestart,
@@ -26,7 +27,7 @@ import {
 } from "../../core/command/dispatch.js";
 import type { QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import { messages, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
+import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import {
   browseCwd,
   clearBrowse,
@@ -36,14 +37,28 @@ import {
 } from "../../core/projects/dir-browser.js";
 import { clearFreeLabel, requestFreeLabel } from "../../core/projects/free-label-prompt.js";
 import { createProjectFromPath } from "../../core/projects/project-ops.js";
+import { projectPickerRows } from "../../core/projects/project-session-picker.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import {
   makePromptLib,
   resolvePromptByShortId,
   resolveTagByShortId,
 } from "../../core/promptlib/promptlib.js";
+import { runOptionalFeatureInstall } from "../../core/read/optional-feature-install.js";
+import {
+  applyPromptTranslateCommand,
+  formatPromptTranslateCommandResult,
+  installPromptTranslation,
+  promptTranslateStatus,
+} from "../../core/read/prompt-translation.js";
 import { DEFAULT_INPUTS, lookupInput } from "../../core/read/recent-inputs.js";
-import { setWhisperLanguage } from "../../core/read/voice-support.js";
+import {
+  checkVoiceSupport,
+  installVoice,
+  isVoicePlatformSupported,
+  resolveWhisperLanguage,
+  setWhisperLanguage,
+} from "../../core/read/voice-support.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -51,6 +66,8 @@ import { sleep } from "../../shared/utils/sleep.js";
 import { timeApi } from "../../shared/utils/timing.js";
 import { safeAnswerCallback } from "./callback-utils.js";
 import {
+  actionConfirmationBody,
+  buildActionConfirmationKeyboard,
   buildAdoptConfirmKeyboard,
   buildAdoptDoneKeyboard,
   buildAutopilotGoalPicker,
@@ -62,14 +79,15 @@ import {
   buildLangKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
+  buildPromptTranslateKeyboard,
   buildStartPickerKeyboard,
+  buildVoiceInstallKeyboard,
   buildVoiceLangKeyboard,
   parseCallbackData,
 } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import {
   addRecentProjectBySid,
-  aliveProjectButtons,
   botSelfRepoWarning,
   removeProjectBySession,
   resolveAliveSessionByShortId,
@@ -107,6 +125,10 @@ export async function handleCallbackQuery(
   const parsed = parseCallbackData(ctx.callbackQuery?.data ?? "");
   try {
     if (!parsed) {
+      await safeAnswerCallback(ctx);
+      return;
+    }
+    if (parsed.kind === "noop") {
       await safeAnswerCallback(ctx);
       return;
     }
@@ -238,7 +260,7 @@ export async function handleCallbackQuery(
     // Toggle the project list between switch mode and delete mode — re-fetch
     // the live project list and swap the keyboard in place.
     if (parsed.kind === "delmode" || parsed.kind === "dellist") {
-      const buttons = await aliveProjectButtons(deps, tgScope(ctx));
+      const buttons = await projectPickerRows(deps, tgScope(ctx), "project-sessions");
       const kb =
         parsed.kind === "delmode"
           ? buildProjectDeleteKeyboard(buttons)
@@ -259,7 +281,7 @@ export async function handleCallbackQuery(
       await sendAliveList(ctx, deps);
       return;
     }
-    // "🆓 new free project" tap: arm the label capture, then prompt. The next
+    // New independent-session tap: arm the label capture, then prompt. The next
     // text message is taken as the label (see the message handler).
     if (parsed.kind === "newfree") {
       requestFreeLabel(tgScope(ctx));
@@ -303,6 +325,46 @@ export async function handleCallbackQuery(
       }
       return;
     }
+    if (parsed.kind === "voicelangmenu") {
+      await safeAnswerCallback(ctx);
+      const current = resolveWhisperLanguage("telegram");
+      if (!checkVoiceSupport().ready) {
+        await reply(ctx, "info", MSG.voiceNotInstalled, {
+          replyTarget,
+          replyMarkup: buildVoiceInstallKeyboard(),
+        });
+      } else {
+        await reply(ctx, "info", MSG.voiceLangCurrent(current), {
+          replyTarget,
+          replyMarkup: buildVoiceLangKeyboard(current),
+        });
+      }
+      return;
+    }
+    if (parsed.kind === "voiceinstall") {
+      await safeAnswerCallback(ctx);
+      await runOptionalFeatureInstall({
+        copy: {
+          installing: MSG.voiceInstalling,
+          ok: MSG.voiceInstallOk,
+          alreadyReady: MSG.voiceAlreadyInstalled,
+          inProgress: MSG.voiceInstalling,
+          unsupported: MSG.voiceUnsupported,
+          failed: MSG.voiceInstallFailed,
+        },
+        precheck: () => {
+          if (checkVoiceSupport().ready) return { status: "already-ready" };
+          if (!isVoicePlatformSupported()) return { status: "unsupported" };
+          return null;
+        },
+        install: () => installVoice(),
+        send: async (notice) => {
+          await reply(ctx, notice.tone, notice.text, { replyTarget });
+        },
+        background: true,
+      });
+      return;
+    }
     // Voice-language pick: set it live + persist, confirm via toast, and refresh
     // the picker in place so the ✅ moves to the new selection.
     if (parsed.kind === "voicelang") {
@@ -318,6 +380,15 @@ export async function handleCallbackQuery(
       }
       return;
     }
+    if (parsed.kind === "uilangmenu") {
+      await safeAnswerCallback(ctx);
+      const current = resolveUiLang("telegram");
+      await reply(ctx, "info", messages("telegram").uiLangCurrent(current), {
+        replyTarget,
+        replyMarkup: buildLangKeyboard(current),
+      });
+      return;
+    }
     // UI-language pick: set + persist, then refresh the picker in place.
     if (parsed.kind === "uilang") {
       setUiLang("telegram", parsed.lang);
@@ -331,6 +402,51 @@ export async function handleCallbackQuery(
       } catch {
         /* message may be gone or unchanged */
       }
+      return;
+    }
+    if (parsed.kind === "prompttranslatemenu") {
+      await safeAnswerCallback(ctx);
+      const current = promptTranslateStatus("telegram");
+      await reply(ctx, "info", formatPromptTranslateCommandResult(current), {
+        replyTarget,
+        replyMarkup: buildPromptTranslateKeyboard(),
+      });
+      return;
+    }
+    if (parsed.kind === "prompttranslate") {
+      await safeAnswerCallback(ctx);
+      const result = await applyPromptTranslateCommand("telegram", parsed.arg);
+      const current = promptTranslateStatus("telegram");
+      await reply(
+        ctx,
+        result.ok ? "info" : "err",
+        result.ok
+          ? formatPromptTranslateCommandResult(current)
+          : formatPromptTranslateCommandResult(result),
+        {
+          replyTarget,
+          replyMarkup: buildPromptTranslateKeyboard(),
+        },
+      );
+      return;
+    }
+    if (parsed.kind === "prompttranslateinstall") {
+      await safeAnswerCallback(ctx);
+      const m = messages("telegram");
+      await runOptionalFeatureInstall({
+        copy: {
+          installing: m.promptTranslateInstalling,
+          ok: m.promptTranslateInstallOk,
+          alreadyReady: m.promptTranslateAlreadyInstalled,
+          inProgress: m.promptTranslateInstalling,
+          failed: m.promptTranslateInstallFailed,
+        },
+        install: () => installPromptTranslation(),
+        send: async (notice) => {
+          await reply(ctx, notice.tone, notice.text, { replyTarget });
+        },
+        background: true,
+      });
       return;
     }
     // Recreate/switch a recent project — resolves by recent path, not by an
@@ -362,7 +478,7 @@ export async function handleCallbackQuery(
       await deps.agent.startWithResume(
         sessionName,
         parsed.sessionId,
-        getStartCommand(sessionName) ?? undefined,
+        getAgentRuntimeRecord(sessionName).startCommand ?? undefined,
       );
       deps.configResolver.invalidate(sessionName);
       await reply(ctx, "ok", messages("telegram").resumeStarted(parsed.sessionId.slice(0, 8)), {
@@ -371,7 +487,7 @@ export async function handleCallbackQuery(
       });
       return;
     }
-    // Adopt a non-tmux claude: tapping a candidate shows a confirm first, since
+    // Adopt an unmanaged claude: tapping a candidate shows a confirm first, since
     // the action interrupts and ends the original process.
     if (parsed.kind === "adoptshow") {
       await safeAnswerCallback(ctx);
@@ -619,6 +735,15 @@ export async function handleCallbackQuery(
             : messages("telegram").agentStartedWith(pick.label);
       }
       await reply(ctx, "ok", msg, { session: sessionName, replyTarget });
+      return;
+    }
+    if (parsed.kind === "act" && requiresActionConfirmation(parsed.action)) {
+      await safeAnswerCallback(ctx);
+      await reply(ctx, "warn", actionConfirmationBody(parsed.action, sessionName), {
+        session: sessionName,
+        replyMarkup: buildActionConfirmationKeyboard(parsed.action, parsed.sid),
+        replyTarget,
+      });
       return;
     }
     // start/restart buttons: reject a start when already running, else show the

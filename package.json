@@ -39,6 +39,7 @@
     "setup:lark": "NODE_NO_WARNINGS=1 tsx src/scripts/lark-setup.ts",
     "doctor": "NODE_NO_WARNINGS=1 tsx src/scripts/doctor.ts",
     "whisper:install": "scripts/install-whisper.sh",
+    "translate:install": "scripts/install-argos-translate.sh",
     "service:install": "scripts/install-service.sh",
     "service:uninstall": "scripts/uninstall-service.sh",
     "service:status": "scripts/service.sh status",

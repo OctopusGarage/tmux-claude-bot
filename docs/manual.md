@@ -13,12 +13,12 @@ detailed references where they exist: the full command table in
 ## 1. What it is
 
 tmux-claude-bot runs a coding agent — **Claude Code** or **OpenAI Codex** — inside
-**tmux** sessions on your computer, and lets you **drive it remotely**:
+managed project sessions on your computer, and lets you **drive it remotely**:
 
 - from **Telegram** and/or **Feishu/Lark** on your phone (text + voice), and
 - from a **terminal UI** (`tcb tui`) at the PC.
 
-Each project gets its own tmux session; you can run several in parallel, switch
+Each project gets its own session; you can run several in parallel, switch
 between them, and the bot survives restarts/reboots without losing your routing.
 
 ---
@@ -52,14 +52,22 @@ The Telegram and Feishu interfaces mirror each other. The **full command list wi
 descriptions is in [docs/commands.md](commands.md)**; this is the orientation.
 
 ### Talking to the agent
-- **Send any text** → it's typed into the current project's agent; the reply comes
+- **Send any text** → it's typed into the current session's agent; the reply comes
   back when the agent finishes. **Voice messages** are transcribed and sent as text.
+  Optional local prompt translation can be enabled with
+  `npm run translate:install` or `/translate_install`, plus `PROMPT_TRANSLATE_MODE=argos`,
+  `PROMPT_TRANSLATE_FROM=zh`, and `PROMPT_TRANSLATE_TO=en`; it applies to text,
+  voice transcriptions, TUI input, and `tcb send`. Change it at runtime with
+  `/prompt_translate status|off|on [from] [to]` in Telegram/Feishu, or
+  `tcb prompt-translate status|off|on [from] [to]` for local control input.
 - Replies show the agent's output; long output is paged.
 
 ### The control panel (buttons)
 Every reply carries a control panel (Telegram inline keyboard / Feishu card):
 interrupt (esc) · enter · the lifecycle keys (restart / clear / compact / exit) ·
 peek · history · projects · queue. It adapts to whether an agent is running.
+Lifecycle buttons that can interrupt work or reset context (`restart`, `clear`,
+`compact`, `exit`) ask for confirmation before running.
 
 ### Commands, by area (see commands.md for the table)
 - **Session**: `/start` `/status` `/peek [N]` `/history [N]` `/inputs [N]` (recent
@@ -68,7 +76,7 @@ peek · history · projects · queue. It adapts to whether an agent is running.
   were running before a reboot.
 - **Feishu project groups**: bind a Feishu group to one project so you switch projects
   by switching groups (no `/cd`); works without `@bot`.
-- **Settings**: `/lang` (UI language), voice language, status-line install, `/prompts` (browse saved prompts).
+- **Settings**: `/lang` (UI language), `/voice_lang`, `/prompt_translate`, status-line install, `/prompts` (browse saved prompts). Telegram and Feishu both surface the voice and translation pickers from the settings controls.
 - **Diagnostics**: `/dashboard` (every session at a glance) · `/sysload` (machine
   load / heat / runaway processes) · `/logs` · `/doctor`. Owner-only; on Feishu these
   are 1:1-chat only.
@@ -97,7 +105,7 @@ npm run tui    # dev
 
 Sessions list + live peek; `i` compose a prompt (multi-line paste works), `c`
 controls, `s` projects (switch/start), `R` recover, `l` logs, `m` load, `u` re-run a
-recent input, `a` attach into the real tmux pane, `q` quit. Press `?` for all keys.
+recent input, `a` attach into the real session pane, `q` quit. Press `?` for all keys.
 
 ---
 
@@ -143,11 +151,11 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 | `tcb sessions` | list the running sessions |
 | `tcb projects` | list projects (live + recent); `tcb open <name>` to start one |
 | `tcb send <project> "<prompt>"` | send a prompt to a project's agent; **waits for the reply** (`--no-wait` / `--timeout <s>`) |
-| `tcb peek <project>` | print a snapshot of its tmux pane |
+| `tcb peek <project>` | print a snapshot of its session pane |
 | `tcb open <project>` | switch to / start a project — by name (incl. stopped) or a filesystem path to create a new one |
-| `tcb adopt [pid]` | list claude/codex running outside tmux, or adopt one by PID (stops it, resumes under management) |
-| `tcb control <project> <esc\|enter\|restart\|…>` | send a control action |
-| `tcb attach <file...>` | send an image/file to the session's chat; defaults to the current tmux session (`--to <project>`, `--caption <text>`) |
+| `tcb adopt [pid]` | list unmanaged claude/codex processes, or adopt one by PID (stops it, resumes under management) |
+| `tcb control <project> <esc\|enter\|restart\|…>` | send a control action; `restart` / `clear` / `compact` / `exit` prompt for confirmation (`--yes` for scripts) |
+| `tcb attach <file...>` | send an image/file to the session's chat; defaults to the current session (`--to <project>`, `--caption <text>`) |
 | `tcb skill install` | install the AI operating skill into Claude Code / Codex (`--tool` for one) |
 
 This is what the **AI skill** (`skills/tmux-claude-bot/SKILL.md`, the AI-facing
@@ -181,7 +189,7 @@ To manage **every** session without enabling each one, run `/autopilot global on
 
 Autopilot is also fully button-drivable from Telegram. Open the inline control
 panel (the keyboard under any reply, or via the control buttons), then tap
-`🤖 Autopilot` to enter the autopilot panel. From there you can enable or disable
+`✈️ Autopilot` to enter the autopilot panel. From there you can enable or disable
 autopilot for the current session, open the goal picker to select one or more goals
 with a multi-select list and set the number of rounds, then start the cycle — or
 toggle the global keep-alive on/off for all sessions, or stop autopilot outright.
@@ -195,7 +203,7 @@ Autopilot is also fully drivable from `tcb tui`. Press `A` to open the autopilot
 ### Lark/Feishu button controls
 
 Autopilot is also fully button-drivable from Lark/Feishu. In a private chat (p2p)
-the control card includes a `🤖 Autopilot` button that opens the autopilot panel
+the control card includes a `✈️ Autopilot` button that opens the autopilot panel
 card. From there you can enable or disable autopilot for the current session, open
 the goal picker to select one or more goals with a multi-select list and set the
 number of rounds, then start the cycle — or stop autopilot outright. The
@@ -354,7 +362,7 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
 ## Acknowledgements
 
 Autopilot's core idea — engineering a feedback loop that watches a coding agent in
-its tmux pane and keeps nudging it forward so it never stalls mid-task — is owed to
+its session pane and keeps nudging it forward so it never stalls mid-task — is owed to
 **[ForgeFlow](https://github.com/Kingson4Wu/ForgeFlow)**, an earlier project that
 pioneered exactly this "loop engineering": observe the pane → decide by rules →
 recover from stalls → repeat, driving an AI CLI (Claude / Gemini / Codex) through

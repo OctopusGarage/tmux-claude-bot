@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   findRolloutForProject,
   matchOpenCodexRollout,
+  readCodexModelFromRollout,
 } from "../src/core/agents/codex/codex-rollout.js";
 
 const CWD = "/home/user/projects/demo";
@@ -70,5 +71,30 @@ describe("findRolloutForProject", () => {
   it("returns null when no rollout matches", async () => {
     writeRollout(dir, "x.jsonl", "x", "/nope", 1_000_000);
     expect(await findRolloutForProject(home, CWD)).toBeNull();
+  });
+});
+
+describe("readCodexModelFromRollout", () => {
+  it("reads the last recorded model from the rollout turn context", async () => {
+    const home = fs.mkdtempSync(join(os.tmpdir(), "codex-rollout-model-"));
+    const path = join(home, "rollout.jsonl");
+    fs.writeFileSync(
+      path,
+      [
+        JSON.stringify({ type: "session_meta", payload: { id: "sid", cwd: CWD } }),
+        JSON.stringify({
+          type: "turn_context",
+          payload: { cwd: CWD, model: "gpt-5.3-codex" },
+        }),
+        JSON.stringify({
+          type: "turn_context",
+          payload: { cwd: CWD, model: "gpt-5.4-mini" },
+        }),
+      ].join("\n"),
+    );
+
+    expect(await readCodexModelFromRollout(path)).toBe("gpt-5.4-mini");
+
+    fs.rmSync(home, { recursive: true, force: true });
   });
 });

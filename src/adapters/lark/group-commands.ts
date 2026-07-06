@@ -5,6 +5,8 @@ import { messages } from "../../core/i18n/index.js";
 import {
   FREE_PROJECT_LIMIT,
   freeSessionName,
+  freeSlotOf,
+  getFreeProject,
   setFreeProject,
 } from "../../core/projects/free-projects.js";
 import {
@@ -23,9 +25,11 @@ import { chatScope } from "../../core/projects/project-manager.js";
 import {
   allocateFreeSlotPruned,
   createProjectSession,
+  resolveAliveSessionByShortId,
   resolveProjectPathByShortId,
 } from "../../core/projects/project-ops.js";
-import { sessionNameFromPath } from "../../core/projects/sessionPathMap.js";
+import { getPathBySession, sessionNameFromPath } from "../../core/projects/sessionPathMap.js";
+import { isPromptTranslateInstallable } from "../../core/read/prompt-translation.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
@@ -49,7 +53,11 @@ async function sendGroupHome(
   path: string,
 ): Promise<void> {
   await sendText(channel, chatId, m().groupBoundWelcome(label, path));
-  await sendCard(channel, chatId, helpCard(true, isVoiceInstallable()));
+  await sendCard(
+    channel,
+    chatId,
+    helpCard(true, isVoiceInstallable(), isPromptTranslateInstallable()),
+  );
 }
 
 /** Enforce the shared chat-type policy (chat-policy.ts) for a typed command:
@@ -69,6 +77,25 @@ async function deniedByPolicy(
       : m()[verdict.deny.key];
   await sendText(channel, chatId, text);
   return true;
+}
+
+async function createBoundChatOrReply(
+  channel: LarkChannel,
+  lark: NonNullable<HandlerDeps["config"]["lark"]>,
+  originChatId: string,
+  name: string,
+  inviteOpenId: string,
+): Promise<{ chatId: string; name: string } | null> {
+  try {
+    return await createBoundChat(lark, { name, inviteOpenId });
+  } catch (err) {
+    await sendText(
+      channel,
+      originChatId,
+      m().groupCreateFailed(err instanceof Error ? err.message : String(err)),
+    );
+    return null;
+  }
 }
 
 /** Resolve a picked project's short id back to its absolute path, over the same
@@ -118,17 +145,14 @@ export async function makeBoundGroupBySid(
     return;
   }
 
-  let created: { chatId: string; name: string };
-  try {
-    created = await createBoundChat(deps.config.lark, { name: label, inviteOpenId });
-  } catch (err) {
-    await sendText(
-      channel,
-      originChatId,
-      m().groupCreateFailed(err instanceof Error ? err.message : String(err)),
-    );
-    return;
-  }
+  const created = await createBoundChatOrReply(
+    channel,
+    deps.config.lark,
+    originChatId,
+    label,
+    inviteOpenId,
+  );
+  if (!created) return;
 
   bindGroup(created.chatId, { workspacePath: path, sessionName, label });
   await createProjectSession(deps, chatScope("lark", created.chatId), sessionName, path);
@@ -136,9 +160,9 @@ export async function makeBoundGroupBySid(
   await sendText(channel, originChatId, m().groupCreatedShort(label));
 }
 
-/** Shared core: create a NEW group bound to a FRESH free session on `path`, so the
- * same dir can host multiple parallel groups/Claudes. Unlike makeBoundGroupBySid it
- * never refuses on an existing binding (distinct free session = distinct workspace
+/** Shared core: create a NEW group bound to a FRESH independent session on `path`, so the
+ * same dir can host multiple parallel project groups/agents. Unlike makeBoundGroupBySid it
+ * never refuses on an existing binding (distinct independent session = distinct workspace
  * key). Backs both the button (sid) and the `/newfreegroup <path>` command. */
 async function createFreeGroupAtPath(
   channel: LarkChannel,
@@ -148,7 +172,7 @@ async function createFreeGroupAtPath(
   inviteOpenId: string,
 ): Promise<void> {
   if (!deps.config.lark) {
-    log.warn("free group with no lark config (unreachable)");
+    log.warn("parallel group with no lark config (unreachable)");
     return;
   }
   const slot = await allocateFreeSlotPruned(deps);
@@ -161,17 +185,14 @@ async function createFreeGroupAtPath(
   const k = listBindings().filter(({ binding }) => binding.workspacePath === path).length + 1;
   const label = `${basename(path)} #${k}`;
 
-  let created: { chatId: string; name: string };
-  try {
-    created = await createBoundChat(deps.config.lark, { name: label, inviteOpenId });
-  } catch (err) {
-    await sendText(
-      channel,
-      originChatId,
-      m().groupCreateFailed(err instanceof Error ? err.message : String(err)),
-    );
-    return;
-  }
+  const created = await createBoundChatOrReply(
+    channel,
+    deps.config.lark,
+    originChatId,
+    label,
+    inviteOpenId,
+  );
+  if (!created) return;
 
   // Persist the binding + slot BEFORE creating the session (mirrors handleNewGroup):
   // if createProjectSession then fails, the dangling binding self-heals on the
@@ -184,9 +205,9 @@ async function createFreeGroupAtPath(
   await sendText(channel, originChatId, m().freeGroupCreated(label));
 }
 
-/** Button-driven "free parallel group": resolve a recent project's short id to its
- * path, then create a free parallel group there. Private chat only (gated by the
- * card action). */
+/** Button-driven "parallel project group": resolve a recent project's short id to its
+ * path, then create an independent-session group there. Private chat only
+ * (gated by the card action). */
 export async function makeFreeGroupBySid(
   channel: LarkChannel,
   deps: HandlerDeps,
@@ -202,8 +223,52 @@ export async function makeFreeGroupBySid(
   await createFreeGroupAtPath(channel, deps, originChatId, path, inviteOpenId);
 }
 
+/** Button from the live-project list for an EXISTING independent session: create a Lark
+ * group bound to that already-running session. This is intentionally NOT
+ * the same as makeFreeGroupBySid/newfreegroup, which allocate a fresh independent-session slot
+ * and create a new project session. */
+export async function makeExistingFreeGroupBySid(
+  channel: LarkChannel,
+  deps: HandlerDeps,
+  originChatId: string,
+  sid: string,
+  inviteOpenId: string,
+): Promise<void> {
+  if (!deps.config.lark) {
+    log.warn("existing independent-session group with no lark config (unreachable)");
+    return;
+  }
+  const sessionName = await resolveAliveSessionByShortId(deps, sid);
+  const slot = sessionName ? freeSlotOf(sessionName, deps.config.projectSessionPrefix) : null;
+  const path = sessionName ? getPathBySession(sessionName) : null;
+  if (!sessionName || slot === null || !path) {
+    await sendText(channel, originChatId, m().shortIdNotFound(sid));
+    return;
+  }
+  const existing = bindingForSession(sessionName);
+  if (existing) {
+    await sendText(channel, originChatId, m().groupAlreadyExists(existing.binding.label));
+    return;
+  }
+  const label = getFreeProject(slot)?.label?.trim() || `${basename(path)} #${slot}`;
+
+  const created = await createBoundChatOrReply(
+    channel,
+    deps.config.lark,
+    originChatId,
+    label,
+    inviteOpenId,
+  );
+  if (!created) return;
+
+  bindGroup(created.chatId, { workspacePath: path, sessionName, label });
+  await deps.currentProject.set(chatScope("lark", created.chatId), sessionName);
+  await sendGroupHome(channel, created.chatId, label, path);
+  await sendText(channel, originChatId, m().groupCreatedShort(label));
+}
+
 /** `/newfreegroup <path|name>` — private chat only. The typed-path counterpart of
- * the 🆓 button: create a free parallel group on ANY allowed directory (not just
+ * the independent-session button: create a parallel project group on ANY allowed directory (not just
  * recents). Mirrors handleNewGroup's validation. */
 export async function handleNewFreeGroup(
   channel: LarkChannel,
@@ -292,20 +357,14 @@ export async function handleNewGroup(
     return;
   }
 
-  let created: { chatId: string; name: string };
-  try {
-    created = await createBoundChat(deps.config.lark, {
-      name: target.label,
-      inviteOpenId: senderId,
-    });
-  } catch (err) {
-    await sendText(
-      channel,
-      chatId,
-      m().groupCreateFailed(err instanceof Error ? err.message : String(err)),
-    );
-    return;
-  }
+  const created = await createBoundChatOrReply(
+    channel,
+    deps.config.lark,
+    chatId,
+    target.label,
+    senderId,
+  );
+  if (!created) return;
 
   // Persist the binding BEFORE creating the session: the group gate ignores
   // unbound groups, so a dangling binding (no session yet) self-heals on the

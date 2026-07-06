@@ -1,6 +1,6 @@
 # tmux-claude-bot
 
-tmux-claude-bot runs Claude Code and Codex agents inside tmux sessions and lets users
+tmux-claude-bot runs Claude Code and Codex agents inside managed sessions and lets users
 control them from Telegram, Feishu/Lark, a local CLI, or the terminal UI.
 
 ## Primary Documentation

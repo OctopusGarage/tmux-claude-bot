@@ -3,6 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectPathToHistoryDir } from "../../src/core/agents/claude/claude-history.js";
+import { setFreeProject } from "../../src/core/projects/free-projects.js";
+import { bindGroup, unbindGroup } from "../../src/core/projects/group-bindings.js";
 import { projectLabel } from "../../src/core/projects/project-label.js";
 import {
   aliveProjectButtons,
@@ -16,6 +18,7 @@ import {
 import { sessionNameFromPath, setPathForSession } from "../../src/core/projects/sessionPathMap.js";
 import { cumulativeBusyMs, taskEnded, taskStarted } from "../../src/core/session/task-timing.js";
 import type { AgentKind } from "../../src/shared/types.js";
+import { UI_ICONS } from "../../src/shared/ui/icons.js";
 import { sessionShortId } from "../../src/shared/utils/hash.js";
 import { fakeDeps } from "../adapters/lark/_fakes.js";
 
@@ -218,7 +221,87 @@ describe("aliveProjectButtons", () => {
     expect(buttons[0]?.sid).toBeTruthy();
   });
 
-  it("shows 💤 when no agent is live in the pane", async () => {
+  it("marks path-backed independent sessions as eligible for group creation", async () => {
+    const pathBacked = "tmux_proj_free_1";
+    const bare = "tmux_proj_free_2";
+    setFreeProject(1, { label: "path-backed" });
+    setFreeProject(2, { label: "bare" });
+    setPathForSession(pathBacked, dir);
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [pathBacked, bare]) },
+    });
+
+    const buttons = await aliveProjectButtons(deps, "telegram");
+
+    expect(buttons.find((b) => b.sid === sessionShortId(pathBacked))?.canCreateFreeGroup).toBe(
+      true,
+    );
+    expect(buttons.find((b) => b.sid === sessionShortId(bare))?.canCreateFreeGroup).toBe(false);
+  });
+
+  it("returns catalog action metadata for alive project rows", async () => {
+    const session = "tmux_proj_free_7";
+    setFreeProject(7, { label: "worker" });
+    setPathForSession(session, dir);
+    const deps = fakeDeps({
+      session: "other",
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+    });
+
+    const buttons = await aliveProjectButtons(deps, "telegram");
+
+    expect(buttons[0]).toMatchObject({
+      primaryAction: "switch-session",
+      actionIds: ["switch-session", "remove-session", "create-existing-independent-group"],
+    });
+  });
+
+  it("does not offer group creation for an independent session that already has a group", async () => {
+    const session = "tmux_proj_free_4";
+    setFreeProject(4, { label: "already-bound" });
+    setPathForSession(session, dir);
+    bindGroup("oc_bound_free_4", { workspacePath: dir, sessionName: session, label: "free-4" });
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+    });
+
+    const buttons = await aliveProjectButtons(deps, "telegram");
+
+    expect(buttons[0]?.canCreateFreeGroup).toBe(false);
+    unbindGroup("oc_bound_free_4");
+  });
+
+  it("returns structured status metadata for alive projects", async () => {
+    const session = "tmux_proj_free_6";
+    setFreeProject(6, { label: "structured" });
+    setPathForSession(session, dir);
+    bindGroup("oc_structured_free_6", {
+      workspacePath: dir,
+      sessionName: session,
+      label: "structured-group",
+    });
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "codex") },
+    });
+
+    const buttons = await aliveProjectButtons(deps, "telegram");
+
+    expect(buttons[0]).toMatchObject({
+      isFree: true,
+      path: dir,
+      agentKind: "codex",
+      agentRunning: true,
+      hasGroup: true,
+      groupLabel: "structured-group",
+    });
+    expect(buttons[0]?.statusLine).toContain("会话：运行中");
+    expect(buttons[0]?.statusLine).toContain("Agent：Codex");
+    expect(buttons[0]?.statusLine).not.toContain("群：structured-group");
+    unbindGroup("oc_structured_free_6");
+  });
+
+  it("uses the no-agent icon when no agent is live in the pane", async () => {
     const session = "tmux_proj_-home-user-idle";
     setPathForSession(session, dir);
     const deps = fakeDeps({
@@ -226,10 +309,10 @@ describe("aliveProjectButtons", () => {
       configResolver: { detectAgentKind: vi.fn(async () => null) },
     });
     const buttons = await aliveProjectButtons(deps, "telegram");
-    expect(buttons[0]?.label).toContain("💤");
+    expect(buttons[0]?.label).toContain(UI_ICONS.agent.none);
   });
 
-  it("shows 🟠 for a live claude session and 🔘 for a live codex session", async () => {
+  it("uses agent-specific icons for live claude and codex sessions", async () => {
     const session = "tmux_proj_-home-user-agent";
     setPathForSession(session, dir);
     const claudeDeps = fakeDeps({
@@ -240,11 +323,15 @@ describe("aliveProjectButtons", () => {
       bridge: { listProjectSessions: vi.fn(async () => [session]) },
       configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "codex") },
     });
-    expect((await aliveProjectButtons(claudeDeps, "telegram"))[0]?.label).toContain("🟠");
-    expect((await aliveProjectButtons(codexDeps, "telegram"))[0]?.label).toContain("🔘");
+    expect((await aliveProjectButtons(claudeDeps, "telegram"))[0]?.label).toContain(
+      UI_ICONS.agent.claude,
+    );
+    expect((await aliveProjectButtons(codexDeps, "telegram"))[0]?.label).toContain(
+      UI_ICONS.agent.codex,
+    );
   });
 
-  it("shows ⏳ when the queue is processing the session", async () => {
+  it("uses the busy icon when the queue is processing the session", async () => {
     const session = "tmux_proj_-home-user-busy";
     setPathForSession(session, dir);
     const deps = fakeDeps({
@@ -252,10 +339,12 @@ describe("aliveProjectButtons", () => {
       configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
       queue: { isSessionProcessing: vi.fn(() => true) },
     });
-    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⏳");
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain(
+      UI_ICONS.session.busy,
+    );
   });
 
-  it("shows ⏳ when a message is waiting in the session queue (not yet processing)", async () => {
+  it("uses the busy icon when a message is waiting in the session queue", async () => {
     const session = "tmux_proj_-home-user-queued";
     setPathForSession(session, dir);
     const deps = fakeDeps({
@@ -266,10 +355,12 @@ describe("aliveProjectButtons", () => {
         getSessionQueue: vi.fn(() => [{ id: "m1" }] as never),
       },
     });
-    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⏳");
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain(
+      UI_ICONS.session.busy,
+    );
   });
 
-  it("shows ⏳ when the agent transcript was just written (active even with an idle queue)", async () => {
+  it("uses the busy icon when the agent transcript was just written", async () => {
     const session = "tmux_proj_-active";
     setPathForSession(session, dir);
     // A fresh claude transcript under a temp config root → active within the window.
@@ -288,17 +379,19 @@ describe("aliveProjectButtons", () => {
       },
       queue: { isSessionProcessing: vi.fn(() => false), getSessionQueue: vi.fn(() => []) },
     });
-    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⏳");
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain(
+      UI_ICONS.session.busy,
+    );
     fs.rmSync(cfg, { recursive: true, force: true });
   });
 
-  it("shows ⏳ from the activity event source even when the transcript mtime is stale", async () => {
+  it("uses the busy icon from the activity event source even when transcript mtime is stale", async () => {
     const session = "tmux_proj_-event-active";
     setPathForSession(session, dir);
     // A STALE transcript on disk (mtime set well past the idle window): the stat
     // fallback alone would yield false. The fs.watch-backed activity watcher
     // reports a recent write, so the session still reads as actively working —
-    // proving the event source, not stat, produced the ⏳ (idle queue, live claude).
+    // proving the event source, not stat, produced the busy state (idle queue, live claude).
     const cfg = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-evt-"));
     const histDir = projectPathToHistoryDir(dir, cfg);
     fs.mkdirSync(histDir, { recursive: true });
@@ -318,14 +411,16 @@ describe("aliveProjectButtons", () => {
       queue: { isSessionProcessing: vi.fn(() => false), getSessionQueue: vi.fn(() => []) },
       activity: { isActiveWithin: () => true },
     });
-    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⏳");
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain(
+      UI_ICONS.session.busy,
+    );
     fs.rmSync(cfg, { recursive: true, force: true });
   });
 
   it("degrades a session to its plain label when its decoration probe rejects (others survive)", async () => {
     // One wedged pane: paneCurrentPath rejects for it. The other session must
     // still return, and the failed one falls back to its plain base label — no
-    // ⚠️ glyph, no throw that would blank the whole list.
+    // drift icon, no throw that would blank the whole list.
     const wedged = "tmux_proj_-home-user-wedged";
     const ok = "tmux_proj_-home-user-ok";
     setPathForSession(wedged, dir);
@@ -344,14 +439,14 @@ describe("aliveProjectButtons", () => {
     expect(buttons).toHaveLength(2);
     const wedgedBtn = buttons.find((b) => b.sid === sessionShortId(wedged));
     const okBtn = buttons.find((b) => b.sid === sessionShortId(ok));
-    // Failed one degrades to the plain projectLabel — no agent/⚠️ decoration.
+    // Failed one degrades to the plain projectLabel — no agent/drift decoration.
     expect(wedgedBtn?.label).toBe(projectLabel(wedged, dir));
-    expect(wedgedBtn?.label).not.toContain("⚠️");
+    expect(wedgedBtn?.label).not.toContain(UI_ICONS.session.driftedPath);
     // The healthy one still gets its full decoration.
-    expect(okBtn?.label).toContain("🟠");
+    expect(okBtn?.label).toContain(UI_ICONS.agent.claude);
   });
 
-  it("shows ⚠️ when the pane cwd differs from the bound dir (agent live)", async () => {
+  it("uses the drift icon when the pane cwd differs from the bound dir", async () => {
     const session = "tmux_proj_-home-user-drift";
     setPathForSession(session, dir);
     const deps = fakeDeps({
@@ -361,10 +456,12 @@ describe("aliveProjectButtons", () => {
       },
       configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
     });
-    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain("⚠️");
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).toContain(
+      UI_ICONS.session.driftedPath,
+    );
   });
 
-  it("no ⚠️ when the pane cwd matches the bound dir", async () => {
+  it("does not use the drift icon when the pane cwd matches the bound dir", async () => {
     const session = "tmux_proj_-home-user-match";
     setPathForSession(session, dir);
     const deps = fakeDeps({
@@ -374,10 +471,12 @@ describe("aliveProjectButtons", () => {
       },
       configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
     });
-    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).not.toContain("⚠️");
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).not.toContain(
+      UI_ICONS.session.driftedPath,
+    );
   });
 
-  it("no ⚠️ when no agent is live, even if cwd differs", async () => {
+  it("does not use the drift icon when no agent is live, even if cwd differs", async () => {
     const session = "tmux_proj_-home-user-noagent-drift";
     setPathForSession(session, dir);
     const deps = fakeDeps({
@@ -387,7 +486,9 @@ describe("aliveProjectButtons", () => {
       },
       configResolver: { detectAgentKind: vi.fn(async () => null) },
     });
-    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).not.toContain("⚠️");
+    expect((await aliveProjectButtons(deps, "telegram"))[0]?.label).not.toContain(
+      UI_ICONS.session.driftedPath,
+    );
   });
 
   it("excludes the operator session from the project list", async () => {
@@ -474,6 +575,37 @@ describe("recentProjectButtons", () => {
     expect(buttons).toHaveLength(1);
     expect(buttons[0]?.alive).toBe(true);
     expect(buttons[0]?.active).toBe(true);
+  });
+
+  it("returns structured status metadata for recent projects", async () => {
+    const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
+    vi.mocked(readRecentProjectLines).mockResolvedValueOnce([dir]);
+    const sessionName = `tmux_proj_${dir.replace(/\//g, "-")}`;
+    bindGroup("oc_recent_structured", {
+      workspacePath: dir,
+      sessionName,
+      label: "recent-group",
+    });
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
+      configResolver: { detectAgentKind: vi.fn(async (): Promise<AgentKind> => "claude") },
+    });
+
+    const buttons = await recentProjectButtons(deps, "telegram");
+
+    expect(buttons[0]).toMatchObject({
+      isFree: false,
+      path: dir,
+      alive: true,
+      agentKind: "claude",
+      agentRunning: true,
+      hasGroup: true,
+      groupLabel: "recent-group",
+    });
+    expect(buttons[0]?.statusLine).toContain("会话：运行中");
+    expect(buttons[0]?.statusLine).toContain("Agent：Claude");
+    expect(buttons[0]?.statusLine).not.toContain("群：recent-group");
+    unbindGroup("oc_recent_structured");
   });
 
   it("excludes the operator from the live-project set used by the recent picker", async () => {

@@ -15,7 +15,7 @@ describe("enqueueLarkAction", () => {
 
     expect(deps.queue.enqueued).toHaveLength(0);
     // No "/" discovery on Feishu — the no-project reply is a recovery card.
-    expect(JSON.stringify(channel.cards())).toContain("无当前项目");
+    expect(JSON.stringify(channel.cards())).toContain("无当前会话");
   });
 
   it("acks '已接收' when the queue was empty", async () => {
@@ -110,7 +110,7 @@ describe("runImmediateLarkAction", () => {
 
     await runImmediateLarkAction(channel, deps, "chat-1", "msg-1", "status");
 
-    expect(JSON.stringify(channel.cards())).toContain("无当前项目");
+    expect(JSON.stringify(channel.cards())).toContain("无当前会话");
   });
 
   it("runs executeMessage and replies plain text with the result", async () => {

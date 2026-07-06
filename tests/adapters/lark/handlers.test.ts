@@ -267,7 +267,7 @@ describe("makeMessageHandler", () => {
 
       await handler(fakeMessage({ content: "/current_project" }));
 
-      expect(channel.texts().some((t) => t.includes("当前项目"))).toBe(true);
+      expect(channel.texts().some((t) => t.includes("当前会话"))).toBe(true);
     });
 
     it("/queue_status sends the queue status text", async () => {
@@ -368,6 +368,16 @@ describe("makeMessageHandler", () => {
       const handler = makeMessageHandler(channel, deps);
 
       await handler(fakeMessage({ content: "/voice_lang" }));
+
+      expect(channel.cards()).toHaveLength(1);
+    });
+
+    it("/prompt_translate sends the translation picker card", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ content: "/prompt_translate" }));
 
       expect(channel.cards()).toHaveLength(1);
     });

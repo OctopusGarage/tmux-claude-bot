@@ -199,6 +199,7 @@ describe("MessageQueue", () => {
       // Scoped by chat: a matching ack in a DIFFERENT chat must not rewrite this item.
       expect(queue.rewriteByAck("ack-42", 999, "x")).toEqual({ kind: "not-found" });
       expect(queue.rewriteByAck("missing", 1, "x")).toEqual({ kind: "not-found" }); // unknown ack
+      expect(queue.sessionByAck("ack-42", 1)).toBe("s1");
       expect(queue.rewriteByAck("ack-42", 1, "new")).toEqual({ kind: "rewritten", session: "s1" });
       expect(queue.getSessionQueue("s1").map((m) => [m.id, m.text])).toEqual([
         ["q1", "new"], // rewritten in place, position kept
@@ -212,6 +213,38 @@ describe("MessageQueue", () => {
       // The binding is dropped with the item (cancel removes it → ack no longer resolves).
       queue.cancelQueued("s1", "q1");
       expect(queue.rewriteByAck("ack-42", 1, "z")).toEqual({ kind: "not-found" });
+    });
+
+    it("rewriteByAck can update prompt transform metadata with the delivered prompt", async () => {
+      const queue = new MessageQueue(10);
+      queue.setReadinessProbe(async () => false, 10_000);
+      queue.setHandler(async (msg) => msg.resolve("ok"));
+      queue.enqueue(createTestMessage({ id: "q1", text: "old", action: "text" }));
+      await waitFor(() => queue.size("s1") === 1);
+      queue.setQueueAck("s1", "q1", "ack-42");
+
+      expect(
+        queue.rewriteByAck("ack-42", 1, "Ship it", {
+          origin: "user",
+          promptSource: "telegram",
+          sourceText: "发出去",
+          transform: {
+            kind: "translation",
+            provider: "argos",
+            from: "zh",
+            to: "en",
+            sourceText: "发出去",
+            deliveredText: "Ship it",
+          },
+        }),
+      ).toEqual({ kind: "rewritten", session: "s1" });
+      expect(queue.getSessionQueue("s1")[0]).toMatchObject({
+        text: "Ship it",
+        origin: "user",
+        promptSource: "telegram",
+        sourceText: "发出去",
+        transform: { kind: "translation", deliveredText: "Ship it" },
+      });
     });
 
     it("rewriteByAck: the SAME ack id in two chats rewrites only the addressed chat's item", async () => {
@@ -346,7 +379,9 @@ describe("MessageQueue", () => {
       expect(order).not.toContain("start-b");
 
       // Release "a" so "b" can proceed
-      releaseMsgA!();
+      expect(releaseMsgA).toBeDefined();
+      if (releaseMsgA === undefined) throw new Error("releaseMsgA was not initialized");
+      releaseMsgA();
 
       // Wait for both to complete in order
       await waitFor(() => order.length === 4);
@@ -437,7 +472,9 @@ describe("MessageQueue", () => {
       expect(order).toEqual(["start-a"]);
 
       // Release "a"
-      releaseMsgA!();
+      expect(releaseMsgA).toBeDefined();
+      if (releaseMsgA === undefined) throw new Error("releaseMsgA was not initialized");
+      releaseMsgA();
 
       // Wait for both to complete
       await waitFor(() => order.length === 4);

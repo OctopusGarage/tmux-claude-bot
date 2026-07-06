@@ -24,7 +24,21 @@ describe("docs contract", () => {
 
   it(".env.example documents every supported config key", () => {
     // Legacy aliases are read as fallbacks but intentionally undocumented.
-    const LEGACY = new Set(["BOT_TOKEN", "ALLOWED_USER_IDS", "HTTP_PROXY"]);
+    const LEGACY = new Set([
+      "BOT_TOKEN",
+      "ALLOWED_USER_IDS",
+      "HTTP_PROXY",
+      "VOICE_TRANSLATE_MODE",
+      "VOICE_TRANSLATE_FROM",
+      "VOICE_TRANSLATE_TO",
+      "VOICE_TRANSLATE_TIMEOUT_MS",
+      "TELEGRAM_VOICE_TRANSLATE_MODE",
+      "TELEGRAM_VOICE_TRANSLATE_FROM",
+      "TELEGRAM_VOICE_TRANSLATE_TO",
+      "LARK_VOICE_TRANSLATE_MODE",
+      "LARK_VOICE_TRANSLATE_FROM",
+      "LARK_VOICE_TRANSLATE_TO",
+    ]);
     const example = read(".env.example");
     for (const key of Object.keys(envSchema.shape)) {
       if (LEGACY.has(key)) continue;

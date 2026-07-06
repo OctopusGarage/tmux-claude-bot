@@ -36,7 +36,11 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
 fi
 
 echo "[install-whisper] creating venv at $VENV_DIR"
-"$UV_BIN" venv "$VENV_DIR"
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  "$UV_BIN" venv "$VENV_DIR"
+else
+  echo "[install-whisper] reusing existing venv at $VENV_DIR"
+fi
 
 echo "[install-whisper] installing pinned requirements"
 "$UV_BIN" pip install --python "$VENV_DIR/bin/python" -r "$PROJECT_DIR/requirements.txt"

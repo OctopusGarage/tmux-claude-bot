@@ -127,7 +127,8 @@ describe("instance lock", () => {
       acquireInstanceLock();
       const ts = instanceStartedAt();
       expect(ts).not.toBeNull();
-      expect(Number.isNaN(new Date(ts!).getTime())).toBe(false);
+      if (ts === null) throw new Error("instanceStartedAt returned null");
+      expect(Number.isNaN(new Date(ts).getTime())).toBe(false);
     });
 
     it("returns null when no lock file exists", () => {

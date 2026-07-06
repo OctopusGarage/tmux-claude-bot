@@ -11,7 +11,7 @@ describe("requireSession", () => {
     expect(await requireSession(deps, 0)).toBeNull();
   });
 
-  it("returns null when the session has no tmux session", async () => {
+  it("returns null when the session has no backing managed session", async () => {
     const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => false) } });
     expect(await requireSession(deps, 0)).toBeNull();
   });

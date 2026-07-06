@@ -132,7 +132,7 @@ describe("handleQueuedCommand", () => {
   });
 
   it("runs 'tab' inline too (regression: telegram's immediate set once omitted tab)", async () => {
-    // tab is larkKind:"immediate" in the registry; telegram now derives its
+    // tab is queuePolicy:"immediate" in the registry; telegram now derives its
     // immediate set from there instead of a hardcoded list that had drifted.
     const ctx = fakeCtx();
     const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => true) } });

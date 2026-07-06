@@ -103,6 +103,14 @@ export interface AgentProfile {
     session: string,
     projectPath: string,
   ): Promise<number | null>;
+  /** Absolute transcript path for this session/project, when one can be resolved.
+   * Used by shared telemetry to combine profile-owned transcript resolution with
+   * the fs.watch activity source without leaking agent file layouts to callers. */
+  resolveTranscriptPath?(
+    resolver: ReadResolver,
+    session: string,
+    projectPath: string,
+  ): Promise<string | null>;
   /** /status body for a session: running state + this agent's usage/api lines. */
   buildStatusReport(
     deps: HandlerDeps,

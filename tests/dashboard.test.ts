@@ -6,6 +6,8 @@ import { projectPathToHistoryDir } from "../src/core/agents/claude/claude-histor
 import { AutopilotStore } from "../src/core/autopilot/state-store.js";
 import type { SessionRow } from "../src/core/dashboard/dashboard.js";
 import { buildDashboard } from "../src/core/dashboard/dashboard.js";
+import { setFreeProject } from "../src/core/projects/free-projects.js";
+import { bindGroup } from "../src/core/projects/group-bindings.js";
 import { setPathForSession } from "../src/core/projects/sessionPathMap.js";
 
 let stateDir: string | undefined;
@@ -33,7 +35,7 @@ function fakeDeps(over: Record<string, unknown> = {}) {
     // Default: an agent is up (so an idle pane reads as 🟡 idle, not ⏹ stopped).
     agent: { checkIfRunning: async () => true },
     queue: { size: () => 3 },
-    config: { telegramBotToken: "x", lark: undefined },
+    config: { telegramBotToken: "x", lark: undefined, projectSessionPrefix: "tmux_proj_" },
     ...over,
   } as never;
 }
@@ -54,12 +56,48 @@ describe("buildDashboard", () => {
     expect(typeof snap.global.version).toBe("string");
     expect(snap.generatedAt).toBeGreaterThan(0);
     const a = row(snap.sessions, "sess_a");
+    expect(a.sessionKind).toBe("regular");
+    expect(a.workspacePath).toBeNull();
+    expect(a.independentSlot).toBeNull();
+    expect(a.group).toBeNull();
     expect(a.kind).toBe("claude");
     expect(a.uptimeMs).toBeGreaterThan(0); // had a created time
     expect(a.apiMode).toBe("subscription");
     expect(typeof a.busy).toBe("boolean");
     expect(typeof a.cumulativeBusyMs).toBe("number");
     expect(row(snap.sessions, "sess_b").uptimeMs).toBe(0); // no created time
+  });
+
+  it("adds project/session metadata for independent sessions, workspace paths, and groups", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "tcb-dash-work-"));
+    setPathForSession("tmux_proj_free_2", workspace);
+    setFreeProject(2, { label: "parallel-docs" });
+    bindGroup("oc_dash", {
+      workspacePath: workspace,
+      sessionName: "tmux_proj_free_2",
+      label: "Dash Group",
+    });
+
+    const deps = fakeDeps({
+      bridge: {
+        listProjectSessions: async () => ["tmux_proj_free_2"],
+        sessionsCreatedAt: async () => new Map(),
+        capturePane: async () => "",
+      },
+      configResolver: {
+        detectAgentKind: async () => "codex",
+        resolveApiInfo: async () => null,
+        resolveCodexHome: async () => null,
+      },
+    });
+    const r = row((await buildDashboard(deps, { paneDiffMs: 0 })).sessions, "tmux_proj_free_2");
+
+    expect(r.kind).toBe("codex");
+    expect(r.label).toContain("parallel-docs");
+    expect(r.sessionKind).toBe("independent");
+    expect(r.independentSlot).toBe(2);
+    expect(r.workspacePath).toBe(workspace);
+    expect(r.group).toEqual({ chatId: "oc_dash", label: "Dash Group" });
   });
 
   it("marks a session busy from recent transcript activity (no bot task)", async () => {

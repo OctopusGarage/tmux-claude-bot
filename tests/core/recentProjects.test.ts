@@ -2,7 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const stateDir = process.env.TCB_STATE_DIR!;
+const stateDir = process.env.TCB_STATE_DIR;
+if (stateDir === undefined) throw new Error("TCB_STATE_DIR must be set for recentProjects tests");
 const file = path.join(stateDir, "recent_projects.txt");
 
 afterEach(() => {

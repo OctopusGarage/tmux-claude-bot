@@ -168,6 +168,8 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
 
   const agent = {
     checkIfRunning: vi.fn(async () => true),
+    waitUntilReady: vi.fn(async () => {}),
+    waitUntilInputReady: vi.fn(async () => {}),
     waitUntilDone: vi.fn(async () => ({ done: true, output: "done" })),
     start: vi.fn(async () => {}),
     ...overrides.agent,
