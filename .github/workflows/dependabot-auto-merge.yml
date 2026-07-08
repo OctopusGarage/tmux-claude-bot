@@ -1,29 +1,26 @@
 name: Dependabot auto-merge
 
-# Enable auto-merge on Dependabot PRs. GitHub then merges them automatically once
-# the required "verify" check (CI) passes. Only patch/minor updates auto-merge;
-# major bumps are left for manual review.
-on: pull_request_target
+on: pull_request
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  auto-merge:
-    if: github.actor == 'dependabot[bot]'
+  dependabot:
     runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
       - name: Fetch Dependabot metadata
-        id: meta
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Enable auto-merge for patch & minor updates
-        if: >-
-          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
-          steps.meta.outputs.update-type == 'version-update:semver-minor'
+      # Auto-merge all Dependabot updates that target the dev branch.
+      # Required CI status checks gate the merge.
+      - name: Enable auto-merge
+        if: github.event.pull_request.base.ref == 'dev'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
