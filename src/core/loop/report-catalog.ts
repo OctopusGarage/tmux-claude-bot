@@ -1,0 +1,74 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+export type LoopReportRecord = {
+  runId: string;
+  projectId: string;
+  projectName: string;
+  status: "passed" | "failed";
+  startedAt: number;
+  endedAt: number;
+  markdownPath: string;
+  summaryPath: string;
+};
+
+type LoopSupervisorReportSummary = {
+  runId: string;
+  project: {
+    id: string;
+    name: string;
+  };
+  status: string;
+  timestamps: {
+    startedAt: number;
+    endedAt: number;
+  };
+};
+
+export function listLoopReportRecords(root: string): LoopReportRecord[] {
+  if (!existsSync(root)) return [];
+  const records: LoopReportRecord[] = [];
+  for (const projectId of readdirSync(root)) {
+    const projectDir = join(root, projectId);
+    for (const runId of readdirSync(projectDir)) {
+      const record = readReportRecord(join(projectDir, runId));
+      if (record !== null) records.push(record);
+    }
+  }
+  return records.sort(
+    (a, b) => b.startedAt - a.startedAt || a.projectId.localeCompare(b.projectId),
+  );
+}
+
+function readReportRecord(dir: string): LoopReportRecord | null {
+  try {
+    return readCommandReportRecord(dir) ?? readSupervisorReportRecord(dir);
+  } catch {
+    return null;
+  }
+}
+
+function readCommandReportRecord(dir: string): LoopReportRecord | null {
+  const summaryPath = join(dir, "summary.json");
+  if (!existsSync(summaryPath)) return null;
+  const parsed = JSON.parse(readFileSync(summaryPath, "utf8")) as {
+    record?: LoopReportRecord;
+  };
+  return parsed.record ?? null;
+}
+
+function readSupervisorReportRecord(dir: string): LoopReportRecord | null {
+  const summaryPath = join(dir, "supervisor-summary.json");
+  if (!existsSync(summaryPath)) return null;
+  const supervisor = JSON.parse(readFileSync(summaryPath, "utf8")) as LoopSupervisorReportSummary;
+  return {
+    runId: supervisor.runId,
+    projectId: supervisor.project.id,
+    projectName: supervisor.project.name,
+    status: supervisor.status === "completed" ? "passed" : "failed",
+    startedAt: supervisor.timestamps.startedAt,
+    endedAt: supervisor.timestamps.endedAt,
+    markdownPath: join(dir, "supervisor.md"),
+    summaryPath,
+  };
+}

@@ -7,7 +7,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # shellcheck source=scripts/resolve-node.sh
 . "$SCRIPT_DIR/resolve-node.sh"
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 # State lives in the install dir's `state/` subdir, NOT the install dir itself:
 # the deploy re-mirrors the install dir with `rsync --delete` and would wipe any
 # state at the root (this is what erased group_bindings.json). `.env` lives there

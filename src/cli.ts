@@ -40,6 +40,10 @@ function runScript(file: string, args: string[] = []): never {
   process.exit(res.status ?? 1);
 }
 
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 const program = new Command();
 
 program
@@ -225,6 +229,19 @@ program
   .action(async (project, text, o) => (await ctl()).cmdSend(project, text, o));
 
 program
+  .command("notify [text...]")
+  .description("send a local notification through the configured Telegram/Feishu bot")
+  .option("--title <text>", "notification title")
+  .option("--body <text>", "notification body")
+  .option("--stdin", "read notification body from stdin")
+  .option("--channel <telegram|lark|both>", "target channel; default is every configured channel")
+  .option("--level <info|success|warning|error>", "notification level", "info")
+  .option("--source <name>", "source label, such as deploy or backup")
+  .option("--attach <file>", "attach a file to the notification; repeatable", collect, [])
+  .option("--json", "output JSON")
+  .action(async (text, o) => (await ctl()).cmdNotify(text ?? [], o));
+
+program
   .command("prompt-translate [args...]")
   .description(
     "view or change prompt translation for local control input: status | off | on [from] [to]",
@@ -257,7 +274,7 @@ program
 
 program
   .command("control <project> <action>")
-  .description("send a control action (esc|enter|interrupt|restart|clear|compact|…)")
+  .description("send a control action (esc|enter|interrupt|resume|restart|clear|compact|…)")
   .option("-y, --yes", "confirm dangerous control actions without prompting")
   .option("--json", "output JSON")
   .action(async (project, action, o) => (await ctl()).cmdControl(project, action, o));
@@ -468,6 +485,173 @@ batch
     const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
     stopRun(new SchedulerStore());
     console.log("run stopped");
+  });
+
+const loop = program.command("loop").description("validate Loop Engineering configs");
+
+loop
+  .command("validate <file>")
+  .description("validate a Loop Engineering YAML config without executing projects")
+  .option("--json", "output a machine-readable validation summary")
+  .action(async (file: string, o: { json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand(["validate", file, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+loop
+  .command("tick <file>")
+  .description("check due Loop Engineering projects without executing them")
+  .option(
+    "--now <time>",
+    "override current time for automation/testing (epoch ms or ISO timestamp)",
+  )
+  .option("--json", "output a machine-readable tick summary")
+  .action(async (file: string, o: { now?: string; json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand([
+      "tick",
+      file,
+      ...(o.now !== undefined ? ["--now", o.now] : []),
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+loop
+  .command("run <file> <projectId>")
+  .description("run a deterministic command-backed Loop Engineering project")
+  .option("--json", "output a machine-readable run summary")
+  .action(async (file: string, projectId: string, o: { json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand(["run", file, projectId, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+const loopReports = loop.command("reports").description("list Loop Engineering run reports");
+
+loopReports
+  .command("list")
+  .description("list recorded Loop Engineering run reports")
+  .option("--json", "output reports as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand(["reports", "list", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+const loopBacklog = loop.command("backlog").description("manage Loop Engineering backlog items");
+
+loopBacklog
+  .command("list")
+  .description("list Loop Engineering backlog items")
+  .option("--all", "include closed backlog items")
+  .option("--json", "output backlog items as JSON")
+  .action(async (o: { all?: boolean; json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand([
+      "backlog",
+      "list",
+      ...(o.all ? ["--all"] : []),
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+loopBacklog
+  .command("close <id>")
+  .description("close a Loop Engineering backlog item")
+  .option("--json", "output close result as JSON")
+  .action(async (id: string, o: { json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand(["backlog", "close", id, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+const loopSkills = loop
+  .command("skills")
+  .description("list, refresh, or sync the Loop Engineering skill registry");
+
+loopSkills
+  .command("list")
+  .description("list recorded Loop Engineering skills")
+  .option("--json", "output recorded skills as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand(["skills", "list", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+loopSkills
+  .command("sync <file>")
+  .description("reconcile approved Loop Engineering skills through skills.applyCommand")
+  .option("--json", "output a machine-readable sync summary")
+  .action(async (file: string, o: { json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand(["skills", "sync", file, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+loopSkills
+  .command("refresh <file>")
+  .description("resolve catalog skills to pinned approved refs")
+  .option("--write", "write refreshed approved skill refs back to the config file")
+  .option("--json", "output a machine-readable refresh summary")
+  .action(async (file: string, o: { write?: boolean; json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand([
+      "skills",
+      "refresh",
+      file,
+      ...(o.write ? ["--write"] : []),
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
   });
 
 program.parseAsync().catch((err) => {

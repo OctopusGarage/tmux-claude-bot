@@ -189,6 +189,78 @@ The project root directory name `tmux-claude-bot` is used as the process identit
   pause/resume) or pause the service first.
 - Commands exposed via Telegram Bot menu
 
+## Active Goal Discipline
+
+Do not turn a broad active goal into an endless opportunistic sweep. A broad
+goal must work in explicit, reviewable slices: define the slice, inspect current
+state, make only changes that directly prove that slice, run matching
+verification, commit or clean up, then stop after each slice to report the exact
+state before choosing the next slice.
+
+- Do not keep searching for "one more" unrelated coverage gap after a slice is
+  already verified.
+- Do not preserve useful-looking opportunistic edits just because they are real
+  bugs; if they were not part of the current slice, clean them up or defer them
+  explicitly.
+- Clean up or revert opportunistic changes before restarting the goal loop.
+- If the active goal state is paused, stale, or unclear, say that plainly and
+  restart from a current-state audit rather than assuming momentum is progress.
+
+## AI Capability Boundary
+
+This project orchestrates existing agent runtimes (Claude Code, Codex, and their
+managed tmux sessions). Do not implement bot-owned AI behavior by writing code
+or scripts that call model-provider APIs directly. It must not grow separate
+direct model-provider integrations for product AI behavior, autonomous judging,
+or evals.
+
+AI work is active-agent-only: if a feature needs AI reasoning, it must reuse the
+currently running Claude Code / Codex capability that this bot manages. The
+acceptable implementations are queueing work into an existing project session,
+using existing agent goal runners, or talking to the running bot/agent
+control surface. Do not add a second model transport, even for a quick eval,
+prototype, smoke check, or helper script.
+
+This is not a model-client application. For autonomous evals, smoke checks, or
+other AI-backed work, the bot should ask the already-running agent surface
+instead of adding a separate provider-client path.
+Historical names such as `aiEval` describe the quality gate/report field only;
+they do not authorize a new script, helper, or module to call model-provider APIs.
+
+- Do not add source, scripts, smoke tests, docs, or `.env.example` entries that
+  call OpenAI, Anthropic, Gemini/Google, or other LLM/model HTTP APIs directly.
+- Do not ship helper scripts that instantiate model SDK clients (`OpenAI`,
+  `Anthropic`, `GoogleGenerativeAI`, `GoogleGenAI`, etc.), add AI SDK provider
+  packages, or call provider `/v1/*` endpoints for bot-owned AI behavior.
+- Do not introduce new model API key env vars for bot-owned features unless the
+  user explicitly approves an architecture change first.
+- Do not create temporary or example scripts that bypass this boundary for
+  convenience; prototypes, smoke tests, and eval helpers follow the same rule.
+- AI-backed work must route through the currently running agent capability:
+  managed project sessions, the queue, existing goal runners, or a
+  command that talks to the running bot/agent control surface. Local deterministic
+  checks and schema-validating command contracts are fine.
+- If a feature needs AI judgment, reuse the active Claude Code / Codex session
+  already managed by this bot. Do not create a parallel provider-client path just
+  because a shell script or helper command would be easy to write.
+- `eval.command`, assessment/execution commands, smoke helpers, and scripts are
+  command-contract boundaries, not model-integration points. They may run local
+  deterministic checks or adapters to the running bot/agent control surface. If
+  their result depends on AI judgment, that judgment must come from the active
+  Claude Code / Codex session already managed by this project.
+- Treat any bot-owned OpenAI/Anthropic/LLM provider SDK client, HTTP helper
+  script, or provider-key based eval path as an architectural regression: remove
+  it or replace it with an agent-backed/control-surface adapter.
+- If a shell command needs AI judgment, make it a deterministic contract wrapper
+  or an adapter that talks to the running bot/agent control surface; do not make
+  the script own model credentials or provider transport.
+- If an implementation idea requires `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `GEMINI_API_KEY`, a provider SDK, or a provider HTTP endpoint, stop and redesign
+  it around the currently running Claude Code / Codex capability unless the user
+  explicitly approves changing this architecture.
+- Reading an existing agent CLI's local auth/config state for status display is
+  allowed when it does not make a model request.
+
 ## Logging
 
 All code logs via `createLogger("<area>.<file>")` exported from

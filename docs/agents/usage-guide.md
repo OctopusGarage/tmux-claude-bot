@@ -58,6 +58,10 @@ can bind a **group per project** so switching groups = switching projects (no `/
 **Re-run a past input** → `/inputs` (chat) lists recent inputs, tap one to re-run; in
 the TUI press `u`.
 
+**Accidentally exited the agent** → use the idle **Resume** button or `/resume` in the
+current project. It relaunches the last recorded agent flavor and exact conversation
+id for that project. Use `/start` only when they want a fresh agent session.
+
 **See what the agent is doing** → `/peek` (a snapshot of the session pane), `/history`
 (recent rounds). In the TUI it's the live right-pane; `a` drops into the real session pane.
 
@@ -80,6 +84,22 @@ re-run input, `a` attach to the real session pane, `q` quit, `?` for all keys. D
 session, busy/idle, queue, version); `/sysload` or `tcb sysload` (machine load, heat,
 runaway processes); `/logs` or `tcb logs`; `tcb doctor` (install health).
 
+**Let another local project send notifications** → call `tcb notify` from that
+project. It uses the running bot's local control socket and configured Telegram /
+Feishu owner targets; the caller does not need chat credentials or SDKs. Example:
+`tcb notify --source deploy --level error --title "Deploy failed" --body "api health check failed"`.
+Use `--stdin` for multi-line bodies. Use repeatable `--attach <file>` for owner
+notification files, for example:
+`tcb notify --source radar --title "Radar ready" --body "Daily report attached" --attach report.md --attach report.html`.
+
+**Schedule recurring Loop Engineering maintenance** → create a Loop config and set
+`LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml`. Default projects use the
+deterministic system runner. For adaptive AI-managed scheduled work, enable the
+reserved supervisor with `LOOP_SUPERVISOR_ENABLED=true` and set a project
+`runner.kind: agent-supervised`; the bot queues a bounded WorkOrder to the
+`tmux_proj_loop-supervisor` session and writes `supervisor.md` /
+`supervisor-summary.json` under `loop-runs/<project>/<runId>/`.
+
 **Restart the bot / deploy code changes** → it's a managed service, so restart via the
 manager: `tcb service restart` (or `launchctl kickstart -k …` / `systemctl --user
 restart tmux-claude-bot`). To pick up SOURCE changes, deploy a fresh build:
@@ -88,7 +108,8 @@ rebuild.
 
 **Recover after a reboot** → agents that were running before a reboot are relaunched
 automatically on boot; to do it on demand use `/recover` (chat) / `R` (TUI) / `tcb
-recover`.
+recover`. This is host-wide; for one accidentally exited current project use
+`/resume`.
 
 ---
 
@@ -98,16 +119,19 @@ recover`.
   table with descriptions in [commands.md](../commands.md). Diagnostics (`/dashboard`,
   `/sysload`, `/logs`, `/doctor`) are owner-only (Feishu: 1:1 chat only).
 - **CLI — drive the bot from the shell** (this is what you, the AI, run; the bot must
-  be running, every command takes a project by name + `--json`):
+  be running; project-driving commands take a project by name + `--json`):
   - `tcb sessions` / `tcb projects` — list running sessions / all projects.
+  - `tcb notify --title "<title>" --body "<body>" [--attach <file>]...` — send a local
+    owner notification through Telegram/Feishu without receiving chat messages.
   - `tcb send <project> "<prompt>"` — send a prompt; **waits for the reply** and prints
     it (`--no-wait` to fire-and-forget, `--timeout <s>`). This is your main verb.
   - `tcb peek <project>` — snapshot its pane · `tcb open <project>` — switch to / start
-    a project · `tcb control <project> <esc|enter|restart|…>` — a control key
+    a project · `tcb control <project> <esc|enter|resume|restart|…>` — a control key
     (`--yes` is required for dangerous actions in scripts).
 - **CLI — admin**: `run` · `setup` / `setup:lark` · `doctor` · `dashboard` · `sysload`
-  · `tui` · `recover` · `logs` · `install` · `service <install|uninstall|status|pause|
-  resume|restart|logs>`. (`npm run dev|tui|doctor|service:*` for dev.)
+  · `tui` · `recover` · `logs` · `install` ·
+  `service <install|uninstall|status|pause|resume|restart|logs>`.
+  (`npm run dev|tui|doctor|service:*` for dev.)
 - **TUI keys**: see [tui.md](../tui.md).
 
 ---

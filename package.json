@@ -58,6 +58,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --exclude '**/tmux-live.test.ts' --exclude '**/composer-pty.test.ts'",
+    "smoke": "scripts/smoke.sh",
     "knip": "knip",
     "depcruise": "depcruise src --config .dependency-cruiser.cjs",
     "lint:deep": "eslint src",

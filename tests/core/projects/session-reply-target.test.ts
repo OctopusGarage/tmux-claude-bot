@@ -41,4 +41,16 @@ describe("session reply target", () => {
     clearReplyTarget("s1");
     expect(resolveReplyTarget("s1")).toBeNull();
   });
+
+  it("falls back to the bound Lark group after clearing a stored target", () => {
+    vi.mocked(bindingForSession).mockReturnValue({
+      chatId: "oc_group",
+      binding: { workspacePath: "/w", sessionName: "s1", label: "x" },
+    });
+    recordReplyTarget("s1", { channel: "telegram", chatId: "123" });
+
+    clearReplyTarget("s1");
+
+    expect(resolveReplyTarget("s1")).toEqual({ channel: "lark", chatId: "oc_group" });
+  });
 });

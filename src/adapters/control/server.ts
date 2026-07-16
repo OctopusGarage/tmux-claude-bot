@@ -283,6 +283,19 @@ async function handleRequest(
         ok({ body: formatPromptTranslateCommandResult(status), status });
         return;
       }
+      case "notify":
+        ok(
+          await deps.notifications.notify({
+            title: req.title,
+            ...(req.body !== undefined ? { body: req.body } : {}),
+            ...(req.channel !== undefined ? { channel: req.channel } : {}),
+            ...(req.level !== undefined ? { level: req.level } : {}),
+            ...(req.source !== undefined ? { source: req.source } : {}),
+            ...(req.session !== undefined ? { session: req.session } : {}),
+            ...(req.attachments !== undefined ? { attachments: req.attachments } : {}),
+          }),
+        );
+        return;
       case "autopilot": {
         const status = applyAutopilotVerb(
           new AutopilotStore(),

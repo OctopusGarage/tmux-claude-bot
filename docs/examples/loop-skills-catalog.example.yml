@@ -1,0 +1,73 @@
+skills:
+  applyCommand: ./scripts/sync-agent-skill.sh
+  catalog:
+    - id: brooks-lint
+      sourceUrl: https://github.com/hyhmrright/brooks-lint
+      sourcePath: .
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [architecture, audit]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+    - id: improve-codebase-architecture
+      sourceUrl: https://github.com/mattpocock/skills
+      sourcePath: skills/engineering/improve-codebase-architecture
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [architecture, refactor]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+    - id: code-review
+      sourceUrl: https://github.com/mattpocock/skills
+      sourcePath: skills/engineering/code-review
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [review, quality]
+      trustLevel: approved
+      risk: low
+      updatePolicy: notify
+    - id: production-code-audit
+      sourceUrl: https://github.com/sickn33/agentic-awesome-skills
+      sourcePath: skills/production-code-audit
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [production, audit]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+    - id: codebase-audit-pre-push
+      sourceUrl: https://github.com/sickn33/agentic-awesome-skills
+      sourcePath: skills/codebase-audit-pre-push
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [pre-push, audit]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+    - id: production-audit
+      sourceUrl: https://github.com/affaan-m/everything-claude-code
+      sourcePath: skills/production-audit
+      trackingRef: production-audit
+      platforms: [claude, codex]
+      tags: [production, reliability]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+  approved: []
+
+projects:
+  - id: example-project
+    name: Example Project
+    path: /path/to/project
+    agent: codex
+    goal: Improve codebase quality in small, verified, reviewable slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run loop-assess
+    execution:
+      agent: true
+    allowedActions: [tests, docs, small-refactor]
+    blockedActions: [direct-model-api, dependency-upgrade, broad-rewrite]

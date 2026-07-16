@@ -9,7 +9,7 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
 # shellcheck source=scripts/resolve-node.sh
 . "$SCRIPT_DIR/resolve-node.sh"
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 PROD_DIR="${TMUX_CLAUDE_BOT_DIR:-$HOME/.tmux-claude-bot}"
 if [ -f "$PROD_DIR/state/.env" ]; then

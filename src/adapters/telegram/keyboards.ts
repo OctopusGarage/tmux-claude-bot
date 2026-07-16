@@ -11,10 +11,8 @@ import {
 import { isMessageAction, type MessageAction } from "../../core/command/actions.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { BrowseAction, BrowseView } from "../../core/projects/dir-browser.js";
-import {
-  type ProjectPickerLikeRow,
-  projectPickerPrimaryAction,
-} from "../../core/projects/project-session-picker.js";
+import type { ProjectPickerLikeRow } from "../../core/projects/project-session-picker.js";
+import { projectSessionPrimaryIntent } from "../../core/projects/project-session-surface.js";
 import type { PromptsView } from "../../core/promptlib/view.js";
 import {
   checkPromptTranslateSupport,
@@ -468,6 +466,7 @@ export function buildIdleKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
   return new InlineKeyboard()
     .text(m.btnStart, encodeControlAction("start", sid))
+    .text(m.btnResume, encodeControlAction("resume", sid))
     .row()
     .text(m.btnProjects, "la")
     .text(m.btnRecover, "rcv");
@@ -530,11 +529,10 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
 export function buildProjectKeyboard(projects: ProjectButton[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const p of projects) {
-    if (projectPickerPrimaryAction(p) !== "switch-session") {
-      kb.text(`${UI_ICONS.tone.ok} ${p.label}`, "noop").row();
-    } else {
-      kb.text(`${UI_ICONS.project.switch} ${p.label}`, `s:${p.sid}`).row();
-    }
+    const intent = projectSessionPrimaryIntent(p);
+    if (intent.kind === "switch")
+      kb.text(`${UI_ICONS.project.switch} ${p.label}`, `s:${intent.sid}`).row();
+    else kb.text(`${UI_ICONS.tone.ok} ${p.label}`, "noop").row();
   }
   kb.text(messages("telegram").btnNewFree, "nf").row();
   return kb.text(messages("telegram").btnDeleteMode, "dm");
@@ -645,10 +643,11 @@ export function buildInputsKeyboard(prompts: string[], token: string): InlineKey
 export function buildRecentKeyboard(projects: RecentButton[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   projects.forEach((p, i) => {
-    const action = projectPickerPrimaryAction(p);
-    if (action === "switch-session") kb.text(`${UI_ICONS.project.switch} ${p.label}`, `s:${p.sid}`);
-    else if (action === "create-session")
-      kb.text(`${UI_ICONS.project.create} ${p.label}`, `g:${p.sid}`);
+    const intent = projectSessionPrimaryIntent(p);
+    if (intent.kind === "switch")
+      kb.text(`${UI_ICONS.project.switch} ${p.label}`, `s:${intent.sid}`);
+    else if (intent.kind === "create")
+      kb.text(`${UI_ICONS.project.create} ${p.label}`, `g:${intent.sid}`);
     else kb.text(`${UI_ICONS.tone.ok} ${p.label}`, "noop");
     if (i < projects.length - 1) kb.row();
   });

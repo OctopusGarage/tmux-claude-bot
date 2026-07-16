@@ -31,6 +31,10 @@ function canonicalize(p: string): string {
 // project dir — the store's mtime-keyed cache picks up those foreign writes.
 const store = new JsonMapStore<string>("session_path_map.json");
 
+type SessionExistenceProbe = {
+  hasSession(sessionName: string): Promise<boolean>;
+};
+
 export function getPathBySession(sessionName: string): string | null {
   return store.get(sessionName) ?? null;
 }
@@ -47,7 +51,26 @@ export function clearPathForSession(sessionName: string): void {
 
 export function sessionNameFromPath(projectPath: string, prefix: string): string {
   const absPath = nodePath.resolve(projectPath);
-  return prefix + absPath.replace(/\//g, "-");
+  return sanitizeTmuxSessionName(prefix + absPath.replace(/\//g, "-"));
+}
+
+/** Keep generated names safe inside tmux target strings (`session:window.pane`).
+ * Legacy versions only replaced `/`, so hidden dirs such as `.alcove` could
+ * derive a session name different from the one created by managed launchers. */
+export function sanitizeTmuxSessionName(sessionName: string): string {
+  return sessionName.replace(/[.:]/g, "_");
+}
+
+/** Resolve a persisted/generated session name to the live tmux session.
+ * This self-heals legacy dotted names while still preferring an exact live hit. */
+export async function resolveLiveSessionName(
+  bridge: SessionExistenceProbe,
+  sessionName: string,
+): Promise<string | null> {
+  if (await bridge.hasSession(sessionName)) return sessionName;
+  const safe = sanitizeTmuxSessionName(sessionName);
+  if (safe !== sessionName && (await bridge.hasSession(safe))) return safe;
+  return null;
 }
 
 export function isCdAllowed(targetPath: string, allowed: readonly string[]): boolean {

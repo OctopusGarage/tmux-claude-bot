@@ -1,6 +1,7 @@
 import type { AgentKind } from "../../shared/types.js";
 import type { HandlerDeps } from "../deps.js";
-import { readSessionTelemetry, SHORT_ACTIVITY_WINDOW_MS } from "../session/session-telemetry.js";
+import { SHORT_ACTIVITY_WINDOW_MS } from "../session/session-telemetry.js";
+import { readAgentActivitySnapshot } from "./activity-snapshot.js";
 
 /** A transcript written within this window means the agent is actively working.
  * Slightly above the runner's 5s idle window to bridge brief think gaps. */
@@ -28,7 +29,7 @@ export async function inspectAgentActivity(
   session: string,
   boundPath: string | null,
 ): Promise<AgentActivityStatus> {
-  const telemetry = await readSessionTelemetry(deps, session, {
+  const activity = await readAgentActivitySnapshot(deps, session, {
     boundPath,
     activityWindowMs: TRANSCRIPT_IDLE_MS,
     includePathDrift: true,
@@ -38,9 +39,9 @@ export async function inspectAgentActivity(
   });
 
   return {
-    agentKind: telemetry.agentKind,
-    agentRunning: telemetry.agentRunning,
-    agentBusy: telemetry.busy,
-    pathDrifted: telemetry.pathDrifted,
+    agentKind: activity.kind,
+    agentRunning: activity.running,
+    agentBusy: activity.busy,
+    pathDrifted: activity.pathDrifted,
   };
 }

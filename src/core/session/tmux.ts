@@ -19,6 +19,7 @@ export type WriteFileLike = (file: string, data: string) => Promise<void>;
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_SUBMIT_SETTLE_MS = 50;
+let sendBufferCounter = 0;
 
 function defaultExecFile(file: string, args: string[], options?: { timeout?: number }) {
   return execFileAsync(file, args, { timeout: options?.timeout });
@@ -26,6 +27,11 @@ function defaultExecFile(file: string, args: string[], options?: { timeout?: num
 
 function isSafeClientTty(path: string): boolean {
   return /^\/dev\/[A-Za-z0-9._/-]+$/.test(path);
+}
+
+function nextSendBufferName(): string {
+  sendBufferCounter += 1;
+  return `tcb-send-${process.pid}-${Date.now()}-${sendBufferCounter}`;
 }
 
 export class TmuxBridge {
@@ -68,6 +74,14 @@ export class TmuxBridge {
     return sessionName !== undefined ? Promise.resolve(sessionName) : this.getSessionName();
   }
 
+  private async cancelCopyMode(target: string): Promise<void> {
+    try {
+      await this.execFile("tmux", ["send-keys", "-t", target, "-X", "cancel"], { timeout: 10000 });
+    } catch {
+      // tmux returns "not in a mode" when the pane is already accepting keys.
+    }
+  }
+
   async isPaneAlive(sessionName?: string): Promise<boolean> {
     try {
       const target = await this.formatTarget(sessionName);
@@ -81,33 +95,35 @@ export class TmuxBridge {
   }
 
   /**
-   * Type `text` into the pane line by line, submitting after each line.
+   * Paste `text` as one prompt, then submit once.
    *
-   * The text content is sent with `-l` (literal) so tmux types it verbatim instead
-   * of interpreting a token as a key name — a line that happens to equal "Up",
-   * "Enter", "Tab" or "C-c" must be typed, not pressed. The newline is a separate
-   * un-flagged `C-m` submit key, matching the explicit Enter action. Codex's TUI
-   * can ignore a submit sent in the same tick as literal text, so text lines get
-   * a short settle window before submit. For named keys use `sendRawKey`.
+   * Text goes through a tmux buffer so embedded newlines remain prompt content
+   * instead of being interpreted as Enter. The final `C-m` is the single submit.
+   * For named keys or raw Enter use `sendRawKey`.
    */
   async sendKeys(text: string, sessionName?: string): Promise<void> {
     const target = await this.formatTarget(sessionName);
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const isLastLine = i === lines.length - 1;
-      const line = lines[i];
-      if (line) {
-        await this.execFile("tmux", ["send-keys", "-t", target, "-l", line], { timeout: 10000 });
-      }
-      if (line || isLastLine) {
-        if (line && this.submitSettleMs > 0) await this.sleep(this.submitSettleMs);
-        await this.execFile("tmux", ["send-keys", "-t", target, "C-m"], { timeout: 10000 });
+    await this.cancelCopyMode(target);
+    const bufferName = nextSendBufferName();
+    try {
+      await this.execFile("tmux", ["set-buffer", "-b", bufferName, text], { timeout: 10000 });
+      await this.execFile("tmux", ["paste-buffer", "-p", "-b", bufferName, "-t", target], {
+        timeout: 10000,
+      });
+      if (this.submitSettleMs > 0) await this.sleep(this.submitSettleMs);
+      await this.execFile("tmux", ["send-keys", "-t", target, "C-m"], { timeout: 10000 });
+    } finally {
+      try {
+        await this.execFile("tmux", ["delete-buffer", "-b", bufferName], { timeout: 10000 });
+      } catch {
+        // Best-effort cleanup; a send failure should surface as the original error.
       }
     }
   }
 
   async sendRawKey(key: string, sessionName?: string): Promise<void> {
     const target = await this.formatTarget(sessionName);
+    await this.cancelCopyMode(target);
     await this.execFile("tmux", ["send-keys", "-t", target, key], { timeout: 10000 });
   }
 

@@ -58,4 +58,23 @@ describe("sendLarkAttachment", () => {
     expect(types).toContain("file");
     expect(types).toContain("text"); // caption sent as a separate text message
   });
+
+  it("can send owner notification files to an open_id target", async () => {
+    const c = fakeClient();
+    await sendLarkAttachment(
+      c as never,
+      "ou_owner",
+      "/r.html",
+      "file",
+      undefined,
+      () => "STREAM",
+      "open_id",
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const msg = (c.im.v1.message.create.mock.calls as any[][])[0]?.[0] as any;
+    expect(msg.params).toEqual({ receive_id_type: "open_id" });
+    expect(msg.data.receive_id).toBe("ou_owner");
+    expect(msg.data.msg_type).toBe("file");
+  });
 });

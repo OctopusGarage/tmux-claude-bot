@@ -1,0 +1,55 @@
+import type { LarkChannel } from "@larksuiteoapi/node-sdk";
+import { renderNotice } from "../../core/autopilot/notifier.js";
+import type { HandlerDeps } from "../../core/deps.js";
+import { messages } from "../../core/i18n/index.js";
+import { boundLarkGroupForSession } from "../../core/notifications/target-resolver.js";
+import { autopilotGateCard } from "./cards.js";
+import { type LarkMediaClient, sendLarkAttachment } from "./media.js";
+import { sendText } from "./replies.js";
+import { clientFor, notifyLarkOwner, notifyLarkOwnerCard } from "./resource.js";
+
+type LarkConfig = NonNullable<HandlerDeps["config"]["lark"]>;
+
+export function registerLarkNotifications(
+  deps: HandlerDeps,
+  cfg: LarkConfig,
+  channel: LarkChannel,
+): void {
+  deps.notifier.register((notice) =>
+    notice.kind === "awaitHuman"
+      ? notifyLarkOwnerCard(cfg, autopilotGateCard(notice.session))
+      : notifyLarkOwner(cfg, renderNotice(notice, messages("lark"))),
+  );
+
+  if ([...cfg.allowedOpenIds][0] !== undefined) {
+    deps.notifications.register("lark", async (message, req) => {
+      const target = boundLarkGroupForSession(req?.session);
+      if (target) {
+        await sendText(channel, target.chatId, message);
+        return;
+      }
+      await notifyLarkOwner(cfg, message);
+    });
+    deps.notifications.registerAttachment("lark", (filePath, kind, caption) =>
+      sendLarkAttachment(
+        clientFor(cfg) as unknown as LarkMediaClient,
+        [...cfg.allowedOpenIds][0] ?? "",
+        filePath,
+        kind,
+        caption,
+        undefined,
+        "open_id",
+      ),
+    );
+  }
+
+  deps.channelSenders.register("lark", (chatId, filePath, kind, caption) =>
+    sendLarkAttachment(
+      clientFor(cfg) as unknown as LarkMediaClient,
+      chatId,
+      filePath,
+      kind,
+      caption,
+    ),
+  );
+}

@@ -264,6 +264,35 @@ binding management:
 Restore uses the group binding as the source of truth. It re-anchors the group's
 current session pointer and recreates the project session if needed.
 
+## Notification Targets
+
+Notification routing is a project/session concern, not an adapter-local choice.
+`src/core/notifications/target-resolver.ts` owns the channel-selection policy for
+proactive notifications:
+
+- no registered channels: do not notify
+- session with a bound Lark project group and Lark enabled: prefer Lark
+- otherwise use the most recent owner channel when known
+- otherwise fan out to both registered channels
+- when a primary channel fails, fall back to the other registered channel
+
+The Lark adapter still owns the final Lark delivery detail: a Lark notification
+with a bound session is sent to that group's chat; otherwise it is sent to the
+owner. Adapter startup should register senders, not reimplement target policy.
+
+## Queue Observers
+
+`MessageQueue` owns scheduling, ordering, deduplication, persistence, and
+readiness gating. Cross-cutting effects that happen around a session task belong
+behind `QueueObserver`:
+
+- task timing for dashboards and long-task monitoring
+- recording the latest chat target for a session
+
+Keep new queue-adjacent side effects out of `MessageQueue` unless they are part
+of scheduling itself. Add them to the observer boundary or a new collaborator so
+the queue remains testable as a protocol-neutral scheduler.
+
 ## Naming Rules
 
 Use these names consistently:

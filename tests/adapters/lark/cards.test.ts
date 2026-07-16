@@ -176,7 +176,7 @@ describe("viewCard", () => {
 
   it("idle (running=false): swaps control keys for start/projects/recover/help", () => {
     const card = cardOf(viewCard("👁 会话画面", "pane body", false, false));
-    expect(allCmds(card)).toEqual(["start", "listalive", "recover", "help"]);
+    expect(allCmds(card)).toEqual(["start", "resume", "listalive", "recover", "help"]);
     expect(allCmds(card)).not.toContain("esc"); // no dead control keys when idle
   });
 });
@@ -347,7 +347,7 @@ describe("helpCard", () => {
     expect(card.header?.title?.content).toBe("使用帮助");
 
     expect(allCmds(card)).toEqual([
-      // Session rows (canonical control order: interrupts → lifecycle → nav → start/status)
+      // Session rows (canonical control order: interrupts → lifecycle → nav → start/resume/status)
       "esc",
       "enter",
       "interrupt",
@@ -361,6 +361,7 @@ describe("helpCard", () => {
       "right",
       "tab",
       "start",
+      "resume",
       "status",
       // Projects / views (unchanged in this stage)
       "dashboard",

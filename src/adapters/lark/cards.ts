@@ -11,11 +11,11 @@ import {
 import type { MessageAction } from "../../core/command/actions.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { BrowseView } from "../../core/projects/dir-browser.js";
+import type { ProjectPickerLikeRow } from "../../core/projects/project-session-picker.js";
 import {
-  type ProjectPickerLikeRow,
-  projectPickerHasAction,
-  projectPickerPrimaryAction,
-} from "../../core/projects/project-session-picker.js";
+  canCreateExistingIndependentGroup,
+  projectSessionPrimaryIntent,
+} from "../../core/projects/project-session-surface.js";
 import { formatProjectSummaryItem } from "../../core/projects/project-summary-view.js";
 import type { PromptsView } from "../../core/promptlib/view.js";
 import {
@@ -240,7 +240,10 @@ function controlRows(group = false, running = true): ButtonSpec[][] {
   if (!running) {
     // Idle: no agent — offer launch / navigation instead of dead control keys.
     return [
-      [{ text: m.btnStart, value: { cmd: "start" }, style: "primary" }],
+      [
+        { text: m.btnStart, value: { cmd: "start" }, style: "primary" },
+        { text: m.btnResume, value: { cmd: "resume" }, style: "primary" },
+      ],
       group
         ? [
             { text: m.btnCurrent, value: { cmd: "current" } },
@@ -311,6 +314,7 @@ export function recoveryCard(body: string, group = false, title = UI_ICONS.tone.
     HR,
     gridRow([
       { text: m.btnStart, value: { cmd: "start" }, style: "primary" },
+      { text: m.btnResume, value: { cmd: "resume" }, style: "primary" },
       { text: m.btnExit, value: { cmd: "exit" } },
     ]),
     ...controlActions(group),
@@ -523,16 +527,17 @@ function listCard<P extends { label: string; statusLine?: string; path?: string 
 export function projectListCard(projects: ProjectButton[], group = false): object {
   const m = messages("lark");
   return listCard(m.aliveListTitle(projects.length), m.aliveListEmpty, projects, (p) => {
-    if (projectPickerPrimaryAction(p) !== "switch-session") {
+    const intent = projectSessionPrimaryIntent(p);
+    if (intent.kind !== "switch") {
       const btns: ButtonSpec[] = [{ text: m.btnActiveMarker, value: { cmd: "noop" } }];
-      if (!group && projectPickerHasAction(p, "create-existing-independent-group")) {
+      if (!group && canCreateExistingIndependentGroup(p)) {
         btns.push({ text: m.btnMakeGroup, value: { cmd: "makefreeprojectgroup", sid: p.sid } });
       }
       return gridRow(btns);
     }
     if (group) return null;
-    const btns: ButtonSpec[] = [{ text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } }];
-    if (projectPickerHasAction(p, "create-existing-independent-group")) {
+    const btns: ButtonSpec[] = [{ text: m.btnSwitch, value: { cmd: "switch", sid: intent.sid } }];
+    if (canCreateExistingIndependentGroup(p)) {
       btns.push({ text: m.btnMakeGroup, value: { cmd: "makefreeprojectgroup", sid: p.sid } });
     }
     btns.push({ text: m.btnRemove, value: { cmd: "remove", sid: p.sid }, style: "danger" });
@@ -545,13 +550,14 @@ export function projectListCard(projects: ProjectButton[], group = false): objec
 export function recentListCard(projects: RecentButton[], group = false): object {
   const m = messages("lark");
   return listCard(m.recentListTitle, m.recentListEmpty, projects, (p) => {
-    const action = projectPickerPrimaryAction(p);
-    if (!action) return gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]);
+    const intent = projectSessionPrimaryIntent(p);
+    if (intent.kind === "inert")
+      return gridRow([{ text: m.btnActiveMarker, value: { cmd: "noop" } }]);
     if (group) return null; // read-only in a group: switching/creating is private-chat-only
-    if (action === "switch-session") {
-      return gridRow([{ text: m.btnSwitch, value: { cmd: "switch", sid: p.sid } }]);
+    if (intent.kind === "switch") {
+      return gridRow([{ text: m.btnSwitch, value: { cmd: "switch", sid: intent.sid } }]);
     }
-    return gridRow([{ text: m.btnCreate, value: { cmd: "addrecent", sid: p.sid } }]);
+    return gridRow([{ text: m.btnCreate, value: { cmd: "addrecent", sid: intent.sid } }]);
   });
 }
 
@@ -777,6 +783,7 @@ export function autopilotGoalPickerCard(view: AutopilotView, session: string): o
     const spec: ButtonSpec = {
       text: g.selected ? `✓ ${g.title}` : g.title,
       value: { cmd: "ap_goal_toggle", s: session, id: g.id },
+      ...(g.skills.length > 0 ? { hoverText: `${g.title} · skill: ${g.skills.join(", ")}` } : {}),
     };
     if (i % 2 === 0) goalRows.push([spec]);
     else goalRows.at(-1)?.push(spec);

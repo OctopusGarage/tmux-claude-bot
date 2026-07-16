@@ -158,6 +158,8 @@ function fakeProbe(over: Partial<TakeoverProbe>): TakeoverProbe {
     openSessionFile: async () => null,
     readProcEnv: async () => "",
     readShellRc: async () => "",
+    ttyOf: async () => null,
+    resetTerminal: async () => {},
     isAlive: async () => false,
     signal: () => {},
     sleep: async () => {},

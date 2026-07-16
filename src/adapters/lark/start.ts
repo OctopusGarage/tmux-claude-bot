@@ -5,17 +5,16 @@ import {
   type LarkChannelOptions,
   LoggerLevel,
 } from "@larksuiteoapi/node-sdk";
-import { renderNotice } from "../../core/autopilot/notifier.js";
+import { restorePersistedChannel } from "../../core/command/queue-restore.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { makeCardActionHandler } from "./card-actions.js";
-import { autopilotGateCard } from "./cards.js";
 import { createLarkRestoredMessage } from "./executor.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
-import { type LarkMediaClient, sendLarkAttachment } from "./media.js";
-import { clientFor, notifyLarkOwner, notifyLarkOwnerCard } from "./resource.js";
+import { registerLarkNotifications } from "./notifications.js";
+import { notifyLarkOwner } from "./resource.js";
 
 const log = createLogger("lark.start");
 
@@ -83,14 +82,14 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
   // Restore this channel's persisted backlog so a bot restart doesn't drop
   // queued Lark messages (parity with Telegram). Each adapter restores + drops
   // ONLY its own channel, so a Telegram+Lark deployment loses neither side.
-  let restored = 0;
-  for (const p of deps.queue.loadPersisted()) {
-    if (p.channel !== "lark") continue;
-    deps.queue.enqueue(createLarkRestoredMessage(p, channel));
-    restored++;
-  }
-  deps.queue.clearPersistedChannel("lark");
-  if (restored > 0) log.info("queue restored", { channel: "lark", data: { restored } });
+  const restored = restorePersistedChannel({
+    channel: "lark",
+    loadPersisted: () => deps.queue.loadPersisted(),
+    enqueue: (message) => deps.queue.enqueue(message),
+    keepPersistedCarryover: (messages) => deps.queue.keepPersistedCarryover(messages),
+    restore: (message) => createLarkRestoredMessage(message, channel),
+  });
+  if (restored.restored > 0) log.info("queue restored", { channel: "lark", data: restored });
   // App-level WS watchdog — catches half-open sockets after laptop sleep /
   // network flaps that the SDK's own reconnect loop can miss. Ticks are
   // no-ops until connect() initializes the WS client.
@@ -102,23 +101,7 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
       await channel.connect();
     },
   });
-  // Register the Lark owner as the proactive-notification channel so the
-  // autopilot (and any other notifier.broadcast caller) can DM the owner.
-  deps.notifier.register((notice) =>
-    notice.kind === "awaitHuman"
-      ? notifyLarkOwnerCard(cfg, autopilotGateCard(notice.session))
-      : notifyLarkOwner(cfg, renderNotice(notice, messages("lark"))),
-  );
-
-  deps.channelSenders.register("lark", (chatId, filePath, kind, caption) =>
-    sendLarkAttachment(
-      clientFor(cfg) as unknown as LarkMediaClient,
-      chatId,
-      filePath,
-      kind,
-      caption,
-    ),
-  );
+  registerLarkNotifications(deps, cfg, channel);
 
   channel
     .connect()

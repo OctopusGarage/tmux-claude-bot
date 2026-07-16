@@ -53,8 +53,10 @@ const GOALS: Goal[] = [
       {
         id: "review",
         intent: {
-          kind: "prompt",
-          text: "Review the current diff/branch for correctness bugs and quality issues — use your code-review skill if one is available. List each confirmed finding with its file and a one-line description, then output the marker [REVIEW_DONE].",
+          kind: "skill",
+          name: "code-review",
+          fallback:
+            "Review the current diff/branch for correctness bugs and quality issues. List each confirmed finding with its file and a one-line description, then output the marker [REVIEW_DONE].",
         },
         done: { kind: "sentinel", marker: "REVIEW_DONE" },
       },
@@ -155,8 +157,10 @@ const GOALS: Goal[] = [
       {
         id: "audit",
         intent: {
-          kind: "prompt",
-          text: "Comprehensively review the whole project module by module — use your improve-codebase-architecture skill if one is available. Identify unreasonable designs, missing component extractions, and quality issues, plus any suspected hidden bugs. Write the findings to a markdown plan (one section per module; each item with a recommendation). When the audit is complete, output the marker [AUDIT_DONE].",
+          kind: "skill",
+          name: "improve-codebase-architecture",
+          fallback:
+            "Comprehensively review the whole project module by module. Identify unreasonable designs, missing component extractions, and quality issues, plus any suspected hidden bugs. Write the findings to a markdown plan (one section per module; each item with a recommendation). When the audit is complete, output the marker [AUDIT_DONE].",
         },
         done: { kind: "sentinel", marker: "AUDIT_DONE" },
       },

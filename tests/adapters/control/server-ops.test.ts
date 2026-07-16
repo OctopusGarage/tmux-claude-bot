@@ -91,6 +91,12 @@ function fakeDeps(
     },
     activity: { onActivity: () => () => {} },
     notifier: new NotifierRegistry(),
+    notifications: {
+      notify: vi.fn(async () => ({
+        status: "sent",
+        deliveries: [{ channel: "telegram", ok: true }],
+      })),
+    },
     currentProject: { set: vi.fn(async () => {}) },
   } as unknown as HandlerDeps;
 }
@@ -140,6 +146,50 @@ describe("control server op dispatch (real unix socket)", () => {
     expect(await c.logs("sX")).toBe("LOGTEXT");
     expect(await c.sysload()).toBe("SYSLOAD");
     expect(await c.inputs("sX")).toEqual(["input-a", "input-b"]);
+  });
+
+  it("routes notify through the notification gateway", async () => {
+    const deps = fakeDeps();
+    const c = await connected(deps);
+
+    await expect(
+      c.notify({
+        channel: "both",
+        level: "warning",
+        source: "backup",
+        title: "Backup slow",
+        body: "database dump took 12m\nretry scheduled",
+        session: "tmux_proj_api",
+      }),
+    ).resolves.toEqual({
+      status: "sent",
+      deliveries: [{ channel: "telegram", ok: true }],
+    });
+    expect(deps.notifications.notify).toHaveBeenCalledWith({
+      channel: "both",
+      level: "warning",
+      source: "backup",
+      title: "Backup slow",
+      body: "database dump took 12m\nretry scheduled",
+      session: "tmux_proj_api",
+    });
+  });
+
+  it("routes notify attachments through the notification gateway", async () => {
+    const deps = fakeDeps();
+    const c = await connected(deps);
+
+    await c.notify({
+      channel: "lark",
+      title: "Radar ready",
+      attachments: [{ path: "/tmp/report.md" }, { path: "/tmp/report.html" }],
+    });
+
+    expect(deps.notifications.notify).toHaveBeenCalledWith({
+      channel: "lark",
+      title: "Radar ready",
+      attachments: [{ path: "/tmp/report.md" }, { path: "/tmp/report.html" }],
+    });
   });
 
   it("logs op returns 'no session' when the filter is empty", async () => {

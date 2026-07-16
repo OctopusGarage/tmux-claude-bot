@@ -1,5 +1,6 @@
 import type { AgentKind } from "../../shared/types.js";
 import { appVersion } from "../../shared/version.js";
+import { readAgentActivitySnapshot } from "../agents/activity-snapshot.js";
 import { AutopilotStore } from "../autopilot/state-store.js";
 import type { HandlerDeps } from "../deps.js";
 import { instanceStartedAt } from "../infra/instance-lock.js";
@@ -10,8 +11,7 @@ import { projectLabel } from "../projects/project-label.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
 import { PANE_DIFF_MS } from "../session/pane-activity.js";
-import { readSessionTelemetry, SESSION_ACTIVITY_WINDOW_MS } from "../session/session-telemetry.js";
-import { cumulativeBusyMs as cumulativeBusyMsOf, currentTask } from "../session/task-timing.js";
+import { SESSION_ACTIVITY_WINDOW_MS } from "../session/session-telemetry.js";
 
 /** A transcript written within this window counts the session as actively
  * working. Generous so brief gaps between streamed writes don't flip to idle;
@@ -40,6 +40,11 @@ export type SessionRow = {
   running: boolean;
   busy: boolean;
   taskMs?: number;
+  task?: {
+    key: string;
+    startedAt: number;
+    source: "queue" | "transcript";
+  };
   cumulativeBusyMs: number;
   uptimeMs: number;
   usage: UsageSnapshot | null;
@@ -96,12 +101,10 @@ async function gatherRow(
       ? freeLabel(independentSlot, getFreeProject(independentSlot), projectPath)
       : projectLabel(session, projectPath ?? undefined);
 
-  const ct = currentTask(session, now);
-  const cumulativeBusyMs = cumulativeBusyMsOf(session, now);
   const createdAt = created.get(session);
   const uptimeMs = createdAt !== undefined ? Math.max(0, now - createdAt * 1000) : 0;
 
-  const telemetry = await readSessionTelemetry(deps, session, {
+  const activity = await readAgentActivitySnapshot(deps, session, {
     boundPath: projectPath,
     now,
     activityWindowMs: ACTIVITY_WINDOW_MS,
@@ -109,25 +112,10 @@ async function gatherRow(
     includeQueue: false,
     includePaneAnimation: true,
     includeUsage: projectPath !== null,
-    includeCurrentTurn: true,
   });
   // Best-effort like the usage/apiMode reads below; default to "claude" (matching
   // the persisted-map default) if the live/resolved kind probe fails.
-  const kind = telemetry.agentKind ?? ("claude" as AgentKind);
-  const usage = telemetry.usage;
-
-  // Busy = the bot is driving a task OR telemetry saw recent transcript activity
-  // OR telemetry's pane-animation fallback detected movement.
-  const busy = ct.busy || telemetry.transcriptBusy || telemetry.paneAnimating;
-  const running = telemetry.agentRunning;
-
-  // How long the current task has run. Bot-driven tasks have a precise tracked
-  // start (ct.sinceMs); for a desktop-driven busy session derive it from the
-  // transcript — the newest round's timestamp is when this turn (the current
-  // task) started. Only read the transcript when busy without a bot timer.
-  let taskMs = ct.sinceMs;
-  if (busy && taskMs === undefined && telemetry.currentTurnStartedAt !== null)
-    taskMs = Math.max(0, now - telemetry.currentTurnStartedAt);
+  const kind = activity.kind ?? ("claude" as AgentKind);
 
   const apiMode = (await deps.configResolver.resolveApiInfo?.(session).catch(() => null))?.mode;
 
@@ -151,12 +139,13 @@ async function gatherRow(
     independentSlot,
     group: groupBinding ? { chatId: groupBinding.chatId, label: groupBinding.binding.label } : null,
     kind,
-    running,
-    busy,
-    ...(taskMs !== undefined && { taskMs }),
-    cumulativeBusyMs,
+    running: activity.running,
+    busy: activity.busy,
+    ...(activity.taskMs !== undefined && { taskMs: activity.taskMs }),
+    ...(activity.task && { task: activity.task }),
+    cumulativeBusyMs: activity.cumulativeBusyMs,
     uptimeMs,
-    usage,
+    usage: activity.usage,
     ...(apiMode !== undefined && { apiMode }),
     ...(autopilot && { autopilot }),
     ...(operatorFlag && { operator: true }),

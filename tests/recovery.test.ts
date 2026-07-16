@@ -108,6 +108,41 @@ describe("recoverProjects", () => {
     fs.rmSync(codexHome, { recursive: true, force: true });
   });
 
+  it("parses a quoted codex home when recovering the last recorded codex model", async () => {
+    const codexHome = fs.mkdtempSync(join(os.tmpdir(), "tcb recover codex home "));
+    const rolloutDir = join(codexHome, "sessions", "2026", "07", "06");
+    fs.mkdirSync(rolloutDir, { recursive: true });
+    fs.writeFileSync(
+      join(rolloutDir, "rollout-2026-07-06T00-00-00-uuid-quoted.jsonl"),
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: { id: "uuid-quoted", cwd: realDir },
+        }),
+        JSON.stringify({
+          type: "turn_context",
+          payload: { cwd: realDir, model: "gpt-5.3" },
+        }),
+      ].join("\n"),
+    );
+    setPathForSession("tmux_proj_codex_quoted", realDir);
+    markSessionRunning("tmux_proj_codex_quoted");
+    setAgentKind("tmux_proj_codex_quoted", "codex");
+    setStartCommand("tmux_proj_codex_quoted", `CODEX_HOME="${codexHome}" codex --model gpt-5.5`);
+    recordLiveSessionId("tmux_proj_codex_quoted", "uuid-quoted");
+    const deps = recoverDeps({ paneAlive: false });
+
+    await recoverProjects(deps, { staggerMs: 0 });
+
+    expect(deps.agent.startWithResume).toHaveBeenCalledWith(
+      "tmux_proj_codex_quoted",
+      "uuid-quoted",
+      `CODEX_HOME="${codexHome}" codex --model gpt-5.3`,
+    );
+
+    fs.rmSync(codexHome, { recursive: true, force: true });
+  });
+
   it("leaves an alive session whose agent is running untouched (idempotent)", async () => {
     setPathForSession("tmux_proj_c", realDir);
     markSessionRunning("tmux_proj_c");
@@ -239,12 +274,16 @@ describe("recoverProjects", () => {
     expect(res.launched.map((i) => i.session)).toEqual(["tmux_proj_h2"]);
   });
 
-  it("never recovers the operator session, even when marked running with a path", async () => {
-    // Operator is marked running (as would happen if startOperator ran before a
-    // restart) and has a recorded path — generic recovery must leave it alone.
+  it("never recovers infrastructure sessions, even when marked running with paths", async () => {
+    // Infrastructure sessions are marked running when their agents start and can
+    // have recorded paths, but generic recovery must leave them to their boot
+    // provisioners.
     setPathForSession("tmux_proj_home", realDir);
     markSessionRunning("tmux_proj_home");
     setStartCommand("tmux_proj_home", "claude --dangerously-skip-permissions");
+    setPathForSession("tmux_proj_loop-supervisor", realDir);
+    markSessionRunning("tmux_proj_loop-supervisor");
+    setStartCommand("tmux_proj_loop-supervisor", "codex --yolo");
     // A real user project alongside it — to confirm the operator filter doesn't
     // drop everything.
     setPathForSession("tmux_proj_real", realDir);
@@ -256,9 +295,18 @@ describe("recoverProjects", () => {
 
     const sessionNames = res.launched.map((i) => i.session);
     expect(sessionNames).not.toContain("tmux_proj_home");
+    expect(sessionNames).not.toContain("tmux_proj_loop-supervisor");
     expect(sessionNames).toContain("tmux_proj_real");
-    // No createSession/start calls for the operator
+    // No createSession/start calls for infrastructure sessions.
     expect(deps.bridge.createSession).not.toHaveBeenCalledWith("tmux_proj_home", expect.anything());
     expect(deps.agent.start).not.toHaveBeenCalledWith("tmux_proj_home", expect.anything());
+    expect(deps.bridge.createSession).not.toHaveBeenCalledWith(
+      "tmux_proj_loop-supervisor",
+      expect.anything(),
+    );
+    expect(deps.agent.start).not.toHaveBeenCalledWith(
+      "tmux_proj_loop-supervisor",
+      expect.anything(),
+    );
   });
 });

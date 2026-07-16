@@ -61,6 +61,28 @@ describe("BoundedSessionMap", () => {
     expect(new BoundedSessionMap<string>({ max: 10, file: file() }).resolve("om_x")).toBe("sess");
   });
 
+  it("enforces the entry cap when loading an oversized backing file", () => {
+    fs.writeFileSync(
+      file(),
+      JSON.stringify([
+        [1, "oldest"],
+        [2, "middle"],
+        [3, "newest"],
+      ]),
+      "utf-8",
+    );
+
+    const m = new BoundedSessionMap<number>({ max: 2, file: file() });
+
+    expect(m.resolve(1)).toBeUndefined();
+    expect(m.resolve(2)).toBe("middle");
+    expect(m.resolve(3)).toBe("newest");
+    expect(JSON.parse(fs.readFileSync(file(), "utf-8"))).toEqual([
+      [2, "middle"],
+      [3, "newest"],
+    ]);
+  });
+
   it("a corrupt backing file resets to empty (no throw) and stays usable", () => {
     fs.writeFileSync(file(), "{ not json", "utf-8");
     const m = new BoundedSessionMap<number>({ max: 10, file: file() });

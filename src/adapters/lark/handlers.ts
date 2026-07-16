@@ -3,6 +3,7 @@ import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
 import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
 import { formatGoalsList } from "../../core/autopilot/goals/goals-view.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
+import { planMessageAction } from "../../core/command/action-plan.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { createSubfolder, isAwaitingFolderName } from "../../core/projects/dir-browser.js";
@@ -25,9 +26,9 @@ import { parsePeekLines } from "../../core/session/output.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
-import { autopilotPanelCard, browseCard, helpCard } from "./cards.js";
+import { autopilotPanelCard, browseCard, helpCard, startPickerCard } from "./cards.js";
 import { isGroupMgmtCommand, isRecoveryCommand, parseLarkInput } from "./commands.js";
-import { enqueueLarkAction, runImmediateLarkAction } from "./executor.js";
+import { enqueueLarkAction, resolveSession, runImmediateLarkAction } from "./executor.js";
 import {
   handleBind,
   handleNewFreeGroup,
@@ -78,6 +79,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         log.info(`drop message from non-allowlisted open_id=${msg.senderId || "?"}`);
         return;
       }
+      deps.ownerActivity.record("lark");
 
       const isP2p = msg.chatType === "p2p";
       if (!isP2p && !isProjectGroup(msg.chatId)) {
@@ -195,30 +197,62 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
           );
           break;
 
-        case "command":
-          if (parsed.immediate) {
+        case "command": {
+          const commandSession =
+            parsed.action === "start" || parsed.action === "restart"
+              ? await resolveSession(
+                  channel,
+                  deps,
+                  msg.chatId,
+                  replySession,
+                  msg.chatType === "p2p",
+                )
+              : undefined;
+          const planned = await planMessageAction({
+            deps,
+            action: parsed.action,
+            text: text.trim(),
+            confirmed: true,
+            session: commandSession,
+          });
+          if (planned.kind === "already-running") {
+            await sendText(channel, msg.chatId, messages("lark").agentAlreadyRunning);
+            break;
+          }
+          if (planned.kind === "pick-start-command") {
+            await sendCard(
+              channel,
+              msg.chatId,
+              startPickerCard(deps.config.startCommands, planned.action),
+            );
+            break;
+          }
+          if (planned.kind === "no-session" || planned.kind === "unsupported") break;
+
+          if (planned.kind === "immediate") {
             await runImmediateLarkAction(
               channel,
               deps,
               msg.chatId,
               msg.messageId,
-              parsed.action,
+              planned.action,
               replySession,
               msg.chatType === "p2p",
             );
-          } else {
+          } else if (planned.kind === "queued") {
             await enqueueLarkAction(
               channel,
               deps,
               msg.chatId,
               msg.messageId,
-              parsed.action,
-              text.trim(),
-              replySession,
+              planned.action,
+              planned.text,
+              commandSession ?? replySession,
               msg.chatType === "p2p",
             );
           }
           break;
+        }
 
         case "view":
           switch (parsed.name) {
@@ -415,21 +449,6 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               if (msg.chatType === "p2p") await sendPrompts(channel, deps, msg.chatId, parsed.arg);
               break;
           }
-          break;
-
-        case "unknown":
-          // No "/" command discovery on Feishu — show the full button menu so an
-          // unknown command isn't a dead end.
-          await sendText(channel, msg.chatId, messages("lark").unknownCommand(parsed.name));
-          await sendCard(
-            channel,
-            msg.chatId,
-            helpCard(
-              isProjectGroup(msg.chatId),
-              isVoiceInstallable(),
-              isPromptTranslateInstallable(),
-            ),
-          );
           break;
 
         case "text":

@@ -73,6 +73,7 @@ export const ja: Messages = {
   btnTab: "⇥ Tab",
   btnStatus: "📊 状態",
   btnStart: "🚀 起動",
+  btnResume: "🔄 再開",
   btnExit: `${UI_ICONS.action.exit} 終了`,
   btnPeek: "👁 peek",
   btnHistory: "📜 履歴",
@@ -149,10 +150,14 @@ export const ja: Messages = {
     `✅ 接続コマンドは「PC」のクリップボードにコピー済みです（スマホ側でコピーする必要はありません）。PC に戻ったらターミナルに貼り付けて Enter を押すだけで入れます。この手順は任意です。\nコマンド: ${cmd}`,
 
   doneShort: "完了",
-  agentNotRunningRestart: "実行されていません · /restart で起動してください",
+  agentNotRunningRestart:
+    "実行されていません · /resume で復元、または /start で新規開始してください",
   contentTruncated: "...(内容が長すぎるため省略しました)",
   agentEmptyOutput: "出力が空です · /peek で画面を確認",
   agentStarted: "✅ 起動しました",
+  agentResumed: "🔄 前回のセッションを復元しました",
+  agentResumeMissingState:
+    "復元できる前回セッションの状態がありません。/start で新規開始してください。",
   agentAlreadyRunning: "✅ すでに実行中です（再起動は不要）",
   agentStartedWith: (label) => `✅ 「${label}」で起動しました`,
   startPickerTitle: "🚀 起動方法を選択",
@@ -352,6 +357,7 @@ export const ja: Messages = {
   cmdExit: "終了",
   cmdStatus: "状態を確認",
   cmdStart: "エージェントを起動",
+  cmdResume: "前回のエージェントセッションを復元",
   cmdDoctor: "インストールのヘルスチェックを実行",
   cmdRecover: "再起動後に全プロジェクトを復元",
   cmdStatusInstall: "/status 用の使用状況レポートを設定",

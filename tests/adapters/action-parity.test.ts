@@ -60,7 +60,10 @@ describe("Telegram routes each registry action by its kind (behavioral)", () => 
   for (const action of queued) {
     it(`enqueues queued '${action}'`, async () => {
       const ctx = fakeCtx();
-      const deps = fakeDeps();
+      const deps =
+        action === "start"
+          ? fakeDeps({ agent: { checkIfRunning: vi.fn(async () => false) } })
+          : fakeDeps();
       await handleQueuedCommand(ctx, deps, action as MessageAction);
       expect(deps.queue.enqueued).toHaveLength(1);
     });

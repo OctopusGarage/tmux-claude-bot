@@ -7,6 +7,7 @@ import { formatGoalsList } from "../../core/autopilot/goals/goals-view.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
 import { buildHelpBody, getTelegramActions } from "../../core/command/action-registry.js";
 import { startDisposition } from "../../core/command/dispatch.js";
+import { restorePersistedChannel } from "../../core/command/queue-restore.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
 import { formatDashboardForChat } from "../../core/dashboard/dashboard-view.js";
 import type { HandlerDeps } from "../../core/deps.js";
@@ -99,16 +100,15 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   // Restore this channel's persisted backlog on boot. Drop ONLY the Telegram
   // channel — Lark restores + drops its own in startLark, so a Telegram+Lark
   // deployment loses neither side's queue regardless of which starts first.
-  const persisted = deps.queue.loadPersisted();
-  if (persisted.length > 0) {
-    let restored = 0;
-    for (const p of persisted) {
-      if (p.channel === "lark") continue; // Lark restores its own (startLark)
-      deps.queue.enqueue(createRestoredMessage(p, bot));
-      restored++;
-    }
-    deps.queue.clearPersistedChannel("telegram"); // legacy no-channel entries count as telegram
-    if (restored > 0) log.info("queue restored", { channel: "telegram", data: { restored } });
+  const restored = restorePersistedChannel({
+    channel: "telegram",
+    loadPersisted: () => deps.queue.loadPersisted(),
+    enqueue: (message) => deps.queue.enqueue(message),
+    keepPersistedCarryover: (messages) => deps.queue.keepPersistedCarryover(messages),
+    restore: (message) => createRestoredMessage(message, bot),
+  });
+  if (restored.restored > 0) {
+    log.info("queue restored", { channel: "telegram", data: restored });
   }
 
   bot.command("lang", async (ctx) => {

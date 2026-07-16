@@ -1,7 +1,10 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
 import { vi } from "vitest";
+import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
+import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
+import { ChannelSenderRegistry } from "../../../src/core/projects/channel-sender.js";
 
 /**
  * Shared fakes for the Lark adapter orchestration tests. They record observable
@@ -91,6 +94,7 @@ type DepsOverrides = {
   output?: Partial<HandlerDeps["output"]>;
   configResolver?: Partial<HandlerDeps["configResolver"]>;
   activity?: Partial<HandlerDeps["activity"]>;
+  ownerActivity?: Partial<HandlerDeps["ownerActivity"]>;
   /** Override the default current session ("proj-1"); pass null for "none". */
   session?: string | null;
   /** Override the default allowed open ids (default {"ou_me"}). */
@@ -208,6 +212,12 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     ...overrides.activity,
   } as unknown as HandlerDeps["activity"];
 
+  const ownerActivity = {
+    record: vi.fn(),
+    recent: vi.fn(() => undefined),
+    ...overrides.ownerActivity,
+  } as unknown as HandlerDeps["ownerActivity"];
+
   return {
     bridge,
     queue,
@@ -217,6 +227,10 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     currentProject,
     configResolver,
     activity,
+    notifier: new NotifierRegistry(),
+    notifications: new NotificationGateway(),
+    ownerActivity,
+    channelSenders: new ChannelSenderRegistry(),
   } as FakeDeps;
 }
 

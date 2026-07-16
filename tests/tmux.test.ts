@@ -24,6 +24,10 @@ function createMockExecFile(results: {
           return results.listPanes ?? { stdout: "", stderr: "" };
         case "send-keys":
           return results.sendKeys ?? { stdout: "", stderr: "" };
+        case "set-buffer":
+        case "paste-buffer":
+        case "delete-buffer":
+          return { stdout: "", stderr: "" };
         case "capture-pane":
           return results.capturePane ?? { stdout: "", stderr: "" };
         case "has-session":
@@ -130,26 +134,51 @@ describe("TmuxBridge", () => {
   });
 
   describe("sendKeys", () => {
-    it("sends single line literally (-l) and submits with C-m", async () => {
+    it("pastes single-line text and submits with one C-m", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("echo hello");
-      expect(mockExecFile).toHaveBeenCalledTimes(2);
+      expect(mockExecFile).toHaveBeenCalledTimes(5);
       expect(mockExecFile).toHaveBeenNthCalledWith(
         1,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "echo hello"],
+        ["send-keys", "-t", "tmux_proj_test:0.0", "-X", "cancel"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
         2,
         "tmux",
+        ["set-buffer", "-b", expect.stringMatching(/^tcb-send-/), "echo hello"],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        3,
+        "tmux",
+        [
+          "paste-buffer",
+          "-p",
+          "-b",
+          expect.stringMatching(/^tcb-send-/),
+          "-t",
+          "tmux_proj_test:0.0",
+        ],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        4,
+        "tmux",
         ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        5,
+        "tmux",
+        ["delete-buffer", "-b", expect.stringMatching(/^tcb-send-/)],
         { timeout: 10000 },
       );
     });
 
-    it("waits briefly after literal text before submitting", async () => {
+    it("waits briefly after paste before submitting", async () => {
       const sleeps: number[] = [];
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({
@@ -165,14 +194,14 @@ describe("TmuxBridge", () => {
 
       expect(sleeps).toEqual([50]);
       expect(mockExecFile).toHaveBeenNthCalledWith(
-        2,
+        4,
         "tmux",
         ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
     });
 
-    it("does not wait before a raw newline submit with no literal text", async () => {
+    it("preserves newline-only text instead of treating it as a raw Enter", async () => {
       const sleeps: number[] = [];
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({
@@ -186,57 +215,11 @@ describe("TmuxBridge", () => {
 
       await bridge.sendKeys("\n");
 
-      expect(sleeps).toEqual([]);
-      expect(mockExecFile).toHaveBeenCalledWith(
-        "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
-        { timeout: 10000 },
-      );
-    });
-
-    it("types text literally with -l so a line equal to a tmux key name is not interpreted", async () => {
-      // Regression: without -l, `send-keys -t target Up` presses the Up ARROW key
-      // instead of typing the word "Up". A user prompt line that happens to equal a
-      // key name (Up/Enter/Tab/C-c) would be silently swallowed/misinterpreted.
-      mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
-      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      await bridge.sendKeys("Up");
-      expect(mockExecFile).toHaveBeenNthCalledWith(
-        1,
-        "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "Up"],
-        { timeout: 10000 },
-      );
+      expect(sleeps).toEqual([50]);
       expect(mockExecFile).toHaveBeenNthCalledWith(
         2,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
-        { timeout: 10000 },
-      );
-    });
-
-    it("sends multiple lines sequentially with C-m after each", async () => {
-      mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
-      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      await bridge.sendKeys("line1\nline2\nline3");
-      // Each non-empty line gets content + C-m; last line also gets C-m
-      expect(mockExecFile).toHaveBeenCalledTimes(6);
-      expect(mockExecFile).toHaveBeenNthCalledWith(
-        1,
-        "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "line1"],
-        { timeout: 10000 },
-      );
-      expect(mockExecFile).toHaveBeenNthCalledWith(
-        2,
-        "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
-        { timeout: 10000 },
-      );
-      expect(mockExecFile).toHaveBeenNthCalledWith(
-        3,
-        "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "line2"],
+        ["set-buffer", "-b", expect.stringMatching(/^tcb-send-/), "\n"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
@@ -245,54 +228,110 @@ describe("TmuxBridge", () => {
         ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
+    });
+
+    it("pastes text literally so a prompt equal to a tmux key name is not interpreted", async () => {
+      // Regression: without -l, `send-keys -t target Up` presses the Up ARROW key
+      // instead of typing the word "Up". A user prompt line that happens to equal a
+      // key name (Up/Enter/Tab/C-c) would be silently swallowed/misinterpreted.
+      mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+      await bridge.sendKeys("Up");
       expect(mockExecFile).toHaveBeenNthCalledWith(
-        5,
+        2,
         "tmux",
-        ["send-keys", "-t", "tmux_proj_test:0.0", "-l", "line3"],
+        ["set-buffer", "-b", expect.stringMatching(/^tcb-send-/), "Up"],
         { timeout: 10000 },
       );
       expect(mockExecFile).toHaveBeenNthCalledWith(
-        6,
+        4,
         "tmux",
         ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
     });
 
-    it("skips empty lines but still sends C-m on last iteration", async () => {
+    it("pastes multiple lines as one prompt and submits once", async () => {
+      mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+      await bridge.sendKeys("line1\nline2\nline3");
+      expect(mockExecFile).toHaveBeenCalledTimes(5);
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        1,
+        "tmux",
+        ["send-keys", "-t", "tmux_proj_test:0.0", "-X", "cancel"],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        2,
+        "tmux",
+        ["set-buffer", "-b", expect.stringMatching(/^tcb-send-/), "line1\nline2\nline3"],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        3,
+        "tmux",
+        [
+          "paste-buffer",
+          "-p",
+          "-b",
+          expect.stringMatching(/^tcb-send-/),
+          "-t",
+          "tmux_proj_test:0.0",
+        ],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        4,
+        "tmux",
+        ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
+        { timeout: 10000 },
+      );
+    });
+
+    it("preserves empty lines inside the prompt", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("line1\n\nline2");
-      // Split gives ["line1", "", "line2"], length=3
-      // i=0: line="line1" truthy -> send-keys, C-m
-      // i=1: line="" falsy -> skip (no C-m, not last line)
-      // i=2: line="line2" truthy, isLastLine=true -> send-keys, C-m
-      expect(mockExecFile).toHaveBeenCalledTimes(4);
+      expect(mockExecFile).toHaveBeenCalledTimes(5);
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        2,
+        "tmux",
+        ["set-buffer", "-b", expect.stringMatching(/^tcb-send-/), "line1\n\nline2"],
+        { timeout: 10000 },
+      );
     });
 
-    it("handles single newline - sends C-m only", async () => {
+    it("preserves a single newline as prompt text and submits once", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("\n");
-      // Split gives [""], length=1
-      // i=0: line="" falsy, isLastLine=true -> send C-m
-      expect(mockExecFile).toHaveBeenCalledTimes(1);
-      expect(mockExecFile).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledTimes(5);
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        2,
+        "tmux",
+        ["set-buffer", "-b", expect.stringMatching(/^tcb-send-/), "\n"],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        4,
         "tmux",
         ["send-keys", "-t", "tmux_proj_test:0.0", "C-m"],
         { timeout: 10000 },
       );
     });
 
-    it("handles whitespace-only lines as non-empty", async () => {
+    it("preserves whitespace-only lines inside the prompt", async () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendKeys("line1\n   \nline2");
-      // Split: ["line1", "   ", "line2"], length=3
-      // i=0: "line1" truthy -> send-keys, C-m
-      // i=1: "   " truthy -> send-keys, C-m
-      // i=2: "line2" truthy, isLastLine=true -> send-keys, C-m
-      expect(mockExecFile).toHaveBeenCalledTimes(6);
+      expect(mockExecFile).toHaveBeenCalledTimes(5);
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        2,
+        "tmux",
+        ["set-buffer", "-b", expect.stringMatching(/^tcb-send-/), "line1\n   \nline2"],
+        { timeout: 10000 },
+      );
     });
   });
 
@@ -301,8 +340,15 @@ describe("TmuxBridge", () => {
       mockExecFile = createMockExecFile({ sendKeys: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await bridge.sendRawKey("C-c");
-      expect(mockExecFile).toHaveBeenCalledTimes(1);
-      expect(mockExecFile).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledTimes(2);
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        1,
+        "tmux",
+        ["send-keys", "-t", "tmux_proj_test:0.0", "-X", "cancel"],
+        { timeout: 10000 },
+      );
+      expect(mockExecFile).toHaveBeenNthCalledWith(
+        2,
         "tmux",
         ["send-keys", "-t", "tmux_proj_test:0.0", "C-c"],
         { timeout: 10000 },

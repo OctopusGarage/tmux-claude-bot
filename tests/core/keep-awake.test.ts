@@ -5,7 +5,17 @@ vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
 import { startKeepAwake, stopKeepAwake } from "../../src/core/platform/keep-awake.js";
 
-const fakeChild = () => ({ on: vi.fn(), kill: vi.fn() });
+const fakeChild = () => {
+  const handlers = new Map<string, (...args: unknown[]) => void>();
+  return {
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      handlers.set(event, handler);
+      return undefined;
+    }),
+    kill: vi.fn(),
+    emit: (event: string, ...args: unknown[]) => handlers.get(event)?.(...args),
+  };
+};
 const origPlatform = process.platform;
 const setPlatform = (p: string): void => {
   Object.defineProperty(process, "platform", { value: p, configurable: true });
@@ -52,5 +62,47 @@ describe("keep-awake", () => {
     startKeepAwake(true);
     stopKeepAwake();
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("allows a later retry when spawning caffeinate throws", () => {
+    setPlatform("darwin");
+    const child = fakeChild();
+    spawnMock.mockImplementationOnce(() => {
+      throw new Error("caffeinate missing");
+    });
+    spawnMock.mockReturnValueOnce(child);
+
+    startKeepAwake(true);
+    startKeepAwake(true);
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(child.on).toHaveBeenCalledWith("error", expect.any(Function));
+    expect(child.on).toHaveBeenCalledWith("exit", expect.any(Function));
+  });
+
+  it("allows a later retry after the caffeinate child emits error", () => {
+    setPlatform("darwin");
+    const first = fakeChild();
+    const second = fakeChild();
+    spawnMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
+
+    startKeepAwake(true);
+    first.emit("error", new Error("spawn failed"));
+    startKeepAwake(true);
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows a later retry after the caffeinate child exits", () => {
+    setPlatform("darwin");
+    const first = fakeChild();
+    const second = fakeChild();
+    spawnMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
+
+    startKeepAwake(true);
+    first.emit("exit");
+    startKeepAwake(true);
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
   });
 });

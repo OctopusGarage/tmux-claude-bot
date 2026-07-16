@@ -94,6 +94,24 @@ describe("statuslineScript / manualSnippet", () => {
       expect(out).toContain("█"); // progress bar rendered
     },
   );
+
+  it.skipIf(!hasShellTools)("renders reset_at fallbacks for session and weekly windows", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-sl-"));
+    const f = join(dir, "statusline.sh");
+    writeFileSync(f, statuslineScript(dir), { mode: 0o755 });
+    const input = JSON.stringify({
+      model: { display_name: "Opus 4.8" },
+      context_window: { used_percentage: 42 },
+      rate_limits: {
+        session: { used_percentage: 61, reset_at: 1781503200 },
+        weekly: { used_percentage: 12, reset_at: 1782075600 },
+      },
+    });
+    const out = execFileSync("bash", ["-c", `printf %s '${input}' | '${f}'`]).toString();
+    expect(out).toContain("session 61%");
+    expect(out).toContain("weekly 12%");
+    expect(out).not.toContain("(reset ?)");
+  });
 });
 
 describe("runStatusInstall", () => {

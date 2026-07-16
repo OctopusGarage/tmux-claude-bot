@@ -67,22 +67,22 @@ describe("getImmediateActions", () => {
 
   it("does not include queued actions", () => {
     const set = getImmediateActions();
-    for (const a of ["start", "restart", "exit"] as const) {
+    for (const a of ["start", "resume", "restart", "exit"] as const) {
       expect(set.has(a), `${a} should not be in IMMEDIATE`).toBe(false);
     }
   });
 });
 
 describe("getQueuedActions", () => {
-  it("includes start, restart, exit", () => {
+  it("includes start, resume, restart, exit", () => {
     const set = getQueuedActions();
-    for (const a of ["start", "restart", "exit"] as const) {
+    for (const a of ["start", "resume", "restart", "exit"] as const) {
       expect(set.has(a), `expected ${a} in QUEUED`).toBe(true);
     }
   });
 
   it("exposes queued actions without naming a specific adapter", () => {
-    expect([...getQueuedActions()].sort()).toEqual(["exit", "restart", "start"]);
+    expect([...getQueuedActions()].sort()).toEqual(["exit", "restart", "resume", "start"]);
   });
 });
 
@@ -127,6 +127,7 @@ describe("canonical control rows", () => {
     const all = HELP_SESSION_ROWS.flat();
     expect(all).toContain("tab");
     expect(all).toContain("start");
+    expect(all).toContain("resume");
     expect(all).toContain("exit");
     expect(all).toContain("status");
   });

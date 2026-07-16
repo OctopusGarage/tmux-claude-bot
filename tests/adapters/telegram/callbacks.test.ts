@@ -131,15 +131,17 @@ describe("handleCallbackQuery", () => {
     expect(JSON.stringify(ctx.replies)).toContain(`cf:exit:${SID}`);
   });
 
-  it("confirmed dangerous control button executes the original action", async () => {
+  it("confirmed dangerous control button enqueues the original action", async () => {
     const exit = vi.fn(async () => {});
     const ctx = fakeCtx({ callbackData: `cf:exit:${SID}` });
     const deps = aliveDeps({ agent: { exit } });
 
     await handleCallbackQuery(ctx, deps, replyTarget);
 
-    expect(exit).toHaveBeenCalledWith(SESSION);
-    expect(ctx.texts().some((t) => t.includes("已退出"))).toBe(true);
+    expect(exit).not.toHaveBeenCalled();
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]).toMatchObject({ sessionName: SESSION, action: "exit" });
+    expect(ctx.texts().some((t) => t.includes("已接收"))).toBe(true);
   });
 
   it("voicelang (vl:) sets the env var and refreshes the picker", async () => {

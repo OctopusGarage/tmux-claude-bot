@@ -34,6 +34,12 @@ Only present this term when a session is live or selected; a stopped recent
 workspace row is a Recent Project, not a Project Session.
 _Avoid_: tmux session, tmux project, chat session, agent session
 
+**Project Session Surface**:
+The core read model for rendering project session rows and actions in chat
+adapters, such as whether a row should switch, create, stay inert, or expose a
+project-group action.
+_Avoid_: adapter project button rules, picker rendering branch
+
 **Operator Session**:
 A reserved project-like session used as the fallback home surface when no chat
 scope has selected a current session.
@@ -83,6 +89,12 @@ _Avoid_: bot history, message log
 Whether the agent appears busy for a project session, based on bot queue work or
 fresh transcript writes.
 _Avoid_: tmux activity, project activity
+
+**Agent Activity Snapshot**:
+The core read model that reports an agent's kind, running state, busy state,
+current task identity, task duration, cumulative busy time, usage, pane activity,
+and path drift for one project session.
+_Avoid_: dashboard busy row, activity flags bundle
 
 ### Chat Routing
 
@@ -150,6 +162,12 @@ _Avoid_: thread target, reply session
 The per-session backlog for messages that must be delivered to an agent in
 order.
 _Avoid_: task list, command queue
+
+**Message Action Plan**:
+The protocol-independent decision for a message action before an adapter renders
+or executes it: confirm, show a launch-flavor picker, reject an already-running
+start, run immediately, enqueue, or ignore as unsupported.
+_Avoid_: adapter action branch, callback handler decision
 
 ### Lark Project Groups
 

@@ -96,6 +96,10 @@ export async function startTelegram(
   if (config.telegramAllowedUserIds.size === 0) {
     log.warn("TELEGRAM_ALLOWED_USER_IDS is empty — the bot will reject ALL messages.");
   }
+  bot.use((_ctx, next) => {
+    deps.ownerActivity.record("telegram");
+    return next();
+  });
 
   // Catch any error thrown inside a handler so a transient Telegram/network blip
   // is logged instead of becoming an uncaughtException that exits the process.
@@ -222,6 +226,12 @@ export async function startTelegram(
           : undefined;
       return bot.api.sendMessage(owner, text, reply_markup ? { reply_markup } : {}).then(() => {});
     });
+    deps.notifications.register("telegram", (message) =>
+      bot.api.sendMessage(owner, message).then(() => {}),
+    );
+    deps.notifications.registerAttachment("telegram", (filePath, kind, caption) =>
+      sendTelegramAttachment(bot.api, owner, filePath, kind, caption),
+    );
   }
 
   // Register the Telegram channel sender so the attachment-dispatch layer can

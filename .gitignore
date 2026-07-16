@@ -29,5 +29,6 @@ docs/superpowers/
 reports/
 .stryker-tmp/
 .superpowers/
+.codegraph/
 # Personal, machine-specific operating rules (self-evolving dev mode); not shared.
 /CLAUDE.local.md

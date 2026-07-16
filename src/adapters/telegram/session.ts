@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import type { HandlerDeps } from "../../core/deps.js";
 import { chatScope } from "../../core/projects/project-manager.js";
+import { resolveLiveSessionName } from "../../core/projects/sessionPathMap.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 
 /** The current project's session for a specific chat, but only if its session pane is alive. */
@@ -10,11 +11,14 @@ export async function requireSession(
 ): Promise<string | null> {
   const session = await deps.currentProject.get(chatScope("telegram", String(chatId)));
   if (!session) return null;
-  const exists = await deps.bridge.hasSession(session);
-  if (!exists) return null;
-  const alive = await deps.bridge.isPaneAlive(session);
+  const liveSession = await resolveLiveSessionName(deps.bridge, session);
+  if (!liveSession) return null;
+  if (liveSession !== session) {
+    await deps.currentProject.set(chatScope("telegram", String(chatId)), liveSession);
+  }
+  const alive = await deps.bridge.isPaneAlive(liveSession);
   if (!alive) return null;
-  return session;
+  return liveSession;
 }
 
 /**

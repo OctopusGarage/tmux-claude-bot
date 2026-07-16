@@ -48,10 +48,9 @@ export class BoundedSessionMap<K extends string | number> {
     try {
       const entries = JSON.parse(fs.readFileSync(this.file, "utf-8")) as Array<[K, string]>;
       for (const [k, v] of entries) this.map.set(k, v);
+      if (this.enforceMax()) this.save();
     } catch (err) {
-      log.error(
-        `failed to load ${this.file}, starting empty: ${err instanceof Error ? err.message : err}`,
-      );
+      log.error(`failed to load ${this.file}, starting empty`, { err });
     }
   }
 
@@ -61,19 +60,26 @@ export class BoundedSessionMap<K extends string | number> {
       fs.mkdirSync(nodePath.dirname(this.file), { recursive: true });
       fs.writeFileSync(this.file, JSON.stringify([...this.map.entries()]), "utf-8");
     } catch (err) {
-      log.error(`failed to write ${this.file}: ${err instanceof Error ? err.message : err}`);
+      log.error(`failed to write ${this.file}`, { err });
     }
+  }
+
+  private enforceMax(): boolean {
+    let changed = false;
+    while (this.map.size > this.max) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+      changed = true;
+    }
+    return changed;
   }
 
   /** Remember that bot message `id` belongs to `session`. Evicts the oldest
    *  entries once over the cap. */
   record(id: K, session: string): void {
     this.map.set(id, session);
-    while (this.map.size > this.max) {
-      const oldest = this.map.keys().next().value;
-      if (oldest === undefined) break;
-      this.map.delete(oldest);
-    }
+    this.enforceMax();
     this.save();
   }
 

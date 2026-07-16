@@ -10,7 +10,7 @@ import {
 } from "../agents/codex/codex-rollout.js";
 import { allRunningSessions } from "../agents/runningSessions.js";
 import type { HandlerDeps } from "../deps.js";
-import { isOperator } from "../projects/operator.js";
+import { isReservedInfrastructureSession } from "../projects/operator.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 
 const log = createLogger("recovery.recover");
@@ -76,11 +76,12 @@ export async function planRecovery(deps: HandlerDeps): Promise<RecoverItem[]> {
   // Roster = the sessions the bot last knew to be RUNNING (not every recorded
   // project), so recovery restores the pre-reboot running state rather than
   // blindly relaunching everything. A running session with no recorded path
-  // can't be recreated, so drop it. The operator is excluded — its lifecycle
-  // is owned by startOperator at boot, not by the generic recovery path.
+  // can't be recreated, so drop it. Reserved infrastructure sessions are
+  // excluded: their lifecycle is owned by their boot provisioners, not generic
+  // recovery.
   const prefix = deps.config.projectSessionPrefix;
   const roster = allRunningSessions()
-    .filter((session) => !isOperator(session, prefix))
+    .filter((session) => !isReservedInfrastructureSession(session, prefix))
     .map((session) => ({ session, path: getPathBySession(session) }))
     .filter((r): r is { session: string; path: string } => r.path !== null);
   // Each session's classification is independent and each does its own tmux /
@@ -220,7 +221,9 @@ async function runRecovery(
   return result;
 }
 
-async function recoveryStartCommand(item: RecoverItem): Promise<string> {
+export async function recoveryStartCommand(
+  item: Pick<RecoverItem, "kind" | "command" | "sessionId">,
+): Promise<string> {
   const command = item.command as string;
   if (item.kind !== "codex" || !item.sessionId) {
     return command;

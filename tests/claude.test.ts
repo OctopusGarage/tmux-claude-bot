@@ -225,7 +225,7 @@ describe("ClaudeRunner", () => {
       await runner.start();
 
       expect(sentKeys.filter((key) => key === "Down")).toHaveLength(1);
-      expect(sentKeys.slice(-2)).toEqual(["Down", "Enter"]);
+      expect(sentKeys.filter((key) => key !== "cancel").slice(-2)).toEqual(["Down", "Enter"]);
     });
   });
 
@@ -558,6 +558,7 @@ describe("ClaudeRunner", () => {
       const typed: string[] = [];
       mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
         if (cmd === "tmux" && args[0] === "send-keys") typed.push(args[args.length - 1] ?? "");
+        if (cmd === "tmux" && args[0] === "set-buffer") typed.push(args[args.length - 1] ?? "");
         if (cmd === "tmux" && args[0] === "capture-pane") return { stdout: "❯ ", stderr: "" };
         return { stdout: "", stderr: "" };
       });

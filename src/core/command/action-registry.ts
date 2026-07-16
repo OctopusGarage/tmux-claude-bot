@@ -83,6 +83,12 @@ export const ACTION_META: Partial<Record<MessageAction, ActionMeta>> = {
   },
   status: { btnKey: "btnStatus", queuePolicy: "immediate", telegram: true },
   start: { btnKey: "btnStart", queuePolicy: "queued", telegram: true, buttonStyle: "primary" },
+  resume: {
+    btnKey: "btnResume",
+    queuePolicy: "queued",
+    telegram: true,
+    buttonStyle: "primary",
+  },
   // "text" — no button, not a slash command
 };
 
@@ -108,7 +114,10 @@ export const CONTROL_ROWS_FULL: MessageAction[][] = [
 ];
 
 /** Agent-action button rows for the help card "Session" section (adds start/status). */
-export const HELP_SESSION_ROWS: MessageAction[][] = [...CONTROL_ROWS_FULL, ["start", "status"]];
+export const HELP_SESSION_ROWS: MessageAction[][] = [
+  ...CONTROL_ROWS_FULL,
+  ["start", "resume", "status"],
+];
 
 // ── Derived sets / lists ─────────────────────────────────────────────────────
 
@@ -133,6 +142,10 @@ export function getQueuedActions(): Set<MessageAction> {
       .filter(([, m]) => m.queuePolicy === "queued")
       .map(([a]) => a),
   );
+}
+
+export function getActionQueuePolicy(action: MessageAction): ActionMeta["queuePolicy"] {
+  return ACTION_META[action]?.queuePolicy ?? null;
 }
 
 /** MessageActions that should be registered as Telegram bot.command() handlers. */
@@ -239,8 +252,9 @@ interface HelpSection {
 const SESSION: readonly HelpRow[] = [
   [
     { cmds: ["start"], descKey: "cmdStart", telegramDescription: "Start the agent" },
-    { cmds: ["status"], descKey: "cmdStatus", telegramDescription: "Check agent status" },
+    { cmds: ["resume"], descKey: "cmdResume", telegramDescription: "Resume the last session" },
   ],
+  [{ cmds: ["status"], descKey: "cmdStatus", telegramDescription: "Check agent status" }],
   [
     {
       cmds: ["peek"],

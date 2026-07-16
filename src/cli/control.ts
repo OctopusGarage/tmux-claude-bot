@@ -4,6 +4,11 @@ import { createInterface } from "node:readline/promises";
 import { ControlClient } from "../adapters/control/client.js";
 import { requiresActionConfirmation } from "../core/command/action-registry.js";
 import type { SessionRow } from "../core/dashboard/dashboard.js";
+import type {
+  NotificationChannelSelection,
+  NotificationLevel,
+  NotificationRequest,
+} from "../core/notifications/gateway.js";
 import { expandTilde } from "../shared/utils/path.js";
 
 /**
@@ -82,6 +87,61 @@ const fail = (err: unknown): never => {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 };
+
+const NOTIFY_CHANNELS = new Set(["telegram", "lark", "both"]);
+const NOTIFY_LEVELS = new Set(["info", "success", "warning", "error"]);
+
+type NotifyCliOpts = {
+  title?: string;
+  body?: string;
+  channel?: string;
+  level?: string;
+  source?: string;
+  attach?: string[];
+  stdin?: boolean;
+};
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+export async function buildNotifyRequest(
+  words: string[],
+  opts: NotifyCliOpts,
+  stdinReader: () => Promise<string> = readStdin,
+): Promise<NotificationRequest> {
+  if (opts.channel !== undefined && !NOTIFY_CHANNELS.has(opts.channel)) {
+    throw new Error("channel must be one of: telegram, lark, both");
+  }
+  if (opts.level !== undefined && !NOTIFY_LEVELS.has(opts.level)) {
+    throw new Error("level must be one of: info, success, warning, error");
+  }
+  const positional = words.join(" ").trim();
+  const title = (opts.title ?? positional).trim();
+  if (!title) throw new Error("notification requires --title or positional text");
+  const stdinBody = opts.stdin ? (await stdinReader()).trimEnd() : undefined;
+  const body = opts.body ?? stdinBody;
+  return {
+    title,
+    ...(body !== undefined && body.length > 0 ? { body } : {}),
+    ...(opts.channel !== undefined
+      ? { channel: opts.channel as NotificationChannelSelection }
+      : {}),
+    ...(opts.level !== undefined ? { level: opts.level as NotificationLevel } : {}),
+    ...(opts.source !== undefined ? { source: opts.source } : {}),
+    ...(opts.attach !== undefined && opts.attach.length > 0
+      ? {
+          attachments: opts.attach.map((path) => ({
+            path: resolve(process.cwd(), expandTilde(path)),
+          })),
+        }
+      : {}),
+  };
+}
 
 export async function confirmCliDangerousControl(
   action: string,
@@ -255,6 +315,22 @@ export async function cmdControl(
     const ack = await c.control(session, action);
     if (opts.json) return json({ session, action, ...ack });
     out(`${action} → ${ref}: ${ack.status}`);
+  }).catch(fail);
+}
+
+export async function cmdNotify(
+  words: string[],
+  opts: NotifyCliOpts & { json?: boolean },
+): Promise<void> {
+  await withClient(async (c) => {
+    const request = await buildNotifyRequest(words ?? [], opts);
+    const result = await c.notify(request);
+    if (opts.json) return json(result);
+    const delivered = result.deliveries
+      .map((d) => `${d.channel}:${d.ok ? "ok" : d.error}`)
+      .join(" ");
+    out(`notify: ${result.status}${delivered ? ` (${delivered})` : ""}`);
+    if (result.status === "failed") process.exitCode = 1;
   }).catch(fail);
 }
 

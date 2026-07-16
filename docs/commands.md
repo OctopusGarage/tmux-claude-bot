@@ -10,6 +10,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 |---------|-------------|
 | `help` | Show all commands |
 | `start` | Start the agent |
+| `resume` | Resume the last recorded agent session for the current project |
 | `status` | Check agent status |
 | `peek` | Capture the session pane |
 | `esc` | Send Escape key |
@@ -23,7 +24,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `right` | Send Right arrow |
 | `tab` | Send Tab key |
 | `exit` | Exit the agent |
-| `restart` | Restart the agent (Claude `--continue` / Codex `resume --last`) |
+| `restart` | Restart the running agent in-place (Claude `--continue` / Codex `resume --last`) |
 | `list_alive_projects` | List alive projects |
 | `list_recent_projects` | List recent projects |
 | `current_project` | Show current session |
@@ -82,8 +83,28 @@ The help card's **🧩 Parallel group** button (private chat) creates a *second*
 | `/switch_<id>` | `<id>` = 6-char session short id | Resolve alive session by short id → switch the current session |
 | Any text | Agent **running** | Send to the session → `waitUntilDone()` rounds (one-time "still running" notice past `MAX_WAIT_DONE_MS`, give up at `MAX_WAIT_DONE_TOTAL_MS`) → clean and reply |
 
+`/resume` is per-session: use it when the current project's agent was accidentally
+exited and you want the same recorded agent flavor and conversation id relaunched.
+`/recover` is host-wide: use it after a reboot to restore every project that was
+running before.
+
+## Local Send-Only Notifications
+
+Other local projects can send outbound Telegram/Feishu notifications through the
+running bot without owning chat credentials:
+
+```bash
+tcb notify --source deploy --level error --title "Deploy failed" --body "api health check failed"
+printf '%s\n' "line 1" "line 2" | tcb notify --title "Nightly report" --stdin
+```
+
+`tcb notify` uses the existing local control socket, targets the configured owner
+recipient(s), and does not subscribe the caller to incoming chat messages.
+
 Button and TUI shortcuts ask for confirmation before `exit`, `restart`, `clear`, or
-`compact`. Typed slash commands are treated as explicit intent and run directly.
+`compact`. Known typed slash commands are treated as explicit bot intent and run
+directly. Unknown slash-prefixed text is forwarded to the running agent, so agent
+built-ins such as Codex `/goal ...` continue to work through chat.
 
 ## Agent Running Detection
 

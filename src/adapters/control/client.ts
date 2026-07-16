@@ -2,11 +2,13 @@ import { EventEmitter } from "node:events";
 import net from "node:net";
 import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import type { DashboardSnapshot } from "../../core/dashboard/dashboard.js";
+import type { NotificationRequest } from "../../core/notifications/gateway.js";
 import {
   type ControlRequest,
   controlSocketPath,
   createLineDecoder,
   encodeLine,
+  type NotifyControlResponse,
   type PromptTranslateControlResponse,
   type ServerMessage,
 } from "./protocol.js";
@@ -185,6 +187,9 @@ export class ControlClient extends EventEmitter {
   }
   promptTranslate(arg: string): Promise<PromptTranslateControlResponse> {
     return this.req({ op: "promptTranslate", arg }) as Promise<PromptTranslateControlResponse>;
+  }
+  notify(req: NotificationRequest): Promise<NotifyControlResponse> {
+    return this.req({ op: "notify", ...req }) as Promise<NotifyControlResponse>;
   }
   async togglePromptTranslate(): Promise<PromptTranslateControlResponse> {
     const current = await this.promptTranslate("status");

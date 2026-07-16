@@ -15,9 +15,8 @@ import {
   toggleGoal,
 } from "../../core/autopilot/picker-state.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
-import { requiresActionConfirmation } from "../../core/command/action-registry.js";
-import type { MessageAction } from "../../core/command/actions.js";
-import { performRestart, performStart, startDisposition } from "../../core/command/dispatch.js";
+import { planMessageAction } from "../../core/command/action-plan.js";
+import { performRestart, performStart } from "../../core/command/dispatch.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import type { ForeignAction } from "../../core/infra/status-install.js";
@@ -81,7 +80,6 @@ import {
   voiceLangCard,
 } from "./cards.js";
 import { type ChatKind, checkAction, type ProjectAction, serviceableChat } from "./chat-policy.js";
-import { IMMEDIATE, QUEUED } from "./commands.js";
 import { enqueueLarkAction, resolveSession, runImmediateLarkAction } from "./executor.js";
 import {
   bindCurrentGroupBySid,
@@ -838,7 +836,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       }
 
       const value = rawValue as CardValue;
-      let cmd = value?.cmd;
+      const cmd = value?.cmd;
       if (!cmd) return;
 
       log.info(`cardAction cmd=${cmd} chat=${evt.chatId}`);
@@ -859,72 +857,72 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
 
         if (cmd === "noop") return;
 
-        if (cmd === "confirm") {
-          const action = value?.action;
-          if (
-            !action ||
-            (!QUEUED.has(action as MessageAction) && !IMMEDIATE.has(action as MessageAction))
-          )
-            return;
-          cmd = action as MessageAction;
-        } else if (
-          (QUEUED.has(cmd as MessageAction) || IMMEDIATE.has(cmd as MessageAction)) &&
-          requiresActionConfirmation(cmd)
-        ) {
-          const session = await resolveSession(channel, deps, evt.chatId, undefined, isP2p);
-          if (!session) return;
-          await sendCard(channel, evt.chatId, actionConfirmationCard(cmd, session, !isP2p));
-          return;
-        }
-
-        // start/restart: reject a start when an agent is already running (no
-        // pointless picker), else show the flavor picker (multi-command) or fall
-        // through to the queued-action routing (single command).
-        if (cmd === "start" || cmd === "restart") {
-          const mode = cmd === "restart" ? "restart" : "start";
-          const startSession = await resolveSession(channel, deps, evt.chatId, undefined, isP2p);
-          const disp = startSession
-            ? await startDisposition(deps, startSession, mode)
-            : deps.config.startCommands.length > 1
-              ? "pick"
-              : "go";
-          if (disp === "already-running") {
-            await sendText(channel, evt.chatId, messages("lark").agentAlreadyRunning);
-            return;
-          }
-          if (disp === "pick") {
-            await sendCard(channel, evt.chatId, startPickerCard(deps.config.startCommands, mode));
-            return;
-          }
-        }
-
         const handler = CARD_HANDLERS[cmd];
         if (handler) {
           await handler({ channel, deps, evt, value, chatKind });
           return;
         }
 
-        if (IMMEDIATE.has(cmd as MessageAction)) {
+        const planned = await planMessageAction({
+          deps,
+          action: cmd === "confirm" ? String(value?.action ?? "") : cmd,
+          confirmed: cmd === "confirm",
+          session:
+            cmd === "confirm" || cmd === "start" || cmd === "restart"
+              ? await resolveSession(channel, deps, evt.chatId, undefined, isP2p)
+              : undefined,
+          text: cmd,
+          allowStartPickerWithoutSession: true,
+        });
+
+        if (planned.kind === "confirm") {
+          const session = await resolveSession(channel, deps, evt.chatId, undefined, isP2p);
+          if (!session) return;
+          await sendCard(
+            channel,
+            evt.chatId,
+            actionConfirmationCard(planned.action, session, !isP2p),
+          );
+          return;
+        }
+
+        if (planned.kind === "already-running") {
+          await sendText(channel, evt.chatId, messages("lark").agentAlreadyRunning);
+          return;
+        }
+
+        if (planned.kind === "pick-start-command") {
+          await sendCard(
+            channel,
+            evt.chatId,
+            startPickerCard(deps.config.startCommands, planned.action),
+          );
+          return;
+        }
+
+        if (planned.kind === "no-session") return;
+
+        if (planned.kind === "immediate") {
           await runImmediateLarkAction(
             channel,
             deps,
             evt.chatId,
             evt.messageId,
-            cmd as MessageAction,
+            planned.action,
             undefined,
             isP2p,
           );
           return;
         }
 
-        if (QUEUED.has(cmd as MessageAction)) {
+        if (planned.kind === "queued") {
           await enqueueLarkAction(
             channel,
             deps,
             evt.chatId,
             evt.messageId,
-            cmd as MessageAction,
-            cmd,
+            planned.action,
+            planned.text,
             undefined,
             isP2p,
           );

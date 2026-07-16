@@ -17,6 +17,7 @@ describe("command actions", () => {
     expect(getActionPrecondition("text")).toBe("running");
     expect(getActionPrecondition("clear")).toBe("running");
     expect(getActionPrecondition("start")).toBe("absent");
+    expect(getActionPrecondition("resume")).toBe("absent");
     expect(getActionPrecondition("restart")).toBeNull();
     expect(getActionPrecondition("interrupt")).toBeNull();
     expect(getActionPrecondition("status")).toBeNull();

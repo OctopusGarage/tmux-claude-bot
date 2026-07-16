@@ -104,6 +104,11 @@ export type AppConfig = {
   lark?: LarkConfig | undefined;
   autopilot: AutopilotRuntimeConfig;
   scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
+  loopEngineering: {
+    configFile: string;
+    tickMs: number;
+    supervisor: { enabled: boolean; dir: string; agent: AgentKind };
+  };
   homeOperator: { enabled: boolean; dir: string; agent: "claude" | "codex" };
   promptMcp: { command: string; args: string[]; cwd?: string };
 };

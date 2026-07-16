@@ -144,6 +144,39 @@ describe("linux introspector", () => {
     ]);
   });
 
+  it("ttyOf readlinks /proc/<pid>/fd/0 when it is a pts/tty device", async () => {
+    const fs = fakeProc({
+      pids: {
+        200: {
+          ppid: 1,
+          comm: "claude",
+          cmdline: "claude\0",
+          fds: ["/dev/pts/0", "/home/u/.claude/projects/foo/abc.jsonl"],
+        },
+      },
+    });
+    expect(await createLinuxIntrospector(fs).ttyOf(200)).toBe("/dev/pts/0");
+  });
+
+  it("ttyOf returns null when fd 0 is not a terminal", async () => {
+    const fs = fakeProc({
+      pids: {
+        200: {
+          ppid: 1,
+          comm: "claude",
+          cmdline: "claude\0",
+          fds: ["/dev/null"],
+        },
+      },
+    });
+    expect(await createLinuxIntrospector(fs).ttyOf(200)).toBeNull();
+  });
+
+  it("ttyOf returns null when the process has vanished", async () => {
+    const fs = fakeProc({ pids: {} });
+    expect(await createLinuxIntrospector(fs).ttyOf(999)).toBeNull();
+  });
+
   it("cwdOf readlinks /proc/<pid>/cwd; null when absent", async () => {
     const fs = fakeProc({
       pids: { 200: { ppid: 1, comm: "x", cmdline: "x\0", cwd: "/home/u/project" } },

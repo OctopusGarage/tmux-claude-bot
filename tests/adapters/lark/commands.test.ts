@@ -162,14 +162,19 @@ describe("parseLarkInput", () => {
     expect(isGroupMgmtCommand("/newfreegroup ~/x")).toBe(true);
   });
 
-  it("/bogus → unknown kind", () => {
+  it("/bogus → text kind so agent slash commands can pass through", () => {
     const result = parseLarkInput("/bogus");
-    expect(result).toEqual({ kind: "unknown", name: "bogus" });
+    expect(result).toEqual({ kind: "text", text: "/bogus" });
   });
 
-  it("unknown command with args → unknown kind using first token", () => {
+  it("unknown command with args → text kind preserving the full command", () => {
     const result = parseLarkInput("/foo bar baz");
-    expect(result).toEqual({ kind: "unknown", name: "foo" });
+    expect(result).toEqual({ kind: "text", text: "/foo bar baz" });
+  });
+
+  it("Codex built-in slash commands pass through as text", () => {
+    const prompt = "/goal refactor the whole project with AI eval";
+    expect(parseLarkInput(prompt)).toEqual({ kind: "text", text: prompt });
   });
 
   it("leading/trailing spaces with command", () => {

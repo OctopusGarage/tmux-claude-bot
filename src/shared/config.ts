@@ -152,6 +152,15 @@ export const envSchema = z.object({
   AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
   AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
   AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
+  // --- Loop Engineering. Blank config file or tick 0 disables the managed loop. ---
+  LOOP_ENGINEERING_CONFIG_FILE: z.string().default(""),
+  LOOP_ENGINEERING_TICK_MS: blankTolerantNonNegativeInt(300000),
+  LOOP_SUPERVISOR_ENABLED: blankTolerantString("false"),
+  LOOP_SUPERVISOR_DIR: z.string().default(""),
+  LOOP_SUPERVISOR_AGENT: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["claude", "codex"]).default("codex"),
+  ),
   // --- Home operator session ---
   HOME_OPERATOR_ENABLED: blankTolerantString("false"),
   HOME_OPERATOR_DIR: z.string().default(""),
@@ -363,6 +372,16 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       tickMs: parsed.AUTOPILOT_SCHEDULER_TICK_MS,
       quotaPct: parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
       reprobeMs: parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
+    },
+    loopEngineering: {
+      configFile: parsed.LOOP_ENGINEERING_CONFIG_FILE.trim(),
+      tickMs: parsed.LOOP_ENGINEERING_TICK_MS,
+      supervisor: {
+        enabled:
+          parsed.LOOP_SUPERVISOR_ENABLED !== "false" && parsed.LOOP_SUPERVISOR_ENABLED !== "0",
+        dir: parsed.LOOP_SUPERVISOR_DIR,
+        agent: parsed.LOOP_SUPERVISOR_AGENT,
+      },
     },
     homeOperator: {
       enabled: parsed.HOME_OPERATOR_ENABLED !== "false" && parsed.HOME_OPERATOR_ENABLED !== "0",

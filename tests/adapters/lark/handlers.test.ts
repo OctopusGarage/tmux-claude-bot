@@ -132,6 +132,28 @@ describe("makeMessageHandler", () => {
     expect(deps.queue.enqueued[0]?.sessionName).toBe("proj-1");
   });
 
+  it("enqueues one multi-line text message as one prompt", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(fakeMessage({ content: "first line\nsecond line\nthird line" }));
+
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]?.action).toBe("text");
+    expect(deps.queue.enqueued[0]?.text).toBe("first line\nsecond line\nthird line");
+  });
+
+  it("records lark as the recent owner activity channel for accepted messages", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(fakeMessage({ content: "/help" }));
+
+    expect(deps.ownerActivity.record).toHaveBeenCalledWith("lark");
+  });
+
   it("enqueues each text SEPARATELY (no merge) — aligned with Telegram", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
@@ -217,7 +239,7 @@ describe("makeMessageHandler", () => {
 
   it("an immediate command runs directly via executeMessage (plain text reply)", async () => {
     const channel = fakeChannel();
-    const deps = fakeDeps();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
     const handler = makeMessageHandler(channel, deps);
 
     await handler(fakeMessage({ content: "/status" }));
@@ -229,7 +251,7 @@ describe("makeMessageHandler", () => {
 
   it("a queued command (/start) is enqueued, not run immediately", async () => {
     const channel = fakeChannel();
-    const deps = fakeDeps();
+    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => false) } });
     const handler = makeMessageHandler(channel, deps);
 
     await handler(fakeMessage({ content: "/start" }));
@@ -238,14 +260,47 @@ describe("makeMessageHandler", () => {
     expect(deps.queue.enqueued[0]?.action).toBe("start");
   });
 
-  it("unknown command replies the unknown-command hint", async () => {
+  it("/start reports already running instead of enqueueing", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => true) } });
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(fakeMessage({ content: "/start" }));
+
+    expect(deps.queue.enqueued).toHaveLength(0);
+    expect(channel.texts().some((t) => t.includes("已在运行"))).toBe(true);
+  });
+
+  it("/restart with multiple launch flavors opens the picker", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      config: {
+        startCommands: [
+          { label: "Claude", command: "claude" },
+          { label: "Codex", command: "codex" },
+        ],
+      },
+    });
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(fakeMessage({ content: "/restart" }));
+
+    expect(deps.queue.enqueued).toHaveLength(0);
+    expect(JSON.stringify(channel.cards())).toContain("restartpick");
+  });
+
+  it("unknown slash commands are forwarded to the agent as text", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
     const handler = makeMessageHandler(channel, deps);
 
-    await handler(fakeMessage({ content: "/bogus" }));
+    await handler(fakeMessage({ content: "/goal refactor with eval" }));
 
-    expect(channel.texts().some((t) => t.includes("未知命令：/bogus"))).toBe(true);
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]).toMatchObject({
+      action: "text",
+      text: "/goal refactor with eval",
+    });
   });
 
   describe("view commands dispatch to the right view fn", () => {

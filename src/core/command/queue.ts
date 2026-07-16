@@ -4,79 +4,15 @@ import { normalizeError } from "../../shared/utils/error.js";
 import { runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { Queue } from "../../shared/utils/queue.js";
-import type { Channel } from "../projects/project-manager.js";
-import { recordReplyTarget } from "../projects/session-reply-target.js";
-import { taskEnded, taskStarted } from "../session/task-timing.js";
-import { replyTargetFromMessage } from "./reply-target-from-message.js";
+import type { Channel, PersistedMessage, QueuedMessage } from "./queue-message.js";
+import { defaultQueueObserver, type QueueObserver } from "./queue-observer.js";
 
 const log = createLogger("command.queue");
 
 // Re-exported from its canonical home (project-manager) so there is a single
 // Channel type across core; QueuedMessage carries it, so queue consumers import
 // it from here too.
-export type { Channel };
-
-export type QueuedMessage = {
-  id: string;
-  text: string;
-  chatId: string | number;
-  channel?: Channel | undefined;
-  sessionName?: string | undefined;
-  action: string;
-  origin?: "user" | "system" | undefined;
-  promptSource?: "telegram" | "lark" | "control" | undefined;
-  sourceText?: string | undefined;
-  transform?:
-    | {
-        kind: "translation";
-        provider: string;
-        from: string;
-        to: string;
-        sourceText: string;
-        deliveredText: string;
-      }
-    | undefined;
-  traceId?: string | undefined;
-  resolve: (output: string) => void;
-  reject: (err: Error) => void;
-  /** Optional interim-progress channel: sends a message to the chat while the
-   * run is still in flight (resolve/reject remain the one-shot finale). */
-  notify?: ((text: string) => void) | undefined;
-  /** Don't persist this message to the on-disk backlog. For the local control
-   * transport (the TUI): its client is ephemeral, so a bot restart must not
-   * "restore" a prompt that has no one to reply to. Still fully queued in-memory
-   * (per-session serialization holds), just never written to pending.json. */
-  ephemeral?: boolean | undefined;
-  /** Chat message id (stringified) of this item's "queued" ack, set once the ack
-   * is sent (setQueueAck). A reply to that ack rewrites THIS item (rewriteByAck).
-   * Persisted, so reply-to-rewrite survives a restart exactly like the item does —
-   * the ack mapping lives WITH the item rather than in a separate volatile map. */
-  ackMsgId?: string | undefined;
-};
-
-export type PersistedMessage = {
-  id: string;
-  text: string;
-  chatId: string | number;
-  channel?: Channel | undefined;
-  sessionName?: string | undefined;
-  action: string;
-  origin?: "user" | "system" | undefined;
-  promptSource?: "telegram" | "lark" | "control" | undefined;
-  sourceText?: string | undefined;
-  transform?:
-    | {
-        kind: "translation";
-        provider: string;
-        from: string;
-        to: string;
-        sourceText: string;
-        deliveredText: string;
-      }
-    | undefined;
-  traceId?: string | undefined;
-  ackMsgId?: string | undefined;
-};
+export type { Channel, PersistedMessage, QueuedMessage };
 
 export type QueueHandler = (msg: QueuedMessage) => Promise<void>;
 
@@ -106,22 +42,26 @@ export class MessageQueue {
   private readonly lastProcessedAt = new Map<string, number>();
   private readonly persistPath: string;
   private persistScheduled = false;
+  private persistedCarryover = new Map<string, PersistedMessage>();
   /** Optional idle-gate: returns false while the session's agent is busy with
    * work this queue didn't start (e.g. the user driving it on the desktop), so
    * the next message is HELD in the queue instead of being typed into a busy
    * pane. Injected (setReadinessProbe) to keep the queue protocol-agnostic. */
   private readyProbe: ((session: string) => Promise<boolean>) | undefined;
   private readyRecheckMs = 1500;
+  private readonly observer: QueueObserver;
 
   constructor(
     maxSize: number = 30,
     persistPath: string = ".queue/pending.json",
     maxConcurrentSessions: number = Infinity,
+    observer: QueueObserver = defaultQueueObserver,
   ) {
     this.maxSize = maxSize;
     this.maxConcurrentSessions = maxConcurrentSessions;
     this.globalQueue = new Queue<QueuedMessage>(maxSize);
     this.persistPath = persistPath;
+    this.observer = observer;
     this.ensurePersistDir();
   }
 
@@ -166,12 +106,17 @@ export class MessageQueue {
         sourceText: msg.sourceText,
         transform: msg.transform,
         traceId: msg.traceId,
+        controlRestore: msg.controlRestore,
         ackMsgId: msg.ackMsgId,
       });
     };
     for (const msg of this.globalQueue.toArray()) collect(msg);
     for (const queue of this.sessionQueues.values()) {
       for (const msg of queue.toArray()) collect(msg);
+    }
+    const liveIds = new Set(messages.map((msg) => msg.id));
+    for (const msg of this.persistedCarryover.values()) {
+      if (!liveIds.has(msg.id)) messages.push(msg);
     }
     try {
       fs.writeFileSync(this.persistPath, JSON.stringify(messages, null, 2), "utf-8");
@@ -198,6 +143,7 @@ export class MessageQueue {
   }
 
   clearPersisted(): void {
+    this.persistedCarryover.clear();
     try {
       fs.unlinkSync(this.persistPath);
     } catch {
@@ -205,23 +151,13 @@ export class MessageQueue {
     }
   }
 
-  /** Remove only one channel's persisted messages, leaving other channels for
-   * their own adapter to restore. Each adapter restores + drops its own channel
-   * on boot, so a Telegram+Lark deployment doesn't lose either side's backlog and
-   * neither double-restores. Legacy entries without a channel are treated as
-   * Telegram (that is who wrote them before the field existed). Unlinks the file
-   * when nothing remains. */
-  clearPersistedChannel(channel: Channel): void {
-    const remaining = this.loadPersisted().filter((m) => (m.channel ?? "telegram") !== channel);
-    if (remaining.length === 0) {
-      this.clearPersisted();
-      return;
-    }
-    try {
-      fs.writeFileSync(this.persistPath, JSON.stringify(remaining, null, 2), "utf-8");
-    } catch {
-      // ignore persist failures
-    }
+  /** Keep persisted messages that could not be restored into the live queue.
+   * The next queue persistence pass includes this carryover alongside live
+   * backlog, so a partial restore does not silently drop work that hit queue
+   * capacity or dedupe. */
+  keepPersistedCarryover(messages: PersistedMessage[]): void {
+    this.persistedCarryover = new Map(messages.map((message) => [message.id, message]));
+    this.persist();
   }
 
   private hasDuplicateText(chatId: string | number, text: string): boolean {
@@ -444,11 +380,7 @@ export class MessageQueue {
     // task-time store that clearTaskTiming, seeing only real session names, never
     // clears. Keying on presence (not a "global" sentinel) keeps the decision in
     // the types and lets a session literally named "global" time correctly.
-    if (sessionName !== undefined) taskStarted(sessionName);
-    if (sessionName !== undefined) {
-      const target = replyTargetFromMessage(msg);
-      if (target) recordReplyTarget(sessionName, target);
-    }
+    if (sessionName !== undefined) this.observer.started(sessionName, msg);
     const label = sessionName ?? "global";
     try {
       await runWithLogContext(
@@ -456,7 +388,7 @@ export class MessageQueue {
           ...(msg.traceId !== undefined && { traceId: msg.traceId }),
           ...(msg.sessionName !== undefined && { session: msg.sessionName }),
           chatId: msg.chatId,
-          ...(msg.channel !== undefined && { channel: msg.channel }),
+          ...(msg.channel === "telegram" || msg.channel === "lark" ? { channel: msg.channel } : {}),
         },
         () => this.handler?.(msg) ?? Promise.resolve(),
       );
@@ -466,7 +398,7 @@ export class MessageQueue {
       log.error(`handler threw session=${label} msgId=${msg.id}: ${e.message}`);
       msg.reject(e); // one-shot: a no-op if the handler already settled
     } finally {
-      if (sessionName !== undefined) taskEnded(sessionName);
+      if (sessionName !== undefined) this.observer.finished(sessionName, msg);
     }
   }
 

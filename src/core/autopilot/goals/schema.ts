@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { skillIdSchema } from "../../skills/schema.js";
 import type { Goal } from "./types.js";
 
 const intentSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("prompt"), text: z.string().min(1) }),
-  z.object({ kind: z.literal("skill"), name: z.string().min(1), fallback: z.string().min(1) }),
+  z.object({ kind: z.literal("skill"), name: skillIdSchema, fallback: z.string().min(1) }),
 ]);
 
 const doneSchema: z.ZodType = z.lazy(() =>

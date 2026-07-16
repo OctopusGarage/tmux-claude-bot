@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MessageQueue } from "../src/core/command/queue.js";
+import type { QueueObserver } from "../src/core/command/queue-observer.js";
 
 /** Poll until predicate is true or timeout. Replaces fixed-sleep coordination. */
 async function waitFor(
@@ -51,6 +52,31 @@ describe("MessageQueue", () => {
       await waitFor(() => results.length === 2);
 
       expect(results).toEqual(["a", "b"]);
+    });
+
+    it("notifies the observer around session message processing", async () => {
+      const observer: QueueObserver = {
+        started: vi.fn(),
+        finished: vi.fn(),
+      };
+      const queue = new MessageQueue(10, undefined, Infinity, observer);
+
+      queue.setHandler(async (msg) => {
+        msg.resolve("ok");
+      });
+
+      queue.enqueue(createTestMessage({ id: "1", sessionName: "s1" }));
+
+      await waitFor(() => vi.mocked(observer.finished).mock.calls.length === 1);
+
+      expect(observer.started).toHaveBeenCalledWith(
+        "s1",
+        expect.objectContaining({ id: "1", sessionName: "s1" }),
+      );
+      expect(observer.finished).toHaveBeenCalledWith(
+        "s1",
+        expect.objectContaining({ id: "1", sessionName: "s1" }),
+      );
     });
 
     it("rejects the message if the handler throws without settling (no hang)", async () => {

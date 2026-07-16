@@ -494,16 +494,19 @@ describe("aliveProjectButtons", () => {
   it("excludes the operator session from the project list", async () => {
     const userSession = "tmux_proj_-my-app";
     const operatorSession = "tmux_proj_home";
+    const supervisorSession = "tmux_proj_loop-supervisor";
     setPathForSession(userSession, dir);
     setPathForSession(operatorSession, dir);
+    setPathForSession(supervisorSession, dir);
     const deps = fakeDeps({
       bridge: {
-        listProjectSessions: vi.fn(async () => [operatorSession, userSession]),
+        listProjectSessions: vi.fn(async () => [operatorSession, supervisorSession, userSession]),
       },
     });
     const buttons = await aliveProjectButtons(deps, "telegram");
     const sids = buttons.map((b) => b.sid);
     expect(sids).not.toContain(sessionShortId(operatorSession));
+    expect(sids).not.toContain(sessionShortId(supervisorSession));
     expect(sids).toContain(sessionShortId(userSession));
   });
 });
@@ -608,13 +611,16 @@ describe("recentProjectButtons", () => {
     unbindGroup("oc_recent_structured");
   });
 
-  it("excludes the operator from the live-project set used by the recent picker", async () => {
+  it("excludes infrastructure from the live-project set used by the recent picker", async () => {
     const { readRecentProjectLines } = await import("../../src/core/projects/recentProjects.js");
     vi.mocked(readRecentProjectLines).mockResolvedValueOnce([]);
-    // Operator has a recorded path but must not appear in the picker.
+    // Infrastructure sessions have recorded paths but must not appear in the picker.
     setPathForSession("tmux_proj_home", dir);
+    setPathForSession("tmux_proj_loop-supervisor", dir);
     const deps = fakeDeps({
-      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_home"]) },
+      bridge: {
+        listProjectSessions: vi.fn(async () => ["tmux_proj_home", "tmux_proj_loop-supervisor"]),
+      },
     });
     const buttons = await recentProjectButtons(deps, "telegram");
     expect(buttons).toHaveLength(0);

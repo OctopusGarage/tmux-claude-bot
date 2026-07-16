@@ -8,11 +8,13 @@ import { SHELL_RC_FILES } from "../../shared/shell-rc.js";
 import type { AgentKind } from "../../shared/types.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { recordAgentLaunch } from "../agents/agent-runtime-records.js";
+import { getAgentRuntimeRecord, recordAgentLaunch } from "../agents/agent-runtime-records.js";
 import { buildAgentStatusReport, readAgentLatestReply } from "../agents/read.js";
+import { CODEX_SKIP_PERMS, SKIP_PERMS } from "../agents/resume-command.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
-import { getPathBySession } from "../projects/sessionPathMap.js";
+import { getPathBySession, resolveLiveSessionName } from "../projects/sessionPathMap.js";
+import { recoveryStartCommand } from "../recovery/recover.js";
 import { getActionPrecondition, isMessageAction } from "./actions.js";
 import { sendContextReset } from "./context-reset.js";
 import type { QueuedMessage } from "./queue.js";
@@ -22,7 +24,13 @@ const log = createLogger("command.dispatch");
 /** Derive the AgentKind for a start command by matching against startCommands config. */
 function agentKindForCommand(deps: HandlerDeps, command: string | undefined): AgentKind {
   if (command === undefined) return "claude";
-  return deps.config.startCommands.find((c) => c.command === command)?.agent ?? "claude";
+  const normalized = command
+    .replace(new RegExp(`\\s+${SKIP_PERMS.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}$`), "")
+    .replace(new RegExp(`\\s+${CODEX_SKIP_PERMS.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}$`), "");
+  return (
+    deps.config.startCommands.find((c) => c.command === command || c.command === normalized)
+      ?.agent ?? "claude"
+  );
 }
 
 /**
@@ -53,11 +61,21 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-const INTERACTIVE_SHELL_LOOKUP_TIMEOUT_MS = 1700;
+const INTERACTIVE_SHELL_LOOKUP_TIMEOUT_MS = 5000;
 const interactiveShellVisibilityCache = new Map<string, boolean>();
 
+function interactiveShellVisibilityCacheKey(bin: string): string {
+  return JSON.stringify([
+    bin,
+    process.env.SHELL ?? "",
+    process.env.HOME ?? "",
+    process.env.PATH ?? "",
+  ]);
+}
+
 function visibleToInteractiveShell(bin: string): boolean {
-  const cached = interactiveShellVisibilityCache.get(bin);
+  const cacheKey = interactiveShellVisibilityCacheKey(bin);
+  const cached = interactiveShellVisibilityCache.get(cacheKey);
   if (cached !== undefined) return cached;
   const shells = process.env.SHELL ? [process.env.SHELL] : ["/bin/zsh", "/bin/bash"];
   for (const shell of shells) {
@@ -67,13 +85,13 @@ function visibleToInteractiveShell(bin: string): boolean {
         timeout: INTERACTIVE_SHELL_LOOKUP_TIMEOUT_MS,
         env: process.env,
       });
-      interactiveShellVisibilityCache.set(bin, true);
+      interactiveShellVisibilityCache.set(cacheKey, true);
       return true;
     } catch {
       // Shell missing, rc error, or command unavailable there — try the next shell.
     }
   }
-  interactiveShellVisibilityCache.set(bin, false);
+  interactiveShellVisibilityCache.set(cacheKey, false);
   return false;
 }
 
@@ -87,7 +105,8 @@ export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
       throw new Error(`Agent binary not found or not executable: ${bin}`);
     }
   }
-  for (const dir of (process.env.PATH ?? "").split(":")) {
+  const pathEnv = process.env.PATH;
+  for (const dir of (pathEnv ?? "").split(":")) {
     if (!dir) continue;
     try {
       accessSync(nodePath.join(dir, bin), constants.X_OK);
@@ -101,7 +120,7 @@ export function assertClaudeBinaryAccessible(claudeStartCommand: string): void {
   // explicit aliases/functions or binaries made visible by shell startup files
   // (common with nvm-installed `codex`).
   if (definedInShellRc(bin)) return;
-  if (visibleToInteractiveShell(bin)) return;
+  if (pathEnv !== undefined && visibleToInteractiveShell(bin)) return;
   throw new Error(`Agent binary "${bin}" not found in PATH`);
 }
 
@@ -143,6 +162,29 @@ export async function performStart(
   return "started";
 }
 
+export async function performResume(
+  deps: HandlerDeps,
+  session: string,
+): Promise<"resumed" | "already-running" | "missing-state"> {
+  if (await deps.agent.checkIfRunning(session)) return "already-running";
+  const record = getAgentRuntimeRecord(session);
+  if (!record.startCommand || !record.liveSessionId) return "missing-state";
+  assertClaudeBinaryAccessible(record.startCommand);
+  recordAgentLaunch(session, {
+    kind: record.kind,
+    startCommand: record.startCommand,
+    liveSessionId: record.liveSessionId,
+  });
+  const command = await recoveryStartCommand({
+    kind: record.kind,
+    command: record.startCommand,
+    sessionId: record.liveSessionId,
+  });
+  await deps.agent.startWithResume(session, record.liveSessionId, command);
+  deps.configResolver.invalidate(session);
+  return "resumed";
+}
+
 /**
  * What a `/start` or `/restart` request should do for `session`. Surfaces the
  * "already running" precondition for start BEFORE the flavor picker, so a running
@@ -182,14 +224,24 @@ export async function performRestart(
  */
 
 export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Promise<string> {
-  const m = messages(msg.channel ?? "telegram");
-  const session = msg.sessionName;
+  const m = messages(chatChannelOrDefault(msg.channel));
+  let session = msg.sessionName;
   if (!session) return m.doneShort;
   if (!isMessageAction(msg.action)) {
     throw new Error(`Unknown action: ${msg.action}`);
   }
 
   log.info(`action=${msg.action} session=${session} text_len=${msg.text?.length ?? 0}`);
+
+  const liveSession = await resolveLiveSessionName(deps.bridge, session);
+  if (!liveSession) {
+    log.warn(`${msg.action} rejected: tmux session not found session=${session}`);
+    return m.agentNotRunningRestart;
+  }
+  if (liveSession !== session) {
+    log.warn(`${msg.action} remapped legacy session=${session} liveSession=${liveSession}`);
+    session = liveSession;
+  }
 
   // Single precondition gate for every mutating action (see getActionPrecondition):
   // never type into a wrong-state pane, never spawn a second agent.
@@ -286,6 +338,13 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       const r = await performStart(deps, session);
       return r === "already-running" ? m.agentAlreadyRunning : m.agentStarted;
     }
+    case "resume": {
+      log.info(`resuming agent session=${session}`);
+      const r = await performResume(deps, session);
+      if (r === "already-running") return m.agentAlreadyRunning;
+      if (r === "missing-state") return m.agentResumeMissingState;
+      return m.agentResumed;
+    }
     case "exit": {
       log.info(`exiting agent session=${session}`);
       deps.queue.clearSession(session);
@@ -354,7 +413,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     case "status": {
       log.info(`checking status session=${session}`);
       const running = await deps.agent.checkIfRunning(session);
-      const channel = msg.channel ?? "telegram";
+      const channel = chatChannelOrDefault(msg.channel);
       return buildAgentStatusReport(deps, session, channel, running);
     }
     default: {
@@ -362,4 +421,8 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       throw new Error(`Unknown action: ${_exhaustive}`);
     }
   }
+}
+
+function chatChannelOrDefault(channel: QueuedMessage["channel"]): "telegram" | "lark" {
+  return channel === "lark" ? "lark" : "telegram";
 }

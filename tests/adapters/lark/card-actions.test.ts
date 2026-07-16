@@ -362,7 +362,7 @@ describe("makeCardActionHandler", () => {
 
   it("an IMMEDIATE cmd runs immediately (no enqueue, plain text)", async () => {
     const channel = fakeChannel();
-    const deps = fakeDeps();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
     const handler = makeCardActionHandler(channel, deps);
 
     await handler(evt({ cmd: "status" }));
@@ -540,12 +540,13 @@ describe("makeCardActionHandler", () => {
 
     it("startpick → reports preflight failures instead of going silent", async () => {
       const channel = fakeChannel();
+      const missingBinary = join(tmpdir(), "__tcb_missing_codex_for_lark_preflight__");
       const deps = fakeDeps({
         config: {
           startCommands: [
             {
               label: "Codex YOLO",
-              command: "__tcb_missing_codex_for_lark_preflight__ --yolo",
+              command: `${missingBinary} --yolo`,
               agent: "codex",
             },
           ],
@@ -557,9 +558,7 @@ describe("makeCardActionHandler", () => {
 
       expect(deps.agent.start).not.toHaveBeenCalled();
       expect(channel.texts()).toHaveLength(1);
-      expect(
-        channel.texts().some((t) => t.includes("__tcb_missing_codex_for_lark_preflight__")),
-      ).toBe(true);
+      expect(channel.texts().some((t) => t.includes(missingBinary))).toBe(true);
     });
   });
 

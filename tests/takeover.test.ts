@@ -86,6 +86,8 @@ describe("listClaudeOrphans dedup", () => {
       openSessionFile: async () => null,
       readProcEnv: async () => "CLAUDE_CONFIG_DIR=/nonexistent-xyz", // no on-disk sessions → sessionId null
       readShellRc: async () => "",
+      ttyOf: async () => null,
+      resetTerminal: async () => {},
       isAlive: async () => true,
       signal: () => {},
       sleep: async () => {},
@@ -108,6 +110,8 @@ describe("listClaudeOrphans dedup", () => {
       openSessionFile: async () => null,
       readProcEnv: async () => "CLAUDE_CONFIG_DIR=/home/u/.claude",
       readShellRc: async () => "",
+      ttyOf: async () => null,
+      resetTerminal: async () => {},
       isAlive: async () => true,
       signal: () => {},
       sleep: async () => {},
@@ -188,13 +192,16 @@ describe("buildResumeCommand", () => {
 });
 
 /** A probe whose liveness answers come from a scripted queue, recording the
- * exact order of signals sent. */
-function fakeProbe(opts: { alive?: boolean[] }): {
+ * exact order of signals sent and terminal resets performed. */
+function fakeProbe(opts: { alive?: boolean[]; tty?: string | null } = {}): {
   probe: TakeoverProbe;
   signals: Array<[number, Signal]>;
+  resets: string[];
 } {
   const alive = [...(opts.alive ?? [])];
+  const tty = opts.tty ?? null;
   const signals: Array<[number, Signal]> = [];
+  const resets: string[] = [];
   const probe: TakeoverProbe = {
     snapshot: async () => [],
     tmuxPanePids: async () => [],
@@ -202,13 +209,17 @@ function fakeProbe(opts: { alive?: boolean[] }): {
     openSessionFile: async () => null,
     readProcEnv: async () => "",
     readShellRc: async () => "",
+    ttyOf: async () => tty,
+    resetTerminal: async (t) => {
+      resets.push(t);
+    },
     isAlive: async () => alive.shift() ?? false,
     signal: (pid, sig) => {
       signals.push([pid, sig]);
     },
     sleep: async () => {},
   };
-  return { probe, signals };
+  return { probe, signals, resets };
 }
 
 const ORPHAN: OrphanAgent = {
@@ -299,6 +310,39 @@ describe("takeover", () => {
     await takeover({ ...ORPHAN, startCommand: "claude-stella --resume sess-9" }, d);
     expect(d.startInSession).toHaveBeenCalledWith("tcb-proj", "claude-stella --resume sess-9");
   });
+
+  it("resets the orphan's terminal after a successful kill so the shell doesn't print raw CSI sequences", async () => {
+    const { probe, resets } = fakeProbe({ alive: [false], tty: "/dev/ttys001" });
+    const d = deps(probe);
+    const res = await takeover(ORPHAN, d);
+    expect(res.ok).toBe(true);
+    expect(resets).toEqual(["/dev/ttys001"]);
+  });
+
+  it("does not reset the terminal when the orphan refuses to die", async () => {
+    const { probe, resets } = fakeProbe({ alive: [true, true, true], tty: "/dev/ttys001" });
+    const d = deps(probe);
+    const res = await takeover(ORPHAN, d);
+    expect(res.ok).toBe(false);
+    expect(resets).toEqual([]);
+    expect(d.ensureSession).not.toHaveBeenCalled();
+  });
+
+  it("resets each unique tty only once when multiple pids share the same terminal", async () => {
+    const { probe, resets } = fakeProbe({ alive: [false, false], tty: "/dev/ttys001" });
+    const d = deps(probe);
+    const res = await takeover({ ...ORPHAN, pids: [42, 43] }, d);
+    expect(res.ok).toBe(true);
+    expect(resets).toEqual(["/dev/ttys001"]);
+  });
+
+  it("skips terminal reset when the orphan has no tty", async () => {
+    const { probe, resets } = fakeProbe({ alive: [false] });
+    const d = deps(probe);
+    const res = await takeover(ORPHAN, d);
+    expect(res.ok).toBe(true);
+    expect(resets).toEqual([]);
+  });
 });
 
 describe("createTakeoverProbe composition", () => {
@@ -311,6 +355,7 @@ describe("createTakeoverProbe composition", () => {
         "/home/u/.claude/projects/foo/12345678-1234-1234-1234-123456789abc.jsonl",
       ],
       cwdOf: async () => "/home/u/project",
+      ttyOf: async () => null,
     };
     const probe = createTakeoverProbe(intro);
     expect(await probe.openSessionFile(200)).toBe("12345678-1234-1234-1234-123456789abc");
@@ -326,6 +371,7 @@ describe("createTakeoverProbe composition", () => {
         "/home/u/.codex/sessions/2026/06/17/rollout-2026-06-17T10-00-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
       ],
       cwdOf: async () => "/home/u/project",
+      ttyOf: async () => null,
     };
     const probe = createTakeoverProbe(intro);
     expect(await probe.openSessionFile(200)).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
@@ -337,6 +383,7 @@ describe("createTakeoverProbe composition", () => {
       readProcEnv: async () => "",
       listOpenFiles: async () => ["/dev/null", "/tmp/socket"],
       cwdOf: async () => null,
+      ttyOf: async () => null,
     };
     const probe = createTakeoverProbe(intro);
     expect(await probe.openSessionFile(200)).toBeNull();
@@ -349,14 +396,17 @@ describe("createTakeoverProbe composition", () => {
       readProcEnv: vi.fn(async () => "CLAUDE_CONFIG_DIR=/x"),
       listOpenFiles: async () => [],
       cwdOf: async () => null,
+      ttyOf: vi.fn(async () => "/dev/ttys007"),
     };
     const probe = createTakeoverProbe(intro);
     expect(await probe.snapshot()).toBe(rows);
     expect(await probe.readProcEnv(5)).toBe("CLAUDE_CONFIG_DIR=/x");
+    expect(await probe.ttyOf(5)).toBe("/dev/ttys007");
     // isAlive(pid 0) → process.kill(0,0) inspects the whole group; a clearly dead
     // pid is reliably false.
     expect(await probe.isAlive(2_147_483_646)).toBe(false);
     expect(intro.readProcEnv).toHaveBeenCalledWith(5);
+    expect(intro.ttyOf).toHaveBeenCalledWith(5);
   });
 
   it("tmuxPanePids returns null when the tmux query fails", async () => {
@@ -367,6 +417,7 @@ describe("createTakeoverProbe composition", () => {
       readProcEnv: async () => "",
       listOpenFiles: async () => [],
       cwdOf: async () => null,
+      ttyOf: async () => null,
     });
     const orig = process.env.PATH;
     process.env.PATH = "/nonexistent"; // tmux not found → execFile rejects
@@ -383,6 +434,7 @@ describe("createTakeoverProbe composition", () => {
       readProcEnv: async () => "",
       listOpenFiles: async () => [],
       cwdOf: async () => null,
+      ttyOf: async () => null,
     });
     // A pid that does not exist → process.kill throws ESRCH → must be swallowed.
     expect(() => probe.signal(2_147_483_646, "SIGTERM")).not.toThrow();
@@ -442,6 +494,8 @@ describe("listClaudeOrphans", () => {
       openSessionFile: async () => null,
       readProcEnv: async () => "",
       readShellRc: async () => "",
+      ttyOf: async () => null,
+      resetTerminal: async () => {},
       isAlive: async () => false,
       signal: () => {},
       sleep: async () => {},

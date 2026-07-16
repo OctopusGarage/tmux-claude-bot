@@ -18,13 +18,8 @@ import {
   toggleGoal,
 } from "../../core/autopilot/picker-state.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
-import { requiresActionConfirmation } from "../../core/command/action-registry.js";
-import {
-  executeMessage,
-  performRestart,
-  performStart,
-  startDisposition,
-} from "../../core/command/dispatch.js";
+import { planMessageAction } from "../../core/command/action-plan.js";
+import { executeMessage, performRestart, performStart } from "../../core/command/dispatch.js";
 import type { QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
@@ -65,6 +60,7 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { timeApi } from "../../shared/utils/timing.js";
 import { safeAnswerCallback } from "./callback-utils.js";
+import { enqueueSessionCommand } from "./executor.js";
 import {
   actionConfirmationBody,
   buildActionConfirmationKeyboard,
@@ -737,45 +733,64 @@ export async function handleCallbackQuery(
       await reply(ctx, "ok", msg, { session: sessionName, replyTarget });
       return;
     }
-    if (parsed.kind === "act" && requiresActionConfirmation(parsed.action)) {
+    if (parsed.kind !== "act" && parsed.kind !== "actconfirm") return;
+
+    const planned = await planMessageAction({
+      deps,
+      action: parsed.action,
+      confirmed: parsed.kind === "actconfirm",
+      session: sessionName,
+      text: parsed.action,
+    });
+
+    if (planned.kind === "confirm") {
       await safeAnswerCallback(ctx);
-      await reply(ctx, "warn", actionConfirmationBody(parsed.action, sessionName), {
+      await reply(ctx, "warn", actionConfirmationBody(planned.action, sessionName), {
         session: sessionName,
-        replyMarkup: buildActionConfirmationKeyboard(parsed.action, parsed.sid),
+        replyMarkup: buildActionConfirmationKeyboard(planned.action, parsed.sid),
         replyTarget,
       });
       return;
     }
-    // start/restart buttons: reject a start when already running, else show the
-    // flavor picker (multi-command) or fall through to the single-command action.
-    if (parsed.action === "start" || parsed.action === "restart") {
-      const mode = parsed.action === "restart" ? "restart" : "start";
-      const disp = await startDisposition(deps, sessionName, mode);
-      if (disp === "already-running") {
-        await safeAnswerCallback(ctx);
-        await reply(ctx, "ok", messages("telegram").agentAlreadyRunning, {
-          session: sessionName,
-          replyTarget,
-        });
-        return;
-      }
-      if (disp === "pick") {
-        await safeAnswerCallback(ctx);
-        await reply(ctx, "info", messages("telegram").startPickerPrompt, {
-          session: sessionName,
-          replyMarkup: buildStartPickerKeyboard(deps.config.startCommands, parsed.sid, mode),
-          replyTarget,
-        });
-        return;
-      }
+
+    if (planned.kind === "already-running") {
+      await safeAnswerCallback(ctx);
+      await reply(ctx, "ok", messages("telegram").agentAlreadyRunning, {
+        session: sessionName,
+        replyTarget,
+      });
+      return;
     }
-    // Control action — verb already validated as a safe MessageAction.
-    await safeAnswerCallback(ctx, messages("telegram").toastSent(parsed.action));
-    const result = await executeMessage(
-      { sessionName, action: parsed.action, id: "" } as QueuedMessage,
-      deps,
-    );
-    await reply(ctx, "info", result, { session: sessionName, replyTarget });
+
+    if (planned.kind === "pick-start-command") {
+      await safeAnswerCallback(ctx);
+      await reply(ctx, "info", messages("telegram").startPickerPrompt, {
+        session: sessionName,
+        replyMarkup: buildStartPickerKeyboard(
+          deps.config.startCommands,
+          parsed.sid,
+          planned.action,
+        ),
+        replyTarget,
+      });
+      return;
+    }
+
+    if (planned.kind === "immediate") {
+      await safeAnswerCallback(ctx, messages("telegram").toastSent(planned.action));
+      const result = await executeMessage(
+        { sessionName, action: planned.action, id: "" } as QueuedMessage,
+        deps,
+      );
+      await reply(ctx, "info", result, { session: sessionName, replyTarget });
+      return;
+    }
+
+    if (planned.kind === "queued") {
+      await safeAnswerCallback(ctx, messages("telegram").toastSent(planned.action));
+      await enqueueSessionCommand(ctx, deps, sessionName, planned.action, planned.text);
+      return;
+    }
   } catch (err) {
     log.error("callback handler failed", { err });
     await safeAnswerCallback(ctx, messages("telegram").toastError);

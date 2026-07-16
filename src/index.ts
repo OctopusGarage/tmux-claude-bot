@@ -9,6 +9,9 @@ import {
   releaseInstanceLock,
 } from "./core/infra/instance-lock.js";
 import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
+import { startLoopEngineering } from "./core/loop/service.js";
+import { startLoopSupervisor } from "./core/loop/supervisor-session.js";
+import { startLongTaskMonitor } from "./core/notifications/long-task-monitor.js";
 import { startKeepAwake, stopKeepAwake } from "./core/platform/keep-awake.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
 import { startOperator } from "./core/projects/operator-home.js";
@@ -134,6 +137,10 @@ startRunningSweep(deps, config.runningSweepMs);
 // fallback interval). No-op when AUTOPILOT_TICK_MS=0.
 startAutopilot(deps);
 startScheduler(deps);
+startLoopEngineering(deps, config.loopEngineering);
+startLongTaskMonitor(deps);
+// Boot the background Loop Supervisor session. No-op unless explicitly enabled.
+void startLoopSupervisor(deps);
 // Boot the home operator session (provision home dir + create session + start agent).
 // Fire-and-forget — must not block boot. No-op when HOME_OPERATOR_ENABLED=false.
 void startOperator(deps);

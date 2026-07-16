@@ -13,8 +13,8 @@ const base: AutopilotView = {
   gatePending: false,
   globalOn: false,
   goals: [
-    { id: "fix-tests", title: "Fix tests", selected: false },
-    { id: "code-review", title: "Code review", selected: true },
+    { id: "fix-tests", title: "Fix tests", selected: false, skills: [] },
+    { id: "code-review", title: "Code review", selected: true, skills: ["code-review"] },
   ],
   rounds: 2,
   maxRounds: 10,
@@ -63,6 +63,7 @@ describe("lark autopilot cards", () => {
   it("picker → selected goal marked, rounds shown, start summarises", () => {
     const j = JSON.stringify(autopilotGoalPickerCard({ ...base, enabled: false }, "s1"));
     expect(j).toContain("✓"); // code-review is selected
+    expect(j).toContain("skill: code-review");
     expect(j).toContain("ap_goal_toggle");
     expect(j).toContain("ap_rounds");
     expect(j).toContain("ap_start");

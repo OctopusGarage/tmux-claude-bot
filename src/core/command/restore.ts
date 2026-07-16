@@ -26,6 +26,7 @@ export function restoreMessage(
     sourceText: p.sourceText,
     transform: p.transform,
     ackMsgId: p.ackMsgId,
+    controlRestore: p.controlRestore,
     // Carry the ingress trace so a recovered message's execution logs still
     // correlate to its original trace instead of starting blank.
     traceId: p.traceId,

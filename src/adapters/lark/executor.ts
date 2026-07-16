@@ -15,6 +15,10 @@ import { resolveTargetSession } from "../../core/projects/operator.js";
 import { labelForSession } from "../../core/projects/project-label.js";
 import { chatScope } from "../../core/projects/project-manager.js";
 import {
+  resolveLiveSessionName,
+  sanitizeTmuxSessionName,
+} from "../../core/projects/sessionPathMap.js";
+import {
   prepareUserPromptDelivery,
   userPromptQueueFields,
 } from "../../core/read/user-prompt-intake.js";
@@ -93,6 +97,14 @@ export async function resolveSession(
       recoveryCard(messages("lark").noCurrentProject, isProjectGroup(chatId)),
     );
     return null;
+  }
+  const safeSession = sanitizeTmuxSessionName(session);
+  if (safeSession !== session) {
+    const liveSession = await resolveLiveSessionName(deps.bridge, session);
+    if (liveSession) {
+      await deps.currentProject.set(chatScope("lark", chatId), liveSession);
+      return liveSession;
+    }
   }
   return session;
 }

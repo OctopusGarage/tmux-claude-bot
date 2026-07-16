@@ -9,6 +9,7 @@ import { buildDashboard } from "../src/core/dashboard/dashboard.js";
 import { setFreeProject } from "../src/core/projects/free-projects.js";
 import { bindGroup } from "../src/core/projects/group-bindings.js";
 import { setPathForSession } from "../src/core/projects/sessionPathMap.js";
+import { clearTaskTiming, taskStarted } from "../src/core/session/task-timing.js";
 
 let stateDir: string | undefined;
 beforeEach(() => {
@@ -16,6 +17,8 @@ beforeEach(() => {
   process.env.TCB_STATE_DIR = stateDir;
 });
 afterEach(() => {
+  clearTaskTiming("sess_a");
+  clearTaskTiming("sess_b");
   delete process.env.TCB_STATE_DIR;
   if (stateDir) rmSync(stateDir, { recursive: true, force: true });
   stateDir = undefined;
@@ -66,6 +69,25 @@ describe("buildDashboard", () => {
     expect(typeof a.busy).toBe("boolean");
     expect(typeof a.cumulativeBusyMs).toBe("number");
     expect(row(snap.sessions, "sess_b").uptimeMs).toBe(0); // no created time
+  });
+
+  it("adds a stable task identity for the current queue message", async () => {
+    const startedAt = Date.now() - 1000;
+    taskStarted("sess_a", startedAt);
+    const snap = await buildDashboard(
+      fakeDeps({
+        queue: {
+          size: () => 1,
+          getCurrentSessionMessage: (session: string) =>
+            session === "sess_a" ? ({ id: "msg-1" } as never) : undefined,
+        },
+      }),
+      { paneDiffMs: 0 },
+    );
+
+    const a = row(snap.sessions, "sess_a");
+    expect(a.busy).toBe(true);
+    expect(a.task).toEqual({ key: "queue:msg-1", startedAt, source: "queue" });
   });
 
   it("adds project/session metadata for independent sessions, workspace paths, and groups", async () => {

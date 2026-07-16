@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   getPathBySession,
   isCdAllowed,
+  resolveLiveSessionName,
   sessionNameFromPath,
   setPathForSession,
 } from "../src/core/projects/sessionPathMap.js";
@@ -54,6 +55,54 @@ describe("sessionNameFromPath", () => {
   it("preserves underscores and hyphens together", () => {
     const result = sessionNameFromPath("/Users/test/tmux-claude-bot", "tmux_proj_");
     expect(result).toBe("tmux_proj_-Users-test-tmux-claude-bot");
+  });
+
+  it("sanitizes tmux target separators in hidden directory names", () => {
+    const result = sessionNameFromPath("/Users/test/.alcove/workspaces/data/family", "tmux_proj_");
+    expect(result).toBe("tmux_proj_-Users-test-_alcove-workspaces-data-family");
+  });
+});
+
+describe("resolveLiveSessionName", () => {
+  it("prefers the exact live session when it exists", async () => {
+    const calls: string[] = [];
+    const bridge = {
+      hasSession: async (sessionName: string) => {
+        calls.push(sessionName);
+        return sessionName === "tmux_proj_-home-user-.legacy";
+      },
+    };
+
+    await expect(resolveLiveSessionName(bridge, "tmux_proj_-home-user-.legacy")).resolves.toBe(
+      "tmux_proj_-home-user-.legacy",
+    );
+    expect(calls).toEqual(["tmux_proj_-home-user-.legacy"]);
+  });
+
+  it("falls back to the sanitized live alias for legacy dotted session names", async () => {
+    const calls: string[] = [];
+    const bridge = {
+      hasSession: async (sessionName: string) => {
+        calls.push(sessionName);
+        return sessionName === "tmux_proj_-home-user-_alcove-data-family";
+      },
+    };
+
+    await expect(
+      resolveLiveSessionName(bridge, "tmux_proj_-home-user-.alcove-data-family"),
+    ).resolves.toBe("tmux_proj_-home-user-_alcove-data-family");
+    expect(calls).toEqual([
+      "tmux_proj_-home-user-.alcove-data-family",
+      "tmux_proj_-home-user-_alcove-data-family",
+    ]);
+  });
+
+  it("returns null when neither the original nor sanitized session exists", async () => {
+    const bridge = { hasSession: async () => false };
+
+    await expect(
+      resolveLiveSessionName(bridge, "tmux_proj_-home-user-.alcove-data-family"),
+    ).resolves.toBeNull();
   });
 });
 

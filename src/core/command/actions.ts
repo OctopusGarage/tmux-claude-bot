@@ -1,6 +1,7 @@
 export const MESSAGE_ACTIONS = [
   "text",
   "start",
+  "resume",
   "exit",
   "restart",
   "esc",
@@ -38,6 +39,7 @@ export type ActionPrecondition = "running" | "absent" | null;
 const ACTION_PRECONDITION: Record<MessageAction, ActionPrecondition> = {
   text: "running",
   start: "absent",
+  resume: "absent",
   exit: "running",
   clear: "running",
   compact: "running",

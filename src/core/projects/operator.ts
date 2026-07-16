@@ -8,9 +8,19 @@ export function operatorSessionName(prefix: string): string {
   return `${prefix}home`;
 }
 
+/** Reserved loop supervisor session name, e.g. `tmux_proj_loop-supervisor`. */
+export function loopSupervisorSessionName(prefix: string): string {
+  return `${prefix}loop-supervisor`;
+}
+
 /** True iff `session` is the reserved operator session for this prefix. */
 export function isOperator(session: string, prefix: string): boolean {
   return session === operatorSessionName(prefix);
+}
+
+/** True iff `session` is reserved bot infrastructure, not a user project. */
+export function isReservedInfrastructureSession(session: string, prefix: string): boolean {
+  return session === operatorSessionName(prefix) || session === loopSupervisorSessionName(prefix);
 }
 
 /** Resolve the target session for a channel: an explicit current project wins;
@@ -47,5 +57,7 @@ export async function listUserProjectSessions(deps: {
   config: { projectSessionPrefix: string };
 }): Promise<string[]> {
   const prefix = deps.config.projectSessionPrefix;
-  return (await deps.bridge.listProjectSessions()).filter((s) => !isOperator(s, prefix));
+  return (await deps.bridge.listProjectSessions()).filter(
+    (s) => !isReservedInfrastructureSession(s, prefix),
+  );
 }

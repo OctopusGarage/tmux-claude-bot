@@ -81,8 +81,7 @@ export type ParsedInput =
   | { kind: "text"; text: string }
   | { kind: "help" }
   | { kind: "command"; action: MessageAction; immediate: boolean }
-  | { kind: "view"; name: ViewName; arg?: string | undefined }
-  | { kind: "unknown"; name: string };
+  | { kind: "view"; name: ViewName; arg?: string | undefined };
 
 export function parseLarkInput(raw: string): ParsedInput {
   const trimmed = raw.trim();
@@ -116,7 +115,7 @@ export function parseLarkInput(raw: string): ParsedInput {
     return { kind: "view", name: view, arg };
   }
 
-  return { kind: "unknown", name };
+  return { kind: "text", text: trimmed };
 }
 
 const GROUP_MGMT_VIEWS: ReadonlySet<ViewName> = new Set([

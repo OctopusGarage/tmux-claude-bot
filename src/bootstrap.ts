@@ -12,8 +12,11 @@ import { NotifierRegistry } from "./core/autopilot/notifier.js";
 import { agentIsIdle } from "./core/command/agent-ready.js";
 import { executeMessage } from "./core/command/dispatch.js";
 import { MessageQueue } from "./core/command/queue.js";
+import { defaultQueueObserver } from "./core/command/queue-observer.js";
 import type { HandlerDeps } from "./core/deps.js";
 import { migrateLegacyStateDir } from "./core/infra/state-migration.js";
+import { NotificationGateway } from "./core/notifications/gateway.js";
+import { OwnerActivityTracker } from "./core/notifications/owner-activity.js";
 import { ChannelSenderRegistry } from "./core/projects/channel-sender.js";
 import { createProjectManager } from "./core/projects/project-manager.js";
 import { createActivityWatcher } from "./core/session/activity-watcher.js";
@@ -79,7 +82,12 @@ export function bootstrap(): HandlerDeps {
     maxOutputLines: config.maxOutputLines,
     maxMessageLength: config.maxMessageLength,
   });
-  const queue = new MessageQueue(config.maxQueueSize, undefined, config.maxConcurrentSessions);
+  const queue = new MessageQueue(
+    config.maxQueueSize,
+    undefined,
+    config.maxConcurrentSessions,
+    defaultQueueObserver,
+  );
   const configResolver = createConfigResolver(createExecProbe(), {
     defaultRoot: DEFAULT_CONFIG_ROOT,
     claudeBin: claudeBinFromStartCommand(config.claudeStartCommand),
@@ -120,6 +128,8 @@ export function bootstrap(): HandlerDeps {
   activity.start();
 
   const notifier = new NotifierRegistry();
+  const notifications = new NotificationGateway();
+  const ownerActivity = new OwnerActivityTracker();
 
   const deps: HandlerDeps = {
     bridge,
@@ -131,6 +141,8 @@ export function bootstrap(): HandlerDeps {
     configResolver,
     activity,
     notifier,
+    notifications,
+    ownerActivity,
     channelSenders: new ChannelSenderRegistry(),
   };
 

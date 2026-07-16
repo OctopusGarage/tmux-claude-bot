@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import { SHELL_RC_FILES } from "../../shared/shell-rc.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { TERMINAL_MODE_RESET_SEQUENCE } from "../../shared/utils/terminal-modes.js";
 import { type ProcessIntrospector, selectIntrospector } from "../platform/introspector.js";
 import { createExecProbe, type ProcRow, parseEnvVar } from "./agent-config-resolver.js";
 import { isClaudeProcess, matchOpenClaudeTranscript } from "./claude/claude-process.js";
@@ -107,6 +108,11 @@ export interface TakeoverProbe {
   readProcEnv(pid: number): Promise<string>;
   /** Concatenated shell rc files, mined for `claude-*` launcher aliases. */
   readShellRc(): Promise<string>;
+  /** Controlling terminal of the process (e.g. /dev/ttys001 or /dev/pts/0),
+   * or null when the process has no terminal. */
+  ttyOf(pid: number): Promise<string | null>;
+  /** Best-effort reset of TUI-forced terminal modes on the given tty. */
+  resetTerminal(tty: string): Promise<void>;
   /** Send a signal; swallow ESRCH (already gone). */
   signal(pid: number, sig: Signal): void;
   /** Whether the pid is still alive (kill -0). */
@@ -283,6 +289,18 @@ export async function takeover(orphan: OrphanAgent, deps: TakeoverDeps): Promise
     return { ok: false, sessionName: "", resumed: false, reason: "target_session_busy" };
   }
 
+  // Capture the terminals that host these orphans BEFORE killing them. A TUI
+  // like claude leaves the terminal in enhanced keyboard modes (kitty protocol,
+  // modifyOtherKeys, focus tracking, bracketed paste). An abrupt signal-kill
+  // never gives it a chance to reset, so the user's shell afterwards prints raw
+  // CSI sequences for every keystroke. We remember the ttys here and reset them
+  // once the processes are confirmed dead.
+  const orphanTtys = new Set<string>();
+  for (const pid of orphan.pids ?? [orphan.pid]) {
+    const tty = await probe.ttyOf(pid);
+    if (tty) orphanTtys.add(tty);
+  }
+
   // Kill every process resuming this session — a survivor would corrupt the
   // resumed `.jsonl` (two writers on one file). SIGINT first: cancels an in-flight
   // generation (and flushes that turn to disk), harmless when idle; settle, then
@@ -305,6 +323,12 @@ export async function takeover(orphan: OrphanAgent, deps: TakeoverDeps): Promise
       log.warn(`pid=${pid} would not die`);
       return { ok: false, sessionName: "", resumed: false, reason: "process_would_not_die" };
     }
+  }
+
+  // Reset any terminals the orphans had attached. This is best-effort: the tty
+  // may already be closed or reassigned by the time we get here.
+  for (const tty of orphanTtys) {
+    await probe.resetTerminal(tty);
   }
 
   const sessionName = await deps.ensureSession(orphan.cwd);
@@ -371,6 +395,14 @@ export function createTakeoverProbe(
       return (matchOpenClaudeTranscript(files) ?? matchOpenCodexRollout(files))?.sessionId ?? null;
     },
     cwdOf: (pid) => intro.cwdOf(pid),
+    ttyOf: (pid) => intro.ttyOf(pid),
+    async resetTerminal(tty: string): Promise<void> {
+      try {
+        await writeFile(tty, TERMINAL_MODE_RESET_SEQUENCE);
+      } catch {
+        // Best-effort: the tty may have closed or permissions may have changed.
+      }
+    },
     signal(pid: number, sig: Signal): void {
       try {
         process.kill(pid, sig);

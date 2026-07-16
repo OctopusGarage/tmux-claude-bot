@@ -1,11 +1,14 @@
-# Agent skills the autopilot goals rely on
+# Agent skills and capability registry
 
-Some built-in autopilot goals (`src/core/autopilot/goals/catalog.ts`) drive the
-coding agent by asking it to run a **skill** — e.g. *"use your code-review skill
-if one is available."* The skill lives in the **agent's** environment (Claude
-Code / Codex running in the project session), **not** in this repo, so it is not
-installed by `npm install` / the deploy. This file is the registry of those
-skills and where to get them, so they can be installed and kept up to date.
+Some built-in autopilot goals (`src/core/autopilot/goals/catalog.ts`) and Loop
+Engineering tasks drive the coding agent by asking it to run a **skill** — e.g.
+*"use your code-review skill if one is available."* The skill lives in the
+**agent's** environment (Claude Code / Codex running in the project session),
+**not** in this repo, so it is not installed by `npm install` / the deploy.
+
+The shared capability registry lives under `src/core/skills`. Autopilot consumes
+it for goal skill intents; Loop Engineering consumes it for scheduled
+maintenance tasks and `tcb loop skills ...` commands.
 
 The goal prompts are written to **degrade gracefully**: *"use your X skill if one
 is available"* — if the skill is missing, the agent follows the prose steps in
@@ -19,6 +22,88 @@ installing it is not fatal.
 | `code-review` | `code-review` → review; `improve-architecture` (review discipline) | Bundled with Claude Code | Built in — no install. Codex has no equivalent and falls back to the goal prompt's prose. |
 | `simplify` | `code-review` → simplify | Bundled with Claude Code | Built in — no install. Codex falls back to prose. |
 | `improve-codebase-architecture` | `improve-architecture` → audit | [github.com/mattpocock/skills](https://github.com/mattpocock/skills) (`skills/engineering/improve-codebase-architecture/`) | Not bundled — install per below. |
+
+## Loop Engineering skill catalog
+
+Loop Engineering configs can keep common remote skills in `skills.catalog`, and
+the same approved entries describe capabilities Autopilot can reference from
+goal skill intents. Catalog entries may track a floating Git ref such as `main`,
+but project runs should use the pinned `skills.approved` entries produced by:
+
+```bash
+tcb loop skills refresh /path/to/loop-engineering.yml --write
+tcb loop skills sync /path/to/loop-engineering.yml
+```
+
+`refresh` resolves each catalog entry to a concrete commit SHA and checksum, then
+updates `skills.approved`. `sync` delegates the actual install/update/remove work
+to `skills.applyCommand`; the bot does not copy or symlink agent skill files
+itself.
+
+Common catalog entries:
+
+```yaml
+skills:
+  applyCommand: ./scripts/sync-agent-skill.sh
+  catalog:
+    - id: brooks-lint
+      sourceUrl: https://github.com/hyhmrright/brooks-lint
+      sourcePath: .
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [architecture, audit]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+    - id: improve-codebase-architecture
+      sourceUrl: https://github.com/mattpocock/skills
+      sourcePath: skills/engineering/improve-codebase-architecture
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [architecture, refactor]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+    - id: code-review
+      sourceUrl: https://github.com/mattpocock/skills
+      sourcePath: skills/engineering/code-review
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [review, quality]
+      trustLevel: approved
+      risk: low
+      updatePolicy: notify
+    - id: production-code-audit
+      sourceUrl: https://github.com/sickn33/agentic-awesome-skills
+      sourcePath: skills/production-code-audit
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [production, audit]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+    - id: codebase-audit-pre-push
+      sourceUrl: https://github.com/sickn33/agentic-awesome-skills
+      sourcePath: skills/codebase-audit-pre-push
+      trackingRef: main
+      platforms: [claude, codex]
+      tags: [pre-push, audit]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+    - id: production-audit
+      sourceUrl: https://github.com/affaan-m/everything-claude-code
+      sourcePath: skills/production-audit
+      trackingRef: production-audit
+      platforms: [claude, codex]
+      tags: [production, reliability]
+      trustLevel: approved
+      risk: medium
+      updatePolicy: notify
+```
+
+See `docs/examples/loop-skills-catalog.example.yml` for a complete config
+fragment with the six common skills and a runnable project skeleton.
 
 ## `improve-codebase-architecture` — install & update
 

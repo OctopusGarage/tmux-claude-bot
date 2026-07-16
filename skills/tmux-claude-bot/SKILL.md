@@ -51,7 +51,15 @@ matches; pick the right one or ask the user.
 
 ## Sending an image or file to the user
 
-Text replies reach the user automatically. To send an **image or file** (a
+For an owner/background notification from another local project, prefer
+`tcb notify --attach`:
+
+    tcb notify --source radar --title "Radar ready" --body "Daily report attached" --attach report.md --attach report.html
+
+It sends the text and uploads the files through the configured Telegram/Feishu
+owner targets without requiring a chat-originated session.
+
+Text replies from a chat-originated session reach the user automatically. To send an **image or file** (a
 screenshot, a generated diagram, a report, a log), run:
 
     tcb attach <path> [--caption "<short description>"]
