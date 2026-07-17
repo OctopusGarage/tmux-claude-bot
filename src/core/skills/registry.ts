@@ -305,17 +305,3 @@ export function applyAgentSkillRegistryActions(input: {
 export function listAgentSkills(store = new AgentSkillRegistryStore()): InstalledAgentSkill[] {
   return store.list();
 }
-
-export type InstalledLoopSkill = InstalledAgentSkill;
-export type LoopSkillAction = AgentSkillAction;
-export type LoopSkillCommandRun = AgentSkillCommandRun;
-export type LoopSkillCommandResult = AgentSkillCommandResult;
-export type LoopSkillSyncSummary = AgentSkillSyncSummary;
-export type LoopSkillResolvedVersion = AgentSkillResolvedVersion;
-export type LoopSkillRefreshUpdate = AgentSkillRefreshUpdate;
-export type LoopSkillRefreshSummary = AgentSkillRefreshSummary;
-export const LoopSkillRegistryStore = AgentSkillRegistryStore;
-export const planLoopSkillRegistryActions = planAgentSkillRegistryActions;
-export const refreshLoopSkillCatalog = refreshAgentSkillCatalog;
-export const applyLoopSkillRegistryActions = applyAgentSkillRegistryActions;
-export const listLoopSkills = listAgentSkills;

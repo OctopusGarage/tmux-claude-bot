@@ -1,5 +1,25 @@
-import type { AgentSkillResolvedVersion, InstalledAgentSkill } from "./registry.js";
 import type { ApprovedSkill, SkillCatalogEntry } from "./schema.js";
+
+type InstalledAgentSkillProjection = {
+  skillId: string;
+  sourceUrl: string;
+  sourcePath?: string;
+  ref: string;
+  checksum: string;
+  platforms: Array<"claude" | "codex">;
+  tags: string[];
+  trustLevel: "core" | "approved" | "community";
+  risk: "low" | "medium" | "high";
+  updatePolicy: "manual" | "notify" | "auto-minor";
+  status: "installed" | "quarantined";
+  installedAt: number;
+  updatedAt?: number;
+};
+
+type AgentSkillResolvedVersionProjection = {
+  ref: string;
+  checksum: string;
+};
 
 function sameStringArray(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -21,7 +41,7 @@ export function approvedSkillSpecsEqual(left: ApprovedSkill, right: ApprovedSkil
 }
 
 export function installedSkillMatchesApprovedSkill(
-  installed: InstalledAgentSkill,
+  installed: InstalledAgentSkillProjection,
   spec: ApprovedSkill,
 ): boolean {
   return approvedSkillSpecsEqual(
@@ -44,9 +64,9 @@ export function installedSkillMatchesApprovedSkill(
 export function installedFromApprovedSkill(
   spec: ApprovedSkill,
   now: number,
-  previous?: InstalledAgentSkill,
-  status: InstalledAgentSkill["status"] = "installed",
-): InstalledAgentSkill {
+  previous?: InstalledAgentSkillProjection,
+  status: InstalledAgentSkillProjection["status"] = "installed",
+): InstalledAgentSkillProjection {
   return {
     skillId: spec.id,
     sourceUrl: spec.sourceUrl,
@@ -66,7 +86,7 @@ export function installedFromApprovedSkill(
 
 export function approvedFromCatalogEntry(
   skill: SkillCatalogEntry,
-  version: AgentSkillResolvedVersion,
+  version: AgentSkillResolvedVersionProjection,
 ): ApprovedSkill {
   return {
     id: skill.id,

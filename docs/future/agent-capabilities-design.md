@@ -95,7 +95,6 @@ Loop Engineering flow:
 - Shared skill schema lives in `src/core/skills/schema.ts`.
 - Shared skill registry and refresh/sync logic lives in
   `src/core/skills/registry.ts`.
-- `src/core/loop/skill-registry.ts` is a compatibility re-export only.
 - Loop CLI commands still expose the user-facing surface as
   `tcb loop skills list|refresh|sync`.
 - Autopilot skill intents reuse the shared skill id schema/type.

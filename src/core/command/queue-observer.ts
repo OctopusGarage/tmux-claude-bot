@@ -8,11 +8,6 @@ export interface QueueObserver {
   finished(sessionName: string, msg: QueuedMessage): void;
 }
 
-export const noopQueueObserver: QueueObserver = {
-  started: () => {},
-  finished: () => {},
-};
-
 export const defaultQueueObserver: QueueObserver = {
   started(sessionName, msg) {
     taskStarted(sessionName);

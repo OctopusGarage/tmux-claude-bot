@@ -207,8 +207,7 @@ Proposed modules:
   Shared agent capability registry used by Loop Engineering and Autopilot.
   Reconciles approved skill specs through a command boundary. It pins refs,
   rejects floating refs such as `main`, records installed state, and quarantines
-  unsafe entries. `src/core/loop/skill-registry.ts` is only a compatibility
-  re-export.
+  unsafe entries.
 
 - `src/core/loop/assessment.ts`
   Produces findings from either a deterministic command or an agent-backed prompt.
