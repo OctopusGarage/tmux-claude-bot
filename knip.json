@@ -11,6 +11,7 @@
     "scripts/install-whisper.sh",
     "scripts/install-argos-translate.sh",
     "scripts/smoke.sh",
+    "scripts/verify-local.sh",
     "shellcheck",
     "ps",
     "tmux",

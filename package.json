@@ -62,6 +62,7 @@
     "knip": "knip",
     "depcruise": "depcruise src --config .dependency-cruiser.cjs",
     "lint:deep": "eslint src",
+    "verify:local": "scripts/verify-local.sh",
     "mutation": "stryker run",
     "audit": "npm audit --audit-level=high",
     "prepare": "husky 2>/dev/null || true"

@@ -39,6 +39,13 @@ model-integration points; keep them deterministic/local or make them talk to the
 running bot/agent control surface. Remove or replace any bot-owned provider SDK,
 HTTP, or model-key based eval path with an agent-backed adapter.
 
+## Local Verification Before Push
+
+Before pushing or claiming CI readiness, run `npm run verify:local`. The
+pre-push hook runs this command too. If a remote CI failure exposes a category
+not covered locally, update `scripts/verify-local.sh`, the hook, or this file so
+future agents see the same failure before push.
+
 ## Usage Documentation Lookup
 
 When the task is about how to use tmux-claude-bot, available commands, setup,

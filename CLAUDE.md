@@ -189,6 +189,26 @@ The project root directory name `tmux-claude-bot` is used as the process identit
   pause/resume) or pause the service first.
 - Commands exposed via Telegram Bot menu
 
+## Local Verification Contract
+
+Before pushing, run `npm run verify:local`. The pre-push hook runs the same
+command and must not be bypassed for ordinary work. This local gate mirrors the
+CI checks that previously caught missed issues only after push:
+
+- Biome, production TypeScript, and test TypeScript checks
+- coverage test run
+- `knip` dead-code/export/dependency checks
+- dependency-cruiser architecture checks
+- type-aware ESLint (`lint:deep`)
+- smoke script and high-severity npm audit
+- shellcheck when available locally
+- systemd unit validation when `systemd-analyze` is available locally
+
+If CI finds a problem that `npm run verify:local` did not find, treat that as a
+process bug: update this script, the hook, or these instructions so the same
+class of issue is caught locally next time. Do not leave the fix only in CI
+tribal knowledge.
+
 ## Active Goal Discipline
 
 Do not turn a broad active goal into an endless opportunistic sweep. A broad
