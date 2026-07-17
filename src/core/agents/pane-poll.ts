@@ -12,6 +12,8 @@ export type ReadyVerdict =
   | { sendRawKey: string }
   | { sendRawKeys: readonly string[] };
 
+type PaneAction = Extract<ReadyVerdict, object>;
+
 /**
  * Prose-agnostic readiness fallback for `pollUntilReady`. When the positive
  * marker never matches (e.g. a future UI re-skin breaks it), a pane that has been
@@ -126,6 +128,7 @@ export async function pollUntilIdle(opts: {
   sessionName?: string | undefined;
   logTag: string;
   isActiveTurn?: (pane: string) => boolean;
+  activePaneAction?: (pane: string) => "wait" | PaneAction;
 }): Promise<{ done: boolean; output: string }> {
   const {
     bridge,
@@ -136,6 +139,7 @@ export async function pollUntilIdle(opts: {
     sessionName,
     logTag,
     isActiveTurn,
+    activePaneAction,
   } = opts;
   let identicalCount = 0;
   let lastContent = "";
@@ -153,6 +157,17 @@ export async function pollUntilIdle(opts: {
       logger.error(
         `${logTag} waitUntilDone capturePane failed iter=${i}: ${err instanceof Error ? err.message : err}`,
       );
+      await sleep(pollIntervalMs);
+      continue;
+    }
+
+    const action = activePaneAction?.(pane);
+    if (action && action !== "wait") {
+      const keys = "sendRawKeys" in action ? action.sendRawKeys : [action.sendRawKey];
+      logger.info(`${logTag} waitUntilDone session=${sess} sending ${keys.join(",")} at iter=${i}`);
+      for (const key of keys) await bridge.sendRawKey(key, sessionName);
+      identicalCount = 0;
+      lastContent = pane;
       await sleep(pollIntervalMs);
       continue;
     }

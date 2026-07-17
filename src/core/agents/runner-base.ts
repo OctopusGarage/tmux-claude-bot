@@ -24,12 +24,19 @@ export function paneNeedsConfirm(pane: string): boolean {
 }
 
 export function paneConfirmAction(pane: string): ReadyVerdict {
+  if (activeCodexAdditionalSafetyMenu(pane)) return "wait";
   if (!activeConfirmGate(pane)) return "wait";
   if (pane.includes("Bypass Permissions mode") && pane.includes("Yes, I accept")) {
     if (/❯\s*2\.\s*Yes, I accept/.test(pane)) return { sendRawKey: "Enter" };
     return { sendRawKeys: ["Down", "Enter"] };
   }
   return { sendRawKey: "Enter" };
+}
+
+export function paneCodexAdditionalSafetyAction(pane: string): ReadyVerdict {
+  if (!activeCodexAdditionalSafetyMenu(pane)) return "wait";
+  if (/❯\s*2\.\s*Keep waiting/i.test(pane)) return { sendRawKey: "Enter" };
+  return { sendRawKeys: ["Down", "Enter"] };
 }
 
 function activeConfirmGate(pane: string): boolean {
@@ -50,6 +57,19 @@ function activeConfirmGate(pane: string): boolean {
       line.includes("Yes, I accept"),
   );
   return gateLine >= 0 && lastNonBlank - gateLine <= 3;
+}
+
+function activeCodexAdditionalSafetyMenu(pane: string): boolean {
+  const lines = pane.split("\n");
+  const lastNonBlank = findLastNonBlankLine(lines);
+  if (lastNonBlank < 0) return false;
+  const lastLine = lines[lastNonBlank] ?? "";
+  return (
+    /Additional safety checks/i.test(pane) &&
+    /Retry with a faster model/i.test(pane) &&
+    /Keep waiting/i.test(pane) &&
+    /Press enter to confirm or esc to go back/i.test(lastLine)
+  );
 }
 
 function findLastNonBlankLine(lines: readonly string[]): number {
@@ -182,6 +202,8 @@ export abstract class AgentRunnerBase implements AgentRunner {
       // when needed, then confirm; otherwise defer to the agent's positive ready
       // marker so a gate screen is never a false "ready".
       classify: (pane) => {
+        const safety = paneCodexAdditionalSafetyAction(pane);
+        if (safety !== "wait") return safety;
         const confirm = paneConfirmAction(pane);
         if (confirm !== "wait") return confirm;
         if (this.activeTurnMarker(pane)) return "wait";
@@ -210,6 +232,8 @@ export abstract class AgentRunnerBase implements AgentRunner {
       logTag: this.logTag,
       notReadyError: this.notReadyError,
       classify: (pane) => {
+        const safety = paneCodexAdditionalSafetyAction(pane);
+        if (safety !== "wait") return safety;
         if (blocksInput(pane)) return "wait";
         return this.readyMarker(pane) ? "ready" : "wait";
       },
@@ -231,7 +255,11 @@ export abstract class AgentRunnerBase implements AgentRunner {
       maxWaitDoneMs: this.maxWaitDoneMs,
       sessionName,
       logTag: this.logTag,
-      isActiveTurn: (pane) => this.activeTurnMarker(pane),
+      isActiveTurn: (pane) => this.activeTurnMarker(pane) || paneNeedsConfirm(pane),
+      activePaneAction: (pane) => {
+        const safety = paneCodexAdditionalSafetyAction(pane);
+        return safety === "ready" ? "wait" : safety;
+      },
     });
   }
 

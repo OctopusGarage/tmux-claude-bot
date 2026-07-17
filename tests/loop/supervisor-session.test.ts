@@ -69,6 +69,10 @@ describe("loop supervisor session", () => {
       expect(firstClaude).toBe(secondClaude);
       expect(firstAgents).toContain("Loop Supervisor");
       expect(firstAgents).toContain("Do not call model-provider APIs");
+      expect(firstAgents).toContain("persistent working home");
+      expect(firstAgents).toContain("Use the `tcb` CLI");
+      expect(firstAgents).toContain("Do not silently ignore partial work");
+      expect(firstAgents).toContain("required final marker");
       expect(firstClaude).toBe(firstAgents);
     } finally {
       rmSync(dir, { recursive: true, force: true });

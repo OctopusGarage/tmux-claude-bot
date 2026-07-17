@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
-import { type LoopRunCommandInvocation, runLoopProject } from "../../src/core/loop/run.js";
+import {
+  type LoopRunCommandInvocation,
+  runLoopProject,
+  runLoopProjectAsync,
+} from "../../src/core/loop/run.js";
 
 const configText = `
 projects:
@@ -301,13 +305,291 @@ describe("runLoopProject", () => {
       "commit",
       "commit",
       "commit",
+      "commit",
     ]);
     expect(gitCommands).toEqual([
       ["switch", "loop/hub"],
       ["add", "--", "tests/parser.test.ts"],
       ["diff", "--cached", "--quiet"],
       ["commit", "-m", "loop(hub): Extract parser tests"],
+      ["status", "--porcelain"],
       ["rev-parse", "HEAD"],
+    ]);
+  });
+
+  it("recovers a committed round when verified changes remain outside affected files", () => {
+    const config = parseLoopConfigYaml(closedLoopConfigText);
+    const gitCommands: string[][] = [];
+    const agentPrompts: string[] = [];
+    let statusChecks = 0;
+
+    const summary = runLoopProject({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.command === "test -x .venv/bin/pytest") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              score: 72,
+              findings: [
+                {
+                  id: "f1",
+                  title: "Add architecture guard",
+                  action: "small-refactor",
+                  confidence: "high",
+                  autofixSafety: "guarded",
+                  affectedFiles: ["src"],
+                  prompt: "Add a focused architecture guard.",
+                  verificationCommands: ["npm test"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "verified", stderr: "" };
+      },
+      runAgentTask: (invocation) => {
+        agentPrompts.push(invocation.prompt);
+        return { status: 0, stdout: "recovered and committed residual changes", stderr: "" };
+      },
+      runGit: (invocation) => {
+        gitCommands.push(invocation.args);
+        if (invocation.args.join(" ") === "diff --cached --quiet") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          statusChecks++;
+          return {
+            status: 0,
+            stdout: statusChecks === 2 ? " M .semgrep/datavibe-arch.yml\n" : "",
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({
+        findingId: "f1",
+        status: "committed",
+      }),
+    ]);
+    expect(agentPrompts).toHaveLength(2);
+    expect(agentPrompts[1]).toContain(".semgrep/datavibe-arch.yml");
+    expect(gitCommands).toContainEqual(["status", "--porcelain"]);
+  });
+
+  it("async runner recovers verified residual changes instead of leaving the target worktree dirty", async () => {
+    const config = parseLoopConfigYaml(closedLoopConfigText);
+    const agentPrompts: string[] = [];
+    let statusChecks = 0;
+
+    const summary = await runLoopProjectAsync({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.command === "test -x .venv/bin/pytest") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              score: 72,
+              findings: [
+                {
+                  id: "f1",
+                  title: "Add architecture guard",
+                  action: "small-refactor",
+                  confidence: "high",
+                  autofixSafety: "guarded",
+                  affectedFiles: ["src"],
+                  prompt: "Add a focused architecture guard.",
+                  verificationCommands: ["npm test"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "verified", stderr: "" };
+      },
+      runAgentTask: async (invocation) => {
+        agentPrompts.push(invocation.prompt);
+        return { status: 0, stdout: "agent handled task", stderr: "" };
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          statusChecks++;
+          return {
+            status: 0,
+            stdout: statusChecks === 2 ? " M .semgrep/datavibe-arch.yml\n" : "",
+            stderr: "",
+          };
+        }
+        if (invocation.args.join(" ") === "diff --cached --quiet") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({
+        findingId: "f1",
+        status: "committed",
+      }),
+    ]);
+    expect(agentPrompts).toHaveLength(2);
+    expect(agentPrompts[1]).toContain("worktree still has verified changes");
+    expect(summary.commands.map((command) => command.command)).toContain(
+      "agent-post-commit-recovery",
+    );
+  });
+
+  it("async runner recovers when the commit hook fails but verified changes remain", async () => {
+    const config = parseLoopConfigYaml(closedLoopConfigText);
+    const agentPrompts: string[] = [];
+    let statusChecks = 0;
+
+    const summary = await runLoopProjectAsync({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.command === "test -x .venv/bin/pytest") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              score: 72,
+              findings: [
+                {
+                  id: "f1",
+                  title: "Extract parser tests",
+                  action: "tests",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["src", "tests"],
+                  prompt: "Add focused parser regression tests.",
+                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "verified", stderr: "" };
+      },
+      runAgentTask: async (invocation) => {
+        agentPrompts.push(invocation.prompt);
+        return { status: 0, stdout: "agent handled task", stderr: "" };
+      },
+      runGit: (invocation) => {
+        const command = invocation.args.join(" ");
+        if (command === "diff --cached --quiet") {
+          return { status: 1, stdout: "", stderr: "" };
+        }
+        if (command.startsWith("commit -m ")) {
+          return { status: 1, stdout: "", stderr: "pre-commit failed" };
+        }
+        if (command === "status --porcelain") {
+          statusChecks++;
+          return {
+            status: 0,
+            stdout: statusChecks === 2 ? "M  tests/parser.test.ts\n M src/parser.ts\n" : "",
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({
+        findingId: "f1",
+        status: "committed",
+      }),
+    ]);
+    expect(agentPrompts).toHaveLength(2);
+    expect(agentPrompts[1]).toContain("worktree still has verified changes");
+    expect(agentPrompts[1]).toContain("tests/parser.test.ts");
+    expect(summary.commands.map((command) => command.command)).toContain(
+      "agent-post-commit-recovery",
+    );
+  });
+
+  it("async runner retries once when Codex is running but does not become ready in time", async () => {
+    const config = parseLoopConfigYaml(closedLoopConfigText);
+    let taskAttempts = 0;
+
+    const summary = await runLoopProjectAsync({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.command === "test -x .venv/bin/pytest") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              score: 72,
+              findings: [
+                {
+                  id: "f1",
+                  title: "Extract parser tests",
+                  action: "tests",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["tests/parser.test.ts"],
+                  prompt: "Add focused parser regression tests.",
+                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "verified", stderr: "" };
+      },
+      runAgentTask: async () => {
+        taskAttempts++;
+        return taskAttempts === 1
+          ? { status: 1, stdout: "", stderr: "Codex did not become ready in time" }
+          : { status: 0, stdout: "agent changed files", stderr: "" };
+      },
+      runGit: (invocation) => {
+        if (invocation.args[0] === "diff") {
+          return { status: 1, stdout: "", stderr: "" };
+        }
+        return {
+          status: 0,
+          stdout: invocation.args.includes("rev-parse") ? "retry123\n" : "",
+          stderr: "",
+        };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(taskAttempts).toBe(2);
+    expect(summary.commands.map((command) => command.command)).toContain("agent-task-ready-retry");
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({
+        findingId: "f1",
+        status: "committed",
+        commitSha: "retry123",
+      }),
     ]);
   });
 

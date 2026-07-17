@@ -271,6 +271,129 @@ function buildVerificationRecoveryPrompt(input: {
     .join("\n");
 }
 
+function buildPostCommitDirtyRecoveryPrompt(input: {
+  project: LoopProjectConfig;
+  finding: LoopFinding;
+  dirtyStatus: string;
+}): string {
+  return [
+    "Loop Engineering verification passed, but the worktree still has verified changes that were not committed by the runner.",
+    `Project: ${input.project.name}`,
+    `Project id: ${input.project.id}`,
+    `Path: ${input.project.path}`,
+    "",
+    `Finding: ${input.finding.title}`,
+    `Affected files declared by assessment: ${input.finding.affectedFiles.join(", ")}`,
+    "",
+    "Current git status --porcelain:",
+    input.dirtyStatus.trim(),
+    "",
+    "Finish only this verified slice. Do not start a new architecture scan.",
+    "If the remaining files belong to this verified slice, rerun the required gates and commit them.",
+    "If they do not belong to this slice or are unsafe, stop and report the exact blocker.",
+    "",
+    "Verification commands:",
+    ...input.finding.verificationCommands.map((command) => `- ${command}`),
+    "",
+    "Constraints:",
+    "- Keep the recovery focused on the listed dirty files.",
+    "- Do not change runtime contracts, secrets, deployment settings, or model integrations.",
+    "- Do not add model-provider SDKs, API-key env vars, or direct model HTTP calls.",
+  ].join("\n");
+}
+
+function isAgentReadyTimeout(result: LoopRunCommandResult): boolean {
+  return /did not become ready in time/i.test(`${result.stderr}\n${result.stdout}`);
+}
+
+function runAgentTaskWithReadyRetry(input: {
+  project: LoopProjectConfig;
+  finding: LoopFinding;
+  env: Record<string, string>;
+  commands: LoopRunCommandSummary[];
+  runAgentTask?: (invocation: LoopAgentTaskInvocation) => LoopRunCommandResult;
+}): LoopRunCommandResult {
+  const invocation: LoopAgentTaskInvocation = {
+    projectId: input.project.id,
+    projectName: input.project.name,
+    agent: input.project.agent,
+    cwd: input.project.path,
+    prompt: buildAgentTaskPrompt(input.project, input.finding),
+    finding: input.finding,
+  };
+  let result = input.runAgentTask?.(invocation) ?? {
+    status: 1,
+    stdout: "",
+    stderr: "missing agent task adapter",
+  };
+  input.commands.push(
+    commandSummary(
+      { kind: "agent", command: "agent-task", cwd: input.project.path, env: { ...input.env } },
+      result,
+    ),
+  );
+  if (
+    result.status !== 0 &&
+    isAgentReadyTimeout(result) &&
+    input.project.recovery.agent === true &&
+    input.project.recovery.maxAttempts > 0 &&
+    input.runAgentTask !== undefined
+  ) {
+    result = input.runAgentTask(invocation);
+    input.commands.push(
+      commandSummary(
+        { kind: "agent", command: "agent-task-ready-retry", cwd: input.project.path, env: {} },
+        result,
+      ),
+    );
+  }
+  return result;
+}
+
+async function runAgentTaskWithReadyRetryAsync(input: {
+  project: LoopProjectConfig;
+  finding: LoopFinding;
+  env: Record<string, string>;
+  commands: LoopRunCommandSummary[];
+  runAgentTask?: (invocation: LoopAgentTaskInvocation) => Promise<LoopRunCommandResult>;
+}): Promise<LoopRunCommandResult> {
+  const invocation: LoopAgentTaskInvocation = {
+    projectId: input.project.id,
+    projectName: input.project.name,
+    agent: input.project.agent,
+    cwd: input.project.path,
+    prompt: buildAgentTaskPrompt(input.project, input.finding),
+    finding: input.finding,
+  };
+  let result = (await input.runAgentTask?.(invocation)) ?? {
+    status: 1,
+    stdout: "",
+    stderr: "missing agent task adapter",
+  };
+  input.commands.push(
+    commandSummary(
+      { kind: "agent", command: "agent-task", cwd: input.project.path, env: { ...input.env } },
+      result,
+    ),
+  );
+  if (
+    result.status !== 0 &&
+    isAgentReadyTimeout(result) &&
+    input.project.recovery.agent === true &&
+    input.project.recovery.maxAttempts > 0 &&
+    input.runAgentTask !== undefined
+  ) {
+    result = await input.runAgentTask(invocation);
+    input.commands.push(
+      commandSummary(
+        { kind: "agent", command: "agent-task-ready-retry", cwd: input.project.path, env: {} },
+        result,
+      ),
+    );
+  }
+  return result;
+}
+
 function parseJsonObject(stdout: string): Record<string, unknown> | null {
   if (stdout.trim().length === 0) return null;
   try {
@@ -449,6 +572,14 @@ function gitCommandSummary(
 function commandPassed(command: LoopRunCommandSummary): boolean {
   if (command.status === 0) return true;
   if (command.kind === "preflight" || command.kind === "verification") return true;
+  if (
+    command.kind === "agent" &&
+    command.command === "agent-task" &&
+    isAgentReadyTimeout(command)
+  ) {
+    return true;
+  }
+  if (command.kind === "commit" && command.command.startsWith("git commit ")) return true;
   return (
     command.kind === "commit" &&
     command.command === "git diff --cached --quiet" &&
@@ -695,23 +826,55 @@ function runCommit(input: {
   finding: LoopFinding;
   commands: LoopRunCommandSummary[];
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
-}): { ok: boolean; commitSha?: string; noChanges?: boolean } {
+}): { ok: boolean; commitSha?: string; noChanges?: boolean; dirtyStatus?: string } {
   const addArgs = ["add", "--", ...input.finding.affectedFiles];
   const addResult = input.runGit({ cwd: input.project.path, args: addArgs });
   input.commands.push(gitCommandSummary(input.project.path, addArgs, addResult));
   if (addResult.status !== 0) return { ok: false };
 
+  const statusArgs = ["status", "--porcelain"];
+  const worktreeStatus = (): { ok: boolean; dirtyStatus?: string } => {
+    const statusResult = input.runGit({ cwd: input.project.path, args: statusArgs });
+    input.commands.push(gitCommandSummary(input.project.path, statusArgs, statusResult));
+    if (statusResult.status !== 0) return { ok: false };
+    const dirtyStatus = statusResult.stdout.trim();
+    return dirtyStatus.length === 0 ? { ok: true } : { ok: false, dirtyStatus };
+  };
+
   const diffArgs = ["diff", "--cached", "--quiet"];
   const diffResult = input.runGit({ cwd: input.project.path, args: diffArgs });
   input.commands.push(gitCommandSummary(input.project.path, diffArgs, diffResult));
-  if (diffResult.status === 0) return { ok: true, noChanges: true };
+  if (diffResult.status === 0) {
+    const status = worktreeStatus();
+    if (!status.ok) {
+      return status.dirtyStatus !== undefined
+        ? { ok: false, dirtyStatus: status.dirtyStatus }
+        : { ok: false };
+    }
+    return { ok: true, noChanges: true };
+  }
   if (diffResult.status !== 1) return { ok: false };
 
   const message = `loop(${input.project.id}): ${input.finding.title}`;
   const commitArgs = ["commit", "-m", message];
   const commitResult = input.runGit({ cwd: input.project.path, args: commitArgs });
   input.commands.push(gitCommandSummary(input.project.path, commitArgs, commitResult));
-  if (commitResult.status !== 0) return { ok: false };
+  if (commitResult.status !== 0) {
+    const status = worktreeStatus();
+    if (!status.ok) {
+      return status.dirtyStatus !== undefined
+        ? { ok: false, dirtyStatus: status.dirtyStatus }
+        : { ok: false };
+    }
+    return { ok: false };
+  }
+
+  const status = worktreeStatus();
+  if (!status.ok) {
+    return status.dirtyStatus !== undefined
+      ? { ok: false, dirtyStatus: status.dirtyStatus }
+      : { ok: false };
+  }
 
   const revParseArgs = ["rev-parse", "HEAD"];
   const revParseResult = input.runGit({ cwd: input.project.path, args: revParseArgs });
@@ -719,6 +882,140 @@ function runCommit(input: {
   if (revParseResult.status !== 0) return { ok: false };
   const commitSha = revParseResult.stdout.trim();
   return commitSha.length > 0 ? { ok: true, commitSha } : { ok: true };
+}
+
+function recoverPostCommitDirtyWorktree(input: {
+  project: LoopProjectConfig;
+  finding: LoopFinding;
+  env: Record<string, string>;
+  dirtyStatus: string;
+  commands: LoopRunCommandSummary[];
+  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  runAgentTask?: (invocation: LoopAgentTaskInvocation) => LoopRunCommandResult;
+}): { ok: boolean; reason?: string } {
+  if (
+    input.project.recovery.agent !== true ||
+    input.project.recovery.maxAttempts <= 0 ||
+    input.runAgentTask === undefined
+  ) {
+    return {
+      ok: false,
+      reason: `worktree still dirty after staging affected files:\n${input.dirtyStatus}`,
+    };
+  }
+
+  const recoveryFinding = syntheticFinding({
+    id: `${input.finding.id}-post-commit-recovery`,
+    title: `Recover residual changes for ${input.finding.title}`,
+    prompt: buildPostCommitDirtyRecoveryPrompt(input),
+    verificationCommands: input.finding.verificationCommands,
+  });
+  const recoveryResult = input.runAgentTask({
+    projectId: input.project.id,
+    projectName: input.project.name,
+    agent: input.project.agent,
+    cwd: input.project.path,
+    prompt: recoveryFinding.prompt,
+    finding: recoveryFinding,
+  });
+  input.commands.push(
+    commandSummary(
+      { kind: "agent", command: "agent-post-commit-recovery", cwd: input.project.path, env: {} },
+      recoveryResult,
+    ),
+  );
+  if (recoveryResult.status !== 0) {
+    return { ok: false, reason: recoveryResult.stderr || "post-commit recovery failed" };
+  }
+
+  const failedVerification = runVerificationCommands({
+    project: input.project,
+    finding: input.finding,
+    env: input.env,
+    commands: input.commands,
+    runCommand: input.runCommand,
+  });
+  if (failedVerification !== null) {
+    return { ok: false, reason: "post-commit recovery verification failed" };
+  }
+
+  const statusArgs = ["status", "--porcelain"];
+  const status = input.runGit({ cwd: input.project.path, args: statusArgs });
+  input.commands.push(gitCommandSummary(input.project.path, statusArgs, status));
+  if (status.status !== 0) return { ok: false, reason: "git status failed after recovery" };
+  const dirtyStatus = status.stdout.trim();
+  if (dirtyStatus.length > 0) {
+    return { ok: false, reason: `worktree still dirty after recovery:\n${dirtyStatus}` };
+  }
+  return { ok: true };
+}
+
+async function recoverPostCommitDirtyWorktreeAsync(input: {
+  project: LoopProjectConfig;
+  finding: LoopFinding;
+  env: Record<string, string>;
+  dirtyStatus: string;
+  commands: LoopRunCommandSummary[];
+  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  runAgentTask?: (invocation: LoopAgentTaskInvocation) => Promise<LoopRunCommandResult>;
+}): Promise<{ ok: boolean; reason?: string }> {
+  if (
+    input.project.recovery.agent !== true ||
+    input.project.recovery.maxAttempts <= 0 ||
+    input.runAgentTask === undefined
+  ) {
+    return {
+      ok: false,
+      reason: `worktree still dirty after staging affected files:\n${input.dirtyStatus}`,
+    };
+  }
+
+  const recoveryFinding = syntheticFinding({
+    id: `${input.finding.id}-post-commit-recovery`,
+    title: `Recover residual changes for ${input.finding.title}`,
+    prompt: buildPostCommitDirtyRecoveryPrompt(input),
+    verificationCommands: input.finding.verificationCommands,
+  });
+  const recoveryResult = await input.runAgentTask({
+    projectId: input.project.id,
+    projectName: input.project.name,
+    agent: input.project.agent,
+    cwd: input.project.path,
+    prompt: recoveryFinding.prompt,
+    finding: recoveryFinding,
+  });
+  input.commands.push(
+    commandSummary(
+      { kind: "agent", command: "agent-post-commit-recovery", cwd: input.project.path, env: {} },
+      recoveryResult,
+    ),
+  );
+  if (recoveryResult.status !== 0) {
+    return { ok: false, reason: recoveryResult.stderr || "post-commit recovery failed" };
+  }
+
+  const failedVerification = await runVerificationCommandsAsync({
+    project: input.project,
+    finding: input.finding,
+    env: input.env,
+    commands: input.commands,
+    runCommand: input.runCommand,
+  });
+  if (failedVerification !== null) {
+    return { ok: false, reason: "post-commit recovery verification failed" };
+  }
+
+  const statusArgs = ["status", "--porcelain"];
+  const status = input.runGit({ cwd: input.project.path, args: statusArgs });
+  input.commands.push(gitCommandSummary(input.project.path, statusArgs, status));
+  if (status.status !== 0) return { ok: false, reason: "git status failed after recovery" };
+  const dirtyStatus = status.stdout.trim();
+  if (dirtyStatus.length > 0) {
+    return { ok: false, reason: `worktree still dirty after recovery:\n${dirtyStatus}` };
+  }
+  return { ok: true };
 }
 
 function ensureCommitBranch(input: {
@@ -1103,25 +1400,13 @@ export function runLoopProject(input: {
           });
           break;
         }
-        const agentInvocation: LoopAgentTaskInvocation = {
-          projectId: project.id,
-          projectName: project.name,
-          agent: project.agent,
-          cwd: project.path,
-          prompt: buildAgentTaskPrompt(project, finding),
+        const agentResult = runAgentTaskWithReadyRetry({
+          project,
           finding,
-        };
-        const agentResult = input.runAgentTask?.(agentInvocation) ?? {
-          status: 1,
-          stdout: "",
-          stderr: "missing agent task adapter",
-        };
-        commands.push(
-          commandSummary(
-            { kind: "agent", command: "agent-task", cwd: project.path, env: { ...env } },
-            agentResult,
-          ),
-        );
+          env,
+          commands,
+          ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
+        });
         const round: LoopRoundSummary = {
           findingId: finding.id,
           title: finding.title,
@@ -1200,7 +1485,34 @@ export function runLoopProject(input: {
         if (project.commit.enabled && input.runGit !== undefined) {
           const commit = runCommit({ project, finding, commands, runGit: input.runGit });
           if (!commit.ok) {
-            rounds.push({ ...round, status: "failed", reason: "commit failed" });
+            if (commit.dirtyStatus !== undefined) {
+              const recovery = recoverPostCommitDirtyWorktree({
+                project,
+                finding,
+                env,
+                dirtyStatus: commit.dirtyStatus,
+                commands,
+                runCommand: input.runCommand,
+                runGit: input.runGit,
+                ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
+              });
+              if (recovery.ok) {
+                round.status = "committed";
+                rounds.push(round);
+                continue;
+              }
+              rounds.push({
+                ...round,
+                status: "failed",
+                reason: recovery.reason ?? "post-commit recovery failed",
+              });
+              break;
+            }
+            rounds.push({
+              ...round,
+              status: "failed",
+              reason: "commit failed",
+            });
             break;
           }
           if (!commit.noChanges) {
@@ -1327,25 +1639,13 @@ export async function runLoopProjectAsync(input: {
           });
           break;
         }
-        const agentResult = await input.runAgentTask?.({
-          projectId: project.id,
-          projectName: project.name,
-          agent: project.agent,
-          cwd: project.path,
-          prompt: buildAgentTaskPrompt(project, finding),
+        const result = await runAgentTaskWithReadyRetryAsync({
+          project,
           finding,
+          env,
+          commands,
+          ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
         });
-        const result = agentResult ?? {
-          status: 1,
-          stdout: "",
-          stderr: "missing agent task adapter",
-        };
-        commands.push(
-          commandSummary(
-            { kind: "agent", command: "agent-task", cwd: project.path, env: { ...env } },
-            result,
-          ),
-        );
         const round: LoopRoundSummary = {
           findingId: finding.id,
           title: finding.title,
@@ -1422,6 +1722,29 @@ export async function runLoopProjectAsync(input: {
         if (project.commit.enabled && input.runGit !== undefined) {
           const commit = runCommit({ project, finding, commands, runGit: input.runGit });
           if (!commit.ok) {
+            if (commit.dirtyStatus !== undefined) {
+              const recovery = await recoverPostCommitDirtyWorktreeAsync({
+                project,
+                finding,
+                env,
+                dirtyStatus: commit.dirtyStatus,
+                commands,
+                runCommand: input.runCommand,
+                runGit: input.runGit,
+                ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
+              });
+              if (recovery.ok) {
+                round.status = "committed";
+                rounds.push(round);
+                continue;
+              }
+              rounds.push({
+                ...round,
+                status: "failed",
+                reason: recovery.reason ?? "post-commit recovery failed",
+              });
+              break;
+            }
             rounds.push({ ...round, status: "failed", reason: "commit failed" });
             break;
           }

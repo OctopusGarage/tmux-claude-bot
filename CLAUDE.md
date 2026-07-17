@@ -209,6 +209,12 @@ process bug: update this script, the hook, or these instructions so the same
 class of issue is caught locally next time. Do not leave the fix only in CI
 tribal knowledge.
 
+Loop Engineering assessment findings must declare every path the active agent is
+allowed to change in `affectedFiles`, including architecture guard directories
+such as `.semgrep`, config files, docs, and lockfiles. The loop runner treats a
+dirty worktree after staging those affected files as a failed round; update the
+assessment contract instead of letting verified changes sit uncommitted.
+
 ## Active Goal Discipline
 
 Do not turn a broad active goal into an endless opportunistic sweep. A broad
