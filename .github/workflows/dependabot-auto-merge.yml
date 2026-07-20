@@ -1,8 +1,9 @@
 name: Dependabot auto-merge
 
-# Enable auto-merge on Dependabot PRs targeting dev. GitHub then merges them
-# automatically once the required "verify" check (CI) passes. Dependency updates
-# flow into dev first; main stays on the normal manual promotion path.
+# Enable auto-merge on patch/minor Dependabot PRs targeting dev. GitHub then
+# merges them automatically once the required "verify" check (CI) passes.
+# Dependency updates flow into dev first; main stays on the normal manual
+# promotion path.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -24,7 +25,19 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+      - name: Refresh Dependabot branch from dev
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr update-branch "$PR_URL" --rebase
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Enable auto-merge into dev
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
