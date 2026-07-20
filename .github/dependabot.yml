@@ -22,6 +22,7 @@ updates:
     schedule:
       interval: weekly
     groups:
-      github-actions:
-        patterns:
-          - "*"
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch

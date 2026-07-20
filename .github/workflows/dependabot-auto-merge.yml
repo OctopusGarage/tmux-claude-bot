@@ -3,7 +3,9 @@ name: Dependabot auto-merge
 # Enable auto-merge on Dependabot PRs targeting dev. GitHub then merges them
 # automatically once the required "verify" check (CI) passes. Dependency updates
 # flow into dev first; main stays on the normal manual promotion path.
-on: pull_request_target
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -12,15 +14,15 @@ permissions:
 jobs:
   auto-merge:
     if: >-
-      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.base.ref == 'dev'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Dependabot metadata
-        id: meta
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Enable auto-merge into dev
         run: gh pr merge --auto --squash "$PR_URL"

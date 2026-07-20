@@ -1,259 +1,143 @@
-<a id="readme-top"></a>
-
 # tmux-claude-bot
 
+Remote-control Claude Code or OpenAI Codex agents running inside tmux.
+
 [![CI](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/ci.yml)
-[![CodeQL](https://img.shields.io/badge/CodeQL-enabled-2088FF?logo=github)](https://github.com/OctopusGarage/tmux-claude-bot/security/code-scanning)
-[![Coverage](https://codecov.io/gh/OctopusGarage/tmux-claude-bot/branch/main/graph/badge.svg)](https://codecov.io/gh/OctopusGarage/tmux-claude-bot)
-[![version](https://img.shields.io/github/package-json/v/OctopusGarage/tmux-claude-bot)](https://github.com/OctopusGarage/tmux-claude-bot/releases/latest)
+[![Release](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/release.yml/badge.svg)](https://github.com/OctopusGarage/tmux-claude-bot/actions/workflows/release.yml)
 [![npm](https://img.shields.io/npm/v/@octopusgarage/tmux-claude-bot?logo=npm)](https://www.npmjs.com/package/@octopusgarage/tmux-claude-bot)
-[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![platform: macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-000000?logo=linux&logoColor=white)](#prerequisites)
-[![Checked with Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?logo=biome)](https://biomejs.dev)
+[![Node](https://img.shields.io/badge/Node-22%2B-339933?logo=nodedotjs&logoColor=white)](package.json)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?logo=biome&logoColor=white)](https://biomejs.dev)
+[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+
+`tmux-claude-bot` drives the real agent CLI through tmux, just like a person typing in the pane. It does not replace Claude Code or Codex with an API wrapper; it gives you a durable control layer around the interactive tools you already use.
 
 <p align="center">
-  A chat bot that drives a coding agent — <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> or <a href="https://github.com/openai/codex">OpenAI Codex</a> — inside tmux sessions — remote-control your local agent from <strong>Telegram and/or Feishu/Lark</strong>, with voice and text input. Supports <strong>multiple projects</strong>, each with its own tmux session. Pick one chat app or run both.
-  <br />
-  <br />
-  <a href="docs/manual.md"><strong>Read the manual »</strong></a>
-  <br />
-  <br />
-  <a href="#demo">View Demo</a>
-  ·
-  <a href="https://github.com/OctopusGarage/tmux-claude-bot/issues/new?template=bug_report.yml">Report Bug</a>
-  ·
-  <a href="https://github.com/OctopusGarage/tmux-claude-bot/issues/new?template=feature_request.yml">Request Feature</a>
+  <img src=".github/assets/demo-telegram-keyboard.png" alt="Telegram project controls" width="30%" />
+  <img src=".github/assets/demo-voice.png" alt="Voice prompt transcription" width="30%" />
+  <img src=".github/assets/demo-feishu.png" alt="Feishu Lark card output" width="30%" />
 </p>
 
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#demo">Demo</a></li>
-        <li><a href="#features">Features</a></li>
-        <li><a href="#built-with">Built With</a></li>
-      </ul>
-    </li>
-    <li><a href="#architecture">Architecture</a></li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#usage">Usage</a>
-      <ul>
-        <li><a href="#configuration">Configuration</a></li>
-        <li><a href="#session-naming">Session Naming</a></li>
-        <li><a href="#telegram-commands">Telegram Commands</a></li>
-        <li><a href="#voice-transcription-optional">Voice transcription</a></li>
-        <li><a href="#agent-running-detection">Agent Running Detection</a></li>
-        <li><a href="#structured-logs">Structured Logs</a></li>
-        <li><a href="#dashboard">Dashboard</a></li>
-      </ul>
-    </li>
-    <li><a href="#deployment--resilience">Deployment &amp; Resilience</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#acknowledgments">Acknowledgments</a></li>
-  </ol>
-</details>
+## Why
 
-## About The Project
+Long-running coding agents are useful, but the laptop terminal is a fragile place to babysit them. This project keeps each workspace in a named tmux session, serializes input through a queue, streams output back to chat, and lets you switch projects from Telegram, Feishu/Lark, a local CLI, or a TUI.
 
-The bot **drives the agent's CLI like a user typing in tmux** (send-keys + screen-scrape) rather than calling an LLM API — so you get the full interactive session (Claude Code or OpenAI Codex), controlled remotely from a chat app. Run several projects at once (each in its own tmux session), switch between them from buttons, and talk to the agent with text or voice.
+## Features
 
-### Demo
+- **Multi-project sessions** - one tmux session per workspace.
+- **Telegram and Feishu/Lark adapters** - use either chat app or both.
+- **Local CLI and TUI** - control the same service from the machine.
+- **Claude Code and Codex** - configure multiple agent launch commands.
+- **Voice prompts** - optional local transcription flow for spoken requests.
+- **Real-time output** - capture tmux pane output and stream it back.
+- **Serialized execution** - one queue per session prevents interleaved commands.
+- **Directory guard** - restrict projects to allowed workspace roots.
+- **Managed service** - install with launchd on macOS or systemd on Linux.
 
-| Telegram — keyboard & output | Voice transcription | Feishu/Lark |
-|:---:|:---:|:---:|
-| ![Telegram keyboard](.github/assets/demo-telegram-keyboard.png) | ![Voice](.github/assets/demo-voice.png) | ![Feishu](.github/assets/demo-feishu.png) |
+## Quick Start
 
-### Features
-
-- **Multi-project tmux sessions** — each project gets its own tmux session (`tmux_proj_<path>`)
-- **Project switching** — create, switch, and remove projects via Telegram/Feishu commands & buttons
-- **Feishu/Lark project groups** — bind a Feishu group to one workspace, so you switch projects by switching groups (no `/cd`); works without `@bot`. See [docs/commands.md](docs/commands.md)
-- **Terminal UI (`tcb tui`)** — a keyboard-driven control panel at the PC: every session's status at a glance, send prompts, peek, and control — a local client of the same bot. See [docs/tui.md](docs/tui.md)
-- **Drive it from an AI agent (`tcb` CLI + installable skill)** — one-shot `tcb` clients over the same control socket let an assistant in Claude Code / Codex operate the bot in natural language; `tcb skill install` bundles the operating skill (auto-installed on deploy). See [docs/manual.md](docs/manual.md)
-- **Multiple start commands** — configure several agent launch commands (Claude or Codex, different env/model/API key) and pick which to start from a button
-- **Real-time output streaming** — captures tmux pane and streams output to the chat
-- **Queue-based execution** — prevents concurrent commands from interleaving
-- **Idle detection** — polls tmux pane to detect when the agent is idle vs. running
-- **Directory guard** — operations restricted to configured allowed directories
-
-### Built With
-
-- **Language / runtime** — [TypeScript](https://www.typescriptlang.org/) on [Node.js](https://nodejs.org) 22+
-- **Chat adapters** — [grammY](https://grammy.dev) (Telegram) · [@larksuite/node-sdk](https://github.com/larksuite/node-sdk) (Feishu/Lark)
-- **Core** — tmux · [Zod](https://zod.dev) (config) · [Commander](https://github.com/tj/commander.js) (CLI)
-- **Build & test** — [tsup](https://tsup.egoist.dev) · [tsx](https://github.com/privatenumber/tsx) · [Vitest](https://vitest.dev) · [fast-check](https://fast-check.dev) · [Stryker](https://stryker-mutator.io) (mutation) · [Biome](https://biomejs.dev) (lint/format)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Architecture
-
-```
-   ┌──────────────┐         ┌──────────────┐         ┌──────────────────┐
-   │   Telegram   │         │  Feishu/Lark │         │ Terminal TUI /   │
-   │  app (user)  │         │  app (user)  │         │  tcb CLI (local) │
-   └──────┬───────┘         └──────┬───────┘         └────────┬─────────┘
-          │                        │                          │
-   HTTPS long-poll          WebSocket (push)          unix-domain socket
-   getUpdates / send        events + Open API         (local, NDJSON)
-          │                        │                          │
-   ┌──────▼────────────────────────▼──────────────────────────▼─────────┐
-   │            tmux-claude-bot   (node dist/cli.js run)                │  launchd / systemd
-   │                                                                    │  (single instance)
-   │  ┌──────────────┐     ┌──────────────┐     ┌─────────────────────┐ │
-   │  │  adapters/   │     │  adapters/   │     │  adapters/control   │ │  protocol glue:
-   │  │  telegram    │     │  lark        │     │  unix-socket server │ │  receive / render /
-   │  │  (grammY)    │     │ (@larksuite) │     │  ← TUI + tcb CLI    │ │  buttons & cards
-   │  └──────┬───────┘     └──────┬───────┘     └──────────┬──────────┘ │
-   │         └───────────────────┬┴────────────────────────┘            │
-   │                      ┌──────▼───────┐                              │
-   │                      │     core/    │  dispatch — meaning          │  protocol-agnostic
-   │                      │   dispatch   │  queue    — serial + idle    │  (no platform code;
-   │                      │   queue      │  agents/  — agent lifecycle  │   reused by every
-   │                      │   agents/    │  tmux.ts  — tmux sessions    │   adapter)
-   │                      │   tmux.ts    │                              │
-   │                      └──────┬───────┘                              │
-   └─────────────────────────────┼──────────────────────────────────────┘
-                                 │
-                  tmux send-keys │ ▲ capture-pane
-                   (inject cmd)  │ │ (scrape output)
-                                 ▼ │
-                       ┌──────────────────────┐
-                       │     tmux session      │  one per project
-                       │  ┌────────────────┐   │
-                       │  │  coding agent   │   │  interactive CLI,
-                       │  │ (Claude / Codex)│   │  foreground in the pane
-                       │  └────────────────┘   │
-                       └──────────────────────┘
-```
-
-**Message round-trip:**
-
-1. User sends a message in **Telegram / Feishu**, or drives the bot from the **Terminal TUI / `tcb` CLI**.
-2. The matching **adapter** receives it (long-poll / WebSocket / unix socket) and normalizes it to a core command.
-3. **`core/dispatch`** routes it; **`tmux.ts`** injects it into the project's tmux session via `send-keys`.
-4. **Claude Code** processes it in the pane; the bot reads the result with `capture-pane`.
-5. The adapter **renders the reply back** to the originating surface.
-
-**Key points:**
-
-- **Three client surfaces** — Telegram *polls* (HTTPS long-poll), Feishu *pushes* (persistent WebSocket), and the local **Terminal TUI / `tcb` CLI** talk over a unix-domain socket; each reply goes back out the surface it came from. All three funnel through the **same per-session queue**, so the TUI/CLI can't race the chat adapters.
-- **One-way layering `adapters/ → core/ → shared/`** — `core/` knows nothing about any client, so adding Feishu — and later the local control transport (TUI/CLI) — was just another adapter; the tmux + agent machinery is fully reused.
-- The bot **drives the Claude Code CLI like a user typing in tmux** (send-keys + screen-scrape), rather than calling an LLM API — which is why tmux sits in the middle.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Getting Started
-
-### Prerequisites
-
-Runs on macOS (managed by launchd) and Linux (managed by a systemd `--user` service; `loginctl enable-linger` keeps it running on headless servers).
-
-- Node.js 22+ (`engines: node >=22`)
-- tmux
-- Claude Code CLI (`claude-yolo` or similar)
-- _Optional, for voice:_ Apple Silicon Mac + [uv](https://docs.astral.sh/uv/) + ffmpeg (see [Voice transcription](#voice-transcription-optional))
-
-### Installation
-
-**Two first-class install methods — both stand up the same managed launchd service** (guided wizard + auto-restart at `~/.tmux-claude-bot`). Pick either:
-
-- **`curl … | bash`** (below) — the one-liner installer; nothing to install first beyond `node`/`tmux`.
-- **[npm](#install-via-npm)** — `npm i -g @octopusgarage/tmux-claude-bot && tmux-claude-bot install`, with build provenance.
-
-#### Install (macOS) — `curl | bash`
+One-line install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
 ```
 
-The installer checks prerequisites (`node`, `tmux`, Claude Code CLI), installs
-dependencies, then runs a guided wizard that:
-
-1. asks which **chat app** to connect — **Telegram, Feishu/Lark, or both**,
-2. **Telegram:** asks for your **bot token** ([@BotFather](https://t.me/BotFather)), validates it live, and auto-captures your Telegram id (just message the bot),
-3. **Feishu/Lark:** renders a **QR code** — scan it to create the app; credentials are written for you,
-4. asks which project directories the bot may use,
-
-and finally installs and starts the bot as a launchd service (auto-restart on crash/boot).
-
-> [!TIP]
-> Re-running the installer **updates code + dependencies and restarts the service while preserving your `.env` and runtime state** — a safe one-click update. Add Feishu later anytime with `npm run setup:lark`.
-
-> [!NOTE]
-> Prefer to clone first? `git clone … && cd tmux-claude-bot && ./install.sh` does the same thing in place.
-> The install location defaults to `~/.tmux-claude-bot`; override it with `TMUX_CLAUDE_BOT_DIR=/path`.
-
-#### Install with an AI assistant
-
-Not comfortable on the command line? Copy this prompt to any AI assistant (ChatGPT,
-Claude, Gemini, or an agent with shell access) — it downloads the release, reads the
-bundled guide, and walks you through it:
-
-```text
-Install "tmux-claude-bot" on my machine for me (open-source; macOS or Linux). Download the latest
-release tarball from https://github.com/OctopusGarage/tmux-claude-bot/releases/latest,
-extract it, read the INSTALL.md inside, and follow it. Guide me step by step and ask me
-for anything it needs (like my Telegram bot token).
-```
-
-By default the installer fetches the **latest stable release** — a lean tarball
-without `tests/`, `docs/`, or dev-config files. Pin a specific version, or track `main`:
-
-```bash
-# pin a released version (see github.com/OctopusGarage/tmux-claude-bot/releases)
-TMUX_CLAUDE_BOT_VERSION=v0.1.5 curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
-
-# track the latest main (development)
-TMUX_CLAUDE_BOT_VERSION=main curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
-```
-
-#### Install via npm
-
-Published as **[`@octopusgarage/tmux-claude-bot`](https://www.npmjs.com/package/@octopusgarage/tmux-claude-bot)** with build [provenance](https://docs.npmjs.com/generating-provenance-statements). A **full managed install** (equivalent to the `curl … | bash` above — provisions `~/.tmux-claude-bot`, runs the wizard, registers the launchd service):
+Or install from npm:
 
 ```bash
 npm i -g @octopusgarage/tmux-claude-bot
-tmux-claude-bot install
+tmux-claude-bot setup
+tmux-claude-bot run
 ```
 
-`tmux-claude-bot install` materializes the prebuilt package into the stable `~/.tmux-claude-bot` and runs the service from there — so the launchd daemon never depends on the volatile global npm path (which moves with node versions / `npm update`). Update later with:
+Useful commands:
 
 ```bash
-npm i -g @octopusgarage/tmux-claude-bot@latest && tmux-claude-bot install
+tmux-claude-bot doctor
+tmux-claude-bot setup --reconfigure
+tmux-claude-bot tui
+tmux-claude-bot service status
 ```
 
-Or run the CLI ad-hoc without a managed service (`run` / `setup` / `doctor` / `service …`):
+## Architecture
+
+```text
+Telegram / Feishu / TUI / CLI
+        |
+        v
+adapters/*  ->  core queue  ->  tmux send-keys
+        ^                         |
+        |                         v
+renderers   <-  capture-pane  <-  Claude Code / Codex
+```
+
+Important boundaries:
+
+| Layer | Responsibility |
+|---|---|
+| Adapters | Translate Telegram, Feishu/Lark, TUI, and CLI input into core commands. |
+| Core | Route commands, serialize per-session work, enforce workspace rules, manage lifecycle. |
+| tmux integration | Send keys, capture pane output, and detect idle/running state. |
+| Renderers | Convert agent output into chat messages, cards, and terminal UI views. |
+
+See [docs/manual.md](docs/manual.md) and [docs/adr](docs/adr/) for deeper design notes.
+
+## Configuration
+
+The setup wizard creates the service config and helps bind Telegram and/or Feishu/Lark. Typical prerequisites:
+
+- Node.js 22+
+- tmux
+- Claude Code CLI or OpenAI Codex CLI installed and logged in
+- Telegram bot token and/or Feishu/Lark app credentials
+- macOS or Linux for managed service mode
+
+## Safety Design
+
+- Only configured users/groups can control sessions.
+- Workspace roots are allowlisted.
+- Commands flow through per-session queues.
+- tmux output is captured after command dispatch, reducing stale-output confusion.
+- Local service controls are exposed through a unix-domain socket, not a public network port.
+
+## Development
 
 ```bash
-npx @octopusgarage/tmux-claude-bot --help
+npm install
+npm run setup:lark
+npm run doctor
+npm run service:install
+npm run service:uninstall
+npm run dev
+npm run build
+npm test
+npm run lint
+npm run lint:types
 ```
 
-#### Manage
+Deeper checks:
 
 ```bash
-npm run service:install     # (re)install + start the launchd service
-npm run doctor              # health check (incl. single-instance 409 guard)
-npm run setup:reconfigure   # change token / authorized users / directories
-npm run service:uninstall   # stop and remove the launchd service
+npm run test:coverage
+npm run knip
+npm run mutation
+npm run audit
 ```
 
-#### First message
+## Docs
 
-In Telegram: `/add_project ~/projects/myapp` then `/start`.
+- [Manual](docs/manual.md)
+- [Commands](docs/commands.md)
+- [TUI](docs/tui.md)
+- [Testing](docs/TESTING.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+## Related
+
+- [telegram-bridge](https://github.com/OctopusGarage/telegram-bridge) - a smaller Telegram-only bridge for one tmux target.
+- [octopusgarage-skills](https://github.com/OctopusGarage/octopusgarage-skills) - shared skills for Claude Code and Codex.
+- [OctopusGarage](https://github.com/OctopusGarage) - small tools for AI agents, local automation, and browser-native products.
 
 ## Usage
 
