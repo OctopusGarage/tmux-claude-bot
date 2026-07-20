@@ -9,6 +9,7 @@ export default defineConfig({
       // Prevent git worktrees nested under .claude/worktrees/ from being picked
       // up as additional test suites — they are independent branches/sandboxes.
       ".claude/worktrees/**",
+      ".stryker-tmp/**",
       "**/node_modules/**",
     ],
     coverage: {
