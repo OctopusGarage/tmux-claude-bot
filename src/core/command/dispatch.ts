@@ -47,9 +47,10 @@ function definedInShellRc(bin: string): boolean {
     `^\\s*(alias\\s+${esc}=|(function\\s+)?${esc}\\s*\\(\\s*\\)|function\\s+${esc}\\s)`,
     "m",
   );
+  const home = process.env.HOME ?? homedir();
   for (const file of SHELL_RC_FILES) {
     try {
-      if (re.test(readFileSync(nodePath.join(homedir(), file), "utf8"))) return true;
+      if (re.test(readFileSync(nodePath.join(home, file), "utf8"))) return true;
     } catch {
       // rc file may not exist — skip it
     }

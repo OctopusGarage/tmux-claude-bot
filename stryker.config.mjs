@@ -7,6 +7,7 @@ export default {
   packageManager: "npm",
   testRunner: "vitest",
   reporters: ["html", "clear-text", "progress"],
+  ignorePatterns: [".codegraph/**", ".stryker-tmp/**", "coverage/**", "reports/**"],
   // Only run the tests that actually cover each mutant — keeps the run tractable.
   coverageAnalysis: "perTest",
   mutate: [

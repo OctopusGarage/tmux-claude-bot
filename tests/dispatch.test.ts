@@ -110,7 +110,7 @@ describe("assertClaudeBinaryAccessible", () => {
   // A launcher defined only as a shell alias/function (e.g. `claude-stella` in
   // ~/.zshrc) is not on PATH, but the command runs in the session's interactive
   // shell via tmux send-keys — so the pre-flight must accept it. HOME is pointed
-  // at a temp dir whose rc files we control (os.homedir() honours $HOME on POSIX).
+  // at a temp dir whose rc files we control.
   function withRcFiles(files: Record<string, string>, fn: () => void) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rc-"));
     for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(tmp, name), body);
