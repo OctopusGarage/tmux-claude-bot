@@ -13,6 +13,7 @@ vi.mock("../src/shared/utils/error.js", () => ({
 
 import type { Bot, Context } from "grammy";
 import { reply, send, type Tone } from "../src/adapters/telegram/replies.js";
+import { UI_ICONS } from "../src/shared/ui/icons.js";
 import { logger } from "../src/shared/utils/logger.js";
 
 function createMockContext(overrides: Partial<Context> = {}): Context {
@@ -41,8 +42,8 @@ describe("compose (via reply/send integration)", () => {
     const ctx = createMockContext();
     await reply(ctx, "ok", "完成", { session: "tmux_proj_-Users-test-project" });
     const [text] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
-    expect(text).toContain("✅ 完成");
-    expect(text).toContain("📂 "); // friendly project line (no path mapped → #shortid)
+    expect(text).toContain(`${UI_ICONS.tone.ok} 完成`);
+    expect(text).toContain(`${UI_ICONS.project.project} `); // friendly project line (no path mapped → #shortid)
     expect(text).not.toContain("[tmux_proj_"); // the long ugly tag is gone
   });
 
@@ -58,14 +59,14 @@ describe("compose (via reply/send integration)", () => {
   it("omits the project line when no session provided", async () => {
     const ctx = createMockContext();
     await reply(ctx, "ok", "完成");
-    expect(ctx.reply).toHaveBeenCalledWith("✅ 完成", expect.any(Object));
+    expect(ctx.reply).toHaveBeenCalledWith(`${UI_ICONS.tone.ok} 完成`, expect.any(Object));
   });
 
   it("appends elapsed time to the status line when elapsedS is set", async () => {
     const ctx = createMockContext();
     await reply(ctx, "result", "完成", { elapsedS: 12 });
     const [text] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
-    expect(text).toContain("🤖 完成 · ⏱ 12s");
+    expect(text).toContain(`${UI_ICONS.tone.result} 完成 · ⏱ 12s`);
   });
 
   it("formats terminal output as a MarkdownV2 code block", async () => {
@@ -80,14 +81,14 @@ describe("compose (via reply/send integration)", () => {
   it("uses correct emoji for each tone", async () => {
     const ctx = createMockContext();
     const tones: { tone: Tone; expected: string }[] = [
-      { tone: "ok", expected: "✅" },
-      { tone: "err", expected: "❌" },
-      { tone: "warn", expected: "⚠️" },
-      { tone: "queue", expected: "📋" },
-      { tone: "queued", expected: "⏳" },
-      { tone: "list", expected: "📁" },
-      { tone: "view", expected: "👁" },
-      { tone: "recover", expected: "🔄" },
+      { tone: "ok", expected: UI_ICONS.tone.ok },
+      { tone: "err", expected: UI_ICONS.tone.error },
+      { tone: "warn", expected: UI_ICONS.tone.warning },
+      { tone: "queue", expected: UI_ICONS.tone.queue },
+      { tone: "queued", expected: UI_ICONS.tone.queued },
+      { tone: "list", expected: UI_ICONS.tone.list },
+      { tone: "view", expected: UI_ICONS.tone.view },
+      { tone: "recover", expected: UI_ICONS.tone.recover },
       { tone: "info", expected: "" },
       { tone: "help", expected: "" },
     ];
@@ -221,7 +222,11 @@ describe("send", () => {
   it("sends message via bot.api.sendMessage", async () => {
     const bot = createMockBot();
     await send(bot, 12345, "ok", "hello");
-    expect(bot.api.sendMessage).toHaveBeenCalledWith(12345, "✅ hello", expect.any(Object));
+    expect(bot.api.sendMessage).toHaveBeenCalledWith(
+      12345,
+      `${UI_ICONS.tone.ok} hello`,
+      expect.any(Object),
+    );
   });
 
   it("includes reply_to_message_id when replyTo is provided", async () => {

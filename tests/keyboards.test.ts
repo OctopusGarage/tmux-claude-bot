@@ -1,4 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const promptTranslateMocks = vi.hoisted(() => ({
+  checkPromptTranslateSupportMock: vi.fn(() => ({
+    ready: true,
+    python: "/opt/tcb/.venv/bin/python",
+  })),
+  isPromptTranslateInstallableMock: vi.fn(() => false),
+  checkVoiceSupportMock: vi.fn(() => ({ ready: true, bin: "/opt/tcb/.venv/bin/mlx_whisper" })),
+}));
+
+vi.mock("../src/core/read/prompt-translation.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/core/read/prompt-translation.js")>()),
+  checkPromptTranslateSupport: promptTranslateMocks.checkPromptTranslateSupportMock,
+  isPromptTranslateInstallable: promptTranslateMocks.isPromptTranslateInstallableMock,
+}));
+vi.mock("../src/core/read/voice-support.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/core/read/voice-support.js")>()),
+  checkVoiceSupport: promptTranslateMocks.checkVoiceSupportMock,
+}));
+
 import {
   buildBrowseKeyboard,
   buildControlKeyboard,
@@ -6,6 +26,7 @@ import {
   buildLangKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
+  buildPromptTranslateKeyboard,
   buildRecentKeyboard,
   buildSessionsKeyboard,
   buildStartPickerKeyboard,
@@ -13,10 +34,21 @@ import {
   parseCallbackData,
 } from "../src/adapters/telegram/keyboards.js";
 import type { BrowseView } from "../src/core/projects/dir-browser.js";
+import { UI_ICONS } from "../src/shared/ui/icons.js";
 
 function callbackDatas(kb: { inline_keyboard: { text: string; callback_data?: string }[][] }) {
   return kb.inline_keyboard.flat().map((b) => b.callback_data);
 }
+
+type ProjectKeyboardItem = Parameters<typeof buildProjectKeyboard>[0][number];
+type RecentKeyboardItem = Parameters<typeof buildRecentKeyboard>[0][number];
+
+const projectButton = (
+  over: Partial<ProjectKeyboardItem> & Pick<ProjectKeyboardItem, "sid" | "label">,
+): ProjectKeyboardItem => ({ active: false, alive: true, isFree: false, ...over });
+const recentButton = (
+  over: Partial<RecentKeyboardItem> & Pick<RecentKeyboardItem, "sid" | "label">,
+): RecentKeyboardItem => ({ active: false, alive: false, isFree: false, ...over });
 
 describe("directory browser keyboard", () => {
   it("parses every br:* callback shape", () => {
@@ -38,7 +70,7 @@ describe("directory browser keyboard", () => {
     expect(parseCallbackData("br:x")).toEqual({ kind: "browsecancel" });
   });
 
-  it("parses the 'new free project' toggle and its cancel", () => {
+  it("parses the independent-session toggle and its cancel", () => {
     expect(parseCallbackData("nf")).toEqual({ kind: "newfree" });
     expect(parseCallbackData("nfx")).toEqual({ kind: "newfreecancel" });
   });
@@ -51,6 +83,14 @@ describe("directory browser keyboard", () => {
     });
     expect(parseCallbackData("qx:ab12")).toBeNull(); // missing msgId
     expect(parseCallbackData("qx::x")).toBeNull(); // empty sid
+  });
+
+  it("parses the voice / translation / ui menu toggles", () => {
+    expect(parseCallbackData("vlm")).toEqual({ kind: "voicelangmenu" });
+    expect(parseCallbackData("vi")).toEqual({ kind: "voiceinstall" });
+    expect(parseCallbackData("ulm")).toEqual({ kind: "uilangmenu" });
+    expect(parseCallbackData("ptm")).toEqual({ kind: "prompttranslatemenu" });
+    expect(parseCallbackData("pti")).toEqual({ kind: "prompttranslateinstall" });
   });
 
   it("rejects malformed br:* callbacks", () => {
@@ -85,10 +125,10 @@ describe("directory browser keyboard", () => {
     expect(data).toContain("br:sel");
     expect(data).toContain("br:nf"); // new-folder button (creatable dir)
     expect(data).toContain("br:x");
-    // 📦 marks the git-repo entry (b), 📁 the plain one (a).
+    // Repository icon marks the git-repo entry (b), regular-session icon the plain one (a).
     const labels = kb.inline_keyboard.flat().map((btn) => btn.text);
-    expect(labels).toContain("📁 a");
-    expect(labels).toContain("📦 b");
+    expect(labels).toContain(`${UI_ICONS.session.regular} a`);
+    expect(labels).toContain(`${UI_ICONS.project.repository} b`);
   });
 
   it("uses br:rt for roots and omits create when not creatable", () => {
@@ -147,6 +187,14 @@ describe("parseCallbackData", () => {
     });
   });
 
+  it("parses confirmed control actions separately from first-tap actions", () => {
+    expect(parseCallbackData("cf:exit:abc123")).toEqual({
+      kind: "actconfirm",
+      action: "exit",
+      sid: "abc123",
+    });
+  });
+
   it("parses a switch action", () => {
     expect(parseCallbackData("s:abc123")).toEqual({ kind: "switch", sid: "abc123" });
   });
@@ -195,6 +243,17 @@ describe("parseCallbackData", () => {
     expect(parseCallbackData("ul:xx")).toBeNull();
     expect(parseCallbackData("ul:")).toBeNull();
     expect(parseCallbackData("vl:")).toBeNull();
+  });
+
+  it("parses prompt-translation toggles and rejects malformed data", () => {
+    expect(parseCallbackData("pt:off")).toEqual({ kind: "prompttranslate", arg: "off" });
+    expect(parseCallbackData("pt:on:zh:en")).toEqual({
+      kind: "prompttranslate",
+      arg: "on zh en",
+    });
+    expect(parseCallbackData("pt:on:zh")).toBeNull();
+    expect(parseCallbackData("pt:on")).toBeNull();
+    expect(parseCallbackData("pt:bogus")).toBeNull();
   });
 
   it("returns null for unknown / malformed data", () => {
@@ -267,8 +326,56 @@ describe("buildExpandedControlKeyboard", () => {
     expect(datas).toContain("ins:abc123"); // inputs
     expect(datas).toContain("la"); // list alive projects
     expect(datas).toContain("qs"); // queue status
+    expect(datas).toContain("vlm"); // voice settings
+    expect(datas).toContain("ptm"); // translation settings
+    expect(datas).toContain("ulm"); // UI language settings
     expect(datas).toContain("l:abc123"); // collapse toggle
     expect(datas).not.toContain("m:abc123"); // no expand toggle when already expanded
+  });
+
+  it("shows install instead of voice settings when voice is unavailable", () => {
+    promptTranslateMocks.checkVoiceSupportMock.mockReturnValueOnce({
+      ready: false,
+      reason: "not-installed",
+    } as never);
+
+    const kb = buildExpandedControlKeyboard("abc123") as unknown as {
+      inline_keyboard: { text: string; callback_data?: string }[][];
+    };
+    const datas = callbackDatas(kb);
+
+    expect(datas).toContain("vi");
+    expect(datas).not.toContain("vlm");
+  });
+});
+
+describe("buildPromptTranslateKeyboard", () => {
+  it("shows a prompt translation picker with off / source presets when ready", () => {
+    const kb = buildPromptTranslateKeyboard() as unknown as {
+      inline_keyboard: { text: string; callback_data?: string }[][];
+    };
+    const datas = callbackDatas(kb);
+    expect(datas).toContain("pt:off");
+    expect(datas).toContain("pt:on:zh:en");
+    expect(datas).toContain("pt:on:yue:en");
+    expect(datas).toContain("pt:on:ja:en");
+    expect(datas).toContain("pt:on:es:en");
+    expect(datas).not.toContain("pti");
+    for (const r of kb.inline_keyboard) expect(r.length).toBeLessThanOrEqual(1);
+  });
+
+  it("shows only the install button when translation support is missing", () => {
+    promptTranslateMocks.checkPromptTranslateSupportMock.mockReturnValueOnce({
+      ready: false,
+    } as never);
+    promptTranslateMocks.isPromptTranslateInstallableMock.mockReturnValueOnce(true);
+
+    const kb = buildPromptTranslateKeyboard() as unknown as {
+      inline_keyboard: { text: string; callback_data?: string }[][];
+    };
+    const datas = callbackDatas(kb);
+
+    expect(datas).toEqual(["pti"]);
   });
 });
 
@@ -279,8 +386,8 @@ function rows(kb: { inline_keyboard: { text: string; callback_data?: string }[][
 describe("buildProjectKeyboard", () => {
   it("renders one full-width switch row per project plus a delete-mode toggle", () => {
     const kb = buildProjectKeyboard([
-      { sid: "aaaaaa", label: "proj-a", active: false },
-      { sid: "bbbbbb", label: "proj-b", active: true },
+      projectButton({ sid: "aaaaaa", label: "proj-a", active: false }),
+      projectButton({ sid: "bbbbbb", label: "proj-b", active: true }),
     ]) as unknown as { inline_keyboard: { text: string; callback_data?: string }[][] };
     const datas = callbackDatas(kb);
     // each project is its own full-width row (one button per row)
@@ -295,9 +402,9 @@ describe("buildProjectKeyboard", () => {
 describe("buildRecentKeyboard", () => {
   it("renders switch for alive projects, add for not-running, and marks the active one", () => {
     const kb = buildRecentKeyboard([
-      { sid: "aaaaaa", label: "alive-proj", alive: true, active: false },
-      { sid: "bbbbbb", label: "active-proj", alive: true, active: true },
-      { sid: "cccccc", label: "dead-proj", alive: false, active: false },
+      recentButton({ sid: "aaaaaa", label: "alive-proj", alive: true, active: false }),
+      recentButton({ sid: "bbbbbb", label: "active-proj", alive: true, active: true }),
+      recentButton({ sid: "cccccc", label: "dead-proj", alive: false, active: false }),
     ]) as unknown as { inline_keyboard: { text: string; callback_data?: string }[][] };
     const datas = callbackDatas(kb);
     for (const r of kb.inline_keyboard) expect(r.length).toBe(1); // full-width rows
@@ -311,8 +418,8 @@ describe("buildRecentKeyboard", () => {
 describe("buildProjectDeleteKeyboard", () => {
   it("renders one full-width delete row per project plus a cancel toggle", () => {
     const kb = buildProjectDeleteKeyboard([
-      { sid: "aaaaaa", label: "proj-a", active: false },
-      { sid: "bbbbbb", label: "proj-b", active: true },
+      projectButton({ sid: "aaaaaa", label: "proj-a", active: false }),
+      projectButton({ sid: "bbbbbb", label: "proj-b", active: true }),
     ]) as unknown as { inline_keyboard: { text: string; callback_data?: string }[][] };
     const datas = callbackDatas(kb);
     for (const r of rows(kb)) expect(r.length).toBe(1);
@@ -324,12 +431,12 @@ describe("buildProjectDeleteKeyboard", () => {
 });
 
 describe("buildLangKeyboard", () => {
-  it("marks the current language with ✅ and makes it inert; others pick via ul:<code>", () => {
+  it("marks the current language with the ok icon and makes it inert", () => {
     const kb = buildLangKeyboard("zh") as unknown as {
       inline_keyboard: { text: string; callback_data?: string }[][];
     };
     const buttons = kb.inline_keyboard.flat();
-    const current = buttons.find((b) => b.text.startsWith("✅"));
+    const current = buttons.find((b) => b.text.startsWith(UI_ICONS.tone.ok));
     expect(current?.callback_data).toBe("noop");
     expect(callbackDatas(kb)).toContain("ul:en");
     expect(callbackDatas(kb)).not.toContain("ul:zh"); // current isn't re-selectable

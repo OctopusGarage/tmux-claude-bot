@@ -17,17 +17,22 @@ const DEFAULT_CODEX_ROOT = `${homedir()}/.codex`;
 
 /** A codex session's transcript source: its CODEX_HOME, and the rollout the LIVE
  * pid currently has open (exact under same-cwd Free-Projects contention, else the
- * read funcs fall back to the newest cwd-matched rollout). `home` is null when no
- * codex runs → the read methods return empty, same as before. */
+ * read funcs fall back to the newest cwd-matched rollout).
+ *
+ * `CODEX_HOME` is often unset because Codex defaults to ~/.codex. The live rollout
+ * is already an absolute path from the running pid, so do not gate it on a
+ * resolved env var; otherwise /history returns empty for normal default installs.
+ */
 async function codexSource(
   resolver: ReadResolver,
   session: string,
 ): Promise<{ home: string | null; rolloutPath: string | null }> {
   const home = (await resolver.resolveCodexHome?.(session)) ?? null;
-  const rolloutPath = home
-    ? ((await resolver.resolveLiveTranscript?.(session))?.path ?? null)
-    : null;
-  return { home, rolloutPath };
+  const live = (await resolver.resolveLiveTranscript?.(session)) ?? null;
+  return {
+    home: home ?? (live ? DEFAULT_CODEX_ROOT : null),
+    rolloutPath: live?.path ?? null,
+  };
 }
 
 /** Codex profile. */
@@ -71,6 +76,11 @@ export const codexProfile: AgentProfile = {
     } catch {
       return null;
     }
+  },
+  resolveTranscriptPath: async (resolver, session, projectPath) => {
+    const { home, rolloutPath } = await codexSource(resolver, session);
+    if (rolloutPath) return rolloutPath;
+    return home ? ((await findRolloutForProject(home, projectPath))?.path ?? null) : null;
   },
   buildResumeCommand: ({ aliasName, configRoot, sessionId, origCmd }) =>
     buildCodexResumeCommand({ aliasName, configRoot, sessionId, origCmd }),

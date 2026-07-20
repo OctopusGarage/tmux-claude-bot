@@ -13,12 +13,12 @@ detailed references where they exist: the full command table in
 ## 1. What it is
 
 tmux-claude-bot runs a coding agent — **Claude Code** or **OpenAI Codex** — inside
-**tmux** sessions on your computer, and lets you **drive it remotely**:
+managed project sessions on your computer, and lets you **drive it remotely**:
 
 - from **Telegram** and/or **Feishu/Lark** on your phone (text + voice), and
 - from a **terminal UI** (`tcb tui`) at the PC.
 
-Each project gets its own tmux session; you can run several in parallel, switch
+Each project gets its own session; you can run several in parallel, switch
 between them, and the bot survives restarts/reboots without losing your routing.
 
 ---
@@ -52,23 +52,34 @@ The Telegram and Feishu interfaces mirror each other. The **full command list wi
 descriptions is in [docs/commands.md](commands.md)**; this is the orientation.
 
 ### Talking to the agent
-- **Send any text** → it's typed into the current project's agent; the reply comes
+- **Send any text** → it's typed into the current session's agent; the reply comes
   back when the agent finishes. **Voice messages** are transcribed and sent as text.
+  Optional local prompt translation can be enabled with
+  `npm run translate:install` or `/translate_install`, plus `PROMPT_TRANSLATE_MODE=argos`,
+  `PROMPT_TRANSLATE_FROM=zh`, and `PROMPT_TRANSLATE_TO=en`; it applies to text,
+  voice transcriptions, TUI input, and `tcb send`. Change it at runtime with
+  `/prompt_translate status|off|on [from] [to]` in Telegram/Feishu, or
+  `tcb prompt-translate status|off|on [from] [to]` for local control input.
 - Replies show the agent's output; long output is paged.
 
 ### The control panel (buttons)
 Every reply carries a control panel (Telegram inline keyboard / Feishu card):
 interrupt (esc) · enter · the lifecycle keys (restart / clear / compact / exit) ·
 peek · history · projects · queue. It adapts to whether an agent is running.
+When the agent is stopped, the idle panel offers **Start** and **Resume**: Start opens
+a new agent session, while Resume relaunches the current project's last recorded
+agent flavor and conversation id.
+Lifecycle buttons that can interrupt work or reset context (`restart`, `clear`,
+`compact`, `exit`) ask for confirmation before running.
 
 ### Commands, by area (see commands.md for the table)
-- **Session**: `/start` `/status` `/peek [N]` `/history [N]` `/inputs [N]` (recent
-  inputs — tap one to re-run) `/restart` `/clear` `/compact` `/exit`.
+- **Session**: `/start` `/resume` `/status` `/peek [N]` `/history [N]` `/inputs [N]`
+  (recent inputs — tap one to re-run) `/restart` `/clear` `/compact` `/exit`.
 - **Projects**: create / switch / remove projects; `/recover` to relaunch agents that
   were running before a reboot.
 - **Feishu project groups**: bind a Feishu group to one project so you switch projects
   by switching groups (no `/cd`); works without `@bot`.
-- **Settings**: `/lang` (UI language), voice language, status-line install, `/prompts` (browse saved prompts).
+- **Settings**: `/lang` (UI language), `/voice_lang`, `/prompt_translate`, status-line install, `/prompts` (browse saved prompts). Telegram and Feishu both surface the voice and translation pickers from the settings controls.
 - **Diagnostics**: `/dashboard` (every session at a glance) · `/sysload` (machine
   load / heat / runaway processes) · `/logs` · `/doctor`. Owner-only; on Feishu these
   are 1:1-chat only.
@@ -97,7 +108,7 @@ npm run tui    # dev
 
 Sessions list + live peek; `i` compose a prompt (multi-line paste works), `c`
 controls, `s` projects (switch/start), `R` recover, `l` logs, `m` load, `u` re-run a
-recent input, `a` attach into the real tmux pane, `q` quit. Press `?` for all keys.
+recent input, `a` attach into the real session pane, `q` quit. Press `?` for all keys.
 
 ---
 
@@ -128,6 +139,7 @@ install dir.)
 | `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
 | `tcb autopilot` | autopilot status across all sessions (`--json` for raw) |
 | `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
+| `tcb loop validate\|tick\|run <file>` / `tcb loop reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |
 | `tcb sysload` | machine load, thermal state, top CPU, runaway shells |
 | `tcb tui` | the terminal control panel (needs the bot running) |
 | `tcb recover` | relaunch agents that were running before a reboot |
@@ -142,11 +154,29 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 |---------|--------------|
 | `tcb sessions` | list the running sessions |
 | `tcb projects` | list projects (live + recent); `tcb open <name>` to start one |
+| `tcb notify [text...]` | send a local send-only notification through the configured Telegram/Feishu bot; use `--title`, `--body` or `--stdin`, `--channel telegram\|lark\|both`, `--level info\|success\|warning\|error`, `--source <name>`, and repeatable `--attach <file>` |
 | `tcb send <project> "<prompt>"` | send a prompt to a project's agent; **waits for the reply** (`--no-wait` / `--timeout <s>`) |
-| `tcb peek <project>` | print a snapshot of its tmux pane |
-| `tcb open <project>` | switch to / start a project (incl. stopped ones) |
-| `tcb control <project> <esc\|enter\|restart\|…>` | send a control action |
+| `tcb peek <project>` | print a snapshot of its session pane |
+| `tcb open <project>` | switch to / start a project — by name (incl. stopped) or a filesystem path to create a new one |
+| `tcb adopt [pid]` | list unmanaged claude/codex processes, or adopt one by PID (stops it, resumes under management) |
+| `tcb control <project> <esc\|enter\|resume\|restart\|…>` | send a control action; `restart` / `clear` / `compact` / `exit` prompt for confirmation (`--yes` for scripts) |
+| `tcb attach <file...>` | send an image/file to the session's chat; defaults to the current session (`--to <project>`, `--caption <text>`) |
 | `tcb skill install` | install the AI operating skill into Claude Code / Codex (`--tool` for one) |
+
+`tcb notify` is for other local projects that need outbound alerts but do not need
+to receive chat messages. It talks to the already-running bot over the local control
+socket, so those projects do not need Telegram tokens, Feishu credentials, chat ids,
+or SDK dependencies. It sends to the configured owner targets only. Attachments are
+uploaded by the active Telegram/Feishu adapter, for example:
+
+```bash
+tcb notify --channel lark --title "Radar ready" --body "Daily report attached" \
+  --attach report.md --attach report.html
+```
+
+Use `tcb notify --attach` for owner/background notifications. Use `tcb attach`
+when a chat-originated project session should receive a file reply in that same
+chat context.
 
 This is what the **AI skill** (`skills/tmux-claude-bot/SKILL.md`, the AI-facing
 companion to [docs/agents/usage-guide.md](agents/usage-guide.md)) drives — so an agent
@@ -179,7 +209,7 @@ To manage **every** session without enabling each one, run `/autopilot global on
 
 Autopilot is also fully button-drivable from Telegram. Open the inline control
 panel (the keyboard under any reply, or via the control buttons), then tap
-`🤖 Autopilot` to enter the autopilot panel. From there you can enable or disable
+`✈️ Autopilot` to enter the autopilot panel. From there you can enable or disable
 autopilot for the current session, open the goal picker to select one or more goals
 with a multi-select list and set the number of rounds, then start the cycle — or
 toggle the global keep-alive on/off for all sessions, or stop autopilot outright.
@@ -193,7 +223,7 @@ Autopilot is also fully drivable from `tcb tui`. Press `A` to open the autopilot
 ### Lark/Feishu button controls
 
 Autopilot is also fully button-drivable from Lark/Feishu. In a private chat (p2p)
-the control card includes a `🤖 Autopilot` button that opens the autopilot panel
+the control card includes a `✈️ Autopilot` button that opens the autopilot panel
 card. From there you can enable or disable autopilot for the current session, open
 the goal picker to select one or more goals with a multi-select list and set the
 number of rounds, then start the cycle — or stop autopilot outright. The
@@ -208,6 +238,11 @@ A **goal** is a named preset that tells autopilot what to do each phase and when
 stop. Built-in goal ids (`test-coverage`, `fix-tests`, `code-review`, `add-feature`,
 `refactor-elegant`, `ui-polish`) are always available. You can also drop your own
 goal files into the goals directory.
+
+Goal phases may use plain prompts or skill intents. Skill metadata is shared with
+Loop Engineering through the agent capability registry (`skills.catalog` and
+`skills.approved`), so the same approved skill set can support interactive
+Autopilot goals and scheduled project maintenance.
 
 **User-defined goals** — create a `.json` file in `AUTOPILOT_GOALS_DIR` (default
 `~/.tmux-claude-bot/state/autopilot-goals`). Any `.json` file placed there appears
@@ -265,7 +300,73 @@ burn through your quota unattended. Resume with `/autopilot on` or
 
 ---
 
-## 8. Home operator
+## 8. Loop Engineering
+
+Loop Engineering runs recurring maintenance work from a YAML config. It is off by
+default; enable it by setting:
+
+```bash
+LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml
+LOOP_ENGINEERING_TICK_MS=300000   # 0 disables the managed loop
+```
+
+Each scheduled project chooses a runner:
+
+- `runner.kind: system` (default) runs deterministic local commands, optional queued
+  agent tasks, verification, eval, commit, and writes `report.md` / `summary.json`.
+- `runner.kind: agent-supervised` sends a bounded WorkOrder to a reserved Loop
+  Supervisor agent. The supervisor can inspect failures, adapt the next action, and
+  finish with a required marker + JSON summary. Reports are written as
+  `supervisor.md` / `supervisor-summary.json`.
+
+Enable the supervisor only when at least one project uses `agent-supervised`:
+
+```bash
+LOOP_SUPERVISOR_ENABLED=true
+LOOP_SUPERVISOR_AGENT=codex       # codex (default) or claude
+LOOP_SUPERVISOR_DIR=              # blank -> <state-dir>/loop-supervisor
+```
+
+Example project:
+
+```yaml
+projects:
+  - id: datavibe-backend
+    name: Datavibe Backend
+    path: /path/to/datavibe-backend
+    agent: codex
+    schedule: "30 5 * * *"
+    runner:
+      kind: agent-supervised
+      timeoutMs: 7200000
+      maxTurns: 20
+      requireConfirmation: false
+    goal: Improve architecture in small verified slices and commit each round.
+    maxRounds: 3
+    targetScore: 90
+    assessment:
+      command: npm run assess
+    execution:
+      agent: true
+    allowedActions: [tests, docs, small-refactor]
+    blockedActions: [direct-model-api, broad-rewrite]
+```
+
+Supervisor dispatch still uses this bot's managed Claude Code / Codex sessions. It
+does not call model-provider APIs directly. If the supervisor session is missing or
+the queue cannot accept the WorkOrder, the scheduler keeps the fire eligible for a
+later retry instead of consuming that cron occurrence.
+
+Useful commands:
+
+- `tcb loop validate <file> [--json]`
+- `tcb loop tick <file> [--now <iso>] [--json]`
+- `tcb loop run <file> <projectId> [--json]` for command-backed/manual runs
+- `tcb loop reports list [--json]`
+- `tcb loop backlog list [--all] [--json]`
+- `tcb loop skills refresh <file> [--write] [--json]`
+
+## 9. Home operator
 
 When `HOME_OPERATOR_ENABLED=true`, the bot auto-starts a dedicated agent session
 (Claude Code or Codex) in a fixed home directory. That session becomes the default
@@ -292,7 +393,7 @@ HOME_OPERATOR_DIR=            # blank → <state-dir>/home (auto-created)
 
 ---
 
-## 9. Batch scheduler
+## 10. Batch scheduler
 
 Run a set of agent tasks across multiple projects on a schedule (cron, one-shot, or immediate).
 
@@ -317,7 +418,7 @@ Run a set of agent tasks across multiple projects on a schedule (cron, one-shot,
 
 ---
 
-## 10. Managing the service
+## 11. Managing the service
 
 The bot is a managed, auto-restarting service. **Restart via the service manager**,
 not the dev scripts (the manager respawns it):
@@ -336,25 +437,35 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 - **Bot not responding** → `tcb doctor`; check exactly one bot process is running
   (multiple cause a Telegram 409); check network/proxy reachability.
-- **"No session" / can't talk to a project** → `/start`, or switch/open the project.
+- **"No session" / can't talk to a project** → `/resume` if it was accidentally
+  exited, `/start` for a new agent session, or switch/open the project.
 - **Mac keeps sleeping** → enable keep-awake (§5); lid-closed needs `pmset disablesleep`.
 - **TUI says "can't reach the control socket"** → the bot isn't running; start the
   service.
 - **Machine warm / slow** → `/sysload` or `tcb sysload` to spot a runaway process.
 - **Logs** → `tcb logs` (CLI) or `/logs` (chat, owner-only).
+- **After `tcb adopt`, typing prints raw escape sequences** (e.g. `d0;1:3u`, `s5;1:3u`)
+  → the orphaned claude/codex process was killed by signal before it could reset the
+  terminal's enhanced keyboard mode. Run one of these in the affected terminal:
+  - `reset` (fastest, clears the screen)
+  - `printf '\033[<u\033[<u\033[<u\033[>4;0m\033[?1004l\033[?2004l'` then press Enter
+    (resets the mode without clearing the screen)
+  - or close the terminal window and open a new one. Current bot versions reset the
+    orphan's terminal automatically during takeover, so this only affects sessions
+    adopted before the fix.
 
 ---
 
 ## Acknowledgements
 
 Autopilot's core idea — engineering a feedback loop that watches a coding agent in
-its tmux pane and keeps nudging it forward so it never stalls mid-task — is owed to
+its session pane and keeps nudging it forward so it never stalls mid-task — is owed to
 **[ForgeFlow](https://github.com/Kingson4Wu/ForgeFlow)**, an earlier project that
-pioneered exactly this "loop engineering": observe the pane → decide by rules →
+pioneered exactly this feedback loop: observe the pane → decide by rules →
 recover from stalls → repeat, driving an AI CLI (Claude / Gemini / Codex) through
 long programming tasks unattended.
 

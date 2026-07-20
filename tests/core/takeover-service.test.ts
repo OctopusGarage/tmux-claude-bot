@@ -40,6 +40,20 @@ vi.mock("../../src/core/platform/clipboard.js", () => ({
   copyToClipboard: (...a: unknown[]) => copyToClipboard(...(a as [])),
 }));
 
+const freeProject = vi.hoisted(() => ({
+  allocateFreeSlot: vi.fn<() => number | null>(() => 1),
+  setFreeProject: vi.fn(),
+}));
+vi.mock("../../src/core/projects/free-projects.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/core/projects/free-projects.js")>();
+  return {
+    ...actual,
+    allocateFreeSlot: () => freeProject.allocateFreeSlot(),
+    setFreeProject: (...a: unknown[]) =>
+      freeProject.setFreeProject(...(a as Parameters<typeof actual.setFreeProject>)),
+  };
+});
+
 const getPathBySession = vi.fn<(s: string) => string | null>(() => null);
 const setPathForSession = vi.fn();
 vi.mock("../../src/core/projects/sessionPathMap.js", async (importOriginal) => {
@@ -74,6 +88,8 @@ beforeEach(() => {
   listCodexOrphans.mockReset().mockResolvedValue([]);
   takeover.mockReset();
   copyToClipboard.mockClear();
+  freeProject.allocateFreeSlot.mockReset().mockReturnValue(1);
+  freeProject.setFreeProject.mockReset();
   getPathBySession.mockReset().mockReturnValue(null);
   setPathForSession.mockReset();
   probeSnapshot.mockReset().mockResolvedValue([]);
@@ -140,6 +156,22 @@ describe("composeAdoptOutcome", () => {
     expect(out).toEqual({ ok: false, body: m.adoptBusy, sessionName: "tcb-x" });
   });
 
+  it("maps a running same-project agent to the duplicate-project message", () => {
+    const out = composeAdoptOutcome(
+      { ok: false, sessionName: "tcb-x", resumed: false, reason: "project_agent_running" },
+      "telegram",
+    );
+    expect(out).toEqual({ ok: false, body: m.adoptProjectRunning, sessionName: "tcb-x" });
+  });
+
+  it("maps a full free-project registry to the free-project limit message", () => {
+    const out = composeAdoptOutcome(
+      { ok: false, sessionName: "", resumed: false, reason: "free_project_limit" },
+      "telegram",
+    );
+    expect(out).toEqual({ ok: false, body: m.freeProjectLimit(10), sessionName: "" });
+  });
+
   it("maps other failures to the generic failed message", () => {
     const out = composeAdoptOutcome(
       { ok: false, sessionName: "tcb-x", resumed: false, reason: "agent_did_not_start" },
@@ -188,10 +220,12 @@ describe("adoptOrphan", () => {
       createSession: vi.fn(async () => true),
       sendKeys: vi.fn(async () => {}),
       paneCurrentCommand: vi.fn(async () => null),
+      listProjectSessions: vi.fn(async () => []),
       ...over,
     } as unknown as TmuxBridge;
     const configResolver = {
       isClaudeRunning: vi.fn(async () => resolverRunning),
+      isCodexRunning: vi.fn(async () => false),
     } as unknown as ConfigResolver;
     return {
       bridge,
@@ -249,6 +283,63 @@ describe("adoptOrphan", () => {
       return { ok: true, sessionName: "s", resumed: false };
     });
     await adoptOrphan(42, c);
+  });
+
+  it("blocks a path takeover when another same-path session is running an agent", async () => {
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
+    getPathBySession.mockImplementation((session) =>
+      session === "tcb-existing" ? "/home/u/proj" : null,
+    );
+    const c = ctx({ listProjectSessions: vi.fn(async () => ["tcb-existing"]) }, true);
+
+    const result = await adoptOrphan(42, c);
+
+    expect(result).toEqual({
+      ok: false,
+      sessionName: "tcb-existing",
+      resumed: false,
+      reason: "project_agent_running",
+    });
+    expect(takeover).not.toHaveBeenCalled();
+  });
+
+  it("allows a free takeover even when another same-path session is running an agent", async () => {
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
+    getPathBySession.mockImplementation((session) =>
+      session === "tcb-existing" ? "/home/u/proj" : null,
+    );
+    const createSession = vi.fn(async () => true);
+    const c = ctx(
+      { listProjectSessions: vi.fn(async () => ["tcb-existing"]), createSession },
+      true,
+    );
+    takeover.mockImplementation(async (_o, d) => {
+      const name = await d.ensureSession("/home/u/proj");
+      expect(name).toBe("tcb-free_1");
+      return { ok: true, sessionName: name, resumed: true };
+    });
+
+    const result = await adoptOrphan(42, c, { target: "free" });
+
+    expect(result?.ok).toBe(true);
+    expect(createSession).toHaveBeenCalledWith("tcb-free_1", "/home/u/proj");
+    expect(freeProject.setFreeProject).toHaveBeenCalledWith(1, { label: null });
+    expect(setPathForSession).toHaveBeenCalledWith("tcb-free_1", "/home/u/proj");
+  });
+
+  it("blocks a free takeover before touching the orphan when free slots are full", async () => {
+    listClaudeOrphans.mockResolvedValue([ORPHAN]);
+    freeProject.allocateFreeSlot.mockReturnValue(null);
+
+    const result = await adoptOrphan(42, ctx(), { target: "free" });
+
+    expect(result).toEqual({
+      ok: false,
+      sessionName: "",
+      resumed: false,
+      reason: "free_project_limit",
+    });
+    expect(takeover).not.toHaveBeenCalled();
   });
 
   it("isTargetBusy: true when the existing session has a non-shell foreground", async () => {

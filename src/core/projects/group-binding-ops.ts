@@ -55,7 +55,7 @@ export type ReconcileResult =
 
 /**
  * Ensure the group's current-project pointer equals its binding. Re-anchors a
- * drifted pointer and recreates the tmux session if it died. The binding (not the
+ * drifted pointer and recreates the project session if it died. The binding (not the
  * volatile .current_project) is the source of truth, so a group can always come
  * home even after `clearSession` wiped the pointer.
  */

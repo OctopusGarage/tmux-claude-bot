@@ -66,6 +66,16 @@ describe("i18n", () => {
     expect(messages("telegram").queueFull(30)).toContain("30");
   });
 
+  it("keeps Telegram handler errors free of Lark-only group recovery copy", () => {
+    snap("TELEGRAM_UI_LANG", "LARK_UI_LANG");
+    process.env.TELEGRAM_UI_LANG = "zh";
+    process.env.LARK_UI_LANG = "zh";
+    expect(messages("telegram").handlerErrorTelegram).not.toContain("群");
+    expect(messages("telegram").handlerErrorTelegram).not.toContain("/restore");
+    expect(messages("lark").handlerError).toContain("群组");
+    expect(messages("lark").handlerError).toContain("/restore");
+  });
+
   // Passing a string array as every positional arg renders all entries (works for
   // both `${n}` interpolation and the lone `dirs.join(...)` call) so each catalog's
   // function bodies are exercised, not just its static strings.

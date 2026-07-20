@@ -17,6 +17,14 @@ export function goalTitle(msgs: Messages, goal: Goal): string {
       return msgs.goalRefactorElegant;
     case "goalUiPolish":
       return msgs.goalUiPolish;
+    case "goalImproveArchitecture":
+      return msgs.goalImproveArchitecture;
+    case "goalHardenStandards":
+      return msgs.goalHardenStandards;
+    case "goalPolishGithub":
+      return msgs.goalPolishGithub;
+    case "goalSyncDocs":
+      return msgs.goalSyncDocs;
     default:
       return goal.titleKey;
   }

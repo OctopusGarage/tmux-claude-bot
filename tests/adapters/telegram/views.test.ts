@@ -11,6 +11,7 @@ import {
 } from "../../../src/adapters/telegram/views.js";
 import { projectPathToHistoryDir } from "../../../src/core/agents/claude/claude-history.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
+import { bindGroup, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
 import { fakeCtx, fakeDeps } from "./_fakes.js";
 
@@ -80,14 +81,14 @@ describe("sendQueueStatus", () => {
 describe("sendAliveList", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("sends a hint with a lone 'new free project' button when there are no alive projects", async () => {
+  it("sends a hint with a lone independent-session button when there are no alive projects", async () => {
     const ctx = fakeCtx();
     const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => []) } });
 
     await sendAliveList(ctx, deps);
 
-    expect(ctx.texts().some((t) => t.includes("没有活跃项目"))).toBe(true);
-    // the empty list still offers the 🆓 button so the first parallel project is one tap away
+    expect(ctx.texts().some((t) => t.includes("没有活跃会话"))).toBe(true);
+    // The empty list still offers the independent-session button so the first one is one tap away.
     const kb = ctx.replies[0]?.extra.reply_markup as {
       inline_keyboard: { callback_data: string }[][];
     };
@@ -104,8 +105,55 @@ describe("sendAliveList", () => {
 
     await sendAliveList(ctx, deps);
 
-    expect(ctx.texts().some((t) => t.includes("活跃项目 (1)"))).toBe(true);
+    expect(ctx.texts().some((t) => t.includes("活跃会话 (1)"))).toBe(true);
     expect(ctx.replies[0]?.extra.reply_markup).toBeDefined();
+  });
+
+  it("includes project status details in the alive-list message body", async () => {
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tg-alive-status-"));
+    setPathForSession("tmux_proj_alive_status", dir);
+    const ctx = fakeCtx();
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_alive_status"]) },
+      configResolver: { detectAgentKind: vi.fn(async () => "codex" as const) },
+    });
+
+    await sendAliveList(ctx, deps);
+
+    const text = ctx.texts().join("\n");
+    expect(text).toContain("会话：运行中");
+    expect(text).toContain("Agent：Codex");
+    expect(text).toContain(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("does not expose Lark project-group bindings in Telegram status copy", async () => {
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tg-alive-lark-group-"));
+    const session = "tmux_proj_tg_lark_group_hidden";
+    setPathForSession(session, dir);
+    bindGroup("oc_tg_lark_group_hidden", {
+      workspacePath: dir,
+      sessionName: session,
+      label: "lark-only-group",
+    });
+    const ctx = fakeCtx();
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => [session]) },
+      configResolver: { detectAgentKind: vi.fn(async () => "claude" as const) },
+    });
+
+    try {
+      await sendAliveList(ctx, deps);
+
+      const text = ctx.texts().join("\n");
+      expect(text).toContain("活跃会话 (1)");
+      expect(text).toContain("类型：常规会话");
+      expect(text).not.toContain("群：");
+      expect(text).not.toContain("lark-only-group");
+    } finally {
+      unbindGroup("oc_tg_lark_group_hidden");
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -194,7 +242,7 @@ describe("sendHistory", () => {
     fs.mkdirSync(histDir, { recursive: true });
     fs.writeFileSync(
       nodePath.join(histDir, "a.jsonl"),
-      [jsonlLine("user", "hello"), jsonlLine("assistant", "world")].join("\n") + "\n",
+      `${[jsonlLine("user", "hello"), jsonlLine("assistant", "world")].join("\n")}\n`,
     );
     const ctx = fakeCtx();
     const deps = fakeDeps({ configResolver: makeConfigResolver() });
@@ -207,7 +255,7 @@ describe("sendHistory", () => {
     fs.mkdirSync(histDir, { recursive: true });
     fs.writeFileSync(
       nodePath.join(histDir, "a.jsonl"),
-      [jsonlLine("user", "my question"), jsonlLine("assistant", "my answer")].join("\n") + "\n",
+      `${[jsonlLine("user", "my question"), jsonlLine("assistant", "my answer")].join("\n")}\n`,
     );
     const ctx = fakeCtx();
     const deps = fakeDeps({ configResolver: makeConfigResolver() });

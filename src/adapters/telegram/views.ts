@@ -1,6 +1,5 @@
 import type { Context } from "grammy";
-import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
-import { profileFor } from "../../core/agents/registry.js";
+import { readAgentRecentConversations } from "../../core/agents/read.js";
 import { buildQueueStatusLines } from "../../core/command/queue-status.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
@@ -8,6 +7,8 @@ import type { ForeignAction } from "../../core/infra/status-install.js";
 import { runStatusInstall } from "../../core/infra/status-install.js";
 import type { BrowseView } from "../../core/projects/dir-browser.js";
 import type { CreateProjectResult } from "../../core/projects/project-ops.js";
+import { projectPickerRows } from "../../core/projects/project-session-picker.js";
+import { formatProjectSummaryBlock } from "../../core/projects/project-summary-view.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { getRecentInputs, storeInputList } from "../../core/read/recent-inputs.js";
 import { formatSingleConversation } from "../../core/read/transcript.js";
@@ -30,13 +31,13 @@ import {
   buildStatusInstallChoiceKeyboard,
 } from "./keyboards.js";
 import { MSG } from "./messages.js";
-import { aliveProjectButtons, startOrPickAfterCreate } from "./project-ops.js";
+import { startOrPickAfterCreate } from "./project-ops.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
 import { tgScope } from "./scope.js";
 
 /**
- * Read-side renderers: fetch state (tmux pane, conversation history, queue) and
+ * Read-side renderers: fetch state (session pane, conversation history, queue) and
  * render it into a Telegram reply. No mutation — these only display. Kept apart
  * from command/callback wiring so the "what the user sees" lives in one place.
  */
@@ -72,10 +73,10 @@ export async function sendRecoverPreview(
   }
 }
 
-/** The alive-projects list (tappable switch/delete keyboard, no body text). */
+/** The alive-projects list (tappable switch/delete keyboard). */
 export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<void> {
   try {
-    const buttons = await aliveProjectButtons(deps, tgScope(ctx));
+    const buttons = await projectPickerRows(deps, tgScope(ctx), "project-sessions");
     if (buttons.length === 0) {
       await reply(ctx, "list", messages("telegram").aliveListEmpty, {
         replyMarkup: buildNewFreeKeyboard(),
@@ -83,6 +84,7 @@ export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<vo
       return;
     }
     await reply(ctx, "list", messages("telegram").aliveListTitle(buttons.length), {
+      body: formatProjectSummaryBlock(buttons),
       replyMarkup: buildProjectKeyboard(buttons),
     });
   } catch (err) {
@@ -90,7 +92,7 @@ export async function sendAliveList(ctx: Context, deps: HandlerDeps): Promise<vo
   }
 }
 
-/** Capture and send the tmux pane. `lines` (from `/peek N`) captures that many
+/** Capture and send the session pane. `lines` (from `/peek N`) captures that many
  * lines of scrollback and pages the result across messages so tall output isn't
  * truncated to one screen; the control keyboard rides the LAST (bottom) message. */
 export async function sendPeek(
@@ -219,8 +221,7 @@ export async function sendHistory(
       });
       return;
     }
-    const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
-    const rounds = await profile.getRecentConversations(deps.configResolver, session, projectPath);
+    const rounds = await readAgentRecentConversations(deps.configResolver, session, projectPath);
     if (rounds.length === 0) {
       await reply(ctx, "info", messages("telegram").noHistory, { session, replyTarget });
       return;

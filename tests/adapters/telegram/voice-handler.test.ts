@@ -93,6 +93,7 @@ function voiceCtx(over: { chatId?: number; messageId?: number; replyToMessageId?
 
 beforeEach(() => {
   vi.clearAllMocks();
+  checkVoiceSupportMock.mockReturnValue({ ready: true, bin: "/bin/mlx" });
   isVoicePlatformSupportedMock.mockReturnValue(true);
 });
 
@@ -220,6 +221,21 @@ describe("voice_lang", () => {
       expect.objectContaining({ replyMarkup: expect.anything() }),
     );
     expect(setWhisperLanguageMock).not.toHaveBeenCalled();
+  });
+
+  it("when voice is unavailable, shows only the install button", async () => {
+    checkVoiceSupportMock.mockReturnValueOnce({ ready: false, reason: "not-installed" });
+    const handlers = register(fakeDeps());
+    await handlers["cmd:voice_lang"]?.(fakeCtx({ text: "/voice_lang" }));
+
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      M.voiceNotEnabled,
+      expect.anything(),
+    );
+    expect(JSON.stringify(replyMock.mock.calls.at(-1)?.[3])).toContain("vi");
+    expect(JSON.stringify(replyMock.mock.calls.at(-1)?.[3])).not.toContain("vlm");
   });
 
   it("with an invalid arg replies the usage/invalid message", async () => {
@@ -364,14 +380,20 @@ describe("message:voice", () => {
     const ctx = withGetFile(voiceCtx({ messageId: 42 }), "voice/file.ogg");
     await handlers["on:message:voice"]?.(ctx);
 
-    // voiceHeard confirmation went out with the transcript
-    expect(replyMock).toHaveBeenCalledWith(
+    // confirmation and optional delivery preview are owned by runPromptWithProgress.
+    expect(replyMock).not.toHaveBeenCalledWith(
       expect.anything(),
       "info",
       M.voiceHeard("build me a thing"),
-      expect.objectContaining({ session: "proj-1" }),
+      expect.anything(),
     );
-    // and the prompt was dispatched for the resolved session
-    expect(promptMock).toHaveBeenCalledWith(ctx, deps, "proj-1", "build me a thing", replyTarget);
+    expect(promptMock).toHaveBeenCalledWith(
+      ctx,
+      deps,
+      "proj-1",
+      "build me a thing",
+      replyTarget,
+      "voice",
+    );
   });
 });

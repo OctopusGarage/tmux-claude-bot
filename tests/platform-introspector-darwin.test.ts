@@ -43,6 +43,21 @@ describe("darwin introspector", () => {
     expect(await intro.cwdOf(200)).toBe("/Users/x/project");
   });
 
+  it("ttyOf returns the stdin device from `lsof -d 0` when it is a terminal", async () => {
+    const exec = fakeExec({ lsof: "p200\nf0\nn/dev/ttys001\n" });
+    const intro = createDarwinIntrospector(exec as never);
+    expect(await intro.ttyOf(200)).toBe("/dev/ttys001");
+    expect(exec).toHaveBeenCalledWith("lsof", ["-a", "-p", "200", "-d", "0", "-Fn"], {
+      timeout: 5000,
+    });
+  });
+
+  it("ttyOf returns null when stdin is not a terminal", async () => {
+    const exec = fakeExec({ lsof: "p200\nf0\nn/dev/null\n" });
+    const intro = createDarwinIntrospector(exec as never);
+    expect(await intro.ttyOf(200)).toBeNull();
+  });
+
   it("returns safe empties when a command fails", async () => {
     const exec = vi.fn(async () => {
       throw new Error("boom");
@@ -52,5 +67,6 @@ describe("darwin introspector", () => {
     expect(await intro.readProcEnv(1)).toBe("");
     expect(await intro.listOpenFiles(1)).toEqual([]);
     expect(await intro.cwdOf(1)).toBeNull();
+    expect(await intro.ttyOf(1)).toBeNull();
   });
 });

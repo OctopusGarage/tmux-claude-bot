@@ -23,8 +23,13 @@ describe("splitFrontmatter", () => {
 describe("skillTargets", () => {
   it("ships the Claude skill with frontmatter and the Codex prompt without it", () => {
     const targets = skillTargets("/home/u");
-    const claude = targets.find((t) => t.tool === "claude")!;
-    const codex = targets.find((t) => t.tool === "codex")!;
+    const claude = targets.find((t) => t.tool === "claude");
+    const codex = targets.find((t) => t.tool === "codex");
+    expect(claude).toBeDefined();
+    expect(codex).toBeDefined();
+    if (claude === undefined || codex === undefined) {
+      throw new Error("expected both Claude and Codex skill targets");
+    }
     expect(claude.tool).toBe("claude");
     expect(claude.path).toBe("/home/u/.claude/skills/tmux-claude-bot/SKILL.md");
     expect(codex.path).toBe("/home/u/.codex/prompts/tmux-claude-bot.md");

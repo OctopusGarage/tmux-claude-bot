@@ -1,6 +1,7 @@
 import type { Bot, Context } from "grammy";
-import { getImmediateActions } from "../../core/command/action-registry.js";
-import { executeMessage, type MessageAction } from "../../core/command/dispatch.js";
+import { planMessageAction } from "../../core/command/action-plan.js";
+import type { MessageAction } from "../../core/command/actions.js";
+import { executeMessage } from "../../core/command/dispatch.js";
 import { enqueueMessage, planQueuedAck } from "../../core/command/enqueue.js";
 import {
   type PersistedMessage,
@@ -12,16 +13,12 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { buildQueueCancelKeyboard } from "./keyboards.js";
+import { buildQueueCancelKeyboard, buildStartPickerKeyboard } from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { reply, send } from "./replies.js";
 import { requireSession } from "./session.js";
 
 const log = createLogger("telegram.executor");
-
-// Single source of truth (core/action-registry) — same set Lark derives, so the
-// two adapters can't drift (telegram used to omit `tab`).
-const IMMEDIATE_ACTIONS = getImmediateActions();
 
 export async function enqueueSessionCommand(
   ctx: Context,
@@ -109,16 +106,49 @@ export async function handleQueuedCommand(
   }
   const replyTo = ctx.message?.message_id;
 
-  if (IMMEDIATE_ACTIONS.has(action)) {
+  const planned = await planMessageAction({
+    deps,
+    action,
+    session,
+    text: text ?? action,
+    confirmed: true,
+  });
+
+  if (planned.kind === "immediate") {
     const result = await executeMessage(
-      { sessionName: session, action, text, id: "" } as QueuedMessage,
+      { sessionName: session, action: planned.action, text, id: "" } as QueuedMessage,
       deps,
     );
     await reply(ctx, "info", result, { session, replyTo, replyTarget });
     return;
   }
 
-  await enqueueSessionCommand(ctx, deps, session, action, text, replyTo);
+  if (planned.kind === "already-running") {
+    await reply(ctx, "ok", messages("telegram").agentAlreadyRunning, {
+      session,
+      replyTo,
+      replyTarget,
+    });
+    return;
+  }
+
+  if (planned.kind === "pick-start-command") {
+    await reply(ctx, "info", messages("telegram").startPickerPrompt, {
+      session,
+      replyTo,
+      replyTarget,
+      replyMarkup: buildStartPickerKeyboard(
+        deps.config.startCommands,
+        sessionShortId(session),
+        planned.action,
+      ),
+    });
+    return;
+  }
+
+  if (planned.kind === "queued") {
+    await enqueueSessionCommand(ctx, deps, session, planned.action, planned.text, replyTo);
+  }
 }
 
 export function createRestoredMessage(p: PersistedMessage, bot: Bot): QueuedMessage {

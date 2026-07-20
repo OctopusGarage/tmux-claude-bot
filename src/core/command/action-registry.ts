@@ -2,10 +2,11 @@
  * Single source of truth for action metadata and UI layout.
  *
  * To add a new command:
- *   1. dispatch.ts   — add to MESSAGE_ACTIONS + add a case (execution logic)
+ *   1. actions.ts    — add to MESSAGE_ACTIONS
+ *      dispatch.ts   — add a case (execution logic)
  *   2. action-registry.ts — add to ACTION_META + relevant button row group(s),
- *                      and to BOT_COMMANDS below (the Telegram command menu — a
- *                      hand-maintained array in this file)
+ *                      then add one help taxonomy item when it is user-facing.
+ *                      BOT_COMMANDS is derived from that taxonomy.
  *   3. catalog/*.ts  — add btnXxx + cmdXxx keys to zh.ts (canonical), then every
  *                      other language (en/zh-TW/yue/ja/es) — a missing key fails the build
  *   Everything else updates automatically:
@@ -18,7 +19,7 @@
 import type { BotCommand } from "../../shared/types.js";
 import type { Messages } from "../i18n/catalog/zh.js";
 import { messages } from "../i18n/index.js";
-import type { MessageAction } from "./dispatch.js";
+import type { MessageAction } from "./actions.js";
 
 type StringKey = { [K in keyof Messages]: Messages[K] extends string ? K : never }[keyof Messages];
 
@@ -26,30 +27,68 @@ type StringKey = { [K in keyof Messages]: Messages[K] extends string ? K : never
 
 export interface ActionMeta {
   btnKey: StringKey;
-  /** null = no Lark slash command (action only reachable via button) */
-  larkKind: "immediate" | "queued" | null;
+  /** null = no slash command (action only reachable via button) */
+  queuePolicy: "immediate" | "queued" | null;
   /** true = register as Telegram bot.command() */
   telegram: boolean;
-  /** Lark-only button style override */
-  larkStyle?: "danger" | "primary";
+  /** Button style override for surfaces that support styled actions. */
+  buttonStyle?: "danger" | "primary";
+  /** Present when a one-tap UI action must ask for explicit confirmation first. */
+  confirmation?: ActionConfirmation;
+}
+
+export interface ActionConfirmation {
+  severity: "warning" | "danger";
+  impactKey: StringKey;
 }
 
 /** Metadata for every action that has a button or slash-command surface. */
 export const ACTION_META: Partial<Record<MessageAction, ActionMeta>> = {
-  enter: { btnKey: "btnEnter", larkKind: "immediate", telegram: true },
-  esc: { btnKey: "btnEsc", larkKind: "immediate", telegram: true },
-  interrupt: { btnKey: "btnInterrupt", larkKind: "immediate", telegram: true, larkStyle: "danger" },
-  restart: { btnKey: "btnRestart", larkKind: "queued", telegram: true },
-  clear: { btnKey: "btnClear", larkKind: "immediate", telegram: true },
-  compact: { btnKey: "btnCompact", larkKind: "immediate", telegram: true },
-  up: { btnKey: "btnUp", larkKind: "immediate", telegram: true },
-  down: { btnKey: "btnDown", larkKind: "immediate", telegram: true },
-  left: { btnKey: "btnLeft", larkKind: "immediate", telegram: true },
-  right: { btnKey: "btnRight", larkKind: "immediate", telegram: true },
-  tab: { btnKey: "btnTab", larkKind: "immediate", telegram: true },
-  exit: { btnKey: "btnExit", larkKind: "queued", telegram: true },
-  status: { btnKey: "btnStatus", larkKind: "immediate", telegram: true },
-  start: { btnKey: "btnStart", larkKind: "queued", telegram: true, larkStyle: "primary" },
+  enter: { btnKey: "btnEnter", queuePolicy: "immediate", telegram: true },
+  esc: { btnKey: "btnEsc", queuePolicy: "immediate", telegram: true },
+  interrupt: {
+    btnKey: "btnInterrupt",
+    queuePolicy: "immediate",
+    telegram: true,
+    buttonStyle: "danger",
+  },
+  restart: {
+    btnKey: "btnRestart",
+    queuePolicy: "queued",
+    telegram: true,
+    confirmation: { severity: "warning", impactKey: "confirmImpactRestart" },
+  },
+  clear: {
+    btnKey: "btnClear",
+    queuePolicy: "immediate",
+    telegram: true,
+    confirmation: { severity: "warning", impactKey: "confirmImpactClear" },
+  },
+  compact: {
+    btnKey: "btnCompact",
+    queuePolicy: "immediate",
+    telegram: true,
+    confirmation: { severity: "warning", impactKey: "confirmImpactCompact" },
+  },
+  up: { btnKey: "btnUp", queuePolicy: "immediate", telegram: true },
+  down: { btnKey: "btnDown", queuePolicy: "immediate", telegram: true },
+  left: { btnKey: "btnLeft", queuePolicy: "immediate", telegram: true },
+  right: { btnKey: "btnRight", queuePolicy: "immediate", telegram: true },
+  tab: { btnKey: "btnTab", queuePolicy: "immediate", telegram: true },
+  exit: {
+    btnKey: "btnExit",
+    queuePolicy: "queued",
+    telegram: true,
+    confirmation: { severity: "danger", impactKey: "confirmImpactExit" },
+  },
+  status: { btnKey: "btnStatus", queuePolicy: "immediate", telegram: true },
+  start: { btnKey: "btnStart", queuePolicy: "queued", telegram: true, buttonStyle: "primary" },
+  resume: {
+    btnKey: "btnResume",
+    queuePolicy: "queued",
+    telegram: true,
+    buttonStyle: "primary",
+  },
   // "text" — no button, not a slash command
 };
 
@@ -75,7 +114,10 @@ export const CONTROL_ROWS_FULL: MessageAction[][] = [
 ];
 
 /** Agent-action button rows for the help card "Session" section (adds start/status). */
-export const HELP_SESSION_ROWS: MessageAction[][] = [...CONTROL_ROWS_FULL, ["start", "status"]];
+export const HELP_SESSION_ROWS: MessageAction[][] = [
+  ...CONTROL_ROWS_FULL,
+  ["start", "resume", "status"],
+];
 
 // ── Derived sets / lists ─────────────────────────────────────────────────────
 
@@ -84,22 +126,26 @@ export const HELP_SESSION_ROWS: MessageAction[][] = [...CONTROL_ROWS_FULL, ["sta
  * Channel-neutral: both adapters share the same immediate/queued split, so the
  * Telegram executor and the Lark command router both derive from this — neither
  * hardcodes its own list (which drifted historically: telegram once omitted
- * `tab`). Modeled under `larkKind` for legacy reasons; the concept is universal.
+ * `tab`).
  */
 export function getImmediateActions(): Set<MessageAction> {
   return new Set(
     (Object.entries(ACTION_META) as [MessageAction, ActionMeta][])
-      .filter(([, m]) => m.larkKind === "immediate")
+      .filter(([, m]) => m.queuePolicy === "immediate")
       .map(([a]) => a),
   );
 }
 
-export function getLarkQueued(): Set<MessageAction> {
+export function getQueuedActions(): Set<MessageAction> {
   return new Set(
     (Object.entries(ACTION_META) as [MessageAction, ActionMeta][])
-      .filter(([, m]) => m.larkKind === "queued")
+      .filter(([, m]) => m.queuePolicy === "queued")
       .map(([a]) => a),
   );
+}
+
+export function getActionQueuePolicy(action: MessageAction): ActionMeta["queuePolicy"] {
+  return ACTION_META[action]?.queuePolicy ?? null;
 }
 
 /** MessageActions that should be registered as Telegram bot.command() handlers. */
@@ -109,12 +155,87 @@ export function getTelegramActions(): MessageAction[] {
     .map(([a]) => a);
 }
 
+export function getActionConfirmation(action: string): ActionConfirmation | null {
+  if (!isRegisteredAction(action)) return null;
+  return ACTION_META[action]?.confirmation ?? null;
+}
+
+export function requiresActionConfirmation(action: string): action is MessageAction {
+  return getActionConfirmation(action) !== null;
+}
+
+export function actionLabel(action: MessageAction, channel: "telegram" | "lark"): string {
+  const meta = ACTION_META[action];
+  if (!meta) return action;
+  const m = messages(channel);
+  return m[meta.btnKey] as string;
+}
+
+export function actionConfirmationText(
+  action: MessageAction,
+  channel: "telegram" | "lark",
+  target: string,
+): string | null {
+  const confirmation = getActionConfirmation(action);
+  if (!confirmation) return null;
+  const m = messages(channel);
+  return m.confirmActionBody(
+    actionLabel(action, channel),
+    m[confirmation.impactKey] as string,
+    target,
+  );
+}
+
+export function actionConfirmButtonText(
+  action: MessageAction,
+  channel: "telegram" | "lark",
+): string {
+  return messages(channel).btnConfirmAction(actionLabel(action, channel));
+}
+
+function isRegisteredAction(action: string): action is MessageAction {
+  return action in ACTION_META;
+}
+
+export interface ActionButtonSpec {
+  action: MessageAction;
+  text: string;
+  style?: "danger" | "primary";
+}
+
+export function actionButtonSpec(
+  action: MessageAction,
+  channel: "telegram" | "lark",
+): ActionButtonSpec | null {
+  const meta = ACTION_META[action];
+  if (!meta) return null;
+  const m = messages(channel);
+  return {
+    action,
+    text: m[meta.btnKey] as string,
+    ...(meta.buttonStyle ? { style: meta.buttonStyle } : {}),
+  };
+}
+
+export function actionButtonRows(
+  rows: readonly (readonly MessageAction[])[],
+  channel: "telegram" | "lark",
+): ActionButtonSpec[][] {
+  return rows.map((row) =>
+    row.flatMap((action) => {
+      const spec = actionButtonSpec(action, channel);
+      return spec ? [spec] : [];
+    }),
+  );
+}
+
 // ── Help text builder ────────────────────────────────────────────────────────
 
 interface HelpItem {
   cmds: string[];
   descKey: StringKey;
   argHint?: string;
+  telegramDescription?: string;
 }
 
 type HelpRow = readonly [HelpItem] | readonly [HelpItem, HelpItem];
@@ -130,21 +251,40 @@ interface HelpSection {
 
 const SESSION: readonly HelpRow[] = [
   [
-    { cmds: ["start"], descKey: "cmdStart" },
-    { cmds: ["status"], descKey: "cmdStatus" },
+    { cmds: ["start"], descKey: "cmdStart", telegramDescription: "Start the agent" },
+    { cmds: ["resume"], descKey: "cmdResume", telegramDescription: "Resume the last session" },
+  ],
+  [{ cmds: ["status"], descKey: "cmdStatus", telegramDescription: "Check agent status" }],
+  [
+    {
+      cmds: ["peek"],
+      descKey: "cmdPeek",
+      argHint: " [N]",
+      telegramDescription: "Capture the session pane (/peek N for N lines of scrollback)",
+    },
+    {
+      cmds: ["history"],
+      descKey: "cmdHistory",
+      argHint: " [N]",
+      telegramDescription:
+        "Show recent conversation history (default: last, /history N for Nth recent)",
+    },
   ],
   [
-    { cmds: ["peek"], descKey: "cmdPeek", argHint: " [N]" },
-    { cmds: ["history"], descKey: "cmdHistory", argHint: " [N]" },
+    {
+      cmds: ["inputs"],
+      descKey: "cmdInputs",
+      argHint: " [N]",
+      telegramDescription: "List your recent inputs — tap one to fetch & edit it",
+    },
   ],
-  [{ cmds: ["inputs"], descKey: "cmdInputs", argHint: " [N]" }],
   [
-    { cmds: ["restart"], descKey: "cmdRestart" },
-    { cmds: ["exit"], descKey: "cmdExit" },
+    { cmds: ["restart"], descKey: "cmdRestart", telegramDescription: "Restart the agent" },
+    { cmds: ["exit"], descKey: "cmdExit", telegramDescription: "Exit the agent" },
   ],
   [
-    { cmds: ["clear"], descKey: "cmdClear" },
-    { cmds: ["compact"], descKey: "cmdCompact" },
+    { cmds: ["clear"], descKey: "cmdClear", telegramDescription: "Send /clear command" },
+    { cmds: ["compact"], descKey: "cmdCompact", telegramDescription: "Send /compact command" },
   ],
   [
     { cmds: ["esc"], descKey: "cmdEsc" },
@@ -157,33 +297,174 @@ const SESSION: readonly HelpRow[] = [
 ];
 
 const PROJECTS: readonly HelpRow[] = [
-  [{ cmds: ["current_project"], descKey: "cmdCurrentProject" }],
-  [{ cmds: ["list_alive_projects"], descKey: "cmdListAlive" }],
-  [{ cmds: ["list_recent_projects"], descKey: "cmdListRecent" }],
-  [{ cmds: ["sessions"], descKey: "cmdSessions" }],
-  [{ cmds: ["add_project"], descKey: "cmdAddProject", argHint: " <path>" }],
-  [{ cmds: ["new_free"], descKey: "cmdNewFree", argHint: " [label]" }],
-  [{ cmds: ["adopt"], descKey: "cmdAdopt" }],
-  [{ cmds: ["recover"], descKey: "cmdRecover" }],
+  [
+    {
+      cmds: ["current_project"],
+      descKey: "cmdCurrentProject",
+      telegramDescription: "Show current project",
+    },
+  ],
+  [
+    {
+      cmds: ["list_alive_projects"],
+      descKey: "cmdListAlive",
+      telegramDescription: "List alive projects",
+    },
+  ],
+  [
+    {
+      cmds: ["list_recent_projects"],
+      descKey: "cmdListRecent",
+      telegramDescription: "List recent projects",
+    },
+  ],
+  [
+    {
+      cmds: ["sessions"],
+      descKey: "cmdSessions",
+      telegramDescription: "List resumable agent sessions",
+    },
+  ],
+  [
+    {
+      cmds: ["add_project"],
+      descKey: "cmdAddProject",
+      argHint: " <path>",
+      telegramDescription: "Add a new project",
+    },
+  ],
+  [
+    {
+      cmds: ["new_free"],
+      descKey: "cmdNewFree",
+      argHint: " [label]",
+      telegramDescription: "Create an independent session",
+    },
+  ],
+  [{ cmds: ["adopt"], descKey: "cmdAdopt", telegramDescription: "Take over an unmanaged agent" }],
+  [
+    {
+      cmds: ["recover"],
+      descKey: "cmdRecover",
+      telegramDescription: "Recover all projects after a reboot",
+    },
+  ],
 ];
 
 const SETTINGS: readonly HelpRow[] = [
-  [{ cmds: ["home"], descKey: "cmdHome" }],
-  [{ cmds: ["lang"], descKey: "cmdLang" }],
-  [{ cmds: ["voice_lang"], descKey: "cmdVoiceLang" }],
-  [{ cmds: ["voice_install"], descKey: "cmdVoiceInstall" }],
-  [{ cmds: ["status_install"], descKey: "cmdStatusInstall" }],
-  [{ cmds: ["prompts"], descKey: "cmdPrompts" }],
+  [
+    {
+      cmds: ["home"],
+      descKey: "cmdHome",
+      telegramDescription: "Switch to the home operator session",
+    },
+  ],
+  [
+    {
+      cmds: ["lang"],
+      descKey: "cmdLang",
+      telegramDescription: "Set interface language (en/zh/zh-TW/yue/ja/es)",
+    },
+  ],
+  [
+    {
+      cmds: ["voice_lang"],
+      descKey: "cmdVoiceLang",
+      telegramDescription: "Set voice recognition language (zh/en/yue/ja/es/auto)",
+    },
+  ],
+  [
+    {
+      cmds: ["prompt_translate"],
+      descKey: "cmdPromptTranslate",
+      telegramDescription: "Set prompt translation (status/off/on from to)",
+    },
+  ],
+  [
+    {
+      cmds: ["translate_install"],
+      descKey: "cmdTranslateInstall",
+      telegramDescription: "Install prompt translation dependencies",
+    },
+  ],
+  [
+    {
+      cmds: ["voice_install"],
+      descKey: "cmdVoiceInstall",
+      telegramDescription: "Install voice transcription (Apple Silicon)",
+    },
+  ],
+  [
+    {
+      cmds: ["status_install"],
+      descKey: "cmdStatusInstall",
+      telegramDescription: "Install usage reporting for /status",
+    },
+  ],
+  [
+    {
+      cmds: ["prompts"],
+      descKey: "cmdPrompts",
+      telegramDescription: "Browse saved prompts",
+    },
+  ],
 ];
 
 const DIAGNOSTICS: readonly HelpRow[] = [
-  [{ cmds: ["batch"], descKey: "cmdBatch", argHint: " [start <id>|pause|resume|stop|report]" }],
-  [{ cmds: ["dashboard"], descKey: "cmdDashboard" }],
-  [{ cmds: ["sysload"], descKey: "cmdSysload" }],
-  [{ cmds: ["logs"], descKey: "cmdLogs", argHint: " [traceId|N]" }],
-  [{ cmds: ["queue_status"], descKey: "cmdQueueStatus" }],
-  [{ cmds: ["doctor"], descKey: "cmdDoctor" }],
-  [{ cmds: ["help"], descKey: "cmdHelp" }],
+  [
+    {
+      cmds: ["batch"],
+      descKey: "cmdBatch",
+      argHint: " [start <id>|pause|resume|stop|report]",
+      telegramDescription: "Batch scheduler status or control",
+    },
+  ],
+  [
+    {
+      cmds: ["autopilot"],
+      descKey: "cmdAutopilot",
+      argHint: " [on|off|goals|global]",
+      telegramDescription: "Toggle/inspect keep-alive autopilot for this session",
+    },
+  ],
+  [
+    {
+      cmds: ["goals"],
+      descKey: "cmdGoals",
+      telegramDescription: "List autopilot goal presets",
+    },
+  ],
+  [
+    {
+      cmds: ["dashboard"],
+      descKey: "cmdDashboard",
+      telegramDescription: "Show the global dashboard",
+    },
+  ],
+  [{ cmds: ["sysload"], descKey: "cmdSysload", telegramDescription: "Show machine load" }],
+  [
+    {
+      cmds: ["logs"],
+      descKey: "cmdLogs",
+      argHint: " [traceId|N]",
+      telegramDescription: "Show recent WARN/ERROR logs",
+    },
+  ],
+  [
+    {
+      cmds: ["queue_status"],
+      descKey: "cmdQueueStatus",
+      telegramDescription: "Show message queue status",
+    },
+  ],
+  [
+    {
+      cmds: ["doctor"],
+      descKey: "cmdDoctor",
+      telegramDescription: "Run install health checks",
+    },
+  ],
+  [{ cmds: ["help"], descKey: "cmdHelp", telegramDescription: "Show all commands" }],
 ];
 
 const SECTIONS: readonly HelpSection[] = [
@@ -219,61 +500,21 @@ export function buildHelpBody(adapter: "telegram" | "lark", channel: "telegram" 
 
 // ── Telegram BOT_COMMANDS ────────────────────────────────────────────────────
 
-// The `/` autocomplete menu, grouped by category (Session → Projects → Settings →
-// Diagnostics). Deliberately OMITS the pure button keys (esc/interrupt/enter/up/
-// down/left/right/tab) — nobody types `/up`, and they flood the menu. Their
-// bot.command() handlers stay registered (getTelegramActions), so typing them
-// still works; they're just not advertised. Reachable as one-tap control buttons.
-export const BOT_COMMANDS: BotCommand[] = [
-  // ▶️ Session
-  { command: "help", description: "Show all commands" },
-  { command: "start", description: "Start the agent" },
-  { command: "status", description: "Check agent status" },
-  { command: "peek", description: "Capture the tmux pane (/peek N for N lines of scrollback)" },
-  {
-    command: "history",
-    description: "Show recent conversation history (default: last, /history N for Nth recent)",
-  },
-  { command: "inputs", description: "List your recent inputs — tap one to fetch & edit it" },
-  { command: "restart", description: "Restart the agent (resumes the conversation)" },
-  { command: "clear", description: "Send /clear command" },
-  { command: "compact", description: "Send /compact command" },
-  { command: "exit", description: "Exit the agent" },
-  // 📂 Projects
-  { command: "current_project", description: "Show current project" },
-  { command: "list_alive_projects", description: "List alive projects" },
-  { command: "list_recent_projects", description: "List recent projects" },
-  { command: "sessions", description: "List resumable agent sessions" },
-  { command: "add_project", description: "Add a new project" },
-  { command: "new_free", description: "Create a free (parallel) project" },
-  { command: "adopt", description: "Take over an agent running outside tmux" },
-  { command: "recover", description: "Recover all projects after a reboot (recreate + relaunch)" },
-  // ⚙️ Settings
-  { command: "home", description: "Switch to the home operator session" },
-  { command: "lang", description: "Set interface language (en/zh/zh-TW/yue/ja/es)" },
-  { command: "voice_lang", description: "Set voice recognition language (zh/en/yue/ja/es/auto)" },
-  { command: "voice_install", description: "Install voice transcription (Apple Silicon)" },
-  {
-    command: "status_install",
-    description: "Install usage reporting (statusLine snapshot) for /status",
-  },
-  {
-    command: "prompts",
-    description: "Browse saved prompts (read-only; needs PROMPT_MCP_* configured)",
-  },
-  // 🛠 Diagnostics
-  {
-    command: "batch",
-    description: "Batch scheduler status or control (/batch start <id>|pause|resume|stop|report)",
-  },
-  { command: "autopilot", description: "Toggle/inspect keep-alive autopilot for this session" },
-  { command: "goals", description: "List autopilot goal presets" },
-  { command: "dashboard", description: "Show the global dashboard (all sessions overview)" },
-  { command: "sysload", description: "Show machine load, heat, and runaway processes" },
-  {
-    command: "logs",
-    description: "Show recent WARN/ERROR logs (/logs <traceId> or /logs N)",
-  },
-  { command: "queue_status", description: "Show message queue status" },
-  { command: "doctor", description: "Run install health checks" },
-];
+function telegramMenuCommands(): BotCommand[] {
+  return SECTIONS.flatMap((section) =>
+    section.rows.flatMap((row) =>
+      (row as readonly HelpItem[]).flatMap((item) => {
+        const command = item.cmds[0];
+        return item.telegramDescription && command
+          ? [{ command, description: item.telegramDescription }]
+          : [];
+      }),
+    ),
+  );
+}
+
+// The `/` autocomplete menu is derived from the same taxonomy as `/help`.
+// Pure button keys (esc/interrupt/enter/up/down/left/right/tab) omit
+// `telegramDescription`, so their handlers stay registered but they do not flood
+// Telegram command discovery.
+export const BOT_COMMANDS: BotCommand[] = telegramMenuCommands();

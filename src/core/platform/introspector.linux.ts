@@ -84,5 +84,17 @@ export function createLinuxIntrospector(fs: LinuxFs = realFs): ProcessIntrospect
         return null;
       }
     },
+    async ttyOf(pid: number): Promise<string | null> {
+      // stdin (fd 0) is the terminal the user was typing into for a TUI orphan.
+      try {
+        const target = await fs.readlink(`/proc/${pid}/fd/0`);
+        if (target.startsWith("/dev/pts/") || target.startsWith("/dev/tty")) {
+          return target;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
   };
 }

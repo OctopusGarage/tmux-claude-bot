@@ -11,7 +11,7 @@ describe("requireSession", () => {
     expect(await requireSession(deps, 0)).toBeNull();
   });
 
-  it("returns null when the session has no tmux session", async () => {
+  it("returns null when the session has no backing managed session", async () => {
     const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => false) } });
     expect(await requireSession(deps, 0)).toBeNull();
   });
@@ -31,6 +31,21 @@ describe("requireSession", () => {
       paneAlive: true,
     });
     expect(await requireSession(deps, 0)).toBe("proj-1");
+  });
+
+  it("self-heals a current project saved with an unsafe dotted session name", async () => {
+    const unsafe = "tmux_proj_-Users-test-.alcove-workspaces-data-family";
+    const safe = "tmux_proj_-Users-test-_alcove-workspaces-data-family";
+    const deps = fakeDeps({
+      session: unsafe,
+      bridge: {
+        hasSession: vi.fn(async (session: string) => session === safe),
+        isPaneAlive: vi.fn(async () => true),
+      },
+    });
+
+    expect(await requireSession(deps, 0)).toBe(safe);
+    expect(deps.currentProject.set).toHaveBeenCalledWith("telegram:0", safe);
   });
 });
 

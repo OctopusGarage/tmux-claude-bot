@@ -327,6 +327,7 @@ describe("createExecProbe composition", () => {
       readProcEnv: async (pid: number) => `PID=${pid} CLAUDE_CONFIG_DIR=/tmp/cfg`,
       listOpenFiles: async () => [],
       cwdOf: async () => null,
+      ttyOf: async () => null,
     };
     const probe = createExecProbe(intro);
     expect(await probe.snapshot()).toEqual([{ pid: 1, ppid: 0, command: "init" }]);

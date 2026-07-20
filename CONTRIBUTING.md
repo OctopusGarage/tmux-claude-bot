@@ -53,13 +53,24 @@ want it. Nothing here depends on it.
 
 ## Before you open a PR
 
-Everything must be green — these are the same gates `/release` enforces:
+Everything must be green locally before push. Run the CI-equivalent local gate:
+
+```bash
+npm run verify:local
+```
+
+The pre-push hook runs the same command. If GitHub Actions catches a problem
+that this command misses, update `scripts/verify-local.sh` in the same fix so
+the next contributor or agent gets the failure locally.
+
+For narrower iteration, these are the main component checks:
 
 ```bash
 npm test                                   # vitest (TDD: add/keep tests)
 npm run lint                               # biome
 npm run lint:types && npm run lint:types:tests
 npm run knip                               # dead-code / unused deps
+npm run depcruise                          # dependency rules / cycles
 ```
 
 New behavior is test-first. Match the surrounding style; keep changes surgical.

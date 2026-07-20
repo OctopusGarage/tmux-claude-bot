@@ -1,0 +1,25 @@
+# tmux-claude-bot
+
+tmux-claude-bot runs Claude Code and Codex agents inside managed sessions and lets users
+control them from Telegram, Feishu/Lark, a local CLI, or the terminal UI.
+
+## Primary Documentation
+
+- [User manual](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/manual.md): Complete user guide for install, setup, chat usage, CLI usage, autopilot, and batch scheduling.
+- [Chat command reference](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/commands.md): Telegram and Feishu/Lark command list and behavior.
+- [Terminal UI guide](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/tui.md): `tcb tui` layout, keys, and workflows.
+- [AI usage guide](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/agents/usage-guide.md): Task recipes for assistants helping a user operate tmux-claude-bot.
+- [Testing standard](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/TESTING.md): Test strategy, local verification commands, and guardrails.
+
+## Architecture And Maintenance
+
+- [Architecture ADR](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/adr/0001-bot-architecture-refactor.md): Adapter/core/shared layering and bot architecture.
+- [Protocol layering ADR](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/adr/0002-protocol-layering.md): Protocol boundaries across chat adapters and core behavior.
+- [Multi-agent ADR](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/adr/0005-multi-agent-claude-and-codex.md): Claude/Codex agent support model.
+
+## Guidance For AI Assistants
+
+For user-facing usage questions, read `docs/agents/usage-guide.md` first, then follow
+its links to `docs/manual.md`, `docs/commands.md`, and `docs/tui.md` for details. Do
+not infer undocumented commands or flags from source code before checking the
+documented references.

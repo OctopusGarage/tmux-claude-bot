@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { enqueueLarkAction, runImmediateLarkAction } from "../../../src/adapters/lark/executor.js";
+import {
+  enqueueLarkAction,
+  resolveSession,
+  runImmediateLarkAction,
+} from "../../../src/adapters/lark/executor.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
 
 describe("enqueueLarkAction", () => {
@@ -15,7 +19,7 @@ describe("enqueueLarkAction", () => {
 
     expect(deps.queue.enqueued).toHaveLength(0);
     // No "/" discovery on Feishu — the no-project reply is a recovery card.
-    expect(JSON.stringify(channel.cards())).toContain("无当前项目");
+    expect(JSON.stringify(channel.cards())).toContain("无当前会话");
   });
 
   it("acks '已接收' when the queue was empty", async () => {
@@ -97,6 +101,44 @@ describe("enqueueLarkAction", () => {
     // currentProject.get is not consulted when an override is supplied
     expect(deps.currentProject.get).not.toHaveBeenCalled();
   });
+
+  it("self-heals a current project saved with an unsafe dotted session name", async () => {
+    const channel = fakeChannel();
+    const unsafe = "tmux_proj_-Users-test-.alcove-workspaces-data-family";
+    const safe = "tmux_proj_-Users-test-_alcove-workspaces-data-family";
+    const deps = fakeDeps({
+      session: unsafe,
+      bridge: {
+        hasSession: vi.fn(async (session: string) => session === safe),
+        isPaneAlive: vi.fn(async () => true),
+      },
+    });
+
+    await enqueueLarkAction(channel, deps, "chat-1", "msg-1", "text", "hi");
+
+    expect(deps.queue.enqueued[0]?.sessionName).toBe(safe);
+    expect(deps.currentProject.set).toHaveBeenCalledWith("lark:chat-1", safe);
+  });
+});
+
+describe("resolveSession", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the safe live alias for an unsafe override", async () => {
+    const channel = fakeChannel();
+    const unsafe = "tmux_proj_-Users-test-.alcove-workspaces-data-family";
+    const safe = "tmux_proj_-Users-test-_alcove-workspaces-data-family";
+    const deps = fakeDeps({
+      bridge: {
+        hasSession: vi.fn(async (session: string) => session === safe),
+        isPaneAlive: vi.fn(async () => true),
+      },
+    });
+
+    await expect(resolveSession(channel, deps, "chat-1", unsafe)).resolves.toBe(safe);
+  });
 });
 
 describe("runImmediateLarkAction", () => {
@@ -110,12 +152,15 @@ describe("runImmediateLarkAction", () => {
 
     await runImmediateLarkAction(channel, deps, "chat-1", "msg-1", "status");
 
-    expect(JSON.stringify(channel.cards())).toContain("无当前项目");
+    expect(JSON.stringify(channel.cards())).toContain("无当前会话");
   });
 
   it("runs executeMessage and replies plain text with the result", async () => {
     const channel = fakeChannel();
-    const deps = fakeDeps({ agent: { checkIfRunning: vi.fn(async () => true) } });
+    const deps = fakeDeps({
+      agent: { checkIfRunning: vi.fn(async () => true) },
+      bridge: { hasSession: vi.fn(async () => true) },
+    });
 
     await runImmediateLarkAction(channel, deps, "chat-1", "msg-1", "status");
 
@@ -128,6 +173,7 @@ describe("runImmediateLarkAction", () => {
   it("on error replies the error message", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps({
+      bridge: { hasSession: vi.fn(async () => true) },
       // force executeMessage to throw during a status action.
       agent: {
         checkIfRunning: vi.fn(async () => {

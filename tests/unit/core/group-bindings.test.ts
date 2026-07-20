@@ -1,16 +1,19 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("group-bindings registry", () => {
   let dir: string;
   beforeEach(() => {
+    vi.resetModules();
     dir = mkdtempSync(join(tmpdir(), "tcb-gb-"));
     process.env.TCB_STATE_DIR = dir;
   });
   afterEach(() => {
     delete process.env.TCB_STATE_DIR;
+    rmSync(dir, { recursive: true, force: true });
+    vi.resetModules();
   });
 
   it("binds, reads, lists and unbinds by chat_id", async () => {
@@ -49,5 +52,24 @@ describe("group-bindings registry", () => {
     m.bindGroup("oc_a", { workspacePath: "/p/x", sessionName: "claude_-x", label: "x" });
     expect(m.bindingForSession("claude_-x")?.chatId).toBe("oc_a");
     expect(m.bindingForSession("claude_-other")).toBeNull();
+  });
+
+  it("persists across module reloads and lists bindings by chat id", async () => {
+    let m = await import("../../../src/core/projects/group-bindings.js");
+    m.bindGroup("oc_b", { workspacePath: "/p/b", sessionName: "claude_-b", label: "b" });
+    m.bindGroup("oc_a", { workspacePath: "/p/a", sessionName: "claude_-a", label: "a" });
+
+    expect(m.listBindings().map(({ chatId }) => chatId)).toEqual(["oc_a", "oc_b"]);
+
+    vi.resetModules();
+    m = await import("../../../src/core/projects/group-bindings.js");
+
+    expect(m.getBinding("oc_a")).toEqual({
+      workspacePath: "/p/a",
+      sessionName: "claude_-a",
+      label: "a",
+    });
+    expect(m.bindingForSession("claude_-b")?.chatId).toBe("oc_b");
+    expect(m.listBindings().map(({ chatId }) => chatId)).toEqual(["oc_a", "oc_b"]);
   });
 });

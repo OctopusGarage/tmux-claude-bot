@@ -3,6 +3,10 @@ import { newMessageId, planQueuedAck } from "../../core/command/enqueue.js";
 import { QueueCancelledError } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
+import {
+  prepareUserPromptDelivery,
+  userPromptQueueFields,
+} from "../../core/read/user-prompt-intake.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { looksLikeTerminalOutput } from "./format.js";
@@ -58,6 +62,7 @@ export async function runPromptWithProgress(
   session: string,
   text: string,
   replyTarget: ReplyTargetMap,
+  preview: "text" | "voice" = "text",
 ): Promise<void> {
   const chatId = ctx.chat?.id ?? 0;
   const userMsgId = ctx.message?.message_id;
@@ -68,6 +73,38 @@ export async function runPromptWithProgress(
 
   if (userMsgId !== undefined) {
     void reactToMessage(reactionApi, chatId, userMsgId, REACTION.received);
+  }
+
+  const prepared = await prepareUserPromptDelivery("telegram", text, preview);
+  if (!prepared.ok) {
+    await reply(ctx, "err", messages("telegram").promptTranslateFailed, {
+      session,
+      replyTarget,
+    });
+    return;
+  }
+  if (prepared.preview.kind === "voice") {
+    await reply(ctx, "info", messages("telegram").voiceHeard(prepared.preview.sourceText), {
+      session,
+      replyTarget,
+    });
+  } else if (prepared.preview.kind === "voice-translated") {
+    await reply(
+      ctx,
+      "info",
+      messages("telegram").voiceHeardTranslated(
+        prepared.preview.sourceText,
+        prepared.preview.deliveredText,
+      ),
+      { session, replyTarget },
+    );
+  } else if (prepared.preview.kind === "text-translated") {
+    await reply(
+      ctx,
+      "info",
+      messages("telegram").promptTranslatedSent(prepared.preview.from, prepared.preview.to),
+      { session, replyTarget },
+    );
   }
 
   const queuePosition = deps.queue.size(session);
@@ -109,8 +146,9 @@ export async function runPromptWithProgress(
 
   const queued = deps.queue.enqueue({
     id: msgId,
-    text,
+    ...userPromptQueueFields(prepared),
     chatId,
+    channel: "telegram",
     sessionName: session,
     action: "text",
     resolve: (output: string) => {

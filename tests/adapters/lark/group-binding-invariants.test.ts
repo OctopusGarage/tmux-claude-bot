@@ -58,11 +58,17 @@ describe("group-binding invariants (property-based)", () => {
         for (const { chatId } of listBindings()) unbindGroup(chatId);
 
         for (const op of ops) {
-          const chatId = GROUPS[op.group]!;
+          const chatId = GROUPS[op.group];
+          const project = projects[op.proj];
+          expect(chatId).toBeDefined();
+          expect(project).toBeDefined();
+          if (chatId === undefined || project === undefined) {
+            throw new Error(`invalid generated op: ${JSON.stringify(op)}`);
+          }
           if (op.kind === "bind") {
-            await handleBind(channel, deps, chatId, "group", projects[op.proj]!.path);
+            await handleBind(channel, deps, chatId, "group", project.path);
           } else if (op.kind === "rebind") {
-            await bindCurrentGroupBySid(channel, deps, chatId, projects[op.proj]!.sid);
+            await bindCurrentGroupBySid(channel, deps, chatId, project.sid);
           } else {
             await handleUnbind(channel, deps, chatId, "group");
           }

@@ -15,9 +15,9 @@ import { handleQueuedCommand } from "../../src/adapters/telegram/executor.js";
 import {
   ACTION_META,
   getImmediateActions,
-  getLarkQueued,
+  getQueuedActions,
 } from "../../src/core/command/action-registry.js";
-import type { MessageAction } from "../../src/core/command/dispatch.js";
+import type { MessageAction } from "../../src/core/command/actions.js";
 import { fakeCtx, fakeDeps } from "./telegram/_fakes.js";
 
 /**
@@ -28,7 +28,7 @@ import { fakeCtx, fakeDeps } from "./telegram/_fakes.js";
  */
 
 const immediate = [...getImmediateActions()];
-const queued = [...getLarkQueued()];
+const queued = [...getQueuedActions()];
 
 describe("action registry sanity", () => {
   it("immediate and queued sets are disjoint", () => {
@@ -60,7 +60,10 @@ describe("Telegram routes each registry action by its kind (behavioral)", () => 
   for (const action of queued) {
     it(`enqueues queued '${action}'`, async () => {
       const ctx = fakeCtx();
-      const deps = fakeDeps();
+      const deps =
+        action === "start"
+          ? fakeDeps({ agent: { checkIfRunning: vi.fn(async () => false) } })
+          : fakeDeps();
       await handleQueuedCommand(ctx, deps, action as MessageAction);
       expect(deps.queue.enqueued).toHaveLength(1);
     });

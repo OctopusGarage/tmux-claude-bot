@@ -1,22 +1,35 @@
 import { InlineKeyboard } from "grammy";
 import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import {
-  ACTION_META,
+  actionButtonRows,
+  actionConfirmationText,
+  actionConfirmButtonText,
   CONTROL_INTERRUPTS,
   CONTROL_ROWS_FULL,
+  getActionConfirmation,
 } from "../../core/command/action-registry.js";
-import { isMessageAction, type MessageAction } from "../../core/command/dispatch.js";
+import { isMessageAction, type MessageAction } from "../../core/command/actions.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { BrowseAction, BrowseView } from "../../core/projects/dir-browser.js";
-import type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+import type { ProjectPickerLikeRow } from "../../core/projects/project-session-picker.js";
+import { projectSessionPrimaryIntent } from "../../core/projects/project-session-surface.js";
 import type { PromptsView } from "../../core/promptlib/view.js";
+import {
+  checkPromptTranslateSupport,
+  isPromptTranslateInstallable,
+  PROMPT_TRANSLATE_SOURCE_PRESETS,
+  PROMPT_TRANSLATE_TARGET_LANGUAGE,
+  resolvePromptTranslateConfig,
+} from "../../core/read/prompt-translation.js";
 import { inputButtonLabel } from "../../core/read/recent-inputs.js";
 import type { SessionEntry } from "../../core/read/transcript.js";
-import { VOICE_LANGS } from "../../core/read/voice-support.js";
+import { checkVoiceSupport, VOICE_LANGS } from "../../core/read/voice-support.js";
 import { agentGlyph } from "../../shared/types.js";
+import { UI_ICONS } from "../../shared/ui/icons.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 
-export type { ProjectButton, RecentButton } from "../../core/projects/project-ops.js";
+export type ProjectButton = ProjectPickerLikeRow;
+export type RecentButton = ProjectButton;
 export type { SessionEntry } from "../../core/read/transcript.js";
 
 /**
@@ -27,7 +40,8 @@ export type { SessionEntry } from "../../core/read/transcript.js";
  *   r:<sid>           remove project
  */
 export type CallbackAction =
-  | { kind: "act"; action: string; sid: string }
+  | { kind: "act"; action: MessageAction; sid: string }
+  | { kind: "actconfirm"; action: MessageAction; sid: string }
   | { kind: "switch"; sid: string }
   | { kind: "remove"; sid: string }
   | { kind: "more"; sid: string }
@@ -45,7 +59,13 @@ export type CallbackAction =
   | { kind: "recoverlist" }
   | { kind: "recover" }
   | { kind: "recovercancel" }
+  | { kind: "voicelangmenu" }
   | { kind: "voicelang"; lang: string }
+  | { kind: "voiceinstall" }
+  | { kind: "uilangmenu" }
+  | { kind: "prompttranslatemenu" }
+  | { kind: "prompttranslate"; arg: string }
+  | { kind: "prompttranslateinstall" }
   | { kind: "uilang"; lang: Lang }
   | { kind: "resume"; sessionId: string }
   | { kind: "inputredo"; token: string; idx: number }
@@ -53,7 +73,7 @@ export type CallbackAction =
   | { kind: "restartpick"; idx: number; sid: string }
   | { kind: "qcancel"; sid: string; msgId: string }
   | { kind: "adoptshow"; pid: number }
-  | { kind: "adoptexec"; pid: number }
+  | { kind: "adoptexec"; pid: number; target: "path" | "free" }
   | { kind: "adoptcancel" }
   | { kind: "adoptattach"; sid: string }
   | { kind: "statusinstall"; action: StatusInstallAction }
@@ -74,7 +94,8 @@ export type CallbackAction =
   | { kind: "apContinue"; sid: string }
   | { kind: "promptget"; sid: string }
   | { kind: "promptfilter"; tagSid: string }
-  | { kind: "promptpage"; page: number; tagSid: string };
+  | { kind: "promptpage"; page: number; tagSid: string }
+  | { kind: "noop" };
 
 /** The choices when /status_install hits a foreign statusLine. */
 export const STATUS_INSTALL_ACTIONS = ["overwrite", "wrap", "snippet", "skip"] as const;
@@ -82,6 +103,10 @@ export type StatusInstallAction = (typeof STATUS_INSTALL_ACTIONS)[number];
 
 export function encodeControlAction(action: string, sid: string): string {
   return `a:${action}:${sid}`;
+}
+
+export function encodeConfirmedControlAction(action: string, sid: string): string {
+  return `cf:${action}:${sid}`;
 }
 
 type SidKind = "switch" | "remove" | "more" | "less" | "add" | "peek" | "history" | "inputslist";
@@ -104,10 +129,14 @@ export function parseCallbackData(data: string): CallbackAction | null {
   if (data === "nf") return { kind: "newfree" };
   if (data === "nfx") return { kind: "newfreecancel" };
   if (data === "qs") return { kind: "queuestatus" };
+  if (data === "noop") return { kind: "noop" };
   if (data === "ac") return { kind: "adoptcancel" };
   if (data === "rcv") return { kind: "recoverlist" };
   if (data === "rec") return { kind: "recover" };
   if (data === "recx") return { kind: "recovercancel" };
+  if (data === "vlm") return { kind: "voicelangmenu" };
+  if (data === "vi") return { kind: "voiceinstall" };
+  if (data === "ulm") return { kind: "uilangmenu" };
   const parts = data.split(":");
   const [tag] = parts;
   if (tag === "pp") {
@@ -135,10 +164,31 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (!isMessageAction(action)) return null;
     return { kind: "act", action, sid };
   }
+  if (tag === "cf") {
+    const action = parts[1];
+    const sid = parts[2];
+    if (parts.length !== 3 || !action || !sid) return null;
+    if (!isMessageAction(action) || !getActionConfirmation(action)) return null;
+    return { kind: "actconfirm", action, sid };
+  }
   if (tag === "vl") {
     const lang = parts[1];
     if (parts.length !== 2 || !lang || !isVoiceLang(lang)) return null;
     return { kind: "voicelang", lang };
+  }
+  if (tag === "ptm") return { kind: "prompttranslatemenu" };
+  if (tag === "pti") return { kind: "prompttranslateinstall" };
+  if (tag === "pt") {
+    const verb = parts[1];
+    if (verb === "off" && parts.length === 2) return { kind: "prompttranslate", arg: "off" };
+    if (verb === "on") {
+      const from = parts[2];
+      const to = parts[3];
+      if (parts.length === 4 && from && to) {
+        return { kind: "prompttranslate", arg: `on ${from} ${to}` };
+      }
+    }
+    return null;
   }
   if (tag === "ul") {
     const lang = parts[1];
@@ -169,10 +219,11 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (parts.length !== 3 || !sid || !msgId) return null;
     return { kind: "qcancel", sid, msgId };
   }
-  if (tag === "as" || tag === "ae") {
+  if (tag === "as" || tag === "ae" || tag === "af") {
     const pid = Number(parts[1]);
     if (parts.length !== 2 || !Number.isInteger(pid) || pid <= 0) return null;
-    return tag === "as" ? { kind: "adoptshow", pid } : { kind: "adoptexec", pid };
+    if (tag === "as") return { kind: "adoptshow", pid };
+    return { kind: "adoptexec", pid, target: tag === "af" ? "free" : "path" };
   }
   if (tag === "aa") {
     const sid = parts[1];
@@ -268,8 +319,11 @@ export function buildBrowseKeyboard(view: BrowseView): InlineKeyboard {
   const kb = new InlineKeyboard();
   const tag = view.kind === "roots" ? "rt" : "cd";
   for (const e of view.entries) {
-    // 📦 marks a git repo (a likely project root); 📁 a plain directory.
-    kb.text(`${e.isRepo ? "📦" : "📁"} ${e.label}`, `br:${tag}:${e.index}`).row();
+    // Repository icon marks a likely project root; regular-session icon marks a plain directory.
+    kb.text(
+      `${e.isRepo ? UI_ICONS.project.repository : UI_ICONS.session.regular} ${e.label}`,
+      `br:${tag}:${e.index}`,
+    ).row();
   }
   let navRow = false;
   if (view.canGoUp) {
@@ -298,11 +352,52 @@ export function buildBrowseKeyboard(view: BrowseView): InlineKeyboard {
  */
 export function buildVoiceLangKeyboard(current: string): InlineKeyboard {
   const kb = new InlineKeyboard();
+  if (!checkVoiceSupport().ready) {
+    return buildVoiceInstallKeyboard();
+  }
   VOICE_LANGS.forEach((l, i) => {
-    if (l.code === current) kb.text(`✅ ${l.label}`, "noop");
+    if (l.code === current) kb.text(`${UI_ICONS.tone.ok} ${l.label}`, "noop");
     else kb.text(l.label, `vl:${l.code}`);
     if (i < VOICE_LANGS.length - 1) kb.row();
   });
+  return kb;
+}
+
+export function buildVoiceInstallKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text(messages("telegram").btnVoiceInstall, "vi");
+}
+
+function buildPromptTranslatePresetLabel(source: string): string {
+  return `${source}->${PROMPT_TRANSLATE_TARGET_LANGUAGE}`;
+}
+
+/** Prompt-translation picker: mirrors the voice-language picker. The current
+ * mode is marked and inert; tapping another switches the translation pair. */
+export function buildPromptTranslateKeyboard(): InlineKeyboard {
+  const m = messages("telegram");
+  const config = resolvePromptTranslateConfig("telegram");
+  const support = checkPromptTranslateSupport();
+  const kb = new InlineKeyboard();
+  if (support.ready) {
+    kb.text(
+      config.enabled ? m.btnPromptTranslateOff : `${UI_ICONS.tone.ok} ${m.btnPromptTranslateOff}`,
+      "pt:off",
+    ).row();
+    for (const [i, source] of PROMPT_TRANSLATE_SOURCE_PRESETS.entries()) {
+      const label = buildPromptTranslatePresetLabel(source);
+      const active =
+        config.enabled && config.from === source && config.to === PROMPT_TRANSLATE_TARGET_LANGUAGE;
+      kb.text(
+        active ? `${UI_ICONS.tone.ok} ${label}` : label,
+        active ? "noop" : `pt:on:${source}:${PROMPT_TRANSLATE_TARGET_LANGUAGE}`,
+      );
+      if (i < PROMPT_TRANSLATE_SOURCE_PRESETS.length - 1) kb.row();
+    }
+    return kb;
+  }
+  if (isPromptTranslateInstallable()) {
+    kb.row().text(m.btnPromptTranslateInstall, "pti");
+  }
   return kb;
 }
 
@@ -311,7 +406,7 @@ export function buildVoiceLangKeyboard(current: string): InlineKeyboard {
 export function buildLangKeyboard(current: Lang): InlineKeyboard {
   const kb = new InlineKeyboard();
   UI_LANGS.forEach((l, i) => {
-    if (l.code === current) kb.text(`✅ ${l.label}`, "noop");
+    if (l.code === current) kb.text(`${UI_ICONS.tone.ok} ${l.label}`, "noop");
     else kb.text(l.label, `ul:${l.code}`);
     if (i < UI_LANGS.length - 1) kb.row();
   });
@@ -336,21 +431,33 @@ export function buildStartPickerKeyboard(
 }
 
 function addActionRows(kb: InlineKeyboard, rows: MessageAction[][], sid: string): InlineKeyboard {
-  const m = messages("telegram");
-  for (const row of rows) {
-    for (const action of row) {
-      const meta = ACTION_META[action];
-      if (meta) kb.text(m[meta.btnKey] as string, encodeControlAction(action, sid));
+  for (const row of actionButtonRows(rows, "telegram")) {
+    for (const spec of row) {
+      kb.text(spec.text, encodeControlAction(spec.action, sid));
     }
     kb.row();
   }
   return kb;
 }
 
-/** A lone ❌ on a "queued" ack, so the user can cancel that still-waiting message
+/** A lone cancel button on a "queued" ack, so the user can cancel that still-waiting message
  * before it's typed in. `qx:<sid>:<msgId>` (msgId carries no ':'). */
 export function buildQueueCancelKeyboard(sid: string, msgId: string): InlineKeyboard {
-  return new InlineKeyboard().text("❌", `qx:${sid}:${msgId}`);
+  return new InlineKeyboard().text(UI_ICONS.tone.error, `qx:${sid}:${msgId}`);
+}
+
+export function buildActionConfirmationKeyboard(
+  action: MessageAction,
+  sid: string,
+): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(actionConfirmButtonText(action, "telegram"), encodeConfirmedControlAction(action, sid))
+    .row()
+    .text(messages("telegram").btnCancel, "noop");
+}
+
+export function actionConfirmationBody(action: MessageAction, target: string): string {
+  return actionConfirmationText(action, "telegram", target) ?? action;
 }
 
 /** Idle panel: with no agent running, control keys do nothing — offer the launch
@@ -359,6 +466,7 @@ export function buildIdleKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
   return new InlineKeyboard()
     .text(m.btnStart, encodeControlAction("start", sid))
+    .text(m.btnResume, encodeControlAction("resume", sid))
     .row()
     .text(m.btnProjects, "la")
     .text(m.btnRecover, "rcv");
@@ -370,9 +478,8 @@ export function buildControlKeyboard(sid: string, running = true): InlineKeyboar
   if (!running) return buildIdleKeyboard(sid);
   const m = messages("telegram");
   const kb = new InlineKeyboard();
-  for (const action of CONTROL_INTERRUPTS) {
-    const meta = ACTION_META[action];
-    if (meta) kb.text(m[meta.btnKey] as string, encodeControlAction(action, sid));
+  for (const spec of actionButtonRows([CONTROL_INTERRUPTS], "telegram")[0] ?? []) {
+    kb.text(spec.text, encodeControlAction(spec.action, sid));
   }
   return kb
     .row()
@@ -390,6 +497,9 @@ export function buildControlKeyboard(sid: string, running = true): InlineKeyboar
  * → navigation), then read/views, then project nav, then "collapse". */
 export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
+  const voiceReady = checkVoiceSupport().ready;
+  const voiceButtonData = voiceReady ? "vlm" : "vi";
+  const voiceButtonLabel = voiceReady ? m.btnVoiceLang : m.btnVoiceInstall;
   const kb = new InlineKeyboard();
   addActionRows(kb, CONTROL_ROWS_FULL, sid);
   return kb
@@ -402,7 +512,11 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
     .text(m.btnQueue, "qs")
     .text(m.btnRecover, "rcv")
     .row()
-    .text("🤖 Autopilot", `ap:${sid}`)
+    .text(`${UI_ICONS.feature.autopilot} Autopilot`, `ap:${sid}`)
+    .text(voiceButtonLabel, voiceButtonData)
+    .text(m.btnPromptTranslate, "ptm")
+    .row()
+    .text(m.btnUiLang, "ulm")
     .text(m.btnCollapse, `l:${sid}`);
 }
 
@@ -415,23 +529,22 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
 export function buildProjectKeyboard(projects: ProjectButton[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const p of projects) {
-    if (p.active) {
-      kb.text(`✅ ${p.label}`, "noop").row();
-    } else {
-      kb.text(`🔀 ${p.label}`, `s:${p.sid}`).row();
-    }
+    const intent = projectSessionPrimaryIntent(p);
+    if (intent.kind === "switch")
+      kb.text(`${UI_ICONS.project.switch} ${p.label}`, `s:${intent.sid}`).row();
+    else kb.text(`${UI_ICONS.tone.ok} ${p.label}`, "noop").row();
   }
   kb.text(messages("telegram").btnNewFree, "nf").row();
   return kb.text(messages("telegram").btnDeleteMode, "dm");
 }
 
-/** Lone "🆓 new free project" button — shown when the alive list is empty so the
- * first parallel project is still one tap away. */
+/** Lone independent-session button — shown when the alive list is empty
+ * so the first parallel session is still one tap away. */
 export function buildNewFreeKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text(messages("telegram").btnNewFree, "nf");
 }
 
-/** Lone "cancel" button shown under the "name your free project" prompt, so the
+/** Lone "cancel" button shown under the "name your independent session" prompt, so the
  * armed label capture can be dropped without sending a throwaway message. */
 export function buildFreeLabelKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text(messages("telegram").btnCancel, "nfx");
@@ -478,6 +591,9 @@ export function buildRecoverConfirmKeyboard(): InlineKeyboard {
 export function buildAdoptConfirmKeyboard(pid: number): InlineKeyboard {
   return new InlineKeyboard()
     .text(messages("telegram").btnAdoptConfirm, `ae:${pid}`)
+    .row()
+    .text(messages("telegram").btnAdoptAsFree, `af:${pid}`)
+    .row()
     .text(messages("telegram").btnAdoptCancel, "ac");
 }
 
@@ -527,9 +643,12 @@ export function buildInputsKeyboard(prompts: string[], token: string): InlineKey
 export function buildRecentKeyboard(projects: RecentButton[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   projects.forEach((p, i) => {
-    if (p.active) kb.text(`✅ ${p.label}`, "noop");
-    else if (p.alive) kb.text(`🔀 ${p.label}`, `s:${p.sid}`);
-    else kb.text(`➕ ${p.label}`, `g:${p.sid}`);
+    const intent = projectSessionPrimaryIntent(p);
+    if (intent.kind === "switch")
+      kb.text(`${UI_ICONS.project.switch} ${p.label}`, `s:${intent.sid}`);
+    else if (intent.kind === "create")
+      kb.text(`${UI_ICONS.project.create} ${p.label}`, `g:${intent.sid}`);
+    else kb.text(`${UI_ICONS.tone.ok} ${p.label}`, "noop");
     if (i < projects.length - 1) kb.row();
   });
   return kb;
@@ -599,7 +718,10 @@ export function buildPromptsKeyboard(
   const shownTags = tags.slice(0, 6);
   shownTags.forEach((t) => {
     const active = t.tag === view.tagFilter;
-    kb.text(`${active ? "✅ " : "🏷 "}${t.tag} (${t.count})`, `pf:${sessionShortId(t.tag)}`);
+    kb.text(
+      `${active ? `${UI_ICONS.tone.ok} ` : `${UI_ICONS.feature.tag} `}${t.tag} (${t.count})`,
+      `pf:${sessionShortId(t.tag)}`,
+    );
   });
   if (view.tagFilter) kb.text(m.promptsAll, "pn:0:_");
   if (shownTags.length > 0 || view.tagFilter) kb.row();

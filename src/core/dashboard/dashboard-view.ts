@@ -1,3 +1,5 @@
+import { type AgentKind, agentGlyph } from "../../shared/types.js";
+import { UI_ICONS } from "../../shared/ui/icons.js";
 import type { UsageSnapshot } from "../read/usage.js";
 import type { DashboardSnapshot, SessionRow } from "./dashboard.js";
 
@@ -40,18 +42,41 @@ function formatUsageParts(usage: UsageSnapshot): string {
   return parts.length > 0 ? `📊 ${parts.join(" · ")}` : "";
 }
 
+function formatAgentKind(kind: AgentKind): string {
+  return kind === "codex" ? "Codex" : "Claude";
+}
+
+function formatSessionKind(row: SessionRow): string {
+  if (row.sessionKind === "operator") return `${UI_ICONS.session.regular} operator`;
+  if (row.sessionKind === "independent") {
+    const slot = row.independentSlot !== null ? ` #${row.independentSlot}` : "";
+    return `${UI_ICONS.session.independent} independent${slot}`;
+  }
+  return `${UI_ICONS.session.regular} regular`;
+}
+
+type DashboardFormatOptions = {
+  showGroups?: boolean;
+};
+
 /** One session as two lines: a status-dot + name headline, then an indented
  * detail line (kind/api · state · uptime · usage · cumulative). Emoji-labeled
  * so it stays scannable as plain chat text (no monospace column alignment). */
-function formatSessionBlock(row: SessionRow): string {
+function formatSessionBlock(row: SessionRow, options: DashboardFormatOptions = {}): string {
   // Three states: 🟢 busy (agent working) · 🟡 idle (agent up, waiting) · ⚫ stopped
   // (no agent in the pane — a shell, or the agent exited). The middle/last were
   // previously both ⚪, so a stopped session looked the same as an idle one.
   const dot = row.busy ? "🟢" : row.running ? "🟡" : "⚫";
-  const label = row.operator ? `🏠 ${row.label}` : row.label;
+  const label = row.operator ? `${UI_ICONS.session.regular} ${row.label}` : row.label;
   // api vs subscription matters operationally (which sessions burn API credits).
   const apiTag = row.apiMode ? `/${row.apiMode === "subscription" ? "sub" : "api"}` : "";
-  const kind = `🤖 ${row.kind}${apiTag}`;
+  const agent = `${agentGlyph(row.kind)} ${formatAgentKind(row.kind)}${apiTag}`;
+  const type = formatSessionKind(row);
+  const group =
+    options.showGroups === false || !row.group
+      ? ""
+      : `${UI_ICONS.group.projectGroup} ${row.group.label}`;
+  const path = row.workspacePath ? `${UI_ICONS.project.workspace} ${row.workspacePath}` : "";
   // Same precedence as the dot (busy → running → stopped): a session can read busy
   // from recent activity while its agent has just exited (running=false), and there
   // it should show 🔥 busy, not ⏹ stopped — matching its 🟢 dot.
@@ -67,7 +92,9 @@ function formatSessionBlock(row: SessionRow): string {
   const total = row.cumulativeBusyMs > 0 ? `Σ ${humanizeMs(row.cumulativeBusyMs)}` : "";
   const auto = row.autopilot ? `✈️ auto·${row.autopilot.iterations}` : "";
 
-  const detail = [kind, state, uptime, usage, total, auto].filter(Boolean).join(" · ");
+  const detail = [agent, type, group, path, state, uptime, usage, total, auto]
+    .filter(Boolean)
+    .join(" · ");
   return `${dot} ${label}\n   ↳ ${detail}`;
 }
 
@@ -91,8 +118,14 @@ function assemble(header: string, blocks: string[]): string {
 }
 
 /** Render a full text dashboard: header + one block per session. */
-export function formatDashboardText(s: DashboardSnapshot): string {
-  return assemble(formatHeader(s), s.sessions.map(formatSessionBlock));
+export function formatDashboardText(
+  s: DashboardSnapshot,
+  options: DashboardFormatOptions = {},
+): string {
+  return assemble(
+    formatHeader(s),
+    s.sessions.map((row) => formatSessionBlock(row, options)),
+  );
 }
 
 /** Render a chat-friendly dashboard capped at `maxChars`.
@@ -101,10 +134,11 @@ export function formatDashboardText(s: DashboardSnapshot): string {
  * appended when it still fits. */
 export function formatDashboardForChat(
   s: DashboardSnapshot,
-  { maxChars }: { maxChars: number },
+  { maxChars, showGroups }: { maxChars: number } & DashboardFormatOptions,
 ): string {
   const header = formatHeader(s);
-  const blocks = s.sessions.map(formatSessionBlock);
+  const options = showGroups === undefined ? {} : { showGroups };
+  const blocks = s.sessions.map((row) => formatSessionBlock(row, options));
 
   let result = header;
   let included = 0;

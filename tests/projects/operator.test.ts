@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   homeCommandResult,
   isOperator,
+  isReservedInfrastructureSession,
   listUserProjectSessions,
   operatorSessionName,
   resolveTargetSession,
@@ -14,6 +15,11 @@ describe("operator identity", () => {
   it("isOperator matches only the reserved name", () => {
     expect(isOperator("tmux_proj_home", "tmux_proj_")).toBe(true);
     expect(isOperator("tmux_proj_free_1", "tmux_proj_")).toBe(false);
+  });
+  it("recognizes reserved infrastructure sessions", () => {
+    expect(isReservedInfrastructureSession("tmux_proj_home", "tmux_proj_")).toBe(true);
+    expect(isReservedInfrastructureSession("tmux_proj_loop-supervisor", "tmux_proj_")).toBe(true);
+    expect(isReservedInfrastructureSession("tmux_proj_free_1", "tmux_proj_")).toBe(false);
   });
 });
 
@@ -48,16 +54,22 @@ describe("listUserProjectSessions", () => {
     };
   }
 
-  it("filters out the operator session, keeps real user projects", async () => {
-    const deps = fakeDepsFor(["tmux_proj_home", "tmux_proj_-my-app", "tmux_proj_free_1"]);
+  it("filters out reserved infrastructure sessions, keeps real user projects", async () => {
+    const deps = fakeDepsFor([
+      "tmux_proj_home",
+      "tmux_proj_loop-supervisor",
+      "tmux_proj_-my-app",
+      "tmux_proj_free_1",
+    ]);
     const result = await listUserProjectSessions(deps);
     expect(result).not.toContain("tmux_proj_home");
+    expect(result).not.toContain("tmux_proj_loop-supervisor");
     expect(result).toContain("tmux_proj_-my-app");
     expect(result).toContain("tmux_proj_free_1");
   });
 
-  it("returns an empty list when only the operator is live", async () => {
-    const deps = fakeDepsFor(["tmux_proj_home"]);
+  it("returns an empty list when only infrastructure is live", async () => {
+    const deps = fakeDepsFor(["tmux_proj_home", "tmux_proj_loop-supervisor"]);
     expect(await listUserProjectSessions(deps)).toEqual([]);
   });
 

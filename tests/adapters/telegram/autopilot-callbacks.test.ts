@@ -6,6 +6,7 @@ import {
 } from "../../../src/adapters/telegram/keyboards.js";
 import type { AutopilotView } from "../../../src/core/autopilot/autopilot-view.js";
 import { setUiLang } from "../../../src/core/i18n/index.js";
+import { UI_ICONS } from "../../../src/shared/ui/icons.js";
 
 beforeAll(() => {
   setUiLang("telegram", "en");
@@ -54,7 +55,7 @@ describe("autopilot telegram callbacks", () => {
   it("off view shows only enable + back", () => {
     const kb = buildAutopilotPanelKeyboard(offView, "abc123");
     const labels = kb.inline_keyboard.flat().map((b) => b.text);
-    expect(labels).toContain("🤖 Enable autopilot");
+    expect(labels).toContain(`${UI_ICONS.feature.autopilot} Enable autopilot`);
     expect(labels).not.toContain("🎯 Pick goals");
   });
 

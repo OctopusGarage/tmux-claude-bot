@@ -1,3 +1,4 @@
+import { UI_ICONS } from "../../../shared/ui/icons.js";
 import type { Messages } from "./zh.js";
 
 /** Traditional Chinese (Taiwan) catalog. Typed `: Messages`, so it must
@@ -6,7 +7,7 @@ export const zhTW: Messages = {
   ackReceived: "已接收",
   queuedAt: (pos) => `已排隊 · 第 ${pos} 位`,
   queueFull: (max) => `佇列已滿（上限 ${max}），請稍後再試`,
-  noCurrentProject: "無目前專案，請先用 /list_alive_projects 選擇或 /add_project 新增",
+  noCurrentProject: "無目前工作階段，請先用 /list_alive_projects 選擇或 /add_project 新增",
   errorPrefix: (msg) => `錯誤：${msg}`,
   projectTag: (project) => `📂 ${project}`,
 
@@ -14,12 +15,35 @@ export const zhTW: Messages = {
   voiceLangCardPrompt: (lang) => `目前(飛書)：**${lang}** · 點按鈕切換`,
   autoDetect: "自動偵測",
   voiceHeard: (text) => `🎙️ 你說的是：「${text}」`,
+  voiceHeardTranslated: (original, translated) =>
+    `🎙️ 你說的是：「${original}」\n🌐 傳送英文：「${translated}」`,
+  promptTranslateTitle: `${UI_ICONS.feature.translate} 翻譯模式`,
+  promptTranslateCardPrompt: (mode) => `目前：**${mode}** · 點按鈕切換`,
   voiceTranscribeFailed: "轉錄失敗 · 請重試或改傳文字",
+  voiceTranslateFailed: "翻譯失敗 · 請重試或改傳文字",
+  promptTranslateFailed: "翻譯失敗 · 請重試或關閉 prompt 翻譯",
+  promptTranslatedSent: (from, to) => `已翻譯並傳送 ${from}->${to}`,
+  promptTranslateAlreadyInstalled: "🌐 prompt 翻譯相依套件已就緒",
+  promptTranslateInstalling: "🌐 正在安裝 prompt 翻譯相依套件 · 首次需下載模型，稍候…",
+  promptTranslateInstallOk: "🌐 prompt 翻譯相依套件已就緒 · 現在可以開啟翻譯模式",
+  promptTranslateInstallFailed: (e) =>
+    `🌐 安裝失敗 · ${e} · 可在主機執行 npm run translate:install 查看詳情`,
   voiceEmpty: "沒聽清楚 · 請再說一遍或改傳文字",
   voiceUnsupported: "語音轉錄僅支援 Apple Silicon",
   voiceNotInstalled: "語音轉錄尚未安裝（在儲存庫執行 npm run whisper:install）",
 
-  currentProjectIs: (project) => `📂 目前專案：${project}`,
+  currentProjectIs: (project) => `${UI_ICONS.session.current} 目前工作階段：${project}`,
+  projectStatusSession: (alive) =>
+    `${alive ? UI_ICONS.session.active : UI_ICONS.session.stopped} 工作階段：${alive ? "執行中" : "未執行"}`,
+  projectStatusAgent: (agent, running, busy) =>
+    agent
+      ? `${running ? (busy ? UI_ICONS.session.busy : UI_ICONS.agent.generic) : UI_ICONS.session.stopped} Agent：${agent}${running ? (busy ? " 忙碌" : " 閒置") : " 未執行"}`
+      : `${UI_ICONS.agent.none} Agent：無`,
+  projectStatusType: (isFree) =>
+    `${isFree ? UI_ICONS.session.independent : UI_ICONS.session.regular} 類型：${isFree ? "獨立工作階段" : "一般工作階段"}`,
+  projectStatusGroup: (label) =>
+    `${label ? UI_ICONS.group.projectGroup : UI_ICONS.group.none} 群：${label ?? "無"}`,
+  projectStatusLine: (session, agent, type, group) => `${session} · ${agent} · ${type} · ${group}`,
   switched: "已切換",
   switchedTo: (project) => `已切換：${project}`,
   removed: "已移除",
@@ -36,10 +60,10 @@ export const zhTW: Messages = {
 
   btnEnter: "⏎ Enter",
   btnEsc: "⎋ Esc",
-  btnInterrupt: "✋ 中斷",
+  btnInterrupt: `${UI_ICONS.action.interrupt} 中斷`,
   btnRestart: "🔄 重啟",
-  btnClear: "🧹 clear",
-  btnCompact: "🗜 compact",
+  btnClear: `${UI_ICONS.action.clear} clear`,
+  btnCompact: `${UI_ICONS.action.compact} compact`,
   btnUp: "⬆️ up",
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
@@ -47,15 +71,16 @@ export const zhTW: Messages = {
   btnTab: "⇥ Tab",
   btnStatus: "📊 狀態",
   btnStart: "🚀 啟動",
-  btnExit: "🚪 離開",
+  btnResume: "🔄 復原工作階段",
+  btnExit: `${UI_ICONS.action.exit} 離開`,
   btnPeek: "👁 peek",
   btnHistory: "📜 歷史",
   btnInputs: "🔁 重發",
-  btnQueue: "📋 佇列",
+  btnQueue: `${UI_ICONS.tone.queue} 佇列`,
   btnDashboard: "📊 儀表板",
-  btnProjects: "📁 專案",
+  btnProjects: "🟢 活躍工作階段",
   btnRecent: "🕘 近期",
-  btnCurrent: "📌 目前",
+  btnCurrent: "📌 目前工作階段",
   btnAddProject: "➕ 新增專案",
   btnSwitch: "🔀 切換",
   btnRemove: "🗑 刪除",
@@ -63,19 +88,30 @@ export const zhTW: Messages = {
   btnHelp: "💡 說明",
   btnVoiceLang: "🎙️ 語音語言",
   btnVoiceInstall: "🎙️ 安裝語音",
+  btnPromptTranslate: `${UI_ICONS.feature.translate} 翻譯`,
+  btnPromptTranslateOff: "⏻ 關閉",
+  btnPromptTranslateInstall: `${UI_ICONS.feature.translate} 安裝翻譯`,
   btnUiLang: "🌐 介面語言",
   btnActiveMarker: "✅ 目前",
   btnMore: "⌨️ 更多控制 ▾",
   btnCollapse: "▴ 收合",
   btnCancel: "✕ 取消",
+  btnConfirmAction: (action) => `確認 ${action}`,
   btnDeleteMode: "🗑 刪除…",
+  confirmActionBody: (action, impact, target) =>
+    `確認執行：${action}\n\n目標：${target}\n影響：${impact}\n\n請確認後繼續。`,
+  confirmImpactExit: "離開目前 Agent，並清空該會話等待中的佇列。",
+  confirmImpactRestart: "中斷並重新啟動目前 Agent，未送出的輸入可能遺失。",
+  confirmImpactClear: "傳送 /clear，清空目前 Agent 上下文。",
+  confirmImpactCompact: "傳送 /compact，壓縮目前 Agent 上下文。",
 
-  // ── adopt (take over a non-tmux agent) ──
-  adoptTitle: "🧲 可接管的程序（不在 tmux 中）",
+  // ── adopt (take over an unmanaged agent) ──
+  adoptTitle: "🧲 可接管的未納管程序",
   adoptEmpty: "沒有發現可接管的程序",
   adoptConfirmPrompt: (label: string) =>
-    `確認接管？將先中斷並結束原程序，再在 tmux 中續接：\n${label}`,
+    `確認接管？將先中斷並結束原程序，再在納管工作階段中續接：\n${label}`,
   btnAdoptConfirm: "🧲 接管",
+  btnAdoptAsFree: `${UI_ICONS.session.independent} 接管為獨立工作階段`,
   btnAdoptCancel: "✕ 取消",
   adoptCancelled: "已取消接管",
   adoptWorking: "正在接管…",
@@ -96,21 +132,25 @@ export const zhTW: Messages = {
   recoverBusy: "已有一個復原正在進行,請稍候。",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 復原完成\n\n🔁 重新啟動 ${launched}${shellOnly > 0 ? ` · 🐚 重建 ${shellOnly}` : ""} · 🟢 執行中 ${alive}${failed > 0 ? ` · ⚠️ 失敗 ${failed}` : ""}`,
-  adoptGone: "該程序已不在可接管清單（已結束或已在 tmux 中）",
+  adoptGone: "該程序已不在可接管清單（已結束或已被納管）",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
   adoptFailed: "接管失敗：程序無法結束或未能啟動",
   adoptBusy:
-    "目標 tmux 工作階段裡已有程式在前台運行（另一個 agent 或其他程式）。已中止，未動原程序——請先去那邊退出，再重新接管。",
+    "目標工作階段裡已有程式在前台運行（另一個 agent 或其他程式）。已中止，未動原程序——請先去那邊退出，再重新接管。",
+  adoptProjectRunning:
+    "已有相同專案正在執行 Claude/Codex。已中止，未動原程序——如需並行接管，請選擇「接管為獨立工作階段」。",
   btnAdoptAttach: "💻 在電腦終端查看（可選）",
   adoptAttachHint: (cmd: string) =>
     `✅ 接入指令已經放進「電腦」的剪貼簿了（不用在手機上複製）。回到電腦後，在終端裡直接貼上按 Enter，就能進去查看——這一步是可選的。\n指令：${cmd}`,
 
   doneShort: "完成",
-  agentNotRunningRestart: "未執行，請使用 /restart 啟動",
+  agentNotRunningRestart: "未執行，請使用 /resume 復原，或 /start 新建",
   contentTruncated: "...(內容過長，已截斷)",
   agentEmptyOutput: "回傳空內容 · 用 /peek 查看畫面",
   agentStarted: "✅ 已啟動",
+  agentResumed: "🔄 已復原原工作階段",
+  agentResumeMissingState: "沒有可復原的原工作階段狀態，請用 /start 新建。",
   agentAlreadyRunning: "✅ 已在執行中，無需重複啟動",
   agentStartedWith: (label) => `✅ 已用「${label}」啟動`,
   startPickerTitle: "🚀 選擇啟動方式",
@@ -168,10 +208,10 @@ export const zhTW: Messages = {
   queueLastDone: (s) => `上次完成： ${s}s 前`,
   queueItemCancelled: "已取消該排隊訊息",
   queueItemRewritten: "已改寫該排隊訊息",
-  queueItemGone: "該訊息已不在佇列（可能正在執行，可用 ✋ 中斷停止）",
+  queueItemGone: `該訊息已不在佇列（可能正在執行，可用 ${UI_ICONS.action.interrupt} 中斷停止）`,
   queueTitle: "佇列狀態",
 
-  paneTitle: "👁 tmux 畫面",
+  paneTitle: "👁 工作階段畫面",
   emptyPane: "（空）",
   historyTitle: "📜 歷史記錄",
   historyTitleShort: "歷史記錄",
@@ -180,9 +220,9 @@ export const zhTW: Messages = {
   onlyNRounds: (n) => `只有 ${n} 筆對話記錄`,
   emptyOutput: "(無輸出)",
 
-  noCurrentProjectShort: "無目前專案",
-  aliveListTitle: (n) => `活躍專案 (${n})`,
-  aliveListEmpty: "沒有活躍專案，用 /add_project <路徑> 新增",
+  noCurrentProjectShort: "無目前工作階段",
+  aliveListTitle: (n) => `活躍工作階段 (${n})`,
+  aliveListEmpty: "沒有活躍工作階段，用 /add_project <路徑> 新增",
   recentListTitle: "近期專案",
   recentListTitleN: (n) => `近期專案 (${n})`,
   recentListEmpty: "沒有近期專案，用 /add_project <路徑> 加入",
@@ -209,13 +249,12 @@ export const zhTW: Messages = {
   browseNewFolderExists: "❌ 該名稱已存在",
   browseNewFolderError: "❌ 新增資料夾失敗",
   shortIdNotFound: (id) => `找不到短 id：${id}`,
-  noCurrentProjectSet: "未設定目前專案\n\n用 /add_project <路徑> 設定一個",
-  currentActive: "✅ 目前活躍",
-  currentNotFound: "🔴 找不到",
-  currentProjectTitle: "目前專案",
+  noCurrentProjectSet: "未設定目前工作階段\n\n用 /add_project <路徑> 設定一個",
+  currentProjectTitle: "目前工作階段",
   noRecentProjects: "沒有近期專案\n\n用 /add_project <路徑> 加入一個",
   messageTooLong: (len, max) => `訊息過長 · ${len} > ${max} 字元`,
   onlyTextVoice: "目前僅支援文字和語音訊息",
+  handlerErrorTelegram: "⚠️ 處理訊息時發生錯誤，請重試。",
   handlerError: "⚠️ 處理訊息時發生錯誤，請重試；若群組無回應，可傳送 /restore 重新連接專案。",
   unknownCommand: (name) => `未知指令：/${name}（傳送 /help 查看指令）`,
 
@@ -258,7 +297,7 @@ export const zhTW: Messages = {
 傳任意文字 → 轉給 agent → 回傳結果
 🎙️ 語音轉錄為選用功能 · /voice_install 啟用（僅 Apple Silicon）· /voice_lang 設辨識語言
 
-提示：訊息會收到 👀（已接收）/👍（完成）回應；處理中就地顯示進度並編輯成結果；結果下方有 ⏎/✋/⎋/🔄 快捷按鈕。`,
+提示：訊息會收到 👀（已接收）/👍（完成）回應；處理中就地顯示進度並編輯成結果；結果下方有 ⏎/${UI_ICONS.action.interrupt}/⎋/🔄 快捷按鈕。`,
 
   helpIntroLark: `🤖 tmux-claude (Lark)
 
@@ -272,22 +311,24 @@ export const zhTW: Messages = {
   helpSectionRunning: "⚡ 執行中",
   helpSectionIdle: "🚀 未執行",
 
-  cmdCurrentProject: "目前專案",
-  cmdListAlive: "活躍專案（點按切換/刪除）",
+  cmdCurrentProject: "目前工作階段",
+  cmdListAlive: "活躍工作階段（點按切換/刪除）",
   cmdListRecent: "近期專案",
   cmdAddProject: "新增專案",
-  cmdNewFree: "新增自由專案（同目錄可並行）",
-  freeProjectLimit: (max) => `自由專案已達上限 ${max} 個，請先刪除一個再試。`,
+  cmdNewFree: "新增獨立工作階段（同工作區可並行）",
+  freeProjectLimit: (max) => `獨立工作階段已達上限 ${max} 個，請先刪除一個再試。`,
   freeProjectCreated: (slot, label) =>
-    `🆓 已建立自由專案 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目錄並自行啟動 agent；/list_alive_projects 可切回。`,
-  btnNewFree: "🆓 新增自由專案",
-  freeLabelPrompt: "請輸入自由專案名稱（傳送 - 略過命名）",
+    `${UI_ICONS.session.independent} 已建立獨立工作階段 #${slot}${label ? `（${label}）` : ""}\n可 /cd 到任意目錄並自行啟動 agent；/list_alive_projects 可切回。`,
+  btnNewFree: `${UI_ICONS.session.independent} 新增獨立工作階段`,
+  freeLabelPrompt: "請輸入獨立工作階段名稱（傳送 - 略過命名）",
   freeLabelCancelled: "已取消",
-  cmdAdopt: "接管 tmux 外的 agent",
+  cmdAdopt: "接管未納管 agent",
   cmdQueueStatus: "佇列狀態",
   cmdHistory: "對話歷史（預設最近一筆）",
-  cmdPeek: "查看 tmux 畫面",
+  cmdPeek: "查看工作階段畫面",
   cmdVoiceLang: "語音辨識語言（英/中/粵/日/西/自動）",
+  cmdPromptTranslate: "prompt 翻譯（status/off/on 來源語言 目標語言）",
+  cmdTranslateInstall: "安裝 prompt 翻譯相依套件",
   cmdLang: "介面語言（英/簡/繁/粵/日/西）",
   cmdEnter: "Enter",
   cmdEsc: "Escape",
@@ -299,6 +340,7 @@ export const zhTW: Messages = {
   cmdExit: "離開",
   cmdStatus: "檢查狀態",
   cmdStart: "啟動 agent",
+  cmdResume: "復原上一次原 agent 工作階段",
   cmdDoctor: "執行安裝健康檢查",
   cmdRecover: "重新開機後復原所有專案",
   cmdStatusInstall: "為 /status 安裝用量回報",
@@ -312,7 +354,7 @@ export const zhTW: Messages = {
   wsRemoved: (name) => `✅ 已刪除工作區「${name}」`,
   wsNotFound: (name) => `工作區「${name}」不存在`,
   wsSessionGone: (name) => `工作區「${name}」對應的工作階段已不存在`,
-  wsNoCurrentProject: "無目前專案，請先用 /add_project 新增專案",
+  wsNoCurrentProject: "無目前工作階段，請先用 /add_project 新增專案",
   wsListEmpty: "尚無儲存的工作區",
   wsListTitle: "📎 工作區",
   wsListItem: (name, session) => `• **${name}** → ${session}`,
@@ -351,10 +393,12 @@ export const zhTW: Messages = {
   homeOperatorSwitched: "🏠 已切換至主控操作員工作階段",
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
   cmdBatch: "批次排程器：查看狀態或控制批次執行（start/pause/resume/stop/report）",
+  cmdAutopilot: "管理工作階段智能託管（目標/保活/全域託管）",
+  cmdGoals: "列出 autopilot 目標預設",
   cmdSysload: "查看本機負載/發熱/失控程序",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
-  autopilotTitle: "🤖 Autopilot",
+  autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotNotifyPaused: (session, reason) => `🛑 autopilot 已暫停 [${session}]：${reason}`,
   autopilotNotifyStopped: (session, reason) => `⏹️ autopilot 已停止 [${session}]：${reason}`,
   autopilotNotifyUsage: (session, pct) => `🛑 autopilot 目標暫停 [${session}]：用量達 ${pct}% 門檻`,
@@ -382,7 +426,7 @@ export const zhTW: Messages = {
     `Autopilot：${o.enabled ? "開" : "關"}（${o.pureKeepAlive ? "純保活" : "隨目標"}，已干預 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw) =>
     `未知子指令「${raw}」。用法：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: "🤖 開啟智能托管",
+  btnApEnable: `${UI_ICONS.feature.autopilot} 開啟智能托管`,
   btnApDisable: "⏹ 關閉智能托管",
   btnApPickGoals: "🎯 選目標",
   btnApGlobalOn: "🌐 全域:開",
@@ -402,10 +446,13 @@ export const zhTW: Messages = {
   goalRefactorElegant: "重構為優雅專業",
   goalUiPolish: "打磨介面",
   goalImproveArchitecture: "提升架構品質",
+  goalHardenStandards: "加固工程規範與門禁",
+  goalPolishGithub: "GitHub 專業化",
+  goalSyncDocs: "文件與程式碼對齊",
   autopilotGoalStarted: (id) => `已啟動目標：${id}`,
   autopilotUnknownGoal: (ids) => `未知目標。可用：${ids}`,
   goalsTitle: "🎯 目標預設",
-  noLogsContext: "無當前專案，請先選擇專案或指定 trace（/logs <traceId>）。",
+  noLogsContext: "無目前工作階段，請先選擇專案或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──
   groupBoundWelcome: (label, path) =>
@@ -430,17 +477,20 @@ export const zhTW: Messages = {
   groupBindPickerTitle: "🔗 綁定本群 — 選一個專案",
   groupBoundCardTitle: (label) => `🗂 本群已綁定：${label}`,
   groupMenuNoProjects: "尚無近期專案。先在私訊用 `/add_project <路徑>` 加入一個。",
+  groupNoNewGroupProjects: "暫無可新建專案群的一般專案（已有群或獨立工作階段會隱藏）。",
+  groupNoBindableProjects: "暫無可綁定的一般專案。先在私訊用 `/add_project <路徑>` 加入一個。",
+  groupNoParallelProjects: "暫無可新增並行專案群組的一般專案。請先新增一個一般專案。",
   groupCreatedShort: (label) => `✓ 已新建專案群「${label}」，去新群裡繼續。`,
   groupAlreadyExists: (label) =>
     `⚠️ 專案「${label}」已經有綁定群了，去那個群裡用即可，無需重複建立。`,
   groupPinnedNoSwitch: (label) =>
     `🔒 本群已固定綁定「${label}」，不能切換到其他專案。如需更換，請用 🗂 → 改綁。`,
   groupNoRemoveInGroup: "🔒 在群裡不能刪除專案（會影響他人）。請到與機器人的私訊裡刪除。",
-  groupFreePickerTitle: "🆓 新增自由專案群組（可與現有群組同目錄）",
+  groupFreePickerTitle: `${UI_ICONS.session.independent} 新增並行專案群組（新建獨立工作階段）`,
   groupOverviewTitle: "🗂 專案群",
   groupOverviewExisting: "已有專案群：",
   groupOverviewNoGroups: "尚無專案群。",
   groupOverviewItem: (label, path) => `• **${label}** — \`${path}\``,
-  btnFreeGroup: "🆓 平行群組",
-  freeGroupCreated: (label) => `🆓 已建立平行群組「${label}」`,
+  btnFreeGroup: `${UI_ICONS.session.independent} 新增並行群組`,
+  freeGroupCreated: (label) => `${UI_ICONS.session.independent} 已建立並行群組「${label}」`,
 };

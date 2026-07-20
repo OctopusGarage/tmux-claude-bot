@@ -39,7 +39,7 @@ export class AutopilotStore {
 
 /** Drop a session's autopilot record on project removal, so a reused free slot
  * (e.g. tmux_proj_free_N) can't read stale state — optOut/goalId/viaGlobal would
- * otherwise carry over. Mirrors clearAgentKind / clearTaskTiming in the removal
+ * otherwise carry over. Mirrors clearAgentRuntimeRecord / clearTaskTiming in the removal
  * path. The sweep only self-heals ENABLED records; an opted-out/stopped record
  * lingers without this. */
 export function clearAutopilotState(session: string): void {

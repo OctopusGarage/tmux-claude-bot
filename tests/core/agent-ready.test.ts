@@ -50,6 +50,24 @@ describe("agentIsIdle (queue idle-gate)", () => {
     expect(await agentIsIdle(deps, "s")).toBe(true);
   });
 
+  it("busy when a long-quiet pane still shows a blocked Codex submit state", async () => {
+    h.lastActivityAt.mockResolvedValue(Date.now() - 120_000);
+    const blockedDeps = {
+      configResolver: {},
+      bridge: {
+        capturePane: vi.fn(async () =>
+          [
+            "• UserPromptSubmit hook (blocked)",
+            "• Messages to be submitted after next tool call",
+            "› queued draft",
+          ].join("\n"),
+        ),
+      },
+    } as never;
+
+    expect(await agentIsIdle(blockedDeps, "s")).toBe(false);
+  });
+
   it("in the ambiguous window, an animating pane is busy", async () => {
     h.lastActivityAt.mockResolvedValue(Date.now() - 20_000);
     h.animating.mockResolvedValue(true);

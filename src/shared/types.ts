@@ -1,3 +1,5 @@
+import { UI_ICONS } from "./ui/icons.js";
+
 export type RetryPolicy = {
   maxRetries: number;
   baseDelayMs: number;
@@ -37,10 +39,14 @@ export type LarkConfig = {
 /** Which coding agent a start command launches. Absent => "claude" (back-compat). */
 export type AgentKind = "claude" | "codex";
 
-/** UI glyph for an agent: 🟠 claude / 🔘 codex, or 💤 when none is live (null).
+/** UI glyph for an agent. Keep the actual symbols in UI_ICONS.
  * Single source so the alive-list, keyboards, and Lark cards never drift. */
 export function agentGlyph(kind: AgentKind | null): string {
-  return kind === "codex" ? "🔘" : kind === "claude" ? "🟠" : "💤";
+  return kind === "codex"
+    ? UI_ICONS.agent.codex
+    : kind === "claude"
+      ? UI_ICONS.agent.claude
+      : UI_ICONS.agent.none;
 }
 
 /** Endpoint/auth an agent is using, for the /status line. `baseUrl` null = the
@@ -98,6 +104,11 @@ export type AppConfig = {
   lark?: LarkConfig | undefined;
   autopilot: AutopilotRuntimeConfig;
   scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
+  loopEngineering: {
+    configFile: string;
+    tickMs: number;
+    supervisor: { enabled: boolean; dir: string; agent: AgentKind };
+  };
   homeOperator: { enabled: boolean; dir: string; agent: "claude" | "codex" };
   promptMcp: { command: string; args: string[]; cwd?: string };
 };

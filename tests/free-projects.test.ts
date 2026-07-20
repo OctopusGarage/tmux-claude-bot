@@ -13,6 +13,7 @@ import {
   releaseFreeSlot,
   setFreeProject,
 } from "../src/core/projects/free-projects.js";
+import { UI_ICONS } from "../src/shared/ui/icons.js";
 
 let dir: string;
 let orig: string | undefined;
@@ -31,13 +32,13 @@ afterEach(() => {
 
 const P = "tmux_proj_";
 
-describe("free session naming", () => {
-  it("builds and parses a free session name", () => {
+describe("independent session naming", () => {
+  it("builds and parses an independent session name", () => {
     expect(freeSessionName(P, 3)).toBe("tmux_proj_free_3");
     expect(freeSlotOf("tmux_proj_free_3", P)).toBe(3);
   });
 
-  it("does not treat a path-derived session as free", () => {
+  it("does not treat a path-derived session as independent", () => {
     expect(freeSlotOf("tmux_proj_-Users-x-free_1", P)).toBeNull();
   });
 });
@@ -65,9 +66,13 @@ describe("slot allocation", () => {
 });
 
 describe("freeLabel", () => {
-  it("uses the label, else Free #n, and appends a path basename", () => {
-    expect(freeLabel(2, { label: "feature-x" }, "/foo/bar")).toBe("🆓 feature-x · bar");
-    expect(freeLabel(5, null, null)).toBe("🆓 Free #5");
-    expect(freeLabel(5, { label: null }, null)).toBe("🆓 Free #5");
+  it("uses the label, else Independent #n, and appends a path basename", () => {
+    expect(freeLabel(2, { label: "feature-x" }, "/foo/bar")).toBe(
+      `${UI_ICONS.session.independent} feature-x · bar`,
+    );
+    expect(freeLabel(5, null, null)).toBe(`${UI_ICONS.session.independent} Independent #5`);
+    expect(freeLabel(5, { label: null }, null)).toBe(
+      `${UI_ICONS.session.independent} Independent #5`,
+    );
   });
 });

@@ -7,12 +7,20 @@ export function sessionShortId(sessionName: string): string {
 
   let num = 0;
   for (let i = 0; i < 4; i++) {
-    num = num * 256 + hash[i]!; // SHA-256 digest is always 32 bytes; i is 0–3
+    const byte = hash[i];
+    if (byte === undefined) {
+      throw new Error("SHA-256 digest is unexpectedly short");
+    }
+    num = num * 256 + byte;
   }
 
   let result = "";
   while (num > 0) {
-    result = BASE62[num % 62]! + result; // num % 62 is always 0–61
+    const digit = BASE62[num % 62];
+    if (digit === undefined) {
+      throw new Error("base62 digit index is out of range");
+    }
+    result = digit + result;
     num = Math.floor(num / 62);
   }
 

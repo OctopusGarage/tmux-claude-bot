@@ -1,3 +1,9 @@
+import type {
+  NotificationChannelSelection,
+  NotificationLevel,
+  NotificationResult,
+} from "../../core/notifications/gateway.js";
+import type { PromptTranslateCommandResult } from "../../core/read/prompt-translation.js";
 import { appStateFile } from "../../shared/state-dir.js";
 
 /**
@@ -22,16 +28,39 @@ export type ControlRequest =
   | { id: number; op: "control"; session: string; action: string }
   | { id: number; op: "projects" }
   | { id: number; op: "open"; sid: string }
+  | { id: number; op: "openPath"; path: string }
+  | { id: number; op: "orphans" }
+  | { id: number; op: "adopt"; pid: number }
   | { id: number; op: "recover" }
   | { id: number; op: "logs"; session: string }
   | { id: number; op: "sysload" }
   | { id: number; op: "inputs"; session: string }
+  | { id: number; op: "promptTranslate"; arg: string }
+  | {
+      id: number;
+      op: "notify";
+      title: string;
+      body?: string;
+      channel?: NotificationChannelSelection;
+      level?: NotificationLevel;
+      source?: string;
+      session?: string;
+      attachments?: { path: string; caption?: string }[];
+    }
   | { id: number; op: "autopilot"; session: string; verb: string }
-  | { id: number; op: "autopilotView"; session: string };
+  | { id: number; op: "autopilotView"; session: string }
+  | { id: number; op: "sendAttachment"; session: string; filePath: string; caption?: string };
 
 export type ControlResponse =
   | { id: number; ok: true; data: unknown }
   | { id: number; ok: false; error: string };
+
+export type PromptTranslateControlResponse = {
+  body: string;
+  status: PromptTranslateCommandResult;
+};
+
+export type NotifyControlResponse = NotificationResult;
 
 /** Server → client, unsolicited. `activity` means "something changed, re-snapshot";
  * `reply`/`notify`/`error` carry a queued prompt's eventual outcome by session. */

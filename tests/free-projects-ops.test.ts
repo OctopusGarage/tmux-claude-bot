@@ -14,6 +14,7 @@ import {
   createFreeProject,
   removeProjectBySession,
 } from "../src/core/projects/project-ops.js";
+import { UI_ICONS } from "../src/shared/ui/icons.js";
 
 let dir: string;
 let orig: string | undefined;
@@ -30,7 +31,7 @@ afterEach(() => {
 });
 
 // Minimal deps double — only the fields createFreeProject touches. `live` is the
-// set of tmux sessions listProjectSessions() reports (drives the dead-slot prune).
+// set of managed sessions listProjectSessions() reports (drives the dead-slot prune).
 function makeDeps(opts: { live?: string[] } = {}) {
   const createSession = vi.fn().mockResolvedValue(true);
   const set = vi.fn().mockResolvedValue(undefined);
@@ -74,8 +75,8 @@ describe("createFreeProject", () => {
   });
 
   it("prunes dead slots before allocating (no false 'limit')", async () => {
-    // registry says 1..10 are used, but tmux has NO live free sessions (e.g. after
-    // a tmux/server restart). The prune frees them; allocation succeeds at slot 1.
+    // registry says 1..10 are used, but there are NO live independent sessions
+    // (e.g. after a session host restart). The prune frees them; allocation succeeds at slot 1.
     for (let n = 1; n <= FREE_PROJECT_LIMIT; n++) setFreeProject(n, { label: null });
     const { deps } = makeDeps({ live: [] });
     const res = await createFreeProject(deps, "telegram:1", "fresh");
@@ -119,7 +120,7 @@ describe("allocateFreeSlotPruned never recycles a bound slot (#5 guard)", () => 
 });
 
 describe("removeProjectBySession releases free slots", () => {
-  it("frees the slot for a free session", async () => {
+  it("frees the slot for an independent session", async () => {
     setFreeProject(2, { label: "x" });
     const deps = {
       config: { projectSessionPrefix: "tmux_proj_" },
@@ -133,7 +134,7 @@ describe("removeProjectBySession releases free slots", () => {
     expect(getFreeProject(2)).toBeNull();
   });
 
-  it("unbinds a group bound to the free session before recycling the slot", async () => {
+  it("unbinds a group bound to the independent session before recycling the slot", async () => {
     setFreeProject(3, { label: "g" });
     bindGroup("oc_g", {
       workspacePath: "/work/app",
@@ -155,8 +156,8 @@ describe("removeProjectBySession releases free slots", () => {
   });
 });
 
-describe("aliveProjectButtons includes path-less free sessions", () => {
-  it("keeps a free session with no path mapping, labeled 🆓", async () => {
+describe("aliveProjectButtons includes path-less independent sessions", () => {
+  it("keeps an independent session with no path mapping, labeled by the independent icon", async () => {
     setFreeProject(1, { label: "taskB" });
     const deps = {
       config: { projectSessionPrefix: "tmux_proj_" },
@@ -173,8 +174,8 @@ describe("aliveProjectButtons includes path-less free sessions", () => {
     } as never;
     const buttons = await aliveProjectButtons(deps, "telegram:1");
     expect(buttons).toHaveLength(1);
-    // No live agent → 💤 prefix; the 🆓 free label is preserved verbatim.
-    expect(buttons[0]?.label).toBe("💤 🆓 taskB");
+    // No live agent prefix; the independent-session label is preserved verbatim.
+    expect(buttons[0]?.label).toBe(`${UI_ICONS.agent.none} ${UI_ICONS.session.independent} taskB`);
     expect(buttons[0]?.active).toBe(true);
   });
 });

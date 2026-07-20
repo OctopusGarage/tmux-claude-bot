@@ -1,21 +1,22 @@
 import type { AgentKind } from "../../shared/types.js";
 import { appVersion } from "../../shared/version.js";
-import { resolveAgentKind } from "../agents/agentKindMap.js";
-import { profileFor } from "../agents/registry.js";
+import { readAgentActivitySnapshot } from "../agents/activity-snapshot.js";
 import { AutopilotStore } from "../autopilot/state-store.js";
 import type { HandlerDeps } from "../deps.js";
 import { instanceStartedAt } from "../infra/instance-lock.js";
+import { freeLabel, freeSlotOf, getFreeProject } from "../projects/free-projects.js";
+import { bindingForSession } from "../projects/group-bindings.js";
 import { isOperator } from "../projects/operator.js";
 import { projectLabel } from "../projects/project-label.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
-import { PANE_DIFF_MS, paneIsAnimating } from "../session/pane-activity.js";
-import { cumulativeBusyMs as cumulativeBusyMsOf, currentTask } from "../session/task-timing.js";
+import { PANE_DIFF_MS } from "../session/pane-activity.js";
+import { SESSION_ACTIVITY_WINDOW_MS } from "../session/session-telemetry.js";
 
 /** A transcript written within this window counts the session as actively
  * working. Generous so brief gaps between streamed writes don't flip to idle;
  * the cost is up to this much "busy" lag after a task actually finishes. */
-const ACTIVITY_WINDOW_MS = 60_000;
+const ACTIVITY_WINDOW_MS = SESSION_ACTIVITY_WINDOW_MS;
 
 const autopilotStore = new AutopilotStore();
 
@@ -26,6 +27,10 @@ const autopilotStore = new AutopilotStore();
 export type SessionRow = {
   session: string;
   label: string;
+  sessionKind: "regular" | "independent" | "operator";
+  workspacePath: string | null;
+  independentSlot: number | null;
+  group: { chatId: string; label: string } | null;
   kind: AgentKind;
   /** Whether an agent process is alive in the pane. A tmux session can exist with
    * NO agent (shell prompt, or the agent exited) — distinguishing that from an
@@ -35,6 +40,11 @@ export type SessionRow = {
   running: boolean;
   busy: boolean;
   taskMs?: number;
+  task?: {
+    key: string;
+    startedAt: number;
+    source: "queue" | "transcript";
+  };
   cumulativeBusyMs: number;
   uptimeMs: number;
   usage: UsageSnapshot | null;
@@ -76,62 +86,36 @@ async function gatherRow(
   now: number,
   paneDiffMs: number,
 ): Promise<SessionRow> {
-  // Best-effort like the usage/apiMode reads below; default to "claude" (matching
-  // the persisted-map default) if the live probe fails.
-  const kind = await resolveAgentKind(deps.configResolver, session).catch(
-    (): AgentKind => "claude",
-  );
-
   const projectPath = getPathBySession(session);
-  const label = projectLabel(session, projectPath ?? undefined);
+  const prefix = deps.config.projectSessionPrefix;
+  const operatorFlag = isOperator(session, prefix);
+  const independentSlot = freeSlotOf(session, prefix);
+  const sessionKind = operatorFlag
+    ? "operator"
+    : independentSlot !== null
+      ? "independent"
+      : "regular";
+  const groupBinding = bindingForSession(session);
+  const label =
+    independentSlot !== null
+      ? freeLabel(independentSlot, getFreeProject(independentSlot), projectPath)
+      : projectLabel(session, projectPath ?? undefined);
 
-  const ct = currentTask(session, now);
-  const cumulativeBusyMs = cumulativeBusyMsOf(session, now);
   const createdAt = created.get(session);
   const uptimeMs = createdAt !== undefined ? Math.max(0, now - createdAt * 1000) : 0;
 
-  const profile = profileFor(kind);
-  let usage: UsageSnapshot | null = null;
-  let lastActivity: number | null = null;
-  if (projectPath) {
-    [usage, lastActivity] = await Promise.all([
-      profile.readUsage(deps.configResolver, session, projectPath).catch(() => null),
-      profile.lastActivityAt?.(deps.configResolver, session, projectPath).catch(() => null) ??
-        Promise.resolve(null),
-    ]);
-  }
-
-  // Busy = the bot is driving a task OR the agent wrote its transcript recently.
-  // The transcript-mtime arm catches work started directly in the pane (no bot
-  // task), so a desktop-driven session shows busy too — it just has no task
-  // duration.
-  const liveActive = lastActivity !== null && now - lastActivity < ACTIVITY_WINDOW_MS;
-  let busy = ct.busy || liveActive;
-  // Only when the cheap signals say idle, fall back to the pane-animation check:
-  // it catches a long silent tool call or a background subagent (both tick a
-  // timer / spin) that writes no transcript and drove no bot task. Skipped for
-  // already-busy sessions to avoid the extra captures + the diff delay.
-  if (!busy) busy = await paneIsAnimating(deps.bridge, session, paneDiffMs);
-
-  // Is an agent process actually up in this pane? Probed INDEPENDENTLY of `busy`,
-  // not short-circuited by it: `busy`'s transcript-mtime arm is process-independent,
-  // so an agent that wrote its transcript then exited would be wrongly counted as
-  // running for the activity window. Guarded with .catch like every other probe here
-  // so a single tmux hiccup on one session can't sink the whole snapshot.
-  const running = await deps.agent.checkIfRunning(session).catch(() => false);
-
-  // How long the current task has run. Bot-driven tasks have a precise tracked
-  // start (ct.sinceMs); for a desktop-driven busy session derive it from the
-  // transcript — the newest round's timestamp is when this turn (the current
-  // task) started. Only read the transcript when busy without a bot timer.
-  let taskMs = ct.sinceMs;
-  if (busy && taskMs === undefined && projectPath) {
-    const rounds = await profile
-      .getRecentConversations(deps.configResolver, session, projectPath)
-      .catch(() => []);
-    const startedAt = rounds[0]?.timeMs ?? 0;
-    if (startedAt > 0) taskMs = Math.max(0, now - startedAt);
-  }
+  const activity = await readAgentActivitySnapshot(deps, session, {
+    boundPath: projectPath,
+    now,
+    activityWindowMs: ACTIVITY_WINDOW_MS,
+    paneDiffMs,
+    includeQueue: false,
+    includePaneAnimation: true,
+    includeUsage: projectPath !== null,
+  });
+  // Best-effort like the usage/apiMode reads below; default to "claude" (matching
+  // the persisted-map default) if the live/resolved kind probe fails.
+  const kind = activity.kind ?? ("claude" as AgentKind);
 
   const apiMode = (await deps.configResolver.resolveApiInfo?.(session).catch(() => null))?.mode;
 
@@ -147,18 +131,21 @@ async function gatherRow(
     // degraded: leave autopilot undefined
   }
 
-  const operatorFlag = isOperator(session, deps.config.projectSessionPrefix);
-
   return {
     session,
     label,
+    sessionKind,
+    workspacePath: projectPath,
+    independentSlot,
+    group: groupBinding ? { chatId: groupBinding.chatId, label: groupBinding.binding.label } : null,
     kind,
-    running,
-    busy,
-    ...(taskMs !== undefined && { taskMs }),
-    cumulativeBusyMs,
+    running: activity.running,
+    busy: activity.busy,
+    ...(activity.taskMs !== undefined && { taskMs: activity.taskMs }),
+    ...(activity.task && { task: activity.task }),
+    cumulativeBusyMs: activity.cumulativeBusyMs,
     uptimeMs,
-    usage,
+    usage: activity.usage,
     ...(apiMode !== undefined && { apiMode }),
     ...(autopilot && { autopilot }),
     ...(operatorFlag && { operator: true }),

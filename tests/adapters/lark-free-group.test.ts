@@ -43,7 +43,7 @@ function deps() {
 }
 
 describe("makeFreeGroupBySid", () => {
-  it("binds a NEW group to a fresh free session on the same dir", async () => {
+  it("binds a new group to a fresh independent session on the same dir", async () => {
     bindGroup("oc_first", {
       workspacePath: "/work/app",
       sessionName: "tmux_proj_-work-app",

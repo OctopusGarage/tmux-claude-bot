@@ -17,11 +17,14 @@ const {
   handleUnbind,
   handleRestore,
   makeBoundGroupBySid,
+  makeExistingFreeGroupBySid,
   makeFreeGroupBySid,
   bindCurrentGroupBySid,
 } = await import("../../../src/adapters/lark/group-commands.js");
 const { fakeChannel, fakeDeps } = await import("./_fakes.js");
-const { bindGroup, getBinding } = await import("../../../src/core/projects/group-bindings.js");
+const { bindGroup, getBinding, unbindGroup } = await import(
+  "../../../src/core/projects/group-bindings.js"
+);
 const { setPathForSession, sessionNameFromPath } = await import(
   "../../../src/core/projects/sessionPathMap.js"
 );
@@ -390,7 +393,7 @@ describe("group-commands", () => {
     });
   });
 
-  // ── free parallel groups ──────────────────────────────────────────────────────
+  // ── independent-session parallel groups ───────────────────────────────────────
 
   describe("makeFreeGroupBySid", () => {
     it("replies shortIdNotFound and creates nothing for an unknown sid", async () => {
@@ -430,7 +433,7 @@ describe("group-commands", () => {
       expect(created?.workspacePath).toBe(dir);
       expect(created?.sessionName).toMatch(/^tmux_proj_free_\d+$/);
       expect(created?.label).toBe(`${basename(dir)} #1`);
-      expect(channel.texts().some((t) => t.includes("已创建平行群"))).toBe(true);
+      expect(channel.texts().some((t) => t.includes("已创建并行群"))).toBe(true);
     });
 
     it("replies the free-project limit and creates nothing when all slots are taken", async () => {
@@ -473,6 +476,58 @@ describe("group-commands", () => {
       const channel = fakeChannel();
       await handleNewFreeGroup(channel, deps, "ou_me", "p2p", "ou_me", dir);
       expect(createBoundChat).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("makeExistingFreeGroupBySid", () => {
+    it("binds a new group to the existing independent session without creating another session", async () => {
+      createBoundChat.mockResolvedValue({ chatId: "oc_existing_free", name: "x" });
+      const channel = fakeChannel();
+      const freeSession = "tmux_proj_free_4";
+      setFreeProject(4, { label: "review-task" });
+      setPathForSession(freeSession, dir);
+      const deps = fakeDeps({
+        bridge: { listProjectSessions: vi.fn(async () => [freeSession]) },
+      });
+
+      await makeExistingFreeGroupBySid(
+        channel,
+        deps,
+        "ou_me",
+        sessionShortId(freeSession),
+        "ou_me",
+      );
+
+      expect(createBoundChat).toHaveBeenCalledOnce();
+      expect(deps.bridge.createSession).not.toHaveBeenCalled();
+      const binding = getBinding("oc_existing_free");
+      expect(binding?.workspacePath).toBe(dir);
+      expect(binding?.sessionName).toBe(freeSession);
+      expect(binding?.label).toBe("review-task");
+      expect(channel.texts().some((t) => t.includes("已新建项目群"))).toBe(true);
+    });
+
+    it("refuses when the independent session already has a group", async () => {
+      const channel = fakeChannel();
+      const freeSession = "tmux_proj_free_5";
+      setFreeProject(5, { label: "bound-task" });
+      setPathForSession(freeSession, dir);
+      bindGroup("oc_already_free", { workspacePath: dir, sessionName: freeSession, label: "g" });
+      const deps = fakeDeps({
+        bridge: { listProjectSessions: vi.fn(async () => [freeSession]) },
+      });
+
+      await makeExistingFreeGroupBySid(
+        channel,
+        deps,
+        "ou_me",
+        sessionShortId(freeSession),
+        "ou_me",
+      );
+
+      expect(createBoundChat).not.toHaveBeenCalled();
+      expect(channel.texts().some((t) => t.includes("已经有绑定群"))).toBe(true);
+      unbindGroup("oc_already_free");
     });
   });
 });

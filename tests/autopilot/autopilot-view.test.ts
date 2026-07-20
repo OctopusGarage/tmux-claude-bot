@@ -50,4 +50,13 @@ describe("buildAutopilotView", () => {
     const v = buildAutopilotView(store, "s1", en);
     expect(v.goals.find((g) => g.id === "fix-tests")?.selected).toBe(true);
   });
+
+  it("exposes skill dependencies for goal picker surfaces", () => {
+    const v = buildAutopilotView(store, "s1", en);
+
+    expect(v.goals.find((g) => g.id === "code-review")?.skills).toContain("code-review");
+    expect(v.goals.find((g) => g.id === "improve-architecture")?.skills).toContain(
+      "improve-codebase-architecture",
+    );
+  });
 });

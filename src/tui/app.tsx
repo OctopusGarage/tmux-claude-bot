@@ -7,6 +7,7 @@ import type { AutopilotView } from "../core/autopilot/autopilot-view.js";
 import type { SessionRow } from "../core/dashboard/dashboard.js";
 import { formatHeader } from "../core/dashboard/dashboard-view.js";
 import { agentGlyph } from "../shared/types.js";
+import { UI_ICONS } from "../shared/ui/icons.js";
 import { autopilotActionList, goalsVerb } from "./autopilot-panel.js";
 import {
   type ComposerState,
@@ -14,6 +15,7 @@ import {
   DISABLE_BRACKETED_PASTE,
   ENABLE_BRACKETED_PASTE,
 } from "./composer.js";
+import { confirmDangerousControl, dangerousControlPrompt } from "./danger-confirmation.js";
 
 const PEEK_LINES = 80;
 
@@ -43,8 +45,9 @@ const HELP: [string, string][] = [
   ["e / x / r", "esc / enter / restart"],
   ["s", "projects — switch / start a project"],
   ["R", "recover (relaunch pre-restart agents)"],
+  ["T", "toggle prompt translation for local control input (zh→en)"],
   ["A", "autopilot panel"],
-  ["a", "attach to the real tmux pane"],
+  ["a", "attach to the real session pane"],
   ["q", "quit (the bot keeps running)"],
 ];
 
@@ -58,6 +61,8 @@ const fmtDur = (ms: number): string => {
 };
 
 const shortLabel = (s: SessionRow): string => s.label || s.session;
+const sessionKindGlyph = (s: SessionRow): string =>
+  s.sessionKind === "independent" ? UI_ICONS.session.independent : UI_ICONS.session.regular;
 
 type Mode =
   | "list"
@@ -111,6 +116,11 @@ export function App({
   const [apPick, setApPick] = useState(false); // goal sub-picker open?
   const [apGoals, setApGoals] = useState<Set<string>>(new Set());
   const [apRounds, setApRounds] = useState(1);
+  const [pendingDanger, setPendingDanger] = useState<{
+    action: string;
+    session: string;
+    label: string;
+  } | null>(null);
 
   const selected = rows[Math.min(sel, Math.max(0, rows.length - 1))];
   // Keep both panes within the terminal (the 2-line fleet summary + status line +
@@ -281,14 +291,25 @@ export function App({
   const move = (d: number): void => setSel((i) => Math.max(0, Math.min(rows.length - 1, i + d)));
   const fail = (err: unknown): void => setStatus(`✗ ${err instanceof Error ? err.message : err}`);
 
-  const doControl = async (action: string): Promise<void> => {
-    if (!selected) return;
-    setStatus(`→ ${action} → ${shortLabel(selected)}`);
+  const performControl = async (session: string, action: string, label: string): Promise<void> => {
+    setStatus(`→ ${action} → ${label}`);
     try {
-      await client.control(selected.session, action);
+      await client.control(session, action);
     } catch (err) {
       fail(err);
     }
+  };
+
+  const doControl = async (action: string): Promise<void> => {
+    if (!selected) return;
+    const label = shortLabel(selected);
+    const prompt = dangerousControlPrompt(action, label);
+    if (prompt) {
+      setPendingDanger({ action, session: selected.session, label });
+      setStatus(prompt);
+      return;
+    }
+    await performControl(selected.session, action, label);
   };
 
   const exitComposer = (): void => {
@@ -377,8 +398,30 @@ export function App({
     }
   };
 
+  const togglePromptTranslate = async (): Promise<void> => {
+    setStatus("checking prompt translation…");
+    try {
+      const next = await client.togglePromptTranslate();
+      setStatus(next.body);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
   useInput(
     (ch, key) => {
+      if (pendingDanger) {
+        const result = key.escape ? "cancel" : confirmDangerousControl(ch);
+        if (result === "pending") return;
+        const { action, session, label } = pendingDanger;
+        setPendingDanger(null);
+        if (result === "cancel") {
+          setStatus(`cancelled ${action}`);
+          return;
+        }
+        void performControl(session, action, label);
+        return;
+      }
       if (mode === "help") {
         setMode("list"); // any key closes help
         return;
@@ -510,6 +553,7 @@ export function App({
       } else if (ch === "c") setMode("controls");
       else if (ch === "s") void openProjects();
       else if (ch === "R") void doRecover();
+      else if (ch === "T") void togglePromptTranslate();
       else if (ch === "A") {
         setApSel(0);
         setApPick(false);
@@ -590,7 +634,7 @@ export function App({
                     <Text color={r.busy ? "green" : r.running ? "yellow" : "gray"}>
                       {r.running ? "● " : "○ "}
                     </Text>
-                    {agentGlyph(r.kind)} {shortLabel(r)}
+                    {agentGlyph(r.kind)} {sessionKindGlyph(r)} {shortLabel(r)}
                     {r.busy && r.taskMs ? ` ${fmtDur(r.taskMs)}` : ""}
                   </Text>
                 );
@@ -729,7 +773,8 @@ export function App({
         </Text>
       ) : (
         <Text color="gray">
-          j/k move · i prompt · a attach · s projects · A autopilot · ? more keys · q quit
+          j/k move · i prompt · T translate · a attach · s projects · A autopilot · ? more keys · q
+          quit
         </Text>
       )}
     </Box>

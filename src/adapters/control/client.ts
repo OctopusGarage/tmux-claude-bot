@@ -2,11 +2,14 @@ import { EventEmitter } from "node:events";
 import net from "node:net";
 import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import type { DashboardSnapshot } from "../../core/dashboard/dashboard.js";
+import type { NotificationRequest } from "../../core/notifications/gateway.js";
 import {
   type ControlRequest,
   controlSocketPath,
   createLineDecoder,
   encodeLine,
+  type NotifyControlResponse,
+  type PromptTranslateControlResponse,
   type ServerMessage,
 } from "./protocol.js";
 
@@ -125,6 +128,47 @@ export class ControlClient extends EventEmitter {
       started?: string;
     }>;
   }
+  /** Start (or switch to) a project by filesystem PATH — for a path the bot does
+   * not yet know as a project. Parity with the chat /add_project flow. */
+  openPath(path: string): Promise<{
+    status: string;
+    session?: string;
+    started?: string;
+    error?: string;
+    resolvedPath?: string;
+    message?: string;
+  }> {
+    return this.req({ op: "openPath", path }) as Promise<{
+      status: string;
+      session?: string;
+      started?: string;
+      error?: string;
+      resolvedPath?: string;
+      message?: string;
+    }>;
+  }
+  /** Claude/Codex processes running OUTSIDE tmux that the bot could adopt. */
+  orphans(): Promise<
+    { pid: number; agent: "claude" | "codex"; busy: "busy" | "idle" | "unknown"; label: string }[]
+  > {
+    return this.req({ op: "orphans" }) as Promise<
+      {
+        pid: number;
+        agent: "claude" | "codex";
+        busy: "busy" | "idle" | "unknown";
+        label: string;
+      }[]
+    >;
+  }
+  /** Adopt an orphan by PID: stop it, then resume it under a managed tmux
+   * session (via its session-id). Mirrors the chat /adopt flow. */
+  adopt(pid: number): Promise<{ ok: boolean; body: string; session?: string }> {
+    return this.req({ op: "adopt", pid }) as Promise<{
+      ok: boolean;
+      body: string;
+      session?: string;
+    }>;
+  }
   recover(): Promise<{ launched: number; shellOnly: number; alreadyAlive: number }> {
     return this.req({ op: "recover" }) as Promise<{
       launched: number;
@@ -141,11 +185,33 @@ export class ControlClient extends EventEmitter {
   inputs(session: string): Promise<string[]> {
     return this.req({ op: "inputs", session }) as Promise<string[]>;
   }
+  promptTranslate(arg: string): Promise<PromptTranslateControlResponse> {
+    return this.req({ op: "promptTranslate", arg }) as Promise<PromptTranslateControlResponse>;
+  }
+  notify(req: NotificationRequest): Promise<NotifyControlResponse> {
+    return this.req({ op: "notify", ...req }) as Promise<NotifyControlResponse>;
+  }
+  async togglePromptTranslate(): Promise<PromptTranslateControlResponse> {
+    const current = await this.promptTranslate("status");
+    return await this.promptTranslate(
+      current.status.ok && current.status.mode === "argos" ? "off" : "on zh en",
+    );
+  }
   autopilot(session: string, verb: string): Promise<{ status: string }> {
     return this.req({ op: "autopilot", session, verb }) as Promise<{ status: string }>;
   }
   autopilotView(session: string): Promise<AutopilotView> {
     return this.req({ op: "autopilotView", session }) as Promise<AutopilotView>;
+  }
+  sendAttachment(session: string, filePath: string, caption?: string): Promise<{ status: string }> {
+    return this.req({
+      op: "sendAttachment",
+      session,
+      filePath,
+      ...(caption !== undefined ? { caption } : {}),
+    }) as Promise<{
+      status: string;
+    }>;
   }
 
   close(): void {

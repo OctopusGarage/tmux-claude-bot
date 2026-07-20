@@ -127,8 +127,9 @@ describe("logger (ambient context, component, err/data)", () => {
     freshLogger.error("boom", { err: new Error("token bot123:SECRETSECRETSECRETSECRET leaked") });
     const rec = readRecords()[0];
     expect(rec).toBeDefined();
-    expect(rec?.level).toBe("ERROR");
-    expect((rec?.err as { message: string }).message).not.toContain("SECRETSECRET");
+    if (rec === undefined) throw new Error("expected one log record");
+    expect(rec.level).toBe("ERROR");
+    expect((rec.err as { message: string }).message).not.toContain("SECRETSECRET");
     delete process.env.TELEGRAM_BOT_TOKEN;
   });
 
@@ -138,7 +139,9 @@ describe("logger (ambient context, component, err/data)", () => {
     circular.self = circular; // JSON.stringify would throw
     expect(() => freshLogger.info("circular", { data: circular })).not.toThrow();
     const rec = readRecords()[0];
-    expect(rec?.msg).toBe("circular");
-    expect((rec?.data as { _serializeError?: string })._serializeError).toContain("circular");
+    expect(rec).toBeDefined();
+    if (rec === undefined) throw new Error("expected one log record");
+    expect(rec.msg).toBe("circular");
+    expect((rec.data as { _serializeError?: string })._serializeError).toContain("circular");
   });
 });

@@ -14,6 +14,7 @@ import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
 import { registerHandlers } from "./handlers.js";
 import { buildAutopilotGateKeyboard } from "./keyboards.js";
+import { sendTelegramAttachment } from "./media.js";
 import { createReplyTargetMap } from "./reply-target.js";
 import { createRouteHealthStore, type RouteName } from "./transport/route-health.js";
 import { createSmartFetch, type SmartFetchRoute } from "./transport/smart-fetch.js";
@@ -95,6 +96,10 @@ export async function startTelegram(
   if (config.telegramAllowedUserIds.size === 0) {
     log.warn("TELEGRAM_ALLOWED_USER_IDS is empty — the bot will reject ALL messages.");
   }
+  bot.use((_ctx, next) => {
+    deps.ownerActivity.record("telegram");
+    return next();
+  });
 
   // Catch any error thrown inside a handler so a transient Telegram/network blip
   // is logged instead of becoming an uncaughtException that exits the process.
@@ -105,7 +110,7 @@ export async function startTelegram(
   bot.catch(async (err) => {
     log.error(`handler error on update ${err.ctx.update.update_id}`, { err: err.error });
     try {
-      await err.ctx.reply(messages("telegram").handlerError);
+      await err.ctx.reply(messages("telegram").handlerErrorTelegram);
     } catch (replyErr) {
       log.error(`failed to send handler-error reply: ${String(replyErr)}`);
     }
@@ -221,7 +226,19 @@ export async function startTelegram(
           : undefined;
       return bot.api.sendMessage(owner, text, reply_markup ? { reply_markup } : {}).then(() => {});
     });
+    deps.notifications.register("telegram", (message) =>
+      bot.api.sendMessage(owner, message).then(() => {}),
+    );
+    deps.notifications.registerAttachment("telegram", (filePath, kind, caption) =>
+      sendTelegramAttachment(bot.api, owner, filePath, kind, caption),
+    );
   }
+
+  // Register the Telegram channel sender so the attachment-dispatch layer can
+  // push images/files to a chat via bot.api without importing grammy directly.
+  deps.channelSenders.register("telegram", (chatId, filePath, kind, caption) =>
+    sendTelegramAttachment(bot.api, chatId, filePath, kind, caption),
+  );
 
   // grammy's long-poll loop blocks until the bot is stopped. Through a flaky
   // proxy, getUpdates fails transiently — most often a 409 when a previous

@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { normalizeError } from "../../shared/utils/error.js";
 import { persistEnvVar } from "../infra/env-store.js";
 import type { Channel } from "../projects/project-manager.js";
+import { voiceTranscriptionReadiness } from "./capability-readiness.js";
 import { transcribeOgg } from "./transcriber.js";
 
 const execFileAsync = promisify(execFile);
@@ -50,9 +51,12 @@ function isExecutable(p: string): boolean {
  * (which builds the venv at cwd) work even when .env points elsewhere.
  */
 export function resolveWhisperBin(): string {
-  const explicit = process.env.MLX_WHISPER_BIN;
-  if (explicit && existsSync(explicit)) return explicit;
-  return WHISPER_VENV_BIN;
+  return voiceTranscriptionReadiness({
+    env: process.env,
+    fallbackBin: WHISPER_VENV_BIN,
+    platformSupported: true,
+    probes: { pathExists: existsSync },
+  }).bin;
 }
 
 /** Default recognition language: Chinese — whisper auto-detect often misreads it as Japanese. */
@@ -99,10 +103,17 @@ export function setWhisperLanguage(channel: Channel, lang: string): void {
 }
 
 export function checkVoiceSupport(): VoiceSupport {
-  const bin = resolveWhisperBin();
-  if (existsSync(bin) && isExecutable(bin)) return { ready: true, bin };
-  if (!isVoicePlatformSupported()) return { ready: false, reason: "unsupported-platform" };
-  return { ready: false, reason: "not-installed" };
+  const readiness = voiceTranscriptionReadiness({
+    env: process.env,
+    fallbackBin: WHISPER_VENV_BIN,
+    platformSupported: isVoicePlatformSupported(),
+    probes: { pathExists: existsSync, pathExecutable: isExecutable },
+  });
+  if (readiness.status === "ready") return { ready: true, bin: readiness.bin };
+  return {
+    ready: false,
+    reason: readiness.status === "unsupported-platform" ? "unsupported-platform" : "not-installed",
+  };
 }
 
 export function persistWhisperBin(bin: string): void {

@@ -24,7 +24,7 @@ describe("task-timing", () => {
   it("tracks an in-flight task's duration while busy", async () => {
     const t = await import("../src/core/session/task-timing.js");
     t.taskStarted("s", 1000);
-    expect(t.currentTask("s", 1500)).toEqual({ busy: true, sinceMs: 500 });
+    expect(t.currentTask("s", 1500)).toEqual({ busy: true, sinceMs: 500, startedAt: 1000 });
     expect(t.cumulativeBusyMs("s", 1500)).toBe(500);
   });
 

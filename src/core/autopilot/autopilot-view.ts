@@ -3,6 +3,7 @@ import { autopilotStatusText, MAX_ROUNDS_FALLBACK } from "./controls.js";
 import { isGlobalKeepAlive } from "./global-flag.js";
 import { listGoals } from "./goals/catalog.js";
 import { goalTitle } from "./goals/goal-title.js";
+import { goalSkillIds } from "./goals/skill-dependencies.js";
 import { getPicker } from "./picker-state.js";
 import type { AutopilotStore } from "./state-store.js";
 
@@ -14,7 +15,7 @@ export type AutopilotView = {
   gatePending: boolean;
   globalOn: boolean;
   cycle?: { goalId: string; pos: number; total: number; round: number; rounds: number };
-  goals: { id: string; title: string; selected: boolean }[];
+  goals: { id: string; title: string; selected: boolean; skills: string[] }[];
   rounds: number;
   maxRounds: number; // the configured round cap (so out-of-process surfaces like the TUI can clamp correctly)
 };
@@ -49,6 +50,7 @@ export function buildAutopilotView(
       id: g.id,
       title: goalTitle(msgs, g),
       selected: picker.selected.includes(g.id),
+      skills: goalSkillIds(g),
     })),
     rounds: picker.rounds,
     maxRounds,

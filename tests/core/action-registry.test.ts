@@ -1,30 +1,49 @@
 import { describe, expect, it } from "vitest";
 import {
   ACTION_META,
+  actionButtonRows,
+  BOT_COMMANDS,
   buildHelpBody,
   CONTROL_INTERRUPTS,
   CONTROL_LIFECYCLE,
   CONTROL_ROWS_FULL,
+  getActionConfirmation,
   getImmediateActions,
-  getLarkQueued,
+  getQueuedActions,
   getTelegramActions,
   HELP_SESSION_ROWS,
+  requiresActionConfirmation,
 } from "../../src/core/command/action-registry.js";
 
 describe("ACTION_META", () => {
-  it("tab is immediate on Lark and registered on Telegram", () => {
-    const m = ACTION_META["tab"];
-    expect(m?.larkKind).toBe("immediate");
+  it("tab is immediate and registered on Telegram", () => {
+    const m = ACTION_META.tab;
+    expect(m?.queuePolicy).toBe("immediate");
     expect(m?.telegram).toBe(true);
     expect(m?.btnKey).toBe("btnTab");
   });
 
-  it("interrupt has danger style", () => {
-    expect(ACTION_META["interrupt"]?.larkStyle).toBe("danger");
+  it("uses channel-neutral queue policy metadata", () => {
+    expect(ACTION_META.restart?.queuePolicy).toBe("queued");
+    expect("larkKind" in (ACTION_META.restart ?? {})).toBe(false);
   });
 
-  it("start has primary style", () => {
-    expect(ACTION_META["start"]?.larkStyle).toBe("primary");
+  it("interrupt has danger button style", () => {
+    expect(ACTION_META.interrupt?.buttonStyle).toBe("danger");
+    expect("larkStyle" in (ACTION_META.interrupt ?? {})).toBe(false);
+  });
+
+  it("start has primary button style", () => {
+    expect(ACTION_META.start?.buttonStyle).toBe("primary");
+  });
+
+  it("marks destructive or context-resetting actions as confirmation-gated", () => {
+    expect(
+      ["exit", "restart", "clear", "compact"].filter((a) => requiresActionConfirmation(a as never)),
+    ).toEqual(["exit", "restart", "clear", "compact"]);
+    expect(requiresActionConfirmation("interrupt")).toBe(false);
+    expect(getActionConfirmation("exit")?.severity).toBe("danger");
+    expect(getActionConfirmation("clear")?.severity).toBe("warning");
   });
 });
 
@@ -48,18 +67,22 @@ describe("getImmediateActions", () => {
 
   it("does not include queued actions", () => {
     const set = getImmediateActions();
-    for (const a of ["start", "restart", "exit"] as const) {
+    for (const a of ["start", "resume", "restart", "exit"] as const) {
       expect(set.has(a), `${a} should not be in IMMEDIATE`).toBe(false);
     }
   });
 });
 
-describe("getLarkQueued", () => {
-  it("includes start, restart, exit", () => {
-    const set = getLarkQueued();
-    for (const a of ["start", "restart", "exit"] as const) {
+describe("getQueuedActions", () => {
+  it("includes start, resume, restart, exit", () => {
+    const set = getQueuedActions();
+    for (const a of ["start", "resume", "restart", "exit"] as const) {
       expect(set.has(a), `expected ${a} in QUEUED`).toBe(true);
     }
+  });
+
+  it("exposes queued actions without naming a specific adapter", () => {
+    expect([...getQueuedActions()].sort()).toEqual(["exit", "restart", "resume", "start"]);
   });
 });
 
@@ -76,6 +99,13 @@ describe("getTelegramActions", () => {
   });
 });
 
+describe("BOT_COMMANDS", () => {
+  it("contains unique commands", () => {
+    const commands = BOT_COMMANDS.map((c) => c.command);
+    expect(new Set(commands).size).toBe(commands.length);
+  });
+});
+
 describe("canonical control rows", () => {
   it("interrupts row is the same single order shared by every surface", () => {
     expect(CONTROL_INTERRUPTS).toEqual(["esc", "enter", "interrupt"]);
@@ -83,7 +113,7 @@ describe("canonical control rows", () => {
 
   it("interrupt button carries the danger style", () => {
     expect(CONTROL_INTERRUPTS).toContain("interrupt");
-    expect(ACTION_META["interrupt"]?.larkStyle).toBe("danger");
+    expect(ACTION_META.interrupt?.buttonStyle).toBe("danger");
   });
 
   it("the full control rows are interrupts → lifecycle → navigation", () => {
@@ -97,8 +127,20 @@ describe("canonical control rows", () => {
     const all = HELP_SESSION_ROWS.flat();
     expect(all).toContain("tab");
     expect(all).toContain("start");
+    expect(all).toContain("resume");
     expect(all).toContain("exit");
     expect(all).toContain("status");
+  });
+});
+
+describe("actionButtonRows", () => {
+  it("renders localized action labels and styles without adapter metadata leaks", () => {
+    expect(actionButtonRows([["interrupt", "start"]], "telegram")).toEqual([
+      [
+        { action: "interrupt", text: "🛑 中断", style: "danger" },
+        { action: "start", text: "🚀 启动", style: "primary" },
+      ],
+    ]);
   });
 });
 
@@ -119,5 +161,12 @@ describe("buildHelpBody", () => {
     expect(body).toMatch(/📂/); // Projects
     expect(body).toMatch(/⚙️/); // Settings
     expect(body).toMatch(/🛠/); // Diagnostics
+  });
+
+  it("documents every Telegram menu command", () => {
+    const body = buildHelpBody("telegram", "telegram");
+    for (const { command } of BOT_COMMANDS) {
+      expect(body, `missing /${command} in help`).toContain(`/${command}`);
+    }
   });
 });

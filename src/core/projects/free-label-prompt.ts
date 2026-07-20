@@ -1,5 +1,5 @@
-// Two-step capture for naming a free project from a button tap. A chat has no
-// inline text field, so the "🆓 new free project" tap remembers the chat scope,
+// Two-step capture for naming an independent session from a button tap. A chat has no
+// inline text field, so the new independent-session tap remembers the chat scope,
 // then the user's next text message is taken as the label. Per-scope, short TTL.
 // Mirrors the new-folder capture in dir-browser.ts (kept as a small parallel copy
 // rather than a shared abstraction — only two such flows exist, and extracting one
@@ -13,12 +13,12 @@
 const FREE_LABEL_TTL_MS = 5 * 60 * 1000;
 const pending = new Map<string, number>();
 
-/** Start a "name this free project" capture for the scope. */
+/** Start a "name this independent session" capture for the scope. */
 export function requestFreeLabel(scope: string): void {
   pending.set(scope, Date.now());
 }
 
-/** True while the scope's next text message should be taken as a free-project label. */
+/** True while the scope's next text message should be taken as an independent-session label. */
 export function isAwaitingFreeLabel(scope: string): boolean {
   const at = pending.get(scope);
   if (at === undefined) return false;

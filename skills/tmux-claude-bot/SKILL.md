@@ -1,11 +1,11 @@
 ---
 name: tmux-claude-bot
-description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed tmux session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Operated through the `tcb` CLI.
+description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Operated through the `tcb` CLI.
 ---
 
 # Operating tmux-claude-bot
 
-tmux-claude-bot runs coding agents (Claude Code / Codex) inside **tmux** sessions on
+tmux-claude-bot runs coding agents (Claude Code / Codex) inside managed sessions on
 this machine — one per project, several in parallel. You drive it through the **`tcb`
 CLI**. The bot must be running; if a command says it can't reach the control socket,
 tell the user to start it (`tcb service start`). You are the **operator**, a separate
@@ -19,14 +19,14 @@ process — not one of the managed sessions.
   the prompt into that project's agent and **waits for the reply, then prints it**.
   Use `--no-wait` to fire-and-forget, `--timeout <seconds>` to bound the wait
   (default 120s; raise it for long tasks).
-- **Look** — `tcb peek <project>` prints a snapshot of its tmux pane.
+- **Look** — `tcb peek <project>` prints a snapshot of its session pane.
 - **Start / switch a project** — `tcb open <project>` (works for stopped projects too).
 - **Control keys** — `tcb control <project> <esc|enter|interrupt|restart|clear|compact|up|down|tab>`.
 - **Status / health** — `tcb dashboard` (all sessions), `tcb sysload` (machine load /
   heat / runaway processes), `tcb doctor` (install health).
 
 **Reference a project by name** — a unique substring works (`geo` → `geo-backend`).
-Never type the raw `tmux_proj_…` session id. If a name is ambiguous, the CLI lists the
+Never type the raw internal session id. If a name is ambiguous, the CLI lists the
 matches; pick the right one or ask the user.
 
 ## Mapping requests → commands
@@ -48,3 +48,23 @@ matches; pick the right one or ask the user.
 - When you can't resolve a request to one of these commands, say so and run `tcb doctor`;
   don't invent flags. `tcb --help` and `tcb <command> --help` are the authoritative,
   always-current reference — consult them rather than guessing.
+
+## Sending an image or file to the user
+
+For an owner/background notification from another local project, prefer
+`tcb notify --attach`:
+
+    tcb notify --source radar --title "Radar ready" --body "Daily report attached" --attach report.md --attach report.html
+
+It sends the text and uploads the files through the configured Telegram/Feishu
+owner targets without requiring a chat-originated session.
+
+Text replies from a chat-originated session reach the user automatically. To send an **image or file** (a
+screenshot, a generated diagram, a report, a log), run:
+
+    tcb attach <path> [--caption "<short description>"]
+
+It uploads the file and sends it to the chat that asked. You can pass multiple
+paths: `tcb attach a.png b.pdf`. This only works for chat-originated sessions; if
+it prints "no chat is bound to this session", the work wasn't started from chat —
+just describe the file's location in your text reply instead.

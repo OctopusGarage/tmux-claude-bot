@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ConfigResolver } from "../src/core/agents/agent-config-resolver.js";
 import { CodexRunner, paneLooksReady } from "../src/core/agents/codex/codex-runner.js";
-import { paneNeedsConfirm } from "../src/core/agents/runner-base.js";
+import {
+  paneCodexAdditionalSafetyAction,
+  paneConfirmAction,
+  paneNeedsConfirm,
+} from "../src/core/agents/runner-base.js";
 import type { OutputProcessor } from "../src/core/session/output.js";
 import type { TmuxBridge } from "../src/core/session/tmux.js";
 
@@ -40,6 +44,35 @@ describe("codex pane heuristics", () => {
     expect(paneNeedsConfirm("Some new gate wording\n Enter to confirm · Esc to cancel")).toBe(true);
     // A ready composer is NOT a confirm gate.
     expect(paneNeedsConfirm(ready)).toBe(false);
+  });
+
+  it("chooses Yes on the Claude bypass gate instead of confirming the default No", () => {
+    const bypass =
+      "WARNING: Claude Code running in Bypass Permissions mode\n\n  ❯ 1. No, exit\n    2. Yes, I accept\n\n  Enter to confirm · Esc to cancel";
+    expect(paneConfirmAction(bypass)).toEqual({ sendRawKeys: ["Down", "Enter"] });
+  });
+
+  it("does not treat stale confirm text above a shell prompt as an active gate", () => {
+    const stale =
+      "WARNING: Claude Code running in Bypass Permissions mode\n\n  ❯ 1. No, exit\n    2. Yes, I accept\n\n  Enter to confirm · Esc to cancel\n(base) user@host:~/repo|main ⇒";
+    expect(paneNeedsConfirm(stale)).toBe(false);
+  });
+
+  it("keeps waiting on codex additional safety checks instead of treating them as confirm gates", () => {
+    const safetyMenu = [
+      "Additional safety checks",
+      "This request requires additional safety checks, which can take extra time.",
+      "› 1. Retry with a faster model",
+      "  2. Keep waiting",
+      "  3. Learn more",
+      "",
+      "Press enter to confirm or esc to go back",
+    ].join("\n");
+
+    expect(paneNeedsConfirm(safetyMenu)).toBe(false);
+    expect(paneCodexAdditionalSafetyAction(safetyMenu)).toEqual({
+      sendRawKeys: ["Down", "Enter"],
+    });
   });
 });
 
@@ -150,6 +183,105 @@ describe("CodexRunner.startWithResume", () => {
 
     expect(sent[0]).toBe("keys:codex --yolo resume uuid-9"); // resume typed first
     expect(sent).toContain("raw:Enter"); // trust gate auto-accepted
+  });
+});
+
+describe("CodexRunner.waitUntilDone", () => {
+  it("does not report done while the stable pane still has the active-turn marker", async () => {
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () => busy,
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => true,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: { process: (s: string) => s } as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 50,
+      maxWaitDoneMs: 5,
+    });
+
+    const result = await runner.waitUntilDone("sess");
+
+    expect(result.done).toBe(false);
+    expect(result.output).toContain("esc to interrupt");
+  });
+
+  it("does not report done while codex is waiting at the additional safety check menu", async () => {
+    const sent: string[] = [];
+    const safetyMenu = [
+      "Additional safety checks",
+      "This request requires additional safety checks, which can take extra time.",
+      "› 1. Retry with a faster model",
+      "  2. Keep waiting",
+      "  3. Learn more",
+      "",
+      "Press enter to confirm or esc to go back",
+    ].join("\n");
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () => safetyMenu,
+      sendRawKey: async (key: string) => {
+        sent.push(key);
+      },
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => true,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: { process: (s: string) => s } as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 50,
+      maxWaitDoneMs: 5,
+    });
+
+    const result = await runner.waitUntilDone("sess");
+
+    expect(result.done).toBe(false);
+    expect(result.output).toContain("Additional safety checks");
+    expect(sent).toContain("Down");
+    expect(sent).toContain("Enter");
+  });
+});
+
+describe("CodexRunner.waitUntilInputReady", () => {
+  it("does not auto-confirm a gate while waiting to send normal text", async () => {
+    const sent: string[] = [];
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () =>
+        "Do you trust this directory?\n› 1. Yes, continue\nPress enter to continue",
+      sendRawKey: async (k: string) => {
+        sent.push(k);
+      },
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => true,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: { process: (s: string) => s } as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 5,
+      maxWaitDoneMs: 5,
+    });
+
+    await expect(runner.waitUntilInputReady("sess")).rejects.toThrow(
+      "Codex did not become ready in time",
+    );
+    expect(sent).toEqual([]);
   });
 });
 

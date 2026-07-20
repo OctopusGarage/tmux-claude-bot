@@ -89,6 +89,32 @@ export const envSchema = z.object({
   // back instead of throwing at startup — a stray Lark line must not take down a
   // Telegram-only install.
   LARK_DOMAIN: z.enum(["feishu", "lark"]).catch("feishu"),
+  // --- Optional local prompt translation ---
+  PROMPT_TRANSLATE_MODE: z.string().default("off"),
+  PROMPT_TRANSLATE_FROM: blankTolerantString("zh"),
+  PROMPT_TRANSLATE_TO: blankTolerantString("en"),
+  PROMPT_TRANSLATE_TIMEOUT_MS: blankTolerantPositiveInt(15000),
+  TELEGRAM_PROMPT_TRANSLATE_MODE: z.string().default(""),
+  TELEGRAM_PROMPT_TRANSLATE_FROM: z.string().default(""),
+  TELEGRAM_PROMPT_TRANSLATE_TO: z.string().default(""),
+  LARK_PROMPT_TRANSLATE_MODE: z.string().default(""),
+  LARK_PROMPT_TRANSLATE_FROM: z.string().default(""),
+  LARK_PROMPT_TRANSLATE_TO: z.string().default(""),
+  CONTROL_PROMPT_TRANSLATE_MODE: z.string().default(""),
+  CONTROL_PROMPT_TRANSLATE_FROM: z.string().default(""),
+  CONTROL_PROMPT_TRANSLATE_TO: z.string().default(""),
+  // Legacy aliases kept so existing voice-translation setups continue to boot.
+  VOICE_TRANSLATE_MODE: z.string().default("off"),
+  VOICE_TRANSLATE_FROM: blankTolerantString("zh"),
+  VOICE_TRANSLATE_TO: blankTolerantString("en"),
+  VOICE_TRANSLATE_TIMEOUT_MS: blankTolerantPositiveInt(15000),
+  TELEGRAM_VOICE_TRANSLATE_MODE: z.string().default(""),
+  TELEGRAM_VOICE_TRANSLATE_FROM: z.string().default(""),
+  TELEGRAM_VOICE_TRANSLATE_TO: z.string().default(""),
+  LARK_VOICE_TRANSLATE_MODE: z.string().default(""),
+  LARK_VOICE_TRANSLATE_FROM: z.string().default(""),
+  LARK_VOICE_TRANSLATE_TO: z.string().default(""),
+  ARGOS_TRANSLATE_PYTHON: z.string().default(""),
   // --- Autopilot (智能模式 / keep-alive). Default loop ON but every session is
   // opt-in; AUTOPILOT_TICK_MS=0 is the master kill (no loop runs at all). ---
   AUTOPILOT_TICK_MS: blankTolerantNonNegativeInt(8000),
@@ -126,6 +152,15 @@ export const envSchema = z.object({
   AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
   AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
   AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
+  // --- Loop Engineering. Blank config file or tick 0 disables the managed loop. ---
+  LOOP_ENGINEERING_CONFIG_FILE: z.string().default(""),
+  LOOP_ENGINEERING_TICK_MS: blankTolerantNonNegativeInt(300000),
+  LOOP_SUPERVISOR_ENABLED: blankTolerantString("false"),
+  LOOP_SUPERVISOR_DIR: z.string().default(""),
+  LOOP_SUPERVISOR_AGENT: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["claude", "codex"]).default("codex"),
+  ),
   // --- Home operator session ---
   HOME_OPERATOR_ENABLED: blankTolerantString("false"),
   HOME_OPERATOR_DIR: z.string().default(""),
@@ -337,6 +372,16 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       tickMs: parsed.AUTOPILOT_SCHEDULER_TICK_MS,
       quotaPct: parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
       reprobeMs: parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
+    },
+    loopEngineering: {
+      configFile: parsed.LOOP_ENGINEERING_CONFIG_FILE.trim(),
+      tickMs: parsed.LOOP_ENGINEERING_TICK_MS,
+      supervisor: {
+        enabled:
+          parsed.LOOP_SUPERVISOR_ENABLED !== "false" && parsed.LOOP_SUPERVISOR_ENABLED !== "0",
+        dir: parsed.LOOP_SUPERVISOR_DIR,
+        agent: parsed.LOOP_SUPERVISOR_AGENT,
+      },
     },
     homeOperator: {
       enabled: parsed.HOME_OPERATOR_ENABLED !== "false" && parsed.HOME_OPERATOR_ENABLED !== "0",

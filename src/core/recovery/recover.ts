@@ -1,13 +1,16 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import type { AgentKind } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
-import { getAgentKind } from "../agents/agentKindMap.js";
-import { getLastLiveSessionId } from "../agents/live-session-id.js";
+import { getAgentRuntimeRecord } from "../agents/agent-runtime-records.js";
+import {
+  findRolloutBySessionId,
+  readCodexModelFromRollout,
+} from "../agents/codex/codex-rollout.js";
 import { allRunningSessions } from "../agents/runningSessions.js";
-import { getStartCommand } from "../agents/startCommandMap.js";
 import type { HandlerDeps } from "../deps.js";
-import { isOperator } from "../projects/operator.js";
+import { isReservedInfrastructureSession } from "../projects/operator.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 
 const log = createLogger("recovery.recover");
@@ -15,6 +18,7 @@ const log = createLogger("recovery.recover");
 /** Stagger between agent launches so recovery doesn't spawn every claude/codex at
  * once (each is a heavy process + a TUI boot). */
 const RECOVER_STAGGER_MS = 1500;
+const DEFAULT_CODEX_ROOT = `${homedir()}/.codex`;
 
 /**
  * What recovery will do with one rostered project. The roster is every session
@@ -72,11 +76,12 @@ export async function planRecovery(deps: HandlerDeps): Promise<RecoverItem[]> {
   // Roster = the sessions the bot last knew to be RUNNING (not every recorded
   // project), so recovery restores the pre-reboot running state rather than
   // blindly relaunching everything. A running session with no recorded path
-  // can't be recreated, so drop it. The operator is excluded — its lifecycle
-  // is owned by startOperator at boot, not by the generic recovery path.
+  // can't be recreated, so drop it. Reserved infrastructure sessions are
+  // excluded: their lifecycle is owned by their boot provisioners, not generic
+  // recovery.
   const prefix = deps.config.projectSessionPrefix;
   const roster = allRunningSessions()
-    .filter((session) => !isOperator(session, prefix))
+    .filter((session) => !isReservedInfrastructureSession(session, prefix))
     .map((session) => ({ session, path: getPathBySession(session) }))
     .filter((r): r is { session: string; path: string } => r.path !== null);
   // Each session's classification is independent and each does its own tmux /
@@ -91,19 +96,19 @@ async function classifySession(
   session: string,
   path: string,
 ): Promise<RecoverItem> {
-  const command = getStartCommand(session);
+  const record = getAgentRuntimeRecord(session);
   const base = {
     session,
     path,
-    kind: getAgentKind(session),
-    command,
-    sessionId: getLastLiveSessionId(session),
+    kind: record.kind,
+    command: record.startCommand,
+    sessionId: record.liveSessionId,
   };
   if (await deps.bridge.isPaneAlive(session)) {
     // Session is present. If its agent is already running there's nothing to do;
     // if not (crashed/exited) and we know how to start it, relaunch in place.
     const running = await deps.agent.checkIfRunning(session);
-    return running || command === null
+    return running || record.startCommand === null
       ? { ...base, needsRecreate: false, action: "alive" }
       : { ...base, needsRecreate: false, action: "launch" };
   }
@@ -113,7 +118,7 @@ async function classifySession(
   return {
     ...base,
     needsRecreate: true,
-    action: command === null ? "recreate-shell" : "launch",
+    action: record.startCommand === null ? "recreate-shell" : "launch",
   };
 }
 
@@ -194,7 +199,7 @@ async function runRecovery(
         continue;
       }
       // command is non-null for a "launch" item (see planRecovery).
-      const command = item.command as string;
+      const command = await recoveryStartCommand(item);
       if (item.sessionId) {
         await deps.agent.startWithResume(item.session, item.sessionId, command);
       } else {
@@ -214,6 +219,37 @@ async function runRecovery(
     if (i < actionable.length - 1) await sleep(staggerMs);
   }
   return result;
+}
+
+export async function recoveryStartCommand(
+  item: Pick<RecoverItem, "kind" | "command" | "sessionId">,
+): Promise<string> {
+  const command = item.command as string;
+  if (item.kind !== "codex" || !item.sessionId) {
+    return command;
+  }
+  const configRoot = codexHomeFromCommand(command) ?? DEFAULT_CODEX_ROOT;
+  const rollout = await findRolloutBySessionId(configRoot, item.sessionId);
+  if (!rollout?.path) return command;
+  const model = await readCodexModelFromRollout(rollout.path);
+  return model ? setCodexModel(command, model) : command;
+}
+
+function codexHomeFromCommand(command: string): string | null {
+  const match = command.match(/(?:^|\s)CODEX_HOME=(?:"([^"]*)"|'([^']*)'|(\S+))/);
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+}
+
+const CODEX_MODEL_ARG_RE =
+  /(?:^|\s)(?:-m|--model)(?:=(?:"[^"]*"|'[^']*'|\S+)|\s+(?:"[^"]*"|'[^']*'|\S+))|(?:^|\s)(?:-c|--config)\s+model=(?:"[^"]*"|'[^']*'|\S+)/g;
+
+function setCodexModel(command: string, model: string): string {
+  const stripped = command.replace(CODEX_MODEL_ARG_RE, " ").replace(/\s+/g, " ").trim();
+  return `${stripped} --model ${shellToken(model)}`;
+}
+
+function shellToken(value: string): string {
+  return /^[A-Za-z0-9._:/-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**

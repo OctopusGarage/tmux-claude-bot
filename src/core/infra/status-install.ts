@@ -23,7 +23,7 @@ function sidecarPath(configDir: string): string {
  * manual snippet. `<DIR>` is the baked absolute snapshots dir. */
 function snapshotJq(dir: string): string {
   return `mkdir -p '${dir}' 2>/dev/null
-printf '%s' "$input" | jq -c '{session_id, context_pct:(.context_window.used_percentage//null), five_hour_pct:(.rate_limits.five_hour.used_percentage//.rate_limits.session.used_percentage//null), five_hour_reset:(.rate_limits.five_hour.resets_at//.rate_limits.session.reset_at//.rate_limits.session.resets_at//null), seven_day_pct:(.rate_limits.seven_day.used_percentage//.rate_limits.weekly.used_percentage//null), seven_day_reset:(.rate_limits.seven_day.resets_at//.rate_limits.weekly.reset_at//.rate_limits.weekly.resets_at//null), updated_at:(now|floor)}' > "${dir}/$(printf '%s' "$input" | jq -r '.session_id // "_"').json" 2>/dev/null`;
+printf '%s' "$input" | jq -c '{session_id, context_pct:(.context_window.used_percentage//null), five_hour_pct:(.rate_limits.five_hour.used_percentage//.rate_limits.session.used_percentage//null), five_hour_reset:(.rate_limits.five_hour.resets_at//.rate_limits.five_hour.reset_at//.rate_limits.session.reset_at//.rate_limits.session.resets_at//null), seven_day_pct:(.rate_limits.seven_day.used_percentage//.rate_limits.weekly.used_percentage//null), seven_day_reset:(.rate_limits.seven_day.resets_at//.rate_limits.seven_day.reset_at//.rate_limits.weekly.reset_at//.rate_limits.weekly.resets_at//null), updated_at:(now|floor)}' > "${dir}/$(printf '%s' "$input" | jq -r '.session_id // "_"').json" 2>/dev/null`;
 }
 
 /** The standalone statusLine script (ASCII / bash-3.2). No arg: prints a minimal
@@ -48,9 +48,9 @@ else
   model=$(printf '%s' "$input" | jq -r '.model.display_name // "claude"' 2>/dev/null || echo claude)
   pct=$(printf '%s' "$input" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
   sess=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // .rate_limits.session.used_percentage // 0' 2>/dev/null | cut -d. -f1)
-  sres=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.resets_at // .rate_limits.session.resets_at // ""' 2>/dev/null)
+  sres=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.resets_at // .rate_limits.five_hour.reset_at // .rate_limits.session.reset_at // .rate_limits.session.resets_at // ""' 2>/dev/null)
   week=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.used_percentage // .rate_limits.weekly.used_percentage // 0' 2>/dev/null | cut -d. -f1)
-  wres=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.resets_at // .rate_limits.weekly.resets_at // ""' 2>/dev/null)
+  wres=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.resets_at // .rate_limits.seven_day.reset_at // .rate_limits.weekly.reset_at // .rate_limits.weekly.resets_at // ""' 2>/dev/null)
   printf '%s[%s] %s%% ctx%s  [%s]\\n' "$(col "$pct")" "$(bar "$pct")" "$pct" "$r" "$model"
   printf '%ssession %s%% (reset %s)%s  %sweekly %s%% (reset %s)%s\\n' "$(col "$sess")" "$sess" "$(fmt "$sres")" "$r" "$(col "$week")" "$week" "$(fmt "$wres")" "$r"
 fi
@@ -101,7 +101,13 @@ function installStatusLine(
   const settingsFile = join(dir, "settings.json");
   const backup = fs.existsSync(settingsFile) ? backupSettings(settingsFile) : null;
   fs.mkdirSync(dir, { recursive: true });
-  settings.statusLine = { type: "command", command };
+  // Preserve any sibling statusLine fields (e.g. refreshInterval) — only type
+  // and command are ours to set; replacing the whole object would drop them.
+  const prev =
+    settings.statusLine && typeof settings.statusLine === "object"
+      ? (settings.statusLine as Record<string, unknown>)
+      : {};
+  settings.statusLine = { ...prev, type: "command", command };
   writeFileAtomicSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
   return backup;
 }

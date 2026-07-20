@@ -33,6 +33,7 @@ function fakeRunner(name: string): AgentRunner & { calls: string[] } {
     start: record("start"),
     startWithResume: record("startWithResume"),
     waitUntilReady: record("waitUntilReady"),
+    waitUntilInputReady: record("waitUntilInputReady"),
     waitUntilDone: record("waitUntilDone"),
     interrupt: record("interrupt"),
     exit: record("exit"),
@@ -228,6 +229,7 @@ describe("AgentRunnerDispatcher", () => {
     await dispatcher.start(s, "cmd");
     await dispatcher.startWithResume(s, "uuid-1");
     await dispatcher.waitUntilReady(s);
+    await dispatcher.waitUntilInputReady(s);
     await dispatcher.waitUntilDone(s);
     await dispatcher.interrupt(s);
     await dispatcher.exit(s);
@@ -239,6 +241,7 @@ describe("AgentRunnerDispatcher", () => {
       "start",
       "startWithResume",
       "waitUntilReady",
+      "waitUntilInputReady",
       "waitUntilDone",
       "interrupt",
       "exit",

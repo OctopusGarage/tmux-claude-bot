@@ -1,6 +1,6 @@
 # Terminal UI (`tcb tui`)
 
-A keyboard-driven control panel for the bot's tmux sessions, for use **at the PC**
+A keyboard-driven control panel for the bot's project sessions, for use **at the PC**
 — the local-terminal sibling of the Telegram and Feishu/Lark clients. Same idea as
 `tmux`/`docker`: the bot is the always-on daemon, the TUI is just another client of
 it. So a prompt you send from the TUI goes through the **same per-session queue** as
@@ -55,15 +55,16 @@ TUI is open, the TUI auto-reconnects.
 | `i` | compose a prompt for the selected session. **`Enter` sends**; **`Alt+Enter` inserts a newline** and **pasting multi-line text keeps its newlines** (bracketed paste) — so multi-line prompts work. `←`/`→` `↑`/`↓` move, `Ctrl-A`/`Ctrl-E` jump to line start/end, backspace edits at the cursor, `Esc` cancels. |
 | `e` | send `Esc` to the session |
 | `x` | send `Enter` to the session |
-| `r` | restart the session's agent (resumes the conversation) |
+| `r` | restart the session's agent (resumes the conversation); asks for `y/N` confirmation |
 | `l` | **logs** — recent WARN/ERROR for the selected session (any key to close) |
 | `m` | **system load** — machine load / thermal / top CPU / runaway shells (any key to close) |
 | `u` | **inputs** — recent inputs you sent to the selected session; `Enter` **re-runs** the selected one, `Esc` to close |
-| `c` | controls overlay — the full action set (interrupt / clear / compact / esc / enter / restart / ↑ / ↓ / tab); press the number, `Esc` to close |
+| `c` | controls overlay — the full action set (interrupt / clear / compact / esc / enter / restart / ↑ / ↓ / tab); dangerous actions ask for `y/N` confirmation |
 | `s` | **projects** overlay — every project (live `●` + stopped `◌`, recents included); `Enter` **opens + starts** the selected one (switch to a project / start a stopped one), `Esc` to close |
 | `R` | **recover** — reboot recovery: relaunch the agents that were running before a restart (status shows launched / shell-only / already-alive counts) |
+| `T` | toggle local control prompt translation between off and Argos zh→en; full language-pair control is available with `tcb prompt-translate status|off|on [from] [to]` |
 | `A` | **autopilot** panel — enable or disable autopilot for the current session; pick one or more goal-cycles with a multi-select list and set the number of rounds; toggle the global keep-alive; stop autopilot. When a goal pauses at a `humanGate` phase, a banner appears — press `A` to confirm and continue in-place. |
-| `a` | **attach** — drop into the session's real, fully-interactive tmux pane; the TUI resumes when you detach (`Ctrl-b d`). Inside tmux it `switch-client`s instead |
+| `a` | **attach** — drop into the session's real, fully-interactive pane; the TUI resumes when you detach (`Ctrl-b d`). When already attached, it switches client instead |
 | `q` | quit the TUI (the bot keeps running) |
 
 A sent prompt is acked immediately; its reply lands in the status line when the agent

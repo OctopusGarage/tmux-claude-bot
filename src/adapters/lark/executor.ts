@@ -1,5 +1,6 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
-import { executeMessage, type MessageAction } from "../../core/command/dispatch.js";
+import type { MessageAction } from "../../core/command/actions.js";
+import { executeMessage } from "../../core/command/dispatch.js";
 import { enqueueMessage, planQueuedAck } from "../../core/command/enqueue.js";
 import {
   type PersistedMessage,
@@ -13,6 +14,14 @@ import { isProjectGroup } from "../../core/projects/group-bindings.js";
 import { resolveTargetSession } from "../../core/projects/operator.js";
 import { labelForSession } from "../../core/projects/project-label.js";
 import { chatScope } from "../../core/projects/project-manager.js";
+import {
+  resolveLiveSessionName,
+  sanitizeTmuxSessionName,
+} from "../../core/projects/sessionPathMap.js";
+import {
+  prepareUserPromptDelivery,
+  userPromptQueueFields,
+} from "../../core/read/user-prompt-intake.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { queueAckCard, recoveryCard, resultCard } from "./cards.js";
 import { markDone, markWorking } from "./reactions.js";
@@ -22,7 +31,7 @@ import { recordReplyTarget } from "./reply-target.js";
 const log = createLogger("lark.executor");
 
 /** "📂 <friendly project>" tag stamped on every reply so the user can see which
- * tmux session received it — mirrors the Telegram adapter's project line. */
+ * project session received it — mirrors the Telegram adapter's project line. */
 function projectTag(session: string): string {
   return messages("lark").projectTag(labelForSession(session));
 }
@@ -89,6 +98,14 @@ export async function resolveSession(
     );
     return null;
   }
+  const safeSession = sanitizeTmuxSessionName(session);
+  if (safeSession !== session) {
+    const liveSession = await resolveLiveSessionName(deps.bridge, session);
+    if (liveSession) {
+      await deps.currentProject.set(chatScope("lark", chatId), liveSession);
+      return liveSession;
+    }
+  }
   return session;
 }
 
@@ -106,6 +123,7 @@ export async function enqueueLarkAction(
   text: string,
   sessionOverride?: string,
   operatorFallbackOk = false,
+  preview: "text" | "voice" = "text",
 ): Promise<void> {
   const session = await resolveSession(channel, deps, chatId, sessionOverride, operatorFallbackOk);
   if (!session) {
@@ -114,6 +132,31 @@ export async function enqueueLarkAction(
 
   const m = messages("lark");
   const tag = projectTag(session);
+  const prepared =
+    action === "text"
+      ? await prepareUserPromptDelivery("lark", text, preview)
+      : ({ ok: true, text } as const);
+  if (!prepared.ok) {
+    await sendText(channel, chatId, `${m.promptTranslateFailed}\n${tag}`);
+    return;
+  }
+  if (action === "text" && "preview" in prepared) {
+    if (prepared.preview.kind === "voice") {
+      await sendText(channel, chatId, m.voiceHeard(prepared.preview.sourceText));
+    } else if (prepared.preview.kind === "voice-translated") {
+      await sendText(
+        channel,
+        chatId,
+        m.voiceHeardTranslated(prepared.preview.sourceText, prepared.preview.deliveredText),
+      );
+    } else if (prepared.preview.kind === "text-translated") {
+      await sendText(
+        channel,
+        chatId,
+        `${m.promptTranslatedSent(prepared.preview.from, prepared.preview.to)}\n${tag}`,
+      );
+    }
+  }
   await enqueueMessage(
     {
       queue: deps.queue,
@@ -121,7 +164,9 @@ export async function enqueueLarkAction(
       chatId,
       channel: "lark",
       action,
-      text,
+      ...(action === "text" && "preview" in prepared
+        ? userPromptQueueFields(prepared)
+        : { text: prepared.text }),
       callbacks: {
         resolve: (output) => {
           log.info(`resolve session=${session} output_len=${output.length}`);

@@ -42,40 +42,48 @@ describe("queue persistence with channel", () => {
     });
   });
 
-  it("clearPersistedChannel drops only one channel's backlog (each adapter restores its own)", () => {
+  it("persists explicit carryover alongside live backlog", () => {
     const q = new MessageQueue(10, persistPath);
     q.setHandler(() => new Promise<void>(() => {})); // blocks the in-flight message
-    const base = {
-      chatId: "c",
-      sessionName: "sess_a",
+    q.enqueue({
+      id: "blocker",
+      text: "block",
+      chatId: "chat",
+      channel: "telegram",
+      sessionName: "sess",
       action: "text",
       resolve: () => {},
       reject: () => {},
-    };
-    q.enqueue({ id: "blocker", text: "block", channel: "telegram", ...base }); // dequeued → in flight
-    q.enqueue({ id: "L", text: "lark-msg", channel: "lark", ...base }); // backlog
-    q.enqueue({ id: "T", text: "tg-msg", channel: "telegram", ...base }); // backlog
-    q.enqueue({ id: "G", text: "legacy-msg", ...base }); // backlog, no channel → counts as telegram
+    });
+    q.enqueue({
+      id: "live",
+      text: "live-msg",
+      chatId: "chat",
+      channel: "telegram",
+      sessionName: "sess",
+      action: "text",
+      resolve: () => {},
+      reject: () => {},
+    });
+
+    q.keepPersistedCarryover([
+      {
+        id: "control-carryover",
+        text: "control-msg",
+        chatId: "control",
+        channel: "control",
+        sessionName: "sess_control",
+        action: "text",
+      },
+    ]);
     q.flushPending();
+
     expect(
       q
         .loadPersisted()
-        .map((m) => m.id)
+        .map((message) => message.id)
         .sort(),
-    ).toEqual(["G", "L", "T"]);
-
-    // Lark restores + drops its own: only Telegram + legacy entries remain.
-    q.clearPersistedChannel("lark");
-    expect(
-      q
-        .loadPersisted()
-        .map((m) => m.id)
-        .sort(),
-    ).toEqual(["G", "T"]);
-
-    // Telegram drops its own (legacy no-channel counts as telegram) → file empty.
-    q.clearPersistedChannel("telegram");
-    expect(q.loadPersisted()).toEqual([]);
+    ).toEqual(["control-carryover", "live"]);
   });
 
   it("does NOT persist an ephemeral backlog message (the local-control transport)", () => {

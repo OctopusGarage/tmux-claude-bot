@@ -81,6 +81,10 @@ export class AgentRunnerDispatcher implements AgentRunner {
     return (await this.pick(sessionName)).runner.waitUntilReady(sessionName);
   }
 
+  async waitUntilInputReady(sessionName?: string): Promise<void> {
+    return (await this.pick(sessionName)).runner.waitUntilInputReady(sessionName);
+  }
+
   async waitUntilDone(sessionName?: string): Promise<{ done: boolean; output: string }> {
     return (await this.pick(sessionName)).runner.waitUntilDone(sessionName);
   }

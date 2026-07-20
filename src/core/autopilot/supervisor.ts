@@ -1,14 +1,15 @@
 import { createLogger } from "../../shared/utils/logger.js";
 import { resolveAgentKind } from "../agents/agentKindMap.js";
-import { profileFor } from "../agents/registry.js";
 import { sendContextReset } from "../command/context-reset.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
+import { readSessionTelemetry } from "../session/session-telemetry.js";
 import { type CheckRunner, cachedExecCheckRunner } from "./check-runner.js";
+import { planPendingContextOp } from "./context-op-plan.js";
+import { planGoalFinalize } from "./goal-finalize-plan.js";
 import { getGoal } from "./goals/catalog.js";
 import { decideGoal } from "./goals/goal-decision.js";
-import { advanceCycle } from "./goals/goal-state.js";
 import { intentToText } from "./goals/intent.js";
 import { govern } from "./governor.js";
 import { decide } from "./rules.js";
@@ -66,6 +67,7 @@ async function execute(
         chatId: "autopilot",
         action: "text",
         sessionName: session,
+        origin: "system",
         ephemeral: true,
         resolve: () => {},
         reject: () => {},
@@ -131,10 +133,11 @@ export async function runSupervisorTick(
       // Between-goals context reset: a prior goal finalized and queued an op.
       // Run it at the idle boundary, before the next goal's first prompt. The
       // next-goal inject is busy-gated in decideGoal, so the op always precedes it.
-      if (state.pendingContextOp) {
-        if (!idle) return { kind: "none" }; // wait until the just-finalized agent is idle
+      const contextOpPlan = planPendingContextOp(state, idle);
+      if (contextOpPlan.kind !== "none") {
+        if (contextOpPlan.kind === "wait") return { kind: "none" };
         if (userChangedSince(store, session, state)) return { kind: "none" };
-        const op = state.pendingContextOp;
+        const op = contextOpPlan.op;
         await sendContextReset(deps, session, op).catch((err) =>
           log.warn("autopilot context reset failed", { err, data: { session, op } }),
         );
@@ -157,9 +160,12 @@ export async function runSupervisorTick(
           probes?.readUsage ??
           ((s: string) =>
             cwd
-              ? profileFor(agentKind)
-                  .readUsage(deps.configResolver, s, cwd)
-                  .catch(() => null)
+              ? readSessionTelemetry(deps, s, {
+                  boundPath: cwd,
+                  includeQueue: false,
+                  includeTranscript: false,
+                  includeUsage: true,
+                }).then((telemetry) => telemetry.usage)
               : Promise.resolve(null));
         const snap = await readUsage(session).catch(() => null);
         if (
@@ -191,6 +197,7 @@ export async function runSupervisorTick(
           chatId: "autopilot",
           action: "text",
           sessionName: session,
+          origin: "system",
           ephemeral: true,
           resolve: () => {},
           reject: () => {},
@@ -224,6 +231,10 @@ export async function runSupervisorTick(
             return { kind: "stop", reason: "goal max iterations" };
           }
           if (state.cooldownUntil !== undefined && now < state.cooldownUntil) {
+            log.debug("autopilot goal inject suppressed (cooldown)", {
+              session,
+              data: { goalId: goal.id, cooldownForMs: state.cooldownUntil - now },
+            });
             return { kind: "none" };
           }
           deps.queue.enqueue({
@@ -232,11 +243,23 @@ export async function runSupervisorTick(
             chatId: "autopilot",
             action: "text",
             sessionName: session,
+            origin: "system",
             ephemeral: true,
             resolve: () => {},
             reject: () => {},
           });
           store.set(session, { ...outcome.nextState, cooldownUntil: now + cfg.cooldownMs });
+          // A re-inject of the SAME phase (iteration climbing without an `advance`)
+          // means the agent hadn't picked up the previous prompt before the cooldown
+          // lapsed — visible here as repeated lines with the same phaseIndex.
+          log.info("autopilot goal prompt injected", {
+            session,
+            data: {
+              goalId: goal.id,
+              phaseIndex: state.phaseIndex ?? 0,
+              iteration: outcome.nextState.goalIterations ?? 0,
+            },
+          });
           return { kind: "nudge", text: outcome.text };
         }
         case "advance":
@@ -254,46 +277,33 @@ export async function runSupervisorTick(
           await deps.notifier.broadcast({ kind: "awaitHuman", session, goalId: goal.id });
           return { kind: "pauseNotify", reason: outcome.reason };
         case "finalize": {
-          const step = advanceCycle(outcome.nextState);
-          if (step.kind === "next") {
-            const nextState =
-              cfg.betweenGoals === "none"
-                ? step.state
-                : { ...step.state, pendingContextOp: cfg.betweenGoals };
-            store.set(session, nextState);
+          const plan = planGoalFinalize({
+            session,
+            goalId: goal.id,
+            nextState: outcome.nextState,
+            reason: outcome.reason,
+            betweenGoals: cfg.betweenGoals,
+          });
+          store.set(session, plan.state);
+          if (plan.kind === "advance") {
             log.info("autopilot goal complete, advancing cycle", {
               session,
               data: {
-                from: goal.id,
-                to: step.state.goalId,
-                round: (step.state.roundsDone ?? 0) + 1,
-                contextOp: nextState.pendingContextOp ?? "none",
+                from: plan.fromGoalId,
+                to: plan.state.goalId,
+                round: (plan.state.roundsDone ?? 0) + 1,
+                contextOp: plan.contextOp,
               },
             });
-            await deps.notifier.broadcast({
-              kind: "goalAdvance",
-              session,
-              goalId: step.state.goalId ?? "",
-              pos: (step.state.queuePos ?? 0) + 1,
-              total: step.state.goalQueue?.length ?? 1,
-              round: (step.state.roundsDone ?? 0) + 1,
-              rounds: step.state.rounds ?? 1,
-            });
-            return { kind: "none" };
+            await deps.notifier.broadcast(plan.notice);
+            return plan.action;
           }
-          const isCycle =
-            (outcome.nextState.goalQueue?.length ?? 1) > 1 || (outcome.nextState.rounds ?? 1) > 1;
-          store.set(session, { ...outcome.nextState, enabled: false });
           log.info("autopilot finished, stopping", {
             session,
-            data: { goalId: goal.id, isCycle, reason: outcome.reason },
+            data: { goalId: goal.id, isCycle: plan.isCycle, reason: outcome.reason },
           });
-          await deps.notifier.broadcast(
-            isCycle
-              ? { kind: "cycleComplete", session, rounds: outcome.nextState.rounds ?? 1 }
-              : { kind: "complete", session, goalId: goal.id },
-          );
-          return { kind: "pauseNotify", reason: outcome.reason };
+          await deps.notifier.broadcast(plan.notice);
+          return plan.action;
         }
         case "none":
           // While a human gate is pending the session is intentionally paused for

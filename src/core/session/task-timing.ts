@@ -25,9 +25,11 @@ export function taskEnded(session: string, now = Date.now()): void {
 export function currentTask(
   session: string,
   now = Date.now(),
-): { busy: boolean; sinceMs?: number } {
+): { busy: boolean; sinceMs?: number; startedAt?: number } {
   const start = busySince.get(session);
-  return start === undefined ? { busy: false } : { busy: true, sinceMs: Math.max(0, now - start) };
+  return start === undefined
+    ? { busy: false }
+    : { busy: true, sinceMs: Math.max(0, now - start), startedAt: start };
 }
 
 export function cumulativeBusyMs(session: string, now = Date.now()): number {

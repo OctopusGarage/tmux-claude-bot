@@ -2,12 +2,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearAgentRuntimeRecord,
+  recordAgentLaunch,
+} from "../src/core/agents/agent-runtime-records.js";
 import { getAgentKind } from "../src/core/agents/agentKindMap.js";
 import { projectPathToHistoryDir } from "../src/core/agents/claude/claude-history.js";
+import type { MessageAction } from "../src/core/command/actions.js";
 import {
   assertClaudeBinaryAccessible,
   executeMessage,
-  type MessageAction,
   performRestart,
   performStart,
 } from "../src/core/command/dispatch.js";
@@ -31,15 +35,31 @@ function msg(action: MessageAction, over: Partial<QueuedMessage> = {}): QueuedMe
 
 function deps(claudeOver: Record<string, unknown> = {}) {
   return fakeDeps({
+    bridge: {
+      hasSession: vi.fn(async () => true),
+    },
     agent: {
       checkIfRunning: vi.fn(async () => true),
+      waitUntilReady: vi.fn(async () => {}),
+      waitUntilInputReady: vi.fn(async () => {}),
       waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE" })),
       start: vi.fn(async () => {}),
+      startWithResume: vi.fn(async () => {}),
       interrupt: vi.fn(async () => {}),
       exit: vi.fn(async () => {}),
       gracefulRestartWithContinue: vi.fn(async () => {}),
       ...claudeOver,
     } as never,
+  });
+}
+
+function liveFakeDeps(overrides: Parameters<typeof fakeDeps>[0] = {}) {
+  return fakeDeps({
+    ...overrides,
+    bridge: {
+      hasSession: vi.fn(async () => true),
+      ...overrides.bridge,
+    },
   });
 }
 
@@ -56,9 +76,11 @@ describe("assertClaudeBinaryAccessible", () => {
   });
 
   it("throws when a named binary cannot be found in PATH", () => {
-    expect(() => assertClaudeBinaryAccessible("__no_such_binary_xyz_1234__")).toThrow(
-      /not found in PATH/,
-    );
+    withRcFiles({}, () => {
+      expect(() => assertClaudeBinaryAccessible("__no_such_binary_xyz_1234__")).toThrow(
+        /not found in PATH/,
+      );
+    });
   });
 
   it("skips empty PATH segments and still finds a named binary in a real dir", () => {
@@ -73,11 +95,13 @@ describe("assertClaudeBinaryAccessible", () => {
     }
   });
 
-  it("treats an unset PATH as 'binary not found' (process.env.PATH ?? '')", () => {
+  it("still rejects an unknown binary when PATH is unset", () => {
     const orig = process.env.PATH;
-    delete process.env.PATH; // exercises the `?? ""` nullish fallback
+    delete process.env.PATH;
     try {
-      expect(() => assertClaudeBinaryAccessible("sh")).toThrow(/not found in PATH/);
+      expect(() => assertClaudeBinaryAccessible("__no_such_binary_xyz_1234__")).toThrow(
+        /not found in PATH/,
+      );
     } finally {
       process.env.PATH = orig;
     }
@@ -86,16 +110,19 @@ describe("assertClaudeBinaryAccessible", () => {
   // A launcher defined only as a shell alias/function (e.g. `claude-stella` in
   // ~/.zshrc) is not on PATH, but the command runs in the session's interactive
   // shell via tmux send-keys — so the pre-flight must accept it. HOME is pointed
-  // at a temp dir whose rc files we control (os.homedir() honours $HOME on POSIX).
+  // at a temp dir whose rc files we control.
   function withRcFiles(files: Record<string, string>, fn: () => void) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rc-"));
     for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(tmp, name), body);
     const origHome = process.env.HOME;
+    const origShell = process.env.SHELL;
     process.env.HOME = tmp;
+    process.env.SHELL = "/bin/false";
     try {
       fn();
     } finally {
       process.env.HOME = origHome;
+      process.env.SHELL = origShell;
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
@@ -106,10 +133,92 @@ describe("assertClaudeBinaryAccessible", () => {
     });
   });
 
+  it("accepts a name defined as a shell alias in ~/.zsh_aliases (not on PATH)", () => {
+    withRcFiles(
+      { ".zsh_aliases": 'alias claude-dernan="CLAUDE_CONFIG_DIR=~/.x claude --foo"\n' },
+      () => {
+        expect(() => assertClaudeBinaryAccessible("claude-dernan")).not.toThrow();
+      },
+    );
+  });
+
   it("accepts a name defined as a shell function in ~/.bashrc", () => {
     withRcFiles({ ".bashrc": 'my-launcher() {\n  claude "$@"\n}\n' }, () => {
       expect(() => assertClaudeBinaryAccessible("my-launcher")).not.toThrow();
     });
+  });
+
+  it("accepts a binary resolved by the user's interactive shell PATH", () => {
+    const origHome = process.env.HOME;
+    const origPath = process.env.PATH;
+    const origShell = process.env.SHELL;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "interactive-path-"));
+    const binDir = path.join(tmp, "bin");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(path.join(binDir, "codex-test-bin"), "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(path.join(binDir, "codex-test-bin"), 0o755);
+    fs.writeFileSync(path.join(tmp, ".bash_profile"), 'export PATH="$HOME/bin:$PATH"\n');
+    process.env.HOME = tmp;
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.SHELL = "/bin/bash";
+    try {
+      expect(() => assertClaudeBinaryAccessible("codex-test-bin --yolo")).not.toThrow();
+    } finally {
+      process.env.HOME = origHome;
+      process.env.PATH = origPath;
+      process.env.SHELL = origShell;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("waits long enough for a slow interactive shell to resolve a launcher", () => {
+    const origHome = process.env.HOME;
+    const origPath = process.env.PATH;
+    const origShell = process.env.SHELL;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "slow-shell-"));
+    const shell = path.join(tmp, "shell");
+    fs.writeFileSync(shell, "#!/bin/sh\nsleep 2\nexit 0\n");
+    fs.chmodSync(shell, 0o755);
+    process.env.HOME = tmp;
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.SHELL = shell;
+    try {
+      expect(() => assertClaudeBinaryAccessible("slow-shell-launcher")).not.toThrow();
+    } finally {
+      process.env.HOME = origHome;
+      process.env.PATH = origPath;
+      process.env.SHELL = origShell;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reuse a failed interactive-shell lookup after the shell environment changes", () => {
+    const origHome = process.env.HOME;
+    const origPath = process.env.PATH;
+    const origShell = process.env.SHELL;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "shell-cache-"));
+    const failingShell = path.join(tmp, "failing-shell");
+    const passingShell = path.join(tmp, "passing-shell");
+    fs.writeFileSync(failingShell, "#!/bin/sh\nexit 1\n");
+    fs.writeFileSync(passingShell, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(failingShell, 0o755);
+    fs.chmodSync(passingShell, 0o755);
+    process.env.HOME = tmp;
+    process.env.PATH = "/usr/bin:/bin";
+    try {
+      process.env.SHELL = failingShell;
+      expect(() => assertClaudeBinaryAccessible("cached-shell-launcher")).toThrow(
+        /not found in PATH/,
+      );
+
+      process.env.SHELL = passingShell;
+      expect(() => assertClaudeBinaryAccessible("cached-shell-launcher")).not.toThrow();
+    } finally {
+      process.env.HOME = origHome;
+      process.env.PATH = origPath;
+      process.env.SHELL = origShell;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("still throws when a name is neither on PATH nor defined in any rc file", () => {
@@ -171,6 +280,61 @@ describe("executeMessage — control actions", () => {
     expect(getAgentKind("proj-1")).toBe("claude");
     expect(getStartCommand("proj-1")).toBe("bash"); // the base flavor, no --session-id
     expect(getLastLiveSessionId("proj-1")).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  describe("resume", () => {
+    let stateDir: string;
+
+    beforeEach(() => {
+      stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-resume-"));
+      process.env.TCB_STATE_DIR = stateDir;
+    });
+
+    afterEach(() => {
+      clearAgentRuntimeRecord("proj-1");
+      delete process.env.TCB_STATE_DIR;
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    });
+
+    it("restarts the last recorded agent session by exact id and command", async () => {
+      recordAgentLaunch("proj-1", {
+        kind: "claude",
+        startCommand: "bash",
+        liveSessionId: "uuid-resume-1",
+      });
+      const d = deps({ checkIfRunning: vi.fn(async () => false) });
+
+      expect(await executeMessage(msg("resume"), d)).toBe("🔄 已恢复原会话");
+      expect(d.agent.startWithResume).toHaveBeenCalledWith("proj-1", "uuid-resume-1", "bash");
+      expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
+    });
+
+    it("does not launch when no exact session state is recorded", async () => {
+      recordAgentLaunch("proj-1", {
+        kind: "claude",
+        startCommand: "bash",
+        liveSessionId: null,
+      });
+      const d = deps({ checkIfRunning: vi.fn(async () => false) });
+
+      expect(await executeMessage(msg("resume"), d)).toBe(
+        "没有可恢复的原会话状态，请用 /start 新建。",
+      );
+      expect(d.agent.startWithResume).not.toHaveBeenCalled();
+      expect(d.agent.start).not.toHaveBeenCalled();
+    });
+
+    it("does not resume over an already-running agent", async () => {
+      recordAgentLaunch("proj-1", {
+        kind: "claude",
+        startCommand: "bash",
+        liveSessionId: "uuid-resume-1",
+      });
+      const d = deps({ checkIfRunning: vi.fn(async () => true) });
+
+      expect(await executeMessage(msg("resume"), d)).toBe("✅ 已在运行中，无需重复启动");
+      expect(d.agent.startWithResume).not.toHaveBeenCalled();
+    });
   });
 
   it("exit clears the queue, exits the agent via the runner, invalidates config", async () => {
@@ -257,7 +421,33 @@ describe("executeMessage — control actions", () => {
   it("a running-required action is rejected when Claude isn't running — no keys sent", async () => {
     const d = deps({ checkIfRunning: vi.fn(async () => false) });
     expect(await executeMessage(msg("text", { text: "do it" }), d)).toBe(
-      "未运行，请使用 /restart 启动",
+      "未运行，请使用 /resume 恢复，或 /start 新建",
+    );
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("routes a stale dotted queued session name to its safe live alias", async () => {
+    const unsafe = "tmux_proj_-Users-test-.alcove-workspaces-data-family";
+    const safe = "tmux_proj_-Users-test-_alcove-workspaces-data-family";
+    const d = deps({
+      checkIfRunning: vi.fn(async (session: string) => session === safe),
+    });
+    d.bridge.hasSession = vi.fn(async (session: string) => session === safe);
+
+    await executeMessage(msg("text", { sessionName: unsafe, text: "do it" }), d);
+
+    expect(d.agent.checkIfRunning).toHaveBeenCalledWith(safe);
+    expect(d.bridge.sendKeys).toHaveBeenCalledWith("do it", safe);
+  });
+
+  it("does not paste when the queued session no longer exists", async () => {
+    const d = deps({
+      checkIfRunning: vi.fn(async () => true),
+    });
+    d.bridge.hasSession = vi.fn(async () => false);
+
+    expect(await executeMessage(msg("text", { text: "do it" }), d)).toBe(
+      "未运行，请使用 /resume 恢复，或 /start 新建",
     );
     expect(d.bridge.sendKeys).not.toHaveBeenCalled();
   });
@@ -298,6 +488,66 @@ describe("executeMessage — text action with history", () => {
     expect(out).toBe("feature built");
   });
 
+  it("sends the delivered prompt and matches history against it", async () => {
+    const projectPath = "/proj/translated";
+    setPathForSession("proj-1", projectPath);
+    const histDir = projectPathToHistoryDir(projectPath, configRoot);
+    fs.mkdirSync(histDir, { recursive: true });
+    const line = (type: string, content: string) =>
+      JSON.stringify({ type, timestamp: "2026-06-10T10:00:00Z", message: { content } });
+    fs.writeFileSync(
+      path.join(histDir, "a.jsonl"),
+      `${[line("user", "Ship the feature now"), line("assistant", "feature shipped")].join("\n")}\n`,
+    );
+
+    const d = deps();
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    const out = await executeMessage(
+      msg("text", {
+        text: "Ship the feature now",
+        origin: "user",
+        promptSource: "telegram",
+        sourceText: "把功能做完",
+        transform: {
+          kind: "translation",
+          provider: "argos",
+          from: "zh",
+          to: "en",
+          sourceText: "把功能做完",
+          deliveredText: "Ship the feature now",
+        },
+      }),
+      d,
+    );
+
+    expect(d.bridge.sendKeys).toHaveBeenCalledWith("Ship the feature now", "proj-1");
+    expect(out).toBe("feature shipped");
+  });
+
+  it("does not translate a system text action", async () => {
+    const fakePython = path.join(configRoot, "fake-python");
+    fs.writeFileSync(fakePython, "#!/bin/sh\ncat >/dev/null\nprintf 'Continue in English'\n");
+    fs.chmodSync(fakePython, 0o755);
+    const oldEnv = {
+      mode: process.env.PROMPT_TRANSLATE_MODE,
+      python: process.env.ARGOS_TRANSLATE_PYTHON,
+    };
+    process.env.PROMPT_TRANSLATE_MODE = "argos";
+    process.env.ARGOS_TRANSLATE_PYTHON = fakePython;
+
+    try {
+      const d = deps();
+
+      await executeMessage(msg("text", { text: "继续", origin: "system" }), d);
+
+      expect(d.bridge.sendKeys).toHaveBeenCalledWith("继续", "proj-1");
+    } finally {
+      process.env.PROMPT_TRANSLATE_MODE = oldEnv.mode;
+      process.env.ARGOS_TRANSLATE_PYTHON = oldEnv.python;
+    }
+  });
+
   it("truncates an over-long history reply", async () => {
     const projectPath = "/proj/big";
     setPathForSession("proj-1", projectPath);
@@ -310,7 +560,7 @@ describe("executeMessage — text action with history", () => {
       path.join(histDir, "a.jsonl"),
       `${[line("user", "make it long please"), line("assistant", long)].join("\n")}\n`,
     );
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => ({ done: true, output: "P" })),
@@ -349,7 +599,7 @@ describe("executeMessage — text action with history", () => {
   it("handles a text action with undefined text (length defaults to 0, no history match)", async () => {
     // msg.text undefined exercises `msg.text?.length ?? 0` in the entry log and a
     // null sent-text lookup; falls back to the pane snapshot.
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE_FOR_UNDEF" })),
@@ -364,7 +614,7 @@ describe("executeMessage — text action with history", () => {
 
   it("falls back to the processed tmux pane when no history reply matches", async () => {
     // No history file → getLatestAssistantReply returns null → pane output is used.
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE_SNAPSHOT" })),
@@ -376,7 +626,7 @@ describe("executeMessage — text action with history", () => {
   });
 
   it("reports empty output when the pane processes to nothing", async () => {
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => ({ done: true, output: "   " })),
@@ -387,13 +637,40 @@ describe("executeMessage — text action with history", () => {
     expect(out).toBe("返回空内容 · 用 /peek 查看画面");
   });
 
+  it("waits for the agent input surface before sending text", async () => {
+    const calls: string[] = [];
+    const d = liveFakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilInputReady: vi.fn(async () => {
+          calls.push("ready");
+        }),
+        waitUntilDone: vi.fn(async () => {
+          calls.push("done");
+          return { done: true, output: "PANE" };
+        }),
+      } as never,
+      bridge: {
+        sendKeys: vi.fn(async () => {
+          calls.push("send");
+        }),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    await executeMessage(msg("text", { text: "build the feature" }), d);
+
+    expect(calls).toEqual(["ready", "send", "done"]);
+    expect(d.agent.waitUntilInputReady).toHaveBeenCalledWith("proj-1");
+  });
+
   it("keeps waiting across timeout rounds and notifies once, then resolves the real result", async () => {
     const waitUntilDone = vi
       .fn()
       .mockResolvedValueOnce({ done: false, output: "partial 1" })
       .mockResolvedValueOnce({ done: false, output: "partial 2" })
       .mockResolvedValueOnce({ done: true, output: "FINAL" });
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
       config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 1000 } as never,
     });
@@ -413,7 +690,7 @@ describe("executeMessage — text action with history", () => {
 
   it("gives up at the total-wait horizon with the still-running reply", async () => {
     const waitUntilDone = vi.fn(async () => ({ done: false, output: "PARTIAL" }));
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
       config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 250 } as never,
     });
@@ -432,7 +709,7 @@ describe("executeMessage — text action with history", () => {
       .fn()
       .mockResolvedValueOnce({ done: false, output: "partial" })
       .mockResolvedValueOnce({ done: true, output: "DONE_LATE" });
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
       config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 1000 } as never,
     });
@@ -443,7 +720,7 @@ describe("executeMessage — text action with history", () => {
   });
 
   it("falls back to capturePane when waitUntilDone throws", async () => {
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => {
@@ -457,7 +734,7 @@ describe("executeMessage — text action with history", () => {
         sendRawKey: vi.fn(async () => {}),
         createSession: vi.fn(async () => {}),
         killSession: vi.fn(async () => {}),
-        hasSession: vi.fn(async () => false),
+        hasSession: vi.fn(async () => true),
         listProjectSessions: vi.fn(async () => []),
       } as never,
     });
@@ -469,7 +746,7 @@ describe("executeMessage — text action with history", () => {
   it("falls back to capturePane when waitUntilDone throws a non-Error value", async () => {
     // Throwing a string (not an Error) exercises the `: err` branch of the
     // error-logging ternary; capturePane still salvages the pane.
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => {
@@ -483,7 +760,7 @@ describe("executeMessage — text action with history", () => {
         sendRawKey: vi.fn(async () => {}),
         createSession: vi.fn(async () => {}),
         killSession: vi.fn(async () => {}),
-        hasSession: vi.fn(async () => false),
+        hasSession: vi.fn(async () => true),
         listProjectSessions: vi.fn(async () => []),
       } as never,
     });
@@ -495,7 +772,7 @@ describe("executeMessage — text action with history", () => {
   it("rethrows a normalized error when both waitUntilDone and capturePane throw non-Errors", async () => {
     // Both throws are non-Error literals → hits the `: err` and `: paneErr`
     // branches of both logging ternaries before normalizeError rethrows.
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => {
@@ -511,7 +788,7 @@ describe("executeMessage — text action with history", () => {
         sendRawKey: vi.fn(async () => {}),
         createSession: vi.fn(async () => {}),
         killSession: vi.fn(async () => {}),
-        hasSession: vi.fn(async () => false),
+        hasSession: vi.fn(async () => true),
         listProjectSessions: vi.fn(async () => []),
       } as never,
     });
@@ -522,7 +799,7 @@ describe("executeMessage — text action with history", () => {
   });
 
   it("rethrows when both waitUntilDone and capturePane throw", async () => {
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
         waitUntilDone: vi.fn(async () => {
@@ -538,7 +815,7 @@ describe("executeMessage — text action with history", () => {
         sendRawKey: vi.fn(async () => {}),
         createSession: vi.fn(async () => {}),
         killSession: vi.fn(async () => {}),
-        hasSession: vi.fn(async () => false),
+        hasSession: vi.fn(async () => true),
         listProjectSessions: vi.fn(async () => []),
       } as never,
     });
@@ -559,7 +836,7 @@ describe("performStart / performRestart — agent kind recording", () => {
   });
 
   it("performStart records 'codex' when the command matches a codex startCommand", async () => {
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => false),
         start: vi.fn(async () => {}),
@@ -576,8 +853,31 @@ describe("performStart / performRestart — agent kind recording", () => {
     expect(await getAgentKind("proj-codex")).toBe("codex");
   });
 
+  it("performStart still records codex when a supervisor/operator appends --yolo", async () => {
+    const start = vi.fn(async (_session: string, _command: string) => {});
+    const d = liveFakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => false),
+        start,
+      } as never,
+      config: {
+        claudeStartCommand: "bash",
+        startCommands: [
+          { label: "claude", command: "bash", agent: "claude" as const },
+          { label: "codex", command: "sh", agent: "codex" as const },
+        ],
+      } as never,
+    });
+
+    await performStart(d, "proj-codex-yolo", "sh --yolo");
+
+    expect(await getAgentKind("proj-codex-yolo")).toBe("codex");
+    expect(start).toHaveBeenCalledWith("proj-codex-yolo", "sh --yolo");
+    expect(start.mock.calls[0]?.[1]).not.toContain("--session-id");
+  });
+
   it("performStart records 'claude' for the default (no command)", async () => {
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => false),
         start: vi.fn(async () => {}),
@@ -588,7 +888,7 @@ describe("performStart / performRestart — agent kind recording", () => {
   });
 
   it("performRestart records 'codex' when the command matches a codex startCommand", async () => {
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         gracefulRestartWithContinue: vi.fn(async () => {}),
       } as never,
@@ -605,7 +905,7 @@ describe("performStart / performRestart — agent kind recording", () => {
   });
 
   it("performRestart records 'claude' when no command override (default)", async () => {
-    const d = fakeDeps({
+    const d = liveFakeDeps({
       agent: {
         gracefulRestartWithContinue: vi.fn(async () => {}),
       } as never,

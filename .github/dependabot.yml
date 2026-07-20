@@ -7,6 +7,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    ignore:
+      # Major version bumps often need coordinated toolchain changes. Keep the
+      # auto-merge lane limited to patch/minor updates that CI can validate.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
     groups:
       # One PR per week for all minor/patch bumps. All Dependabot PRs target dev
       # and auto-merge there once CI is green; main stays manually promoted.
@@ -21,6 +27,10 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
     groups:
       actions-minor-patch:
         update-types:

@@ -94,6 +94,24 @@ describe("statuslineScript / manualSnippet", () => {
       expect(out).toContain("█"); // progress bar rendered
     },
   );
+
+  it.skipIf(!hasShellTools)("renders reset_at fallbacks for session and weekly windows", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-sl-"));
+    const f = join(dir, "statusline.sh");
+    writeFileSync(f, statuslineScript(dir), { mode: 0o755 });
+    const input = JSON.stringify({
+      model: { display_name: "Opus 4.8" },
+      context_window: { used_percentage: 42 },
+      rate_limits: {
+        session: { used_percentage: 61, reset_at: 1781503200 },
+        weekly: { used_percentage: 12, reset_at: 1782075600 },
+      },
+    });
+    const out = execFileSync("bash", ["-c", `printf %s '${input}' | '${f}'`]).toString();
+    expect(out).toContain("session 61%");
+    expect(out).toContain("weekly 12%");
+    expect(out).not.toContain("(reset ?)");
+  });
 });
 
 describe("runStatusInstall", () => {
@@ -213,6 +231,17 @@ describe("runStatusInstall", () => {
     // The sidecar referenced in the command holds the original command verbatim.
     const sidecar = cmd.slice(scriptPath().length + 1);
     expect(readFileSync(sidecar, "utf8")).toBe(foreignCmd);
+  });
+
+  it("wrap preserves other statusLine fields (e.g. refreshInterval)", async () => {
+    const dir = makeConfigDir("wrap-keep", {
+      statusLine: { type: "command", command: "~/mine.sh", refreshInterval: 60 },
+    });
+    dirsInUse.value = [dir];
+    await runStatusInstall("telegram", "wrap");
+    const sl = readSettings(dir).statusLine as { command?: string; refreshInterval?: number };
+    expect(sl.command?.startsWith(`${scriptPath()} `)).toBe(true);
+    expect(sl.refreshInterval).toBe(60);
   });
 
   it("snippet leaves settings untouched and returns the paste-in jq block", async () => {

@@ -142,6 +142,68 @@ describe("runDoctorChecks", () => {
     );
     expect(present.checks.some((c) => c.status === "ok" && c.text.includes("voice:"))).toBe(true);
   });
+
+  it("checks optional prompt translation only when argos mode is enabled", async () => {
+    const missing = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () =>
+          new Map([
+            ["TELEGRAM_BOT_TOKEN", VALID_TOKEN],
+            ["PROMPT_TRANSLATE_MODE", "argos"],
+            ["ARGOS_TRANSLATE_PYTHON", "/opt/tcb/.venv/bin/python"],
+          ]),
+        fileExists: () => false,
+      }),
+    );
+    expect(
+      missing.checks.some(
+        (c) =>
+          c.status === "bad" &&
+          c.text.includes("prompt translation: telegram argos zh->en python is missing"),
+      ),
+    ).toBe(true);
+
+    const present = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () =>
+          new Map([
+            ["TELEGRAM_BOT_TOKEN", VALID_TOKEN],
+            ["PROMPT_TRANSLATE_MODE", "argos"],
+            ["ARGOS_TRANSLATE_PYTHON", "/opt/tcb/.venv/bin/python"],
+          ]),
+      }),
+    );
+    expect(
+      present.checks.some(
+        (c) => c.status === "ok" && c.text.includes("prompt translation: control argos zh->en"),
+      ),
+    ).toBe(true);
+  });
+
+  it("checks prompt translation when only a channel-specific mode is enabled", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () =>
+          new Map([
+            ["TELEGRAM_BOT_TOKEN", VALID_TOKEN],
+            ["PROMPT_TRANSLATE_MODE", "off"],
+            ["LARK_PROMPT_TRANSLATE_MODE", "argos"],
+            ["LARK_PROMPT_TRANSLATE_FROM", "ja"],
+            ["LARK_PROMPT_TRANSLATE_TO", "en"],
+            ["ARGOS_TRANSLATE_PYTHON", "/opt/tcb/.venv/bin/python"],
+          ]),
+        fileExists: () => false,
+      }),
+    );
+
+    expect(
+      report.checks.some(
+        (c) =>
+          c.status === "bad" &&
+          c.text.includes("prompt translation: lark argos ja->en python is missing"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("renderDoctorReport", () => {

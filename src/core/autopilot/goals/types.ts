@@ -1,6 +1,8 @@
+import type { SkillId } from "../../skills/schema.js";
+
 export type Intent =
   | { kind: "prompt"; text: string }
-  | { kind: "skill"; name: string; fallback: string };
+  | { kind: "skill"; name: SkillId; fallback: string };
 
 export type DoneCondition =
   | { kind: "sentinel"; marker: string }

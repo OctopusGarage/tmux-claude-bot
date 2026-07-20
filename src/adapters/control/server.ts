@@ -1,5 +1,12 @@
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, statSync, unlinkSync } from "node:fs";
 import net from "node:net";
+import { orphanBusyState, orphanLabel } from "../../core/agents/takeover.js";
+import {
+  adoptOrphan,
+  composeAdoptOutcome,
+  findAdoptableOrphans,
+} from "../../core/agents/takeover-service.js";
+import { validateAttachment } from "../../core/attachments/classify.js";
 import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
 import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
 import { AutopilotStore } from "../../core/autopilot/state-store.js";
@@ -16,9 +23,22 @@ import {
 import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
 import { isOperator } from "../../core/projects/operator.js";
-import { openRecentProjectBySid, recentProjectButtons } from "../../core/projects/project-ops.js";
+import {
+  createProjectFromPath,
+  openRecentProjectBySid,
+  recentProjectButtons,
+} from "../../core/projects/project-ops.js";
+import { resolveReplyTarget } from "../../core/projects/session-reply-target.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import {
+  applyPromptTranslateCommand,
+  formatPromptTranslateCommandResult,
+} from "../../core/read/prompt-translation.js";
 import { getRecentInputs } from "../../core/read/recent-inputs.js";
+import {
+  prepareUserPromptDelivery,
+  userPromptQueueFields,
+} from "../../core/read/user-prompt-intake.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
 import { renderPeekPane } from "../../core/session/output.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -107,6 +127,44 @@ export function startControlServer(deps: HandlerDeps): net.Server {
   return server;
 }
 
+export async function handleSendAttachment(
+  deps: Pick<HandlerDeps, "channelSenders">,
+  req: {
+    session: string;
+    filePath: string;
+    caption?: string;
+    statInfo?: (p: string) => { size: number; isFile: boolean } | null;
+  },
+): Promise<{ ok: true; status: string } | { ok: false; error: string }> {
+  const statInfo =
+    req.statInfo ??
+    ((p: string) => {
+      try {
+        const st = statSync(p);
+        return { size: st.size, isFile: st.isFile() };
+      } catch {
+        return null;
+      }
+    });
+  const target = resolveReplyTarget(req.session);
+  if (!target) return { ok: false, error: "no chat is bound to this session" };
+  const v = validateAttachment(req.filePath, statInfo);
+  if (!v.ok) return { ok: false, error: v.error };
+  try {
+    await deps.channelSenders.send(
+      target.channel,
+      target.chatId,
+      req.filePath,
+      v.kind,
+      req.caption,
+    );
+    return { ok: true, status: "sent" };
+  } catch (err) {
+    log.warn("attachment send failed", { err });
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 async function handleRequest(
   deps: HandlerDeps,
   req: ControlRequest,
@@ -129,10 +187,10 @@ async function handleRequest(
           fail("cannot send to the operator session");
           return;
         }
-        enqueueControl(deps, req.session, "text", req.text, send, ok, fail);
+        await enqueueControl(deps, req.session, "text", req.text, send, ok, fail);
         return;
       case "control":
-        enqueueControl(deps, req.session, req.action, "", send, ok, fail);
+        await enqueueControl(deps, req.session, req.action, "", send, ok, fail);
         return;
       case "projects":
         ok(await recentProjectButtons(deps, CONTROL_SCOPE));
@@ -147,6 +205,50 @@ async function handleRequest(
         } else {
           ok(res);
         }
+        return;
+      }
+      case "openPath": {
+        // Start (or switch to) a project by filesystem path — parity with the
+        // chat /add_project flow, for a path the bot doesn't yet know. Same
+        // create-then-start as `open`; invalid/error pass through for the client.
+        const res = await createProjectFromPath(deps, CONTROL_SCOPE, req.path);
+        if (res.status === "created" || res.status === "switched") {
+          const started = await performStart(deps, res.sessionName);
+          ok({ status: res.status, session: res.sessionName, started });
+        } else {
+          ok(res);
+        }
+        return;
+      }
+      case "orphans": {
+        // Claude/Codex running OUTSIDE tmux that the bot could adopt.
+        const orphans = await findAdoptableOrphans();
+        ok(
+          orphans.map((o) => ({
+            pid: o.pid,
+            agent: o.agent,
+            busy: orphanBusyState(o),
+            label: orphanLabel(o),
+          })),
+        );
+        return;
+      }
+      case "adopt": {
+        // Stop the orphan and resume it under a managed session — the same
+        // takeover the chat /adopt button runs.
+        const result = await adoptOrphan(req.pid, {
+          bridge: deps.bridge,
+          configResolver: deps.configResolver,
+          projectSessionPrefix: deps.config.projectSessionPrefix,
+          warmupMs: deps.config.sessionWarmupMs,
+        });
+        const outcome = composeAdoptOutcome(result, CONTROL_SCOPE);
+        if (outcome.ok) await deps.currentProject.set(CONTROL_SCOPE, outcome.sessionName);
+        ok({
+          ok: outcome.ok,
+          body: outcome.body,
+          ...(outcome.ok ? { session: outcome.sessionName } : {}),
+        });
         return;
       }
       case "recover": {
@@ -176,6 +278,24 @@ async function handleRequest(
           ),
         );
         return;
+      case "promptTranslate": {
+        const status = await applyPromptTranslateCommand("control", req.arg);
+        ok({ body: formatPromptTranslateCommandResult(status), status });
+        return;
+      }
+      case "notify":
+        ok(
+          await deps.notifications.notify({
+            title: req.title,
+            ...(req.body !== undefined ? { body: req.body } : {}),
+            ...(req.channel !== undefined ? { channel: req.channel } : {}),
+            ...(req.level !== undefined ? { level: req.level } : {}),
+            ...(req.source !== undefined ? { source: req.source } : {}),
+            ...(req.session !== undefined ? { session: req.session } : {}),
+            ...(req.attachments !== undefined ? { attachments: req.attachments } : {}),
+          }),
+        );
+        return;
       case "autopilot": {
         const status = applyAutopilotVerb(
           new AutopilotStore(),
@@ -197,6 +317,16 @@ async function handleRequest(
           ),
         );
         return;
+      case "sendAttachment": {
+        const res = await handleSendAttachment(deps, {
+          session: req.session,
+          filePath: req.filePath,
+          ...(req.caption !== undefined ? { caption: req.caption } : {}),
+        });
+        if (res.ok) ok({ status: res.status });
+        else fail(res.error);
+        return;
+      }
       default:
         fail(`unknown op: ${(req as { op: string }).op}`);
     }
@@ -207,7 +337,7 @@ async function handleRequest(
 
 /** Enqueue a prompt/control action through the bot's single queue. Acked
  * immediately; the eventual reply/notify/error arrives as an event by session. */
-function enqueueControl(
+async function enqueueControl(
   deps: HandlerDeps,
   session: string,
   action: string,
@@ -215,10 +345,20 @@ function enqueueControl(
   send: (msg: ServerMessage) => void,
   ok: (data: unknown) => void,
   fail: (error: string) => void,
-): void {
+): Promise<void> {
+  const prepared =
+    action === "text"
+      ? await prepareUserPromptDelivery("control", text, "text")
+      : ({ ok: true, text } as const);
+  if (!prepared.ok) {
+    fail(messages("telegram").promptTranslateFailed);
+    return;
+  }
   const verdict = deps.queue.enqueue({
     id: newMessageId(),
-    text,
+    ...(action === "text" && "preview" in prepared
+      ? userPromptQueueFields(prepared)
+      : { text: prepared.text }),
     chatId: "control",
     sessionName: session,
     action,

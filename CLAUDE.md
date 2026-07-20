@@ -1,5 +1,14 @@
 # Project Principles
 
+## Usage Documentation Lookup
+
+When the task is about how to use tmux-claude-bot, available commands, setup,
+configuration, the TUI, chat workflows, autopilot, or troubleshooting, check
+`llms.txt` first. For direct task recipes, read `docs/agents/usage-guide.md`, then
+follow its links to `docs/manual.md`, `docs/commands.md`, or `docs/tui.md` as needed.
+Do not read source code to infer user-facing commands or flags until those
+documentation references have been checked.
+
 ## Sensitive Data Isolation
 
 All personal privacy, local paths, and credentials must:
@@ -51,6 +60,47 @@ If any matches are found, refactor to use `process.env`, `os.homedir()`, or gene
 
 **Only ONE bot instance should run at a time.** Multiple instances cause 409 Conflict with Telegram API.
 
+### Run & dev modes (overview)
+
+The bot can run in several modes. They differ on four axes: **what executes**
+(compiled `dist` vs `tsx` source), **hot-reload** (does saving a `src/` edit take
+effect live?), **persistence** (does it survive terminal close / reboot / crash?),
+and **config+state source** (the deployed prod profile vs a repo-local one). The
+hard invariant across all of them: **one instance per state dir** — the runtime
+instance lock (`src/core/infra/instance-lock.ts`) refuses a second instance
+sharing a `TCB_STATE_DIR`, so modes that share the prod state are mutually
+exclusive.
+
+| Mode | What runs | Hot-reload | Persist / auto-restart | Config+state | Start / switch | Use when |
+|------|-----------|-----------|------------------------|--------------|----------------|----------|
+| **Managed — prod** (default) | `dist/cli.js` (built) | No (runs last build) | Yes (launchd KeepAlive / systemd `Restart=always` + reboot) | prod `~/.tmux-claude-bot/state` | `node dist/cli.js install` (deploy); `npm run service:prod` (switch back) | Stable production runtime |
+| **Managed — dev** (hot-reload) | supervisor → `tsx src/index.ts` | **Yes, `tsc`-gated** | Yes (KeepAlive + supervisor crash-backoff + reboot) | borrows prod `~/.tmux-claude-bot/state` | `npm run service:dev` ⇄ `npm run service:prod` | Self-evolving dev: improve the bot live while using it (rule in gitignored `CLAUDE.local.md`) |
+| **`npm run dev`** | `tsx watch src/index.ts` | Yes (raw, no `tsc` gate) | No (foreground; dies with terminal) | borrows prod by default; `TCB_DEV_LOCAL=1` = repo-local; explicit `TCB_STATE_DIR`/`TCB_ENV_FILE` wins | `npm run dev` | One-off foreground dev. NOTE: borrowing prod state hits the instance lock while the managed service is up — use `./dev.sh` instead |
+| **`./dev.sh`** | `npm run dev` (borrow prod) | Yes (raw) | No (foreground) | borrows prod | `./dev.sh` | Quick interactive dev against the real profile — auto-pauses the managed service and resumes it on exit |
+| **`npm run tui`** (`tcb tui`) | Ink client of the control socket | n/a | n/a | connects to a running bot | `npm run tui` | NOT a bot instance — a third client surface onto whichever bot is already running |
+
+**Switching cheatsheet:**
+
+```
+prod  -> dev (hot-reload):   npm run service:dev      # repoints managed service at the repo supervisor
+dev   -> prod (stable dist): npm run service:prod     # repoints back at the deployed dist
+update prod with new source: node dist/cli.js install # build + deploy to the managed prod instance
+quick interactive session:   ./dev.sh                 # auto pause/resume the managed service
+inspect a running bot:       npm run tui              # control-socket client (no new instance)
+which mode is live?:         scripts/service.sh mode  # prints prod|dev|none (also in `service:status`)
+```
+
+**Profile (config+state) resolution** is owned by `scripts/dev-env.sh` (used by
+`npm run dev`): default borrows the deployed prod `~/.tmux-claude-bot/state`
+(+`.env`) so dev mirrors real projects/sessions; `TCB_DEV_LOCAL=1` forces the
+repo's own `.env` + local state; an explicit `TCB_STATE_DIR`/`TCB_ENV_FILE`
+overrides everything (how `dev.sh`, the managed-dev wrapper, and tests pin their
+dirs). The managed-dev wrapper (`scripts/dev-launchd-wrapper.sh`) borrows prod
+the same way.
+
+The subsections below detail each manager (launchd / systemd / dev-service /
+manual scripts).
+
 ### launchd is the real manager — restart via launchctl, NOT the scripts
 
 On this machine the bot is installed as a launchd service (`~/Library/LaunchAgents/com.octopusgarage.tmux-claude-bot.plist`, label `com.octopusgarage.tmux-claude-bot`) with **`KeepAlive=true`**. That means:
@@ -85,13 +135,29 @@ manage it via `systemctl --user` (or `npm run service:pause|resume|restart`,
 which dispatch by OS). The instance is identified the same way:
 `tmux-claude-bot.*(src/index.ts|dist/cli.js)`.
 
-### Scripts (manual/dev only — NOT for the launchd-managed instance)
+### Dev-service mode (hot-reload from source)
 
-```bash
-./scripts/start.sh    # start a foreground/dev instance — only when launchd service is NOT loaded
-./scripts/stop.sh     # stop manual instances (no effect on launchd's KeepAlive instance)
-./scripts/status.sh   # check running instances
-```
+`npm run service:dev` repoints the managed service at the repo's hot-reload
+supervisor (macOS: `scripts/dev-launchd-wrapper.sh`; Linux:
+`scripts/dev-systemd-wrapper.sh` -> `tsx src/scripts/dev-supervisor.ts`) instead
+of the bundled `dist`. Editing `src/` then takes effect live, gated by `tsc` (a
+failing typecheck keeps the last-good process up; see
+`src/core/dev/supervisor-core.ts`). `npm run service:prod` switches back to the
+deployed dist. Both platforms are supported (the `--dev` install path +
+`service:dev`/`service:prod` switch exist for launchd and systemd alike). Only
+one of the two runs at a time (instance lock). KeepAlive / `Restart=always` still
+covers crash-respawn and boot-autostart.
+
+Check which mode is live with `npm run service:status` (its output includes a
+`mode: prod|dev|none` line) or the quick `scripts/service.sh mode`.
+
+### Manual / local dev (no managed service)
+
+Use `./dev.sh` (auto-pauses/resumes the managed service) or `npm run dev` for a
+foreground dev instance, and `npm run service:status` to inspect the managed one.
+(The legacy `scripts/start.sh`/`stop.sh`/`status.sh` + the `.bot.pid` file were
+removed — superseded by `dev.sh` + `service.sh`, and the instance lock now
+prevents the duplicate-instance trap they half-guarded against.)
 
 ### How to identify the correct process
 
@@ -122,6 +188,104 @@ The project root directory name `tmux-claude-bot` is used as the process identit
   lock blocks it while the managed service is up — use `./dev.sh` (auto
   pause/resume) or pause the service first.
 - Commands exposed via Telegram Bot menu
+
+## Local Verification Contract
+
+Before pushing, run `npm run verify:local`. The pre-push hook runs the same
+command and must not be bypassed for ordinary work. This local gate mirrors the
+CI checks that previously caught missed issues only after push:
+
+- Biome, production TypeScript, and test TypeScript checks
+- coverage test run
+- `knip` dead-code/export/dependency checks
+- dependency-cruiser architecture checks
+- type-aware ESLint (`lint:deep`)
+- smoke script and high-severity npm audit
+- shellcheck when available locally
+- systemd unit validation when `systemd-analyze` is available locally
+
+If CI finds a problem that `npm run verify:local` did not find, treat that as a
+process bug: update this script, the hook, or these instructions so the same
+class of issue is caught locally next time. Do not leave the fix only in CI
+tribal knowledge.
+
+Loop Engineering assessment findings must declare every path the active agent is
+allowed to change in `affectedFiles`, including architecture guard directories
+such as `.semgrep`, config files, docs, and lockfiles. The loop runner treats a
+dirty worktree after staging those affected files as a failed round; update the
+assessment contract instead of letting verified changes sit uncommitted.
+
+## Active Goal Discipline
+
+Do not turn a broad active goal into an endless opportunistic sweep. A broad
+goal must work in explicit, reviewable slices: define the slice, inspect current
+state, make only changes that directly prove that slice, run matching
+verification, commit or clean up, then stop after each slice to report the exact
+state before choosing the next slice.
+
+- Do not keep searching for "one more" unrelated coverage gap after a slice is
+  already verified.
+- Do not preserve useful-looking opportunistic edits just because they are real
+  bugs; if they were not part of the current slice, clean them up or defer them
+  explicitly.
+- Clean up or revert opportunistic changes before restarting the goal loop.
+- If the active goal state is paused, stale, or unclear, say that plainly and
+  restart from a current-state audit rather than assuming momentum is progress.
+
+## AI Capability Boundary
+
+This project orchestrates existing agent runtimes (Claude Code, Codex, and their
+managed tmux sessions). Do not implement bot-owned AI behavior by writing code
+or scripts that call model-provider APIs directly. It must not grow separate
+direct model-provider integrations for product AI behavior, autonomous judging,
+or evals.
+
+AI work is active-agent-only: if a feature needs AI reasoning, it must reuse the
+currently running Claude Code / Codex capability that this bot manages. The
+acceptable implementations are queueing work into an existing project session,
+using existing agent goal runners, or talking to the running bot/agent
+control surface. Do not add a second model transport, even for a quick eval,
+prototype, smoke check, or helper script.
+
+This is not a model-client application. For autonomous evals, smoke checks, or
+other AI-backed work, the bot should ask the already-running agent surface
+instead of adding a separate provider-client path.
+Historical names such as `aiEval` describe the quality gate/report field only;
+they do not authorize a new script, helper, or module to call model-provider APIs.
+
+- Do not add source, scripts, smoke tests, docs, or `.env.example` entries that
+  call OpenAI, Anthropic, Gemini/Google, or other LLM/model HTTP APIs directly.
+- Do not ship helper scripts that instantiate model SDK clients (`OpenAI`,
+  `Anthropic`, `GoogleGenerativeAI`, `GoogleGenAI`, etc.), add AI SDK provider
+  packages, or call provider `/v1/*` endpoints for bot-owned AI behavior.
+- Do not introduce new model API key env vars for bot-owned features unless the
+  user explicitly approves an architecture change first.
+- Do not create temporary or example scripts that bypass this boundary for
+  convenience; prototypes, smoke tests, and eval helpers follow the same rule.
+- AI-backed work must route through the currently running agent capability:
+  managed project sessions, the queue, existing goal runners, or a
+  command that talks to the running bot/agent control surface. Local deterministic
+  checks and schema-validating command contracts are fine.
+- If a feature needs AI judgment, reuse the active Claude Code / Codex session
+  already managed by this bot. Do not create a parallel provider-client path just
+  because a shell script or helper command would be easy to write.
+- `eval.command`, assessment/execution commands, smoke helpers, and scripts are
+  command-contract boundaries, not model-integration points. They may run local
+  deterministic checks or adapters to the running bot/agent control surface. If
+  their result depends on AI judgment, that judgment must come from the active
+  Claude Code / Codex session already managed by this project.
+- Treat any bot-owned OpenAI/Anthropic/LLM provider SDK client, HTTP helper
+  script, or provider-key based eval path as an architectural regression: remove
+  it or replace it with an agent-backed/control-surface adapter.
+- If a shell command needs AI judgment, make it a deterministic contract wrapper
+  or an adapter that talks to the running bot/agent control surface; do not make
+  the script own model credentials or provider transport.
+- If an implementation idea requires `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `GEMINI_API_KEY`, a provider SDK, or a provider HTTP endpoint, stop and redesign
+  it around the currently running Claude Code / Codex capability unless the user
+  explicitly approves changing this architecture.
+- Reading an existing agent CLI's local auth/config state for status display is
+  allowed when it does not make a model request.
 
 ## Logging
 
@@ -364,7 +528,9 @@ Defaults: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `w
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` at repo root + `docs/adr/`. See `docs/agents/domain.md`.
+Single-context: one `CONTEXT.md` at repo root + `docs/adr/`. For project/session/group
+relationship rules, also read `docs/domain/project-session-model.md`. See
+`docs/agents/domain.md`.
 
 ### Skills the autopilot goals rely on
 
@@ -373,3 +539,142 @@ simplify / improve-codebase-architecture skill if available`). Those skills live
 in the agent's environment, not this repo. `docs/agents/skills.md` is the
 registry of their sources + install/update steps; add a row when a new
 skill-backed goal is introduced.
+
+<!-- rtk-instructions v2 -->
+# RTK (Rust Token Killer) - Token-Optimized Commands
+
+## Golden Rule
+
+**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
+
+**Important**: Even in command chains with `&&`, use `rtk`:
+```bash
+# ❌ Wrong
+git add . && git commit -m "msg" && git push
+
+# ✅ Correct
+rtk git add . && rtk git commit -m "msg" && rtk git push
+```
+
+## RTK Commands by Workflow
+
+### Build & Compile (80-90% savings)
+```bash
+rtk cargo build         # Cargo build output
+rtk cargo check         # Cargo check output
+rtk cargo clippy        # Clippy warnings grouped by file (80%)
+rtk tsc                 # TypeScript errors grouped by file/code (83%)
+rtk lint                # ESLint/Biome violations grouped (84%)
+rtk prettier --check    # Files needing format only (70%)
+rtk next build          # Next.js build with route metrics (87%)
+```
+
+### Test (60-99% savings)
+```bash
+rtk cargo test          # Cargo test failures only (90%)
+rtk go test             # Go test failures only (90%)
+rtk jest                # Jest failures only (99.5%)
+rtk vitest              # Vitest failures only (99.5%)
+rtk playwright test     # Playwright failures only (94%)
+rtk pytest              # Python test failures only (90%)
+rtk rake test           # Ruby test failures only (90%)
+rtk rspec               # RSpec test failures only (60%)
+rtk test <cmd>          # Generic test wrapper - failures only
+```
+
+### Git (59-80% savings)
+```bash
+rtk git status          # Compact status
+rtk git log             # Compact log (works with all git flags)
+rtk git diff            # Compact diff (80%)
+rtk git show            # Compact show (80%)
+rtk git add             # Ultra-compact confirmations (59%)
+rtk git commit          # Ultra-compact confirmations (59%)
+rtk git push            # Ultra-compact confirmations
+rtk git pull            # Ultra-compact confirmations
+rtk git branch          # Compact branch list
+rtk git fetch           # Compact fetch
+rtk git stash           # Compact stash
+rtk git worktree        # Compact worktree
+```
+
+Note: Git passthrough works for ALL subcommands, even those not explicitly listed.
+
+### GitHub (26-87% savings)
+```bash
+rtk gh pr view <num>    # Compact PR view (87%)
+rtk gh pr checks        # Compact PR checks (79%)
+rtk gh run list         # Compact workflow runs (82%)
+rtk gh issue list       # Compact issue list (80%)
+rtk gh api              # Compact API responses (26%)
+```
+
+### JavaScript/TypeScript Tooling (70-90% savings)
+```bash
+rtk pnpm list           # Compact dependency tree (70%)
+rtk pnpm outdated       # Compact outdated packages (80%)
+rtk pnpm install        # Compact install output (90%)
+rtk npm run <script>    # Compact npm script output
+rtk npx <cmd>           # Compact npx command output
+rtk prisma              # Prisma without ASCII art (88%)
+```
+
+### Files & Search (60-75% savings)
+```bash
+rtk ls <path>           # Tree format, compact (65%)
+rtk read <file>         # Code reading with filtering (60%)
+rtk grep <pattern>      # Search grouped by file (75%). Format flags (-c, -l, -L, -o, -Z) run raw.
+rtk find <pattern>      # Find grouped by directory (70%)
+```
+
+### Analysis & Debug (70-90% savings)
+```bash
+rtk err <cmd>           # Filter errors only from any command
+rtk log <file>          # Deduplicated logs with counts
+rtk json <file>         # JSON structure without values
+rtk deps                # Dependency overview
+rtk env                 # Environment variables compact
+rtk summary <cmd>       # Smart summary of command output
+rtk diff                # Ultra-compact diffs
+```
+
+### Infrastructure (85% savings)
+```bash
+rtk docker ps           # Compact container list
+rtk docker images       # Compact image list
+rtk docker logs <c>     # Deduplicated logs
+rtk kubectl get         # Compact resource list
+rtk kubectl logs        # Deduplicated pod logs
+```
+
+### Network (65-70% savings)
+```bash
+rtk curl <url>          # Compact HTTP responses (70%)
+rtk wget <url>          # Compact download output (65%)
+```
+
+### Meta Commands
+```bash
+rtk gain                # View token savings statistics
+rtk gain --history      # View command history with savings
+rtk discover            # Analyze Claude Code sessions for missed RTK usage
+rtk proxy <cmd>         # Run command without filtering (for debugging)
+rtk init                # Add RTK instructions to CLAUDE.md
+rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
+```
+
+## Token Savings Overview
+
+| Category | Commands | Typical Savings |
+|----------|----------|-----------------|
+| Tests | vitest, playwright, cargo test | 90-99% |
+| Build | next, tsc, lint, prettier | 70-87% |
+| Git | status, log, diff, add, commit | 59-80% |
+| GitHub | gh pr, gh run, gh issue | 26-87% |
+| Package Managers | pnpm, npm, npx | 70-90% |
+| Files | ls, read, grep, find | 60-75% |
+| Infrastructure | docker, kubectl | 85% |
+| Network | curl, wget | 65-70% |
+
+Overall average: **60-90% token reduction** on common development operations.
+<!-- /rtk-instructions -->

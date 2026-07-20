@@ -21,4 +21,8 @@ export interface ProcessIntrospector {
   listOpenFiles(pid: number): Promise<string[]>;
   /** Working directory of the process, or null if it can't be determined. */
   cwdOf(pid: number): Promise<string | null>;
+  /** Controlling terminal of the process (e.g. /dev/ttys001 or /dev/pts/0), or
+   * null when the process has no terminal. Used to reset TUI-forced keyboard
+   * modes after an abrupt takeover kill. */
+  ttyOf(pid: number): Promise<string | null>;
 }

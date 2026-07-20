@@ -5,8 +5,9 @@
  * codex-usage.ts. All fs is async so a large sessions/ tree never blocks the loop.
  */
 import type { Dirent } from "node:fs";
-import { open, readdir, stat } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { iterJsonlObjects } from "../../read/jsonl.js";
 
 export interface RolloutMatch {
   path: string;
@@ -41,6 +42,35 @@ export async function rolloutMeta(
       payload?: { type?: string; cwd?: string; id?: string };
     };
     return obj.payload ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The last model Codex recorded for this rollout, if present. */
+export async function readCodexModelFromRollout(path: string): Promise<string | null> {
+  try {
+    const jsonlText = await readFile(path, "utf8");
+    let last: string | null = null;
+    for (const obj of iterJsonlObjects<{
+      type?: string;
+      payload?: {
+        model?: unknown;
+        collaboration_mode?: { settings?: { model?: unknown } };
+      };
+    }>(jsonlText)) {
+      if (obj.type !== "turn_context") continue;
+      const direct = obj.payload?.model;
+      if (typeof direct === "string" && direct.trim() !== "") {
+        last = direct;
+        continue;
+      }
+      const collaborationModel = obj.payload?.collaboration_mode?.settings?.model;
+      if (typeof collaborationModel === "string" && collaborationModel.trim() !== "") {
+        last = collaborationModel;
+      }
+    }
+    return last;
   } catch {
     return null;
   }
@@ -129,6 +159,25 @@ export async function findRolloutForProject(
   for (const f of files) {
     const meta = await rolloutMeta(f.path);
     if (meta?.cwd === projectPath) return { path: f.path, sessionId: meta.id ?? null };
+  }
+  return null;
+}
+
+/** Find the rollout with an exact session id under `<configRoot>/sessions/**`. */
+export async function findRolloutBySessionId(
+  configRoot: string,
+  sessionId: string,
+): Promise<RolloutMatch | null> {
+  const files = [...(await collectRolloutFiles(configRoot))];
+  files.sort((a, b) => b.mtime - a.mtime);
+  const escaped = sessionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const filenameMatch = new RegExp(`-${escaped}\\.jsonl$`);
+  for (const f of files) {
+    if (filenameMatch.test(f.path)) return { path: f.path, sessionId };
+  }
+  for (const f of files) {
+    const meta = await rolloutMeta(f.path);
+    if (meta?.id === sessionId) return { path: f.path, sessionId };
   }
   return null;
 }

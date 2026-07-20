@@ -186,6 +186,47 @@ describe("ClaudeRunner", () => {
       await runner.start();
       expect(sentKeys).toContain("Enter"); // accepted the trust gate
     });
+
+    it("selects Yes on the bypass-permissions gate and ignores stale gate text", async () => {
+      const sentKeys: string[] = [];
+      let captures = 0;
+      mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
+        if (cmd === "tmux") {
+          if (args[0] === "capture-pane") {
+            captures++;
+            if (captures === 1) {
+              return {
+                stdout:
+                  "WARNING: Claude Code running in Bypass Permissions mode\n\n  ❯ 1. No, exit\n    2. Yes, I accept\n\n  Enter to confirm · Esc to cancel",
+                stderr: "",
+              };
+            }
+            if (captures === 2) {
+              return {
+                stdout:
+                  "WARNING: Claude Code running in Bypass Permissions mode\n\n  ❯ 1. No, exit\n    2. Yes, I accept\n\n  Enter to confirm · Esc to cancel\n(base) user@host:~/repo|main ⇒",
+                stderr: "",
+              };
+            }
+            return { stdout: "────────\n❯ \n────────", stderr: "" };
+          }
+          if (args[0] === "send-keys") sentKeys.push(args[args.length - 1] ?? "");
+        }
+        return { stdout: "", stderr: "" };
+      });
+      runner = new ClaudeRunner({
+        bridge,
+        output,
+        configResolver: mockResolver,
+        ...defaultOptions,
+        pollIntervalMs: 5,
+      });
+
+      await runner.start();
+
+      expect(sentKeys.filter((key) => key === "Down")).toHaveLength(1);
+      expect(sentKeys.filter((key) => key !== "cancel").slice(-2)).toEqual(["Down", "Enter"]);
+    });
   });
 
   describe("waitUntilReady", () => {
@@ -517,6 +558,7 @@ describe("ClaudeRunner", () => {
       const typed: string[] = [];
       mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
         if (cmd === "tmux" && args[0] === "send-keys") typed.push(args[args.length - 1] ?? "");
+        if (cmd === "tmux" && args[0] === "set-buffer") typed.push(args[args.length - 1] ?? "");
         if (cmd === "tmux" && args[0] === "capture-pane") return { stdout: "❯ ", stderr: "" };
         return { stdout: "", stderr: "" };
       });

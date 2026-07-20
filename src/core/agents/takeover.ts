@@ -1,16 +1,17 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import { SHELL_RC_FILES } from "../../shared/shell-rc.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { TERMINAL_MODE_RESET_SEQUENCE } from "../../shared/utils/terminal-modes.js";
 import { type ProcessIntrospector, selectIntrospector } from "../platform/introspector.js";
 import { createExecProbe, type ProcRow, parseEnvVar } from "./agent-config-resolver.js";
 import { isClaudeProcess, matchOpenClaudeTranscript } from "./claude/claude-process.js";
 import { matchOpenCodexRollout } from "./codex/codex-rollout.js";
 import { matchFlavorAlias } from "./flavor-alias.js";
-import type { AgentKind, AgentProfile } from "./types.js";
+import type { AgentKind, AgentProfile, ReadResolver } from "./types.js";
 
 // Re-exported so existing importers (tests, codex-takeover) are unchanged.
 export { buildCodexResumeCommand, buildResumeCommand, SKIP_PERMS } from "./resume-command.js";
@@ -28,6 +29,7 @@ const SETTLE_MS = 1500;
 // failure while it's still booting.
 const READY_POLLS = 12;
 const READY_POLL_MS = 1000;
+const ORPHAN_ACTIVITY_WINDOW_MS = 60_000;
 
 const SHELLS = new Set(["sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh"]);
 
@@ -106,6 +108,11 @@ export interface TakeoverProbe {
   readProcEnv(pid: number): Promise<string>;
   /** Concatenated shell rc files, mined for `claude-*` launcher aliases. */
   readShellRc(): Promise<string>;
+  /** Controlling terminal of the process (e.g. /dev/ttys001 or /dev/pts/0),
+   * or null when the process has no terminal. */
+  ttyOf(pid: number): Promise<string | null>;
+  /** Best-effort reset of TUI-forced terminal modes on the given tty. */
+  resetTerminal(tty: string): Promise<void>;
   /** Send a signal; swallow ESRCH (already gone). */
   signal(pid: number, sig: Signal): void;
   /** Whether the pid is still alive (kill -0). */
@@ -130,11 +137,24 @@ export interface OrphanAgent {
   startCommand: string;
   /** Which agent this orphan runs. */
   agent: AgentKind;
+  /** Whether this external agent appears to be executing a task. `null` means
+   * unknown; outside tmux we usually cannot observe the agent TUI reliably. */
+  busy?: boolean | null;
+}
+
+export type OrphanBusyState = "busy" | "idle" | "unknown";
+
+export function orphanBusyState(o: Pick<OrphanAgent, "busy">): OrphanBusyState {
+  if (o.busy === true) return "busy";
+  if (o.busy === false) return "idle";
+  return "unknown";
 }
 
 /** Short human label for an orphan: project dir + resumable-session hint. */
 export function orphanLabel(o: OrphanAgent): string {
-  return `${basename(o.cwd)}${o.sessionId ? ` · ${o.sessionId.slice(0, 8)}` : " · new"}`;
+  const agent = o.agent === "codex" ? "Codex" : "Claude";
+  const session = o.sessionId ? o.sessionId.slice(0, 8) : "new";
+  return `${agent} · ${basename(o.cwd)} · ${session} · task ${orphanBusyState(o)}`;
 }
 
 /**
@@ -188,7 +208,8 @@ export async function listOrphansFor(
         sessionId,
         origCmd,
       });
-      return { pid, cwd, configRoot, sessionId, startCommand, agent: profile.kind };
+      const busy = await orphanBusyFromActivity(profile, configRoot, cwd, sessionId);
+      return { pid, cwd, configRoot, sessionId, startCommand, agent: profile.kind, busy };
     }),
   );
 
@@ -207,11 +228,34 @@ export async function listOrphansFor(
   return [...byKey.values()];
 }
 
+async function orphanBusyFromActivity(
+  profile: AgentProfile,
+  configRoot: string,
+  cwd: string,
+  sessionId: string | null,
+): Promise<boolean | null> {
+  if (!sessionId || !profile.lastActivityAt) return null;
+  const resolver: ReadResolver = {
+    resolveConfigRoot: async () => configRoot,
+    resolveCodexHome: async () => configRoot,
+    resolveLiveTranscript: async () => null,
+  };
+  const last = await profile
+    .lastActivityAt(resolver, `orphan:${profile.kind}`, cwd)
+    .catch(() => null);
+  return last === null ? null : Date.now() - last < ORPHAN_ACTIVITY_WINDOW_MS;
+}
+
 export interface TakeoverResult {
   ok: boolean;
   sessionName: string;
   resumed: boolean;
-  reason?: "process_would_not_die" | "agent_did_not_start" | "target_session_busy";
+  reason?:
+    | "process_would_not_die"
+    | "agent_did_not_start"
+    | "target_session_busy"
+    | "project_agent_running"
+    | "free_project_limit";
 }
 
 /** tmux/claude side-effects needed to land the adopted session, injected. */
@@ -245,6 +289,18 @@ export async function takeover(orphan: OrphanAgent, deps: TakeoverDeps): Promise
     return { ok: false, sessionName: "", resumed: false, reason: "target_session_busy" };
   }
 
+  // Capture the terminals that host these orphans BEFORE killing them. A TUI
+  // like claude leaves the terminal in enhanced keyboard modes (kitty protocol,
+  // modifyOtherKeys, focus tracking, bracketed paste). An abrupt signal-kill
+  // never gives it a chance to reset, so the user's shell afterwards prints raw
+  // CSI sequences for every keystroke. We remember the ttys here and reset them
+  // once the processes are confirmed dead.
+  const orphanTtys = new Set<string>();
+  for (const pid of orphan.pids ?? [orphan.pid]) {
+    const tty = await probe.ttyOf(pid);
+    if (tty) orphanTtys.add(tty);
+  }
+
   // Kill every process resuming this session — a survivor would corrupt the
   // resumed `.jsonl` (two writers on one file). SIGINT first: cancels an in-flight
   // generation (and flushes that turn to disk), harmless when idle; settle, then
@@ -267,6 +323,12 @@ export async function takeover(orphan: OrphanAgent, deps: TakeoverDeps): Promise
       log.warn(`pid=${pid} would not die`);
       return { ok: false, sessionName: "", resumed: false, reason: "process_would_not_die" };
     }
+  }
+
+  // Reset any terminals the orphans had attached. This is best-effort: the tty
+  // may already be closed or reassigned by the time we get here.
+  for (const tty of orphanTtys) {
+    await probe.resetTerminal(tty);
   }
 
   const sessionName = await deps.ensureSession(orphan.cwd);
@@ -333,6 +395,14 @@ export function createTakeoverProbe(
       return (matchOpenClaudeTranscript(files) ?? matchOpenCodexRollout(files))?.sessionId ?? null;
     },
     cwdOf: (pid) => intro.cwdOf(pid),
+    ttyOf: (pid) => intro.ttyOf(pid),
+    async resetTerminal(tty: string): Promise<void> {
+      try {
+        await writeFile(tty, TERMINAL_MODE_RESET_SEQUENCE);
+      } catch {
+        // Best-effort: the tty may have closed or permissions may have changed.
+      }
+    },
     signal(pid: number, sig: Signal): void {
       try {
         process.kill(pid, sig);

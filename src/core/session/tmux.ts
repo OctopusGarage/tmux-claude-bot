@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
+import { writeFile as defaultWriteFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { sleep as defaultSleep } from "../../shared/utils/sleep.js";
+import { TERMINAL_MODE_RESET_SEQUENCE } from "../../shared/utils/terminal-modes.js";
 
 export type ExecResult = {
   stdout: string;
@@ -12,32 +15,53 @@ export type ExecFileLike = (
   args: string[],
   options?: ExecFileOptions,
 ) => Promise<ExecResult>;
+export type WriteFileLike = (file: string, data: string) => Promise<void>;
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_SUBMIT_SETTLE_MS = 50;
+let sendBufferCounter = 0;
 
 function defaultExecFile(file: string, args: string[], options?: { timeout?: number }) {
   return execFileAsync(file, args, { timeout: options?.timeout });
 }
 
+function isSafeClientTty(path: string): boolean {
+  return /^\/dev\/[A-Za-z0-9._/-]+$/.test(path);
+}
+
+function nextSendBufferName(): string {
+  sendBufferCounter += 1;
+  return `tcb-send-${process.pid}-${Date.now()}-${sendBufferCounter}`;
+}
+
 export class TmuxBridge {
   private readonly execFile: ExecFileLike;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly writeFile: WriteFileLike;
   private getSessionName: () => Promise<string>;
   private readonly window: number;
   private readonly pane: number;
   private readonly projectSessionPrefix: string;
+  private readonly submitSettleMs: number;
 
   constructor(options: {
     execFile?: ExecFileLike;
+    sleep?: (ms: number) => Promise<void>;
+    writeFile?: WriteFileLike;
     getSessionName: () => Promise<string>;
     window?: number;
     pane?: number;
     projectSessionPrefix?: string;
+    submitSettleMs?: number;
   }) {
     this.execFile = options.execFile ?? defaultExecFile;
+    this.sleep = options.sleep ?? defaultSleep;
+    this.writeFile = options.writeFile ?? defaultWriteFile;
     this.getSessionName = options.getSessionName;
     this.window = options.window ?? 0;
     this.pane = options.pane ?? 0;
     this.projectSessionPrefix = options.projectSessionPrefix ?? "tmux_proj_";
+    this.submitSettleMs = options.submitSettleMs ?? DEFAULT_SUBMIT_SETTLE_MS;
   }
 
   private async formatTarget(sessionName?: string): Promise<string> {
@@ -48,6 +72,14 @@ export class TmuxBridge {
   /** Resolve an explicit session name, or the configured default when omitted. */
   resolveSessionName(sessionName?: string): Promise<string> {
     return sessionName !== undefined ? Promise.resolve(sessionName) : this.getSessionName();
+  }
+
+  private async cancelCopyMode(target: string): Promise<void> {
+    try {
+      await this.execFile("tmux", ["send-keys", "-t", target, "-X", "cancel"], { timeout: 10000 });
+    } catch {
+      // tmux returns "not in a mode" when the pane is already accepting keys.
+    }
   }
 
   async isPaneAlive(sessionName?: string): Promise<boolean> {
@@ -63,30 +95,35 @@ export class TmuxBridge {
   }
 
   /**
-   * Type `text` into the pane line by line, pressing Enter after each line.
+   * Paste `text` as one prompt, then submit once.
    *
-   * The text content is sent with `-l` (literal) so tmux types it verbatim instead
-   * of interpreting a token as a key name — a line that happens to equal "Up",
-   * "Enter", "Tab" or "C-c" must be typed, not pressed. The newline is a separate
-   * un-flagged `Enter` (the key). For named keys use `sendRawKey`.
+   * Text goes through a tmux buffer so embedded newlines remain prompt content
+   * instead of being interpreted as Enter. The final `C-m` is the single submit.
+   * For named keys or raw Enter use `sendRawKey`.
    */
   async sendKeys(text: string, sessionName?: string): Promise<void> {
     const target = await this.formatTarget(sessionName);
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const isLastLine = i === lines.length - 1;
-      const line = lines[i];
-      if (line) {
-        await this.execFile("tmux", ["send-keys", "-t", target, "-l", line], { timeout: 10000 });
-      }
-      if (line || isLastLine) {
-        await this.execFile("tmux", ["send-keys", "-t", target, "Enter"], { timeout: 10000 });
+    await this.cancelCopyMode(target);
+    const bufferName = nextSendBufferName();
+    try {
+      await this.execFile("tmux", ["set-buffer", "-b", bufferName, text], { timeout: 10000 });
+      await this.execFile("tmux", ["paste-buffer", "-p", "-b", bufferName, "-t", target], {
+        timeout: 10000,
+      });
+      if (this.submitSettleMs > 0) await this.sleep(this.submitSettleMs);
+      await this.execFile("tmux", ["send-keys", "-t", target, "C-m"], { timeout: 10000 });
+    } finally {
+      try {
+        await this.execFile("tmux", ["delete-buffer", "-b", bufferName], { timeout: 10000 });
+      } catch {
+        // Best-effort cleanup; a send failure should surface as the original error.
       }
     }
   }
 
   async sendRawKey(key: string, sessionName?: string): Promise<void> {
     const target = await this.formatTarget(sessionName);
+    await this.cancelCopyMode(target);
     await this.execFile("tmux", ["send-keys", "-t", target, key], { timeout: 10000 });
   }
 
@@ -148,6 +185,42 @@ export class TmuxBridge {
     await this.sendRawKey("C-c", sessionName);
     await new Promise((r) => setTimeout(r, 300));
     await this.sendKeys("/exit", sessionName);
+    await this.resetAttachedClientTerminalModes(sessionName);
+  }
+
+  async resetAttachedClientTerminalModes(sessionName?: string): Promise<void> {
+    const ttys = await this.attachedClientTtys(sessionName);
+    await Promise.all(
+      ttys.map(async (tty) => {
+        try {
+          await this.writeFile(tty, TERMINAL_MODE_RESET_SEQUENCE);
+        } catch {
+          // Best-effort: an unattached or permission-denied client tty must not
+          // make the agent exit/restart command fail.
+        }
+      }),
+    );
+  }
+
+  private async attachedClientTtys(sessionName?: string): Promise<string[]> {
+    const session = await this.resolveSessionName(sessionName);
+    try {
+      const result = await this.execFile(
+        "tmux",
+        ["list-clients", "-t", session, "-F", "#{client_tty}"],
+        { timeout: 5000 },
+      );
+      return [
+        ...new Set(
+          result.stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(isSafeClientTty),
+        ),
+      ];
+    } catch {
+      return [];
+    }
   }
 
   /**

@@ -1,6 +1,7 @@
 import type { Bot, Context } from "grammy";
 import { messages } from "../../core/i18n/index.js";
 import { labelForSession } from "../../core/projects/project-label.js";
+import { UI_ICONS } from "../../shared/ui/icons.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { tidyFloatNoise } from "../../shared/utils/number.js";
@@ -26,15 +27,15 @@ export type Tone =
   | "help";
 
 const TONE_EMOJI: Record<Tone, string> = {
-  ok: "✅",
-  result: "🤖",
-  err: "❌",
-  warn: "⚠️",
-  queue: "📋",
-  queued: "⏳",
-  list: "📁",
-  view: "👁",
-  recover: "🔄",
+  ok: UI_ICONS.tone.ok,
+  result: UI_ICONS.tone.result,
+  err: UI_ICONS.tone.error,
+  warn: UI_ICONS.tone.warning,
+  queue: UI_ICONS.tone.queue,
+  queued: UI_ICONS.tone.queued,
+  list: UI_ICONS.tone.list,
+  view: UI_ICONS.tone.view,
+  recover: UI_ICONS.tone.recover,
   info: "",
   help: "",
 };
@@ -89,8 +90,10 @@ function composeRaw(tone: Tone, head: string, opts: ReplyOpts): Composed {
     const elapsed = `⏱ ${opts.elapsedS}s`;
     statusLine = statusLine ? `${statusLine} · ${elapsed}` : elapsed;
   }
-  // Line 2: "📂 <friendly project name>"
-  const projectLine = opts.session ? `📂 ${labelForSession(opts.session)}` : "";
+  // Line 2: "<project icon> <friendly project name>"
+  const projectLine = opts.session
+    ? `${UI_ICONS.project.project} ${labelForSession(opts.session)}`
+    : "";
   const header = [statusLine, projectLine].filter(Boolean).join("\n");
 
   // Messages with a formatted body render as Telegram MarkdownV2 (via

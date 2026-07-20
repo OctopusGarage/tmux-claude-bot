@@ -1,5 +1,4 @@
-import { resolveAgentKind } from "../agents/agentKindMap.js";
-import { profileFor } from "../agents/registry.js";
+import { readAgentLastActivityAt } from "../agents/read.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { paneIsAnimating } from "../session/pane-activity.js";
@@ -7,12 +6,6 @@ import { paneIsAnimating } from "../session/pane-activity.js";
 /** A transcript write newer than this → the agent is actively streaming output →
  * busy, no pane capture needed. */
 const RECENT_ACTIVITY_MS = 8_000;
-
-/** Quiet for longer than this → confidently idle, skip the pane probe. A silent
- * tool call almost always starts within seconds of the agent's last output, so the
- * ambiguous "recently active then went quiet" window is short; beyond it, treat the
- * agent as idle and keep the common (long-dormant) path fast. */
-const DORMANT_MS = 60_000;
 
 /** Pane-diff for the idle-gate's confirm arm. SHORT on purpose: a working agent
  * shows a spinner that cycles every ~100ms, so a sub-second diff reliably catches
@@ -29,25 +22,41 @@ const GATE_PANE_DIFF_MS = 450;
  *
  * Three tiers, cheapest-first — the expensive pane capture runs ONLY in the narrow
  * ambiguous window, so the dominant cases stay fork-free:
- *  - No transcript / quiet > DORMANT_MS  → idle (fast, no capture).
+ *  - No transcript                       → idle (fast, no capture).
  *  - Fresh write < RECENT_ACTIVITY_MS    → streaming → busy (fast, no capture).
- *  - In between (recently active, now quiet) → could be a SILENT tool call, so
- *    confirm via the pane: animating → busy, static → idle.
+ *  - Quiet transcript                    → check the pane for blocking states,
+ *    then confirm via animation: animating → busy, static → idle.
  * Best-effort: any probe failure resolves to idle so a flaky capture can never
  * deadlock the queue.
  */
 export async function agentIsIdle(deps: HandlerDeps, session: string): Promise<boolean> {
   try {
     const projectPath = getPathBySession(session) ?? session;
-    const profile = profileFor(await resolveAgentKind(deps.configResolver, session));
-    const last =
-      (await profile.lastActivityAt?.(deps.configResolver, session, projectPath)) ?? null;
+    const last = await readAgentLastActivityAt(deps.configResolver, session, projectPath);
     if (last === null) return true; // never wrote → idle
     const age = Date.now() - last;
     if (age < RECENT_ACTIVITY_MS) return false; // streaming → busy
-    if (age > DORMANT_MS) return true; // long quiet → idle
+    if (await paneHasBlockingState(deps, session)) return false;
     return !(await paneIsAnimating(deps.bridge, session, GATE_PANE_DIFF_MS));
   } catch {
     return true; // never deadlock the queue on a probe failure
   }
+}
+
+async function paneHasBlockingState(deps: HandlerDeps, session: string): Promise<boolean> {
+  const capturePane = (deps.bridge as { capturePane?: (session: string) => Promise<string> })
+    .capturePane;
+  if (!capturePane) return false;
+  const pane = await capturePane.call(deps.bridge, session).catch(() => null);
+  return pane !== null && paneBlocksInput(pane);
+}
+
+function paneBlocksInput(pane: string): boolean {
+  return (
+    /esc to interrupt/i.test(pane) ||
+    /UserPromptSubmit hook/i.test(pane) ||
+    /hook \(blocked\)/i.test(pane) ||
+    /Messages to be submitted after next tool call/i.test(pane) ||
+    /(?:Enter|Press enter) to (?:confirm|continue)/i.test(pane)
+  );
 }

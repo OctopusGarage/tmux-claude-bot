@@ -5,7 +5,7 @@ type LarkConfig = NonNullable<AppConfig["lark"]>;
 
 let cached: { appId: string; client: Client } | null = null;
 
-function clientFor(cfg: LarkConfig): Client {
+export function clientFor(cfg: LarkConfig): Client {
   if (cached?.appId === cfg.appId) return cached.client;
   const client = new Client({
     appId: cfg.appId,

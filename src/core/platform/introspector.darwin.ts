@@ -69,5 +69,21 @@ export function createDarwinIntrospector(
         return null;
       }
     },
+    async ttyOf(pid: number): Promise<string | null> {
+      // stdin (fd 0) is the terminal the user was typing into for a TUI orphan.
+      try {
+        const { stdout } = await execFileAsync(
+          "lsof",
+          ["-a", "-p", String(pid), "-d", "0", "-Fn"],
+          { timeout: 5000 },
+        );
+        const line = stdout
+          .split("\n")
+          .find((l) => l.startsWith("n/dev/tty") || l.startsWith("n/dev/pts/"));
+        return line ? line.slice(1) : null;
+      } catch {
+        return null;
+      }
+    },
   };
 }

@@ -101,14 +101,12 @@ function ctx(text: string, over: Record<string, unknown> = {}) {
 
 async function runText(deps: ReturnType<typeof depsFor>, c: unknown) {
   const { bot, handlers } = captureBot();
-  // biome-ignore lint/suspicious/noExplicitAny: test bot shim
   registerHandlers(bot as any, deps, replyTarget as never);
   await handlers["on:message:text"]?.(c);
 }
 
 function runCmd(name: string, text: string, deps: ReturnType<typeof depsFor>) {
   const { bot, handlers } = captureBot();
-  // biome-ignore lint/suspicious/noExplicitAny: test bot shim
   registerHandlers(bot as any, deps, replyTarget as never);
   return handlers[`cmd:${name}`]?.(ctx(text));
 }
@@ -417,7 +415,7 @@ describe("registerHandlers — message:text routing", () => {
     );
   });
 
-  it("consumes an awaited free-project label and creates a free project", async () => {
+  it("consumes an awaited independent-session label and creates an independent session", async () => {
     const scope = chatScope("telegram", "100");
     requestFreeLabel(scope); // arm the label capture for this chat
     const deps = depsFor({
@@ -520,6 +518,16 @@ describe("registerHandlers — commands routed to mocked views/executor", () => 
       "info",
       expect.any(String),
       expect.anything(),
+    );
+  });
+
+  it("/prompt_translate with no arg shows the translation picker + keyboard", async () => {
+    await runCmd("prompt_translate", "/prompt_translate", depsFor());
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      expect.any(String),
+      expect.objectContaining({ replyMarkup: expect.anything() }),
     );
   });
 
@@ -636,6 +644,34 @@ describe("registerHandlers — commands routed to mocked views/executor", () => 
     );
   });
 
+  it("/current_project includes free-project and agent metadata", async () => {
+    const deps = depsFor({
+      currentProject: { get: vi.fn(async () => "tmux_proj_free_2") },
+      bridge: { hasSession: vi.fn(async () => true) },
+      configResolver: { detectAgentKind: vi.fn(async () => "codex" as const) },
+    });
+    await runCmd("current_project", "/current_project", deps);
+
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "list",
+      expect.any(String),
+      expect.objectContaining({
+        session: "tmux_proj_free_2",
+        body: expect.stringContaining("类型：独立会话"),
+      }),
+    );
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "list",
+      expect.any(String),
+      expect.objectContaining({
+        session: "tmux_proj_free_2",
+        body: expect.stringContaining("Agent：Codex"),
+      }),
+    );
+  });
+
   it("/sessions with no current project replies no-session", async () => {
     const deps = depsFor({ currentProject: { get: vi.fn(async () => null) } });
     await runCmd("sessions", "/sessions", deps);
@@ -653,6 +689,37 @@ describe("registerHandlers — commands routed to mocked views/executor", () => 
     const deps = depsFor({ bridge: { listProjectSessions: vi.fn(async () => []) } });
     await runCmd("list_recent_projects", "/list_recent_projects", deps);
     expect(replyMock).toHaveBeenCalledWith(expect.anything(), "list", expect.any(String));
+  });
+
+  it("/list_recent_projects includes project status details in the message body", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-recent-status-"));
+    const sessionName = `tmux_proj_${dir.replace(/\//g, "-")}`;
+    const { setPathForSession } = await import("../../../src/core/projects/sessionPathMap.js");
+    setPathForSession(sessionName, dir);
+    const deps = depsFor({
+      bridge: { listProjectSessions: vi.fn(async () => [sessionName]) },
+      configResolver: { detectAgentKind: vi.fn(async () => "codex" as const) },
+    });
+
+    await runCmd("list_recent_projects", "/list_recent_projects", deps);
+
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "list",
+      expect.any(String),
+      expect.objectContaining({
+        body: expect.stringContaining("会话：运行中"),
+      }),
+    );
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "list",
+      expect.any(String),
+      expect.objectContaining({
+        body: expect.stringContaining("Agent：Codex"),
+      }),
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it("a queued action (e.g. /status) routes to handleQueuedCommand", async () => {

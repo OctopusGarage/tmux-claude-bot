@@ -24,9 +24,10 @@ function describe(err: unknown): string {
  * latency is fed back into the health store, so the faster/healthier route is
  * preferred next time and a route that starts failing is abandoned.
  *
- * Long-poll calls (getUpdates) are exempt from the timeout/failover — they
- * legitimately hold the connection open — but their success/failure still
- * informs the preference, so a dead route gets dropped across poll cycles.
+ * Long-poll calls (getUpdates) are exempt from the timeout — they legitimately
+ * hold the connection open — but if a route errors, the same poll immediately
+ * tries the next route. Success/failure still informs the preference, so a dead
+ * route gets dropped across poll cycles.
  */
 export function createSmartFetch(opts: {
   routes: SmartFetchRoute[];
@@ -68,19 +69,29 @@ export function createSmartFetch(opts: {
     const routes = order();
     if (routes.length === 0) throw new Error("[smart-fetch] no routes configured");
 
-    // Long poll: preferred route only, no failover, no timeout.
+    // Long poll: no local timeout, but fail over on transport errors.
     if (opts.isLongPoll(url)) {
-      const route = routes[0] as SmartFetchRoute;
-      try {
-        const res = await route.fetch(url, init);
-        // No latency arg: a long poll's duration is wait-time, not route speed.
-        opts.health.recordSuccess(route.name);
-        return res;
-      } catch (err) {
-        opts.health.recordFailure(route.name);
-        log.warn(`longpoll via ${route.name} failed: ${describe(err)}`);
-        throw err;
+      let lastErr: unknown;
+      for (let i = 0; i < routes.length; i++) {
+        const route = routes[i] as SmartFetchRoute;
+        try {
+          const res = await route.fetch(url, init);
+          // No latency arg: a long poll's duration is wait-time, not route speed.
+          opts.health.recordSuccess(route.name);
+          if (i > 0) {
+            log.info(`longpoll recovered via ${route.name} after preferred route failed`);
+          }
+          return res;
+        } catch (err) {
+          lastErr = err;
+          opts.health.recordFailure(route.name);
+          const more = i + 1 < routes.length;
+          log.warn(
+            `longpoll via ${route.name} failed: ${describe(err)}${more ? " — trying other route" : ""}`,
+          );
+        }
       }
+      throw lastErr;
     }
 
     let lastErr: unknown;

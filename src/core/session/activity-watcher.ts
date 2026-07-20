@@ -41,8 +41,9 @@ export function createActivityWatcher(roots: string[]): ActivityWatcher {
       if (!fs.existsSync(root)) continue;
       try {
         const watcher = fs.watch(root, { recursive: true }, (_event, filename) => {
-          if (!filename || !filename.toString().endsWith(".jsonl")) return;
-          const absPath = join(root, filename.toString());
+          const relativePath = filename?.toString();
+          if (!relativePath?.endsWith(".jsonl")) return;
+          const absPath = join(root, relativePath);
           const now = Date.now();
           lastWrite.set(absPath, now);
           // `isActiveWithin` only cares about writes in the last few seconds, so
