@@ -902,18 +902,20 @@ describe("makeCardActionHandler", () => {
   describe("prompt card handlers (pget/pfilter/ppage) — disabled guard", () => {
     // Confirm that a stale prompt card tapped when PROMPT_MCP_COMMAND is unset
     // replies promptsDisabled and does NOT propagate any error.
-    it.each([
-      "pget",
-      "pfilter",
-      "ppage",
-    ] as const)("'%s' replies promptsDisabled when the prompt library is not enabled", async (cmd) => {
-      const channel = fakeChannel();
-      const deps = fakeDeps({
-        config: { promptMcp: { command: "", args: [] } },
-      });
-      await makeCardActionHandler(channel, deps)(evt({ cmd, sid: "some-sid", tagSid: "tag-sid" }));
-      expect(channel.texts().some((t) => t.includes("未启用"))).toBe(true);
-      expect(channel.texts()).toHaveLength(1); // exactly one reply, nothing else
-    });
+    it.each(["pget", "pfilter", "ppage"] as const)(
+      "'%s' replies promptsDisabled when the prompt library is not enabled",
+      async (cmd) => {
+        const channel = fakeChannel();
+        const deps = fakeDeps({
+          config: { promptMcp: { command: "", args: [] } },
+        });
+        await makeCardActionHandler(
+          channel,
+          deps,
+        )(evt({ cmd, sid: "some-sid", tagSid: "tag-sid" }));
+        expect(channel.texts().some((t) => t.includes("未启用"))).toBe(true);
+        expect(channel.texts()).toHaveLength(1); // exactly one reply, nothing else
+      },
+    );
   });
 });
