@@ -31,7 +31,8 @@ jobs:
         uses: dependabot/fetch-metadata@v3
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
-          skip-commit-verification: true
+          skip-commit-verification: "true"
+          skip-verification: "true"
 
       - name: Refresh Dependabot branch from dev
         if: >-
