@@ -25,6 +25,7 @@ describe("Dependabot auto-merge workflow", () => {
     const job = workflow.jobs["auto-merge"];
 
     expect(job.if).toContain("github.event.pull_request.user.login == 'dependabot[bot]'");
+    expect(job.if).toContain("github.event.pull_request.user.login == 'app/dependabot'");
     expect(job.if).not.toContain("github.event.pull_request.base.ref == 'dev'");
     expect(job.steps).toEqual(
       expect.arrayContaining([
@@ -49,7 +50,10 @@ describe("Dependabot auto-merge workflow", () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: "Fetch Dependabot metadata",
-          with: expect.objectContaining({ "skip-commit-verification": true }),
+          with: expect.objectContaining({
+            "skip-commit-verification": "true",
+            "skip-verification": "true",
+          }),
         }),
       ]),
     );
