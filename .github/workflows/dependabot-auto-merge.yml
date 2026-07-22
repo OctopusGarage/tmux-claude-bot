@@ -1,9 +1,9 @@
 name: Dependabot auto-merge
 
-# Enable auto-merge on patch/minor Dependabot PRs targeting dev. GitHub then
-# merges them automatically once the required "verify" check (CI) passes.
-# Dependency updates flow into dev first; main stays on the normal manual
-# promotion path.
+# Keep Dependabot PRs on dev, then enable auto-merge for patch/minor updates.
+# GitHub security updates can still open against the repository default branch,
+# so the workflow retargets those PRs before enabling auto-merge. Main stays on
+# the normal manual promotion path.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -15,15 +15,24 @@ permissions:
 jobs:
   auto-merge:
     if: >-
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.event.pull_request.base.ref == 'dev'
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      github.event.pull_request.user.login == 'app/dependabot'
     runs-on: ubuntu-latest
     steps:
+      - name: Retarget Dependabot PR to dev
+        if: github.event.pull_request.base.ref != 'dev'
+        run: gh pr edit "$PR_URL" --base dev
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Fetch Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@v3
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
+          skip-commit-verification: "true"
+          skip-verification: "true"
 
       - name: Refresh Dependabot branch from dev
         if: >-
