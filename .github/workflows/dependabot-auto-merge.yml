@@ -15,7 +15,8 @@ permissions:
 jobs:
   auto-merge:
     if: >-
-      github.event.pull_request.user.login == 'dependabot[bot]'
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      github.event.pull_request.user.login == 'app/dependabot'
     runs-on: ubuntu-latest
     steps:
       - name: Retarget Dependabot PR to dev
