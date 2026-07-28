@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   findRolloutForProject,
+  matchNewestOpenCodexRollout,
   matchOpenCodexRollout,
   readCodexModelFromRollout,
 } from "../src/core/agents/codex/codex-rollout.js";
@@ -41,6 +42,35 @@ describe("matchOpenCodexRollout", () => {
 
   it("returns null when no open file is a sessions rollout", () => {
     expect(matchOpenCodexRollout(["/dev/null", "/home/user/projects/demo/notes.jsonl"])).toBeNull();
+  });
+
+  it("returns the newest-mtime rollout when a live codex pid keeps several rollouts open", async () => {
+    const home = fs.mkdtempSync(join(os.tmpdir(), "codex-open-rollout-"));
+    const dir = join(home, "sessions", "2026", "03", "27");
+    fs.mkdirSync(dir, { recursive: true });
+    const stale = writeRollout(
+      dir,
+      "rollout-2026-03-27T10-00-00-11111111-2222-3333-4444-555555555555.jsonl",
+      "11111111-2222-3333-4444-555555555555",
+      CWD,
+      1_000_000,
+    );
+    const current = writeRollout(
+      dir,
+      "rollout-2026-03-27T11-00-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
+      "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      CWD,
+      2_000_000,
+    );
+
+    try {
+      await expect(matchNewestOpenCodexRollout(["/dev/null", stale, current])).resolves.toEqual({
+        path: current,
+        sessionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

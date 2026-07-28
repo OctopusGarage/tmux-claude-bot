@@ -10,7 +10,7 @@ import {
 } from "./core/infra/instance-lock.js";
 import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
 import { startLoopEngineering } from "./core/loop/service.js";
-import { startLoopSupervisor } from "./core/loop/supervisor-session.js";
+import { startLoopSupervisors } from "./core/loop/supervisor-session.js";
 import { startLongTaskMonitor } from "./core/notifications/long-task-monitor.js";
 import { startKeepAwake, stopKeepAwake } from "./core/platform/keep-awake.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
@@ -18,7 +18,9 @@ import { startOperator } from "./core/projects/operator-home.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { autoRecoverOnBoot } from "./core/recovery/recover.js";
 import { startRunningSweep } from "./core/recovery/running-sweep.js";
+import { startSessionIdleReaper } from "./core/recovery/session-idle-reaper.js";
 import { startScheduler } from "./core/scheduler/scheduler-loop.js";
+import { startDailyTaskAudit } from "./core/tasks/daily-audit-service.js";
 import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 
@@ -28,6 +30,7 @@ const AUTO_RECOVER_DELAY_MS = 5000;
 
 const log = createLogger("boot");
 const fatalLog = createLogger("index");
+let shuttingDown = false;
 
 // Refuse to start beside another running instance — two pollers on one
 // Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
@@ -49,9 +52,9 @@ try {
 const deps = bootstrap();
 const { config, currentProject, bridge } = deps;
 
-// Keep the Mac awake (macOS, opt-in) for the bot's lifetime, so a sleeping laptop
-// can't drop it off the phone. In the bot process — not the launchd wrapper — so it
-// covers every launch path identically (dev tsx, managed service, manual run).
+// Keep the Mac awake on AC power (macOS, opt-in) for the bot's lifetime. In the
+// bot process — not the launchd wrapper — so it covers every launch path
+// identically (dev tsx, managed service, manual run).
 startKeepAwake(config.keepAwake);
 
 async function init(): Promise<void> {
@@ -93,10 +96,13 @@ async function init(): Promise<void> {
 // Did the previous run exit cleanly? If not, launchd auto-recovered a crash —
 // the adapters alert the owner once connected. Clean shutdowns clear the marker.
 const recoveredFromCrash = detectUncleanRestart();
-process.once("SIGINT", () => log.info("shutdown signal received", { data: { signal: "SIGINT" } }));
-process.once("SIGTERM", () =>
-  log.info("shutdown signal received", { data: { signal: "SIGTERM" } }),
-);
+function noteShutdownSignal(signal: "SIGINT" | "SIGTERM"): void {
+  shuttingDown = true;
+  log.info("shutdown signal received", { data: { signal } });
+}
+
+process.once("SIGINT", () => noteShutdownSignal("SIGINT"));
+process.once("SIGTERM", () => noteShutdownSignal("SIGTERM"));
 process.once("SIGINT", markCleanShutdown);
 process.once("SIGTERM", markCleanShutdown);
 process.once("SIGINT", releaseInstanceLock);
@@ -105,6 +111,10 @@ process.once("SIGINT", stopKeepAwake);
 process.once("SIGTERM", stopKeepAwake);
 
 process.on("uncaughtException", (err) => {
+  if (shuttingDown && isAbortLikeError(err)) {
+    fatalLog.info(`ignored shutdown abort: ${err.message}`);
+    return;
+  }
   fatalLog.error(`uncaughtException: ${err.stack ?? err.message}`);
   process.exit(1); // launchd restarts → startup flags the unclean exit → owner alert
 });
@@ -113,6 +123,10 @@ process.on("unhandledRejection", (reason) => {
     `unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : reason}`,
   );
 });
+
+function isAbortLikeError(err: unknown): err is Error {
+  return err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"));
+}
 
 // Each adapter is independently optional: Telegram is on when TELEGRAM_BOT_TOKEN is
 // set, Feishu/Lark when LARK_* is configured. LARK_ONLY forces Feishu-only even with
@@ -132,15 +146,15 @@ await init();
 // Keep the reboot-recovery "running sessions" roster in sync with live tmux, so
 // sessions started/exited directly in tmux (outside the bot) are tracked too.
 startRunningSweep(deps, config.runningSweepMs);
+startSessionIdleReaper(deps, config.sessionIdleReaper);
 
 // Start the autopilot background loop (coalesced tick on transcript activity +
 // fallback interval). No-op when AUTOPILOT_TICK_MS=0.
 startAutopilot(deps);
 startScheduler(deps);
 startLoopEngineering(deps, config.loopEngineering);
-startLongTaskMonitor(deps);
 // Boot the background Loop Supervisor session. No-op unless explicitly enabled.
-void startLoopSupervisor(deps);
+void startLoopSupervisors(deps);
 // Boot the home operator session (provision home dir + create session + start agent).
 // Fire-and-forget — must not block boot. No-op when HOME_OPERATOR_ENABLED=false.
 void startOperator(deps);
@@ -158,14 +172,27 @@ if (config.autoRecover) {
 // same bot (one queue, no races). Non-blocking; best-effort.
 startControlServer(deps);
 
+let notificationDrivenServicesStarted = false;
+const startNotificationDrivenServices = (): void => {
+  if (notificationDrivenServicesStarted) return;
+  notificationDrivenServicesStarted = true;
+  startDailyTaskAudit(deps);
+  startLongTaskMonitor(deps);
+};
+
 // Lark connects over a WebSocket (non-blocking); start it first. No-op unless
 // config.lark is set.
 startLark(deps, { recoveredFromCrash });
 
 if (telegramEnabled) {
   // grammy's long-poll loop blocks until the bot is stopped; this runs last.
-  await startTelegram(deps, { recoveredFromCrash });
+  await startTelegram(deps, {
+    recoveredFromCrash,
+    onNotificationsReady: startNotificationDrivenServices,
+  });
+  startNotificationDrivenServices();
 } else {
+  startNotificationDrivenServices();
   // Feishu-only: the Lark WS keeps the process alive. Wire a minimal shutdown.
   log.info("Telegram disabled — running Feishu (Lark) only. Ctrl-C to stop.");
   const stop = (): void => {

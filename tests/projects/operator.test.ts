@@ -4,6 +4,7 @@ import {
   isOperator,
   isReservedInfrastructureSession,
   listUserProjectSessions,
+  loopSupervisorSessionNames,
   operatorSessionName,
   resolveTargetSession,
 } from "../../src/core/projects/operator.js";
@@ -19,7 +20,16 @@ describe("operator identity", () => {
   it("recognizes reserved infrastructure sessions", () => {
     expect(isReservedInfrastructureSession("tmux_proj_home", "tmux_proj_")).toBe(true);
     expect(isReservedInfrastructureSession("tmux_proj_loop-supervisor", "tmux_proj_")).toBe(true);
+    expect(isReservedInfrastructureSession("tmux_proj_loop-supervisor-2", "tmux_proj_")).toBe(true);
     expect(isReservedInfrastructureSession("tmux_proj_free_1", "tmux_proj_")).toBe(false);
+  });
+  it("keeps the legacy supervisor name for a single slot and numbered names for pools", () => {
+    expect(loopSupervisorSessionNames("tmux_proj_", 1)).toEqual(["tmux_proj_loop-supervisor"]);
+    expect(loopSupervisorSessionNames("tmux_proj_", 3)).toEqual([
+      "tmux_proj_loop-supervisor-1",
+      "tmux_proj_loop-supervisor-2",
+      "tmux_proj_loop-supervisor-3",
+    ]);
   });
 });
 
@@ -58,12 +68,14 @@ describe("listUserProjectSessions", () => {
     const deps = fakeDepsFor([
       "tmux_proj_home",
       "tmux_proj_loop-supervisor",
+      "tmux_proj_loop-supervisor-1",
       "tmux_proj_-my-app",
       "tmux_proj_free_1",
     ]);
     const result = await listUserProjectSessions(deps);
     expect(result).not.toContain("tmux_proj_home");
     expect(result).not.toContain("tmux_proj_loop-supervisor");
+    expect(result).not.toContain("tmux_proj_loop-supervisor-1");
     expect(result).toContain("tmux_proj_-my-app");
     expect(result).toContain("tmux_proj_free_1");
   });

@@ -64,6 +64,145 @@ const runnerSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+const pullRequestReviewSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    lookbackHours: z.number().int().positive().default(36),
+    consecutivePasses: z.number().int().positive().default(2),
+    autoMerge: z.boolean().default(false),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({ enabled: false, lookbackHours: 36, consecutivePasses: 2, autoMerge: false });
+
+const bugFixSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    branch: z.string().min(1).optional(),
+    maxRounds: z.number().int().positive().default(3),
+    maxBugsPerRound: z.number().int().positive().default(2),
+    requireRegressionTest: z.boolean().default(true),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({
+    enabled: false,
+    maxRounds: 3,
+    maxBugsPerRound: 2,
+    requireRegressionTest: true,
+  });
+
+const testCoverageSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    branch: z.string().min(1).optional(),
+    targetCoverage: z.number().int().min(0).max(100).default(80),
+    maxRounds: z.number().int().positive().default(5),
+    requireMeaningfulTests: z.boolean().default(true),
+    allowIntegrationTests: z.boolean().default(true),
+    allowSmokeTests: z.boolean().default(true),
+    allowE2ETests: z.boolean().default(true),
+    allowAiEvalTests: z.boolean().default(true),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({
+    enabled: false,
+    targetCoverage: 80,
+    maxRounds: 5,
+    requireMeaningfulTests: true,
+    allowIntegrationTests: true,
+    allowSmokeTests: true,
+    allowE2ETests: true,
+    allowAiEvalTests: true,
+  });
+
+const repositoryPullRequestReviewSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    path: z.string().min(1),
+    repo: z.string().min(1),
+    agent: agentSchema,
+    schedule: z.string().min(1),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    base: z.string().min(1).optional(),
+    switchBack: z.string().min(1).optional(),
+    githubAccount: z.string().min(1).optional(),
+    lookbackHours: z.number().int().positive().default(72),
+    consecutivePasses: z.number().int().positive().default(2),
+    autoMerge: z.boolean().default(false),
+    repair: z
+      .object({
+        enabled: z.boolean().default(true),
+        maxAttempts: z.number().int().min(0).max(3).default(1),
+        prompt: z.string().min(1).optional(),
+      })
+      .strict()
+      .default({ enabled: true, maxAttempts: 1 }),
+    prompt: z.string().min(1).optional(),
+    runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
+  })
+  .strict()
+  .transform((repo) => ({
+    ...repo,
+    switchBack: repo.switchBack ?? repo.base ?? "main",
+  }));
+
+const workspaceRepositorySchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    path: z.string().min(1),
+    role: z.string().min(1),
+    agent: agentSchema.optional(),
+    pullRequest: z
+      .object({
+        enabled: z.boolean().default(false),
+        base: z.string().min(1).default("main"),
+        switchBack: z.string().min(1).default("main"),
+        autoMerge: z.boolean().default(false),
+        githubAccount: z.string().min(1).optional(),
+      })
+      .strict()
+      .default({ enabled: false, base: "main", switchBack: "main", autoMerge: false }),
+  })
+  .strict();
+
+const workspaceArchitectureSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    goal: z.string().min(1),
+    maxRounds: z.number().int().positive().default(3),
+    targetScore: z.number().int().min(0).max(100).default(95),
+    prompt: z.string().min(1).optional(),
+    runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
+  })
+  .strict();
+
+const workspaceSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    root: z.string().min(1),
+    agent: agentSchema,
+    repositories: z.array(workspaceRepositorySchema).min(2),
+    architecture: workspaceArchitectureSchema,
+    allowedActions: z.array(actionSchema).default(["tests", "docs", "small-refactor"]),
+    blockedActions: z
+      .array(actionSchema)
+      .default(["direct-model-api", "dependency-upgrade", "broad-rewrite"]),
+  })
+  .strict();
+
 const projectSchema = z
   .object({
     id: z.string().min(1),
@@ -71,6 +210,7 @@ const projectSchema = z
     path: z.string().min(1),
     agent: agentSchema,
     schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
     goal: z.string().min(1),
     maxRounds: z.number().int().positive(),
     targetScore: z.number().int().min(0).max(100),
@@ -97,6 +237,19 @@ const projectSchema = z
       })
       .strict()
       .default({ enabled: false, perRound: true }),
+    pullRequest: z
+      .object({
+        enabled: z.boolean().default(false),
+        base: z.string().min(1).default("main"),
+        switchBack: z.string().min(1).default("main"),
+        autoMerge: z.boolean().default(false),
+        githubAccount: z.string().min(1).optional(),
+      })
+      .strict()
+      .default({ enabled: false, base: "main", switchBack: "main", autoMerge: false }),
+    bugFix: bugFixSchema,
+    testCoverage: testCoverageSchema,
+    pullRequestReview: pullRequestReviewSchema,
     allowedActions: z.array(actionSchema).default([]),
     blockedActions: z.array(actionSchema).default([]),
     selfImprovement: z
@@ -111,6 +264,41 @@ const projectSchema = z
 
 const loopConfigSchema = z
   .object({
+    scheduler: z
+      .object({
+        jitter: z
+          .object({
+            enabled: z.boolean().default(false),
+            seed: z.string().min(1).default("loop-engineering"),
+            architectureMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            bugFixMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            testCoverageMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            pullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            repositoryPullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+          })
+          .strict()
+          .default({
+            enabled: false,
+            seed: "loop-engineering",
+            architectureMaxDelayMinutes: 0,
+            bugFixMaxDelayMinutes: 0,
+            testCoverageMaxDelayMinutes: 0,
+            pullRequestReviewMaxDelayMinutes: 0,
+            repositoryPullRequestReviewMaxDelayMinutes: 0,
+          }),
+      })
+      .strict()
+      .default({
+        jitter: {
+          enabled: false,
+          seed: "loop-engineering",
+          architectureMaxDelayMinutes: 0,
+          bugFixMaxDelayMinutes: 0,
+          testCoverageMaxDelayMinutes: 0,
+          pullRequestReviewMaxDelayMinutes: 0,
+          repositoryPullRequestReviewMaxDelayMinutes: 0,
+        },
+      }),
     skills: z
       .object({
         applyCommand: z.string().min(1).optional(),
@@ -119,12 +307,21 @@ const loopConfigSchema = z
       })
       .strict()
       .default({ catalog: [], approved: [] }),
-    projects: z.array(projectSchema).min(1),
+    projects: z.array(projectSchema).default([]),
+    workspaces: z.array(workspaceSchema).default([]),
+    prReview: z
+      .object({
+        repositories: z.array(repositoryPullRequestReviewSchema).default([]),
+      })
+      .strict()
+      .default({ repositories: [] }),
   })
   .strict();
 
 export type LoopConfig = z.infer<typeof loopConfigSchema>;
 export type LoopProjectConfig = LoopConfig["projects"][number];
+export type LoopWorkspaceConfig = LoopConfig["workspaces"][number];
+export type LoopRepositoryPullRequestReviewConfig = LoopConfig["prReview"]["repositories"][number];
 
 export type LoopValidationIssue = {
   severity: "error" | "warning";
@@ -137,6 +334,7 @@ export type LoopProjectValidationSummary = {
   id: string;
   name: string;
   scheduled: boolean;
+  scheduledJobs: Array<"architecture" | "bug-fix" | "test-coverage" | "pull-request-review">;
   assessment: { mode: "command" };
   eval: { mode: "command" | "agent" | "none"; minScore: number | null };
   execution: { agent: boolean };
@@ -192,6 +390,13 @@ function isFloatingRef(ref: string): boolean {
 
 function ensurePhaseOneBoundaries(config: LoopConfig): void {
   const errors: string[] = [];
+  if (
+    config.projects.length === 0 &&
+    config.workspaces.length === 0 &&
+    config.prReview.repositories.length === 0
+  ) {
+    errors.push("at least one project, workspace, or prReview repository is required");
+  }
   for (const [index, skill] of config.skills.approved.entries()) {
     if (isFloatingRef(skill.ref)) {
       errors.push(`skills.approved.${index}.ref: floating skill ref "${skill.ref}" is not allowed`);
@@ -201,9 +406,49 @@ function ensurePhaseOneBoundaries(config: LoopConfig): void {
     if (project.assessment.agent === true) {
       errors.push(`projects.${index}.assessment.agent is not implemented in phase one`);
     }
+    if (project.pullRequestReview.enabled) {
+      if (project.pullRequestReview.schedule === undefined) {
+        errors.push(`projects.${index}.pullRequestReview.schedule is required when enabled`);
+      }
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(`projects.${index}.pullRequestReview requires runner.kind=agent-supervised`);
+      }
+      if (!project.pullRequest.enabled) {
+        errors.push(`projects.${index}.pullRequestReview requires pullRequest.enabled=true`);
+      }
+    }
+    if (project.bugFix.enabled) {
+      if (project.bugFix.schedule === undefined) {
+        errors.push(`projects.${index}.bugFix.schedule is required when enabled`);
+      }
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(`projects.${index}.bugFix requires runner.kind=agent-supervised`);
+      }
+    }
+    if (project.testCoverage.enabled) {
+      if (project.testCoverage.schedule === undefined) {
+        errors.push(`projects.${index}.testCoverage.schedule is required when enabled`);
+      }
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(`projects.${index}.testCoverage requires runner.kind=agent-supervised`);
+      }
+    }
     const minScore = project.eval?.minScore;
     if (minScore !== undefined && minScore < project.targetScore) {
       errors.push(`projects.${index}.eval.minScore must be >= targetScore`);
+    }
+  }
+  for (const [index, repo] of config.prReview.repositories.entries()) {
+    if (repo.runner.kind !== "agent-supervised") {
+      errors.push(`prReview.repositories.${index}.runner requires kind=agent-supervised`);
+    }
+  }
+  for (const [index, workspace] of config.workspaces.entries()) {
+    if (workspace.architecture.enabled && workspace.architecture.schedule === undefined) {
+      errors.push(`workspaces.${index}.architecture.schedule is required when enabled`);
+    }
+    if (workspace.architecture.runner.kind !== "agent-supervised") {
+      errors.push(`workspaces.${index}.architecture requires runner.kind=agent-supervised`);
     }
   }
   if (errors.length > 0) throw new Error(`invalid loop config: ${errors.join("; ")}`);
@@ -245,11 +490,24 @@ export function validateLoopConfig(text: string): LoopValidationSummary {
   const config = parseLoopConfigYaml(text);
   const projects = config.projects.map((project): LoopProjectValidationSummary => {
     const issues = projectIssues(project);
+    const scheduledJobs = [
+      ...(project.schedule !== undefined ? (["architecture"] as const) : []),
+      ...(project.bugFix.enabled && project.bugFix.schedule !== undefined
+        ? (["bug-fix"] as const)
+        : []),
+      ...(project.testCoverage.enabled && project.testCoverage.schedule !== undefined
+        ? (["test-coverage"] as const)
+        : []),
+      ...(project.pullRequestReview.enabled && project.pullRequestReview.schedule !== undefined
+        ? (["pull-request-review"] as const)
+        : []),
+    ];
     const errorCount = issues.filter((issue) => issue.severity === "error").length;
     return {
       id: project.id,
       name: project.name,
-      scheduled: project.schedule !== undefined,
+      scheduled: scheduledJobs.length > 0,
+      scheduledJobs,
       assessment: { mode: "command" },
       eval:
         project.eval?.command !== undefined

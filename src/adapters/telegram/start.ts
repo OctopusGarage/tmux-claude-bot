@@ -45,7 +45,7 @@ export function isFatalPollingError(err: unknown): boolean {
 
 export async function startTelegram(
   deps: HandlerDeps,
-  opts: { recoveredFromCrash?: boolean } = {},
+  opts: { recoveredFromCrash?: boolean; onNotificationsReady?: () => void } = {},
 ): Promise<void> {
   const { config, queue } = deps;
 
@@ -239,6 +239,7 @@ export async function startTelegram(
   deps.channelSenders.register("telegram", (chatId, filePath, kind, caption) =>
     sendTelegramAttachment(bot.api, chatId, filePath, kind, caption),
   );
+  opts.onNotificationsReady?.();
 
   // grammy's long-poll loop blocks until the bot is stopped. Through a flaky
   // proxy, getUpdates fails transiently — most often a 409 when a previous
@@ -260,7 +261,12 @@ export async function startTelegram(
       });
       return; // resolved → bot.stop() was called (clean shutdown)
     } catch (err) {
-      if (stopping) throw err; // clean-shutdown path
+      if (stopping) {
+        log.info(
+          `Telegram polling stopped after shutdown request: ${err instanceof Error ? err.message : err}`,
+        );
+        return;
+      }
       if (isFatalPollingError(err)) {
         // A revoked/invalid token can't be retried away. Stop Telegram but keep
         // the process alive — Lark / TUI / CLI must not die with it.

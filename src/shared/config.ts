@@ -74,12 +74,17 @@ export const envSchema = z.object({
   // against live tmux, so sessions started/exited directly in tmux (bypassing the
   // bot) are tracked too. Default 5 min; 0 disables the sweep.
   RUNNING_SWEEP_MS: blankTolerantNonNegativeInt(300000),
+  // How often to close long-idle project agents. Only exits the agent process and
+  // keeps tmux/project state so the next use can resume. 0 disables.
+  SESSION_IDLE_REAPER_TICK_MS: blankTolerantNonNegativeInt(3_600_000),
+  // Close agents unused for this long. Default 3 days. 0 disables.
+  SESSION_IDLE_REAPER_MAX_IDLE_MS: blankTolerantNonNegativeInt(259_200_000),
   // Automatically run reboot recovery on boot (no /recover needed). Idempotent —
   // a no-op when tmux survived a mere bot restart (everything's already alive),
   // does real work only after a machine reboot. Set to false/0 to disable.
   AUTO_RECOVER: z.string().default("true"),
-  // macOS: keep the Mac awake (caffeinate) while the bot runs so a sleeping
-  // laptop can't drop it off the phone. Opt-in; set by the setup wizard.
+  // macOS: keep the Mac awake on AC power while the bot runs so a plugged-in
+  // laptop stays reachable from the phone. Opt-in; set by the setup wizard.
   TCB_KEEP_AWAKE: z.string().default("0"),
   LARK_ENABLED: z.string().default("false"),
   LARK_APP_ID: z.string().default(""),
@@ -152,6 +157,16 @@ export const envSchema = z.object({
   AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
   AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
   AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
+  // --- Daily scheduled task audit. TASK_AUDIT_TICK_MS=0 disables the loop. ---
+  TASK_AUDIT_ENABLED: blankTolerantString("false"),
+  TASK_AUDIT_SCHEDULE: blankTolerantString("0 2 * * *"),
+  TASK_AUDIT_TICK_MS: blankTolerantNonNegativeInt(300000),
+  TASK_AUDIT_CHANNEL: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["telegram", "lark", "both"]).default("both"),
+  ),
+  TASK_AUDIT_AUTO_REPAIR: blankTolerantString("false"),
+  TASK_AUDIT_REPAIR_BRANCH: blankTolerantString("dev"),
   // --- Loop Engineering. Blank config file or tick 0 disables the managed loop. ---
   LOOP_ENGINEERING_CONFIG_FILE: z.string().default(""),
   LOOP_ENGINEERING_TICK_MS: blankTolerantNonNegativeInt(300000),
@@ -160,6 +175,11 @@ export const envSchema = z.object({
   LOOP_SUPERVISOR_AGENT: z.preprocess(
     (v) => (v === "" ? undefined : v),
     z.enum(["claude", "codex"]).default("codex"),
+  ),
+  LOOP_SUPERVISOR_POOL_SIZE: blankTolerantPositiveInt(1),
+  LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["none", "compact", "clear"]).default("clear"),
   ),
   // --- Home operator session ---
   HOME_OPERATOR_ENABLED: blankTolerantString("false"),
@@ -335,6 +355,10 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
     telegramHttpProxy,
     telegramLongpollTimeoutSec: parsed.TELEGRAM_LONGPOLL_TIMEOUT_SEC,
     runningSweepMs: parsed.RUNNING_SWEEP_MS,
+    sessionIdleReaper: {
+      tickMs: parsed.SESSION_IDLE_REAPER_TICK_MS,
+      maxIdleMs: parsed.SESSION_IDLE_REAPER_MAX_IDLE_MS,
+    },
     autoRecover: parsed.AUTO_RECOVER !== "false" && parsed.AUTO_RECOVER !== "0",
     keepAwake: parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true",
     lark,
@@ -373,6 +397,15 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       quotaPct: parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
       reprobeMs: parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
     },
+    taskAudit: {
+      enabled: parsed.TASK_AUDIT_ENABLED !== "false" && parsed.TASK_AUDIT_ENABLED !== "0",
+      schedule: parsed.TASK_AUDIT_SCHEDULE,
+      tickMs: parsed.TASK_AUDIT_TICK_MS,
+      channel: parsed.TASK_AUDIT_CHANNEL,
+      autoRepair:
+        parsed.TASK_AUDIT_AUTO_REPAIR !== "false" && parsed.TASK_AUDIT_AUTO_REPAIR !== "0",
+      repairBranch: parsed.TASK_AUDIT_REPAIR_BRANCH,
+    },
     loopEngineering: {
       configFile: parsed.LOOP_ENGINEERING_CONFIG_FILE.trim(),
       tickMs: parsed.LOOP_ENGINEERING_TICK_MS,
@@ -381,6 +414,8 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
           parsed.LOOP_SUPERVISOR_ENABLED !== "false" && parsed.LOOP_SUPERVISOR_ENABLED !== "0",
         dir: parsed.LOOP_SUPERVISOR_DIR,
         agent: parsed.LOOP_SUPERVISOR_AGENT,
+        poolSize: parsed.LOOP_SUPERVISOR_POOL_SIZE,
+        resetBeforeWorkOrder: parsed.LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER,
       },
     },
     homeOperator: {

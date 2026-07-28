@@ -7,6 +7,7 @@ import type { AutopilotState } from "../autopilot/types.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
+import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import { accountQuotaHit, pausePool, resumeAtFrom, resumePool } from "./quota.js";
 import { renderSummary } from "./report.js";
 import { resumeUngatedTasks } from "./resume.js";
@@ -57,6 +58,7 @@ export type TickCtx = {
    * here, de-duped by runId, covers both paths. Optional: tests without it are
    * unaffected. */
   announceRun?: (run: Run) => void;
+  taskLedger?: DailyTaskLedger;
 };
 
 /** Bug #1/#9 fix: derive the pool `paused` flags PURELY from the run, every tick.
@@ -216,6 +218,7 @@ export async function schedulerTick(ctx: TickCtx): Promise<void> {
         ? ctx.now
         : (nextFire(due.schedule, ctx.lastFired[due.id] ?? 0) ?? ctx.now);
     run = materializeRun(due, `run-${ctx.now}`, ctx.now);
+    recordBatchRunStarted(ctx, due, run);
     // Bug #1/#9: a freshly-materialized run has no paused-quota tasks → no paused
     // pools; re-derive so a just-cleared agent doesn't carry a stale flag.
     pools = derivePools(pools, run, ctx.now);
@@ -333,10 +336,55 @@ function finalizeRun(ctx: TickCtx, run: Run, pools: Record<string, PoolState>): 
     }
   }
   const done: Run = { ...run, status: "done", endedAt: ctx.now };
+  recordBatchRunCompleted(ctx, done);
   log.info("scheduler run complete", { data: { plan: done.planId } });
   ctx.notify({ kind: "batchRunComplete", runId: done.runId, summary: renderSummary(done) });
   ctx.lastFired[done.planId] = ctx.now;
   ctx.save(undefined, pools);
+}
+
+function batchTaskId(run: Run): string {
+  return `batch:${run.planId}:${run.runId}`;
+}
+
+function recordBatchRunStarted(ctx: TickCtx, plan: Plan, run: Run): void {
+  const ledger = ctx.taskLedger;
+  if (!ledger) return;
+  const taskId = batchTaskId(run);
+  ledger.expect({
+    taskId,
+    source: "batch-scheduler",
+    name: plan.name || plan.id,
+    scheduledAt: run.startedAt,
+    summary: `${run.tasks.length} task(s)`,
+  });
+  ledger.start(taskId, run.startedAt);
+}
+
+function recordBatchRunCompleted(ctx: TickCtx, run: Run): void {
+  const ledger = ctx.taskLedger;
+  if (!ledger) return;
+  const taskId = batchTaskId(run);
+  const plan = ctx.plans.find((candidate) => candidate.id === run.planId);
+  ledger.expect({
+    taskId,
+    source: "batch-scheduler",
+    name: plan?.name || run.planId,
+    scheduledAt: run.startedAt,
+    summary: `${run.tasks.length} task(s)`,
+  });
+  if (run.tasks.some((task) => task.status === "failed")) {
+    ledger.fail(taskId, {
+      endedAt: run.endedAt ?? ctx.now,
+      error: "one or more batch tasks failed",
+      summary: renderSummary(run),
+    });
+  } else {
+    ledger.finish(taskId, {
+      endedAt: run.endedAt ?? ctx.now,
+      summary: renderSummary(run),
+    });
+  }
 }
 
 /** Start the live scheduler loop + notifier subscription. Returns a stop fn. */
@@ -347,6 +395,7 @@ export function startScheduler(deps: HandlerDeps): () => void {
     return () => {};
   }
   const store = new SchedulerStore();
+  const taskLedger = new DailyTaskLedger();
   const autopilot = new AutopilotStore();
   const quotaPct = deps.config.scheduler.quotaPct;
   const reprobeMs = deps.config.scheduler.reprobeMs;
@@ -443,6 +492,7 @@ export function startScheduler(deps: HandlerDeps): () => void {
       getActiveRun: () => store.getActiveRun(),
       // Bug #3 fix: announce a newly-active run once (scheduled OR manual start).
       announceRun,
+      taskLedger,
     })
       .catch((err) => log.warn("scheduler tick failed", { err }))
       .finally(() => {

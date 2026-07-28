@@ -101,6 +101,24 @@ printf '%s\n' "line 1" "line 2" | tcb notify --title "Nightly report" --stdin
 `tcb notify` uses the existing local control socket, targets the configured owner
 recipient(s), and does not subscribe the caller to incoming chat messages.
 
+## Local Scheduled Task Reporting
+
+External cron jobs, launchd jobs, article monitors, and radar monitors can report
+their run result into the shared daily task ledger:
+
+```bash
+tcb task report --id "radar:daily:2026-07-27" --source radar-monitor \
+  --name "daily radar monitor" --scheduled-at "2026-07-27T03:00:00Z" \
+  --status failed --error "report file was not generated"
+```
+
+The daily audit service actively discovers tmux-claude-bot-owned launchd jobs
+and loop-engineering schedules, merges that expected-task list with this ledger
+for the previous Singapore day, notifies Telegram/Feishu with the success and
+failure list, then queues agent-supervised repair for failed, missing, or
+timed-out tasks when auto-repair is enabled. External scheduled systems should
+use `tcb task report` from their own scheduler or status exporter.
+
 Button and TUI shortcuts ask for confirmation before `exit`, `restart`, `clear`, or
 `compact`. Known typed slash commands are treated as explicit bot intent and run
 directly. Unknown slash-prefixed text is forwarded to the running agent, so agent

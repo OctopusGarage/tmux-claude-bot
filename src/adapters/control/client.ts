@@ -3,9 +3,10 @@ import net from "node:net";
 import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import type { DashboardSnapshot } from "../../core/dashboard/dashboard.js";
 import type { NotificationRequest } from "../../core/notifications/gateway.js";
+import type { AgentKind } from "../../shared/types.js";
 import {
   type ControlRequest,
-  controlSocketPath,
+  controlSocketCandidatePaths,
   createLineDecoder,
   encodeLine,
   type NotifyControlResponse,
@@ -20,6 +21,24 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 
 const RECONNECT_MS = 1000;
+
+function connectSocket(paths = controlSocketCandidatePaths()): Promise<net.Socket> {
+  const [path, ...rest] = paths;
+  if (!path) return Promise.reject(new Error("no control socket path configured"));
+  return new Promise((resolve, reject) => {
+    const conn = net.createConnection(path);
+    conn.setEncoding("utf8");
+    conn.once("error", (err) => {
+      conn.destroy();
+      if (rest.length === 0) reject(err);
+      else connectSocket(rest).then(resolve, reject);
+    });
+    conn.once("connect", () => {
+      conn.removeAllListeners("error");
+      resolve(conn);
+    });
+  });
+}
 
 /**
  * TUI-side client of the bot's control socket. Request/response is promise-based
@@ -36,14 +55,12 @@ export class ControlClient extends EventEmitter {
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const conn = net.createConnection(controlSocketPath());
-      conn.setEncoding("utf8");
-      conn.once("error", reject); // pre-connect failure → bot not running
-      conn.once("connect", () => {
-        conn.removeListener("error", reject);
-        this.wire(conn);
-        resolve();
-      });
+      connectSocket()
+        .then((conn) => {
+          this.wire(conn);
+          resolve();
+        })
+        .catch(reject);
     });
   }
 
@@ -63,17 +80,13 @@ export class ControlClient extends EventEmitter {
   private scheduleReconnect(): void {
     const attempt = (): void => {
       if (this.closing) return;
-      const conn = net.createConnection(controlSocketPath());
-      conn.setEncoding("utf8");
-      conn.once("error", () =>
-        (setTimeout(attempt, RECONNECT_MS) as { unref?: () => void }).unref?.(),
-      );
-      conn.once("connect", () => {
-        conn.removeAllListeners("error");
-        this.decode = createLineDecoder<ServerMessage>();
-        this.wire(conn);
-        this.emit("reconnected");
-      });
+      connectSocket()
+        .then((conn) => {
+          this.decode = createLineDecoder<ServerMessage>();
+          this.wire(conn);
+          this.emit("reconnected");
+        })
+        .catch(() => (setTimeout(attempt, RECONNECT_MS) as { unref?: () => void }).unref?.());
     };
     (setTimeout(attempt, RECONNECT_MS) as { unref?: () => void }).unref?.();
   }
@@ -121,8 +134,11 @@ export class ControlClient extends EventEmitter {
       { sid: string; label: string; alive: boolean; active: boolean }[]
     >;
   }
-  open(sid: string): Promise<{ status: string; session?: string; started?: string }> {
-    return this.req({ op: "open", sid }) as Promise<{
+  open(
+    sid: string,
+    opts: { agent?: AgentKind } = {},
+  ): Promise<{ status: string; session?: string; started?: string }> {
+    return this.req({ op: "open", sid, ...opts }) as Promise<{
       status: string;
       session?: string;
       started?: string;
@@ -130,7 +146,10 @@ export class ControlClient extends EventEmitter {
   }
   /** Start (or switch to) a project by filesystem PATH — for a path the bot does
    * not yet know as a project. Parity with the chat /add_project flow. */
-  openPath(path: string): Promise<{
+  openPath(
+    path: string,
+    opts: { agent?: AgentKind } = {},
+  ): Promise<{
     status: string;
     session?: string;
     started?: string;
@@ -138,7 +157,7 @@ export class ControlClient extends EventEmitter {
     resolvedPath?: string;
     message?: string;
   }> {
-    return this.req({ op: "openPath", path }) as Promise<{
+    return this.req({ op: "openPath", path, ...opts }) as Promise<{
       status: string;
       session?: string;
       started?: string;

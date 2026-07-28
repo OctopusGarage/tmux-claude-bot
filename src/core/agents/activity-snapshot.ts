@@ -16,6 +16,7 @@ export type AgentActivitySnapshot = {
   running: boolean;
   busy: boolean;
   queueBusy: boolean;
+  transcriptLastActivityAt: number | null;
   transcriptBusy: boolean;
   paneAnimating: boolean;
   pathDrifted: boolean;
@@ -30,8 +31,10 @@ export type AgentActivitySnapshotOptions = Pick<
   | "boundPath"
   | "now"
   | "activityWindowMs"
+  | "includeCurrentTurn"
   | "paneDiffMs"
   | "includeQueue"
+  | "includeTranscript"
   | "includePaneAnimation"
   | "includePathDrift"
   | "includeUsage"
@@ -55,11 +58,13 @@ export async function readAgentActivitySnapshot(
   const telemetryOpts: SessionTelemetryOptions = {
     now,
     activityWindowMs: opts.activityWindowMs ?? SESSION_ACTIVITY_WINDOW_MS,
-    includeCurrentTurn: true,
+    includeCurrentTurn: opts.includeCurrentTurn ?? true,
   };
   if (opts.boundPath !== undefined) telemetryOpts.boundPath = opts.boundPath;
   if (opts.paneDiffMs !== undefined) telemetryOpts.paneDiffMs = opts.paneDiffMs;
   if (opts.includeQueue !== undefined) telemetryOpts.includeQueue = opts.includeQueue;
+  if (opts.includeTranscript !== undefined)
+    telemetryOpts.includeTranscript = opts.includeTranscript;
   if (opts.includePaneAnimation !== undefined)
     telemetryOpts.includePaneAnimation = opts.includePaneAnimation;
   if (opts.includePathDrift !== undefined) telemetryOpts.includePathDrift = opts.includePathDrift;
@@ -94,6 +99,7 @@ export async function readAgentActivitySnapshot(
     running: telemetry.agentRunning,
     busy,
     queueBusy: telemetry.queueBusy,
+    transcriptLastActivityAt: telemetry.transcriptLastActivityAt,
     transcriptBusy: telemetry.transcriptBusy,
     paneAnimating: telemetry.paneAnimating,
     pathDrifted: telemetry.pathDrifted,

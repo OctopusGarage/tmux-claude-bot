@@ -1,6 +1,7 @@
 import type { PersistedMessage, QueuedMessage } from "../command/queue.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import { completeLoopSupervisorRun } from "./supervisor-completion.js";
+import { workOrderStateForResult, writeLoopSupervisorWorkOrderState } from "./supervisor-state.js";
 import {
   type LoopSupervisorFinalSummary,
   type LoopWorkOrder,
@@ -46,6 +47,13 @@ export function restoredLoopSupervisorMessage(
     transform: persisted.transform,
     traceId: persisted.traceId,
     controlRestore: persisted.controlRestore,
+    started: () =>
+      writeLoopSupervisorWorkOrderState({
+        workOrder: restore.workOrder,
+        supervisorSession: restore.supervisorSession,
+        status: "in-flight",
+        now: opts.now?.() ?? Date.now(),
+      }),
     resolve: (output) => completeRestoredSupervisorWork(restore, output, opts.now),
     reject: (err) => failRestoredSupervisorWork(restore, err, opts.now),
   };
@@ -122,12 +130,20 @@ function writeRestoredSupervisorReport(
   result: LoopSupervisedRunResult,
   now: (() => number) | undefined,
 ): void {
+  const endedAt = now?.() ?? Date.now();
   completeLoopSupervisorRun({
     workOrder: restore.workOrder,
     supervisorSession: restore.supervisorSession,
     startedAt: restore.queuedAt,
-    endedAt: now?.() ?? Date.now(),
+    endedAt,
     result,
+  });
+  writeLoopSupervisorWorkOrderState({
+    workOrder: restore.workOrder,
+    supervisorSession: restore.supervisorSession,
+    status: workOrderStateForResult(result),
+    now: endedAt,
+    resultStatus: result.status,
   });
 }
 

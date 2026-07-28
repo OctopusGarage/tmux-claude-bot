@@ -43,14 +43,14 @@ describe("keep-awake", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it("spawns caffeinate -i -s -w <pid> once on macOS when enabled", () => {
+  it("spawns caffeinate -s -w <pid> once on macOS when enabled", () => {
     setPlatform("darwin");
     startKeepAwake(true);
     startKeepAwake(true); // already running -> no second process
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(spawnMock).toHaveBeenCalledWith(
       "caffeinate",
-      ["-i", "-s", "-w", String(process.pid)],
+      ["-s", "-w", String(process.pid)],
       expect.anything(),
     );
   });

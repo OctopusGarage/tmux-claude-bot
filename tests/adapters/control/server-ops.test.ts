@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlClient } from "../../../src/adapters/control/client.js";
 import { startControlServer } from "../../../src/adapters/control/server.js";
 import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
+import { performStart } from "../../../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 
@@ -80,7 +81,14 @@ function fakeDeps(
 ): HandlerDeps {
   return {
     bridge: { capturePaneColored: async (s: string) => `PANE for ${s}` },
-    config: { projectSessionPrefix: prefix },
+    config: {
+      projectSessionPrefix: prefix,
+      claudeStartCommand: "claude",
+      startCommands: [
+        { label: "Claude", command: "claude", agent: "claude" },
+        { label: "Codex", command: "codex", agent: "codex" },
+      ],
+    },
     queue: {
       enqueue:
         enqueue ??
@@ -109,6 +117,7 @@ describe("control server op dispatch (real unix socket)", () => {
   let client: ControlClient;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     dir = mkdtempSync(join(tmpdir(), "tcb-ctlops-"));
     process.env.TCB_STATE_DIR = dir;
     h.openResult = { status: "switched", sessionName: "sOpen" };
@@ -201,6 +210,9 @@ describe("control server op dispatch (real unix socket)", () => {
     const c = await connected();
     const switched = await c.open("p1");
     expect(switched).toMatchObject({ status: "switched", session: "sOpen", started: "running" });
+    expect(performStart).toHaveBeenLastCalledWith(expect.anything(), "sOpen", undefined);
+    await c.open("p1", { agent: "codex" });
+    expect(performStart).toHaveBeenLastCalledWith(expect.anything(), "sOpen", "codex");
     h.openResult = { status: "not-found" };
     expect(await c.open("nope")).toEqual({ status: "not-found" });
   });
@@ -209,6 +221,8 @@ describe("control server op dispatch (real unix socket)", () => {
     const c = await connected();
     const created = await c.openPath("/some/dir");
     expect(created).toMatchObject({ status: "created", session: "sNew", started: "running" });
+    await c.openPath("/some/dir", { agent: "claude" });
+    expect(performStart).toHaveBeenLastCalledWith(expect.anything(), "sNew", "claude");
     h.openPathResult = { status: "invalid", error: "not-allowed", resolvedPath: "/x" };
     expect(await c.openPath("/x")).toEqual({
       status: "invalid",

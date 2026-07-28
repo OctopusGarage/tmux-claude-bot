@@ -1,0 +1,629 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
+import { appStateDir } from "../../shared/state-dir.js";
+import type { LoopConfig } from "../loop/config.js";
+import { parseLoopConfigYaml } from "../loop/config.js";
+import {
+  type LoopJitterJobKind,
+  loopScheduleJitterMaxMs,
+  loopScheduleJitterMs,
+} from "../loop/schedule-jitter.js";
+import { nextFire } from "../scheduler/scheduling.js";
+import type { ScheduledTaskRecord, TaskWindow } from "./task-ledger.js";
+
+type LoopDiscoveredJobKind = LoopJitterJobKind;
+
+type LaunchdPlist = {
+  label: string;
+  scheduled: boolean;
+  stdoutPath?: string;
+  stderrPath?: string;
+};
+
+export function mergeDiscoveredTaskRecords(
+  ledgerRecords: ScheduledTaskRecord[],
+  discoveredRecords: ScheduledTaskRecord[],
+): ScheduledTaskRecord[] {
+  const merged = new Map<string, ScheduledTaskRecord>();
+  for (const record of discoveredRecords) merged.set(record.taskId, record);
+  for (const record of ledgerRecords) merged.set(record.taskId, record);
+  return [...merged.values()].sort(
+    (a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId),
+  );
+}
+
+export function discoverLaunchdScheduledTasks(input: {
+  window: TaskWindow;
+  now: number;
+  dirs?: string[];
+  fileTime?: (path: string) => number | null;
+  launchctlState?: (label: string) => string | null;
+  includeLabel?: (label: string) => boolean;
+}): ScheduledTaskRecord[] {
+  const dirs = input.dirs ?? [join(homedir(), "Library", "LaunchAgents")];
+  const fileTime = input.fileTime ?? defaultFileTime;
+  const launchctlState = input.launchctlState ?? defaultLaunchctlState;
+  const records: ScheduledTaskRecord[] = [];
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".plist")) continue;
+      const plist = parseLaunchdPlist(join(dir, name));
+      if (!plist?.scheduled) continue;
+      if (input.includeLabel && !input.includeLabel(plist.label)) continue;
+      records.push(recordForLaunchdPlist(plist, input.window, input.now, fileTime, launchctlState));
+    }
+  }
+  return records.sort((a, b) => a.taskId.localeCompare(b.taskId));
+}
+
+export function discoverLoopEngineeringScheduledTasks(input: {
+  window: TaskWindow;
+  now: number;
+  configFile?: string;
+  loopRunsDir?: string;
+}): ScheduledTaskRecord[] {
+  const configFile = input.configFile?.trim();
+  if (!configFile) return [];
+  let config: ReturnType<typeof parseLoopConfigYaml>;
+  try {
+    config = parseLoopConfigYaml(readFileSync(configFile, "utf8"));
+  } catch {
+    return [];
+  }
+  const records: ScheduledTaskRecord[] = [];
+  for (const project of config.projects) {
+    records.push(
+      ...loopScheduleRecords({
+        projectId: project.id,
+        jobKey: project.id,
+        jobKind: "architecture",
+        schedule: project.schedule,
+        config,
+        window: input.window,
+        now: input.now,
+        ...(project.scheduleJitterMinutes !== undefined
+          ? { scheduleJitterMinutes: project.scheduleJitterMinutes }
+          : {}),
+        ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+      }),
+    );
+    if (project.bugFix.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: project.id,
+          jobKey: `${project.id}:bug-fix`,
+          jobKind: "bug-fix",
+          schedule: project.bugFix.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(project.bugFix.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: project.bugFix.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (project.testCoverage.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: project.id,
+          jobKey: `${project.id}:test-coverage`,
+          jobKind: "test-coverage",
+          schedule: project.testCoverage.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(project.testCoverage.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: project.testCoverage.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (project.pullRequestReview.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: project.id,
+          jobKey: `${project.id}:pull-request-review`,
+          jobKind: "pull-request-review",
+          schedule: project.pullRequestReview.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(project.pullRequestReview.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: project.pullRequestReview.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+  }
+  for (const repository of config.prReview.repositories) {
+    records.push(
+      ...loopScheduleRecords({
+        projectId: repository.id,
+        jobKey: `pr-review:${repository.id}`,
+        jobKind: "repository-pull-request-review",
+        schedule: repository.schedule,
+        config,
+        window: input.window,
+        now: input.now,
+        ...(repository.scheduleJitterMinutes !== undefined
+          ? { scheduleJitterMinutes: repository.scheduleJitterMinutes }
+          : {}),
+        ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+      }),
+    );
+  }
+  for (const workspace of config.workspaces) {
+    records.push(
+      ...loopScheduleRecords({
+        projectId: workspace.id,
+        jobKey: `workspace:${workspace.id}:architecture`,
+        jobKind: "workspace-architecture",
+        schedule: workspace.architecture.enabled ? workspace.architecture.schedule : undefined,
+        config,
+        window: input.window,
+        now: input.now,
+        ...(workspace.architecture.scheduleJitterMinutes !== undefined
+          ? { scheduleJitterMinutes: workspace.architecture.scheduleJitterMinutes }
+          : {}),
+        ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+      }),
+    );
+  }
+  return records.sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
+}
+
+function loopScheduleRecords(input: {
+  projectId: string;
+  jobKey: string;
+  jobKind: LoopDiscoveredJobKind;
+  schedule: string | undefined;
+  scheduleJitterMinutes?: number;
+  config: LoopConfig;
+  window: TaskWindow;
+  now: number;
+  loopRunsDir?: string;
+}): ScheduledTaskRecord[] {
+  if (input.schedule === undefined) return [];
+  const records: ScheduledTaskRecord[] = [];
+  let after =
+    input.window.start -
+    1 -
+    loopScheduleJitterMaxMs({
+      config: input.config,
+      jobKind: input.jobKind,
+      ...(input.scheduleJitterMinutes !== undefined
+        ? { scheduleJitterMinutes: input.scheduleJitterMinutes }
+        : {}),
+    });
+  for (;;) {
+    const scheduledAt = nextFire({ kind: "cron", cron: input.schedule }, after);
+    if (scheduledAt === null || scheduledAt >= input.window.end || scheduledAt > input.now) break;
+    const jitterMs = loopScheduleJitterMs({
+      config: input.config,
+      jobKey: input.jobKey,
+      jobKind: input.jobKind,
+      scheduledAt,
+      ...(input.scheduleJitterMinutes !== undefined
+        ? { scheduleJitterMinutes: input.scheduleJitterMinutes }
+        : {}),
+    });
+    const effectiveAt = scheduledAt + jitterMs;
+    if (
+      effectiveAt < input.window.start ||
+      effectiveAt >= input.window.end ||
+      effectiveAt > input.now
+    ) {
+      after = scheduledAt;
+      continue;
+    }
+    const taskId = `loop:${input.jobKey}:${scheduledAt}`;
+    const artifactRecord = recordForLoopRunArtifact({
+      projectId: input.projectId,
+      jobKind: input.jobKind,
+      jobKey: input.jobKey,
+      scheduledAt,
+      taskId,
+      now: input.now,
+      ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+    });
+    if (artifactRecord !== null) {
+      records.push(artifactRecord);
+      after = scheduledAt;
+      continue;
+    }
+    records.push({
+      taskId,
+      source: "loop-engineering",
+      name: `${input.projectId} ${input.jobKind}`,
+      scheduledAt,
+      status: "expected",
+      summary: "loop-engineering schedule discovered; no explicit run record was found yet",
+      updatedAt: input.now,
+    });
+    after = scheduledAt;
+  }
+  return records;
+}
+
+function recordForLoopRunArtifact(input: {
+  projectId: string;
+  jobKey: string;
+  jobKind: LoopDiscoveredJobKind;
+  scheduledAt: number;
+  taskId: string;
+  now: number;
+  loopRunsDir?: string;
+}): ScheduledTaskRecord | null {
+  const runId = loopRunId(input.scheduledAt, input.projectId, input.jobKind);
+  const runDir = join(
+    input.loopRunsDir ?? join(appStateDir(), "loop-runs"),
+    input.projectId,
+    runId,
+  );
+  const latestSuccess = latestSuccessfulLoopRunAfter({
+    projectId: input.projectId,
+    jobKind: input.jobKind,
+    scheduledAt: input.scheduledAt,
+    now: input.now,
+    ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+  });
+  const finalSummaryPath = join(runDir, "supervisor-final-summary.json");
+  const finalSummary = readJsonRecord(finalSummaryPath);
+  if (finalSummary !== null) {
+    return withLaterSuccessResolution(
+      recordForSupervisorFinalSummary({
+        ...input,
+        path: finalSummaryPath,
+        summary: finalSummary,
+      }),
+      latestSuccess,
+    );
+  }
+
+  const supervisorSummaryPath = join(runDir, "supervisor-summary.json");
+  const supervisorSummary = readJsonRecord(supervisorSummaryPath);
+  if (supervisorSummary !== null) {
+    return withLaterSuccessResolution(
+      recordForSupervisorSummary({
+        ...input,
+        runDir,
+        path: supervisorSummaryPath,
+        summary: supervisorSummary,
+      }),
+      latestSuccess,
+    );
+  }
+
+  return null;
+}
+
+function latestSuccessfulLoopRunAfter(input: {
+  projectId: string;
+  jobKind: LoopDiscoveredJobKind;
+  scheduledAt: number;
+  now: number;
+  loopRunsDir?: string;
+}): { scheduledAt: number; path: string } | null {
+  const root = join(input.loopRunsDir ?? join(appStateDir(), "loop-runs"), input.projectId);
+  if (!existsSync(root)) return null;
+  let latest: { scheduledAt: number; path: string } | null = null;
+  for (const name of readdirSync(root)) {
+    const match = loopRunDirMatch(name, input.projectId, input.jobKind);
+    if (match === null || match.scheduledAt <= input.scheduledAt || match.scheduledAt > input.now) {
+      continue;
+    }
+    const finalSummaryPath = join(root, name, "supervisor-final-summary.json");
+    const finalSummary = readJsonRecord(finalSummaryPath);
+    if (finalSummary?.status !== "completed") continue;
+    if (latest === null || match.scheduledAt > latest.scheduledAt) {
+      latest = { scheduledAt: match.scheduledAt, path: finalSummaryPath };
+    }
+  }
+  return latest;
+}
+
+function loopRunDirMatch(
+  name: string,
+  projectId: string,
+  jobKind: LoopDiscoveredJobKind,
+): { scheduledAt: number } | null {
+  const suffix = loopRunSuffix(projectId, jobKind);
+  if (!name.endsWith(suffix)) return null;
+  const raw = name.slice(0, -suffix.length);
+  if (!/^\d+$/.test(raw)) return null;
+  return { scheduledAt: Number(raw) };
+}
+
+function loopRunId(scheduledAt: number, projectId: string, jobKind: LoopDiscoveredJobKind): string {
+  return `${scheduledAt}${loopRunSuffix(projectId, jobKind)}`;
+}
+
+function loopRunSuffix(projectId: string, jobKind: LoopDiscoveredJobKind): string {
+  if (jobKind === "architecture") return `-${projectId}`;
+  if (jobKind === "workspace-architecture") return `-${projectId}-workspace`;
+  if (jobKind === "bug-fix") return `-${projectId}-bug-fix`;
+  if (jobKind === "test-coverage") return `-${projectId}-test-coverage`;
+  if (jobKind === "repository-pull-request-review") return `-${projectId}-repo-pr-review`;
+  return `-${projectId}-pr-review`;
+}
+
+function withLaterSuccessResolution(
+  record: ScheduledTaskRecord,
+  laterSuccess: { scheduledAt: number; path: string } | null,
+): ScheduledTaskRecord {
+  if (
+    laterSuccess === null ||
+    (record.status !== "failed" &&
+      record.status !== "running-timeout" &&
+      record.status !== "missing")
+  ) {
+    return record;
+  }
+  return {
+    ...record,
+    repairStatus: "fixed",
+    summary: [
+      record.summary,
+      `Superseded by later successful loop run at ${new Date(laterSuccess.scheduledAt).toISOString()}.`,
+    ]
+      .filter((part): part is string => typeof part === "string" && part.length > 0)
+      .join(" "),
+    reportPath: record.reportPath ?? laterSuccess.path,
+  };
+}
+
+function recordForSupervisorFinalSummary(input: {
+  projectId: string;
+  jobKind: LoopDiscoveredJobKind;
+  scheduledAt: number;
+  taskId: string;
+  now: number;
+  path: string;
+  summary: Record<string, unknown>;
+}): ScheduledTaskRecord {
+  const status = typeof input.summary.status === "string" ? input.summary.status : "unknown";
+  const summaryText =
+    parseFirstString(input.summary.actionsTaken) ?? `final summary status ${status}`;
+  if (status === "completed") {
+    return {
+      taskId: input.taskId,
+      source: "loop-engineering",
+      name: `${input.projectId} ${input.jobKind}`,
+      scheduledAt: input.scheduledAt,
+      status: "success",
+      summary: summaryText,
+      reportPath: input.path,
+      repairStatus: "not-needed",
+      updatedAt: input.now,
+    };
+  }
+  return {
+    taskId: input.taskId,
+    source: "loop-engineering",
+    name: `${input.projectId} ${input.jobKind}`,
+    scheduledAt: input.scheduledAt,
+    status: "failed",
+    error: `loop supervisor final status ${status}`,
+    summary: summaryText,
+    reportPath: input.path,
+    repairStatus: "pending",
+    updatedAt: input.now,
+  };
+}
+
+function recordForSupervisorSummary(input: {
+  projectId: string;
+  jobKind: LoopDiscoveredJobKind;
+  scheduledAt: number;
+  taskId: string;
+  now: number;
+  runDir: string;
+  path: string;
+  summary: Record<string, unknown>;
+}): ScheduledTaskRecord {
+  const status = typeof input.summary.status === "string" ? input.summary.status : "unknown";
+  const result = isRecord(input.summary.result) ? input.summary.result : null;
+  const reason = typeof result?.reason === "string" ? result.reason : undefined;
+  const timestamps = isRecord(input.summary.timestamps) ? input.summary.timestamps : null;
+  const endedAt = typeof timestamps?.endedAt === "number" ? timestamps.endedAt : undefined;
+  const reportPath = existsSync(join(input.runDir, "supervisor.md"))
+    ? join(input.runDir, "supervisor.md")
+    : input.path;
+  const detail = reason === undefined ? status : `${status}: ${reason}`;
+  if (status === "completed") {
+    return {
+      taskId: input.taskId,
+      source: "loop-engineering",
+      name: `${input.projectId} ${input.jobKind}`,
+      scheduledAt: input.scheduledAt,
+      status: "success",
+      ...(endedAt !== undefined ? { endedAt } : {}),
+      summary: "Loop supervisor run completed.",
+      reportPath,
+      repairStatus: "not-needed",
+      updatedAt: input.now,
+    };
+  }
+  return {
+    taskId: input.taskId,
+    source: "loop-engineering",
+    name: `${input.projectId} ${input.jobKind}`,
+    scheduledAt: input.scheduledAt,
+    status: "failed",
+    ...(endedAt !== undefined ? { endedAt } : {}),
+    error: `loop supervisor run ${detail}`,
+    summary: "Loop supervisor run did not complete successfully.",
+    reportPath,
+    repairStatus: "pending",
+    updatedAt: input.now,
+  };
+}
+
+function readJsonRecord(path: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return isRecord(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseFirstString(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  const first = value.find((item) => typeof item === "string");
+  return typeof first === "string" && first.trim().length > 0 ? first : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordForLaunchdPlist(
+  plist: LaunchdPlist,
+  window: TaskWindow,
+  now: number,
+  fileTime: (path: string) => number | null,
+  launchctlState: (label: string) => string | null,
+): ScheduledTaskRecord {
+  const taskId = `launchd:${plist.label}:${window.label}`;
+  const stderrTime = plist.stderrPath ? fileTime(plist.stderrPath) : null;
+  if (
+    plist.stderrPath &&
+    stderrTime !== null &&
+    stderrTime >= window.start &&
+    stderrTime < window.end
+  ) {
+    return {
+      taskId,
+      source: "launchd",
+      name: `launchd ${plist.label}`,
+      scheduledAt: window.start,
+      status: "failed",
+      error: `stderr log changed during audited window: ${basename(plist.stderrPath)}`,
+      reportPath: plist.stderrPath,
+      repairStatus: "pending",
+      updatedAt: now,
+    };
+  }
+  const stdoutTime = plist.stdoutPath ? fileTime(plist.stdoutPath) : null;
+  if (
+    plist.stdoutPath &&
+    stdoutTime !== null &&
+    stdoutTime >= window.start &&
+    stdoutTime < window.end
+  ) {
+    return {
+      taskId,
+      source: "launchd",
+      name: `launchd ${plist.label}`,
+      scheduledAt: window.start,
+      status: "success",
+      summary: `stdout log changed during audited window: ${basename(plist.stdoutPath)}`,
+      reportPath: plist.stdoutPath,
+      repairStatus: "not-needed",
+      updatedAt: now,
+    };
+  }
+  const exitCode = parseLastExitCode(launchctlState(plist.label));
+  if (exitCode === 0) {
+    return {
+      taskId,
+      source: "launchd",
+      name: `launchd ${plist.label}`,
+      scheduledAt: window.start,
+      status: "success",
+      summary: "launchctl last exit code 0",
+      repairStatus: "not-needed",
+      updatedAt: now,
+    };
+  }
+  if (exitCode !== null) {
+    return {
+      taskId,
+      source: "launchd",
+      name: `launchd ${plist.label}`,
+      scheduledAt: window.start,
+      status: "failed",
+      error: `launchctl last exit code ${exitCode}`,
+      repairStatus: "pending",
+      updatedAt: now,
+    };
+  }
+  return {
+    taskId,
+    source: "launchd",
+    name: `launchd ${plist.label}`,
+    scheduledAt: window.start,
+    status: "expected",
+    summary: "launchd scheduled task discovered; no explicit task report was recorded",
+    updatedAt: now,
+  };
+}
+
+function defaultFileTime(path: string): number | null {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function defaultLaunchctlState(label: string): string | null {
+  try {
+    const uid = process.getuid?.();
+    if (uid === undefined) return null;
+    return execFileSync("launchctl", ["print", `gui/${uid}/${label}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  }
+}
+
+function parseLastExitCode(text: string | null): number | null {
+  const match = /last exit code = (-?\d+)/.exec(text ?? "");
+  if (!match?.[1]) return null;
+  const code = Number(match[1]);
+  return Number.isFinite(code) ? code : null;
+}
+
+function parseLaunchdPlist(path: string): LaunchdPlist | null {
+  try {
+    const xml = readFileSync(path, "utf8");
+    const label = stringValue(xml, "Label");
+    if (!label) return null;
+    const stdoutPath = stringValue(xml, "StandardOutPath");
+    const stderrPath = stringValue(xml, "StandardErrorPath");
+    return {
+      label,
+      scheduled: hasKey(xml, "StartInterval") || hasKey(xml, "StartCalendarInterval"),
+      ...(stdoutPath ? { stdoutPath } : {}),
+      ...(stderrPath ? { stderrPath } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function hasKey(xml: string, key: string): boolean {
+  return new RegExp(`<key>\\s*${escapeRegExp(key)}\\s*</key>`).test(xml);
+}
+
+function stringValue(xml: string, key: string): string | null {
+  const match = new RegExp(
+    `<key>\\s*${escapeRegExp(key)}\\s*</key>\\s*<string>([^<]*)</string>`,
+  ).exec(xml);
+  return match?.[1]?.trim() || null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

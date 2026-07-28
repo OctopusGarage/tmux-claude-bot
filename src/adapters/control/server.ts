@@ -41,6 +41,7 @@ import {
 } from "../../core/read/user-prompt-intake.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
 import { renderPeekPane } from "../../core/session/output.js";
+import type { AgentKind } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { appVersion } from "../../shared/version.js";
 import {
@@ -58,6 +59,26 @@ const ACTIVITY_DEBOUNCE_MS = 300;
 // active project + as the open/switch scope; the TUI always acts on an explicit
 // session, so this never affects routing).
 const CONTROL_SCOPE = "control";
+
+function commandForAgent(deps: HandlerDeps, agent: AgentKind | undefined): string | undefined {
+  if (agent === undefined) return undefined;
+  return (
+    deps.config.startCommands.find((command) => command.agent === agent)?.command ??
+    (agent === "claude" ? deps.config.claudeStartCommand : undefined)
+  );
+}
+
+async function performStartForRequestedAgent(
+  deps: HandlerDeps,
+  sessionName: string,
+  agent: AgentKind | undefined,
+): Promise<"started" | "already-running"> {
+  const command = commandForAgent(deps, agent);
+  if (agent !== undefined && command === undefined) {
+    throw new Error(`no start command is configured for agent: ${agent}`);
+  }
+  return await performStart(deps, sessionName, command);
+}
 
 /**
  * Start the local control server: a unix-socket transport that makes the running
@@ -200,7 +221,7 @@ async function handleRequest(
         // "already-running" if it was). Covers both "switch project" and "start".
         const res = await openRecentProjectBySid(deps, CONTROL_SCOPE, req.sid);
         if (res.status === "created" || res.status === "switched") {
-          const started = await performStart(deps, res.sessionName);
+          const started = await performStartForRequestedAgent(deps, res.sessionName, req.agent);
           ok({ status: res.status, session: res.sessionName, started });
         } else {
           ok(res);
@@ -213,7 +234,7 @@ async function handleRequest(
         // create-then-start as `open`; invalid/error pass through for the client.
         const res = await createProjectFromPath(deps, CONTROL_SCOPE, req.path);
         if (res.status === "created" || res.status === "switched") {
-          const started = await performStart(deps, res.sessionName);
+          const started = await performStartForRequestedAgent(deps, res.sessionName, req.agent);
           ok({ status: res.status, session: res.sessionName, started });
         } else {
           ok(res);

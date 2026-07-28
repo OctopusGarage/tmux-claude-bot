@@ -34,6 +34,10 @@ export type QueuedMessage = {
   /** Optional interim-progress channel: sends a message to the chat while the
    * run is still in flight (resolve/reject remain the one-shot finale). */
   notify?: ((text: string) => void) | undefined;
+  /** Optional lifecycle hook fired after the item is dequeued and before the
+   * queue handler types into the target session. Used by persisted control work
+   * to distinguish queued from already-dispatched WorkOrders across restarts. */
+  started?: (() => void) | undefined;
   /** Don't persist this message to the on-disk backlog. For the local control
    * transport (the TUI): its client is ephemeral, so a bot restart must not
    * "restore" a prompt that has no one to reply to. Still fully queued in-memory

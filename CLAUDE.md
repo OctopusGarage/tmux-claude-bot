@@ -215,6 +215,29 @@ such as `.semgrep`, config files, docs, and lockfiles. The loop runner treats a
 dirty worktree after staging those affected files as a failed round; update the
 assessment contract instead of letting verified changes sit uncommitted.
 
+## Supervisor and System Gate Boundary
+
+Agent supervisors execute target-project work; the bot system enforces final
+acceptance. Do not blur those responsibilities.
+
+- The supervisor may self-heal target-project work: sync the target branch,
+  create the work branch, delegate to the live project agent, fix code, add
+  tests, run local verification, commit, open or update the PR, clean PR body
+  noise, and switch the target repo back to the configured branch.
+- The system layer must independently enforce run acceptance: work-order state,
+  supervisor summary parsing, PR lookup, mergeability, CI/check interpretation,
+  auto-merge completion, switch-back branch, and clean worktree.
+- If a target project's code, tests, PR body, branch state, or local verification
+  are wrong, let the supervisor repair the target project through the configured
+  agent session.
+- If a completed or nearly completed run is misclassified because system gate
+  logic is wrong, fix this repo. Do not ask the target agent to work around
+  system acceptance bugs, and do not weaken the gate by trusting only the
+  supervisor's self-report.
+- System gates should distinguish pending, blocking, and advisory checks. Pending
+  checks should be waited on before final judgment; merged PRs should not be
+  failed retroactively by non-blocking advisory checks that arrive after merge.
+
 ## Active Goal Discipline
 
 Do not turn a broad active goal into an endless opportunistic sweep. A broad

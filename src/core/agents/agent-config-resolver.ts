@@ -4,7 +4,7 @@ import type { AgentApiInfo, AgentKind } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { isClaudeProcess, matchOpenClaudeTranscript } from "./claude/claude-process.js";
 import { isCodexProcess } from "./codex/codex-process.js";
-import { matchOpenCodexRollout } from "./codex/codex-rollout.js";
+import { matchNewestOpenCodexRollout } from "./codex/codex-rollout.js";
 import { getLastLiveSessionId, recordLiveSessionId } from "./live-session-id.js";
 
 export type { ProcRow } from "../platform/introspector.js";
@@ -298,7 +298,8 @@ export function createConfigResolver(
         // Whichever transcript the live pid holds open — claude's
         // projects/<dir>/<uuid>.jsonl or codex's sessions/.../rollout-<uuid>.jsonl.
         const files = await probe.listOpenFiles(entry.agentPid);
-        entry.transcript = matchOpenClaudeTranscript(files) ?? matchOpenCodexRollout(files);
+        entry.transcript =
+          matchOpenClaudeTranscript(files) ?? (await matchNewestOpenCodexRollout(files));
       }
       // Refresh the persisted last-observed id (self-healing) so /restart can
       // disambiguate co-located Free-Project sessions when the live id later

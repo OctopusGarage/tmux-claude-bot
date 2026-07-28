@@ -1,3 +1,4 @@
+import { markSessionUsed } from "../agents/runningSessions.js";
 import { recordReplyTarget } from "../projects/session-reply-target.js";
 import { taskEnded, taskStarted } from "../session/task-timing.js";
 import type { QueuedMessage } from "./queue-message.js";
@@ -10,11 +11,13 @@ export interface QueueObserver {
 
 export const defaultQueueObserver: QueueObserver = {
   started(sessionName, msg) {
+    markSessionUsed(sessionName);
     taskStarted(sessionName);
     const target = replyTargetFromMessage(msg);
     if (target) recordReplyTarget(sessionName, target);
   },
   finished(sessionName) {
+    markSessionUsed(sessionName);
     taskEnded(sessionName);
   },
 };

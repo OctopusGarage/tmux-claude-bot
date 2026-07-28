@@ -1,8 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AutopilotNotice } from "../../src/core/autopilot/notifier.js";
 import { type AutopilotState, defaultState } from "../../src/core/autopilot/types.js";
 import { schedulerTick, type TickCtx } from "../../src/core/scheduler/scheduler-loop.js";
 import type { Plan, PoolState, Run } from "../../src/core/scheduler/types.js";
+import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
+
+const originalStateDir = process.env.TCB_STATE_DIR;
+
+afterEach(() => {
+  if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+  else process.env.TCB_STATE_DIR = originalStateDir;
+});
 
 function fakeAutopilot() {
   const map = new Map<string, AutopilotState>();
@@ -91,6 +102,45 @@ describe("schedulerTick", () => {
     const complete = noticed.filter((n) => n.kind === "batchRunComplete");
     expect(complete).toHaveLength(1);
     expect(complete[0]).toMatchObject({ kind: "batchRunComplete", runId: "r-complete" });
+  });
+
+  it("records batch scheduler runs in the daily task ledger", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-batch-ledger-"));
+    const ledger = new DailyTaskLedger();
+    const run: Run = {
+      runId: "r-ledger",
+      planId: "p",
+      startedAt: Date.parse("2026-07-27T01:00:00Z"),
+      status: "running",
+      tasks: [
+        {
+          project: "/a",
+          agent: "claude",
+          goals: ["fix-tests"],
+          rounds: 1,
+          retries: 0,
+          priority: 0,
+          status: "done",
+          attempt: 0,
+          goalsCompleted: ["fix-tests"],
+        },
+      ],
+    };
+
+    await schedulerTick(
+      ctx({
+        now: Date.parse("2026-07-27T01:30:00Z"),
+        run,
+        taskLedger: ledger,
+      }),
+    );
+
+    expect(ledger.listForWindow(singaporeDayWindow("2026-07-27"))[0]).toMatchObject({
+      taskId: "batch:p:r-ledger",
+      source: "batch-scheduler",
+      status: "success",
+      name: "n",
+    });
   });
 
   it("does not admit tasks when run is paused by user", async () => {

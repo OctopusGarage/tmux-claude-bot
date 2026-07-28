@@ -19,6 +19,7 @@ import { JsonMapStore } from "../infra/json-map-store.js";
  * debugging / future freshness checks); presence is what matters.
  */
 const store = new JsonMapStore<number>("running_sessions.json");
+const lastUsedStore = new JsonMapStore<number>("session_last_used.json");
 
 /** Mark a session as having a running agent (start / restart / resume). */
 export function markSessionRunning(sessionName: string, now = Date.now()): void {
@@ -28,6 +29,16 @@ export function markSessionRunning(sessionName: string, now = Date.now()): void 
 /** Mark a session as no longer running (agent exited, or project removed). */
 export function markSessionStopped(sessionName: string): void {
   store.delete(sessionName);
+}
+
+/** Record meaningful agent usage: launch/resume/restart, queued work, or observed activity. */
+export function markSessionUsed(sessionName: string, now = Date.now()): void {
+  lastUsedStore.set(sessionName, now);
+}
+
+/** Epoch-ms this session last had meaningful agent usage, or null if unknown. */
+export function sessionLastUsedAt(sessionName: string): number | null {
+  return lastUsedStore.get(sessionName) ?? null;
 }
 
 /** Whether the bot last knew this session to have a running agent. */

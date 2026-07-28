@@ -95,6 +95,37 @@ describe("startTelegram notification registration", () => {
     );
   });
 
+  it("runs the notification-ready callback after registering the sender", async () => {
+    vi.doMock("grammy", () => ({
+      Bot: FakeBot,
+      GrammyError: class GrammyError extends Error {
+        error_code: number;
+        constructor(message = "grammy", error_code = 500) {
+          super(message);
+          this.error_code = error_code;
+        }
+      },
+    }));
+    vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
+    vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({
+      registerHandlers: vi.fn(),
+    }));
+    vi.doMock("../../../src/adapters/telegram/voice-handler.js", () => ({
+      registerVoiceHandler: vi.fn(),
+    }));
+    vi.doMock("../../../src/adapters/telegram/media.js", () => ({ sendTelegramAttachment }));
+
+    const { startTelegram } = await import("../../../src/adapters/telegram/start.js");
+    const d = deps();
+    const onNotificationsReady = vi.fn(() => {
+      expect(d.notifications.registeredChannels()).toEqual(["telegram"]);
+    });
+
+    await startTelegram(d, { onNotificationsReady });
+
+    expect(onNotificationsReady).toHaveBeenCalledTimes(1);
+  });
+
   it("records telegram as the recent owner activity channel for authorized updates", async () => {
     vi.doMock("grammy", () => ({
       Bot: FakeBot,

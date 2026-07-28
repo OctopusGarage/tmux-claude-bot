@@ -143,7 +143,10 @@ describe("LongTaskMonitor", () => {
     await monitor.tick();
     await monitor.tick();
 
-    expect(latestHistory).toHaveBeenCalledWith("tmux_proj_api");
+    expect(latestHistory).toHaveBeenCalledWith("tmux_proj_api", {
+      key: "queue:task-1",
+      startedAt: 0,
+    });
     expect(telegram).toHaveBeenCalledTimes(1);
     expect(telegram.mock.calls[0]?.[0]).toContain("latest history:");
     expect(telegram.mock.calls[0]?.[0]).toContain("final assistant answer");
@@ -301,6 +304,63 @@ describe("LongTaskMonitor", () => {
     await monitor.tick();
 
     expect(telegram).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the finished task time window when reading history after a task switch", async () => {
+    const telegram = vi.fn(async (_message: string) => {});
+    const gateway = new NotificationGateway();
+    gateway.register("telegram", telegram);
+    const snapshots = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [
+          row({
+            taskMs: FIVE_MIN + 1000,
+            task: { key: "queue:long", startedAt: 1000, source: "queue" },
+            cumulativeBusyMs: FIVE_MIN + 1000,
+          }),
+        ],
+        global: {},
+        generatedAt: FIVE_MIN + 1000,
+      })
+      .mockResolvedValueOnce({
+        sessions: [
+          row({
+            taskMs: 1000,
+            task: { key: "queue:next", startedAt: FIVE_MIN + 2000, source: "queue" },
+            cumulativeBusyMs: FIVE_MIN + 2000,
+          }),
+        ],
+        global: {},
+        generatedAt: FIVE_MIN + 2000,
+      });
+    const latestHistory = vi.fn(
+      async (
+        _session: string,
+        task?: { startedAt: number; finishedBefore?: number },
+      ): Promise<string> =>
+        task?.startedAt === 1000 && task.finishedBefore === FIVE_MIN + 2000
+          ? "old task final answer"
+          : "next task answer",
+    );
+    const monitor = new LongTaskMonitor({
+      snapshot: snapshots as never,
+      notifications: gateway,
+      ownerActivity: new OwnerActivityTracker(),
+      latestHistory,
+      thresholdMs: FIVE_MIN,
+    });
+
+    await monitor.tick();
+    await monitor.tick();
+
+    expect(latestHistory).toHaveBeenCalledWith("tmux_proj_api", {
+      key: "queue:long",
+      startedAt: 1000,
+      finishedBefore: FIVE_MIN + 2000,
+    });
+    expect(telegram.mock.calls[0]?.[0]).toContain("old task final answer");
+    expect(telegram.mock.calls[0]?.[0]).not.toContain("next task answer");
   });
 
   it("notifies an armed task when the session disappears from the dashboard", async () => {

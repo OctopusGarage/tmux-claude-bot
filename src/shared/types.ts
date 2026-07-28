@@ -96,18 +96,34 @@ export type AppConfig = {
   /** How often (ms) to reconcile the reboot-recovery running-sessions roster
    * against live tmux; default 5 min, 0 disables. */
   runningSweepMs: number;
+  /** Close idle project agents after this long without meaningful use; 0 disables. */
+  sessionIdleReaper: { tickMs: number; maxIdleMs: number };
   /** Run reboot recovery automatically on boot (idempotent); default true. */
   autoRecover: boolean;
-  /** macOS: keep the Mac awake (caffeinate) while the bot runs so a sleeping
-   * laptop can't drop it off the phone. Opt-in; works for any launch path. */
+  /** macOS: keep the Mac awake on AC power while the bot runs. Opt-in; works
+   * for any launch path. */
   keepAwake: boolean;
   lark?: LarkConfig | undefined;
   autopilot: AutopilotRuntimeConfig;
   scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
+  taskAudit: {
+    enabled: boolean;
+    schedule: string;
+    tickMs: number;
+    channel: "telegram" | "lark" | "both";
+    autoRepair: boolean;
+    repairBranch: string;
+  };
   loopEngineering: {
     configFile: string;
     tickMs: number;
-    supervisor: { enabled: boolean; dir: string; agent: AgentKind };
+    supervisor: {
+      enabled: boolean;
+      dir: string;
+      agent: AgentKind;
+      poolSize: number;
+      resetBeforeWorkOrder: "none" | "compact" | "clear";
+    };
   };
   homeOperator: { enabled: boolean; dir: string; agent: "claude" | "codex" };
   promptMcp: { command: string; args: string[]; cwd?: string };

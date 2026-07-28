@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import type { Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,6 +78,25 @@ describe("control server ↔ client (real unix socket)", () => {
       session: "sessB",
       output: "REPLY:text:hello world",
     });
+  });
+
+  it("falls back to a nested state/control.sock when the client env points at the app home", async () => {
+    const appHome = mkdtempSync(join(tmpdir(), "tcb-ctl-home-"));
+    const nestedState = join(appHome, "state");
+    mkdirSync(nestedState);
+    rmSync(dir, { recursive: true, force: true });
+    dir = appHome;
+
+    process.env.TCB_STATE_DIR = nestedState;
+    const { deps } = fakeDeps();
+    server = startControlServer(deps);
+    await new Promise((r) => setTimeout(r, 60));
+
+    process.env.TCB_STATE_DIR = appHome;
+    client = new ControlClient();
+    await client.connect();
+
+    expect(await client.peek("legacy-env", 10)).toContain("PANE for legacy-env");
   });
 
   it("routes a control action with empty text", async () => {

@@ -116,8 +116,9 @@ recent input, `a` attach into the real session pane, `q` quit. Press `?` for all
 
 A sleeping Mac drops the bot off your phone (nothing can wake an outbound long-poll).
 Opt in during setup (or `tcb setup --reconfigure`): while the bot runs it holds a
-`caffeinate -i -s` assertion (idle-sleep blocked, pinned on AC). It does **not** cover
-a closed lid — for that also run `sudo pmset -a disablesleep 1`. `tcb doctor` reports
+`caffeinate -s` assertion, which prevents system sleep only while the Mac is on AC
+power. It does **not** keep the Mac awake on battery power and does **not** cover a
+closed lid — for that also run `sudo pmset -a disablesleep 1`. `tcb doctor` reports
 whether keep-awake is on and active, **and** reads the actual lid state — if the lid is
 closed while `pmset disablesleep` is off (so the Mac will sleep and drop the bot) it
 fails the check with the fix command.
@@ -155,9 +156,10 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 | `tcb sessions` | list the running sessions |
 | `tcb projects` | list projects (live + recent); `tcb open <name>` to start one |
 | `tcb notify [text...]` | send a local send-only notification through the configured Telegram/Feishu bot; use `--title`, `--body` or `--stdin`, `--channel telegram\|lark\|both`, `--level info\|success\|warning\|error`, `--source <name>`, and repeatable `--attach <file>` |
+| `tcb task report --id <id> --source <source> --name <name> --scheduled-at <time> --status <status>` | record an external scheduled task in the shared daily task ledger; use this from article/radar/launchd monitors |
 | `tcb send <project> "<prompt>"` | send a prompt to a project's agent; **waits for the reply** (`--no-wait` / `--timeout <s>`) |
 | `tcb peek <project>` | print a snapshot of its session pane |
-| `tcb open <project>` | switch to / start a project — by name (incl. stopped) or a filesystem path to create a new one |
+| `tcb open <project> [--agent claude\|codex]` | switch to / start a project; `--agent` selects the start command when the project is stopped |
 | `tcb adopt [pid]` | list unmanaged claude/codex processes, or adopt one by PID (stops it, resumes under management) |
 | `tcb control <project> <esc\|enter\|resume\|restart\|…>` | send a control action; `restart` / `clear` / `compact` / `exit` prompt for confirmation (`--yes` for scripts) |
 | `tcb attach <file...>` | send an image/file to the session's chat; defaults to the current session (`--to <project>`, `--caption <text>`) |
@@ -177,6 +179,15 @@ tcb notify --channel lark --title "Radar ready" --body "Daily report attached" \
 Use `tcb notify --attach` for owner/background notifications. Use `tcb attach`
 when a chat-originated project session should receive a file reply in that same
 chat context.
+
+External scheduled monitors can report their status into the bot's daily task
+ledger without linking to bot internals:
+
+```bash
+tcb task report --id "radar:daily:2026-07-27" --source radar-monitor \
+  --name "daily radar monitor" --scheduled-at "2026-07-27T03:00:00Z" \
+  --status failed --error "report file was not generated"
+```
 
 This is what the **AI skill** (`skills/tmux-claude-bot/SKILL.md`, the AI-facing
 companion to [docs/agents/usage-guide.md](agents/usage-guide.md)) drives — so an agent
@@ -314,10 +325,64 @@ Each scheduled project chooses a runner:
 
 - `runner.kind: system` (default) runs deterministic local commands, optional queued
   agent tasks, verification, eval, commit, and writes `report.md` / `summary.json`.
+  Before each selected optimization round, the managed loop queues `/compact` for
+  the project agent session, then sends the round task.
 - `runner.kind: agent-supervised` sends a bounded WorkOrder to a reserved Loop
   Supervisor agent. The supervisor can inspect failures, adapt the next action, and
   finish with a required marker + JSON summary. Reports are written as
-  `supervisor.md` / `supervisor-summary.json`.
+  `supervisor.md` / `supervisor-summary.json`. When commit or PR publishing is
+  enabled, the managed loop still performs final system gates after the supervisor
+  reports completion: clean worktree, expected switch-back branch, PR lookup,
+  mergeability, and completed successful/neutral/skipped CI checks. If
+  `pullRequest.autoMerge: true` is configured, the system gate merges the PR after
+  those checks pass, switches to `pullRequest.switchBack`, and fast-forwards it
+  from `origin`. Set `pullRequest.githubAccount` when the repository needs a
+  specific GitHub CLI identity; PR create/view/merge commands then use a
+  command-local `GH_TOKEN` from `gh auth token --user <account>` instead of the
+  global active `gh` account. If the supervisor response misses the required final marker, the
+  loop treats the scheduled fire as unfinished and retries it on a later tick
+  instead of marking it complete. The WorkOrder instructs the supervisor to run
+  `tcb control <project> compact --yes` before each delegated optimization round.
+  When the supervisor reports completion but the bot's system gate finds a
+  recoverable validation failure, such as a dirty worktree, wrong switch-back
+  branch, missing PR cleanup, pending/failing PR checks, or PR hygiene issue, the
+  same WorkOrder stays owned by the supervisor. The bot sends a bounded revision
+  prompt with the exact validation failures and re-runs the system gate after the
+  supervisor responds. Non-recoverable platform failures, such as missing GitHub
+  write permission or missing system adapters, fail directly with the concrete
+  blocker instead of looping.
+  A project can also define `bugFix` with its own cron schedule. That job is
+  separate from architecture improvement: it asks the supervisor to find and fix
+  only proven functional or reliability bugs, to skip style nits and speculative
+  concerns, and to stop when a round finds no confirmed real bugs. `bugFix`
+  reuses the same commit, PR, verification, and system-gate policy as the
+  project.
+  `testCoverage` is a third separate cron job for raising meaningful test
+  coverage. Its default target is 80%, but the supervisor must first inspect the
+  project test stack, coverage command/report, uncovered behavior, and risk
+  paths. It should prefer focused unit tests, add integration, smoke, E2E, or AI
+  eval tests only when the project context justifies them, and may make small
+  refactors for testability. It must not add import-only tests, empty assertions,
+  mock-implementation tests, snapshot padding, fixture churn, or any other tests
+  whose only purpose is increasing a metric. If coverage work exposes a real bug,
+  vulnerability, flaky behavior, broken harness, or incorrect existing test, the
+  supervisor should confirm it, fix it narrowly, and add regression coverage when
+  practical. AI eval coverage must use an existing agent-backed or deterministic
+  eval surface; do not add direct model-provider SDKs, model API keys, or HTTP
+  model calls for this task.
+  `pullRequestReview` is another separate cron job. It reuses the same project
+  session and supervisor, reviews loop-created PRs from the configured lookback
+  window, requires the configured number of clean review passes, and only
+  auto-merges when CI/status checks and mergeability are acceptable. It is
+  intended to catch introduced bugs and operational risks, not to block on style
+  nits.
+- `workspaces` define coordinated multi-repository architecture jobs. Use this
+  when repositories should be evaluated together, such as a frontend/backend pair
+  in the same product directory. A workspace architecture job is one scheduled
+  WorkOrder with one run id, but each repository keeps its own branch and PR. The
+  supervisor must inspect cross-repository contracts, change only the repositories
+  that need changes, link related PRs, and verify every repository is clean and
+  back on its configured switch-back branch before finalizing.
 
 Enable the supervisor only when at least one project uses `agent-supervised`:
 
@@ -325,6 +390,9 @@ Enable the supervisor only when at least one project uses `agent-supervised`:
 LOOP_SUPERVISOR_ENABLED=true
 LOOP_SUPERVISOR_AGENT=codex       # codex (default) or claude
 LOOP_SUPERVISOR_DIR=              # blank -> <state-dir>/loop-supervisor
+LOOP_SUPERVISOR_POOL_SIZE=1       # >1 starts tmux_proj_loop-supervisor-1/-2/...
+LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER=clear
+TCB_LOOP_SUPERVISOR_REVISION_MAX_ATTEMPTS=3
 ```
 
 Example project:
@@ -348,8 +416,87 @@ projects:
       command: npm run assess
     execution:
       agent: true
+    commit:
+      enabled: true
+      branch: loop/datavibe-backend/architecture
+    pullRequest:
+      enabled: true
+      base: main
+      switchBack: main
+      autoMerge: false
+      githubAccount: Kingson4Wu
+    bugFix:
+      enabled: true
+      schedule: "45 10 * * *"
+      branch: loop/tmux-claude-bot/bug-fix
+      maxRounds: 3
+      maxBugsPerRound: 2
+      requireRegressionTest: true
+      prompt: >
+        Find and fix only real functional or reliability bugs. Do not nitpick
+        style, do not add features, and stop when no confirmed real bug remains.
+    testCoverage:
+      enabled: true
+      schedule: "20 14 * * *"
+      branch: loop/datavibe-backend/test-coverage
+      targetCoverage: 80
+      maxRounds: 5
+      requireMeaningfulTests: true
+      allowIntegrationTests: true
+      allowSmokeTests: true
+      allowE2ETests: true
+      allowAiEvalTests: false
+      prompt: >
+        Raise meaningful test coverage to at least 80%. Do not add weak tests
+        purely to move the metric; prioritize real behavior, critical paths, and
+        regressions found while testing.
+    pullRequestReview:
+      enabled: true
+      schedule: "0 1 * * *"
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+      prompt: >
+        Review loop-created PRs from the previous day. Do not nitpick; focus on
+        introduced bugs, broken tests, CI failures, mergeability, data loss,
+        security, migrations, and user-visible regressions.
     allowedActions: [tests, docs, small-refactor]
     blockedActions: [direct-model-api, broad-rewrite]
+```
+
+Example workspace:
+
+```yaml
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /path/to/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /path/to/realestate/geo-backend
+        role: backend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /path/to/realestate/geo-frontend
+        role: frontend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+    architecture:
+      enabled: true
+      schedule: "10 11 * * *"
+      goal: Improve frontend/backend architecture together.
+      maxRounds: 3
+      targetScore: 95
+      runner:
+        kind: agent-supervised
 ```
 
 Supervisor dispatch still uses this bot's managed Claude Code / Codex sessions. It
@@ -418,7 +565,38 @@ Run a set of agent tasks across multiple projects on a schedule (cron, one-shot,
 
 ---
 
-## 11. Managing the service
+## 11. Daily task audit
+
+The daily task audit checks the previous Singapore calendar day for actively
+discovered scheduled tasks and explicit task records, can ask the Loop
+Supervisor to repair bot-owned failures on a configured branch, then sends the
+final success/failure/missing summary with the repair dispatch result to
+Telegram and/or Feishu.
+
+```bash
+TASK_AUDIT_ENABLED=true
+TASK_AUDIT_SCHEDULE=0 2 * * *     # UTC; 10:00 Singapore time
+TASK_AUDIT_TICK_MS=300000
+TASK_AUDIT_CHANNEL=both           # telegram | lark | both
+TASK_AUDIT_AUTO_REPAIR=true
+TASK_AUDIT_REPAIR_BRANCH=dev
+```
+
+The audit actively discovers tmux-claude-bot-owned launchd jobs and
+loop-engineering schedules, then merges that expected-task list with the shared
+ledger. Loop Engineering and the batch scheduler write to the ledger
+automatically. Article monitors, radar monitors, and other local jobs should
+call `tcb task report` from their own scheduler or status exporter because their
+domain-specific health rules belong in the owning project. Auto-repair is
+deliberately scoped: the supervisor must inspect evidence, classify each
+failure, fix only tmux-claude-bot bugs on the repair branch, run
+`npm run verify:local`, review the diff, and commit verified fixes.
+Target-project failures and external service, auth, or network failures are
+reported as blockers rather than patched blindly.
+
+---
+
+## 12. Managing the service
 
 The bot is a managed, auto-restarting service. **Restart via the service manager**,
 not the dev scripts (the manager respawns it):

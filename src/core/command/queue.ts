@@ -468,6 +468,7 @@ export class MessageQueue {
     }
     this.currentSessionMessage.set(sessionName, msg);
     log.info(`processing session=${sessionName} action=${msg.action} msgId=${msg.id}`);
+    msg.started?.();
 
     if (!this.handler) {
       log.error(`handler not set session=${sessionName}`);

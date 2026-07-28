@@ -7,6 +7,8 @@ import {
   isSessionRunning,
   markSessionRunning,
   markSessionStopped,
+  markSessionUsed,
+  sessionLastUsedAt,
 } from "../src/core/agents/runningSessions.js";
 
 let dir: string;
@@ -34,5 +36,15 @@ describe("runningSessions", () => {
     markSessionStopped("tmux_proj_a");
     expect(isSessionRunning("tmux_proj_a")).toBe(false);
     expect(allRunningSessions()).toEqual(["tmux_proj_b"]);
+  });
+
+  it("tracks last meaningful session usage separately from the running roster", () => {
+    expect(sessionLastUsedAt("tmux_proj_a")).toBeNull();
+
+    markSessionRunning("tmux_proj_a", 1000);
+    expect(sessionLastUsedAt("tmux_proj_a")).toBeNull();
+
+    markSessionUsed("tmux_proj_a", 2000);
+    expect(sessionLastUsedAt("tmux_proj_a")).toBe(2000);
   });
 });

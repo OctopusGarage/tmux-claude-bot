@@ -71,9 +71,10 @@ the chat API; (4) on macOS, was it asleep? — see keep-awake.
 
 **Keep the Mac awake so it stays reachable** → a sleeping Mac drops the bot (an
 outbound long-poll can't be woken). Enable in setup or `tcb setup --reconfigure`: while
-the bot runs it holds `caffeinate -i -s` (idle-sleep blocked, pinned on AC). A **closed
-lid** still sleeps — for that they ALSO need `sudo pmset -a disablesleep 1` (persistent,
-drains battery; warn them). `tcb doctor` shows if it's active.
+the bot runs it holds `caffeinate -s`, which prevents system sleep only on AC power. On
+battery, the Mac may sleep normally. A **closed lid** still sleeps — for that they ALSO
+need `sudo pmset -a disablesleep 1` (persistent, drains battery; warn them). `tcb doctor`
+shows if it's active.
 
 **Use it from the PC terminal** → `tcb tui` (managed) or `npm run tui` (dev). Needs the
 bot running. Keys: `j/k` move, `i` compose a prompt (multi-line paste works), `c`
@@ -91,6 +92,9 @@ Feishu owner targets; the caller does not need chat credentials or SDKs. Example
 Use `--stdin` for multi-line bodies. Use repeatable `--attach <file>` for owner
 notification files, for example:
 `tcb notify --source radar --title "Radar ready" --body "Daily report attached" --attach report.md --attach report.html`.
+For scheduled monitors that should appear in the daily audit, also call
+`tcb task report --id <id> --source radar-monitor|article-monitor|external-monitor|launchd
+--name <name> --scheduled-at <iso> --status running|success|failed|skipped`.
 
 **Schedule recurring Loop Engineering maintenance** → create a Loop config and set
 `LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml`. Default projects use the
@@ -98,7 +102,44 @@ deterministic system runner. For adaptive AI-managed scheduled work, enable the
 reserved supervisor with `LOOP_SUPERVISOR_ENABLED=true` and set a project
 `runner.kind: agent-supervised`; the bot queues a bounded WorkOrder to the
 `tmux_proj_loop-supervisor` session and writes `supervisor.md` /
-`supervisor-summary.json` under `loop-runs/<project>/<runId>/`.
+`supervisor-summary.json` under `loop-runs/<project>/<runId>/`. For projects with
+commit/PR settings, the bot also checks the final worktree, switch-back branch,
+PR mergeability, and CI rollup after the supervisor reports completion. When
+`pullRequest.autoMerge: true` is set, the bot merges the checked PR and
+fast-forwards the local switch-back branch afterward. Use
+`pullRequest.githubAccount` when PR commands must run under a specific `gh`
+account; the loop uses a command-local `GH_TOKEN` for that account instead of the
+global active `gh` identity. To run a separate real-bug repair loop, add
+`bugFix.enabled: true` with its own `schedule`, `branch`, `maxRounds`, and
+`maxBugsPerRound`; the supervisor must prove a functional or reliability bug
+before editing, use the bug-fix branch instead of the architecture branch, avoid
+feature work and nitpicks, add focused regression coverage where configured, and
+stop when no confirmed real bug remains. To raise meaningful test coverage, add
+`testCoverage.enabled: true` with its own `schedule`, `branch`, `targetCoverage`
+(default 80), and `maxRounds`; the supervisor must inspect the real test stack
+and risk paths, avoid metric-padding tests, add unit/integration/smoke/E2E/AI
+eval coverage only when justified, and fix real bugs discovered during coverage
+work. AI eval coverage must use an existing agent-backed or deterministic eval
+surface, not direct model-provider APIs. To review and
+merge loop-created PRs on a later schedule, add `pullRequestReview.enabled: true`
+with its own `schedule`, `lookbackHours`, `consecutivePasses`, and `autoMerge`;
+the supervisor performs repeat review passes focused on bugs, CI, and
+mergeability rather than nits.
+For coordinated frontend/backend or otherwise coupled repositories, add a
+`workspaces` entry with `architecture.enabled: true`; that creates one scheduled
+multi-repository WorkOrder, asks the supervisor to inspect cross-repository
+contracts, and requires every repository to end clean on its configured
+switch-back branch.
+
+**Audit yesterday's scheduled work** → enable `TASK_AUDIT_ENABLED=true` and set
+`TASK_AUDIT_SCHEDULE` (UTC cron, e.g. `0 2 * * *` for 10:00 Singapore time).
+The audit actively discovers tmux-claude-bot-owned macOS launchd jobs and
+loop-engineering schedules, merges them with the shared task ledger, and when
+`TASK_AUDIT_AUTO_REPAIR=true` queues the Loop Supervisor to repair only
+tmux-claude-bot-owned failures on `TASK_AUDIT_REPAIR_BRANCH`. After that
+dispatch decision, it sends the final Telegram/Feishu summary with the repair
+dispatch result. External scheduled systems should report through `tcb task
+report` rather than being inspected through project-specific adapters.
 
 **Restart the bot / deploy code changes** → it's a managed service, so restart via the
 manager: `tcb service restart` (or `launchctl kickstart -k …` / `systemctl --user
@@ -125,8 +166,9 @@ recover`. This is host-wide; for one accidentally exited current project use
     owner notification through Telegram/Feishu without receiving chat messages.
   - `tcb send <project> "<prompt>"` — send a prompt; **waits for the reply** and prints
     it (`--no-wait` to fire-and-forget, `--timeout <s>`). This is your main verb.
-  - `tcb peek <project>` — snapshot its pane · `tcb open <project>` — switch to / start
-    a project · `tcb control <project> <esc|enter|resume|restart|…>` — a control key
+  - `tcb peek <project>` — snapshot its pane · `tcb open <project> [--agent claude|codex]`
+    — switch to / start a project, optionally selecting the agent when stopped ·
+    `tcb control <project> <esc|enter|resume|restart|…>` — a control key
     (`--yes` is required for dangerous actions in scripts).
 - **CLI — admin**: `run` · `setup` / `setup:lark` · `doctor` · `dashboard` · `sysload`
   · `tui` · `recover` · `logs` · `install` ·

@@ -234,7 +234,6 @@ export function runLoopCommand(args: string[]): LoopCommandResult {
         config,
         now: parsed.now,
         lastFired: store.getLastFired(),
-        setLastFired: (projectId, firedAt) => store.setLastFired(projectId, firedAt),
       });
       return {
         exitCode: 0,

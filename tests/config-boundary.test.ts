@@ -20,4 +20,25 @@ describe("no env var crashes startup when left blank", () => {
   it("covers a non-trivial number of keys (guards an empty introspection)", () => {
     expect(KEYS.length).toBeGreaterThan(10);
   });
+
+  it("parses daily task audit config", () => {
+    const config = loadConfig({
+      TELEGRAM_BOT_TOKEN: "t",
+      TASK_AUDIT_ENABLED: "true",
+      TASK_AUDIT_SCHEDULE: "0 2 * * *",
+      TASK_AUDIT_TICK_MS: "60000",
+      TASK_AUDIT_CHANNEL: "both",
+      TASK_AUDIT_AUTO_REPAIR: "true",
+      TASK_AUDIT_REPAIR_BRANCH: "dev",
+    });
+
+    expect(config.taskAudit).toEqual({
+      enabled: true,
+      schedule: "0 2 * * *",
+      tickMs: 60000,
+      channel: "both",
+      autoRepair: true,
+      repairBranch: "dev",
+    });
+  });
 });

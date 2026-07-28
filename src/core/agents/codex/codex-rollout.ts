@@ -133,12 +133,37 @@ export function collectRolloutFiles(
  * exact where the cwd+mtime scan can only guess. Returns the first match, or null. */
 export function matchOpenCodexRollout(openFiles: string[]): RolloutMatch | null {
   for (const f of openFiles) {
-    const m = f.match(
-      /\/sessions\/.*rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/,
-    );
-    if (m?.[1]) return { path: f, sessionId: m[1] };
+    const match = matchCodexRolloutPath(f);
+    if (match) return match;
   }
   return null;
+}
+
+function matchCodexRolloutPath(path: string): RolloutMatch | null {
+  const m = path.match(
+    /\/sessions\/.*rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/,
+  );
+  return m?.[1] ? { path, sessionId: m[1] } : null;
+}
+
+/** Codex can keep older rollouts open after resume/tool activity. Prefer the
+ * rollout that is actively being written, not the first path lsof happens to
+ * list. */
+export async function matchNewestOpenCodexRollout(
+  openFiles: string[],
+): Promise<RolloutMatch | null> {
+  const matches = openFiles.map(matchCodexRolloutPath).filter((m): m is RolloutMatch => m !== null);
+  let newest: { match: RolloutMatch; mtime: number } | null = null;
+  for (const match of matches) {
+    let mtime = 0;
+    try {
+      mtime = (await stat(match.path)).mtimeMs;
+    } catch {
+      // Keep unreadable open paths eligible, but prefer stat-able active files.
+    }
+    if (!newest || mtime > newest.mtime) newest = { match, mtime };
+  }
+  return newest?.match ?? null;
 }
 
 /** Find the newest rollout JSONL under `<configRoot>/sessions/**` whose
