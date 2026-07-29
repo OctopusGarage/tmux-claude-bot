@@ -54,6 +54,49 @@ ${input.projectExtra ?? ""}
   return file;
 }
 
+function writeRepositoryPrReviewConfig(input: { repoOne: string; repoTwo: string }): string {
+  const file = join(input.repoOne, "loop.yml");
+  writeFileSync(
+    file,
+    `
+projects:
+  - id: placeholder
+    name: Placeholder
+    path: ${input.repoOne}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: repo-one-prs
+      name: Repo One PRs
+      path: ${input.repoOne}
+      repo: OctopusGarage/repo-one
+      agent: codex
+      schedule: "*/5 * * * *"
+      switchBack: dev
+      runner:
+        kind: agent-supervised
+    - id: repo-two-prs
+      name: Repo Two PRs
+      path: ${input.repoTwo}
+      repo: OctopusGarage/repo-two
+      agent: codex
+      schedule: "*/5 * * * *"
+      switchBack: dev
+      runner:
+        kind: agent-supervised
+`,
+  );
+  return file;
+}
+
 function supervisorSummaryPath(stateDir: string, projectId: string): string {
   const projectReportDir = join(stateDir, "loop-runs", projectId);
   const [runId] = readdirSync(projectReportDir);
@@ -347,6 +390,117 @@ prReview:
     expect(sessions).toEqual(["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"]);
     expect(resets).toEqual(["clear", "clear"]);
     expect(maxInFlight).toBe(2);
+  });
+
+  it("does not dispatch new work to active supervisor sessions or active project paths", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const repoOne = mkdtempSync(join(tmpdir(), "tcb-loop-repo-one-"));
+    const repoTwo = mkdtempSync(join(tmpdir(), "tcb-loop-repo-two-"));
+    const configFile = writeRepositoryPrReviewConfig({ repoOne, repoTwo });
+    const config = parseLoopConfigYaml(readFileSync(configFile, "utf8"));
+    const activeRepository = config.prReview.repositories[0];
+    if (activeRepository === undefined) throw new Error("missing repository");
+    const activeWorkOrder = buildRepositoryPullRequestReviewWorkOrder({
+      config,
+      repository: activeRepository,
+      scheduledAt: Date.parse("2026-07-16T10:05:00Z"),
+      runId: "active-repo-one-prs",
+    });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: activeWorkOrder,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.parse("2026-07-16T10:06:00Z"),
+    });
+    const sessions: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository PR review should not call gh gates");
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        sessions.push(request.session);
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: request.workOrder.projectId,
+            actionsTaken: ["reviewed open pull requests"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(sessions).toEqual(["tmux_proj_loop-supervisor-2"]);
+  });
+
+  it("does not dispatch to supervisor sessions that are not idle", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const repoOne = mkdtempSync(join(tmpdir(), "tcb-loop-repo-one-"));
+    const repoTwo = mkdtempSync(join(tmpdir(), "tcb-loop-repo-two-"));
+    const configFile = writeRepositoryPrReviewConfig({ repoOne, repoTwo });
+    const sessions: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository PR review should not call gh gates");
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        sessions.push(request.session);
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: request.workOrder.projectId,
+            actionsTaken: ["reviewed open pull requests"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+      isSupervisorSessionAvailable: async (sessionName) =>
+        sessionName === "tmux_proj_loop-supervisor-2",
+    });
+
+    expect(result).toMatchObject({ ran: 2, failed: 0 });
+    expect(sessions).toEqual(["tmux_proj_loop-supervisor-2", "tmux_proj_loop-supervisor-2"]);
   });
 
   it("recovers interrupted repository PR review work orders from their final summary", () => {

@@ -5,6 +5,7 @@ import { appStateDir } from "../../shared/state-dir.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import type { HandlerDeps } from "../deps.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
+import { agentIsIdle } from "../command/agent-ready.js";
 import {
   createLoopQueueAgentEvalRunner,
   createLoopQueueAgentTaskRunner,
@@ -264,6 +265,7 @@ export async function runLoopServiceTickAsync(input: {
   supervisorSessionNames?: string[];
   resetSupervisorBeforeWorkOrder?: LoopSupervisorResetMode;
   ensureSupervisorSession?: (sessionName: string) => Promise<boolean>;
+  isSupervisorSessionAvailable?: (sessionName: string) => Promise<boolean>;
   defaultSupervisorTimeoutMs?: number;
   supervisorRevisionMaxAttempts?: number;
 }): Promise<LoopServiceTickSummary> {
@@ -619,8 +621,46 @@ export async function runLoopServiceTickAsync(input: {
   let supervisedBuffer: ResolvedDue[] = [];
   const flushSupervisedBuffer = async (): Promise<void> => {
     if (supervisedBuffer.length === 0) return;
-    const batches = allocateLoopSupervisorBatches(supervisedBuffer, supervisorSessions);
+    const active = activeLoopSupervisorWork(input.configFile);
+    const readyTargets = supervisedBuffer.filter((target) => {
+      if (!active.projectPaths.has(target.projectPath)) return true;
+      log.warn("loop engineering supervised target skipped because project already has active work", {
+        data: {
+          projectId: target.due.projectId,
+          jobKey: target.due.jobKey,
+          jobKind: target.due.jobKind,
+          projectPath: target.projectPath,
+        },
+      });
+      return false;
+    });
+    const availableSupervisorSessions =
+      supervisorSessions.length === 0
+        ? supervisorSessions
+        : supervisorSessions.filter((session) => !active.supervisorSessions.has(session));
+    const idleSupervisorSessions =
+      input.isSupervisorSessionAvailable === undefined
+        ? availableSupervisorSessions
+        : await asyncFilter(availableSupervisorSessions, input.isSupervisorSessionAvailable);
     supervisedBuffer = [];
+    if (readyTargets.length === 0) return;
+    if (supervisorSessions.length > 0 && idleSupervisorSessions.length === 0) {
+      log.warn("loop engineering supervised dispatch skipped because supervisor pool is busy", {
+        data: {
+          pending: readyTargets.map((target) => ({
+            projectId: target.due.projectId,
+            jobKey: target.due.jobKey,
+            jobKind: target.due.jobKind,
+          })),
+          activeSupervisorSessions: [...active.supervisorSessions],
+          unavailableSupervisorSessions: availableSupervisorSessions.filter(
+            (session) => !idleSupervisorSessions.includes(session),
+          ),
+        },
+      });
+      return;
+    }
+    const batches = allocateLoopSupervisorBatches(readyTargets, idleSupervisorSessions);
     for (const batch of batches) {
       await Promise.all(
         batch.map(({ item, supervisorSession }) => runSupervisedDue(item, supervisorSession)),
@@ -647,6 +687,37 @@ export async function runLoopServiceTickAsync(input: {
     ran,
     failed,
   };
+}
+
+async function asyncFilter<T>(
+  values: readonly T[],
+  predicate: (value: T) => Promise<boolean>,
+): Promise<T[]> {
+  const decisions = await Promise.all(values.map((value) => predicate(value)));
+  return values.filter((_, index) => decisions[index]);
+}
+
+function activeLoopSupervisorWork(configFile: string): {
+  supervisorSessions: Set<string>;
+  projectPaths: Set<string>;
+} {
+  const supervisorSessions = new Set<string>();
+  const projectPaths = new Set<string>();
+  for (const record of listUnfinishedLoopSupervisorWorkOrders()) {
+    if (record.state.resultStatus === "invalid-output") continue;
+    supervisorSessions.add(record.state.supervisorSession);
+    projectPaths.add(record.workOrder.projectPath);
+  }
+  if (supervisorSessions.size > 0) {
+    log.info("loop engineering active supervisor work detected", {
+      data: {
+        configFile,
+        activeSupervisorSessions: [...supervisorSessions],
+        activeProjectPaths: [...projectPaths],
+      },
+    });
+  }
+  return { supervisorSessions, projectPaths };
 }
 
 function requiredProject(
@@ -740,6 +811,8 @@ export function startLoopEngineering(
           ? {
               ensureSupervisorSession: async (sessionName) =>
                 startLoopSupervisor(deps, undefined, sessionName),
+              isSupervisorSessionAvailable: async (sessionName) =>
+                supervisorSessionIsAvailable(deps, sessionName),
             }
           : {}),
         defaultSupervisorTimeoutMs: deps.config.maxWaitDoneTotalMs,
@@ -755,6 +828,16 @@ export function startLoopEngineering(
   timer.unref?.();
   void tick();
   return () => clearInterval(timer);
+}
+
+async function supervisorSessionIsAvailable(
+  deps: HandlerDeps,
+  sessionName: string,
+): Promise<boolean> {
+  if (deps.queue.isSessionProcessing(sessionName)) return false;
+  if (deps.queue.getSessionQueue(sessionName).length > 0) return false;
+  if (deps.queue.size(sessionName) > 0) return false;
+  return agentIsIdle(deps, sessionName);
 }
 
 export function reconcileLoopSupervisorWorkOrders(input: {
