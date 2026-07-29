@@ -123,6 +123,27 @@ const testCoverageSchema = z
     allowAiEvalTests: true,
   });
 
+const securityMaintenanceSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    branch: z.string().min(1).optional(),
+    maxRounds: z.number().int().positive().default(3),
+    allowDependencyUpdates: z.boolean().default(true),
+    allowConfigHardening: z.boolean().default(true),
+    allowStaticAnalysisFixes: z.boolean().default(true),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({
+    enabled: false,
+    maxRounds: 3,
+    allowDependencyUpdates: true,
+    allowConfigHardening: true,
+    allowStaticAnalysisFixes: true,
+  });
+
 const repositoryPullRequestReviewSchema = z
   .object({
     id: z.string().min(1),
@@ -249,6 +270,7 @@ const projectSchema = z
       .default({ enabled: false, base: "main", switchBack: "main", autoMerge: false }),
     bugFix: bugFixSchema,
     testCoverage: testCoverageSchema,
+    securityMaintenance: securityMaintenanceSchema,
     pullRequestReview: pullRequestReviewSchema,
     allowedActions: z.array(actionSchema).default([]),
     blockedActions: z.array(actionSchema).default([]),
@@ -273,6 +295,7 @@ const loopConfigSchema = z
             architectureMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             bugFixMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             testCoverageMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            securityMaintenanceMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             pullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             repositoryPullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
           })
@@ -283,6 +306,7 @@ const loopConfigSchema = z
             architectureMaxDelayMinutes: 0,
             bugFixMaxDelayMinutes: 0,
             testCoverageMaxDelayMinutes: 0,
+            securityMaintenanceMaxDelayMinutes: 0,
             pullRequestReviewMaxDelayMinutes: 0,
             repositoryPullRequestReviewMaxDelayMinutes: 0,
           }),
@@ -295,6 +319,7 @@ const loopConfigSchema = z
           architectureMaxDelayMinutes: 0,
           bugFixMaxDelayMinutes: 0,
           testCoverageMaxDelayMinutes: 0,
+          securityMaintenanceMaxDelayMinutes: 0,
           pullRequestReviewMaxDelayMinutes: 0,
           repositoryPullRequestReviewMaxDelayMinutes: 0,
         },
@@ -334,7 +359,9 @@ export type LoopProjectValidationSummary = {
   id: string;
   name: string;
   scheduled: boolean;
-  scheduledJobs: Array<"architecture" | "bug-fix" | "test-coverage" | "pull-request-review">;
+  scheduledJobs: Array<
+    "architecture" | "bug-fix" | "test-coverage" | "security-maintenance" | "pull-request-review"
+  >;
   assessment: { mode: "command" };
   eval: { mode: "command" | "agent" | "none"; minScore: number | null };
   execution: { agent: boolean };
@@ -433,6 +460,14 @@ function ensurePhaseOneBoundaries(config: LoopConfig): void {
         errors.push(`projects.${index}.testCoverage requires runner.kind=agent-supervised`);
       }
     }
+    if (project.securityMaintenance.enabled) {
+      if (project.securityMaintenance.schedule === undefined) {
+        errors.push(`projects.${index}.securityMaintenance.schedule is required when enabled`);
+      }
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(`projects.${index}.securityMaintenance requires runner.kind=agent-supervised`);
+      }
+    }
     const minScore = project.eval?.minScore;
     if (minScore !== undefined && minScore < project.targetScore) {
       errors.push(`projects.${index}.eval.minScore must be >= targetScore`);
@@ -497,6 +532,9 @@ export function validateLoopConfig(text: string): LoopValidationSummary {
         : []),
       ...(project.testCoverage.enabled && project.testCoverage.schedule !== undefined
         ? (["test-coverage"] as const)
+        : []),
+      ...(project.securityMaintenance.enabled && project.securityMaintenance.schedule !== undefined
+        ? (["security-maintenance"] as const)
         : []),
       ...(project.pullRequestReview.enabled && project.pullRequestReview.schedule !== undefined
         ? (["pull-request-review"] as const)

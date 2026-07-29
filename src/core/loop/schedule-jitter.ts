@@ -5,6 +5,7 @@ export type LoopJitterJobKind =
   | "workspace-architecture"
   | "bug-fix"
   | "test-coverage"
+  | "security-maintenance"
   | "pull-request-review"
   | "repository-pull-request-review";
 
@@ -41,6 +42,7 @@ function defaultJitterMinutes(jobKind: LoopJitterJobKind, config: LoopConfig): n
   if (jobKind === "architecture" || jobKind === "workspace-architecture")
     return jitter.architectureMaxDelayMinutes;
   if (jobKind === "test-coverage") return jitter.testCoverageMaxDelayMinutes;
+  if (jobKind === "security-maintenance") return jitter.securityMaintenanceMaxDelayMinutes;
   if (jobKind === "bug-fix") return jitter.bugFixMaxDelayMinutes;
   if (jobKind === "pull-request-review") return jitter.pullRequestReviewMaxDelayMinutes;
   return jitter.repositoryPullRequestReviewMaxDelayMinutes;

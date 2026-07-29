@@ -220,6 +220,19 @@ function scheduledJobs(config: LoopConfig): ScheduledJob[] {
             },
           ]
         : []),
+      ...(project.securityMaintenance.enabled
+        ? [
+            {
+              project,
+              jobKey: `${project.id}:security-maintenance`,
+              jobKind: "security-maintenance" as const,
+              schedule: project.securityMaintenance.schedule,
+              ...(project.securityMaintenance.scheduleJitterMinutes !== undefined
+                ? { scheduleJitterMinutes: project.securityMaintenance.scheduleJitterMinutes }
+                : {}),
+            },
+          ]
+        : []),
       ...(project.pullRequestReview.enabled
         ? [
             {

@@ -206,6 +206,11 @@ projects:
       branch: loop/geo-backend/test-coverage
       targetCoverage: 80
       maxRounds: 5
+    securityMaintenance:
+      enabled: true
+      schedule: "15 2 * * *"
+      branch: loop/geo-backend/security-maintenance
+      maxRounds: 3
     pullRequestReview:
       enabled: true
       schedule: "0 1 * * *"
@@ -242,6 +247,12 @@ projects:
           taskId: `loop:geo-backend:test-coverage:${Date.parse("2026-07-28T01:45:00Z")}`,
           source: "loop-engineering",
           name: "geo-backend test-coverage",
+          status: "expected",
+        }),
+        expect.objectContaining({
+          taskId: `loop:geo-backend:security-maintenance:${Date.parse("2026-07-28T02:15:00Z")}`,
+          source: "loop-engineering",
+          name: "geo-backend security-maintenance",
           status: "expected",
         }),
         expect.objectContaining({

@@ -393,9 +393,11 @@ export async function runLoopServiceTickAsync(input: {
                   ? "pull-request-review"
                   : due.jobKind === "test-coverage"
                     ? "test-coverage"
-                    : due.jobKind === "bug-fix"
-                      ? "bug-fix"
-                      : "architecture",
+                    : due.jobKind === "security-maintenance"
+                      ? "security-maintenance"
+                      : due.jobKind === "bug-fix"
+                        ? "bug-fix"
+                        : "architecture",
             });
     if (workOrder.finalSummaryPath !== undefined) {
       mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
@@ -1122,6 +1124,7 @@ function runIdForDueProject(
     | "workspace-architecture"
     | "bug-fix"
     | "test-coverage"
+    | "security-maintenance"
     | "pull-request-review"
     | "repository-pull-request-review",
 ): string {
@@ -1129,6 +1132,7 @@ function runIdForDueProject(
   if (jobKind === "workspace-architecture") return `${scheduledAt}-${projectId}-workspace`;
   if (jobKind === "bug-fix") return `${scheduledAt}-${projectId}-bug-fix`;
   if (jobKind === "test-coverage") return `${scheduledAt}-${projectId}-test-coverage`;
+  if (jobKind === "security-maintenance") return `${scheduledAt}-${projectId}-security-maintenance`;
   if (jobKind === "repository-pull-request-review")
     return `${scheduledAt}-${projectId}-repo-pr-review`;
   return `${scheduledAt}-${projectId}-pr-review`;

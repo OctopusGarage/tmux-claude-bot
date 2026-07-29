@@ -59,6 +59,7 @@ describe("parseLoopConfigYaml", () => {
       architectureMaxDelayMinutes: 0,
       bugFixMaxDelayMinutes: 0,
       testCoverageMaxDelayMinutes: 0,
+      securityMaintenanceMaxDelayMinutes: 0,
       pullRequestReviewMaxDelayMinutes: 0,
       repositoryPullRequestReviewMaxDelayMinutes: 0,
     });
@@ -94,6 +95,7 @@ describe("parseLoopConfigYaml", () => {
     architectureMaxDelayMinutes: 10
     bugFixMaxDelayMinutes: 20
     testCoverageMaxDelayMinutes: 25
+    securityMaintenanceMaxDelayMinutes: 28
     pullRequestReviewMaxDelayMinutes: 30
     repositoryPullRequestReviewMaxDelayMinutes: 45
 ${validConfig.replace(
@@ -118,6 +120,7 @@ prReview:
       architectureMaxDelayMinutes: 10,
       bugFixMaxDelayMinutes: 20,
       testCoverageMaxDelayMinutes: 25,
+      securityMaintenanceMaxDelayMinutes: 28,
       pullRequestReviewMaxDelayMinutes: 30,
       repositoryPullRequestReviewMaxDelayMinutes: 45,
     });
@@ -181,6 +184,58 @@ prReview:
         ),
       ),
     ).toThrow(/testCoverage requires runner.kind=agent-supervised/i);
+  });
+
+  it("parses security maintenance jobs for confirmed security fixes", () => {
+    const text = validConfig.replace(
+      "allowedActions:",
+      [
+        "securityMaintenance:",
+        "      enabled: true",
+        '      schedule: "10 16 * * *"',
+        "      scheduleJitterMinutes: 11",
+        "      branch: loop/hub/security-maintenance",
+        "      maxRounds: 4",
+        "      allowDependencyUpdates: true",
+        "      allowConfigHardening: true",
+        "      allowStaticAnalysisFixes: false",
+        "      prompt: Prioritize reachable auth and supply-chain findings.",
+        "    runner:",
+        "      kind: agent-supervised",
+        "    allowedActions:",
+      ].join("\n"),
+    );
+    const config = parseLoopConfigYaml(text);
+    const project = config.projects[0];
+
+    expect(project?.securityMaintenance).toMatchObject({
+      enabled: true,
+      schedule: "10 16 * * *",
+      scheduleJitterMinutes: 11,
+      branch: "loop/hub/security-maintenance",
+      maxRounds: 4,
+      allowDependencyUpdates: true,
+      allowConfigHardening: true,
+      allowStaticAnalysisFixes: false,
+      prompt: "Prioritize reachable auth and supply-chain findings.",
+    });
+    expect(validateLoopConfig(text).projects[0]?.scheduledJobs).toContain("security-maintenance");
+  });
+
+  it("requires security maintenance jobs to use agent supervision", () => {
+    expect(() =>
+      parseLoopConfigYaml(
+        validConfig.replace(
+          "allowedActions:",
+          [
+            "securityMaintenance:",
+            "      enabled: true",
+            '      schedule: "10 16 * * *"',
+            "    allowedActions:",
+          ].join("\n"),
+        ),
+      ),
+    ).toThrow(/securityMaintenance requires runner.kind=agent-supervised/i);
   });
 
   it("parses workspace architecture jobs for multi-repository optimization", () => {

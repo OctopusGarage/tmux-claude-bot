@@ -271,6 +271,67 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("Prioritize billing, auth, and queue workflows.");
   });
 
+  it("renders a security-maintenance prompt for verified security fixes", () => {
+    const project = {
+      ...firstProject(),
+      securityMaintenance: {
+        enabled: true,
+        schedule: "10 16 * * *",
+        branch: "loop/datavibe/security-maintenance",
+        maxRounds: 3,
+        allowDependencyUpdates: true,
+        allowConfigHardening: true,
+        allowStaticAnalysisFixes: true,
+        prompt: "Prioritize reachable auth, webhook, and supply-chain findings.",
+      },
+      commit: {
+        enabled: true,
+        perRound: false,
+        branch: "loop/datavibe/architecture",
+      },
+      pullRequest: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: false,
+      },
+    };
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe-security-maintenance",
+      jobKind: "security-maintenance",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder.task).toMatchObject({
+      kind: "security-maintenance",
+      maxRounds: 3,
+      allowDependencyUpdates: true,
+      allowConfigHardening: true,
+      allowStaticAnalysisFixes: true,
+    });
+    expect(workOrder.maxRounds).toBe(3);
+    expect(workOrder.allowedActions).toContain("dependency-upgrade");
+    expect(workOrder.blockedActions).not.toContain("dependency-upgrade");
+    expect(workOrder.blockedActions).toContain("direct-model-api");
+    expect(workOrder.commitPolicy.branch).toBe(
+      "loop/datavibe/security-maintenance/1752643800000-datavibe-security-maintenance",
+    );
+    expect(prompt).toContain("Security maintenance task.");
+    expect(prompt).toContain("not only dependency advisories");
+    expect(prompt).toContain("GitHub security findings");
+    expect(prompt).toContain("secret or token exposure");
+    expect(prompt).toContain("prove the issue is real or plausibly reachable");
+    expect(prompt).toContain("Dependency updates are allowed only when");
+    expect(prompt).toContain("PR content must clearly separate");
+    expect(prompt).toContain("compact --yes before each delegated security-maintenance round");
+    expect(prompt).toContain("Prioritize reachable auth, webhook, and supply-chain findings.");
+    expect(prompt).not.toContain("Architecture target score");
+  });
+
   it("renders a pull request review prompt with two-pass merge guidance", () => {
     const project = {
       ...firstProject(),

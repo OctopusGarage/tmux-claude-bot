@@ -235,6 +235,42 @@ describe("runLoopSchedulerTick", () => {
     });
   });
 
+  it("schedules security-maintenance jobs independently from architecture jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    securityMaintenance:",
+          "      enabled: true",
+          '      schedule: "10 16 * * *"',
+          "      branch: loop/due/security-maintenance",
+          "      maxRounds: 3",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T16:15:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T16:15:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:security-maintenance",
+      jobKind: "security-maintenance",
+      scheduledAt: Date.parse("2026-07-16T16:10:00Z"),
+    });
+  });
+
   it("counts architecture and pull request review as separate checked jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(

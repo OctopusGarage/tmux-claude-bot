@@ -49,6 +49,14 @@ export type LoopWorkOrder = {
         prompt?: string;
       }
     | {
+        kind: "security-maintenance";
+        maxRounds: number;
+        allowDependencyUpdates: boolean;
+        allowConfigHardening: boolean;
+        allowStaticAnalysisFixes: boolean;
+        prompt?: string;
+      }
+    | {
         kind: "pull-request-review";
         lookbackHours: number;
         consecutivePasses: number;
@@ -131,16 +139,23 @@ export function buildLoopWorkOrder(input: {
   project: LoopProjectConfig;
   scheduledAt: number;
   runId: string;
-  jobKind?: "architecture" | "bug-fix" | "test-coverage" | "pull-request-review";
+  jobKind?:
+    | "architecture"
+    | "bug-fix"
+    | "test-coverage"
+    | "security-maintenance"
+    | "pull-request-review";
 }): LoopWorkOrder {
   const task =
     input.jobKind === "pull-request-review"
       ? pullRequestReviewTask(input.project.pullRequestReview)
       : input.jobKind === "test-coverage"
         ? testCoverageTask(input.project.testCoverage)
-        : input.jobKind === "bug-fix"
-          ? bugFixTask(input.project.bugFix)
-          : { kind: "architecture" as const };
+        : input.jobKind === "security-maintenance"
+          ? securityMaintenanceTask(input.project.securityMaintenance)
+          : input.jobKind === "bug-fix"
+            ? bugFixTask(input.project.bugFix)
+            : { kind: "architecture" as const };
   const workOrder: LoopWorkOrder = {
     id: input.runId,
     scheduledAt: input.scheduledAt,
@@ -151,13 +166,14 @@ export function buildLoopWorkOrder(input: {
     agent: input.project.agent,
     goal: input.project.goal,
     maxRounds:
-      task.kind === "bug-fix" || task.kind === "test-coverage"
+      task.kind === "bug-fix" ||
+      task.kind === "test-coverage" ||
+      task.kind === "security-maintenance"
         ? task.maxRounds
         : input.project.maxRounds,
     targetScore: input.project.targetScore,
     runner: input.project.runner,
-    allowedActions: [...input.project.allowedActions],
-    blockedActions: [...input.project.blockedActions],
+    ...actionPolicyForTask(input.project, task),
     skills: { approved: [...input.config.skills.approved] },
     preflight: input.project.preflight,
     assessment: input.project.assessment,
@@ -281,9 +297,11 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
           ? workspaceArchitecturePolicy(workOrder)
           : task.kind === "test-coverage"
             ? testCoveragePolicy(workOrder)
-            : task.kind === "bug-fix"
-              ? bugFixPolicy(workOrder)
-              : architecturePolicy(workOrder);
+            : task.kind === "security-maintenance"
+              ? securityMaintenancePolicy(workOrder)
+              : task.kind === "bug-fix"
+                ? bugFixPolicy(workOrder)
+                : architecturePolicy(workOrder);
   return [
     "You are the Loop Supervisor for tmux-claude-bot.",
     "",
@@ -321,7 +339,7 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
     `- Then print ${workOrder.requiredFinalMarker} on its own line. You may print the same strict JSON after it, but the file is authoritative.`,
     '- finalVerification must be one string only: "passed", "failed", "not-run", or "unknown"; put detailed verification notes in actionsTaken or followUps, not in finalVerification.',
     "- commits must contain only real commit hashes or strings that start with a real commit hash; put PR URLs, PR numbers, and status notes in actionsTaken or followUps.",
-    "- Before finalizing a PR task, bug-fix task, test-coverage task, or architecture task that opened a PR, re-read the PR body and remove known generated review/release-note blocks such as CodeRabbit auto-generated summaries; the PR body must contain only the intended human-authored summary, verification, and notes.",
+    "- Before finalizing a PR task, bug-fix task, test-coverage task, security-maintenance task, or architecture task that opened a PR, re-read the PR body and remove known generated review/release-note blocks such as CodeRabbit auto-generated summaries; the PR body must contain only the intended human-authored summary, verification, and notes.",
   ].join("\n");
 }
 
@@ -349,6 +367,19 @@ function testCoverageTask(
     allowSmokeTests: policy.allowSmokeTests,
     allowE2ETests: policy.allowE2ETests,
     allowAiEvalTests: policy.allowAiEvalTests,
+    ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
+  };
+}
+
+function securityMaintenanceTask(
+  policy: LoopProjectConfig["securityMaintenance"],
+): Extract<LoopWorkOrder["task"], { kind: "security-maintenance" }> {
+  return {
+    kind: "security-maintenance",
+    maxRounds: policy.maxRounds,
+    allowDependencyUpdates: policy.allowDependencyUpdates,
+    allowConfigHardening: policy.allowConfigHardening,
+    allowStaticAnalysisFixes: policy.allowStaticAnalysisFixes,
     ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
   };
 }
@@ -492,6 +523,34 @@ function testCoveragePolicy(workOrder: LoopWorkOrder): string[] {
   ].filter(Boolean);
 }
 
+function securityMaintenancePolicy(workOrder: LoopWorkOrder): string[] {
+  const task = workOrderTask(workOrder);
+  if (task.kind !== "security-maintenance") return [];
+  return [
+    "Security maintenance task.",
+    `- Run at most ${task.maxRounds} focused security round(s). Stop when no confirmed actionable security issue remains within this task's allowed scope.`,
+    "- Check broadly for security risk, not only dependency advisories: dependency vulnerabilities, GitHub security findings, static analysis findings, secret or token exposure, unsafe auth/permission checks, webhook verification, CORS, file/path handling, uploads, deserialization/parsing, SSRF, command execution, logging of sensitive data, CI secret handling, and supply-chain risk.",
+    "- Start with the project's own security signals when available: npm/pnpm/yarn/bun audit, GitHub Dependabot/security alerts, CodeQL, Semgrep, ESLint security rules, existing CI/security scripts, and repository documentation.",
+    "- Before editing, prove the issue is real or plausibly reachable in this project. Record the evidence, affected path, severity, reachability, and why it is not merely a scanner false positive.",
+    "- Do not add product features, broad rewrites, cosmetic cleanup, speculative hardening, unrelated test coverage, or dependency churn just to quiet a report.",
+    task.allowDependencyUpdates
+      ? "- Dependency updates are allowed only when they address a confirmed security issue or safe supply-chain maintenance; prefer the smallest compatible update and inspect changelogs or release notes when risk is non-trivial."
+      : "- Do not perform dependency updates; classify dependency findings and report blockers instead.",
+    task.allowConfigHardening
+      ? "- Config hardening is allowed when it directly reduces a confirmed exposure and preserves documented deployment behavior."
+      : "- Do not change runtime, CI, or deployment configuration; classify config findings and report blockers instead.",
+    task.allowStaticAnalysisFixes
+      ? "- Static analysis fixes are allowed when they correct a real security-sensitive behavior or remove a high-signal finding without weakening checks."
+      : "- Do not edit code solely for static analysis findings; report them with evidence and blockers.",
+    "- For every fix, add or update a focused regression, smoke, or security test when practical. If a test is not practical, record the narrow verification command and manual reasoning.",
+    "- After each fix, rerun the relevant security check plus the normal local verification required by the project, then inspect the diff for new security, compatibility, or operational risk.",
+    "- PR content must clearly separate: finding source, severity/reachability judgment, fix, verification, and any accepted residual risk.",
+    task.prompt !== undefined
+      ? `- Additional security-maintenance instruction: ${task.prompt}`
+      : "",
+  ].filter(Boolean);
+}
+
 function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): string[] {
   const task = workOrderTask(workOrder);
   if (task.kind !== "pull-request-review") return [];
@@ -618,6 +677,9 @@ function contextResetPolicy(workOrder: LoopWorkOrder, cli: string): string {
   if (task.kind === "test-coverage") {
     return `- Run ${cli} control <project> compact --yes before each delegated test-coverage round.`;
   }
+  if (task.kind === "security-maintenance") {
+    return `- Run ${cli} control <project> compact --yes before each delegated security-maintenance round.`;
+  }
   if (task.kind === "repository-pull-request-review") {
     return `- Run ${cli} control <project> compact --yes before each delegated repository PR review pass.`;
   }
@@ -660,7 +722,29 @@ function commitPolicyForTask(
       branch: project.testCoverage.branch,
     };
   }
+  if (task.kind === "security-maintenance" && project.securityMaintenance.branch !== undefined) {
+    return {
+      ...project.commit,
+      branch: project.securityMaintenance.branch,
+    };
+  }
   return project.commit;
+}
+
+function actionPolicyForTask(
+  project: LoopProjectConfig,
+  task: NonNullable<LoopWorkOrder["task"]>,
+): Pick<LoopWorkOrder, "allowedActions" | "blockedActions"> {
+  if (task.kind !== "security-maintenance" || !task.allowDependencyUpdates) {
+    return {
+      allowedActions: [...project.allowedActions],
+      blockedActions: [...project.blockedActions],
+    };
+  }
+  return {
+    allowedActions: [...new Set([...project.allowedActions, "dependency-upgrade"])],
+    blockedActions: project.blockedActions.filter((action) => action !== "dependency-upgrade"),
+  };
 }
 
 function sanitizeBranchSegment(value: string): string {
@@ -719,7 +803,7 @@ export function buildLoopSupervisorFinalizationPrompt(
     `- Then print ${workOrder.requiredFinalMarker} on its own line. You may print the same strict JSON after it, but the file is authoritative.`,
     '- finalVerification must be one string only: "passed", "failed", "not-run", or "unknown"; put detailed verification notes in actionsTaken or followUps, not in finalVerification.',
     "- commits must contain only real commit hashes or strings that start with a real commit hash; put PR URLs, PR numbers, and status notes in actionsTaken or followUps.",
-    "- Before finalizing a PR task, bug-fix task, test-coverage task, or architecture task that opened a PR, re-read the PR body and remove known generated review/release-note blocks such as CodeRabbit auto-generated summaries; the PR body must contain only the intended human-authored summary, verification, and notes.",
+    "- Before finalizing a PR task, bug-fix task, test-coverage task, security-maintenance task, or architecture task that opened a PR, re-read the PR body and remove known generated review/release-note blocks such as CodeRabbit auto-generated summaries; the PR body must contain only the intended human-authored summary, verification, and notes.",
   ].join("\n");
 }
 

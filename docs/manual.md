@@ -380,6 +380,16 @@ Each scheduled project chooses a runner:
   practical. AI eval coverage must use an existing agent-backed or deterministic
   eval surface; do not add direct model-provider SDKs, model API keys, or HTTP
   model calls for this task.
+  `securityMaintenance` is a separate cron job for automatic security review and
+  repair. It checks dependency advisories, GitHub security findings, static
+  analysis, secret exposure, auth/permission boundaries, webhook verification,
+  CORS, file/path handling, uploads, command execution, sensitive logging, CI
+  secret handling, and supply-chain risks. Before editing, the supervisor must
+  decide whether the finding is real or plausibly reachable in the project,
+  record severity/reachability evidence, and avoid dependency churn or cosmetic
+  hardening just to quiet a scanner. Confirmed fixes use the security branch,
+  run the relevant security check plus normal local verification, and describe
+  source, impact, fix, verification, and residual risk in the PR.
   `pullRequestReview` is another separate cron job. It reuses the same project
   session and supervisor, reviews loop-created PRs from the configured lookback
   window, requires the configured number of clean review passes, and only
@@ -460,6 +470,20 @@ projects:
         Raise meaningful test coverage to at least 80%. Do not add weak tests
         purely to move the metric; prioritize real behavior, critical paths, and
         regressions found while testing.
+    securityMaintenance:
+      enabled: true
+      schedule: "10 16 * * *"
+      branch: loop/datavibe-backend/security-maintenance
+      maxRounds: 3
+      allowDependencyUpdates: true
+      allowConfigHardening: true
+      allowStaticAnalysisFixes: true
+      prompt: >
+        Check and fix confirmed security risks. Include dependencies, GitHub
+        security findings, static analysis, secrets, auth boundaries, webhooks,
+        CORS, file/path handling, uploads, command execution, sensitive logging,
+        CI secrets, and supply-chain issues. Do not blindly upgrade dependencies
+        or harden config unless the risk is real or plausibly reachable.
     pullRequestReview:
       enabled: true
       schedule: "0 1 * * *"

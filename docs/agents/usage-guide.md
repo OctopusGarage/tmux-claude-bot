@@ -124,8 +124,16 @@ stop when no confirmed real bug remains. To raise meaningful test coverage, add
 and risk paths, avoid metric-padding tests, add unit/integration/smoke/E2E/AI
 eval coverage only when justified, and fix real bugs discovered during coverage
 work. AI eval coverage must use an existing agent-backed or deterministic eval
-surface, not direct model-provider APIs. To review and
-merge loop-created PRs on a later schedule, add `pullRequestReview.enabled: true`
+surface, not direct model-provider APIs. To run automatic security review and
+repair, add `securityMaintenance.enabled: true` with its own `schedule`,
+`branch`, and `maxRounds`. The supervisor checks
+dependencies, GitHub security findings, static analysis, secrets, auth
+boundaries, webhooks, CORS, file/path handling, uploads, command execution,
+sensitive logging, CI secrets, and supply-chain risks. It must verify
+reachability and severity before editing, avoid blind dependency churn, run the
+relevant security check plus local verification, and document impact, fix,
+verification, and residual risk in the PR. To review and merge loop-created PRs
+on a later schedule, add `pullRequestReview.enabled: true`
 with its own `schedule`, `lookbackHours`, `consecutivePasses`, and `autoMerge`;
 the supervisor performs repeat review passes focused on bugs, CI, and
 mergeability rather than nits.

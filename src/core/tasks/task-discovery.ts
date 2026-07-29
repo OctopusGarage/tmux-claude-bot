@@ -124,6 +124,23 @@ export function discoverLoopEngineeringScheduledTasks(input: {
         }),
       );
     }
+    if (project.securityMaintenance.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: project.id,
+          jobKey: `${project.id}:security-maintenance`,
+          jobKind: "security-maintenance",
+          schedule: project.securityMaintenance.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(project.securityMaintenance.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: project.securityMaintenance.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
     if (project.pullRequestReview.enabled) {
       records.push(
         ...loopScheduleRecords({
@@ -350,6 +367,7 @@ function loopRunSuffix(projectId: string, jobKind: LoopDiscoveredJobKind): strin
   if (jobKind === "workspace-architecture") return `-${projectId}-workspace`;
   if (jobKind === "bug-fix") return `-${projectId}-bug-fix`;
   if (jobKind === "test-coverage") return `-${projectId}-test-coverage`;
+  if (jobKind === "security-maintenance") return `-${projectId}-security-maintenance`;
   if (jobKind === "repository-pull-request-review") return `-${projectId}-repo-pr-review`;
   return `-${projectId}-pr-review`;
 }
