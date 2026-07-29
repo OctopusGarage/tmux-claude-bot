@@ -778,6 +778,76 @@ prReview:
     });
   });
 
+  it("does not require a loop-created PR for project pull-request-review jobs", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: main",
+        "      switchBack: main",
+        "    pullRequestReview:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "      consecutivePasses: 2",
+        "      autoMerge: true",
+      ].join("\n"),
+    });
+    const schedulerStore = new LoopSchedulerStore();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    schedulerStore.setLastFired("hub", now);
+    const prompts: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) => {
+        throw new Error(
+          `project PR review should not look up a loop-created PR: ${invocation.command}`,
+        );
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        prompts.push(request.prompt);
+        expect(request.workOrder.task).toMatchObject({ kind: "pull-request-review" });
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: "hub",
+            actionsTaken: ["reviewed and merged eligible loop-created PRs"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: ["abc1234 merge reviewed PR"],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ checked: 2, due: 1, ran: 1, failed: 0 });
+    expect(prompts).toHaveLength(1);
+    expect(schedulerStore.getLastFired()).toHaveProperty("hub:pull-request-review", now);
+  });
+
   it("accepts a supervisor final summary written to the work order file", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));

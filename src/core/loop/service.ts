@@ -964,6 +964,7 @@ function runSupervisedSystemGateOutcome(input: {
   }
 
   const requiresLoopCreatedPullRequestGate =
+    input.workOrder.task?.kind !== "pull-request-review" &&
     input.workOrder.task?.kind !== "repository-pull-request-review";
 
   if (
