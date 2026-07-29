@@ -14,7 +14,7 @@ import { matchFlavorAlias } from "./flavor-alias.js";
 import type { AgentKind, AgentProfile, ReadResolver } from "./types.js";
 
 // Re-exported so existing importers (tests, codex-takeover) are unchanged.
-export { buildCodexResumeCommand, buildResumeCommand, SKIP_PERMS } from "./resume-command.js";
+export { buildCodexResumeCommand, buildResumeCommand } from "./resume-command.js";
 
 const execFileAsync = promisify(execFile);
 
