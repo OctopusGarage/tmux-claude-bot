@@ -118,6 +118,9 @@ for the previous Singapore day, notifies Telegram/Feishu with the success and
 failure list, then queues agent-supervised repair for failed, missing, or
 timed-out tasks when auto-repair is enabled. External scheduled systems should
 use `tcb task report` from their own scheduler or status exporter.
+Repair agents should update the same task id after verification with
+`--repair-status fixed`, `--repair-status superseded`,
+`--repair-status not-reproducible`, or `--repair-status blocked`.
 
 Button and TUI shortcuts ask for confirmation before `exit`, `restart`, `clear`, or
 `compact`. Known typed slash commands are treated as explicit bot intent and run

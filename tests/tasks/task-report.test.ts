@@ -34,6 +34,38 @@ describe("recordExternalTaskReport", () => {
     });
   });
 
+  it("records repair status updates through the shared task report contract", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-repair-"));
+    const scheduledAt = Date.parse("2026-07-27T03:00:00Z");
+
+    recordExternalTaskReport({
+      taskId: "radar:daily:2026-07-27",
+      source: "radar-monitor",
+      name: "daily radar monitor",
+      scheduledAt,
+      status: "failed",
+      error: "report file was not generated",
+    });
+    recordExternalTaskReport({
+      taskId: "radar:daily:2026-07-27",
+      source: "radar-monitor",
+      name: "daily radar monitor",
+      scheduledAt,
+      status: "failed",
+      error: "repair verified the report generator",
+      summary: "fixed by dev branch repair commit",
+      repairStatus: "fixed",
+    });
+
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-27"))[0]).toMatchObject({
+      taskId: "radar:daily:2026-07-27",
+      status: "failed",
+      error: "repair verified the report generator",
+      summary: "fixed by dev branch repair commit",
+      repairStatus: "fixed",
+    });
+  });
+
   it("rejects invalid task timestamps before writing corrupt ledger records", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-invalid-"));
 

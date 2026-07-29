@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  classifyTaskFailure,
   DailyTaskLedger,
   singaporeDayWindow,
   summarizeTaskWindow,
@@ -129,6 +130,110 @@ describe("DailyTaskLedger", () => {
       taskId: "batch:nightly:timeout",
       status: "running-timeout",
       repairStatus: "pending",
+    });
+  });
+
+  it("classifies common loop task failure causes", () => {
+    expect(classifyTaskFailure("invalid-output", "missing-final-marker")).toBe(
+      "invalid-final-summary",
+    );
+    expect(classifyTaskFailure("supervisor-failed", 'CI check "verify" concluded FAILURE')).toBe(
+      "external-ci",
+    );
+    expect(classifyTaskFailure("blocked", "worktree is dirty before sync")).toBe("dirty-worktree");
+    expect(classifyTaskFailure("dispatch-failed", "Codex did not become ready in time")).toBe(
+      "agent-timeout",
+    );
+    expect(classifyTaskFailure("notification failed", "TLS handshake timeout")).toBe(
+      "external-service",
+    );
+  });
+
+  it("marks earlier unresolved same-job failures as superseded by later success", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-supersede-"));
+    const ledger = new DailyTaskLedger();
+    const firstAt = Date.parse("2026-07-27T01:00:00Z");
+    const secondAt = Date.parse("2026-07-27T02:00:00Z");
+
+    ledger.expect({
+      taskId: "loop:geo-backend:pull-request-review:first",
+      source: "loop-engineering",
+      name: "geo-backend pull-request-review",
+      scheduledAt: firstAt,
+    });
+    ledger.fail("loop:geo-backend:pull-request-review:first", {
+      endedAt: firstAt + 1000,
+      error: "supervisor-failed",
+      summary: 'supervised system gate failed: PR lookup failed for branch "loop/pr-review"',
+    });
+    ledger.expect({
+      taskId: "loop:geo-backend:pull-request-review:second",
+      source: "loop-engineering",
+      name: "geo-backend pull-request-review",
+      scheduledAt: secondAt,
+    });
+    ledger.finish("loop:geo-backend:pull-request-review:second", {
+      endedAt: secondAt + 1000,
+      summary: "completed no-op review",
+    });
+
+    expect(
+      ledger
+        .listForWindow(singaporeDayWindow("2026-07-27"))
+        .map((record) => [record.taskId, record.status, record.repairStatus, record.summary]),
+    ).toEqual([
+      [
+        "loop:geo-backend:pull-request-review:first",
+        "failed",
+        "superseded",
+        'supervised system gate failed: PR lookup failed for branch "loop/pr-review"; Superseded by later successful task loop:geo-backend:pull-request-review:second.',
+      ],
+      [
+        "loop:geo-backend:pull-request-review:second",
+        "success",
+        "not-needed",
+        "completed no-op review",
+      ],
+    ]);
+  });
+
+  it("reconciles superseded failures already present in the ledger", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-reconcile-"));
+    const ledger = new DailyTaskLedger();
+    const firstAt = Date.parse("2026-07-27T01:00:00Z");
+    const secondAt = Date.parse("2026-07-27T02:00:00Z");
+
+    ledger.expect({
+      taskId: "loop:geo-backend:pull-request-review:first",
+      source: "loop-engineering",
+      name: "geo-backend pull-request-review",
+      scheduledAt: firstAt,
+    });
+    ledger.fail("loop:geo-backend:pull-request-review:first", {
+      endedAt: firstAt + 1000,
+      error: "supervisor-failed",
+    });
+    ledger.expect({
+      taskId: "loop:geo-backend:pull-request-review:second",
+      source: "loop-engineering",
+      name: "geo-backend pull-request-review",
+      scheduledAt: secondAt,
+    });
+    ledger.finish("loop:geo-backend:pull-request-review:second", {
+      endedAt: secondAt + 1000,
+    });
+    ledger.markRepairStatus("loop:geo-backend:pull-request-review:first", {
+      repairStatus: "pending",
+      updatedAt: secondAt + 2000,
+      summary: "legacy pending failure",
+    });
+
+    expect(ledger.reconcileSupersededFailures()).toBe(1);
+    expect(ledger.listForWindow(singaporeDayWindow("2026-07-27"))[0]).toMatchObject({
+      taskId: "loop:geo-backend:pull-request-review:first",
+      repairStatus: "superseded",
+      summary:
+        "legacy pending failure; Superseded by later successful task loop:geo-backend:pull-request-review:second.",
     });
   });
 });

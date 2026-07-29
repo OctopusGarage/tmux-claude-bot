@@ -95,6 +95,10 @@ notification files, for example:
 For scheduled monitors that should appear in the daily audit, also call
 `tcb task report --id <id> --source radar-monitor|article-monitor|external-monitor|launchd
 --name <name> --scheduled-at <iso> --status running|success|failed|skipped`.
+After repair review, update the same task id with `--repair-status fixed`,
+`--repair-status superseded`, `--repair-status not-reproducible`, or
+`--repair-status blocked` so the next daily audit does not re-dispatch already
+closed failures.
 
 **Schedule recurring Loop Engineering maintenance** → create a Loop config and set
 `LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml`. Default projects use the

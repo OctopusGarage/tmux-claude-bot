@@ -18,6 +18,27 @@ export type ScheduledTaskStatus =
   | "running-timeout"
   | "skipped";
 
+export type ScheduledTaskFailureKind =
+  | "dirty-worktree"
+  | "external-ci"
+  | "github-permission"
+  | "invalid-final-summary"
+  | "system-gate"
+  | "agent-timeout"
+  | "missing-instrumentation"
+  | "external-service"
+  | "unknown";
+
+export type ScheduledTaskRepairStatus =
+  | "not-needed"
+  | "pending"
+  | "running"
+  | "fixed"
+  | "blocked"
+  | "failed"
+  | "superseded"
+  | "not-reproducible";
+
 export type ScheduledTaskRecord = {
   taskId: string;
   source: ScheduledTaskSource;
@@ -28,8 +49,9 @@ export type ScheduledTaskRecord = {
   endedAt?: number;
   summary?: string;
   error?: string;
+  failureKind?: ScheduledTaskFailureKind;
   reportPath?: string;
-  repairStatus?: "not-needed" | "pending" | "running" | "fixed" | "blocked" | "failed";
+  repairStatus?: ScheduledTaskRepairStatus;
   updatedAt: number;
 };
 
@@ -112,6 +134,7 @@ export class DailyTaskLedger {
       updatedAt: input.endedAt,
     };
     this.store.set(taskId, record);
+    this.supersedeEarlierFailures(record);
     return record;
   }
 
@@ -126,6 +149,7 @@ export class DailyTaskLedger {
       status: "failed",
       endedAt: input.endedAt,
       error: input.error,
+      failureKind: classifyTaskFailure(input.error, input.summary),
       repairStatus: "pending",
       ...(input.summary !== undefined ? { summary: input.summary } : {}),
       ...(input.reportPath !== undefined ? { reportPath: input.reportPath } : {}),
@@ -150,6 +174,49 @@ export class DailyTaskLedger {
     return record;
   }
 
+  markRepairStatus(
+    taskId: string,
+    input: {
+      repairStatus: ScheduledTaskRepairStatus;
+      updatedAt: number;
+      summary?: string;
+      error?: string;
+    },
+  ): ScheduledTaskRecord | null {
+    const existing = this.store.get(taskId);
+    if (!existing) return null;
+    const record: ScheduledTaskRecord = {
+      ...existing,
+      repairStatus: input.repairStatus,
+      ...(input.summary !== undefined ? { summary: input.summary } : {}),
+      ...(input.error !== undefined ? { error: input.error } : {}),
+      ...(input.error !== undefined || input.summary !== undefined
+        ? {
+            failureKind: classifyTaskFailure(
+              input.error ?? existing.error,
+              input.summary ?? existing.summary,
+            ),
+          }
+        : {}),
+      updatedAt: input.updatedAt,
+    };
+    this.store.set(taskId, record);
+    return record;
+  }
+
+  reconcileSupersededFailures(): number {
+    let updated = 0;
+    const successes = this.store
+      .sortedEntries()
+      .map(([, record]) => record)
+      .filter((record) => record.status === "success")
+      .sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
+    for (const success of successes) {
+      updated += this.supersedeEarlierFailures(success);
+    }
+    return updated;
+  }
+
   listForWindow(window: TaskWindow): ScheduledTaskRecord[] {
     return this.store
       .sortedEntries()
@@ -157,6 +224,67 @@ export class DailyTaskLedger {
       .filter((record) => record.scheduledAt >= window.start && record.scheduledAt < window.end)
       .sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
   }
+
+  private supersedeEarlierFailures(success: ScheduledTaskRecord): number {
+    let updated = 0;
+    for (const [, record] of this.store.sortedEntries()) {
+      if (record.taskId === success.taskId) continue;
+      if (record.source !== success.source || record.name !== success.name) continue;
+      if (record.scheduledAt >= success.scheduledAt) continue;
+      if (!isUnresolvedRepairCandidate(record)) continue;
+      this.store.set(record.taskId, {
+        ...record,
+        repairStatus: "superseded",
+        summary: appendSummary(
+          record.summary,
+          `Superseded by later successful task ${success.taskId}.`,
+        ),
+        updatedAt: success.endedAt ?? success.updatedAt,
+      });
+      updated++;
+    }
+    return updated;
+  }
+}
+
+export function classifyTaskFailure(
+  error: string | undefined,
+  summary: string | undefined,
+): ScheduledTaskFailureKind {
+  const text = `${error ?? ""}\n${summary ?? ""}`.toLowerCase();
+  if (text.includes("dirty") || text.includes("worktree is dirty")) return "dirty-worktree";
+  if (text.includes("github account") || text.includes("must be a collaborator"))
+    return "github-permission";
+  if (
+    text.includes("invalid-output") ||
+    text.includes("missing-final-marker") ||
+    text.includes("final summary") ||
+    text.includes("status passed") ||
+    text.includes("status complete")
+  ) {
+    return "invalid-final-summary";
+  }
+  if (text.includes("ci check") || text.includes("statuscheckrollup")) return "external-ci";
+  if (text.includes("network") || text.includes("socket") || text.includes("tls handshake"))
+    return "external-service";
+  if (text.includes("did not become ready") || text.includes("timeout")) return "agent-timeout";
+  if (text.includes("missing instrumentation") || text.includes("missing output"))
+    return "missing-instrumentation";
+  if (text.includes("supervised system gate failed")) return "system-gate";
+  return "unknown";
+}
+
+function isUnresolvedRepairCandidate(record: ScheduledTaskRecord): boolean {
+  if (!["failed", "missing", "running-timeout"].includes(record.status)) return false;
+  return !["fixed", "not-needed", "blocked", "superseded", "not-reproducible"].includes(
+    record.repairStatus ?? "pending",
+  );
+}
+
+function appendSummary(current: string | undefined, addition: string): string {
+  if (current === undefined || current.trim().length === 0) return addition;
+  if (current.includes(addition)) return current;
+  return `${current}; ${addition}`;
 }
 
 export function singaporeDayWindow(day: string): TaskWindow {

@@ -509,6 +509,10 @@ task
   .option("--summary <text>", "short result summary")
   .option("--error <text>", "failure reason")
   .option("--report <path>", "path to a generated report")
+  .option(
+    "--repair-status <status>",
+    "repair state: not-needed, pending, running, fixed, blocked, failed, superseded, or not-reproducible",
+  )
   .option("--json", "output JSON")
   .action(async (o) => {
     const { recordExternalTaskReport } = await import("./core/tasks/task-report.js");
@@ -522,6 +526,16 @@ task
       "daily-audit",
     ]);
     const statuses = new Set(["running", "success", "failed", "skipped"]);
+    const repairStatuses = new Set([
+      "not-needed",
+      "pending",
+      "running",
+      "fixed",
+      "blocked",
+      "failed",
+      "superseded",
+      "not-reproducible",
+    ]);
     const parseTime = (value: string | undefined): number | undefined => {
       if (value === undefined) return undefined;
       const numeric = Number(value);
@@ -550,6 +564,10 @@ task
       console.error(`invalid --status "${o.status}"`);
       process.exit(1);
     }
+    if (o.repairStatus !== undefined && !repairStatuses.has(o.repairStatus)) {
+      console.error(`invalid --repair-status "${o.repairStatus}"`);
+      process.exit(1);
+    }
     const report = {
       taskId: o.id,
       source: o.source as Parameters<typeof recordExternalTaskReport>[0]["source"],
@@ -559,6 +577,13 @@ task
       ...(o.summary !== undefined ? { summary: o.summary } : {}),
       ...(o.error !== undefined ? { error: o.error } : {}),
       ...(o.report !== undefined ? { reportPath: o.report } : {}),
+      ...(o.repairStatus !== undefined
+        ? {
+            repairStatus: o.repairStatus as NonNullable<
+              Parameters<typeof recordExternalTaskReport>[0]["repairStatus"]
+            >,
+          }
+        : {}),
     };
     recordExternalTaskReport({
       ...report,

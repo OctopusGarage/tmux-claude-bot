@@ -156,5 +156,42 @@ describe("runDailyTaskAudit", () => {
       }),
     );
     expect(notifiedBodies[0]).toContain("repair: fixed");
+    expect(notifiedBodies[0]).toContain("Closed failures:");
+  });
+
+  it("renders failure kinds for active repair candidates", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-kind-"));
+    const ledger = new DailyTaskLedger();
+    const scheduledAt = Date.parse("2026-07-27T02:00:00Z");
+    ledger.expect({
+      taskId: "loop:geo-frontend:bug-fix",
+      source: "loop-engineering",
+      name: "geo-frontend bug-fix",
+      scheduledAt,
+    });
+    ledger.fail("loop:geo-frontend:bug-fix", {
+      endedAt: scheduledAt + 1000,
+      error: "supervisor-failed",
+      summary: 'supervised system gate failed: CI check "verify" concluded FAILURE',
+    });
+    const notifiedBodies: string[] = [];
+    const notify = vi.fn(async (request: { body?: string }) => {
+      if (request.body !== undefined) notifiedBodies.push(request.body);
+      return { status: "sent" as const, deliveries: [] };
+    });
+
+    const result = await runDailyTaskAudit({
+      now: Date.parse("2026-07-28T02:00:00Z"),
+      ledger,
+      notify,
+      channel: "lark",
+    });
+
+    expect(result.repairCandidates[0]).toMatchObject({
+      taskId: "loop:geo-frontend:bug-fix",
+      failureKind: "external-ci",
+    });
+    expect(notifiedBodies[0]).toContain("failure-kind: external-ci");
+    expect(notifiedBodies[0]).toContain("kind=external-ci");
   });
 });

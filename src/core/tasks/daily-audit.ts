@@ -30,6 +30,7 @@ export async function runDailyTaskAudit(input: {
   discover?: ScheduledTaskDiscovery;
 }): Promise<DailyTaskAuditResult> {
   const window = previousSingaporeDayWindow(input.now);
+  input.ledger.reconcileSupersededFailures();
   const ledgerRecords = input.ledger.listForWindow(window);
   const discoveredRecords = input.discover?.({ window, now: input.now }) ?? [];
   const summary = summarizeTaskWindow({
@@ -38,9 +39,7 @@ export async function runDailyTaskAudit(input: {
     window,
   });
   const repairCandidates = summary.items.filter(
-    (item) =>
-      ["failed", "missing", "running-timeout"].includes(item.status) &&
-      !["fixed", "not-needed", "blocked"].includes(item.repairStatus ?? "pending"),
+    (item) => isRepairableStatus(item.status) && !isClosedRepairStatus(item.repairStatus),
   );
   if (input.notify !== undefined) {
     await input.notify(
@@ -99,6 +98,7 @@ export function renderDailyTaskAudit(
       `- ${item.status}: ${item.name} (${item.source})`,
       `  taskId: ${item.taskId}`,
       item.repairStatus ? `  repair: ${item.repairStatus}` : "",
+      item.failureKind ? `  failure-kind: ${item.failureKind}` : "",
       item.error ? `  error: ${item.error}` : "",
       item.summary ? `  summary: ${item.summary}` : "",
       item.reportPath ? `  report: ${item.reportPath}` : "",
@@ -107,8 +107,31 @@ export function renderDailyTaskAudit(
   if (repairCandidates.length > 0) {
     lines.push("", "Repair candidates:");
     for (const item of repairCandidates) {
-      lines.push(`- ${item.taskId}: ${item.status}${item.error ? ` - ${item.error}` : ""}`);
+      lines.push(
+        `- ${item.taskId}: ${item.status}${
+          item.failureKind ? ` kind=${item.failureKind}` : ""
+        }${item.error ? ` - ${item.error}` : ""}`,
+      );
+    }
+  }
+  const closed = summary.items.filter(
+    (item) => isRepairableStatus(item.status) && isClosedRepairStatus(item.repairStatus),
+  );
+  if (closed.length > 0) {
+    lines.push("", "Closed failures:");
+    for (const item of closed) {
+      lines.push(`- ${item.taskId}: repair=${item.repairStatus}`);
     }
   }
   return lines.filter((line) => line.length > 0).join("\n");
+}
+
+function isClosedRepairStatus(status: TaskAuditItem["repairStatus"]): boolean {
+  return ["fixed", "not-needed", "blocked", "superseded", "not-reproducible"].includes(
+    status ?? "pending",
+  );
+}
+
+function isRepairableStatus(status: TaskAuditItem["status"]): boolean {
+  return ["failed", "missing", "running-timeout"].includes(status);
 }
