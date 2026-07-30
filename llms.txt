@@ -9,6 +9,7 @@ control them from Telegram, Feishu/Lark, a local CLI, or the terminal UI.
 - [Chat command reference](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/commands.md): Telegram and Feishu/Lark command list and behavior.
 - [Terminal UI guide](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/tui.md): `tcb tui` layout, keys, and workflows.
 - [AI usage guide](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/agents/usage-guide.md): Task recipes for assistants helping a user operate tmux-claude-bot.
+- [Intelligent automation map](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/intelligent-automation.md): Terms, relationships, task families, supervisor gates, and maintenance rules for Loop Engineering, Autopilot, Opportunity Discovery, PR review, and Daily Task Audit.
 - [Testing standard](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/TESTING.md): Test strategy, local verification commands, and guardrails.
 
 ## Architecture And Maintenance

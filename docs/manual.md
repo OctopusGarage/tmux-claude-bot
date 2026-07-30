@@ -251,6 +251,9 @@ group when one exists, otherwise to the owner fallback configured for the bot.
 
 ## 8. Loop Engineering
 
+For the intelligent automation terminology map and maintenance boundaries, see
+`docs/intelligent-automation.md`.
+
 Loop Engineering runs recurring maintenance work from a YAML config. It is off by
 default; enable it by setting:
 

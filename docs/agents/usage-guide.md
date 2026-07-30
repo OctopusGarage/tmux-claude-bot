@@ -101,7 +101,9 @@ After repair review, update the same task id with `--repair-status fixed`,
 closed failures.
 
 **Schedule recurring Loop Engineering maintenance** → create a Loop config and set
-`LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml`. Default projects use the
+`LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml`. For the automation terminology
+map, task-family boundaries, and maintenance checklist, see
+`docs/intelligent-automation.md`. Default projects use the
 deterministic system runner. For adaptive AI-managed scheduled work, enable the
 reserved supervisor with `LOOP_SUPERVISOR_ENABLED=true` and set a project
 `runner.kind: agent-supervised`; the bot queues a bounded WorkOrder to the
