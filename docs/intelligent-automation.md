@@ -195,12 +195,18 @@ Automation should remain serialized where work can collide:
 
 - One project should not run multiple code-editing jobs against the same worktree
   at the same time.
+- User-originated ordinary chat/control prompts must not be injected into a
+  project agent while that project has an unfinished or recoverable Loop
+  Supervisor WorkOrder. System-originated supervisor prompts may continue because
+  they are the owner of that automation. Status, peek, interrupt, cancel, and
+  other diagnostic/escape controls should stay available.
 - `harnessAuto` contains architecture, bug-fix, test-coverage, and security
   maintenance. When a harness run is active or due, overlapping standalone jobs
   should skip or wait rather than create duplicate PRs.
 - PR review should not repair a branch while the originating task still owns it.
 - Opportunity Discovery is read-only, but discussion or delegation should block
-  when the target project has active delegated work or a dirty worktree.
+  when the target project has active automation, queued/in-flight user work, or a
+  dirty worktree.
 - Repository-wide PR review may repair only small deterministic same-repository
   PR branch failures. It must not repair fork PRs, drafts, conflicts, broad
   refactors, or changes needing product/security design judgment.

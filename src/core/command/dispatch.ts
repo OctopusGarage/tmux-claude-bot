@@ -11,6 +11,7 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { getAgentRuntimeRecord, recordAgentLaunch } from "../agents/agent-runtime-records.js";
 import { buildAgentStatusReport, readAgentLatestReply } from "../agents/read.js";
 import { CODEX_SKIP_PERMS, SKIP_PERMS } from "../agents/resume-command.js";
+import { findProjectAutomationConflictForSession } from "../automation/project-conflicts.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { getPathBySession, resolveLiveSessionName } from "../projects/sessionPathMap.js";
@@ -262,6 +263,28 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
 
   switch (msg.action) {
     case "text": {
+      if (msg.origin !== "system") {
+        const conflict = findProjectAutomationConflictForSession(session);
+        if (conflict !== null) {
+          log.warn("text rejected: project automation conflict", {
+            data: {
+              session,
+              projectPath: conflict.projectPath,
+              projectId: conflict.projectId,
+              runId: conflict.runId,
+              taskKind: conflict.taskKind,
+              status: conflict.status,
+              supervisorSession: conflict.supervisorSession,
+            },
+          });
+          return m.projectAutomationBusy(
+            conflict.taskKind,
+            conflict.projectId,
+            conflict.runId,
+            conflict.supervisorSession,
+          );
+        }
+      }
       await deps.agent.waitUntilInputReady(session);
       const promptText = text;
       log.info(`sending keys session=${session}`);

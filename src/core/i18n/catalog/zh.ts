@@ -163,6 +163,8 @@ export const zh = {
   agentResumed: "🔄 已恢复原会话",
   agentResumeMissingState: "没有可恢复的原会话状态，请用 /start 新建。",
   agentAlreadyRunning: "✅ 已在运行中，无需重复启动",
+  projectAutomationBusy: (taskKind: string, projectId: string, runId: string, supervisor: string) =>
+    `项目正在执行自动化任务，暂时不能发送普通消息。\n任务：${taskKind}\n项目：${projectId}\nRun：${runId}\nSupervisor：${supervisor}\n\n请等待任务完成，或先查看/取消该任务后再继续。`,
   agentStartedWith: (label: string) => `✅ 已用「${label}」启动`,
   startPickerTitle: "🚀 选择启动方式",
   startPickerPrompt: "配置了多个启动命令,选一个启动:",

@@ -16,6 +16,8 @@ import {
   performStart,
 } from "../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../src/core/command/queue.js";
+import { writeLoopSupervisorWorkOrderState } from "../src/core/loop/supervisor-state.js";
+import type { LoopWorkOrder } from "../src/core/loop/work-order.js";
 import { setPathForSession } from "../src/core/projects/sessionPathMap.js";
 import { fakeDeps } from "./adapters/lark/_fakes.js";
 
@@ -50,6 +52,40 @@ function deps(claudeOver: Record<string, unknown> = {}) {
       gracefulRestartWithContinue: vi.fn(async () => {}),
       ...claudeOver,
     } as never,
+  });
+}
+
+function writeTestWorkOrder(input: {
+  id: string;
+  projectPath: string;
+  taskKind?: NonNullable<LoopWorkOrder["task"]>["kind"];
+  supervisorSession?: string;
+}): void {
+  const workOrder = {
+    id: input.id,
+    scheduledAt: 1,
+    projectId: "api",
+    projectName: "api",
+    projectPath: input.projectPath,
+    task: { kind: input.taskKind ?? "architecture" },
+    agent: "codex",
+    goal: "test",
+    maxRounds: 1,
+    targetScore: 95,
+    runner: { kind: "agent-supervised" },
+    allowedActions: [],
+    blockedActions: [],
+    skills: { approved: [] },
+    preflight: { commands: [] },
+    verification: { commands: [] },
+    pullRequest: { enabled: false },
+    requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${input.id}]`,
+  } as unknown as LoopWorkOrder;
+  writeLoopSupervisorWorkOrderState({
+    workOrder,
+    supervisorSession: input.supervisorSession ?? "tmux_proj_loop-supervisor-1",
+    status: "in-flight",
+    now: Date.now(),
   });
 }
 
@@ -424,6 +460,53 @@ describe("executeMessage — control actions", () => {
       "未运行，请使用 /resume 恢复，或 /start 新建",
     );
     expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("blocks ordinary text while the same project has active supervisor automation", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-conflict-"));
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-conflict-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      setPathForSession("proj-1", projectDir);
+      writeTestWorkOrder({ id: "run-1", projectPath: projectDir, taskKind: "bug-fix" });
+      const d = deps();
+
+      const out = await executeMessage(msg("text", { text: "please continue", origin: "user" }), d);
+
+      expect(out).toContain("项目正在执行自动化任务");
+      expect(out).toContain("bug-fix");
+      expect(out).toContain("run-1");
+      expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = oldStateDir;
+    }
+  });
+
+  it("allows system text while the same project has active supervisor automation", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-system-conflict-"));
+    const projectDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tcb-dispatch-system-conflict-project-"),
+    );
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      setPathForSession("proj-1", projectDir);
+      writeTestWorkOrder({ id: "run-1", projectPath: projectDir, taskKind: "architecture" });
+      const d = deps();
+
+      await executeMessage(msg("text", { text: "supervisor prompt", origin: "system" }), d);
+
+      expect(d.bridge.sendKeys).toHaveBeenCalledWith("supervisor prompt", "proj-1");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = oldStateDir;
+    }
   });
 
   it("routes a stale dotted queued session name to its safe live alias", async () => {

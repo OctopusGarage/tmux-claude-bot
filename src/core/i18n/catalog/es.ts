@@ -159,6 +159,8 @@ export const es: Messages = {
   agentResumeMissingState:
     "No hay estado de sesión anterior para reanudar — usa /start para crear una nueva.",
   agentAlreadyRunning: "✅ Ya está en ejecución",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `Hay una automatización del proyecto en ejecución; los mensajes normales quedan bloqueados por ahora.\nTarea: ${taskKind}\nProyecto: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nEspera a que termine, o revísala/cancélala antes de continuar.`,
   agentStartedWith: (label) => `✅ Iniciado con «${label}»`,
   startPickerTitle: "🚀 Elige cómo iniciar",
   startPickerPrompt: "Hay varios comandos de inicio configurados — elige uno:",

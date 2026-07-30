@@ -153,6 +153,8 @@ export const yue: Messages = {
   agentResumed: "🔄 已恢復原會話",
   agentResumeMissingState: "沒有可恢復嘅原會話狀態，請用 /start 新建。",
   agentAlreadyRunning: "✅ 已在執行中，無需重複啟動",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `專案正在執行自動化任務，暫時不能傳送一般訊息。\n任務：${taskKind}\n專案：${projectId}\nRun：${runId}\nSupervisor：${supervisor}\n\n請等待任務完成，或先查看/取消該任務後再繼續。`,
   agentStartedWith: (label) => `✅ 已用「${label}」啟動`,
   startPickerTitle: "🚀 選擇啟動方式",
   startPickerPrompt: "已設定多個啟動指令,請選一個啟動:",

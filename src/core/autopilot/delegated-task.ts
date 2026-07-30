@@ -2,6 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import {
+  findProjectAutomationConflict,
+  listReservedLoopSupervisorWorkOrders,
+} from "../automation/project-conflicts.js";
 import type { HandlerDeps } from "../deps.js";
 import { createLoopSupervisorTaskRunner } from "../loop/agent-queue.js";
 import { type LoopProjectConfig, parseLoopConfigYaml } from "../loop/config.js";
@@ -21,7 +25,6 @@ import {
 import { completeLoopSupervisorRun } from "../loop/supervisor-completion.js";
 import { loopSupervisorSessionNames, startLoopSupervisor } from "../loop/supervisor-session.js";
 import {
-  listRecoverableFailedLoopSupervisorWorkOrders,
   listUnfinishedLoopSupervisorWorkOrders,
   type UnfinishedLoopSupervisorWorkOrder,
   workOrderStateForResult,
@@ -98,12 +101,6 @@ export function formatActiveDelegateCancel(result: ActiveDelegatedTaskCancelResu
   ].join("\n");
 }
 
-export function hasActiveDelegatedTaskForSession(session: string): boolean {
-  const projectPath = getPathBySession(session);
-  if (projectPath === null) return false;
-  return findActiveDelegatedTask(projectPath) !== null;
-}
-
 export async function cancelActiveDelegatedTask(
   deps: HandlerDeps,
   input: { session: string },
@@ -161,14 +158,15 @@ export async function startActiveDelegatedTask(
     };
   }
 
-  const reserved = listReservedSupervisorWorkOrders();
-  if (reserved.some((record) => record.workOrder.projectPath === projectPath)) {
+  const conflict = findProjectAutomationConflict(projectPath);
+  if (conflict !== null) {
     return {
       status: "blocked",
-      reason: `project already has active delegated work: ${projectPath}`,
+      reason: `project already has active automation: ${conflict.taskKind} ${conflict.runId} (${conflict.status})`,
     };
   }
 
+  const reserved = listReservedLoopSupervisorWorkOrders();
   const candidates = selectSupervisorSessionCandidates(deps, reserved);
   if (candidates.length === 0) {
     return { status: "blocked", reason: "all loop supervisor sessions have active work" };
@@ -273,17 +271,6 @@ function findLoopProjectPolicy(deps: HandlerDeps, projectPath: string): LoopProj
     });
     return null;
   }
-}
-
-function listReservedSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
-  const byRunDir = new Map<string, UnfinishedLoopSupervisorWorkOrder>();
-  for (const record of [
-    ...listUnfinishedLoopSupervisorWorkOrders(),
-    ...listRecoverableFailedLoopSupervisorWorkOrders(),
-  ]) {
-    byRunDir.set(record.runDir, record);
-  }
-  return [...byRunDir.values()];
 }
 
 function selectSupervisorSessionCandidates(

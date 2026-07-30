@@ -7,11 +7,11 @@ import {
   composeAdoptOutcome,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
+import { findProjectAutomationConflictForSession } from "../../core/automation/project-conflicts.js";
 import {
   cancelActiveDelegatedTask,
   formatActiveDelegateCancel,
   formatActiveDelegateStart,
-  hasActiveDelegatedTaskForSession,
   parseDelegateRequirement,
   startActiveDelegatedTask,
 } from "../../core/autopilot/delegated-task.js";
@@ -623,11 +623,15 @@ function opportunityDiscussionBlockReason(
   session: string,
   projectPath: string,
 ): string | null {
+  const conflict = findProjectAutomationConflictForSession(session);
+  if (conflict !== null) {
+    return `项目正在执行自动化任务，暂时不能参与讨论。请等当前任务完成后再试。\n\n任务：${conflict.taskKind}\nRun：${conflict.runId}\nSupervisor：${conflict.supervisorSession}`;
+  }
+
   if (
     deps.queue.isSessionProcessing(session) ||
     deps.queue.getCurrentSessionMessage(session) !== undefined ||
-    deps.queue.getSessionQueue(session).length > 0 ||
-    hasActiveDelegatedTaskForSession(session)
+    deps.queue.getSessionQueue(session).length > 0
   ) {
     return "项目 agent 当前正在处理任务或已有排队消息，暂时不能参与讨论。请等当前任务完成后再试。";
   }

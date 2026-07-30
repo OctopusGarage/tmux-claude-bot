@@ -106,6 +106,11 @@ Keep the intelligent automation terms distinct:
   ledger/report/log/git/scheduler evidence, classify whether it is a bot bug or an
   external/target-project condition, and only then edit this repo. Do not submit a
   repair task that skips the problem statement and review gate.
+- User-originated ordinary prompts must respect project automation ownership: if
+  the target project has an unfinished or recoverable Loop Supervisor WorkOrder,
+  block with a clear message instead of typing into the project agent. Keep
+  diagnostic and escape controls available, and allow system-originated
+  supervisor prompts because they are part of the owning task.
 - `pullRequestReview` is scoped to configured project/workspace loop PRs;
   `prReview.repositories` is the repository-wide open-PR queue processor.
 - The batch scheduler is configured with `BATCH_SCHEDULER_*`. Keep

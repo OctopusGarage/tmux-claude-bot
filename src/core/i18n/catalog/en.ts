@@ -154,6 +154,8 @@ export const en: Messages = {
   agentResumed: "🔄 Resumed the previous session",
   agentResumeMissingState: "No resumable previous session state — use /start to create a new one.",
   agentAlreadyRunning: "✅ Already running",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `Project automation is running, so ordinary messages are blocked for now.\nTask: ${taskKind}\nProject: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nWait for the task to finish, or inspect/cancel it before continuing.`,
   agentStartedWith: (label) => `✅ Started with "${label}"`,
   startPickerTitle: "🚀 Choose how to start",
   startPickerPrompt: "Multiple start commands are configured — pick one:",

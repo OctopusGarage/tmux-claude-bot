@@ -159,6 +159,8 @@ export const ja: Messages = {
   agentResumeMissingState:
     "復元できる前回セッションの状態がありません。/start で新規開始してください。",
   agentAlreadyRunning: "✅ すでに実行中です（再起動は不要）",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `プロジェクトの自動化タスクが実行中のため、通常メッセージは一時的にブロックされています。\nタスク: ${taskKind}\nプロジェクト: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nタスク完了を待つか、確認/キャンセルしてから続行してください。`,
   agentStartedWith: (label) => `✅ 「${label}」で起動しました`,
   startPickerTitle: "🚀 起動方法を選択",
   startPickerPrompt: "複数の起動コマンドが設定されています。1つ選んでください:",
