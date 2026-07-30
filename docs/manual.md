@@ -603,6 +603,10 @@ HOME_OPERATOR_DIR=            # blank → <state-dir>/home (auto-created)
 ## 10. Batch scheduler
 
 Run a set of agent tasks across multiple projects on a schedule (cron, one-shot, or immediate).
+Use `BATCH_SCHEDULER_TICK_MS`, `BATCH_SCHEDULER_QUOTA_PCT`, and
+`BATCH_SCHEDULER_REPROBE_MS` for runtime tuning. The older
+`AUTOPILOT_SCHEDULER_*` variables are compatibility aliases only; if both are
+set, `BATCH_SCHEDULER_*` wins.
 
 **Quick start:**
 

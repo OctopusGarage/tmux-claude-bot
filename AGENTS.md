@@ -108,6 +108,9 @@ Keep the intelligent automation terms distinct:
   repair task that skips the problem statement and review gate.
 - `pullRequestReview` is scoped to configured project/workspace loop PRs;
   `prReview.repositories` is the repository-wide open-PR queue processor.
+- The batch scheduler is configured with `BATCH_SCHEDULER_*`. Keep
+  `AUTOPILOT_SCHEDULER_*` only as legacy aliases; new automation must not extend
+  those old names.
 - Workspace tasks are generic multi-repository WorkOrders. Use top-level
   `workspace.runner`; `architecture.runner` is legacy compatibility for the
   architecture task, not the workspace feature boundary.

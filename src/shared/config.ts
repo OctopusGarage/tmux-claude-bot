@@ -31,6 +31,16 @@ const blankTolerantNonNegativeInt = (def: number): z.ZodType<number> =>
 const blankTolerantString = (def: string): z.ZodType<string> =>
   z.preprocess((v) => (v === "" ? undefined : v), z.string().min(1).default(def));
 
+const optionalRawEnv = z.preprocess((v) => (v === undefined ? "" : v), z.string().default(""));
+
+function preferredEnvInt(
+  preferredRaw: string,
+  legacyValue: number,
+  preferredSchema: z.ZodType<number>,
+): number {
+  return preferredRaw.trim() === "" ? legacyValue : preferredSchema.parse(preferredRaw);
+}
+
 // Exported so the docs contract test can assert every supported key is
 // documented in .env.example (legacy aliases excepted).
 export const envSchema = z.object({
@@ -120,8 +130,8 @@ export const envSchema = z.object({
   LARK_VOICE_TRANSLATE_FROM: z.string().default(""),
   LARK_VOICE_TRANSLATE_TO: z.string().default(""),
   ARGOS_TRANSLATE_PYTHON: z.string().default(""),
-  // --- Autopilot (智能模式 / keep-alive). Default loop ON but every session is
-  // opt-in; AUTOPILOT_TICK_MS=0 is the master kill (no loop runs at all). ---
+  // --- Legacy autopilot keep-alive / goal cycle. Active delegation uses Loop
+  // Supervisor work orders; do not route new scheduled automation through this. ---
   AUTOPILOT_TICK_MS: blankTolerantNonNegativeInt(8000),
   AUTOPILOT_IDLE_GRACE_MS: blankTolerantPositiveInt(20000),
   AUTOPILOT_COOLDOWN_MS: blankTolerantPositiveInt(30000),
@@ -153,7 +163,11 @@ export const envSchema = z.object({
     (v) => (v === "" ? "compact" : v),
     z.enum(["none", "compact", "clear"]).catch("compact"),
   ),
-  // --- Batch scheduler. AUTOPILOT_SCHEDULER_TICK_MS=0 disables the loop. ---
+  // --- Batch scheduler. BATCH_SCHEDULER_TICK_MS=0 disables the loop.
+  // AUTOPILOT_SCHEDULER_* are legacy aliases kept for existing installs. ---
+  BATCH_SCHEDULER_TICK_MS: optionalRawEnv,
+  BATCH_SCHEDULER_QUOTA_PCT: optionalRawEnv,
+  BATCH_SCHEDULER_REPROBE_MS: optionalRawEnv,
   AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
   AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
   AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
@@ -393,9 +407,21 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       betweenGoals: parsed.AUTOPILOT_BETWEEN_GOALS,
     },
     scheduler: {
-      tickMs: parsed.AUTOPILOT_SCHEDULER_TICK_MS,
-      quotaPct: parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
-      reprobeMs: parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
+      tickMs: preferredEnvInt(
+        parsed.BATCH_SCHEDULER_TICK_MS,
+        parsed.AUTOPILOT_SCHEDULER_TICK_MS,
+        blankTolerantNonNegativeInt(parsed.AUTOPILOT_SCHEDULER_TICK_MS),
+      ),
+      quotaPct: preferredEnvInt(
+        parsed.BATCH_SCHEDULER_QUOTA_PCT,
+        parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
+        blankTolerantPositiveInt(parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT),
+      ),
+      reprobeMs: preferredEnvInt(
+        parsed.BATCH_SCHEDULER_REPROBE_MS,
+        parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
+        blankTolerantPositiveInt(parsed.AUTOPILOT_SCHEDULER_REPROBE_MS),
+      ),
     },
     taskAudit: {
       enabled: parsed.TASK_AUDIT_ENABLED !== "false" && parsed.TASK_AUDIT_ENABLED !== "0",

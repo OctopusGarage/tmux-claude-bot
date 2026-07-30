@@ -8,8 +8,9 @@ import { defaultState } from "./types.js";
 
 const log = createLogger("autopilot.manager");
 
-/** One sweep: (global keep-alive) enroll/un-enroll, then enumerate live ∪
- * records, self-heal dead records, and tick the rest. */
+/** Legacy keep-alive sweep: enroll/un-enroll opted-in sessions, then enumerate
+ * live ∪ records, self-heal dead records, and tick the rest. Active user
+ * delegation is handled by Loop Supervisor WorkOrders, not this background loop. */
 export async function tickAllEnabled(
   deps: HandlerDeps,
   store: AutopilotStore,
@@ -71,9 +72,9 @@ export async function tickAllEnabled(
   }
 }
 
-/** Start the autopilot background loop: a coalesced tick on every transcript
- * activity event plus a fallback interval. `AUTOPILOT_TICK_MS=0` disables it.
- * Returns a stop fn. */
+/** Start the legacy keep-alive background loop: a coalesced tick on every
+ * transcript activity event plus a fallback interval. `AUTOPILOT_TICK_MS=0`
+ * disables it. Returns a stop fn. */
 export function startAutopilot(deps: HandlerDeps): () => void {
   const intervalMs = deps.config.autopilot.tickMs;
   if (intervalMs <= 0) {
