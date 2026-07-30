@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
+import type { NotificationChannelSelection } from "../notifications/gateway.js";
+import { opportunityReportPath } from "../opportunities/store.js";
+import { sessionNameFromPath } from "../projects/sessionPathMap.js";
 import type { ApprovedSkill } from "../skills/schema.js";
 import type {
   LoopConfig,
@@ -15,11 +18,54 @@ export type LoopSupervisorFinalSummary = {
   status: SupervisorFinalStatus;
   projectId: string;
   actionsTaken: string[];
-  delegatedTasks: Array<{ projectId: string; status: SupervisorFinalStatus } | string>;
+  delegatedTasks: Array<{ projectId: string; status: string } | string>;
   finalVerification: "passed" | "failed" | "not-run" | "unknown";
   commits: string[];
   followUps: string[];
 };
+
+type HarnessAutoSubtaskKind = "architecture" | "bug-fix" | "test-coverage" | "security-maintenance";
+type HarnessAutoSubtask =
+  | {
+      kind: "architecture";
+      enabled: boolean;
+      weight: number;
+      targetScore: number;
+      maxRounds: number;
+      prompt?: string;
+    }
+  | {
+      kind: "bug-fix";
+      enabled: boolean;
+      weight: number;
+      maxRounds: number;
+      maxBugsPerRound: number;
+      requireRegressionTest: boolean;
+      prompt?: string;
+    }
+  | {
+      kind: "test-coverage";
+      enabled: boolean;
+      weight: number;
+      targetCoverage: number;
+      maxRounds: number;
+      requireMeaningfulTests: boolean;
+      allowIntegrationTests: boolean;
+      allowSmokeTests: boolean;
+      allowE2ETests: boolean;
+      allowAiEvalTests: boolean;
+      prompt?: string;
+    }
+  | {
+      kind: "security-maintenance";
+      enabled: boolean;
+      weight: number;
+      maxRounds: number;
+      allowDependencyUpdates: boolean;
+      allowConfigHardening: boolean;
+      allowStaticAnalysisFixes: boolean;
+      prompt?: string;
+    };
 
 export type LoopWorkOrder = {
   id: string;
@@ -57,6 +103,28 @@ export type LoopWorkOrder = {
         prompt?: string;
       }
     | {
+        kind: "harness-auto";
+        maxRounds: number;
+        strategy: "health-first" | "risk-first" | "configured-order";
+        stopWhen: {
+          healthScoreAtLeast: number;
+          noConfirmedIssues: boolean;
+        };
+        tasks: HarnessAutoSubtask[];
+        prompt?: string;
+      }
+    | {
+        kind: "opportunity-discovery";
+        maxRounds: number;
+        maxSuggestions: number;
+        minConfidence: "low" | "medium" | "high";
+        categories: string[];
+        cooldownDays: number;
+        requireEvidence: boolean;
+        notificationChannel?: NotificationChannelSelection;
+        prompt?: string;
+      }
+    | {
         kind: "pull-request-review";
         lookbackHours: number;
         consecutivePasses: number;
@@ -76,10 +144,21 @@ export type LoopWorkOrder = {
           prompt?: string;
         };
         prompt?: string;
+      }
+    | {
+        kind: "active-delegated-task";
+        sourceSession: string;
+        requirement: string;
+        requireReview: boolean;
+        requireTests: boolean;
+        requireCoverageReview: boolean;
+        allowAiEval: boolean;
       };
   projectId: string;
   projectName: string;
   projectPath: string;
+  relatedOpportunityIds?: string[];
+  notificationSession?: string;
   agent: LoopProjectConfig["agent"];
   goal: string;
   maxRounds: number;
@@ -108,6 +187,7 @@ export type LoopWorkOrder = {
   };
   requiredFinalMarker: string;
   finalSummaryPath?: string;
+  opportunityReportPath?: string;
 };
 
 type ParseSupervisorFinalSummaryResult =
@@ -139,11 +219,14 @@ export function buildLoopWorkOrder(input: {
   project: LoopProjectConfig;
   scheduledAt: number;
   runId: string;
+  projectSessionPrefix?: string;
   jobKind?:
     | "architecture"
     | "bug-fix"
     | "test-coverage"
     | "security-maintenance"
+    | "harness-auto"
+    | "opportunity-discovery"
     | "pull-request-review";
 }): LoopWorkOrder {
   const task =
@@ -155,7 +238,20 @@ export function buildLoopWorkOrder(input: {
           ? securityMaintenanceTask(input.project.securityMaintenance)
           : input.jobKind === "bug-fix"
             ? bugFixTask(input.project.bugFix)
-            : { kind: "architecture" as const };
+            : input.jobKind === "harness-auto"
+              ? harnessAutoTask({
+                  policy: input.project.harnessAuto,
+                  architecture: {
+                    targetScore: input.project.targetScore,
+                    maxRounds: input.project.maxRounds,
+                  },
+                  bugFix: input.project.bugFix,
+                  testCoverage: input.project.testCoverage,
+                  securityMaintenance: input.project.securityMaintenance,
+                })
+              : input.jobKind === "opportunity-discovery"
+                ? opportunityDiscoveryTask(input.project.opportunityDiscovery)
+                : { kind: "architecture" as const };
   const workOrder: LoopWorkOrder = {
     id: input.runId,
     scheduledAt: input.scheduledAt,
@@ -163,29 +259,39 @@ export function buildLoopWorkOrder(input: {
     projectId: input.project.id,
     projectName: input.project.name,
     projectPath: input.project.path,
+    ...(input.projectSessionPrefix !== undefined
+      ? { notificationSession: sessionNameFromPath(input.project.path, input.projectSessionPrefix) }
+      : {}),
     agent: input.project.agent,
     goal: input.project.goal,
     maxRounds:
       task.kind === "bug-fix" ||
       task.kind === "test-coverage" ||
-      task.kind === "security-maintenance"
+      task.kind === "security-maintenance" ||
+      task.kind === "harness-auto" ||
+      task.kind === "opportunity-discovery"
         ? task.maxRounds
         : input.project.maxRounds,
-    targetScore: input.project.targetScore,
+    targetScore:
+      task.kind === "harness-auto" ? task.stopWhen.healthScoreAtLeast : input.project.targetScore,
     runner: input.project.runner,
     ...actionPolicyForTask(input.project, task),
     skills: { approved: [...input.config.skills.approved] },
     preflight: input.project.preflight,
-    assessment: input.project.assessment,
+    assessment:
+      task.kind === "opportunity-discovery" ? { command: "true" } : input.project.assessment,
     execution: input.project.execution,
     recovery: input.project.recovery,
     commitPolicy: commitPolicyForWorkOrder(commitPolicyForTask(input.project, task), input.runId),
-    pullRequestPolicy: input.project.pullRequest,
+    pullRequestPolicy: pullRequestPolicyForTask(input.project, task),
     requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
     finalSummaryPath: finalSummaryPathForWorkOrder(input.project.id, input.runId),
+    ...(task.kind === "opportunity-discovery"
+      ? { opportunityReportPath: opportunityReportPath(input.project.id, input.runId) }
+      : {}),
   };
 
-  if (input.project.eval !== undefined) {
+  if (input.project.eval !== undefined && task.kind !== "opportunity-discovery") {
     workOrder.eval = input.project.eval;
   }
 
@@ -239,24 +345,76 @@ export function buildWorkspaceArchitectureWorkOrder(input: {
   scheduledAt: number;
   runId: string;
 }): LoopWorkOrder {
+  return buildLoopWorkspaceWorkOrder({ ...input, jobKind: "workspace-architecture" });
+}
+
+export function buildLoopWorkspaceWorkOrder(input: {
+  config: LoopConfig;
+  workspace: LoopWorkspaceConfig;
+  scheduledAt: number;
+  runId: string;
+  projectSessionPrefix?: string;
+  jobKind:
+    | "workspace-architecture"
+    | "bug-fix"
+    | "test-coverage"
+    | "security-maintenance"
+    | "harness-auto"
+    | "opportunity-discovery"
+    | "pull-request-review";
+}): LoopWorkOrder {
   const workspace = input.workspace;
+  const task =
+    input.jobKind === "pull-request-review"
+      ? pullRequestReviewTask(workspace.pullRequestReview)
+      : input.jobKind === "test-coverage"
+        ? testCoverageTask(workspace.testCoverage)
+        : input.jobKind === "security-maintenance"
+          ? securityMaintenanceTask(workspace.securityMaintenance)
+          : input.jobKind === "bug-fix"
+            ? bugFixTask(workspace.bugFix)
+            : input.jobKind === "harness-auto"
+              ? harnessAutoTask({
+                  policy: workspace.harnessAuto,
+                  architecture: {
+                    targetScore: workspace.architecture.targetScore,
+                    maxRounds: workspace.architecture.maxRounds,
+                    ...(workspace.architecture.prompt !== undefined
+                      ? { prompt: workspace.architecture.prompt }
+                      : {}),
+                  },
+                  bugFix: workspace.bugFix,
+                  testCoverage: workspace.testCoverage,
+                  securityMaintenance: workspace.securityMaintenance,
+                })
+              : input.jobKind === "opportunity-discovery"
+                ? opportunityDiscoveryTask(workspace.opportunityDiscovery)
+                : {
+                    kind: "workspace-architecture" as const,
+                    ...(workspace.architecture.prompt !== undefined
+                      ? { prompt: workspace.architecture.prompt }
+                      : {}),
+                  };
+  const architectureTask = task.kind === "workspace-architecture";
   return {
     id: input.runId,
     scheduledAt: input.scheduledAt,
-    task: {
-      kind: "workspace-architecture",
-      ...(workspace.architecture.prompt !== undefined
-        ? { prompt: workspace.architecture.prompt }
-        : {}),
-    },
+    task,
     projectId: workspace.id,
     projectName: workspace.name,
     projectPath: workspace.root,
+    ...(input.projectSessionPrefix !== undefined
+      ? { notificationSession: sessionNameFromPath(workspace.root, input.projectSessionPrefix) }
+      : {}),
     agent: workspace.agent,
-    goal: workspace.architecture.goal,
-    maxRounds: workspace.architecture.maxRounds,
-    targetScore: workspace.architecture.targetScore,
-    runner: workspace.architecture.runner,
+    goal: architectureTask ? workspace.architecture.goal : workspaceTaskGoal(workspace, task.kind),
+    maxRounds: architectureTask
+      ? workspace.architecture.maxRounds
+      : task.kind === "pull-request-review"
+        ? 1
+        : task.maxRounds,
+    targetScore: workspaceTaskTargetScore(task, workspace.architecture.targetScore),
+    runner: workspaceRunnerForTask(workspace, task),
     allowedActions: [...workspace.allowedActions],
     blockedActions: [...workspace.blockedActions],
     skills: { approved: [...input.config.skills.approved] },
@@ -279,7 +437,124 @@ export function buildWorkspaceArchitectureWorkOrder(input: {
     },
     requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
     finalSummaryPath: finalSummaryPathForWorkOrder(workspace.id, input.runId),
+    ...(task.kind === "opportunity-discovery"
+      ? { opportunityReportPath: opportunityReportPath(workspace.id, input.runId) }
+      : {}),
   };
+}
+
+export function buildActiveDelegatedTaskWorkOrder(input: {
+  session: string;
+  projectId: string;
+  projectName: string;
+  projectPath: string;
+  agent: LoopProjectConfig["agent"];
+  requirement: string;
+  opportunityIds?: string[];
+  scheduledAt: number;
+  runId: string;
+  skills?: { approved: ApprovedSkill[] };
+  timeoutMs?: number;
+  projectPolicy?: LoopProjectConfig;
+}): LoopWorkOrder {
+  const projectPolicy = input.projectPolicy;
+  return {
+    id: input.runId,
+    scheduledAt: input.scheduledAt,
+    task: {
+      kind: "active-delegated-task",
+      sourceSession: input.session,
+      requirement: input.requirement,
+      requireReview: true,
+      requireTests: true,
+      requireCoverageReview: true,
+      allowAiEval: true,
+    },
+    projectId: input.projectId,
+    projectName: input.projectName,
+    projectPath: input.projectPath,
+    ...(input.opportunityIds !== undefined && input.opportunityIds.length > 0
+      ? { relatedOpportunityIds: [...input.opportunityIds] }
+      : {}),
+    notificationSession: input.session,
+    agent: input.agent,
+    goal: input.requirement,
+    maxRounds: 1,
+    targetScore: 100,
+    runner: {
+      kind: "agent-supervised",
+      requireConfirmation: false,
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    },
+    allowedActions:
+      projectPolicy !== undefined
+        ? [...projectPolicy.allowedActions]
+        : ["tests", "docs", "small-refactor"],
+    blockedActions:
+      projectPolicy !== undefined
+        ? [...projectPolicy.blockedActions]
+        : ["direct-model-api", "dependency-upgrade", "broad-rewrite"],
+    skills: input.skills ?? { approved: [] },
+    preflight: projectPolicy?.preflight ?? { commands: [], repair: { agent: false } },
+    assessment: projectPolicy?.assessment ?? { command: "true" },
+    execution: projectPolicy?.execution ?? { agent: true },
+    recovery: projectPolicy?.recovery ?? { agent: true, dirtyWorktree: false, maxAttempts: 1 },
+    commitPolicy: activeDelegatedCommitPolicy(projectPolicy, input.projectId, input.runId),
+    pullRequestPolicy: projectPolicy?.pullRequest ?? {
+      enabled: false,
+      base: "main",
+      switchBack: "main",
+      autoMerge: false,
+    },
+    requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
+    finalSummaryPath: finalSummaryPathForWorkOrder(input.projectId, input.runId),
+  };
+}
+
+function workspaceTaskGoal(
+  workspace: LoopWorkspaceConfig,
+  taskKind:
+    | "bug-fix"
+    | "test-coverage"
+    | "security-maintenance"
+    | "harness-auto"
+    | "opportunity-discovery"
+    | "pull-request-review",
+): string {
+  if (taskKind === "bug-fix") {
+    return `Find and fix confirmed cross-repository bugs in ${workspace.name}.`;
+  }
+  if (taskKind === "test-coverage") {
+    return `Improve meaningful test coverage across ${workspace.name}.`;
+  }
+  if (taskKind === "harness-auto") {
+    return `Continuously improve overall health across ${workspace.name}.`;
+  }
+  if (taskKind === "opportunity-discovery") {
+    return `Discover grounded, high-value opportunities across ${workspace.name}.`;
+  }
+  if (taskKind === "pull-request-review") {
+    return `Review and merge eligible pull requests across ${workspace.name}.`;
+  }
+  return `Find and fix confirmed security issues across ${workspace.name}.`;
+}
+
+function workspaceRunnerForTask(
+  workspace: LoopWorkspaceConfig,
+  _task: NonNullable<LoopWorkOrder["task"]>,
+): LoopWorkspaceConfig["runner"] {
+  return workspace.runner;
+}
+
+function workspaceTaskTargetScore(
+  task: NonNullable<LoopWorkOrder["task"]>,
+  architectureTargetScore: number,
+): number {
+  if (task.kind === "workspace-architecture") return architectureTargetScore;
+  if (task.kind === "test-coverage") return task.targetCoverage;
+  if (task.kind === "harness-auto") return task.stopWhen.healthScoreAtLeast;
+  if (task.kind === "opportunity-discovery") return 100;
+  return 100;
 }
 
 export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
@@ -287,21 +562,7 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
   const baseBranch = baseBranchForWorkOrder(workOrder);
   const finalSummaryPath = finalSummaryPathForWorkOrder(workOrder.projectId, workOrder.id);
   const ghIdentityPolicy = githubIdentityPolicy(workOrder);
-  const task = workOrderTask(workOrder);
-  const taskPolicy =
-    task.kind === "pull-request-review"
-      ? pullRequestReviewPolicy(workOrder, baseBranch)
-      : task.kind === "repository-pull-request-review"
-        ? repositoryPullRequestReviewPolicy(workOrder, baseBranch)
-        : task.kind === "workspace-architecture"
-          ? workspaceArchitecturePolicy(workOrder)
-          : task.kind === "test-coverage"
-            ? testCoveragePolicy(workOrder)
-            : task.kind === "security-maintenance"
-              ? securityMaintenancePolicy(workOrder)
-              : task.kind === "bug-fix"
-                ? bugFixPolicy(workOrder)
-                : architecturePolicy(workOrder);
+  const taskPolicy = [...workspacePolicy(workOrder), ...taskSpecificPolicy(workOrder, baseBranch)];
   return [
     "You are the Loop Supervisor for tmux-claude-bot.",
     "",
@@ -341,6 +602,108 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
     "- commits must contain only real commit hashes or strings that start with a real commit hash; put PR URLs, PR numbers, and status notes in actionsTaken or followUps.",
     "- Before finalizing a PR task, bug-fix task, test-coverage task, security-maintenance task, or architecture task that opened a PR, re-read the PR body and remove known generated review/release-note blocks such as CodeRabbit auto-generated summaries; the PR body must contain only the intended human-authored summary, verification, and notes.",
   ].join("\n");
+}
+
+function taskSpecificPolicy(workOrder: LoopWorkOrder, baseBranch: string): string[] {
+  const task = workOrderTask(workOrder);
+  if (task.kind === "pull-request-review") return pullRequestReviewPolicy(workOrder, baseBranch);
+  if (task.kind === "repository-pull-request-review")
+    return repositoryPullRequestReviewPolicy(workOrder, baseBranch);
+  if (task.kind === "workspace-architecture") return workspaceArchitecturePolicy(workOrder);
+  if (task.kind === "active-delegated-task") return activeDelegatedTaskPolicy(workOrder);
+  if (task.kind === "opportunity-discovery") return opportunityDiscoveryPolicy(workOrder);
+  if (task.kind === "test-coverage") return testCoveragePolicy(workOrder);
+  if (task.kind === "security-maintenance") return securityMaintenancePolicy(workOrder);
+  if (task.kind === "bug-fix") return bugFixPolicy(workOrder);
+  if (task.kind === "harness-auto") return harnessAutoPolicy(workOrder);
+  return architecturePolicy(workOrder);
+}
+
+function harnessAutoTask(input: {
+  policy: LoopProjectConfig["harnessAuto"];
+  architecture: {
+    targetScore: number;
+    maxRounds: number;
+    prompt?: string;
+  };
+  bugFix: LoopProjectConfig["bugFix"];
+  testCoverage: LoopProjectConfig["testCoverage"];
+  securityMaintenance: LoopProjectConfig["securityMaintenance"];
+}): Extract<LoopWorkOrder["task"], { kind: "harness-auto" }> {
+  const byKind = new Map(input.policy.tasks.map((task) => [task.kind, task]));
+  const taskConfig = (kind: HarnessAutoSubtaskKind): { enabled: boolean; weight: number } => {
+    const configured = byKind.get(kind);
+    return {
+      enabled: configured?.enabled ?? false,
+      weight: configured?.weight ?? 1,
+    };
+  };
+  const architectureConfig = taskConfig("architecture");
+  const bugFixConfig = taskConfig("bug-fix");
+  const testCoverageConfig = taskConfig("test-coverage");
+  const securityConfig = taskConfig("security-maintenance");
+  const bugFix = bugFixTask(input.bugFix);
+  const testCoverage = testCoverageTask(input.testCoverage);
+  const securityMaintenance = securityMaintenanceTask(input.securityMaintenance);
+  const tasks = [
+    {
+      kind: "bug-fix" as const,
+      enabled: bugFixConfig.enabled,
+      weight: bugFixConfig.weight,
+      maxRounds: bugFix.maxRounds,
+      maxBugsPerRound: bugFix.maxBugsPerRound,
+      requireRegressionTest: bugFix.requireRegressionTest,
+      ...(bugFix.prompt !== undefined ? { prompt: bugFix.prompt } : {}),
+    },
+    {
+      kind: "security-maintenance" as const,
+      enabled: securityConfig.enabled,
+      weight: securityConfig.weight,
+      maxRounds: securityMaintenance.maxRounds,
+      allowDependencyUpdates: securityMaintenance.allowDependencyUpdates,
+      allowConfigHardening: securityMaintenance.allowConfigHardening,
+      allowStaticAnalysisFixes: securityMaintenance.allowStaticAnalysisFixes,
+      ...(securityMaintenance.prompt !== undefined ? { prompt: securityMaintenance.prompt } : {}),
+    },
+    {
+      kind: "test-coverage" as const,
+      enabled: testCoverageConfig.enabled,
+      weight: testCoverageConfig.weight,
+      targetCoverage: testCoverage.targetCoverage,
+      maxRounds: testCoverage.maxRounds,
+      requireMeaningfulTests: testCoverage.requireMeaningfulTests,
+      allowIntegrationTests: testCoverage.allowIntegrationTests,
+      allowSmokeTests: testCoverage.allowSmokeTests,
+      allowE2ETests: testCoverage.allowE2ETests,
+      allowAiEvalTests: testCoverage.allowAiEvalTests,
+      ...(testCoverage.prompt !== undefined ? { prompt: testCoverage.prompt } : {}),
+    },
+    {
+      kind: "architecture" as const,
+      enabled: architectureConfig.enabled,
+      weight: architectureConfig.weight,
+      targetScore: input.architecture.targetScore,
+      maxRounds: input.architecture.maxRounds,
+      ...(input.architecture.prompt !== undefined ? { prompt: input.architecture.prompt } : {}),
+    },
+  ] satisfies HarnessAutoSubtask[];
+  const orderedTasks = [...tasks].sort((left, right) => {
+    const leftIndex = input.policy.tasks.findIndex((task) => task.kind === left.kind);
+    const rightIndex = input.policy.tasks.findIndex((task) => task.kind === right.kind);
+    return normalizeTaskOrder(leftIndex) - normalizeTaskOrder(rightIndex);
+  });
+  return {
+    kind: "harness-auto",
+    maxRounds: input.policy.maxRounds,
+    strategy: input.policy.strategy,
+    stopWhen: input.policy.stopWhen,
+    tasks: orderedTasks,
+    ...(input.policy.prompt !== undefined ? { prompt: input.policy.prompt } : {}),
+  };
+}
+
+function normalizeTaskOrder(index: number): number {
+  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
 }
 
 function bugFixTask(
@@ -396,6 +759,24 @@ function pullRequestReviewTask(
   };
 }
 
+function opportunityDiscoveryTask(
+  policy: LoopProjectConfig["opportunityDiscovery"],
+): Extract<LoopWorkOrder["task"], { kind: "opportunity-discovery" }> {
+  return {
+    kind: "opportunity-discovery",
+    maxRounds: 1,
+    maxSuggestions: policy.maxSuggestions,
+    minConfidence: policy.minConfidence,
+    categories: [...policy.categories],
+    cooldownDays: policy.cooldownDays,
+    requireEvidence: policy.requireEvidence,
+    ...(policy.notificationChannel !== undefined
+      ? { notificationChannel: policy.notificationChannel }
+      : {}),
+    ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
+  };
+}
+
 function repositoryPullRequestReviewTask(
   policy: LoopRepositoryPullRequestReviewConfig,
 ): Extract<LoopWorkOrder["task"], { kind: "repository-pull-request-review" }> {
@@ -420,6 +801,16 @@ function workOrderTask(workOrder: LoopWorkOrder): NonNullable<LoopWorkOrder["tas
 }
 
 function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
+  if (workOrder.task?.kind === "active-delegated-task") {
+    if (workOrder.commitPolicy.enabled && workOrder.pullRequestPolicy?.enabled) {
+      return `- Before delegated work, sync the target base branch: cd ${shellQuote(workOrder.projectPath)} && git status --short must be clean, then git fetch origin ${baseBranch}, git switch ${baseBranch}, and git pull --ff-only origin ${baseBranch}.`;
+    }
+    return [
+      "- Before delegated work, inspect the target repository state from the current branch and preserve the user's active branch context.",
+      `- Run git status --short in ${shellQuote(workOrder.projectPath)} and record whether unrelated user work is present before editing.`,
+      "- Do not switch branches, pull, rebase, merge, or discard local changes unless the user requirement explicitly asks for it or it is necessary and safe to complete the delegated task.",
+    ].join("\n");
+  }
   if (workOrder.workspace !== undefined) {
     return [
       "- Before assessment or delegated work, sync every workspace repository:",
@@ -439,22 +830,32 @@ function architecturePolicy(workOrder: LoopWorkOrder): string[] {
   ];
 }
 
+function workspacePolicy(workOrder: LoopWorkOrder): string[] {
+  const task = workOrderTask(workOrder);
+  if (workOrder.workspace === undefined) return [];
+  const branchKind = task.kind === "workspace-architecture" ? "architecture" : task.kind;
+  return [
+    "Workspace multi-repository task.",
+    `- Treat ${workOrder.projectName} as one bounded workspace with ${workOrder.workspace.repositories.length} repositories.`,
+    "- First decide which repositories are actually affected. Do not force every repository to change. When the evidence points to only one repository, keep the change there.",
+    "- Inspect contracts between repositories before editing affected areas: API routes, schemas, generated clients, shared DTOs, auth/session assumptions, build/deploy coupling, error handling, and data/state ownership.",
+    "- If a change crosses repository boundaries, update all affected repositories in the same round and verify the contract from every affected side.",
+    "- Each repository keeps its own git branch and pull request. Use one shared run id, link the related PRs in every PR body, and describe the cross-repository reason clearly.",
+    ...workOrder.workspace.repositories.map(
+      (repository) =>
+        `- For ${repository.id}, use branch loop/${repository.id}/${branchKind}/${workOrder.id}, open the PR against ${repository.pullRequest.base}, switch back to ${repository.pullRequest.switchBack}, and ${workspaceGithubPolicy(repository)}.`,
+    ),
+    "- Before finalizing, verify every changed repository is on its configured switch-back branch, clean, and has a human-readable PR body without generated review/release-note blocks.",
+  ];
+}
+
 function workspaceArchitecturePolicy(workOrder: LoopWorkOrder): string[] {
   const task = workOrderTask(workOrder);
   if (task.kind !== "workspace-architecture" || workOrder.workspace === undefined) return [];
   return [
     "Workspace architecture task.",
-    `- Treat ${workOrder.projectName} as one bounded workspace with ${workOrder.workspace.repositories.length} repositories.`,
     `- Architecture target score is ${workOrder.targetScore}; if the cross-repository evaluation reaches or exceeds it, stop instead of optimizing for its own sake.`,
-    "- First inspect the contracts between repositories: API routes, schemas, generated clients, shared DTOs, auth/session assumptions, build/deploy coupling, error handling, and data/state ownership.",
     "- Prefer the smallest set of repository changes that improves the whole workspace. Do not force every repository to change.",
-    "- If a change crosses repository boundaries, update all affected repositories in the same round and verify the contract from both sides.",
-    "- Each repository keeps its own git branch and pull request. Use one shared run id, link the related PRs in every PR body, and describe the cross-repository reason clearly.",
-    ...workOrder.workspace.repositories.map(
-      (repository) =>
-        `- For ${repository.id}, use branch loop/${repository.id}/architecture/${workOrder.id}, open the PR against ${repository.pullRequest.base}, switch back to ${repository.pullRequest.switchBack}, and ${workspaceGithubPolicy(repository)}.`,
-    ),
-    "- Before finalizing, verify every changed repository is on its configured switch-back branch, clean, and has a human-readable PR body without generated review/release-note blocks.",
     task.prompt !== undefined ? `- Additional workspace instruction: ${task.prompt}` : "",
   ].filter(Boolean);
 }
@@ -477,15 +878,18 @@ function bugFixPolicy(workOrder: LoopWorkOrder): string[] {
     "- Audit through concrete risk lenses: money, quota, billing, permissions, privilege escalation, concurrency, transactions, data correctness, idempotency, scheduling/state machines, error-handling contracts, and cross-module or frontend/backend contracts.",
     "- Do not nitpick style, naming, wording, formatting, harmless refactors, architecture taste, or speculative concerns.",
     "- Do not add product features, new capabilities, new dependencies, broad rewrites, or unrelated cleanup.",
+    "- Separate candidate bugs from confirmed bugs: list candidates first, then fix only candidates with enough evidence to confirm real impact.",
+    "- For every confirmed bug, record a concise evidence chain: entry point or trigger, affected path, expected behavior, actual behavior, impact, and any preconditions or limits.",
     "- Before editing, prove the issue is real by recording the trigger path, affected behavior, and why it is not merely a preference or theoretical concern.",
     "- If the impact depends on another boundary layer, such as a caller, callee, API, worker, scheduler, database constraint, or frontend/backend pair, inspect that boundary before confirming the bug.",
     "- Before editing, perform an independent verification pass from the current final code state and calling path; if that pass cannot reconstruct the bug mechanism, skip the candidate.",
-    "- If a suspected issue cannot be proven as a real functional or reliability risk, record it as skipped and do not edit for it.",
+    "- If a suspected issue cannot be proven as a real functional or reliability risk, record it as a deferred candidate or skipped candidate and do not edit for it.",
     "- Keep each repair small, local, and consistent with existing project patterns.",
     task.requireRegressionTest
       ? "- Add or update a focused regression test for every code bug you fix. If a regression test is genuinely impossible, record the reason and use the narrowest available verification instead."
       : "- Prefer focused regression tests for fixed bugs, but follow the configured project verification contract when tests are impractical.",
-    "- After each repair, independently re-check that the original trigger path is blocked and that the diff did not add feature work, unrelated refactors, or a new functional risk; then run the relevant checks.",
+    "- After each repair, independently re-check the same evidence chain: the original trigger path is blocked, expected behavior now holds, and the diff did not add feature work, unrelated refactors, or a new functional risk; then run the relevant checks.",
+    "- When no confirmed bug is fixed, still report the checked areas, skipped areas, deferred candidates, and whether coverage was complete, partial, or unknown; zero fixes with partial coverage must not be presented as proof that the project has no bugs.",
     "- Stop when a round finds no confirmed real bugs; do not continue looking just because maxRounds remains.",
     task.prompt !== undefined ? `- Additional bug-fix instruction: ${task.prompt}` : "",
   ].filter(Boolean);
@@ -551,9 +955,179 @@ function securityMaintenancePolicy(workOrder: LoopWorkOrder): string[] {
   ].filter(Boolean);
 }
 
+function harnessAutoPolicy(workOrder: LoopWorkOrder): string[] {
+  const task = workOrderTask(workOrder);
+  if (task.kind !== "harness-auto") return [];
+  const enabledTasks = task.tasks.filter((subtask) => subtask.enabled);
+  return [
+    "Harness-auto health orchestration task.",
+    `- Run at most ${task.maxRounds} harness round(s). Each harness round starts with a fresh project health assessment, then chooses the highest-value enabled subtask(s) for that current state.`,
+    `- Strategy is ${task.strategy}. health-first means maximize overall project health; risk-first means prioritize confirmed production/security/reliability risk; configured-order means preserve the configured task order unless current evidence clearly proves a blocker.`,
+    `- Stop when health score is at least ${task.stopWhen.healthScoreAtLeast}${task.stopWhen.noConfirmedIssues ? " and no confirmed actionable issue remains in the enabled task scope" : ""}.`,
+    "- Do not run all subtasks mechanically. Choose only subtasks justified by evidence from the current codebase and verification signals.",
+    "- Start each round by recording: current branch state, recent failures or stale PR context, available test/security/coverage/architecture signals, candidate issues, enabled subtasks considered, selected subtask(s), and why lower-priority subtasks were skipped.",
+    "- A no-op is valid when the stop condition is met or no enabled subtask has a confirmed actionable improvement. Report the checked signals and stop cleanly instead of optimizing for its own sake.",
+    "- Keep the whole harness run on one run id and one PR branch/PR per repository. Do not split bug-fix, security, coverage, and architecture work into separate PRs for the same harness run.",
+    "- If multiple subtasks touch the same area, sequence them deliberately: fix confirmed bugs/security issues first, add or update regression/coverage tests next, then make architecture cleanup only when the behavior is protected.",
+    "- Before each edit, prove the selected subtask has a real reason. After each edit, re-check the exact evidence chain and run the narrowest relevant verification plus the normal project verification when available.",
+    "- PR content must clearly list the harness assessment, selected subtasks, skipped subtasks with reasons, changes made, verification, remaining risk, and stop condition result.",
+    `- Enabled subtasks: ${enabledTasks.map((subtask) => `${subtask.kind}(weight=${subtask.weight})`).join(", ") || "none"}.`,
+    task.prompt !== undefined ? `- Additional harness-auto instruction: ${task.prompt}` : "",
+    ...harnessSubtaskPolicies(workOrder, enabledTasks),
+  ].filter(Boolean);
+}
+
+function opportunityDiscoveryPolicy(workOrder: LoopWorkOrder): string[] {
+  const task = workOrderTask(workOrder);
+  if (task.kind !== "opportunity-discovery") return [];
+  const reportPath =
+    workOrder.opportunityReportPath ?? opportunityReportPath(workOrder.projectId, workOrder.id);
+  return [
+    "Opportunity discovery task.",
+    "- This task must discover and propose valuable opportunities only; do not edit files, commit, push, create branches, create PRs, or change project state.",
+    "- Think like a senior employee proposing focused work to the owner: surface decisions, not busywork.",
+    `- Produce at most ${task.maxSuggestions} suggestion(s). Fewer is better when the evidence is weak.`,
+    `- Minimum confidence is ${task.minConfidence}; do not include lower-confidence ideas.`,
+    `- Allowed categories: ${task.categories.join(", ")}.`,
+    task.requireEvidence
+      ? "- Every suggestion must cite concrete evidence from the repository, docs, logs, recent failures, TODOs, repeated manual workflows, tests, scripts, or existing UX. Do not invent product direction."
+      : "- Prefer concrete evidence; clearly label any suggestion whose evidence is incomplete.",
+    "- A suggestion is reportable only when it has a clear user or engineering value, bounded implementation scope, acceptance criteria, non-goals, and a realistic verification path.",
+    "- Avoid vague ideas, vanity features, broad rewrites, large product pivots, purely stylistic cleanup, speculative architecture preferences, or suggestions whose only value is making code look different.",
+    "- Prefer small or medium opportunities that can be implemented by a later active delegated task in one coherent PR.",
+    "- Include simple options or alternatives when useful, but mark one recommended approach.",
+    "- The owner will decide whether to discuss or delegate. Do not start implementation in this WorkOrder.",
+    `- Write the opportunity report JSON to ${shellQuote(reportPath)} before finalizing.`,
+    "- The JSON file must contain exactly: projectId, projectName, generatedAt, coverage, checkedSignals, skippedSignals, suggestions.",
+    '- coverage must be one of "complete", "partial", or "unknown".',
+    "- suggestions must be an array of objects with: title, category, confidence, problem, whyNow, value, evidence, recommendedApproach, alternatives, acceptanceCriteria, risks, nonGoals, estimatedComplexity, delegateRequirement.",
+    '- category must be one of "product-feature", "workflow-automation", "developer-experience", "reliability", "architecture", "testing", "security".',
+    '- confidence must be one of "low", "medium", "high"; estimatedComplexity must be one of "small", "medium", "large".',
+    "- delegateRequirement must be the clear implementation brief that will be handed to /autopilot delegate after owner approval.",
+    task.prompt !== undefined
+      ? `- Additional opportunity-discovery instruction: ${task.prompt}`
+      : "",
+  ].filter(Boolean);
+}
+
+function harnessSubtaskPolicies(
+  workOrder: LoopWorkOrder,
+  enabledTasks: HarnessAutoSubtask[],
+): string[] {
+  const sections: string[] = [];
+  for (const subtask of enabledTasks) {
+    const pseudoWorkOrder = workOrderForHarnessSubtask(workOrder, subtask);
+    if (subtask.kind === "architecture") {
+      sections.push(
+        "Harness subtask policy: architecture.",
+        ...(workOrder.workspace === undefined
+          ? architecturePolicy(pseudoWorkOrder)
+          : workspaceArchitecturePolicy(pseudoWorkOrder)),
+      );
+    } else if (subtask.kind === "bug-fix") {
+      sections.push("Harness subtask policy: bug-fix.", ...bugFixPolicy(pseudoWorkOrder));
+    } else if (subtask.kind === "test-coverage") {
+      sections.push(
+        "Harness subtask policy: test-coverage.",
+        ...testCoveragePolicy(pseudoWorkOrder),
+      );
+    } else {
+      sections.push(
+        "Harness subtask policy: security-maintenance.",
+        ...securityMaintenancePolicy(pseudoWorkOrder),
+      );
+    }
+  }
+  return sections;
+}
+
+function workOrderForHarnessSubtask(
+  workOrder: LoopWorkOrder,
+  subtask: HarnessAutoSubtask,
+): LoopWorkOrder {
+  if (subtask.kind === "architecture") {
+    return {
+      ...workOrder,
+      task:
+        workOrder.workspace === undefined
+          ? { kind: "architecture" }
+          : {
+              kind: "workspace-architecture",
+              ...(subtask.prompt !== undefined ? { prompt: subtask.prompt } : {}),
+            },
+      targetScore: subtask.targetScore,
+      maxRounds: subtask.maxRounds,
+    };
+  }
+  return {
+    ...workOrder,
+    task: harnessSubtaskAsWorkOrderTask(subtask),
+    maxRounds: subtask.maxRounds,
+  };
+}
+
+function harnessSubtaskAsWorkOrderTask(
+  subtask: Exclude<HarnessAutoSubtask, { kind: "architecture" }>,
+): NonNullable<LoopWorkOrder["task"]> {
+  if (subtask.kind === "bug-fix") {
+    return {
+      kind: "bug-fix",
+      maxRounds: subtask.maxRounds,
+      maxBugsPerRound: subtask.maxBugsPerRound,
+      requireRegressionTest: subtask.requireRegressionTest,
+      ...(subtask.prompt !== undefined ? { prompt: subtask.prompt } : {}),
+    };
+  }
+  if (subtask.kind === "test-coverage") {
+    return {
+      kind: "test-coverage",
+      targetCoverage: subtask.targetCoverage,
+      maxRounds: subtask.maxRounds,
+      requireMeaningfulTests: subtask.requireMeaningfulTests,
+      allowIntegrationTests: subtask.allowIntegrationTests,
+      allowSmokeTests: subtask.allowSmokeTests,
+      allowE2ETests: subtask.allowE2ETests,
+      allowAiEvalTests: subtask.allowAiEvalTests,
+      ...(subtask.prompt !== undefined ? { prompt: subtask.prompt } : {}),
+    };
+  }
+  return {
+    kind: "security-maintenance",
+    maxRounds: subtask.maxRounds,
+    allowDependencyUpdates: subtask.allowDependencyUpdates,
+    allowConfigHardening: subtask.allowConfigHardening,
+    allowStaticAnalysisFixes: subtask.allowStaticAnalysisFixes,
+    ...(subtask.prompt !== undefined ? { prompt: subtask.prompt } : {}),
+  };
+}
+
 function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): string[] {
   const task = workOrderTask(workOrder);
   if (task.kind !== "pull-request-review") return [];
+  if (workOrder.workspace !== undefined) {
+    const repositories = workOrder.workspace.repositories
+      .filter((repository) => repository.pullRequest.enabled)
+      .map(
+        (repository) =>
+          `${repository.id}(${repository.pullRequest.base}->${repository.pullRequest.switchBack}, autoMerge=${repository.pullRequest.autoMerge})`,
+      )
+      .join(", ");
+    return [
+      "Workspace pull request review and merge task.",
+      `- Review open loop-created PRs across this workspace's PR-enabled repositories: ${repositories || "none"}.`,
+      "- Treat loop-created PRs as PRs whose head branch starts with loop/ or whose title/body clearly identifies Loop Engineering.",
+      `- Prioritize PRs created or updated within the last ${task.lookbackHours} hours.`,
+      `- Run two independent review passes for each candidate PR. Merge only when ${task.consecutivePasses} consecutive passes find no bug, CI, mergeability, data loss, security, migration, dependency, deployment, or user-visible regression risk.`,
+      "- Do not nitpick style, naming, wording, formatting, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
+      "- Inspect each repository's PR diff, files changed, commits, review comments, mergeability, and CI/status checks before deciding.",
+      "- If checks are pending, inconclusive, failing, required reviews are missing, the PR is a draft, mergeability is unknown/conflicting, or the branch is behind in a way GitHub cannot update safely, do not merge; record the exact blocker.",
+      task.autoMerge
+        ? "- If both review passes pass and CI/status checks are successful, merge the PR according to that repository's pullRequest policy, then sync the repository's local switch-back branch."
+        : "- Do not merge automatically; report the review decision only.",
+      '- Final status may be "completed" only after every in-scope workspace PR has a recorded review decision.',
+      task.prompt !== undefined ? `- Additional review instruction: ${task.prompt}` : "",
+    ].filter(Boolean);
+  }
   return [
     "Pull request review and merge task.",
     `- Review open loop-created PRs for this repository targeting ${baseBranch}, prioritizing PRs created or updated within the last ${task.lookbackHours} hours.`,
@@ -624,16 +1198,52 @@ function repositoryPullRequestRepairPolicy(
   ].filter(Boolean);
 }
 
+function activeDelegatedTaskPolicy(workOrder: LoopWorkOrder): string[] {
+  const task = workOrderTask(workOrder);
+  if (task.kind !== "active-delegated-task") return [];
+  const pullRequestPolicy =
+    workOrder.pullRequestPolicy?.enabled === true ? workOrder.pullRequestPolicy : null;
+  const projectManagedPr =
+    workOrder.commitPolicy.enabled &&
+    workOrder.commitPolicy.branch !== undefined &&
+    pullRequestPolicy !== null;
+  return [
+    "Active delegated task.",
+    `- This is a user-confirmed interactive task handed off from session ${task.sourceSession}; it is not a cron maintenance run.`,
+    `- Requirement: ${task.requirement}`,
+    "- Treat the requirement as bounded. If the current session context is needed, inspect the target project with tcb peek/history or ask the target agent to summarize the agreed requirement before editing.",
+    "- Drive the target project agent until the requested behavior is implemented or a real blocker is proven. Do not stop at a plan, partial implementation, or one failed check.",
+    "- Work in explicit slices: confirm the intended behavior, implement the smallest coherent slice, run the relevant checks, review the diff, then continue to the next slice.",
+    "- Preserve unrelated user work and do not introduce broad rewrites, new product scope, dependency churn, or direct model-provider integrations.",
+    task.requireReview
+      ? "- Before finalizing, perform an independent review pass focused on introduced bugs, behavior regressions, data loss, security, migration/config risk, and user-visible breakage; fix confirmed issues and repeat the review."
+      : "- A final review pass is optional for this WorkOrder.",
+    task.requireTests
+      ? "- Run the target project's relevant tests or local verification. If no reliable test command exists, record the exact checked surface and why stronger verification is unavailable."
+      : "- Tests are optional for this WorkOrder, but record any verification you do run.",
+    task.requireCoverageReview
+      ? "- Review test coverage for the touched behavior and risk paths. Add meaningful unit, integration, smoke, E2E, or regression tests where justified; do not add weak tests just to move a metric."
+      : "- Coverage review is optional for this WorkOrder.",
+    task.allowAiEval
+      ? "- If the project already has an agent-backed or deterministic AI eval surface relevant to the touched behavior, run or update it when justified. Do not add direct model API calls, model SDKs, or model API keys."
+      : "- Do not add or run AI eval work for this WorkOrder.",
+    projectManagedPr
+      ? `- This delegated task inherits the target project's PR policy: branch from ${pullRequestPolicy.base}, use ${workOrder.commitPolicy.branch}, open or update one PR against ${pullRequestPolicy.base}, verify CI and mergeability, ${pullRequestPolicy.autoMerge ? "allow auto-merge only after all gates pass" : "leave the PR open after checks"}, then switch the local worktree back to ${pullRequestPolicy.switchBack} and fast-forward it.`
+      : "- No project PR policy was matched for this delegated task; preserve the current branch and do not create commits or PRs unless the user requirement explicitly asks for it.",
+    "- Final status may be completed only after implementation, review, verification, and any justified coverage/eval work are done or explicitly recorded as not applicable.",
+  ];
+}
+
 function agentSessionPolicy(workOrder: LoopWorkOrder, cli: string): string[] {
   const task = workOrderTask(workOrder);
-  if (task.kind === "workspace-architecture" && workOrder.workspace !== undefined) {
+  if (workOrder.workspace !== undefined) {
     return [
       "- This workspace task may delegate to multiple real project sessions; do not create a synthetic workspace product session.",
       ...workOrder.workspace.repositories.flatMap((repository) => [
         `- Open ${repository.name} with the configured agent: ${cli} open ${repository.id} --agent ${repository.agent}.`,
         `- After opening ${repository.id}, verify ${cli} dashboard --json shows that real project running with the configured agent.`,
       ]),
-      `- Run ${cli} control <project> compact --yes before each delegated optimization round for every repository you ask to work.`,
+      contextResetPolicy(workOrder, cli),
     ];
   }
   if (task.kind === "repository-pull-request-review") {
@@ -644,7 +1254,7 @@ function agentSessionPolicy(workOrder: LoopWorkOrder, cli: string): string[] {
     ];
   }
   return [
-    `- Open the target project with the configured agent: ${cli} open ${workOrder.projectId} --agent ${workOrder.agent}.`,
+    `- Open the target project with the configured agent: ${cli} open ${shellQuote(workOrder.projectPath)} --agent ${workOrder.agent}.`,
     `- After opening, verify ${cli} dashboard --json shows the target project running with the configured agent; if it does not, stop and report blocked.`,
     contextResetPolicy(workOrder, cli),
   ];
@@ -652,6 +1262,15 @@ function agentSessionPolicy(workOrder: LoopWorkOrder, cli: string): string[] {
 
 function commitBranchPolicy(workOrder: LoopWorkOrder): string {
   const task = workOrderTask(workOrder);
+  if (task.kind === "active-delegated-task") {
+    if (workOrder.commitPolicy.enabled && workOrder.commitPolicy.branch !== undefined) {
+      return `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other delegated branch.`;
+    }
+    return "- This active delegated task must preserve the user's current branch by default; commit or PR only if the user requirement or later project policy explicitly asks for it.";
+  }
+  if (task.kind === "opportunity-discovery") {
+    return "- This opportunity discovery task must not create a branch, commit, PR, or code change.";
+  }
   if (task.kind === "pull-request-review") {
     return "- This review task must not create a new PR branch or commit code changes.";
   }
@@ -679,6 +1298,15 @@ function contextResetPolicy(workOrder: LoopWorkOrder, cli: string): string {
   }
   if (task.kind === "security-maintenance") {
     return `- Run ${cli} control <project> compact --yes before each delegated security-maintenance round.`;
+  }
+  if (task.kind === "harness-auto") {
+    return `- Run ${cli} control <project> compact --yes before each delegated harness-auto round and before switching between different subtask types.`;
+  }
+  if (task.kind === "active-delegated-task") {
+    return `- Run ${cli} control <project> compact --yes before each delegated task slice when context is stale or before a major verification/review pass.`;
+  }
+  if (task.kind === "opportunity-discovery") {
+    return `- Run ${cli} control <project> compact --yes before the discovery pass if the target session context is stale.`;
   }
   if (task.kind === "repository-pull-request-review") {
     return `- Run ${cli} control <project> compact --yes before each delegated repository PR review pass.`;
@@ -710,6 +1338,9 @@ function commitPolicyForTask(
   project: LoopProjectConfig,
   task: NonNullable<LoopWorkOrder["task"]>,
 ): LoopProjectConfig["commit"] {
+  if (task.kind === "opportunity-discovery") {
+    return { enabled: false, perRound: false };
+  }
   if (task.kind === "bug-fix" && project.bugFix.branch !== undefined) {
     return {
       ...project.commit,
@@ -728,14 +1359,63 @@ function commitPolicyForTask(
       branch: project.securityMaintenance.branch,
     };
   }
+  if (task.kind === "harness-auto" && project.harnessAuto.branch !== undefined) {
+    return {
+      ...project.commit,
+      branch: project.harnessAuto.branch,
+    };
+  }
   return project.commit;
+}
+
+function pullRequestPolicyForTask(
+  project: LoopProjectConfig,
+  task: NonNullable<LoopWorkOrder["task"]>,
+): LoopProjectConfig["pullRequest"] {
+  if (task.kind === "opportunity-discovery") {
+    return {
+      ...project.pullRequest,
+      enabled: false,
+      autoMerge: false,
+    };
+  }
+  return project.pullRequest;
+}
+
+function activeDelegatedCommitPolicy(
+  project: LoopProjectConfig | undefined,
+  projectId: string,
+  runId: string,
+): LoopProjectConfig["commit"] {
+  if (project === undefined || !project.commit.enabled || !project.pullRequest.enabled) {
+    return { enabled: false, perRound: false };
+  }
+  return commitPolicyForWorkOrder(
+    {
+      ...project.commit,
+      perRound: false,
+      branch: `loop/${sanitizeBranchSegment(projectId)}/active-delegate`,
+    },
+    runId,
+  );
 }
 
 function actionPolicyForTask(
   project: LoopProjectConfig,
   task: NonNullable<LoopWorkOrder["task"]>,
 ): Pick<LoopWorkOrder, "allowedActions" | "blockedActions"> {
-  if (task.kind !== "security-maintenance" || !task.allowDependencyUpdates) {
+  const allowsDependencyUpdates =
+    task.kind === "security-maintenance"
+      ? task.allowDependencyUpdates
+      : task.kind === "harness-auto"
+        ? task.tasks.some(
+            (subtask) =>
+              subtask.enabled &&
+              subtask.kind === "security-maintenance" &&
+              subtask.allowDependencyUpdates,
+          )
+        : false;
+  if (!allowsDependencyUpdates) {
     return {
       allowedActions: [...project.allowedActions],
       blockedActions: [...project.blockedActions],
@@ -969,7 +1649,7 @@ function parseDelegatedTasks(value: unknown): LoopSupervisorFinalSummary["delega
     }
     if (!isRecord(item)) return null;
     if (typeof item.projectId === "string") {
-      const status = parseSupervisorFinalStatus(item.status);
+      const status = typeof item.status === "string" && item.status.trim() ? item.status : null;
       if (status === null) return null;
       tasks.push({ projectId: item.projectId, status });
       continue;

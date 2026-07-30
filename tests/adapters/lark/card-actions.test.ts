@@ -1,15 +1,21 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CardActionEvent } from "@larksuiteoapi/node-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.js";
+import { OpportunityStore } from "../../../src/core/opportunities/store.js";
 import { bindGroup, getBinding, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { appendRecentProject } from "../../../src/core/projects/recentProjects.js";
 import { sessionNameFromPath } from "../../../src/core/projects/sessionPathMap.js";
 import { storeInputList } from "../../../src/core/read/recent-inputs.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
 import { fakeChannel, fakeDeps } from "./_fakes.js";
+
+vi.mock("../../../src/core/platform/clipboard.js", () => ({
+  copyToClipboard: vi.fn(async () => true),
+}));
 
 // Keep the real VOICE_LANGS/resolveWhisperLanguage; stub the .env writer and the
 // host-mutating install so `voiceinstall` is exercisable without a real install.
@@ -35,6 +41,10 @@ function evt(value: unknown, over: Partial<CardActionEvent> = {}): CardActionEve
     action: { value, tag: "button" },
     ...over,
   } as CardActionEvent;
+}
+
+function initGitProject(projectDir: string): void {
+  execFileSync("git", ["init"], { cwd: projectDir, stdio: "ignore" });
 }
 
 describe("makeCardActionHandler", () => {
@@ -216,6 +226,296 @@ describe("makeCardActionHandler", () => {
     await handler(evt({ cmd: "history" }));
 
     expect(channel.texts().some((t) => t.includes("缺少项目路径映射"))).toBe(true);
+  });
+
+  it("oppdiscuss opens the project and queues a discussion prompt, not implementation", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-action-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      initGitProject(projectDir);
+      const [suggestion] = new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "api",
+          projectName: "api",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["docs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Add explain command",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Users need manual log inspection.",
+              whyNow: "Opportunity discovery found repeated support friction.",
+              value: "Faster support.",
+              evidence: ["support logs mention missing context"],
+              recommendedApproach: "Discuss a read-only explain command.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Scope can grow"],
+              nonGoals: ["Do not implement during discussion"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add the explain command after owner approval.",
+            },
+          ],
+        },
+        projectPath: projectDir,
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      if (suggestion === undefined) throw new Error("expected suggestion");
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        config: {
+          cdAllowedDirs: [projectDir],
+          loopEngineering: {
+            configFile: "",
+            tickMs: 60_000,
+            supervisor: {
+              enabled: true,
+              dir: stateDir,
+              agent: "codex",
+              poolSize: 1,
+              resetBeforeWorkOrder: "compact",
+            },
+          },
+        },
+        bridge: {
+          hasSession: vi.fn(async () => true),
+          isPaneAlive: vi.fn(async () => true),
+        },
+      });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
+
+      expect(deps.queue.enqueued).toHaveLength(1);
+      expect(deps.queue.enqueued[0]?.action).toBe("text");
+      expect(deps.queue.enqueued[0]?.text).toContain("Do not implement yet.");
+      expect(JSON.stringify(channel.cards())).not.toContain("oppdelegate");
+      expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "discussing" });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
+  });
+
+  it("oppdiscuss blocks when the target project agent is busy", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-busy-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-busy-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const [suggestion] = new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "api",
+          projectName: "api",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["docs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Add explain command",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Users need manual log inspection.",
+              whyNow: "Opportunity discovery found repeated support friction.",
+              value: "Faster support.",
+              evidence: ["support logs mention missing context"],
+              recommendedApproach: "Discuss a read-only explain command.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Scope can grow"],
+              nonGoals: ["Do not implement during discussion"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add the explain command after owner approval.",
+            },
+          ],
+        },
+        projectPath: projectDir,
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      if (suggestion === undefined) throw new Error("expected suggestion");
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        config: { cdAllowedDirs: [projectDir] },
+        bridge: { hasSession: vi.fn(async () => true) },
+        queue: { isSessionProcessing: vi.fn(() => true) },
+      });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
+
+      expect(channel.texts().join("\n")).toContain("项目 agent 当前正在处理任务");
+      expect(deps.queue.enqueued).toHaveLength(0);
+      expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
+  });
+
+  it("oppdiscuss blocks when the target worktree is dirty", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-dirty-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-dirty-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      initGitProject(projectDir);
+      writeFileSync(join(projectDir, "dirty.ts"), "export const dirty = true;\n");
+      const [suggestion] = new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "api",
+          projectName: "api",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["docs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Add explain command",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Users need manual log inspection.",
+              whyNow: "Opportunity discovery found repeated support friction.",
+              value: "Faster support.",
+              evidence: ["support logs mention missing context"],
+              recommendedApproach: "Discuss a read-only explain command.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Scope can grow"],
+              nonGoals: ["Do not implement during discussion"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add the explain command after owner approval.",
+            },
+          ],
+        },
+        projectPath: projectDir,
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      if (suggestion === undefined) throw new Error("expected suggestion");
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        config: { cdAllowedDirs: [projectDir] },
+        bridge: { hasSession: vi.fn(async () => true) },
+      });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
+
+      const text = channel.texts().join("\n");
+      expect(text).toContain("项目工作区不干净");
+      expect(text).toContain("?? dirty.ts");
+      expect(deps.queue.enqueued).toHaveLength(0);
+      expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
+  });
+
+  it("oppdiscussall queues one combined discussion prompt for the batch", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-batch-action-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-batch-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      initGitProject(projectDir);
+      const suggestions = new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "api",
+          projectName: "api",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["docs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Add explain command",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Users need manual log inspection.",
+              whyNow: "Opportunity discovery found repeated support friction.",
+              value: "Faster support.",
+              evidence: ["support logs mention missing context"],
+              recommendedApproach: "Discuss a read-only explain command.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Scope can grow"],
+              nonGoals: ["Do not implement during discussion"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add the explain command after owner approval.",
+            },
+            {
+              title: "Add regression coverage",
+              category: "testing",
+              confidence: "high",
+              problem: "A workflow has no regression coverage.",
+              whyNow: "Opportunity discovery found a fragile path.",
+              value: "Safer maintenance.",
+              evidence: ["tests miss the path"],
+              recommendedApproach: "Discuss focused regression coverage.",
+              alternatives: ["Manual QA only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Coverage can become shallow"],
+              nonGoals: ["Do not add unrelated tests"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add regression coverage after owner approval.",
+            },
+          ],
+        },
+        projectPath: projectDir,
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      const ids = suggestions.map((suggestion) => suggestion.id);
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        config: { cdAllowedDirs: [projectDir] },
+        bridge: { hasSession: vi.fn(async () => true) },
+      });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscussall", ids }));
+
+      expect(deps.queue.enqueued).toHaveLength(1);
+      expect(deps.queue.enqueued[0]?.action).toBe("text");
+      expect(deps.queue.enqueued[0]?.text).toContain("as one combined scope");
+      expect(deps.queue.enqueued[0]?.text).toContain(suggestions[0]?.id);
+      expect(deps.queue.enqueued[0]?.text).toContain(suggestions[1]?.id);
+      expect(JSON.stringify(channel.cards())).not.toContain("oppdelegate");
+      expect(new OpportunityStore().get(ids[0] ?? "")).toMatchObject({ status: "discussing" });
+      expect(new OpportunityStore().get(ids[1] ?? "")).toMatchObject({ status: "discussing" });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
   });
 
   it("'switch' with a matching sid switches to that project", async () => {
@@ -709,6 +1009,8 @@ describe("makeCardActionHandler", () => {
         deps,
       )(evt({ cmd: "adoptattach", sid: sessionShortId(session) }));
       expect(channel.texts().some((t) => t.includes("tmux attach"))).toBe(true);
+      const { copyToClipboard } = await import("../../../src/core/platform/clipboard.js");
+      expect(copyToClipboard).not.toHaveBeenCalled();
     });
 
     it("adoptattach with an unmatched sid → 'session gone'", async () => {

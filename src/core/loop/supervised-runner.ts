@@ -13,6 +13,7 @@ export type SupervisorDispatchRequest = {
   prompt: string;
   signal: AbortSignal;
   workOrder: LoopWorkOrder;
+  timeoutMs?: number;
   contextReset?: "none" | "compact" | "clear";
 };
 
@@ -49,6 +50,7 @@ export type LoopSupervisedRunnerInput = {
   supervisorSession: string;
   timeoutMs: number;
   resetBeforeWorkOrder?: "none" | "compact" | "clear";
+  cancelSignal?: AbortSignal;
   dispatch: (request: SupervisorDispatchRequest) => Promise<SupervisorDispatchResult>;
 };
 
@@ -62,6 +64,9 @@ export type LoopSupervisorRevisionInput = LoopSupervisedRunnerInput & {
 export async function runLoopSupervisedProjectAsync(
   input: LoopSupervisedRunnerInput,
 ): Promise<LoopSupervisedRunResult> {
+  if (input.cancelSignal?.aborted) {
+    return cancelledRunResult(input.workOrder, abortReason(input.cancelSignal));
+  }
   const controller = new AbortController();
   const dispatch = runSupervisorDispatchSequence(input, controller.signal)
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
@@ -76,11 +81,14 @@ export async function runLoopSupervisedProjectAsync(
       controller.abort("loop supervisor work order timed out");
       resolve({ timedOut: true, reason: "loop supervisor work order timed out" });
     }, input.timeoutMs);
-    timeoutId.unref?.();
+    timeoutId.unref();
   });
 
-  const result = await Promise.race([dispatch, timeout]);
+  const cancellation = createCancellationRace(input.workOrder, controller, input.cancelSignal);
+
+  const result = await Promise.race([dispatch, timeout, cancellation.promise]);
   if (timeoutId !== undefined) clearTimeout(timeoutId);
+  cancellation.cleanup();
 
   if (isTimedOutResult(result)) {
     return { status: "dispatch-timeout", reason: result.reason, output: result.reason };
@@ -92,6 +100,9 @@ export async function runLoopSupervisedProjectAsync(
 export async function runLoopSupervisorRevisionAsync(
   input: LoopSupervisorRevisionInput,
 ): Promise<LoopSupervisedRunResult> {
+  if (input.cancelSignal?.aborted) {
+    return cancelledRunResult(input.workOrder, abortReason(input.cancelSignal));
+  }
   const controller = new AbortController();
   const dispatch = runSupervisorRevisionSequence(input, controller.signal)
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
@@ -106,11 +117,14 @@ export async function runLoopSupervisorRevisionAsync(
       controller.abort("loop supervisor revision timed out");
       resolve({ timedOut: true, reason: "loop supervisor revision timed out" });
     }, input.timeoutMs);
-    timeoutId.unref?.();
+    timeoutId.unref();
   });
 
-  const result = await Promise.race([dispatch, timeout]);
+  const cancellation = createCancellationRace(input.workOrder, controller, input.cancelSignal);
+
+  const result = await Promise.race([dispatch, timeout, cancellation.promise]);
   if (timeoutId !== undefined) clearTimeout(timeoutId);
+  cancellation.cleanup();
 
   if (isTimedOutResult(result)) {
     return { status: "dispatch-timeout", reason: result.reason, output: result.reason };
@@ -128,6 +142,7 @@ async function runSupervisorDispatchSequence(
     prompt: buildLoopSupervisorPrompt(input.workOrder),
     signal,
     workOrder: input.workOrder,
+    timeoutMs: input.timeoutMs,
     ...(input.resetBeforeWorkOrder !== undefined
       ? { contextReset: input.resetBeforeWorkOrder }
       : {}),
@@ -142,6 +157,7 @@ async function runSupervisorDispatchSequence(
     prompt: buildLoopSupervisorFinalizationPrompt(input.workOrder, firstParsed.output),
     signal,
     workOrder: input.workOrder,
+    timeoutMs: input.timeoutMs,
   });
   const secondParsed = parseDispatchOutput(finalization, input.workOrder);
   if (secondParsed.status !== "invalid-output") return secondParsed;
@@ -166,6 +182,7 @@ async function runSupervisorRevisionSequence(
     }),
     signal,
     workOrder: input.workOrder,
+    timeoutMs: input.timeoutMs,
   });
   const firstParsed = parseDispatchOutput(first, input.workOrder);
   if (firstParsed.status !== "invalid-output") {
@@ -177,6 +194,7 @@ async function runSupervisorRevisionSequence(
     prompt: buildLoopSupervisorFinalizationPrompt(input.workOrder, firstParsed.output),
     signal,
     workOrder: input.workOrder,
+    timeoutMs: input.timeoutMs,
   });
   const secondParsed = parseDispatchOutput(finalization, input.workOrder);
   if (secondParsed.status !== "invalid-output") return secondParsed;
@@ -227,4 +245,47 @@ function mapSupervisorStatus(
   if (status === "failed") return "supervisor-failed";
   if (status === "timeout") return "supervisor-timeout";
   return status;
+}
+
+function abortReason(signal: AbortSignal): string {
+  return typeof signal.reason === "string" ? signal.reason : "loop supervisor work order cancelled";
+}
+
+function createCancellationRace(
+  workOrder: LoopWorkOrder,
+  controller: AbortController,
+  signal: AbortSignal | undefined,
+): { promise: Promise<LoopSupervisedRunResult>; cleanup: () => void } {
+  let cancelListener: (() => void) | undefined;
+  const promise = new Promise<LoopSupervisedRunResult>((resolve) => {
+    if (signal === undefined) return;
+    cancelListener = () => {
+      const reason = abortReason(signal);
+      controller.abort(reason);
+      resolve(cancelledRunResult(workOrder, reason));
+    };
+    signal.addEventListener("abort", cancelListener, { once: true });
+  });
+  return {
+    promise,
+    cleanup: () => {
+      if (cancelListener !== undefined) signal?.removeEventListener("abort", cancelListener);
+    },
+  };
+}
+
+function cancelledRunResult(workOrder: LoopWorkOrder, reason: string): LoopSupervisedRunResult {
+  return {
+    status: "cancelled",
+    summary: {
+      status: "cancelled",
+      projectId: workOrder.projectId,
+      actionsTaken: [reason],
+      delegatedTasks: [],
+      finalVerification: "not-run",
+      commits: [],
+      followUps: [],
+    },
+    output: reason,
+  };
 }

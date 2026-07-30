@@ -211,6 +211,11 @@ projects:
       schedule: "15 2 * * *"
       branch: loop/geo-backend/security-maintenance
       maxRounds: 3
+    harnessAuto:
+      enabled: true
+      schedule: "30 2 * * *"
+      branch: loop/geo-backend/harness-auto
+      maxRounds: 4
     pullRequestReview:
       enabled: true
       schedule: "0 1 * * *"
@@ -253,6 +258,12 @@ projects:
           taskId: `loop:geo-backend:security-maintenance:${Date.parse("2026-07-28T02:15:00Z")}`,
           source: "loop-engineering",
           name: "geo-backend security-maintenance",
+          status: "expected",
+        }),
+        expect.objectContaining({
+          taskId: `loop:geo-backend:harness-auto:${Date.parse("2026-07-28T02:30:00Z")}`,
+          source: "loop-engineering",
+          name: "geo-backend harness-auto",
           status: "expected",
         }),
         expect.objectContaining({
@@ -313,9 +324,178 @@ prReview:
     ]);
   });
 
-  it("discovers workspace architecture schedules as expected tasks", () => {
+  it("discovers workspace schedules as expected tasks", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-workspace-"));
     const configFile = join(root, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /tmp/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /tmp/realestate/geo-backend
+        role: backend
+        pullRequest:
+          enabled: true
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /tmp/realestate/geo-frontend
+        role: frontend
+        pullRequest:
+          enabled: true
+    architecture:
+      enabled: true
+      schedule: "15 4 * * *"
+      goal: Improve frontend/backend architecture together.
+    bugFix:
+      enabled: true
+      schedule: "20 4 * * *"
+    testCoverage:
+      enabled: true
+      schedule: "25 4 * * *"
+    securityMaintenance:
+      enabled: true
+      schedule: "30 4 * * *"
+    harnessAuto:
+      enabled: true
+      schedule: "35 4 * * *"
+    opportunityDiscovery:
+      enabled: true
+      schedule: "40 4 * * *"
+    pullRequestReview:
+      enabled: true
+      schedule: "45 4 * * *"
+`,
+      "utf8",
+    );
+
+    const records = discoverLoopEngineeringScheduledTasks({
+      configFile,
+      window: singaporeDayWindow("2026-07-28"),
+      now: Date.parse("2026-07-29T02:00:00Z"),
+    });
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        taskId: `loop:workspace:geo:architecture:${Date.parse("2026-07-28T04:15:00Z")}`,
+        source: "loop-engineering",
+        name: "geo workspace-architecture",
+        status: "expected",
+      }),
+      expect.objectContaining({
+        taskId: `loop:workspace:geo:bug-fix:${Date.parse("2026-07-28T04:20:00Z")}`,
+        source: "loop-engineering",
+        name: "geo bug-fix",
+        status: "expected",
+      }),
+      expect.objectContaining({
+        taskId: `loop:workspace:geo:test-coverage:${Date.parse("2026-07-28T04:25:00Z")}`,
+        source: "loop-engineering",
+        name: "geo test-coverage",
+        status: "expected",
+      }),
+      expect.objectContaining({
+        taskId: `loop:workspace:geo:security-maintenance:${Date.parse("2026-07-28T04:30:00Z")}`,
+        source: "loop-engineering",
+        name: "geo security-maintenance",
+        status: "expected",
+      }),
+      expect.objectContaining({
+        taskId: `loop:workspace:geo:harness-auto:${Date.parse("2026-07-28T04:35:00Z")}`,
+        source: "loop-engineering",
+        name: "geo harness-auto",
+        status: "expected",
+      }),
+      expect.objectContaining({
+        taskId: `loop:workspace:geo:opportunity-discovery:${Date.parse("2026-07-28T04:40:00Z")}`,
+        source: "loop-engineering",
+        name: "geo opportunity-discovery",
+        status: "expected",
+      }),
+      expect.objectContaining({
+        taskId: `loop:workspace:geo:pull-request-review:${Date.parse("2026-07-28T04:45:00Z")}`,
+        source: "loop-engineering",
+        name: "geo pull-request-review",
+        status: "expected",
+      }),
+    ]);
+  });
+
+  it("discovers completed harness-auto run artifacts", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-harness-artifact-"));
+    const configFile = join(root, "loop.yml");
+    const loopRunsDir = join(root, "loop-runs");
+    const scheduledAt = Date.parse("2026-07-28T02:30:00Z");
+    const runId = `${scheduledAt}-geo-backend-harness-auto`;
+    mkdirSync(join(loopRunsDir, "geo-backend", runId), { recursive: true });
+    writeFileSync(
+      join(loopRunsDir, "geo-backend", runId, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["Harness-auto stopped after health score reached 96."],
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: geo-backend
+    name: Geo Backend
+    path: /tmp/geo-backend
+    agent: codex
+    goal: Improve architecture
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: "true"
+    runner:
+      kind: agent-supervised
+    harnessAuto:
+      enabled: true
+      schedule: "30 2 * * *"
+`,
+      "utf8",
+    );
+
+    const records = discoverLoopEngineeringScheduledTasks({
+      configFile,
+      loopRunsDir,
+      window: singaporeDayWindow("2026-07-28"),
+      now: Date.parse("2026-07-29T02:00:00Z"),
+    });
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        taskId: `loop:geo-backend:harness-auto:${scheduledAt}`,
+        source: "loop-engineering",
+        name: "geo-backend harness-auto",
+        status: "success",
+        summary: "Harness-auto stopped after health score reached 96.",
+      }),
+    ]);
+  });
+
+  it("discovers completed workspace non-architecture run artifacts", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-workspace-artifact-"));
+    const configFile = join(root, "loop.yml");
+    const loopRunsDir = join(root, "loop-runs");
+    const scheduledAt = Date.parse("2026-07-28T04:20:00Z");
+    const runId = `${scheduledAt}-geo-workspace-bug-fix`;
+    mkdirSync(join(loopRunsDir, "geo", runId), { recursive: true });
+    writeFileSync(
+      join(loopRunsDir, "geo", runId, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["Fixed confirmed workspace contract bug."],
+      }),
+      "utf8",
+    );
     writeFileSync(
       configFile,
       `
@@ -334,25 +514,29 @@ workspaces:
         path: /tmp/realestate/geo-frontend
         role: frontend
     architecture:
-      enabled: true
-      schedule: "15 4 * * *"
+      enabled: false
       goal: Improve frontend/backend architecture together.
+    bugFix:
+      enabled: true
+      schedule: "20 4 * * *"
 `,
       "utf8",
     );
 
     const records = discoverLoopEngineeringScheduledTasks({
       configFile,
+      loopRunsDir,
       window: singaporeDayWindow("2026-07-28"),
       now: Date.parse("2026-07-29T02:00:00Z"),
     });
 
     expect(records).toEqual([
       expect.objectContaining({
-        taskId: `loop:workspace:geo:architecture:${Date.parse("2026-07-28T04:15:00Z")}`,
+        taskId: `loop:workspace:geo:bug-fix:${scheduledAt}`,
         source: "loop-engineering",
-        name: "geo workspace-architecture",
-        status: "expected",
+        name: "geo bug-fix",
+        status: "success",
+        summary: "Fixed confirmed workspace contract bug.",
       }),
     ]);
   });

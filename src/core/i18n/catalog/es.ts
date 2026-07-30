@@ -147,7 +147,7 @@ export const es: Messages = {
     "Ya hay un proyecto con la mismo workspace ejecutando Claude/Codex. Se canceló sin tocar el original — usa “Adoptar como sesión independiente” si quieres una adopción paralela.",
   btnAdoptAttach: "💻 Ver en la terminal del computador (opcional)",
   adoptAttachHint: (cmd: string) =>
-    `✅ El comando de conexión ya está en el portapapeles de tu COMPUTADOR (no hace falta copiar nada en el móvil). Al volver, solo pégalo en una terminal y pulsa Enter para entrar — este paso es opcional.\nComando: ${cmd}`,
+    `✅ Para ver la sesión, ejecuta este comando opcional en una terminal del computador:\nComando: ${cmd}`,
 
   doneShort: "Listo",
   agentNotRunningRestart:
@@ -414,12 +414,15 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   cmdDashboard: "Ver el panel global (resumen de todas las sesiones)",
   cmdBatch:
     "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",
-  cmdAutopilot: "Gestionar autopilot de la sesión (objetivos, keep-alive, gestión global)",
+  cmdAutopilot: "Delegar el trabajo de la sesión actual al Loop Supervisor",
+  cmdOpportunity: "Revisar oportunidades propuestas y delegar el trabajo aprobado",
   cmdGoals: "Listar presets de objetivos de autopilot",
   cmdSysload: "Ver carga, temperatura y procesos descontrolados",
   sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
+  autopilotDelegatePanelBody:
+    "Delega el contexto de la sesión actual al Loop Supervisor para implementar, revisar, verificar, gestionar PRs y notificar el resultado final.",
   autopilotNotifyPaused: (session, reason) => `🛑 autopilot en pausa [${session}]: ${reason}`,
   autopilotNotifyStopped: (session, reason) => `⏹️ autopilot detenido [${session}]: ${reason}`,
   autopilotNotifyUsage: (session, pct) =>
@@ -450,9 +453,11 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   autopilotStatus: (o) =>
     `Autopilot: ${o.enabled ? "activado" : "desactivado"} (${o.pureKeepAlive ? "mantener activo" : "por objetivo"}, ${o.iterations} intervenciones, persona=${o.persona})${o.goal ? ` (objetivo ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
   autopilotUsage: (raw) =>
-    `Subcomando desconocido «${raw}». Uso: /autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} Activar autopilot`,
-  btnApDisable: "⏹ Desactivar autopilot",
+    `Subcomando desconocido «${raw}». Uso: /autopilot [delegate [requisito]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
+  btnApEnable: `${UI_ICONS.feature.autopilot} Activar keep-alive/objetivos`,
+  btnApDisable: "⏹ Desactivar keep-alive/objetivos",
+  btnApDelegate: "🚀 Continuar con supervisor",
+  btnApCancelDelegate: "⛔ Cancelar delegación",
   btnApPickGoals: "🎯 Elegir objetivos",
   btnApGlobalOn: "🌐 Global: sí",
   btnApGlobalOff: "🌐 Global: no",

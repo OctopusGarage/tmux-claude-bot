@@ -212,112 +212,40 @@ refresh the skill. It lands at `~/.claude/skills/tmux-claude-bot/SKILL.md` and
 
 ## 7. Autopilot
 
-Autopilot keeps an agent running hands-free: it detects idle, nudges it with a
-continuation prompt, recovers from errors, and stops on a user-defined condition.
-Start it from chat with `/autopilot on` (keep-alive, no exit condition) or
-`/autopilot goal <id>` (run to a goal); `/autopilot off` (or `stop`) ends it for a
-session. Check status across all sessions with `tcb autopilot`. It is **off by
-default** and opt-in per session.
+Autopilot means **supervisor-backed delegation**. After a task has been clarified
+in a project session, use `/autopilot [requirement]`,
+`/autopilot delegate [requirement]`, `tcb autopilot <project> [requirement]`, or
+the **Continue via supervisor** / **继续托管推进** button to hand the work to the
+reserved Loop Supervisor.
 
-To manage **every** session without enabling each one, run `/autopilot global on`
-(persisted in `AUTOPILOT_GLOBAL_KEEPALIVE`): live sessions are auto-kept-alive;
-`/autopilot off` opts one out, and `/autopilot global off` un-enrolls them.
+If the requirement is omitted, the supervisor treats the current session context
+and repository state as the source of truth: live pane, git status, recent
+commits, existing PRs, and prior verification output. It then drives the target
+project agent until the implementation is complete or a real blocker is proven.
+Before finalizing, it must review the diff, run relevant verification, assess
+coverage for touched risk paths, use existing deterministic or agent-backed evals
+when justified, and follow the configured PR/merge/switch-back policy.
 
-> Autopilot's drive-loop is descended from **[ForgeFlow](https://github.com/Kingson4Wu/ForgeFlow)** —
-> see [Acknowledgements](#acknowledgements).
+The old Autopilot keep-alive and goal-cycle flow is not a user-facing feature.
+The bot does not start that background loop, and chat/control cards do not expose
+enable/disable, goal picker, global keep-alive, or human-gate controls.
 
 ### Telegram button controls
 
-Autopilot is also fully button-drivable from Telegram. Open the inline control
-panel (the keyboard under any reply, or via the control buttons), then tap
-`✈️ Autopilot` to enter the autopilot panel. From there you can enable or disable
-autopilot for the current session, open the goal picker to select one or more goals
-with a multi-select list and set the number of rounds, then start the cycle — or
-toggle the global keep-alive on/off for all sessions, or stop autopilot outright.
-When a goal reaches a `humanGate` phase, the owner notification itself carries
-✅确认 and ▶️继续 buttons so you can confirm or continue without typing a command.
+Open the inline control panel and tap **Continue via supervisor**. The command
+returns a run id immediately; final status is written under `loop-runs/...` and
+sent through the configured Telegram/Feishu notification route.
 
 ### Terminal TUI controls
 
-Autopilot is also fully drivable from `tcb tui`. Press `A` to open the autopilot panel: enable or disable autopilot for the current session, pick one or more goal-cycles (multi-select + rounds) and start the cycle, toggle the global keep-alive, or stop autopilot. When a goal pauses at a `humanGate` phase, a banner appears in the TUI — press `A` again to confirm and continue in-place.
+Use `tcb autopilot <project> [requirement]` from the shell. This uses the same
+control socket as the chat adapters and queues the same supervisor WorkOrder.
 
 ### Lark/Feishu button controls
 
-Autopilot is also fully button-drivable from Lark/Feishu. In a private chat (p2p)
-the control card includes a `✈️ Autopilot` button that opens the autopilot panel
-card. From there you can enable or disable autopilot for the current session, open
-the goal picker to select one or more goals with a multi-select list and set the
-number of rounds, then start the cycle — or stop autopilot outright. The
-host-wide global keep-alive toggle is available in the panel when opened from a
-private chat; it is omitted in bound group chats. You can also open the panel
-directly with `/autopilot`. When a goal reaches a `humanGate` phase, the owner
-receives an interactive card with ✅确认 and ▶️继续 buttons.
-
-### Goals
-
-A **goal** is a named preset that tells autopilot what to do each phase and when to
-stop. Built-in goal ids (`test-coverage`, `fix-tests`, `code-review`, `add-feature`,
-`refactor-elegant`, `ui-polish`) are always available. You can also drop your own
-goal files into the goals directory.
-
-Goal phases may use plain prompts or skill intents. Skill metadata is shared with
-Loop Engineering through the agent capability registry (`skills.catalog` and
-`skills.approved`), so the same approved skill set can support interactive
-Autopilot goals and scheduled project maintenance.
-
-**User-defined goals** — create a `.json` file in `AUTOPILOT_GOALS_DIR` (default
-`~/.tmux-claude-bot/state/autopilot-goals`). Any `.json` file placed there appears
-in `/goals` and can be started with `/autopilot goal <id>`. Built-in ids take
-precedence — a user file with a conflicting id is ignored.
-
-Minimal goal schema:
-
-```json
-{
-  "id": "my-goal",
-  "titleKey": "My goal",
-  "phases": [
-    {
-      "id": "p1",
-      "intent": { "kind": "prompt", "text": "…" },
-      "done": { "kind": "sentinel", "marker": "GOAL_DONE" }
-    }
-  ]
-}
-```
-
-`id` must be unique and not collide with a built-in (non-empty string). `titleKey`
-is a short label (any non-empty string). Each phase needs an `intent` — either
-`{ "kind": "prompt", "text": "…" }` or `{ "kind": "skill", "name": "…", "fallback": "…" }`
-— and a `done` condition. The `done` kinds are: `sentinel` (watch the output for a
-literal `[MARKER]`), `check` (run a shell command — done on exit 0), `humanGate`
-(pause and wait for `/autopilot confirm`), and `all` / `seq` to compose them
-(`{ "kind": "all", "of": [ … ] }`). Edits to a goal file are picked up when a file is
-added/removed in the directory or the bot restarts.
-
-### Goal cycling
-
-`/autopilot goals a,b rounds N` runs the listed goals in rotation for N rounds, pausing at each `humanGate` phase for `/autopilot confirm` before continuing to the next goal. Omit `rounds` to run one round.
-
-### Completion-aware keep-alive
-
-`/autopilot on` drives the current task to completion: when the agent emits `[TASK_DONE]` in its output, autopilot stops automatically instead of nudging indefinitely.
-
-### Between-goals context reset
-
-Set `AUTOPILOT_BETWEEN_GOALS` (`none | compact | clear`, default `compact`) to
-control what autopilot does between goals in a cycle. With `compact` (the
-default), autopilot runs `/compact` on the agent before the next goal's first
-prompt to free up context. Use `clear` to run `/clear` instead (full reset), or
-`none` to skip the reset entirely.
-
-### Usage gate
-
-Set `AUTOPILOT_USAGE_PAUSE_PCT` (default `0`, disabled) to a percent threshold
-(e.g. `90`). When an active goal detects that the agent's context or rate-limit
-usage has reached that percent, autopilot pauses and notifies you — so it won't
-burn through your quota unattended. Resume with `/autopilot on` or
-`/autopilot goal <id>` once you are ready to continue.
+In a project-bound group or private chat, tap **继续托管推进** or send
+`/autopilot [requirement]`. Feishu notifications are routed to the bound project
+group when one exists, otherwise to the owner fallback configured for the bot.
 
 ---
 
@@ -390,19 +318,47 @@ Each scheduled project chooses a runner:
   hardening just to quiet a scanner. Confirmed fixes use the security branch,
   run the relevant security check plus normal local verification, and describe
   source, impact, fix, verification, and residual risk in the PR.
-  `pullRequestReview` is another separate cron job. It reuses the same project
-  session and supervisor, reviews loop-created PRs from the configured lookback
-  window, requires the configured number of clean review passes, and only
-  auto-merges when CI/status checks and mergeability are acceptable. It is
-  intended to catch introduced bugs and operational risks, not to block on style
-  nits.
-- `workspaces` define coordinated multi-repository architecture jobs. Use this
-  when repositories should be evaluated together, such as a frontend/backend pair
-  in the same product directory. A workspace architecture job is one scheduled
-  WorkOrder with one run id, but each repository keeps its own branch and PR. The
-  supervisor must inspect cross-repository contracts, change only the repositories
-  that need changes, link related PRs, and verify every repository is clean and
-  back on its configured switch-back branch before finalizing.
+  `pullRequestReview` is a project-scoped cron job. It reuses that project's
+  session and supervisor, reviews loop-created PRs for that project from the
+  configured lookback window, requires the configured number of clean review
+  passes, and only auto-merges when CI/status checks and mergeability are
+  acceptable. It is intended to catch introduced bugs and operational risks, not
+  to block on style nits.
+  `prReview.repositories` is the repository-scoped all-open-PR processor. It is
+  configured outside `projects` and can review every open PR in a GitHub
+  repository, optionally repair small same-repository PR branch issues, then
+  merge eligible PRs. Use `pullRequestReview` for loop-created PRs belonging to a
+  configured project or workspace; use `prReview.repositories` when the desired
+  target is a repository's complete open PR queue.
+  `harnessAuto` is a higher-level project-health orchestration job. It has one
+  schedule and one run id, then chooses from enabled subtasks such as
+  architecture, bug-fix, test-coverage, and security-maintenance after assessing
+  the current project state. Use it when you want one periodic health loop and
+  one PR instead of several independent PRs. The supervisor must record the
+  health signals it checked, selected and skipped subtasks, verification, and
+  stop condition. It must not run every configured subtask mechanically or keep
+  optimizing after the configured health score / no-confirmed-issues condition
+  is met.
+  `opportunityDiscovery` is a read-only proposal job. It asks the supervisor to
+  inspect concrete project evidence, find a small number of high-value feature or
+  optimization opportunities, and write `opportunities.json`; it must not edit
+  files, create branches, commit, push, or open PRs. The bot stores and dedupes
+  suggestions, then sends Telegram/Feishu messages with `/opportunity` commands.
+  Use `/opportunity discuss <id>` to prepare a decision conversation,
+  `/opportunity delegate <id>` to hand an approved suggestion to the Loop
+  Supervisor, or `/opportunity dismiss <id>` when it should not be pursued.
+- `workspaces` define coordinated multi-repository jobs. Use this when
+  repositories should be evaluated together, such as a frontend/backend pair in
+  the same product directory. A workspace job is one scheduled WorkOrder with one
+  run id, but each repository keeps its own branch and PR. The supervisor must
+  inspect cross-repository contracts, change only the repositories that need
+  changes, link related PRs, and verify every repository is clean and back on its
+  configured switch-back branch before finalizing. Workspaces can define the same
+  maintenance task families as projects: `architecture`, `bugFix`,
+  `testCoverage`, `securityMaintenance`, `harnessAuto`, `opportunityDiscovery`,
+  and `pullRequestReview`. The internal job kind `workspace-architecture` exists
+  only for historical run-id compatibility; it does not mean workspace support is
+  limited to architecture.
 
 Enable the supervisor only when at least one project uses `agent-supervised`:
 
@@ -484,6 +440,48 @@ projects:
         CORS, file/path handling, uploads, command execution, sensitive logging,
         CI secrets, and supply-chain issues. Do not blindly upgrade dependencies
         or harden config unless the risk is real or plausibly reachable.
+    harnessAuto:
+      enabled: true
+      schedule: "50 16 * * *"
+      branch: loop/datavibe-backend/harness-auto
+      maxRounds: 4
+      strategy: health-first
+      tasks:
+        - kind: bug-fix
+          enabled: true
+          weight: 40
+        - kind: security-maintenance
+          enabled: true
+          weight: 30
+        - kind: test-coverage
+          enabled: true
+          weight: 20
+        - kind: architecture
+          enabled: true
+          weight: 10
+      stopWhen:
+        healthScoreAtLeast: 95
+        noConfirmedIssues: true
+      prompt: >
+        Assess current project health first, then choose only justified
+        subtasks. Keep the run in one PR and stop when the configured health
+        condition is met.
+    opportunityDiscovery:
+      enabled: true
+      schedule: "20 10 * * *"
+      scheduleJitterMinutes: 15
+      maxSuggestions: 3
+      minConfidence: medium
+      categories:
+        - product-feature
+        - workflow-automation
+        - developer-experience
+        - reliability
+      cooldownDays: 14
+      requireEvidence: true
+      prompt: >
+        Propose only grounded work with clear owner value. Include evidence,
+        risks, acceptance checks, and a concise implementation approach.
     pullRequestReview:
       enabled: true
       schedule: "0 1 * * *"
@@ -506,6 +504,8 @@ workspaces:
     name: Geo Workspace
     root: /path/to/realestate
     agent: codex
+    runner:
+      kind: agent-supervised
     repositories:
       - id: geo-backend
         name: Geo Backend
@@ -529,14 +529,40 @@ workspaces:
       goal: Improve frontend/backend architecture together.
       maxRounds: 3
       targetScore: 95
-      runner:
-        kind: agent-supervised
+    harnessAuto:
+      enabled: true
+      schedule: "50 16 * * *"
+      maxRounds: 4
+      strategy: health-first
+      stopWhen:
+        healthScoreAtLeast: 95
+        noConfirmedIssues: true
+    opportunityDiscovery:
+      enabled: true
+      schedule: "20 10 * * *"
+      maxSuggestions: 3
+      minConfidence: medium
+      categories: [product-feature, workflow-automation, developer-experience]
+      cooldownDays: 14
+    pullRequestReview:
+      enabled: true
+      schedule: "0 9 * * *"
+      lookbackHours: 36
+      consecutivePasses: 2
+      autoMerge: false
 ```
 
 Supervisor dispatch still uses this bot's managed Claude Code / Codex sessions. It
 does not call model-provider APIs directly. If the supervisor session is missing or
 the queue cannot accept the WorkOrder, the scheduler keeps the fire eligible for a
 later retry instead of consuming that cron occurrence.
+
+Workspace scheduling is controlled by the top-level `workspace.runner`; the
+legacy `architecture.runner` field is retained only for architecture-job
+compatibility. Non-architecture workspace tasks such as `bugFix`,
+`testCoverage`, `securityMaintenance`, `harnessAuto`, `opportunityDiscovery`,
+and `pullRequestReview` inherit the workspace runner and are not architecture
+subfeatures.
 
 Useful commands:
 
@@ -602,10 +628,12 @@ Run a set of agent tasks across multiple projects on a schedule (cron, one-shot,
 ## 11. Daily task audit
 
 The daily task audit checks the previous Singapore calendar day for actively
-discovered scheduled tasks and explicit task records, can ask the Loop
-Supervisor to repair bot-owned failures on a configured branch, then sends the
-final success/failure/missing summary with the repair dispatch result to
-Telegram and/or Feishu.
+discovered scheduled tasks and explicit task records. It is the bot's
+self-check/self-healing task for hosted schedules: launchd service health, Loop
+Engineering jobs, and local monitors that report through `tcb task report`. It
+can ask the Loop Supervisor to repair bot-owned failures on a configured branch,
+then sends the final success/failure/missing summary with the repair dispatch
+result to Telegram and/or Feishu.
 
 ```bash
 TASK_AUDIT_ENABLED=true
@@ -614,6 +642,13 @@ TASK_AUDIT_TICK_MS=300000
 TASK_AUDIT_CHANNEL=both           # telegram | lark | both
 TASK_AUDIT_AUTO_REPAIR=true
 TASK_AUDIT_REPAIR_BRANCH=dev
+```
+
+Run the same audit immediately through the running bot:
+
+```bash
+tcb task audit --force
+tcb task audit --force --json
 ```
 
 The audit actively discovers tmux-claude-bot-owned launchd jobs and

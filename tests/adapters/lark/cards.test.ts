@@ -93,9 +93,9 @@ describe("resultCard", () => {
       "inputs",
       "status",
       "queuestatus",
+      "ap_delegate",
       "dashboard",
       "recover",
-      "ap_panel",
       "listalive",
       "adoptlist",
       "current",
@@ -124,10 +124,13 @@ describe("resultCard", () => {
       "inputs",
       "status",
       "queuestatus",
+      "ap_delegate",
       "current",
       "help",
     ]);
     expect(allCmds(card)).not.toContain("listalive");
+    expect(allCmds(card)).not.toContain("dashboard");
+    expect(allCmds(card)).not.toContain("recover");
   });
 
   it("adds PC hover tips and avoids dense button rows", () => {
@@ -159,9 +162,9 @@ describe("viewCard", () => {
       "inputs",
       "status",
       "queuestatus",
+      "ap_delegate",
       "dashboard",
       "recover",
-      "ap_panel",
       "listalive",
       "adoptlist",
       "current",

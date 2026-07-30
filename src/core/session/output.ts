@@ -132,8 +132,8 @@ function isGrayExtendedColor(params: number[]): boolean {
 }
 
 /** Update the running "muted" flag from one SGR sequence's parameters. */
-function nextMuted(prev: boolean, sgr: string): boolean {
-  const codes = sgr.split(";").map((c) => (c === "" ? 0 : Number(c)));
+function nextMuted(prev: boolean, sgr: string | undefined): boolean {
+  const codes = (sgr ?? "").split(";").map((c) => (c === "" ? 0 : Number(c)));
   let muted = prev;
   for (let i = 0; i < codes.length; i++) {
     const c = codes[i];
@@ -176,9 +176,9 @@ export function markColorSemantics(ansi: string): string {
     }
   };
   for (const m of ansi.matchAll(SGR_RE)) {
-    const idx = m.index ?? 0;
+    const idx = m.index;
     emit(ansi.slice(last, idx), muted);
-    muted = nextMuted(muted, m[1] ?? "");
+    muted = nextMuted(muted, m[1]);
     last = idx + m[0].length;
   }
   emit(ansi.slice(last), muted);

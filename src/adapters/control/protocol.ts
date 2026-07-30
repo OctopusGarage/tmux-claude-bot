@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type {
   NotificationChannelSelection,
   NotificationLevel,
+  NotificationOpportunity,
   NotificationResult,
 } from "../../core/notifications/gateway.js";
 import type { PromptTranslateCommandResult } from "../../core/read/prompt-translation.js";
@@ -49,6 +50,7 @@ export type ControlRequest =
   | { id: number; op: "sysload" }
   | { id: number; op: "inputs"; session: string }
   | { id: number; op: "promptTranslate"; arg: string }
+  | { id: number; op: "taskAudit"; now?: number; force?: boolean }
   | {
       id: number;
       op: "notify";
@@ -59,9 +61,9 @@ export type ControlRequest =
       source?: string;
       session?: string;
       attachments?: { path: string; caption?: string }[];
+      opportunities?: NotificationOpportunity[];
     }
   | { id: number; op: "autopilot"; session: string; verb: string }
-  | { id: number; op: "autopilotView"; session: string }
   | { id: number; op: "sendAttachment"; session: string; filePath: string; caption?: string };
 
 export type ControlResponse =

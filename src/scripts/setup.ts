@@ -70,7 +70,7 @@ function botFor(token: string, proxy?: string): Bot {
 async function validateToken(token: string, proxy?: string): Promise<string | null> {
   try {
     const me = await botFor(token, proxy).api.getMe();
-    return me.username ?? null;
+    return me.username;
   } catch {
     return null;
   }

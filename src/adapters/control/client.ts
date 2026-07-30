@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
-import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import type { DashboardSnapshot } from "../../core/dashboard/dashboard.js";
 import type { NotificationRequest } from "../../core/notifications/gateway.js";
+import type { DailyTaskAuditServiceTickResult } from "../../core/tasks/daily-audit-service.js";
 import type { AgentKind } from "../../shared/types.js";
 import {
   type ControlRequest,
@@ -207,6 +207,11 @@ export class ControlClient extends EventEmitter {
   promptTranslate(arg: string): Promise<PromptTranslateControlResponse> {
     return this.req({ op: "promptTranslate", arg }) as Promise<PromptTranslateControlResponse>;
   }
+  taskAudit(
+    opts: { now?: number; force?: boolean } = {},
+  ): Promise<DailyTaskAuditServiceTickResult> {
+    return this.req({ op: "taskAudit", ...opts }) as Promise<DailyTaskAuditServiceTickResult>;
+  }
   notify(req: NotificationRequest): Promise<NotifyControlResponse> {
     return this.req({ op: "notify", ...req }) as Promise<NotifyControlResponse>;
   }
@@ -218,9 +223,6 @@ export class ControlClient extends EventEmitter {
   }
   autopilot(session: string, verb: string): Promise<{ status: string }> {
     return this.req({ op: "autopilot", session, verb }) as Promise<{ status: string }>;
-  }
-  autopilotView(session: string): Promise<AutopilotView> {
-    return this.req({ op: "autopilotView", session }) as Promise<AutopilotView>;
   }
   sendAttachment(session: string, filePath: string, caption?: string): Promise<{ status: string }> {
     return this.req({

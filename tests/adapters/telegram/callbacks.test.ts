@@ -19,6 +19,10 @@ vi.mock("../../../src/core/agents/takeover-service.js", async (importOriginal) =
   adoptOrphan: vi.fn(async () => null),
 }));
 
+vi.mock("../../../src/core/platform/clipboard.js", () => ({
+  copyToClipboard: vi.fn(async () => true),
+}));
+
 // The recover branch sweeps the live roster — stub the planner/executor.
 vi.mock("../../../src/core/recovery/recover.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../src/core/recovery/recover.js")>()),
@@ -42,6 +46,7 @@ import { handleCallbackQuery } from "../../../src/adapters/telegram/callbacks.js
 import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-target.js";
 import { sendStatusInstall } from "../../../src/adapters/telegram/views.js";
 import { adoptOrphan, findAdoptableOrphans } from "../../../src/core/agents/takeover-service.js";
+import { copyToClipboard } from "../../../src/core/platform/clipboard.js";
 import { storeInputList } from "../../../src/core/read/recent-inputs.js";
 import { recoverProjects } from "../../../src/core/recovery/recover.js";
 import { sessionShortId } from "../../../src/shared/utils/hash.js";
@@ -491,6 +496,7 @@ describe("handleCallbackQuery", () => {
       const ctx = fakeCtx({ callbackData: `aa:${SID}` });
       await handleCallbackQuery(ctx, aliveDeps(), replyTarget);
       expect(ctx.texts().some((t) => t.includes("tmux attach"))).toBe(true);
+      expect(copyToClipboard).not.toHaveBeenCalled();
     });
 
     it("adoptattach (aa) toasts 'session gone' for an unknown sid", async () => {

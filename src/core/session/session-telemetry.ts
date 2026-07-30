@@ -91,7 +91,7 @@ export async function readSessionTelemetry(
         }),
     opts.agentRunningMode === "live-kind"
       ? Promise.resolve(false)
-      : (deps.agent?.checkIfRunning?.(session).catch(() => false) ?? Promise.resolve(false)),
+      : checkAgentRunning(deps, session),
     Promise.resolve(includeQueue ? isQueueBusy(deps, session) : false),
   ]);
   const agentKind = opts.agentKindMode === "live" ? detectedAgentKind : resolvedAgentKind;
@@ -128,7 +128,7 @@ export async function readSessionTelemetry(
   ]);
 
   const eventActive = transcriptPath
-    ? (deps.activity?.isActiveWithin?.(transcriptPath, activityWindowMs) ?? false)
+    ? isTranscriptActive(deps, transcriptPath, activityWindowMs)
     : false;
   const transcriptLastActivityAt = eventActive
     ? Math.max(rawTranscriptLastActivityAt ?? 0, now)
@@ -175,11 +175,26 @@ export async function readSessionTelemetry(
 }
 
 function isQueueBusy(deps: HandlerDeps, session: string): boolean {
+  const queue = (deps as Partial<HandlerDeps>).queue as Partial<HandlerDeps["queue"]> | undefined;
   return (
-    deps.queue.isSessionProcessing?.(session) === true ||
-    (deps.queue.getSessionQueue?.(session).length ?? 0) > 0 ||
-    (deps.queue.size?.(session) ?? 0) > 0
+    queue?.isSessionProcessing?.(session) === true ||
+    (queue?.getSessionQueue?.(session).length ?? 0) > 0 ||
+    (queue?.size?.(session) ?? 0) > 0
   );
+}
+
+function checkAgentRunning(deps: HandlerDeps, session: string): Promise<boolean> {
+  const runner = (deps as Partial<HandlerDeps>).agent as Partial<HandlerDeps["agent"]> | undefined;
+  return runner?.checkIfRunning?.(session).catch(() => false) ?? Promise.resolve(true);
+}
+
+function isTranscriptActive(
+  deps: HandlerDeps,
+  transcriptPath: string,
+  activityWindowMs: number,
+): boolean {
+  const activity = deps.activity as Partial<HandlerDeps["activity"]> | undefined;
+  return activity?.isActiveWithin?.(transcriptPath, activityWindowMs) ?? false;
 }
 
 /** Resolve a path through realpathSync to normalize symlinks; fall back to raw

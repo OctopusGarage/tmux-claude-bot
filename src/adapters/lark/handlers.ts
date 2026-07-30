@@ -1,11 +1,13 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
-import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
-import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
-import { formatGoalsList } from "../../core/autopilot/goals/goals-view.js";
-import { AutopilotStore } from "../../core/autopilot/state-store.js";
+import {
+  formatActiveDelegateStart,
+  parseDelegateRequirement,
+  startActiveDelegatedTask,
+} from "../../core/autopilot/delegated-task.js";
 import { planMessageAction } from "../../core/command/action-plan.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
+import { runOpportunityCommand } from "../../core/opportunities/command.js";
 import { createSubfolder, isAwaitingFolderName } from "../../core/projects/dir-browser.js";
 import { reconcileGroupBinding } from "../../core/projects/group-binding-ops.js";
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
@@ -26,7 +28,7 @@ import { parsePeekLines } from "../../core/session/output.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { isOpenIdAllowed } from "./auth.js";
-import { autopilotPanelCard, browseCard, helpCard, startPickerCard } from "./cards.js";
+import { browseCard, helpCard, startPickerCard } from "./cards.js";
 import { isGroupMgmtCommand, isRecoveryCommand, parseLarkInput } from "./commands.js";
 import { enqueueLarkAction, resolveSession, runImmediateLarkAction } from "./executor.js";
 import {
@@ -89,7 +91,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         // run binding-recovery commands (/bind, /rebind, /restore, /newgroup…, /help)
         // in place. Everything else (plain prompts, views) is still ignored: there is
         // no project to talk to until the group is re-bound.
-        const recoverable = msg.rawContentType === "text" && isRecoveryCommand(msg.content ?? "");
+        const recoverable = msg.rawContentType === "text" && isRecoveryCommand(msg.content);
         if (!recoverable) {
           log.info(`ignore unbound chat_type=${msg.chatType} chat=${msg.chatId}`);
           return;
@@ -98,7 +100,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       }
 
       if (!isP2p) {
-        const mgmt = msg.rawContentType === "text" && isGroupMgmtCommand(msg.content ?? "");
+        const mgmt = msg.rawContentType === "text" && isGroupMgmtCommand(msg.content);
         if (!mgmt) {
           const r = await reconcileGroupBinding(deps, "lark", msg.chatId);
           if (r.status === "missing-path") {
@@ -115,7 +117,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       // in place. TERMINAL unless it wasn't one of our acks (mirrors Telegram): a
       // rewrite blocked by dedup is reported, never silently re-enqueued.
       if (msg.replyToMessageId && msg.rawContentType === "text") {
-        const newText = (msg.content ?? "").trim();
+        const newText = msg.content.trim();
         const rw = await rewriteUserPromptByAck(deps.queue, {
           source: "lark",
           ackMsgId: msg.replyToMessageId,
@@ -143,7 +145,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       if (msg.rawContentType !== "text") {
         // Voice/audio → transcribe and process as text (like Telegram); other
         // media isn't supported yet.
-        const audio = msg.resources?.find((r) => r.type === "audio");
+        const audio = msg.resources.find((r) => r.type === "audio");
         if (audio) {
           await handleLarkVoice(channel, deps, msg, audio, replySession);
           return;
@@ -152,7 +154,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         return;
       }
 
-      const text = msg.content ?? "";
+      const text = msg.content;
       if (!text.trim()) return;
 
       log.info(`received text chat=${msg.chatId} len=${text.length}`);
@@ -410,41 +412,36 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
                 await sendText(channel, msg.chatId, messages("lark").noCurrentProjectShort);
                 break;
               }
-              const store = new AutopilotStore();
-              const m = messages("lark");
-              if (parsed.arg?.trim()) {
-                // text verb path (back-compat): apply + report status as text
-                await sendText(
-                  channel,
-                  msg.chatId,
-                  applyAutopilotVerb(
-                    store,
-                    session,
-                    parsed.arg,
-                    m,
-                    deps.config.autopilot.maxRounds,
-                  ),
-                );
-              }
-              await sendCard(
-                channel,
-                msg.chatId,
-                autopilotPanelCard(
-                  buildAutopilotView(store, session, m),
-                  session,
-                  isProjectGroup(msg.chatId),
-                ),
-              );
+              const arg = parsed.arg?.trim() ?? "";
+              const delegatedRequirement =
+                parseDelegateRequirement(
+                  arg.length === 0 || /^delegate\b/i.test(arg)
+                    ? arg || "delegate"
+                    : `delegate ${arg}`,
+                ) ?? parseDelegateRequirement("delegate");
+              if (delegatedRequirement === null) break;
+              const result = await startActiveDelegatedTask(deps, {
+                session,
+                requirement: delegatedRequirement,
+              });
+              await sendText(channel, msg.chatId, formatActiveDelegateStart(result));
               break;
             }
-            case "goals":
-              await sendText(channel, msg.chatId, formatGoalsList(messages("lark")));
-              break;
             case "batch":
               // Host-wide op — p2p owner only (same gate as dashboard/logs).
               if (msg.chatType === "p2p")
                 await sendText(channel, msg.chatId, runBatchCommand(parsed.arg ?? ""));
               break;
+            case "opportunity": {
+              if (msg.chatType !== "p2p" && !isProjectGroup(msg.chatId)) break;
+              const result = await runOpportunityCommand(
+                deps,
+                chatScope("lark", msg.chatId),
+                parsed.arg ?? "",
+              );
+              await sendText(channel, msg.chatId, result.body);
+              break;
+            }
             case "prompts":
               if (msg.chatType === "p2p") await sendPrompts(channel, deps, msg.chatId, parsed.arg);
               break;

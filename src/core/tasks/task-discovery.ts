@@ -141,6 +141,23 @@ export function discoverLoopEngineeringScheduledTasks(input: {
         }),
       );
     }
+    if (project.harnessAuto.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: project.id,
+          jobKey: `${project.id}:harness-auto`,
+          jobKind: "harness-auto",
+          schedule: project.harnessAuto.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(project.harnessAuto.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: project.harnessAuto.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
     if (project.pullRequestReview.enabled) {
       records.push(
         ...loopScheduleRecords({
@@ -192,6 +209,108 @@ export function discoverLoopEngineeringScheduledTasks(input: {
         ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
       }),
     );
+    if (workspace.bugFix.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:bug-fix`,
+          jobKind: "bug-fix",
+          schedule: workspace.bugFix.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.bugFix.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.bugFix.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.testCoverage.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:test-coverage`,
+          jobKind: "test-coverage",
+          schedule: workspace.testCoverage.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.testCoverage.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.testCoverage.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.securityMaintenance.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:security-maintenance`,
+          jobKind: "security-maintenance",
+          schedule: workspace.securityMaintenance.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.securityMaintenance.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.securityMaintenance.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.harnessAuto.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:harness-auto`,
+          jobKind: "harness-auto",
+          schedule: workspace.harnessAuto.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.harnessAuto.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.harnessAuto.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.opportunityDiscovery.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:opportunity-discovery`,
+          jobKind: "opportunity-discovery",
+          schedule: workspace.opportunityDiscovery.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.opportunityDiscovery.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.opportunityDiscovery.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.pullRequestReview.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:pull-request-review`,
+          jobKind: "pull-request-review",
+          schedule: workspace.pullRequestReview.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.pullRequestReview.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.pullRequestReview.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
   }
   return records.sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
 }
@@ -278,7 +397,7 @@ function recordForLoopRunArtifact(input: {
   now: number;
   loopRunsDir?: string;
 }): ScheduledTaskRecord | null {
-  const runId = loopRunId(input.scheduledAt, input.projectId, input.jobKind);
+  const runId = loopRunId(input.scheduledAt, input.projectId, input.jobKind, input.jobKey);
   const runDir = join(
     input.loopRunsDir ?? join(appStateDir(), "loop-runs"),
     input.projectId,
@@ -286,6 +405,7 @@ function recordForLoopRunArtifact(input: {
   );
   const latestSuccess = latestSuccessfulLoopRunAfter({
     projectId: input.projectId,
+    jobKey: input.jobKey,
     jobKind: input.jobKind,
     scheduledAt: input.scheduledAt,
     now: input.now,
@@ -323,6 +443,7 @@ function recordForLoopRunArtifact(input: {
 
 function latestSuccessfulLoopRunAfter(input: {
   projectId: string;
+  jobKey: string;
   jobKind: LoopDiscoveredJobKind;
   scheduledAt: number;
   now: number;
@@ -332,7 +453,7 @@ function latestSuccessfulLoopRunAfter(input: {
   if (!existsSync(root)) return null;
   let latest: { scheduledAt: number; path: string } | null = null;
   for (const name of readdirSync(root)) {
-    const match = loopRunDirMatch(name, input.projectId, input.jobKind);
+    const match = loopRunDirMatch(name, input.projectId, input.jobKind, input.jobKey);
     if (match === null || match.scheduledAt <= input.scheduledAt || match.scheduledAt > input.now) {
       continue;
     }
@@ -350,24 +471,40 @@ function loopRunDirMatch(
   name: string,
   projectId: string,
   jobKind: LoopDiscoveredJobKind,
+  jobKey: string,
 ): { scheduledAt: number } | null {
-  const suffix = loopRunSuffix(projectId, jobKind);
+  const suffix = loopRunSuffix(projectId, jobKind, jobKey);
   if (!name.endsWith(suffix)) return null;
   const raw = name.slice(0, -suffix.length);
   if (!/^\d+$/.test(raw)) return null;
   return { scheduledAt: Number(raw) };
 }
 
-function loopRunId(scheduledAt: number, projectId: string, jobKind: LoopDiscoveredJobKind): string {
-  return `${scheduledAt}${loopRunSuffix(projectId, jobKind)}`;
+function loopRunId(
+  scheduledAt: number,
+  projectId: string,
+  jobKind: LoopDiscoveredJobKind,
+  jobKey: string,
+): string {
+  return `${scheduledAt}${loopRunSuffix(projectId, jobKind, jobKey)}`;
 }
 
-function loopRunSuffix(projectId: string, jobKind: LoopDiscoveredJobKind): string {
+function loopRunSuffix(projectId: string, jobKind: LoopDiscoveredJobKind, jobKey: string): string {
+  const workspaceJob = jobKey.startsWith("workspace:");
   if (jobKind === "architecture") return `-${projectId}`;
   if (jobKind === "workspace-architecture") return `-${projectId}-workspace`;
+  if (workspaceJob && jobKind === "bug-fix") return `-${projectId}-workspace-bug-fix`;
+  if (workspaceJob && jobKind === "test-coverage") return `-${projectId}-workspace-test-coverage`;
+  if (workspaceJob && jobKind === "security-maintenance")
+    return `-${projectId}-workspace-security-maintenance`;
+  if (workspaceJob && jobKind === "harness-auto") return `-${projectId}-workspace-harness-auto`;
+  if (workspaceJob && jobKind === "opportunity-discovery")
+    return `-${projectId}-workspace-opportunity-discovery`;
+  if (workspaceJob && jobKind === "pull-request-review") return `-${projectId}-workspace-pr-review`;
   if (jobKind === "bug-fix") return `-${projectId}-bug-fix`;
   if (jobKind === "test-coverage") return `-${projectId}-test-coverage`;
   if (jobKind === "security-maintenance") return `-${projectId}-security-maintenance`;
+  if (jobKind === "harness-auto") return `-${projectId}-harness-auto`;
   if (jobKind === "repository-pull-request-review") return `-${projectId}-repo-pr-review`;
   return `-${projectId}-pr-review`;
 }

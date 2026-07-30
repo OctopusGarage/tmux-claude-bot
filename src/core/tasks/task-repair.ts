@@ -5,14 +5,25 @@ export function buildDailyAuditRepairPrompt(input: {
   repairBranch: string;
   items: TaskAuditItem[];
 }): string {
+  const count = input.items.length;
   return [
     "Daily scheduled task audit repair.",
     "",
     `Repository: ${input.repoPath}`,
     `Repair branch: ${input.repairBranch}`,
     "",
+    "Problem statement:",
+    `The daily task audit found ${count} unresolved scheduled task${count === 1 ? "" : "s"} that may indicate a tmux-claude-bot scheduling, supervisor, notification, ledger, or validation bug.`,
+    "Your job is not to assume a code bug. First make the problem explicit, verify the evidence, then submit only justified repair work.",
+    "",
     "Failed or missing scheduled tasks:",
     JSON.stringify(input.items, null, 2),
+    "",
+    "Review and confirmation gate:",
+    "- For each item, first write the concrete problem statement in plain language: expected behavior, actual result, affected task id, source, failure kind, and evidence.",
+    "- Reproduce or independently confirm the failure from ledger records, reports, logs, git state, or scheduler configuration before editing.",
+    "- Do not edit code until the failure is independently confirmed as a real tmux-claude-bot code or configuration issue.",
+    "- If the problem is a target-project failure, external service/auth/network issue, stale running state, or already superseded by a later success, do not change bot code; update the task repair status and report the blocker clearly.",
     "",
     "Required process:",
     `- cd ${shellQuote(input.repoPath)}`,

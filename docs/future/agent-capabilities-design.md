@@ -65,7 +65,7 @@ Skill lifecycle:
 
 Autopilot goal flow:
 
-1. User opens the Autopilot panel or sends `/autopilot goal <id>`.
+1. User delegates clarified work through `/autopilot [requirement]` or the supervisor delegation button.
 2. The selected goal phase declares either a prompt intent or skill intent.
 3. Autopilot converts the intent into an agent-facing message.
 4. When skill metadata is available, the UI can show installed/missing/unsupported
@@ -101,8 +101,8 @@ Loop Engineering flow:
 
 ## Planned Improvements
 
-1. Add a read-only skill availability query for Autopilot panels and TUI.
-2. Display skill status in the Autopilot goal picker.
+1. Add a read-only skill availability query for Loop Engineering tasks.
+2. Display skill status in Loop Engineering task reports.
 3. Allow goal definitions to declare optional vs required skill dependencies.
 4. Let Loop Engineering optionally refresh/sync skills before scheduled runs.
 5. Include skill id/ref/checksum in Loop reports and Autopilot completion notes.

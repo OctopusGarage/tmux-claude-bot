@@ -160,7 +160,7 @@ program
 program
   .command("autopilot [project] [verb...]")
   .description(
-    "no args: status across sessions · <project>: its autopilot view · <project> <verb>: drive it (on|off|stop|`goal <id>`|`goals <id,id> [rounds N]`|confirm|reject)",
+    "no args: status across sessions · <project>: its autopilot view · <project> <verb>: drive it (on|off|stop|`goal <id>`|`goals <id,id> [rounds N]`|confirm|reject|delegate [requirement])",
   )
   .option("--json", "output JSON")
   .action(async (project: string | undefined, verb: string[], o) => {
@@ -492,6 +492,17 @@ batch
   });
 
 const task = program.command("task").description("report external scheduled task status");
+
+task
+  .command("audit")
+  .description("run the daily scheduled task audit through the running bot")
+  .option("--now <time>", "override current time for automation/testing (epoch ms or ISO)")
+  .option("--force", "run immediately even if the configured schedule is not due")
+  .option("--json", "output JSON")
+  .action(async (o: { now?: string; force?: boolean; json?: boolean }) => {
+    const { cmdTaskAudit } = await ctl();
+    await cmdTaskAudit(o);
+  });
 
 task
   .command("report")

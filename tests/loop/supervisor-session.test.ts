@@ -109,8 +109,10 @@ describe("loop supervisor session", () => {
     process.env.TCB_STATE_DIR = stateDir;
     const createSession = vi.fn(async () => true);
     const isPaneAlive = vi.fn(async () => false);
+    const waitUntilReady = vi.fn(async () => {});
     const deps = {
       bridge: { createSession, isPaneAlive },
+      agent: { waitUntilReady },
       config: {
         projectSessionPrefix: "tmux_proj_",
         loopEngineering: {
@@ -133,6 +135,7 @@ describe("loop supervisor session", () => {
     const expectedDir = join(stateDir, "loop-supervisor");
     expect(createSession).toHaveBeenCalledWith(session, expectedDir);
     expect(performStart).toHaveBeenCalledWith(deps, session, expect.stringContaining("codex"));
+    expect(waitUntilReady).toHaveBeenCalledWith(session);
     expect(performStart.mock.calls[0]?.[2]).toContain("--yolo");
     expect(getPathBySession(session)).toBe(expectedDir);
     expect(allRunningSessions()).not.toContain(session);
@@ -141,8 +144,10 @@ describe("loop supervisor session", () => {
 
   it("skips createSession when the supervisor pane is already alive", async () => {
     const createSession = vi.fn(async () => true);
+    const waitUntilReady = vi.fn(async () => {});
     const deps = {
       bridge: { createSession, isPaneAlive: vi.fn(async () => true) },
+      agent: { waitUntilReady },
       config: {
         projectSessionPrefix: "tmux_proj_",
         loopEngineering: {
@@ -171,6 +176,42 @@ describe("loop supervisor session", () => {
     await startLoopSupervisor(deps as never, performStart);
 
     expect(createSession).not.toHaveBeenCalled();
+    expect(waitUntilReady).toHaveBeenCalledWith("tmux_proj_loop-supervisor");
     expect(performStart.mock.calls[0]?.[2]).toContain("--dangerously-skip-permissions");
+  });
+
+  it("does not report ensured when the supervisor agent is not input-ready", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-supervisor-"));
+    const createSession = vi.fn(async () => true);
+    const deps = {
+      bridge: {
+        createSession,
+        isPaneAlive: vi.fn(async () => true),
+      },
+      agent: {
+        waitUntilReady: vi.fn(async () => {
+          throw new Error("Codex did not become ready in time");
+        }),
+      },
+      config: {
+        projectSessionPrefix: "tmux_proj_",
+        loopEngineering: {
+          configFile: "",
+          tickMs: 0,
+          supervisor: { enabled: true, dir, agent: "codex" as const },
+        },
+        startCommands: [{ agent: "codex" as const, command: "codex", label: "codex" }],
+        claudeStartCommand: "claude",
+      },
+    };
+    const performStart = vi.fn(
+      async (_deps: HandlerDeps, _session: string, _command?: string) => "already-running" as const,
+    );
+
+    await expect(startLoopSupervisor(deps as never, performStart)).resolves.toBe(false);
+
+    expect(createSession).not.toHaveBeenCalled();
+    expect(deps.agent.waitUntilReady).toHaveBeenCalledWith("tmux_proj_loop-supervisor");
+    rmSync(dir, { recursive: true, force: true });
   });
 });

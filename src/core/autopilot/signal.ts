@@ -35,7 +35,7 @@ export async function observeSignal(
         })
       : null;
 
-  const queueEmpty = deps.queue.size(session) === 0 && !deps.queue.isSessionProcessing(session);
+  const queueEmpty = queueIsEmpty(deps, session);
   const lastActivity =
     probes !== undefined
       ? await probes.lastActivityAt(session).catch(() => null)
@@ -83,4 +83,13 @@ export async function observeSignal(
     progressAt: lastActivity ?? 0,
     sentinels,
   };
+}
+
+function queueIsEmpty(deps: HandlerDeps, session: string): boolean {
+  const queue = deps.queue as Partial<HandlerDeps["queue"]>;
+  return (
+    (queue.size?.(session) ?? 0) === 0 &&
+    queue.isSessionProcessing?.(session) !== true &&
+    (queue.getSessionQueue?.(session).length ?? 0) === 0
+  );
 }

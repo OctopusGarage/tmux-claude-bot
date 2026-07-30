@@ -137,21 +137,71 @@ on a later schedule, add `pullRequestReview.enabled: true`
 with its own `schedule`, `lookbackHours`, `consecutivePasses`, and `autoMerge`;
 the supervisor performs repeat review passes focused on bugs, CI, and
 mergeability rather than nits.
+To run one orchestrated project-health loop instead of several mechanical
+maintenance jobs, add `harnessAuto.enabled: true` with its own `schedule`,
+`branch`, `maxRounds`, `strategy`, `tasks`, and `stopWhen`. A harness run first
+assesses the current project health, then chooses justified enabled subtasks
+from architecture, bug-fix, test-coverage, and security-maintenance. It keeps
+one run id and one PR branch/PR for the whole run, stops when the configured
+health/issue condition is met, and must not run every subtask just because it is
+configured.
+To proactively surface new work for owner approval, add
+`opportunityDiscovery.enabled: true` with its own `schedule`, `maxSuggestions`,
+`minConfidence`, categories, and optional prompt. This job is intentionally
+read-only: the supervisor inspects the project, writes `opportunities.json`, and
+the bot sends Telegram/Feishu suggestions with `/opportunity` commands. Use
+`/opportunity discuss <number|id>` to get a decision prompt, `/opportunity
+delegate <number|id>` for compatibility, or `/opportunity dismiss <number|id>`
+when it is not worth doing. Feishu commands work in private chat and in the bound
+project group that received the suggestion. Feishu opportunity notifications are
+interactive cards: related suggestions in one notification are discussed as a
+single batch by default. The notification card keeps discussion and execution
+separate; after owner approval, use the project control panel's **Continue via
+supervisor** / **继续托管推进** button or `/autopilot delegate` so all implementation
+work goes through the same Loop Supervisor active-delegation pipeline.
 For coordinated frontend/backend or otherwise coupled repositories, add a
-`workspaces` entry with `architecture.enabled: true`; that creates one scheduled
-multi-repository WorkOrder, asks the supervisor to inspect cross-repository
-contracts, and requires every repository to end clean on its configured
-switch-back branch.
+`workspaces` entry. Workspace jobs create one scheduled multi-repository
+WorkOrder, ask the supervisor to inspect cross-repository contracts when
+relevant, and require every repository to end clean on its configured switch-back
+branch. Workspace entries support the same task families as projects:
+`architecture`, `bugFix`, `testCoverage`, `securityMaintenance`, `harnessAuto`,
+`opportunityDiscovery`, and `pullRequestReview`. The internal
+`workspace-architecture` job kind is only a compatibility name for architecture
+run ids; it is not the workspace feature boundary.
+
+**Hand off a clarified interactive task** → use `/autopilot [requirement]`,
+`/autopilot delegate [requirement]`, or `tcb autopilot <project> "[requirement]"`.
+This is not a cron fire:
+it creates a bounded active WorkOrder from the current project session and sends
+it to the reserved Loop Supervisor. If the requirement text is omitted, the
+supervisor uses the current session context plus repository state as the source
+of truth: live pane, git status, recent commits, existing PRs, and prior
+verification output. Telegram/Feishu expose the same one-click action as
+**Continue via supervisor** / **继续托管推进**. It then drives
+the target project agent through implementation, review, relevant tests, coverage
+review for touched risk paths, any justified existing agent-backed/deterministic
+AI eval, and the configured PR/merge/switch-back policy. The command returns a
+run id immediately; the final result is written under `loop-runs/...` and sent
+through Telegram/Feishu notifications.
+For scheduled suggestions, `/opportunity delegate <id>` uses the same active
+delegation pipeline with a requirement built from the stored evidence, scope,
+proposed plan, and acceptance checks.
 
 **Audit yesterday's scheduled work** → enable `TASK_AUDIT_ENABLED=true` and set
 `TASK_AUDIT_SCHEDULE` (UTC cron, e.g. `0 2 * * *` for 10:00 Singapore time).
 The audit actively discovers tmux-claude-bot-owned macOS launchd jobs and
 loop-engineering schedules, merges them with the shared task ledger, and when
 `TASK_AUDIT_AUTO_REPAIR=true` queues the Loop Supervisor to repair only
-tmux-claude-bot-owned failures on `TASK_AUDIT_REPAIR_BRANCH`. After that
-dispatch decision, it sends the final Telegram/Feishu summary with the repair
-dispatch result. External scheduled systems should report through `tcb task
-report` rather than being inspected through project-specific adapters.
+tmux-claude-bot-owned failures on `TASK_AUDIT_REPAIR_BRANCH`. This is the
+self-check/self-healing task for the bot's own hosted schedules, not another
+project-health loop. After the repair dispatch decision, it sends the final
+Telegram/Feishu summary with the repair dispatch result. External scheduled
+systems should report through `tcb task report` rather than being inspected
+through project-specific adapters.
+For an immediate manual check, run `tcb task audit --force` (add `--json` for
+machine-readable output). The command goes through the running bot's control
+socket, so it uses the same config, notification gateway, and auto-repair path as
+the scheduled service.
 
 **Restart the bot / deploy code changes** → it's a managed service, so restart via the
 manager: `tcb service restart` (or `launchctl kickstart -k …` / `systemctl --user

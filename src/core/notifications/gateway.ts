@@ -14,6 +14,18 @@ export interface NotificationRequest {
   source?: string;
   session?: string;
   attachments?: NotificationAttachment[];
+  opportunities?: NotificationOpportunity[];
+}
+
+export interface NotificationOpportunity {
+  id: string;
+  title: string;
+  projectName: string;
+  category: string;
+  confidence: string;
+  estimatedComplexity: string;
+  status: string;
+  value: string;
 }
 
 export interface NotificationAttachment {
@@ -31,6 +43,8 @@ export interface NotificationResult {
   status: "sent" | "partial" | "failed";
   deliveries: NotificationDelivery[];
 }
+
+type InternalNotificationDelivery = NotificationDelivery & { messageSent: boolean };
 
 export type NotificationSendFn = (message: string, request?: NotificationRequest) => Promise<void>;
 export type NotificationAttachmentSendFn = (
@@ -75,38 +89,50 @@ export class NotificationGateway {
     const channels = this.resolveChannels(req.channel);
     const message = formatNotification(req);
     const attachments = req.attachments?.filter((a) => a.path.trim()) ?? [];
-    let anyOperationSucceeded = false;
     const deliveries = await Promise.all(
-      channels.map(async (channel): Promise<NotificationDelivery> => {
+      channels.map(async (channel): Promise<InternalNotificationDelivery> => {
         const sender = this.senders.get(channel);
-        if (!sender) return { channel, ok: false, error: "no sender registered" };
+        if (!sender)
+          return { channel, ok: false, error: "no sender registered", messageSent: false };
+        let messageSent = false;
         try {
           await sender(message, req);
-          anyOperationSucceeded = true;
+          messageSent = true;
           const attachmentSender = this.attachmentSenders.get(channel);
           if (attachments.length > 0 && !attachmentSender) {
-            return { channel, ok: false, error: "no attachment sender registered" };
+            return {
+              channel,
+              ok: false,
+              error: "no attachment sender registered",
+              messageSent,
+            };
           }
           for (const attachment of attachments) {
             const validation = validateAttachment(
               attachment.path,
               opts.statInfo ?? defaultStatInfo,
             );
-            if (!validation.ok) return { channel, ok: false, error: validation.error };
+            if (!validation.ok) {
+              return { channel, ok: false, error: validation.error, messageSent };
+            }
             await attachmentSender?.(attachment.path, validation.kind, attachment.caption);
           }
-          return { channel, ok: true };
+          return { channel, ok: true, messageSent };
         } catch (err) {
-          return { channel, ok: false, error: normalizeError(err).message };
+          return { channel, ok: false, error: normalizeError(err).message, messageSent };
         }
       }),
     );
     const ok = deliveries.filter((d) => d.ok).length;
-    return {
-      status:
-        ok === deliveries.length ? "sent" : ok > 0 || anyOperationSucceeded ? "partial" : "failed",
-      deliveries,
-    };
+    const publicDeliveries = deliveries.map(
+      ({ messageSent: _messageSent, ...delivery }) => delivery,
+    );
+    if (ok === deliveries.length) return { status: "sent", deliveries: publicDeliveries };
+    if (ok > 0) return { status: "partial", deliveries: publicDeliveries };
+    if (deliveries.some((delivery) => delivery.messageSent)) {
+      return { status: "partial", deliveries: publicDeliveries };
+    }
+    return { status: "failed", deliveries: publicDeliveries };
   }
 
   private resolveChannels(

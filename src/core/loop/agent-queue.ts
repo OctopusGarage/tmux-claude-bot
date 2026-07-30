@@ -204,6 +204,7 @@ async function enqueueLoopAgentPromptToSession(
   workOrder: LoopWorkOrder,
   contextReset?: SupervisorDispatchRequest["contextReset"],
   signal?: AbortSignal,
+  timeoutMs?: number,
 ): Promise<LoopRunCommandResult> {
   if (signal?.aborted) {
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
@@ -247,6 +248,7 @@ async function enqueueLoopAgentPromptToSession(
       channel: "control",
       origin: "system",
       promptSource: "control",
+      ...(timeoutMs !== undefined ? { maxWaitDoneTotalMs: timeoutMs } : {}),
       controlRestore: loopSupervisorControlRestore(workOrder, sessionName, Date.now()),
       started: () =>
         writeLoopSupervisorWorkOrderState({
@@ -313,6 +315,7 @@ export function createLoopSupervisorTaskRunner(
       request.workOrder,
       request.contextReset,
       request.signal,
+      request.timeoutMs,
     );
 }
 

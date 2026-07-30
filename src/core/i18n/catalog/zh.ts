@@ -152,8 +152,7 @@ export const zh = {
   adoptProjectRunning:
     "已有相同项目正在运行 Claude/Codex。已中止，未动原进程——如需并行接管，请选择「接管为独立会话」。",
   btnAdoptAttach: "💻 在电脑终端查看（可选）",
-  adoptAttachHint: (cmd: string) =>
-    `✅ 接入命令已经放进「电脑」的剪贴板了（不用在手机上复制）。回到电脑后，在任务终端里直接粘贴回车，就能进去查看——这一步是可选的。\n命令：${cmd}`,
+  adoptAttachHint: (cmd: string) => `✅ 如需查看会话，可在电脑终端执行这个可选命令：\n命令：${cmd}`,
 
   // ── command results (dispatch) ──
   doneShort: "完成",
@@ -425,12 +424,15 @@ export const zh = {
   homeOperatorSwitched: "🏠 已切换到主控操作员会话",
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
   cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
-  cmdAutopilot: "管理会话智能托管（目标/保活/全局托管）",
+  cmdAutopilot: "把当前会话工作托管给 Loop Supervisor 推进",
+  cmdOpportunity: "查看主动机会建议，并托管已确认的工作",
   cmdGoals: "列出 autopilot 目标预设",
   cmdSysload: "查看本机负载/发热/跑飞进程",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
+  autopilotDelegatePanelBody:
+    "把当前会话上下文托管给 Loop Supervisor，继续完成实现、复核、验证、PR 处理和最终通知。",
   autopilotNotifyPaused: (session: string, reason: string) =>
     `🛑 autopilot 已暂停 [${session}]：${reason}`,
   autopilotNotifyStopped: (session: string, reason: string) =>
@@ -473,9 +475,11 @@ export const zh = {
   }) =>
     `Autopilot：${o.enabled ? "开" : "关"}（${o.pureKeepAlive ? "纯保活" : "随目标"}，已干预 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目标 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw: string) =>
-    `未知子命令「${raw}」。用法：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} 开启智能托管`,
-  btnApDisable: "⏹ 关闭智能托管",
+    `未知子命令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
+  btnApEnable: `${UI_ICONS.feature.autopilot} 开启保活/目标`,
+  btnApDisable: "⏹ 关闭保活/目标",
+  btnApDelegate: "🚀 继续托管推进",
+  btnApCancelDelegate: "⛔ 取消托管",
   btnApPickGoals: "🎯 选目标",
   btnApGlobalOn: "🌐 全局:开",
   btnApGlobalOff: "🌐 全局:关",

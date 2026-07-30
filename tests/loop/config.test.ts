@@ -60,6 +60,8 @@ describe("parseLoopConfigYaml", () => {
       bugFixMaxDelayMinutes: 0,
       testCoverageMaxDelayMinutes: 0,
       securityMaintenanceMaxDelayMinutes: 0,
+      harnessAutoMaxDelayMinutes: 0,
+      opportunityDiscoveryMaxDelayMinutes: 0,
       pullRequestReviewMaxDelayMinutes: 0,
       repositoryPullRequestReviewMaxDelayMinutes: 0,
     });
@@ -96,6 +98,8 @@ describe("parseLoopConfigYaml", () => {
     bugFixMaxDelayMinutes: 20
     testCoverageMaxDelayMinutes: 25
     securityMaintenanceMaxDelayMinutes: 28
+    harnessAutoMaxDelayMinutes: 26
+    opportunityDiscoveryMaxDelayMinutes: 18
     pullRequestReviewMaxDelayMinutes: 30
     repositoryPullRequestReviewMaxDelayMinutes: 45
 ${validConfig.replace(
@@ -121,6 +125,8 @@ prReview:
       bugFixMaxDelayMinutes: 20,
       testCoverageMaxDelayMinutes: 25,
       securityMaintenanceMaxDelayMinutes: 28,
+      harnessAutoMaxDelayMinutes: 26,
+      opportunityDiscoveryMaxDelayMinutes: 18,
       pullRequestReviewMaxDelayMinutes: 30,
       repositoryPullRequestReviewMaxDelayMinutes: 45,
     });
@@ -186,6 +192,60 @@ prReview:
     ).toThrow(/testCoverage requires runner.kind=agent-supervised/i);
   });
 
+  it("parses opportunity discovery jobs for proactive suggestions", () => {
+    const text = validConfig.replace(
+      "allowedActions:",
+      [
+        "opportunityDiscovery:",
+        "      enabled: true",
+        '      schedule: "15 9 * * *"',
+        "      scheduleJitterMinutes: 9",
+        "      notificationChannel: both",
+        "      maxSuggestions: 2",
+        "      minConfidence: high",
+        "      categories: [product-feature, developer-experience]",
+        "      cooldownDays: 21",
+        "      requireEvidence: true",
+        "      prompt: Prefer owner-decision suggestions.",
+        "    runner:",
+        "      kind: agent-supervised",
+        "    allowedActions:",
+      ].join("\n"),
+    );
+    const config = parseLoopConfigYaml(text);
+    const project = config.projects[0];
+
+    expect(project?.opportunityDiscovery).toMatchObject({
+      enabled: true,
+      schedule: "15 9 * * *",
+      scheduleJitterMinutes: 9,
+      notificationChannel: "both",
+      maxSuggestions: 2,
+      minConfidence: "high",
+      categories: ["product-feature", "developer-experience"],
+      cooldownDays: 21,
+      requireEvidence: true,
+      prompt: "Prefer owner-decision suggestions.",
+    });
+    expect(validateLoopConfig(text).projects[0]?.scheduledJobs).toContain("opportunity-discovery");
+  });
+
+  it("requires opportunity discovery jobs to use agent supervision", () => {
+    expect(() =>
+      parseLoopConfigYaml(
+        validConfig.replace(
+          "allowedActions:",
+          [
+            "opportunityDiscovery:",
+            "      enabled: true",
+            '      schedule: "15 9 * * *"',
+            "    allowedActions:",
+          ].join("\n"),
+        ),
+      ),
+    ).toThrow(/opportunityDiscovery requires runner.kind=agent-supervised/i);
+  });
+
   it("parses security maintenance jobs for confirmed security fixes", () => {
     const text = validConfig.replace(
       "allowedActions:",
@@ -238,13 +298,81 @@ prReview:
     ).toThrow(/securityMaintenance requires runner.kind=agent-supervised/i);
   });
 
-  it("parses workspace architecture jobs for multi-repository optimization", () => {
+  it("parses harness-auto jobs for orchestrated project health improvement", () => {
+    const text = validConfig.replace(
+      "allowedActions:",
+      [
+        "harnessAuto:",
+        "      enabled: true",
+        '      schedule: "50 16 * * *"',
+        "      scheduleJitterMinutes: 13",
+        "      branch: loop/hub/harness-auto",
+        "      maxRounds: 4",
+        "      strategy: risk-first",
+        "      tasks:",
+        "        - kind: bug-fix",
+        "          enabled: true",
+        "          weight: 50",
+        "        - kind: security-maintenance",
+        "          enabled: true",
+        "          weight: 30",
+        "        - kind: test-coverage",
+        "          enabled: false",
+        "          weight: 10",
+        "      stopWhen:",
+        "        healthScoreAtLeast: 96",
+        "        noConfirmedIssues: true",
+        "      prompt: Prioritize production reliability and security.",
+        "    runner:",
+        "      kind: agent-supervised",
+        "    allowedActions:",
+      ].join("\n"),
+    );
+    const config = parseLoopConfigYaml(text);
+
+    expect(config.projects[0]?.harnessAuto).toMatchObject({
+      enabled: true,
+      schedule: "50 16 * * *",
+      scheduleJitterMinutes: 13,
+      branch: "loop/hub/harness-auto",
+      maxRounds: 4,
+      strategy: "risk-first",
+      stopWhen: { healthScoreAtLeast: 96, noConfirmedIssues: true },
+      prompt: "Prioritize production reliability and security.",
+    });
+    expect(config.projects[0]?.harnessAuto.tasks).toEqual([
+      { kind: "bug-fix", enabled: true, weight: 50 },
+      { kind: "security-maintenance", enabled: true, weight: 30 },
+      { kind: "test-coverage", enabled: false, weight: 10 },
+    ]);
+    expect(validateLoopConfig(text).projects[0]?.scheduledJobs).toContain("harness-auto");
+  });
+
+  it("requires harness-auto jobs to use agent supervision", () => {
+    expect(() =>
+      parseLoopConfigYaml(
+        validConfig.replace(
+          "allowedActions:",
+          [
+            "harnessAuto:",
+            "      enabled: true",
+            '      schedule: "50 16 * * *"',
+            "    allowedActions:",
+          ].join("\n"),
+        ),
+      ),
+    ).toThrow(/harnessAuto requires runner.kind=agent-supervised/i);
+  });
+
+  it("parses workspace jobs for multi-repository automation", () => {
     const config = parseLoopConfigYaml(`${validConfig}
 workspaces:
   - id: geo
     name: Geo Workspace
     root: /repo/realestate
     agent: codex
+    runner:
+      kind: agent-supervised
     repositories:
       - id: geo-backend
         name: Geo Backend
@@ -271,12 +399,49 @@ workspaces:
       targetScore: 95
       runner:
         kind: agent-supervised
+    bugFix:
+      enabled: true
+      schedule: "20 11 * * *"
+      scheduleJitterMinutes: 10
+      maxRounds: 5
+      maxBugsPerRound: 1
+    testCoverage:
+      enabled: true
+      schedule: "30 11 * * *"
+      scheduleJitterMinutes: 11
+      targetCoverage: 82
+      maxRounds: 4
+    securityMaintenance:
+      enabled: true
+      schedule: "40 11 * * *"
+      scheduleJitterMinutes: 12
+      maxRounds: 2
+    harnessAuto:
+      enabled: true
+      schedule: "50 11 * * *"
+      scheduleJitterMinutes: 13
+      maxRounds: 4
+      strategy: health-first
+      stopWhen:
+        healthScoreAtLeast: 96
+        noConfirmedIssues: true
+    opportunityDiscovery:
+      enabled: true
+      schedule: "55 11 * * *"
+      scheduleJitterMinutes: 14
+      maxSuggestions: 2
+    pullRequestReview:
+      enabled: true
+      schedule: "0 12 * * *"
+      scheduleJitterMinutes: 15
+      autoMerge: true
 `);
 
     expect(config.workspaces[0]).toMatchObject({
       id: "geo",
       root: "/repo/realestate",
       agent: "codex",
+      runner: { kind: "agent-supervised", requireConfirmation: false },
       architecture: {
         enabled: true,
         schedule: "10 11 * * *",
@@ -284,6 +449,46 @@ workspaces:
         maxRounds: 3,
         targetScore: 95,
         runner: { kind: "agent-supervised", requireConfirmation: false },
+      },
+      bugFix: {
+        enabled: true,
+        schedule: "20 11 * * *",
+        scheduleJitterMinutes: 10,
+        maxRounds: 5,
+        maxBugsPerRound: 1,
+      },
+      testCoverage: {
+        enabled: true,
+        schedule: "30 11 * * *",
+        scheduleJitterMinutes: 11,
+        targetCoverage: 82,
+        maxRounds: 4,
+      },
+      securityMaintenance: {
+        enabled: true,
+        schedule: "40 11 * * *",
+        scheduleJitterMinutes: 12,
+        maxRounds: 2,
+      },
+      harnessAuto: {
+        enabled: true,
+        schedule: "50 11 * * *",
+        scheduleJitterMinutes: 13,
+        maxRounds: 4,
+        strategy: "health-first",
+        stopWhen: { healthScoreAtLeast: 96, noConfirmedIssues: true },
+      },
+      opportunityDiscovery: {
+        enabled: true,
+        schedule: "55 11 * * *",
+        scheduleJitterMinutes: 14,
+        maxSuggestions: 2,
+      },
+      pullRequestReview: {
+        enabled: true,
+        schedule: "0 12 * * *",
+        scheduleJitterMinutes: 15,
+        autoMerge: true,
       },
       repositories: [
         {
@@ -298,6 +503,32 @@ workspaces:
         },
       ],
     });
+  });
+
+  it("requires enabled workspace jobs to declare schedules", () => {
+    expect(() =>
+      parseLoopConfigYaml(`
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    bugFix:
+      enabled: true
+`),
+    ).toThrow(/workspaces\.0\.bugFix\.schedule is required when enabled/i);
   });
 
   it("allows a config that only schedules workspace architecture", () => {
@@ -357,6 +588,71 @@ workspaces:
         kind: system
 `),
     ).toThrow(/workspace.*requires runner.kind=agent-supervised/i);
+  });
+
+  it("requires scheduled workspace jobs to use the workspace-level supervised runner", () => {
+    expect(() =>
+      parseLoopConfigYaml(`${validConfig}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    runner:
+      kind: system
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    opportunityDiscovery:
+      enabled: true
+      schedule: "20 10 * * *"
+`),
+    ).toThrow(/workspaces\.0\.runner requires kind=agent-supervised/i);
+  });
+
+  it("lets non-architecture workspace jobs inherit the workspace runner", () => {
+    const config = parseLoopConfigYaml(`
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    runner:
+      kind: agent-supervised
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+      runner:
+        kind: system
+    opportunityDiscovery:
+      enabled: true
+      schedule: "20 10 * * *"
+`);
+
+    expect(config.workspaces[0]?.runner).toMatchObject({ kind: "agent-supervised" });
+    expect(config.workspaces[0]?.architecture.runner).toMatchObject({ kind: "system" });
+    expect(config.workspaces[0]?.opportunityDiscovery).toMatchObject({
+      enabled: true,
+      schedule: "20 10 * * *",
+    });
   });
 
   it("rejects unsupported agent-backed assessment in phase one", () => {
@@ -713,10 +1009,14 @@ describe("validateLoopConfig", () => {
     expect(result.readinessSummary).toEqual({
       runnableProjectCount: 1,
       scheduledProjectCount: 1,
+      runnableWorkspaceCount: 0,
+      scheduledWorkspaceCount: 0,
       issueCount: 0,
       errorCount: 0,
       warningCount: 0,
     });
+    expect(result.workspaceCount).toBe(0);
+    expect(result.workspaces).toEqual([]);
     expect(result.projects[0]).toMatchObject({
       id: "hub",
       scheduled: true,

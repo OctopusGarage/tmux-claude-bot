@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
+import { type LoopProjectConfig, parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import {
+  buildActiveDelegatedTaskWorkOrder,
   buildLoopSupervisorFinalizationPrompt,
   buildLoopSupervisorPrompt,
   buildLoopSupervisorRevisionPrompt,
   buildLoopWorkOrder,
+  buildLoopWorkspaceWorkOrder,
   buildRepositoryPullRequestReviewWorkOrder,
   buildWorkspaceArchitectureWorkOrder,
   finalMarkerForWorkOrder,
   parseSupervisorFinalSummary,
 } from "../../src/core/loop/work-order.js";
+import type { OpportunityCategory } from "../../src/core/opportunities/types.js";
 
 const config = parseLoopConfigYaml(`
 skills:
@@ -108,15 +111,17 @@ describe("loop supervisor work order", () => {
       project: firstProject(),
       scheduledAt: 1752643800000,
       runId: "1752643800000-datavibe",
+      projectSessionPrefix: "tmux_proj_",
     });
 
     const prompt = buildLoopSupervisorPrompt(workOrder);
 
+    expect(workOrder.notificationSession).toBe("tmux_proj_-repo-datavibe");
     expect(prompt).toContain("You are the Loop Supervisor for tmux-claude-bot.");
     expect(prompt).toContain("Do not call model-provider APIs.");
     expect(prompt).toContain('send <project> "<task>"');
     expect(prompt).toContain("dashboard --json");
-    expect(prompt).toContain("open datavibe --agent codex");
+    expect(prompt).toContain("open '/repo/datavibe' --agent codex");
     expect(prompt).toContain("git status --short must be clean");
     expect(prompt).toContain("git fetch origin main");
     expect(prompt).toContain("git switch main");
@@ -135,6 +140,113 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain('finalVerification must be one string only: "passed"');
     expect(prompt).not.toContain("tcb status");
     expect(prompt).toContain(finalMarkerForWorkOrder("1752643800000-datavibe"));
+  });
+
+  it("renders an active delegated task prompt with review, coverage, and eval gates", () => {
+    const workOrder = buildActiveDelegatedTaskWorkOrder({
+      session: "tmux_proj_repo",
+      projectId: "repo",
+      projectName: "Repo",
+      projectPath: "/repo/app",
+      agent: "codex",
+      requirement: "Implement the agreed settings flow.",
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-repo-active-delegate",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder.task).toMatchObject({
+      kind: "active-delegated-task",
+      sourceSession: "tmux_proj_repo",
+      requirement: "Implement the agreed settings flow.",
+      requireReview: true,
+      requireTests: true,
+      requireCoverageReview: true,
+      allowAiEval: true,
+    });
+    expect(workOrder.commitPolicy.enabled).toBe(false);
+    expect(workOrder.pullRequestPolicy?.enabled).toBe(false);
+    expect(prompt).toContain("Active delegated task.");
+    expect(prompt).toContain("not a cron maintenance run");
+    expect(prompt).toContain("Requirement: Implement the agreed settings flow.");
+    expect(prompt).toContain("Drive the target project agent until the requested behavior");
+    expect(prompt).toContain("perform an independent review pass");
+    expect(prompt).toContain("Run the target project's relevant tests");
+    expect(prompt).toContain("Review test coverage for the touched behavior");
+    expect(prompt).toContain("agent-backed or deterministic AI eval surface");
+    expect(prompt).toContain("preserve the user's active branch context");
+    expect(prompt).toContain("must preserve the user's current branch by default");
+    expect(prompt).not.toContain("git fetch origin main");
+  });
+
+  it("inherits project PR policy for active delegated tasks when a loop project matches", () => {
+    const projectPolicy: LoopProjectConfig = {
+      ...firstProject(),
+      commit: {
+        enabled: true,
+        perRound: true,
+        branch: "loop/datavibe/architecture",
+      },
+      pullRequest: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+        githubAccount: "Kingson4Wu",
+      },
+      recovery: {
+        agent: true,
+        dirtyWorktree: true,
+        maxAttempts: 2,
+      },
+      allowedActions: ["tests", "docs", "small-refactor", "dependency-upgrade"],
+      blockedActions: ["direct-model-api", "broad-rewrite"],
+    };
+    const workOrder = buildActiveDelegatedTaskWorkOrder({
+      session: "tmux_proj_datavibe",
+      projectId: "datavibe",
+      projectName: "Datavibe",
+      projectPath: "/repo/datavibe",
+      agent: "codex",
+      requirement: "Implement the accepted opportunity.",
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe-active-delegate",
+      projectPolicy,
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder.commitPolicy).toMatchObject({
+      enabled: true,
+      perRound: false,
+      branch: "loop/datavibe/active-delegate/1752643800000-datavibe-active-delegate",
+    });
+    expect(workOrder.pullRequestPolicy).toMatchObject({
+      enabled: true,
+      base: "dev",
+      switchBack: "dev",
+      autoMerge: true,
+      githubAccount: "Kingson4Wu",
+    });
+    expect(workOrder.recovery).toMatchObject({
+      agent: true,
+      dirtyWorktree: true,
+      maxAttempts: 2,
+    });
+    expect(workOrder.allowedActions).toContain("dependency-upgrade");
+    expect(prompt).toContain("git fetch origin dev");
+    expect(prompt).toContain("git switch dev");
+    expect(prompt).toContain("git pull --ff-only origin dev");
+    expect(prompt).toContain("inherits the target project's PR policy");
+    expect(prompt).toContain(
+      "loop/datavibe/active-delegate/1752643800000-datavibe-active-delegate",
+    );
+    expect(prompt).toContain("open or update one PR against dev");
+    expect(prompt).toContain("allow auto-merge only after all gates pass");
+    expect(prompt).toContain("switch the local worktree back to dev");
+    expect(prompt).toContain("GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\"");
+    expect(prompt).not.toContain("must preserve the user's current branch by default");
   });
 
   it("renders a bug-fix prompt that separates real bug repair from architecture work", () => {
@@ -187,11 +299,16 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("money, quota, billing, permissions");
     expect(prompt).toContain("Do not nitpick");
     expect(prompt).toContain("Do not add product features");
+    expect(prompt).toContain("Separate candidate bugs from confirmed bugs");
+    expect(prompt).toContain("entry point or trigger, affected path, expected behavior");
     expect(prompt).toContain("Before editing, prove the issue is real");
     expect(prompt).toContain("inspect that boundary before confirming the bug");
     expect(prompt).toContain("perform an independent verification pass");
+    expect(prompt).toContain("deferred candidate or skipped candidate");
     expect(prompt).toContain("Add or update a focused regression test");
-    expect(prompt).toContain("independently re-check that the original trigger path is blocked");
+    expect(prompt).toContain("independently re-check the same evidence chain");
+    expect(prompt).toContain("checked areas, skipped areas, deferred candidates");
+    expect(prompt).toContain("partial coverage must not be presented as proof");
     expect(prompt).toContain("Stop when a round finds no confirmed real bugs");
     expect(prompt).toContain(
       "control <project> compact --yes before each delegated bug-fix round.",
@@ -199,6 +316,81 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("Focus on scheduler, gate, and state consistency bugs.");
     expect(prompt).toContain("loop/datavibe/bug-fix/1752643800000-datavibe-bug-fix");
     expect(prompt).not.toContain("Architecture target score");
+  });
+
+  it("renders an opportunity-discovery prompt that proposes work without editing", () => {
+    const project = {
+      ...firstProject(),
+      opportunityDiscovery: {
+        enabled: true,
+        schedule: "15 9 * * *",
+        scheduleJitterMinutes: 5,
+        notificationChannel: "both" as const,
+        maxSuggestions: 2,
+        minConfidence: "medium" as const,
+        categories: ["product-feature", "developer-experience"] satisfies OpportunityCategory[],
+        cooldownDays: 14,
+        requireEvidence: true,
+        prompt: "Prefer ideas that reduce owner coordination.",
+      },
+      commit: {
+        enabled: true,
+        perRound: true,
+        branch: "loop/datavibe/architecture",
+      },
+      pullRequest: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+      },
+      eval: {
+        command: "npm run eval",
+        minScore: 95,
+      },
+    };
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe-opportunity-discovery",
+      jobKind: "opportunity-discovery",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder.task).toMatchObject({
+      kind: "opportunity-discovery",
+      maxSuggestions: 2,
+      minConfidence: "medium",
+      categories: ["product-feature", "developer-experience"],
+      cooldownDays: 14,
+      requireEvidence: true,
+      notificationChannel: "both",
+    });
+    expect(workOrder.opportunityReportPath).toContain(
+      "loop-runs/datavibe/1752643800000-datavibe-opportunity-discovery/opportunities.json",
+    );
+    expect(workOrder.commitPolicy.enabled).toBe(false);
+    expect(workOrder.pullRequestPolicy?.enabled).toBe(false);
+    expect(workOrder.pullRequestPolicy).toMatchObject({
+      base: "dev",
+      switchBack: "dev",
+      autoMerge: false,
+    });
+    expect(workOrder.assessment).toEqual({ command: "true" });
+    expect(workOrder.eval).toBeUndefined();
+    expect(prompt).toContain("Opportunity discovery task.");
+    expect(prompt).toContain("git fetch origin dev");
+    expect(prompt).toContain("git switch dev");
+    expect(prompt).toContain("do not edit files, commit, push, create branches");
+    expect(prompt).toContain("Produce at most 2 suggestion(s)");
+    expect(prompt).toContain("Minimum confidence is medium");
+    expect(prompt).toContain("Allowed categories: product-feature, developer-experience");
+    expect(prompt).toContain("Every suggestion must cite concrete evidence");
+    expect(prompt).toContain("Write the opportunity report JSON");
+    expect(prompt).toContain("delegateRequirement");
+    expect(prompt).toContain("must not create a branch, commit, PR, or code change");
   });
 
   it("renders a test-coverage prompt that rejects meaningless coverage padding", () => {
@@ -330,6 +522,105 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("compact --yes before each delegated security-maintenance round");
     expect(prompt).toContain("Prioritize reachable auth, webhook, and supply-chain findings.");
     expect(prompt).not.toContain("Architecture target score");
+  });
+
+  it("renders a harness-auto prompt that orchestrates health subtasks", () => {
+    const project = {
+      ...firstProject(),
+      harnessAuto: {
+        enabled: true,
+        schedule: "50 16 * * *",
+        scheduleJitterMinutes: 13,
+        branch: "loop/datavibe/harness-auto",
+        maxRounds: 4,
+        strategy: "risk-first" as const,
+        tasks: [
+          { kind: "bug-fix" as const, enabled: true, weight: 50 },
+          { kind: "security-maintenance" as const, enabled: true, weight: 30 },
+          { kind: "test-coverage" as const, enabled: true, weight: 15 },
+          { kind: "architecture" as const, enabled: true, weight: 5 },
+        ],
+        stopWhen: { healthScoreAtLeast: 96, noConfirmedIssues: true },
+        prompt: "Prioritize production reliability and security.",
+      },
+      bugFix: {
+        enabled: true,
+        schedule: "45 10 * * *",
+        maxRounds: 2,
+        maxBugsPerRound: 1,
+        requireRegressionTest: true,
+      },
+      testCoverage: {
+        enabled: true,
+        schedule: "20 14 * * *",
+        targetCoverage: 82,
+        maxRounds: 3,
+        requireMeaningfulTests: true,
+        allowIntegrationTests: true,
+        allowSmokeTests: true,
+        allowE2ETests: false,
+        allowAiEvalTests: false,
+      },
+      securityMaintenance: {
+        enabled: true,
+        schedule: "10 16 * * *",
+        maxRounds: 2,
+        allowDependencyUpdates: true,
+        allowConfigHardening: true,
+        allowStaticAnalysisFixes: true,
+      },
+      commit: {
+        enabled: true,
+        perRound: false,
+        branch: "loop/datavibe/architecture",
+      },
+      pullRequest: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: false,
+      },
+    };
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe-harness-auto",
+      jobKind: "harness-auto",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder.task).toMatchObject({
+      kind: "harness-auto",
+      maxRounds: 4,
+      strategy: "risk-first",
+      stopWhen: { healthScoreAtLeast: 96, noConfirmedIssues: true },
+    });
+    expect(workOrder.maxRounds).toBe(4);
+    expect(workOrder.targetScore).toBe(96);
+    expect(workOrder.allowedActions).toContain("dependency-upgrade");
+    expect(workOrder.commitPolicy.branch).toBe(
+      "loop/datavibe/harness-auto/1752643800000-datavibe-harness-auto",
+    );
+    expect(prompt).toContain("Harness-auto health orchestration task.");
+    expect(prompt).toContain("Strategy is risk-first");
+    expect(prompt).toContain("Enabled subtasks: bug-fix(weight=50)");
+    expect(prompt).toContain("security-maintenance(weight=30)");
+    expect(prompt).toContain("test-coverage(weight=15)");
+    expect(prompt).toContain("architecture(weight=5)");
+    expect(prompt).toContain("Do not run all subtasks mechanically");
+    expect(prompt).toContain("one run id and one PR branch/PR per repository");
+    expect(prompt).toContain("Harness subtask policy: bug-fix.");
+    expect(prompt).toContain("Bug finding and repair task.");
+    expect(prompt).toContain("Harness subtask policy: security-maintenance.");
+    expect(prompt).toContain("Security maintenance task.");
+    expect(prompt).toContain("Harness subtask policy: test-coverage.");
+    expect(prompt).toContain("Test coverage improvement task.");
+    expect(prompt).toContain("Harness subtask policy: architecture.");
+    expect(prompt).toContain("Architecture target score is 90");
+    expect(prompt).toContain("compact --yes before each delegated harness-auto round");
+    expect(prompt).toContain("Prioritize production reliability and security.");
   });
 
   it("renders a pull request review prompt with two-pass merge guidance", () => {
@@ -564,6 +855,242 @@ workspaces:
     expect(prompt).toContain("Focus on API contracts and shared data semantics.");
   });
 
+  it("renders a workspace bug-fix prompt for coordinated multi-repository repair", () => {
+    const workspaceConfig = parseLoopConfigYaml(`
+projects:
+  - id: placeholder
+    name: Placeholder
+    path: /repo/placeholder
+    agent: codex
+    goal: Keep placeholder architecture healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run assess
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    bugFix:
+      enabled: true
+      schedule: "20 11 * * *"
+      maxRounds: 5
+      maxBugsPerRound: 1
+      prompt: Focus on backend/frontend contract bugs.
+`);
+    const workspace = workspaceConfig.workspaces[0];
+    if (workspace === undefined) throw new Error("expected workspace config");
+
+    const workOrder = buildLoopWorkspaceWorkOrder({
+      config: workspaceConfig,
+      workspace,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-geo-workspace-bug-fix",
+      jobKind: "bug-fix",
+    });
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder).toMatchObject({
+      task: { kind: "bug-fix", maxRounds: 5, maxBugsPerRound: 1 },
+      projectId: "geo",
+      projectPath: "/repo/realestate",
+      maxRounds: 5,
+      targetScore: 100,
+    });
+    expect(prompt).toContain("Workspace multi-repository task.");
+    expect(prompt).toContain("Bug finding and repair task.");
+    expect(prompt).toContain("Do not force every repository to change.");
+    expect(prompt).toContain("contracts between repositories");
+    expect(prompt).toContain(
+      "For geo-backend, use branch loop/geo-backend/bug-fix/1752643800000-geo-workspace-bug-fix",
+    );
+    expect(prompt).toContain(
+      "For geo-frontend, use branch loop/geo-frontend/bug-fix/1752643800000-geo-workspace-bug-fix",
+    );
+    expect(prompt).toContain("open geo-backend --agent codex");
+    expect(prompt).toContain("open geo-frontend --agent codex");
+    expect(prompt).toContain(
+      "control <project> compact --yes before each delegated bug-fix round.",
+    );
+    expect(prompt).toContain("Focus on backend/frontend contract bugs.");
+    expect(prompt).not.toContain("Architecture target score");
+  });
+
+  it("renders a workspace harness-auto prompt for coordinated health improvement", () => {
+    const workspaceConfig = parseLoopConfigYaml(`
+projects:
+  - id: placeholder
+    name: Placeholder
+    path: /repo/placeholder
+    agent: codex
+    goal: Keep placeholder architecture healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run assess
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+      targetScore: 95
+    harnessAuto:
+      enabled: true
+      schedule: "50 16 * * *"
+      maxRounds: 4
+      strategy: health-first
+      stopWhen:
+        healthScoreAtLeast: 96
+        noConfirmedIssues: true
+      prompt: Prioritize cross-repository health.
+`);
+    const workspace = workspaceConfig.workspaces[0];
+    if (workspace === undefined) throw new Error("expected workspace config");
+
+    const workOrder = buildLoopWorkspaceWorkOrder({
+      config: workspaceConfig,
+      workspace,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-geo-workspace-harness-auto",
+      jobKind: "harness-auto",
+    });
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder.task).toMatchObject({
+      kind: "harness-auto",
+      maxRounds: 4,
+      stopWhen: { healthScoreAtLeast: 96, noConfirmedIssues: true },
+    });
+    expect(workOrder.projectPath).toBe("/repo/realestate");
+    expect(workOrder.targetScore).toBe(96);
+    expect(prompt).toContain("Workspace multi-repository task.");
+    expect(prompt).toContain("Harness-auto health orchestration task.");
+    expect(prompt).toContain(
+      "For geo-backend, use branch loop/geo-backend/harness-auto/1752643800000-geo-workspace-harness-auto",
+    );
+    expect(prompt).toContain(
+      "For geo-frontend, use branch loop/geo-frontend/harness-auto/1752643800000-geo-workspace-harness-auto",
+    );
+    expect(prompt).toContain("one run id and one PR branch/PR per repository");
+    expect(prompt).toContain("Harness subtask policy: architecture.");
+    expect(prompt).toContain("cross-repository evaluation reaches or exceeds it");
+    expect(prompt).toContain("compact --yes before each delegated harness-auto round");
+    expect(prompt).toContain("Prioritize cross-repository health.");
+  });
+
+  it("renders a workspace pull-request-review prompt for coordinated PR review", () => {
+    const workspaceConfig = parseLoopConfigYaml(`
+projects:
+  - id: placeholder
+    name: Placeholder
+    path: /repo/placeholder
+    agent: codex
+    goal: Keep placeholder architecture healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run assess
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+          autoMerge: true
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+        pullRequest:
+          enabled: true
+          base: dev
+          switchBack: dev
+          autoMerge: false
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    pullRequestReview:
+      enabled: true
+      schedule: "5 17 * * *"
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+`);
+    const workspace = workspaceConfig.workspaces[0];
+    if (workspace === undefined) throw new Error("expected workspace config");
+
+    const workOrder = buildLoopWorkspaceWorkOrder({
+      config: workspaceConfig,
+      workspace,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-geo-workspace-pr-review",
+      jobKind: "pull-request-review",
+    });
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder.task).toMatchObject({
+      kind: "pull-request-review",
+      lookbackHours: 48,
+      autoMerge: true,
+    });
+    expect(workOrder.maxRounds).toBe(1);
+    expect(prompt).toContain("Workspace pull request review and merge task.");
+    expect(prompt).toContain("geo-backend(main->main, autoMerge=true)");
+    expect(prompt).toContain("geo-frontend(dev->dev, autoMerge=false)");
+    expect(prompt).toContain("loop-created PRs");
+    expect(prompt).toContain("merge the PR according to that repository's pullRequest policy");
+    expect(prompt).not.toContain("Review open loop-created PRs for this repository");
+  });
+
   it("keeps repository PR review base separate from the local switch-back branch", () => {
     const reviewConfig = parseLoopConfigYaml(`
 projects:
@@ -694,7 +1221,7 @@ prReview:
     if (passed.ok) {
       expect(passed.summary.status).toBe("completed");
       expect(passed.summary.delegatedTasks).toEqual([
-        { projectId: "datavibe", status: "completed" },
+        { projectId: "datavibe", status: "complete" },
       ]);
     }
     expect(complete.ok).toBe(true);
@@ -716,6 +1243,27 @@ prReview:
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.summary.delegatedTasks).toEqual(["Round 1: narrowed a module"]);
+    }
+  });
+
+  it("accepts descriptive delegated task record statuses in supervisor summaries", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        '{"status":"completed","projectId":"datavibe","actionsTaken":["verified"],"delegatedTasks":[{"projectId":"datavibe","status":"interrupted-read-only-discovery-after-local-report-completed"}],"finalVerification":"passed","commits":[],"followUps":[]}',
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.delegatedTasks).toEqual([
+        {
+          projectId: "datavibe",
+          status: "interrupted-read-only-discovery-after-local-report-completed",
+        },
+      ]);
     }
   });
 

@@ -34,6 +34,10 @@ export type QueuedMessage = {
   /** Optional interim-progress channel: sends a message to the chat while the
    * run is still in flight (resolve/reject remain the one-shot finale). */
   notify?: ((text: string) => void) | undefined;
+  /** Optional total wait horizon for long system-owned tasks. Ordinary chat
+   * prompts use the configured global horizon; supervised loop work orders can
+   * safely wait longer because they are bounded by their own WorkOrder timeout. */
+  maxWaitDoneTotalMs?: number | undefined;
   /** Optional lifecycle hook fired after the item is dequeued and before the
    * queue handler types into the target session. Used by persisted control work
    * to distinguish queued from already-dispatched WorkOrders across restarts. */
@@ -63,5 +67,6 @@ export type PersistedMessage = {
   transform?: QueuedMessage["transform"];
   traceId?: string | undefined;
   controlRestore?: ControlRestoreMetadata | undefined;
+  maxWaitDoneTotalMs?: number | undefined;
   ackMsgId?: string | undefined;
 };

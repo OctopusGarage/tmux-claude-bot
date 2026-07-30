@@ -25,7 +25,7 @@ vi.mock("../../../src/core/notifications/target-resolver.js", () => ({
 }));
 
 const channel = {
-  send: vi.fn(async () => ({ messageId: "om_sent" })),
+  send: vi.fn(async (_chatId: string, _input: unknown) => ({ messageId: "om_sent" })),
 };
 
 function deps(): HandlerDeps {
@@ -102,6 +102,45 @@ describe("registerLarkNotifications", () => {
 
     expect(mocks.boundLarkGroupForSession).toHaveBeenCalledWith("tmux_proj_api");
     expect(channel.send).toHaveBeenCalledWith("oc_group", { markdown: "long task done" });
+    expect(mocks.notifyLarkOwner).not.toHaveBeenCalled();
+  });
+
+  it("renders opportunity discovery notifications as project-group cards", async () => {
+    mocks.boundLarkGroupForSession.mockReturnValue({ chatId: "oc_group" });
+    const { registerLarkNotifications } = await import(
+      "../../../src/adapters/lark/notifications.js"
+    );
+    const d = deps();
+    const register = vi.spyOn(d.notifications, "register");
+
+    registerLarkNotifications(d, larkConfig(), channel as never);
+    const sender = register.mock.calls.find((c) => c[0] === "lark")?.[1];
+    await sender?.("fallback text", {
+      title: "Opportunity suggestions: api",
+      source: "opportunity-discovery",
+      session: "tmux_proj_api",
+      body: "Project: api\nSuggestions: 1",
+      opportunities: [
+        {
+          id: "api-20260729-abc123",
+          title: "Add explain command",
+          projectName: "api",
+          category: "developer-experience",
+          confidence: "high",
+          estimatedComplexity: "small",
+          status: "proposed",
+          value: "Faster support.",
+        },
+      ],
+    });
+
+    expect(channel.send).toHaveBeenCalledWith(
+      "oc_group",
+      expect.objectContaining({ card: expect.any(Object) }),
+    );
+    const sent = JSON.stringify(channel.send.mock.calls.at(-1)?.[1]);
+    expect(sent).toContain("oppdiscuss");
+    expect(sent).not.toContain("oppdelegate");
     expect(mocks.notifyLarkOwner).not.toHaveBeenCalled();
   });
 });

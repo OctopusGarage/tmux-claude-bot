@@ -189,8 +189,8 @@ function runShellCommand(run: AgentSkillCommandRun | LoopRunCommandInvocation) {
   });
   return {
     status: result.status ?? 1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? (result.error instanceof Error ? result.error.message : ""),
+    stdout: result.stdout,
+    stderr: result.error instanceof Error ? result.error.message : result.stderr,
   };
 }
 
