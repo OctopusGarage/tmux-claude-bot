@@ -43,10 +43,12 @@ export function completeLoopSupervisorRun(
 }
 
 function shouldRetrySupervisedSchedule(result: LoopSupervisedRunResult): boolean {
+  if (result.status === "invalid-output") return true;
   if (result.status !== "dispatch-failed") return false;
   return [
     "missing loop supervisor session name",
     "missing loop supervisor dispatch adapter",
+    "did not become ready in time",
     "no live loop supervisor session",
     "loop supervisor task queue is full",
     "duplicate loop supervisor task is already queued or running",

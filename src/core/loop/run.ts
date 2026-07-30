@@ -7,6 +7,7 @@ export type LoopRunCommandKind =
   | "agent"
   | "verification"
   | "eval"
+  | "pr"
   | "commit";
 
 export type LoopRunCommandInvocation = {
@@ -54,6 +55,7 @@ export type LoopAgentTaskInvocation = {
   agent: LoopProjectConfig["agent"];
   cwd: string;
   prompt: string;
+  contextReset?: "none" | "compact" | "clear";
   finding: LoopFinding;
 };
 
@@ -156,10 +158,15 @@ function buildAgentTaskPrompt(project: LoopProjectConfig, finding: LoopFinding):
     finding.prompt,
     "",
     "Constraints:",
+    "- Do not open browser windows; read any generated architecture reports directly from disk.",
+    "- Before editing, review the candidate and state why it is real, bounded, allowed, and verifiable.",
     "- Make only the focused change required by this finding.",
     "- Use the currently running Claude Code / Codex capability only.",
     "- Do not add model-provider SDKs, API-key env vars, or direct model HTTP calls.",
     "- Keep the change small enough to verify in this run.",
+    "- If a project verification or commit hook fails because of an existing dependency advisory, you may make the smallest dependency or lockfile update required to satisfy that project gate, then rerun the gate and review the diff.",
+    "- After editing, review the diff and verification evidence before reporting completion.",
+    "- Report the selected issue, review conclusion, changed files, verification results, residual risks, and PR-ready summary.",
     "",
     "Verification commands the loop runner will execute after this task:",
     ...finding.verificationCommands.map((command) => `- ${command}`),
@@ -232,6 +239,7 @@ function buildDirtyWorktreeRecoveryPrompt(project: LoopProjectConfig, status: st
     "",
     "Constraints:",
     "- Keep the recovery focused on the existing worktree changes.",
+    "- If project gates or commit hooks fail only because of a dependency advisory, you may make the smallest dependency or lockfile update required to satisfy that gate, then rerun the gate and review the diff.",
     "- Do not change runtime contracts, secrets, deployment settings, or model integrations.",
     "- Do not add model-provider SDKs, API-key env vars, or direct model HTTP calls.",
   ].join("\n");
@@ -265,6 +273,7 @@ function buildVerificationRecoveryPrompt(input: {
     "Constraints:",
     "- Keep the change focused on this finding.",
     "- Do not bypass the gate by changing verification commands.",
+    "- If the failed gate is a dependency audit or commit-hook dependency advisory, you may make the smallest dependency or lockfile update required to satisfy that gate, then rerun the gate and review the diff.",
     "- Do not add model-provider SDKs, API-key env vars, or direct model HTTP calls.",
   ]
     .filter(Boolean)
@@ -297,6 +306,7 @@ function buildPostCommitDirtyRecoveryPrompt(input: {
     "",
     "Constraints:",
     "- Keep the recovery focused on the listed dirty files.",
+    "- If the remaining blocker is a dependency audit or commit-hook dependency advisory, you may make the smallest dependency or lockfile update required to satisfy that gate, then rerun the gate and review the diff.",
     "- Do not change runtime contracts, secrets, deployment settings, or model integrations.",
     "- Do not add model-provider SDKs, API-key env vars, or direct model HTTP calls.",
   ].join("\n");
@@ -319,6 +329,7 @@ function runAgentTaskWithReadyRetry(input: {
     agent: input.project.agent,
     cwd: input.project.path,
     prompt: buildAgentTaskPrompt(input.project, input.finding),
+    contextReset: "compact",
     finding: input.finding,
   };
   let result = input.runAgentTask?.(invocation) ?? {
@@ -363,6 +374,7 @@ async function runAgentTaskWithReadyRetryAsync(input: {
     agent: input.project.agent,
     cwd: input.project.path,
     prompt: buildAgentTaskPrompt(input.project, input.finding),
+    contextReset: "compact",
     finding: input.finding,
   };
   let result = (await input.runAgentTask?.(invocation)) ?? {
@@ -498,6 +510,21 @@ function skippedRound(finding: LoopFinding, reason: string): LoopRoundSummary {
   };
 }
 
+function targetScoreSkippedRound(project: LoopProjectConfig, score: number): LoopRoundSummary {
+  return {
+    findingId: "target-score-reached",
+    title: `Architecture score ${score} reached target ${project.targetScore}`,
+    action: "skip",
+    status: "skipped",
+    reason: `assessment score ${score} is >= targetScore ${project.targetScore}; skipping optimization to avoid over-optimization`,
+    verificationCommands: [],
+  };
+}
+
+function reachedTargetScore(project: LoopProjectConfig, assessment: AssessmentResult): boolean {
+  return assessment.score !== null && assessment.score >= project.targetScore;
+}
+
 function confidenceIsHigh(confidence: LoopFinding["confidence"]): boolean {
   if (typeof confidence === "number") return confidence >= 0.8;
   if (typeof confidence !== "string") return false;
@@ -567,6 +594,10 @@ function gitCommandSummary(
     },
     result,
   );
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function commandPassed(command: LoopRunCommandSummary): boolean {
@@ -884,6 +915,150 @@ function runCommit(input: {
   return commitSha.length > 0 ? { ok: true, commitSha } : { ok: true };
 }
 
+function committedRounds(rounds: readonly LoopRoundSummary[]): LoopRoundSummary[] {
+  return rounds.filter((round) => round.status === "committed");
+}
+
+function buildPullRequestBody(input: {
+  project: LoopProjectConfig;
+  rounds: readonly LoopRoundSummary[];
+  evalResult: LoopEvalResult | null;
+}): string {
+  const committed = committedRounds(input.rounds);
+  const verificationCommands = [
+    ...new Set(committed.flatMap((round) => round.verificationCommands)),
+  ];
+  return [
+    "## Summary",
+    "",
+    `Automated Loop Engineering architecture improvement for ${input.project.name}.`,
+    "",
+    "## Changes",
+    "",
+    ...committed.map(
+      (round) => `- ${round.title}${round.commitSha ? ` (${round.commitSha})` : ""}`,
+    ),
+    "",
+    "## Verification",
+    "",
+    ...(verificationCommands.length > 0
+      ? verificationCommands.map((command) => `- ${command}`)
+      : ["- No verification commands were recorded."]),
+    "",
+    "## Review",
+    "",
+    `- Agent eval: ${
+      input.evalResult === null
+        ? "not configured"
+        : `${input.evalResult.passed ? "passed" : "failed"}${
+            input.evalResult.score === null ? "" : `, score ${input.evalResult.score}`
+          }`
+    }`,
+    "- Scope was constrained by the scheduled finding affectedFiles and loop verification gates.",
+    "",
+    "## Follow-up",
+    "",
+    "- Review the run report under the bot loop-runs state directory for full command logs.",
+  ].join("\n");
+}
+
+function runPullRequestPublish(input: {
+  project: LoopProjectConfig;
+  rounds: readonly LoopRoundSummary[];
+  evalResult: LoopEvalResult | null;
+  commands: LoopRunCommandSummary[];
+  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): void {
+  if (!input.project.pullRequest.enabled) return;
+  if (!input.project.commit.enabled || committedRounds(input.rounds).length === 0) return;
+
+  const branch = input.project.commit.branch;
+  if (branch === undefined) {
+    input.commands.push(
+      commandSummary(
+        {
+          kind: "pr",
+          command: "pull request skipped: commit.branch is required",
+          cwd: input.project.path,
+          env: {},
+        },
+        { status: 1, stdout: "", stderr: "pullRequest requires commit.branch" },
+      ),
+    );
+    return;
+  }
+
+  const statusArgs = ["status", "--porcelain"];
+  const statusResult = input.runGit({ cwd: input.project.path, args: statusArgs });
+  input.commands.push(gitCommandSummary(input.project.path, statusArgs, statusResult));
+  if (statusResult.status !== 0) return;
+  const dirtyStatus = statusResult.stdout.trim();
+  if (dirtyStatus.length > 0) {
+    input.commands.push(
+      commandSummary(
+        {
+          kind: "pr",
+          command: "pull request skipped: final worktree review is dirty",
+          cwd: input.project.path,
+          env: {},
+        },
+        { status: 1, stdout: "", stderr: dirtyStatus },
+      ),
+    );
+    return;
+  }
+
+  for (const args of [
+    ["log", "-1", "--stat", "--oneline"],
+    ["push", "-u", "origin", branch],
+  ]) {
+    const result = input.runGit({ cwd: input.project.path, args });
+    input.commands.push(gitCommandSummary(input.project.path, args, result));
+    if (result.status !== 0) return;
+  }
+
+  const title = `loop(${input.project.id}): architecture improvements`;
+  const body = buildPullRequestBody({
+    project: input.project,
+    rounds: input.rounds,
+    evalResult: input.evalResult,
+  });
+  const prCommand = [
+    "gh pr create",
+    "--base",
+    shellQuote(input.project.pullRequest.base),
+    "--head",
+    shellQuote(branch),
+    "--title",
+    shellQuote(title),
+    "--body",
+    shellQuote(body),
+  ].join(" ");
+  const prResult = input.runCommand({
+    kind: "pr",
+    command: prCommand,
+    cwd: input.project.path,
+    env: {},
+  });
+  input.commands.push(
+    commandSummary(
+      {
+        kind: "pr",
+        command: prCommand,
+        cwd: input.project.path,
+        env: {},
+      },
+      prResult,
+    ),
+  );
+  if (prResult.status !== 0) return;
+
+  const switchArgs = ["switch", input.project.pullRequest.switchBack];
+  const switchResult = input.runGit({ cwd: input.project.path, args: switchArgs });
+  input.commands.push(gitCommandSummary(input.project.path, switchArgs, switchResult));
+}
+
 function recoverPostCommitDirtyWorktree(input: {
   project: LoopProjectConfig;
   finding: LoopFinding;
@@ -1028,12 +1203,30 @@ function ensureCommitBranch(input: {
 
   const switchArgs = ["switch", branch];
   const switchResult = input.runGit({ cwd: input.project.path, args: switchArgs });
-  input.commands.push(gitCommandSummary(input.project.path, switchArgs, switchResult));
-  if (switchResult.status === 0) return true;
+  if (switchResult.status === 0) {
+    input.commands.push(gitCommandSummary(input.project.path, switchArgs, switchResult));
+    return true;
+  }
 
   const createArgs = ["switch", "-c", branch];
   const createResult = input.runGit({ cwd: input.project.path, args: createArgs });
-  input.commands.push(gitCommandSummary(input.project.path, createArgs, createResult));
+  input.commands.push(
+    commandSummary(
+      {
+        kind: "commit",
+        command: `git switch ${branch}; git switch -c ${branch}`,
+        cwd: input.project.path,
+        env: {},
+      },
+      {
+        status: createResult.status,
+        stdout: createResult.stdout,
+        stderr: [switchResult.stderr.trim(), createResult.stderr.trim()]
+          .filter((message) => message.length > 0)
+          .join("\n"),
+      },
+    ),
+  );
   return createResult.status === 0;
 }
 
@@ -1332,12 +1525,33 @@ export function runLoopProject(input: {
     ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
   });
   if (dirty !== "clean") {
+    if (dirty === "handled" && !rounds.some((round) => round.status === "failed")) {
+      runEval({
+        project,
+        env,
+        commands,
+        runCommand: input.runCommand,
+        ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
+      });
+      const evalCommand = lastEvalCommand(commands);
+      if (input.runGit !== undefined) {
+        runPullRequestPublish({
+          project,
+          rounds,
+          evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
+          commands,
+          runCommand: input.runCommand,
+          runGit: input.runGit,
+        });
+      }
+    }
+    const evalCommand = lastEvalCommand(commands);
     return completeSummary({
       project,
       approvedSkills: input.config.skills.approved,
       commands,
       rounds,
-      evalResult: null,
+      evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
       fallbackSuggestedBotImprovements: [],
     });
   }
@@ -1371,163 +1585,175 @@ export function runLoopProject(input: {
   const assessmentSummary = commandSummary(assessment, input.runCommand(assessment));
   commands.push(assessmentSummary);
   const assessmentResult = parseAssessmentResult(assessmentSummary.stdout);
+  const targetScoreReached = reachedTargetScore(project, assessmentResult);
 
   if (assessmentSummary.status === 0) {
-    const planned = planFindings(project, assessmentResult.findings);
-    rounds.push(...planned.skipped);
-    if (project.execution.agent) {
-      if (planned.selected.length > 0 && input.runAgentTask === undefined) {
-        throw new Error(`loop project "${project.id}" requires an active-agent execution adapter`);
-      }
-      if (project.commit.enabled && input.runGit === undefined) {
-        throw new Error(
-          `loop project "${project.id}" requires a git adapter when commit.enabled is true`,
-        );
-      }
-      for (const finding of planned.selected) {
-        if (
-          project.commit.enabled &&
-          input.runGit !== undefined &&
-          !ensureCommitBranch({ project, commands, runGit: input.runGit })
-        ) {
-          rounds.push({
+    if (targetScoreReached) {
+      rounds.push(targetScoreSkippedRound(project, assessmentResult.score ?? project.targetScore));
+    } else {
+      const planned = planFindings(project, assessmentResult.findings);
+      rounds.push(...planned.skipped);
+      if (project.execution.agent) {
+        if (planned.selected.length > 0 && input.runAgentTask === undefined) {
+          throw new Error(
+            `loop project "${project.id}" requires an active-agent execution adapter`,
+          );
+        }
+        if (project.commit.enabled && input.runGit === undefined) {
+          throw new Error(
+            `loop project "${project.id}" requires a git adapter when commit.enabled is true`,
+          );
+        }
+        for (const finding of planned.selected) {
+          if (
+            project.commit.enabled &&
+            input.runGit !== undefined &&
+            !ensureCommitBranch({ project, commands, runGit: input.runGit })
+          ) {
+            rounds.push({
+              findingId: finding.id,
+              title: finding.title,
+              action: finding.action,
+              status: "failed",
+              reason: "commit branch checkout failed",
+              verificationCommands: finding.verificationCommands,
+            });
+            break;
+          }
+          const agentResult = runAgentTaskWithReadyRetry({
+            project,
+            finding,
+            env,
+            commands,
+            ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
+          });
+          const round: LoopRoundSummary = {
             findingId: finding.id,
             title: finding.title,
             action: finding.action,
-            status: "failed",
-            reason: "commit branch checkout failed",
+            status: agentResult.status === 0 ? "executed" : "failed",
             verificationCommands: finding.verificationCommands,
-          });
-          break;
-        }
-        const agentResult = runAgentTaskWithReadyRetry({
-          project,
-          finding,
-          env,
-          commands,
-          ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
-        });
-        const round: LoopRoundSummary = {
-          findingId: finding.id,
-          title: finding.title,
-          action: finding.action,
-          status: agentResult.status === 0 ? "executed" : "failed",
-          verificationCommands: finding.verificationCommands,
-          ...(agentResult.status === 0
-            ? {}
-            : { reason: agentResult.stderr || "agent task failed" }),
-        };
-        if (agentResult.status !== 0) {
-          rounds.push(round);
-          break;
-        }
-        let failedVerification = runVerificationCommands({
-          project,
-          finding,
-          env,
-          commands,
-          runCommand: input.runCommand,
-        });
-        for (
-          let attempt = 1;
-          failedVerification !== null &&
-          project.recovery.agent === true &&
-          attempt <= project.recovery.maxAttempts &&
-          input.runAgentTask !== undefined;
-          attempt++
-        ) {
-          const recoveryFinding = syntheticFinding({
-            id: `${finding.id}-verification-recovery-${attempt}`,
-            title: `Recover verification for ${finding.title}`,
-            prompt: buildVerificationRecoveryPrompt({
-              project,
-              finding,
-              failed: failedVerification,
-              attempt,
-            }),
-            verificationCommands: finding.verificationCommands,
-          });
-          const recoveryResult = input.runAgentTask({
-            projectId: project.id,
-            projectName: project.name,
-            agent: project.agent,
-            cwd: project.path,
-            prompt: recoveryFinding.prompt,
-            finding: recoveryFinding,
-          });
-          commands.push(
-            commandSummary(
-              { kind: "agent", command: "agent-verification-recovery", cwd: project.path, env: {} },
-              recoveryResult,
-            ),
-          );
-          if (recoveryResult.status !== 0) break;
-          failedVerification = runVerificationCommands({
+            ...(agentResult.status === 0
+              ? {}
+              : { reason: agentResult.stderr || "agent task failed" }),
+          };
+          if (agentResult.status !== 0) {
+            rounds.push(round);
+            break;
+          }
+          let failedVerification = runVerificationCommands({
             project,
             finding,
             env,
             commands,
             runCommand: input.runCommand,
           });
-        }
-        if (failedVerification !== null) {
-          rounds.push({
-            ...round,
-            status: "failed",
-            reason:
-              project.recovery.agent === true
-                ? "verification failed after recovery"
-                : "verification failed",
-          });
-          break;
-        }
-        round.status = "verified";
-        if (project.commit.enabled && input.runGit !== undefined) {
-          const commit = runCommit({ project, finding, commands, runGit: input.runGit });
-          if (!commit.ok) {
-            if (commit.dirtyStatus !== undefined) {
-              const recovery = recoverPostCommitDirtyWorktree({
+          for (
+            let attempt = 1;
+            failedVerification !== null &&
+            project.recovery.agent === true &&
+            attempt <= project.recovery.maxAttempts &&
+            input.runAgentTask !== undefined;
+            attempt++
+          ) {
+            const recoveryFinding = syntheticFinding({
+              id: `${finding.id}-verification-recovery-${attempt}`,
+              title: `Recover verification for ${finding.title}`,
+              prompt: buildVerificationRecoveryPrompt({
                 project,
                 finding,
-                env,
-                dirtyStatus: commit.dirtyStatus,
-                commands,
-                runCommand: input.runCommand,
-                runGit: input.runGit,
-                ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
-              });
-              if (recovery.ok) {
-                round.status = "committed";
-                rounds.push(round);
-                continue;
+                failed: failedVerification,
+                attempt,
+              }),
+              verificationCommands: finding.verificationCommands,
+            });
+            const recoveryResult = input.runAgentTask({
+              projectId: project.id,
+              projectName: project.name,
+              agent: project.agent,
+              cwd: project.path,
+              prompt: recoveryFinding.prompt,
+              finding: recoveryFinding,
+            });
+            commands.push(
+              commandSummary(
+                {
+                  kind: "agent",
+                  command: "agent-verification-recovery",
+                  cwd: project.path,
+                  env: {},
+                },
+                recoveryResult,
+              ),
+            );
+            if (recoveryResult.status !== 0) break;
+            failedVerification = runVerificationCommands({
+              project,
+              finding,
+              env,
+              commands,
+              runCommand: input.runCommand,
+            });
+          }
+          if (failedVerification !== null) {
+            rounds.push({
+              ...round,
+              status: "failed",
+              reason:
+                project.recovery.agent === true
+                  ? "verification failed after recovery"
+                  : "verification failed",
+            });
+            break;
+          }
+          round.status = "verified";
+          if (project.commit.enabled && input.runGit !== undefined) {
+            const commit = runCommit({ project, finding, commands, runGit: input.runGit });
+            if (!commit.ok) {
+              if (commit.dirtyStatus !== undefined) {
+                const recovery = recoverPostCommitDirtyWorktree({
+                  project,
+                  finding,
+                  env,
+                  dirtyStatus: commit.dirtyStatus,
+                  commands,
+                  runCommand: input.runCommand,
+                  runGit: input.runGit,
+                  ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
+                });
+                if (recovery.ok) {
+                  round.status = "committed";
+                  rounds.push(round);
+                  continue;
+                }
+                rounds.push({
+                  ...round,
+                  status: "failed",
+                  reason: recovery.reason ?? "post-commit recovery failed",
+                });
+                break;
               }
               rounds.push({
                 ...round,
                 status: "failed",
-                reason: recovery.reason ?? "post-commit recovery failed",
+                reason: "commit failed",
               });
               break;
             }
-            rounds.push({
-              ...round,
-              status: "failed",
-              reason: "commit failed",
-            });
-            break;
+            if (!commit.noChanges) {
+              round.status = "committed";
+              if (commit.commitSha !== undefined) round.commitSha = commit.commitSha;
+            }
           }
-          if (!commit.noChanges) {
-            round.status = "committed";
-            if (commit.commitSha !== undefined) round.commitSha = commit.commitSha;
-          }
+          rounds.push(round);
         }
-        rounds.push(round);
+      } else {
+        rounds.push(
+          ...planned.selected.map((finding) => skippedRound(finding, "execution.agent is false")),
+        );
       }
-    } else {
-      rounds.push(
-        ...planned.selected.map((finding) => skippedRound(finding, "execution.agent is false")),
-      );
     }
-    if (!rounds.some((round) => round.status === "failed")) {
+    if (!targetScoreReached && !rounds.some((round) => round.status === "failed")) {
       runEval({
         project,
         env,
@@ -1535,6 +1761,17 @@ export function runLoopProject(input: {
         runCommand: input.runCommand,
         ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
       });
+      const evalCommand = lastEvalCommand(commands);
+      if (input.runGit !== undefined) {
+        runPullRequestPublish({
+          project,
+          rounds,
+          evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
+          commands,
+          runCommand: input.runCommand,
+          runGit: input.runGit,
+        });
+      }
     }
   }
 
@@ -1571,12 +1808,33 @@ export async function runLoopProjectAsync(input: {
     ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
   });
   if (dirty !== "clean") {
+    if (dirty === "handled" && !rounds.some((round) => round.status === "failed")) {
+      await runEvalAsync({
+        project,
+        env,
+        commands,
+        runCommand: input.runCommand,
+        ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
+      });
+      const evalCommand = lastEvalCommand(commands);
+      if (input.runGit !== undefined) {
+        runPullRequestPublish({
+          project,
+          rounds,
+          evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
+          commands,
+          runCommand: input.runCommand,
+          runGit: input.runGit,
+        });
+      }
+    }
+    const evalCommand = lastEvalCommand(commands);
     return completeSummary({
       project,
       approvedSkills: input.config.skills.approved,
       commands,
       rounds,
-      evalResult: null,
+      evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
       fallbackSuggestedBotImprovements: [],
     });
   }
@@ -1610,157 +1868,169 @@ export async function runLoopProjectAsync(input: {
   const assessmentSummary = commandSummary(assessment, input.runCommand(assessment));
   commands.push(assessmentSummary);
   const assessmentResult = parseAssessmentResult(assessmentSummary.stdout);
+  const targetScoreReached = reachedTargetScore(project, assessmentResult);
 
   if (assessmentSummary.status === 0) {
-    const planned = planFindings(project, assessmentResult.findings);
-    rounds.push(...planned.skipped);
-    if (project.execution.agent) {
-      if (planned.selected.length > 0 && input.runAgentTask === undefined) {
-        throw new Error(`loop project "${project.id}" requires an active-agent execution adapter`);
-      }
-      if (project.commit.enabled && input.runGit === undefined) {
-        throw new Error(
-          `loop project "${project.id}" requires a git adapter when commit.enabled is true`,
-        );
-      }
-      for (const finding of planned.selected) {
-        if (
-          project.commit.enabled &&
-          input.runGit !== undefined &&
-          !ensureCommitBranch({ project, commands, runGit: input.runGit })
-        ) {
-          rounds.push({
+    if (targetScoreReached) {
+      rounds.push(targetScoreSkippedRound(project, assessmentResult.score ?? project.targetScore));
+    } else {
+      const planned = planFindings(project, assessmentResult.findings);
+      rounds.push(...planned.skipped);
+      if (project.execution.agent) {
+        if (planned.selected.length > 0 && input.runAgentTask === undefined) {
+          throw new Error(
+            `loop project "${project.id}" requires an active-agent execution adapter`,
+          );
+        }
+        if (project.commit.enabled && input.runGit === undefined) {
+          throw new Error(
+            `loop project "${project.id}" requires a git adapter when commit.enabled is true`,
+          );
+        }
+        for (const finding of planned.selected) {
+          if (
+            project.commit.enabled &&
+            input.runGit !== undefined &&
+            !ensureCommitBranch({ project, commands, runGit: input.runGit })
+          ) {
+            rounds.push({
+              findingId: finding.id,
+              title: finding.title,
+              action: finding.action,
+              status: "failed",
+              reason: "commit branch checkout failed",
+              verificationCommands: finding.verificationCommands,
+            });
+            break;
+          }
+          const result = await runAgentTaskWithReadyRetryAsync({
+            project,
+            finding,
+            env,
+            commands,
+            ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
+          });
+          const round: LoopRoundSummary = {
             findingId: finding.id,
             title: finding.title,
             action: finding.action,
-            status: "failed",
-            reason: "commit branch checkout failed",
+            status: result.status === 0 ? "executed" : "failed",
             verificationCommands: finding.verificationCommands,
-          });
-          break;
-        }
-        const result = await runAgentTaskWithReadyRetryAsync({
-          project,
-          finding,
-          env,
-          commands,
-          ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
-        });
-        const round: LoopRoundSummary = {
-          findingId: finding.id,
-          title: finding.title,
-          action: finding.action,
-          status: result.status === 0 ? "executed" : "failed",
-          verificationCommands: finding.verificationCommands,
-          ...(result.status === 0 ? {} : { reason: result.stderr || "agent task failed" }),
-        };
-        if (result.status !== 0) {
-          rounds.push(round);
-          break;
-        }
-        let failedVerification = await runVerificationCommandsAsync({
-          project,
-          finding,
-          env,
-          commands,
-          runCommand: input.runCommand,
-        });
-        for (
-          let attempt = 1;
-          failedVerification !== null &&
-          project.recovery.agent === true &&
-          attempt <= project.recovery.maxAttempts &&
-          input.runAgentTask !== undefined;
-          attempt++
-        ) {
-          const recoveryFinding = syntheticFinding({
-            id: `${finding.id}-verification-recovery-${attempt}`,
-            title: `Recover verification for ${finding.title}`,
-            prompt: buildVerificationRecoveryPrompt({
-              project,
-              finding,
-              failed: failedVerification,
-              attempt,
-            }),
-            verificationCommands: finding.verificationCommands,
-          });
-          const recoveryResult = await input.runAgentTask({
-            projectId: project.id,
-            projectName: project.name,
-            agent: project.agent,
-            cwd: project.path,
-            prompt: recoveryFinding.prompt,
-            finding: recoveryFinding,
-          });
-          commands.push(
-            commandSummary(
-              { kind: "agent", command: "agent-verification-recovery", cwd: project.path, env: {} },
-              recoveryResult,
-            ),
-          );
-          if (recoveryResult.status !== 0) break;
-          failedVerification = await runVerificationCommandsAsync({
+            ...(result.status === 0 ? {} : { reason: result.stderr || "agent task failed" }),
+          };
+          if (result.status !== 0) {
+            rounds.push(round);
+            break;
+          }
+          let failedVerification = await runVerificationCommandsAsync({
             project,
             finding,
             env,
             commands,
             runCommand: input.runCommand,
           });
-        }
-        if (failedVerification !== null) {
-          rounds.push({
-            ...round,
-            status: "failed",
-            reason:
-              project.recovery.agent === true
-                ? "verification failed after recovery"
-                : "verification failed",
-          });
-          break;
-        }
-        round.status = "verified";
-        if (project.commit.enabled && input.runGit !== undefined) {
-          const commit = runCommit({ project, finding, commands, runGit: input.runGit });
-          if (!commit.ok) {
-            if (commit.dirtyStatus !== undefined) {
-              const recovery = await recoverPostCommitDirtyWorktreeAsync({
+          for (
+            let attempt = 1;
+            failedVerification !== null &&
+            project.recovery.agent === true &&
+            attempt <= project.recovery.maxAttempts &&
+            input.runAgentTask !== undefined;
+            attempt++
+          ) {
+            const recoveryFinding = syntheticFinding({
+              id: `${finding.id}-verification-recovery-${attempt}`,
+              title: `Recover verification for ${finding.title}`,
+              prompt: buildVerificationRecoveryPrompt({
                 project,
                 finding,
-                env,
-                dirtyStatus: commit.dirtyStatus,
-                commands,
-                runCommand: input.runCommand,
-                runGit: input.runGit,
-                ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
-              });
-              if (recovery.ok) {
-                round.status = "committed";
-                rounds.push(round);
-                continue;
-              }
-              rounds.push({
-                ...round,
-                status: "failed",
-                reason: recovery.reason ?? "post-commit recovery failed",
-              });
-              break;
-            }
-            rounds.push({ ...round, status: "failed", reason: "commit failed" });
+                failed: failedVerification,
+                attempt,
+              }),
+              verificationCommands: finding.verificationCommands,
+            });
+            const recoveryResult = await input.runAgentTask({
+              projectId: project.id,
+              projectName: project.name,
+              agent: project.agent,
+              cwd: project.path,
+              prompt: recoveryFinding.prompt,
+              finding: recoveryFinding,
+            });
+            commands.push(
+              commandSummary(
+                {
+                  kind: "agent",
+                  command: "agent-verification-recovery",
+                  cwd: project.path,
+                  env: {},
+                },
+                recoveryResult,
+              ),
+            );
+            if (recoveryResult.status !== 0) break;
+            failedVerification = await runVerificationCommandsAsync({
+              project,
+              finding,
+              env,
+              commands,
+              runCommand: input.runCommand,
+            });
+          }
+          if (failedVerification !== null) {
+            rounds.push({
+              ...round,
+              status: "failed",
+              reason:
+                project.recovery.agent === true
+                  ? "verification failed after recovery"
+                  : "verification failed",
+            });
             break;
           }
-          if (!commit.noChanges) {
-            round.status = "committed";
-            if (commit.commitSha !== undefined) round.commitSha = commit.commitSha;
+          round.status = "verified";
+          if (project.commit.enabled && input.runGit !== undefined) {
+            const commit = runCommit({ project, finding, commands, runGit: input.runGit });
+            if (!commit.ok) {
+              if (commit.dirtyStatus !== undefined) {
+                const recovery = await recoverPostCommitDirtyWorktreeAsync({
+                  project,
+                  finding,
+                  env,
+                  dirtyStatus: commit.dirtyStatus,
+                  commands,
+                  runCommand: input.runCommand,
+                  runGit: input.runGit,
+                  ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
+                });
+                if (recovery.ok) {
+                  round.status = "committed";
+                  rounds.push(round);
+                  continue;
+                }
+                rounds.push({
+                  ...round,
+                  status: "failed",
+                  reason: recovery.reason ?? "post-commit recovery failed",
+                });
+                break;
+              }
+              rounds.push({ ...round, status: "failed", reason: "commit failed" });
+              break;
+            }
+            if (!commit.noChanges) {
+              round.status = "committed";
+              if (commit.commitSha !== undefined) round.commitSha = commit.commitSha;
+            }
           }
+          rounds.push(round);
         }
-        rounds.push(round);
+      } else {
+        rounds.push(
+          ...planned.selected.map((finding) => skippedRound(finding, "execution.agent is false")),
+        );
       }
-    } else {
-      rounds.push(
-        ...planned.selected.map((finding) => skippedRound(finding, "execution.agent is false")),
-      );
     }
-    if (!rounds.some((round) => round.status === "failed")) {
+    if (!targetScoreReached && !rounds.some((round) => round.status === "failed")) {
       await runEvalAsync({
         project,
         env,
@@ -1768,6 +2038,17 @@ export async function runLoopProjectAsync(input: {
         runCommand: input.runCommand,
         ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
       });
+      const evalCommand = lastEvalCommand(commands);
+      if (input.runGit !== undefined) {
+        runPullRequestPublish({
+          project,
+          rounds,
+          evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
+          commands,
+          runCommand: input.runCommand,
+          runGit: input.runGit,
+        });
+      }
     }
   }
 

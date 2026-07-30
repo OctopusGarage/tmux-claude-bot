@@ -9,6 +9,7 @@ import type {
   NotificationLevel,
   NotificationRequest,
 } from "../core/notifications/gateway.js";
+import type { AgentKind } from "../shared/types.js";
 import { expandTilde } from "../shared/utils/path.js";
 
 /**
@@ -90,6 +91,7 @@ const fail = (err: unknown): never => {
 
 const NOTIFY_CHANNELS = new Set(["telegram", "lark", "both"]);
 const NOTIFY_LEVELS = new Set(["info", "success", "warning", "error"]);
+const AGENT_KINDS = new Set(["claude", "codex"]);
 
 type NotifyCliOpts = {
   title?: string;
@@ -243,15 +245,28 @@ export async function cmdSend(
   }).catch(fail);
 }
 
-export async function cmdOpen(ref: string, opts: { json?: boolean }): Promise<void> {
+function parseAgentOption(opts: { agent?: string }): AgentKind | undefined {
+  if (opts.agent === undefined) return undefined;
+  if (!AGENT_KINDS.has(opts.agent)) {
+    throw new Error("--agent must be one of: claude, codex");
+  }
+  return opts.agent as AgentKind;
+}
+
+export async function cmdOpen(
+  ref: string,
+  opts: { json?: boolean; agent?: string },
+): Promise<void> {
   await withClient(async (c) => {
+    const agent = parseAgentOption(opts);
+    const openOpts = agent === undefined ? {} : { agent };
     // A known (live/recent) project by name or short-id → switch / start it.
     const sid = await resolveProjectSid(c, ref).then(
       (s) => s,
       () => null,
     );
     if (sid) {
-      const res = await c.open(sid);
+      const res = await c.open(sid, openOpts);
       if (opts.json) return json(res);
       out(`open ${ref}: ${res.status}${res.started ? ` (${res.started})` : ""}`);
       return;
@@ -261,7 +276,7 @@ export async function cmdOpen(ref: string, opts: { json?: boolean }): Promise<vo
     // against the SHELL cwd here: the bot would resolve a relative path against
     // its own working dir, not the user's.
     const abs = resolve(process.cwd(), expandTilde(ref));
-    const res = await c.openPath(abs);
+    const res = await c.openPath(abs, openOpts);
     if (opts.json) return json(res);
     if (res.status === "created" || res.status === "switched") {
       out(`open ${ref}: ${res.status}${res.started ? ` (${res.started})` : ""}`);
@@ -323,7 +338,7 @@ export async function cmdNotify(
   opts: NotifyCliOpts & { json?: boolean },
 ): Promise<void> {
   await withClient(async (c) => {
-    const request = await buildNotifyRequest(words ?? [], opts);
+    const request = await buildNotifyRequest(words, opts);
     const result = await c.notify(request);
     if (opts.json) return json(result);
     const delivered = result.deliveries
@@ -332,6 +347,35 @@ export async function cmdNotify(
     out(`notify: ${result.status}${delivered ? ` (${delivered})` : ""}`);
     if (result.status === "failed") process.exitCode = 1;
   }).catch(fail);
+}
+
+export async function cmdTaskAudit(opts: {
+  now?: string;
+  force?: boolean;
+  json?: boolean;
+}): Promise<void> {
+  await withClient(async (c) => {
+    const now = opts.now === undefined ? undefined : parseCliTime(opts.now, "--now");
+    const result = await c.taskAudit({
+      ...(now !== undefined ? { now } : {}),
+      force: opts.force ?? false,
+    });
+    if (opts.json) return json(result);
+    if (result.fired) {
+      out(
+        `task audit fired: scheduledAt=${new Date(result.scheduledAt).toISOString()} failures=${result.failures}`,
+      );
+    } else {
+      out(`task audit not fired: ${result.reason}`);
+    }
+  }).catch(fail);
+}
+
+function parseCliTime(value: string, flag: string): number {
+  const numeric = Number(value);
+  const parsed = Number.isFinite(numeric) ? numeric : Date.parse(value);
+  if (Number.isNaN(parsed)) throw new Error(`invalid ${flag} "${value}"`);
+  return parsed;
 }
 
 export function currentTmuxSession(
@@ -370,15 +414,13 @@ export async function cmdSendAttachment(
 
 export async function cmdPromptTranslate(words: string[], opts: { json?: boolean }): Promise<void> {
   await withClient(async (c) => {
-    const res = await c.promptTranslate((words ?? []).join(" "));
+    const res = await c.promptTranslate(words.join(" "));
     if (opts.json) return json(res.status);
     out(res.body);
   }).catch(fail);
 }
 
-/** Drive a session's autopilot: no verb prints its view; a verb (on|off|stop|
- * `goal <id>` | `goals <id,id> [rounds N]` | confirm | reject | global on/off)
- * is applied — the same verbs the chat panel and TUI use. */
+/** Delegate a session's current work to the Loop Supervisor. */
 export async function cmdAutopilot(
   ref: string,
   verbParts: string[],
@@ -386,23 +428,9 @@ export async function cmdAutopilot(
 ): Promise<void> {
   await withClient(async (c) => {
     const session = await resolveSession(c, ref);
-    const verb = (verbParts ?? []).join(" ").trim();
-    if (verb) {
-      const res = await c.autopilot(session, verb);
-      if (opts.json) return json(res);
-      out(res.status);
-      return;
-    }
-    const view = await c.autopilotView(session);
-    if (opts.json) return json(view);
-    out(view.statusLine);
-    if (view.cycle) {
-      const cy = view.cycle;
-      out(
-        `goal ${cy.goalId} (${cy.pos}/${cy.total}, round ${cy.round}/${cy.rounds})${
-          view.gatePending ? " — awaiting confirm (tcb autopilot <project> confirm)" : ""
-        }`,
-      );
-    }
+    const verb = verbParts.join(" ").trim();
+    const res = await c.autopilot(session, verb);
+    if (opts.json) return json(res);
+    out(res.status);
   }).catch(fail);
 }

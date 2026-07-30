@@ -7,9 +7,8 @@ let proc: ChildProcess | null = null;
 
 /**
  * Keep the Mac awake for the bot's lifetime (macOS only, opt-in via config). Spawns
- * `caffeinate -i -s -w <our pid>`:
- *  - `-i` blocks idle system sleep (keeps the bot reachable from the phone),
- *  - `-s` pins full system sleep while on AC (so it doesn't drain on battery),
+ * `caffeinate -s -w <our pid>`:
+ *  - `-s` pins system sleep while on AC (so it doesn't drain on battery),
  *  - `-w <pid>` binds the assertion to THIS process, so caffeinate self-exits if we
  *    crash without a clean shutdown — no orphaned assertion.
  *
@@ -20,7 +19,7 @@ let proc: ChildProcess | null = null;
 export function startKeepAwake(enabled: boolean): void {
   if (!enabled || process.platform !== "darwin" || proc) return;
   try {
-    const child = spawn("caffeinate", ["-i", "-s", "-w", String(process.pid)], {
+    const child = spawn("caffeinate", ["-s", "-w", String(process.pid)], {
       stdio: "ignore",
     });
     child.on("error", (err) => {
@@ -31,7 +30,7 @@ export function startKeepAwake(enabled: boolean): void {
       if (proc === child) proc = null;
     });
     proc = child;
-    log.info("keep-awake enabled (caffeinate -i -s)");
+    log.info("keep-awake enabled (caffeinate -s; AC power only)");
   } catch (err) {
     log.warn("keep-awake spawn threw", { err });
     proc = null;

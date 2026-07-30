@@ -26,7 +26,7 @@ projects:
 `;
 
 describe("runLoopSchedulerTick", () => {
-  it("reports due projects without executing them", () => {
+  it("reports due projects without advancing completion anchors", () => {
     const config = parseLoopConfigYaml(configText);
     const lastFired: Record<string, number> = {};
     const now = Date.parse("2026-07-16T10:10:00Z");
@@ -35,9 +35,6 @@ describe("runLoopSchedulerTick", () => {
       config,
       now,
       lastFired,
-      setLastFired: (projectId, firedAt) => {
-        lastFired[projectId] = firedAt;
-      },
     });
 
     expect(summary).toMatchObject({
@@ -53,7 +50,7 @@ describe("runLoopSchedulerTick", () => {
       name: "Due",
       action: "would-run",
     });
-    expect(lastFired.due).toBe(now);
+    expect(lastFired).toEqual({});
   });
 
   it("does not repeat projects whose anchor is already current", () => {
@@ -65,9 +62,6 @@ describe("runLoopSchedulerTick", () => {
       config,
       now,
       lastFired,
-      setLastFired: (projectId, firedAt) => {
-        lastFired[projectId] = firedAt;
-      },
     });
 
     expect(summary.due).toBe(0);
@@ -84,9 +78,6 @@ describe("runLoopSchedulerTick", () => {
       config,
       now,
       lastFired,
-      setLastFired: (projectId, firedAt) => {
-        lastFired[projectId] = firedAt;
-      },
     });
 
     expect(summary.due).toBe(0);
@@ -103,9 +94,6 @@ describe("runLoopSchedulerTick", () => {
       config,
       now,
       lastFired,
-      setLastFired: (projectId, firedAt) => {
-        lastFired[projectId] = firedAt;
-      },
     });
 
     expect(summary.due).toBe(1);
@@ -113,6 +101,716 @@ describe("runLoopSchedulerTick", () => {
       projectId: "due",
       scheduledAt,
     });
-    expect(lastFired.due).toBe(scheduledAt);
+    expect(lastFired).toEqual({});
+  });
+
+  it("collapses stale anchors to the latest due fire instead of replaying missed days", () => {
+    const config = parseLoopConfigYaml(configText.replace('"*/5 * * * *"', '"0 10 * * *"'));
+    const lastFired: Record<string, number> = {
+      due: Date.parse("2026-07-25T10:00:00Z"),
+    };
+    const latestDue = Date.parse("2026-07-28T10:00:00Z");
+    const now = Date.parse("2026-07-28T11:00:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired,
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      scheduledAt: latestDue,
+    });
+  });
+
+  it("schedules pull request review jobs independently from architecture jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    pullRequest:",
+          "      enabled: true",
+          "    pullRequestReview:",
+          "      enabled: true",
+          '      schedule: "30 11 * * *"',
+          "      autoMerge: true",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T11:35:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T11:35:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:pull-request-review",
+      jobKind: "pull-request-review",
+      scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+    });
+  });
+
+  it("schedules bug-fix jobs independently from architecture jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    bugFix:",
+          "      enabled: true",
+          '      schedule: "45 11 * * *"',
+          "      maxRounds: 2",
+          "      maxBugsPerRound: 1",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T11:50:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T11:50:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:bug-fix",
+      jobKind: "bug-fix",
+      scheduledAt: Date.parse("2026-07-16T11:45:00Z"),
+    });
+  });
+
+  it("schedules test-coverage jobs independently from architecture jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    testCoverage:",
+          "      enabled: true",
+          '      schedule: "20 14 * * *"',
+          "      branch: loop/due/test-coverage",
+          "      targetCoverage: 80",
+          "      maxRounds: 5",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T14:25:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T14:25:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:test-coverage",
+      jobKind: "test-coverage",
+      scheduledAt: Date.parse("2026-07-16T14:20:00Z"),
+    });
+  });
+
+  it("schedules security-maintenance jobs independently from architecture jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    securityMaintenance:",
+          "      enabled: true",
+          '      schedule: "10 16 * * *"',
+          "      branch: loop/due/security-maintenance",
+          "      maxRounds: 3",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T16:15:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T16:15:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:security-maintenance",
+      jobKind: "security-maintenance",
+      scheduledAt: Date.parse("2026-07-16T16:10:00Z"),
+    });
+  });
+
+  it("schedules harness-auto jobs independently from component jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    harnessAuto:",
+          "      enabled: true",
+          '      schedule: "50 16 * * *"',
+          "      branch: loop/due/harness-auto",
+          "      maxRounds: 4",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T16:55:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T16:55:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:harness-auto",
+      jobKind: "harness-auto",
+      scheduledAt: Date.parse("2026-07-16T16:50:00Z"),
+    });
+  });
+
+  it("schedules opportunity-discovery jobs independently from implementation jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    opportunityDiscovery:",
+          "      enabled: true",
+          '      schedule: "15 9 * * *"',
+          "      maxSuggestions: 2",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T09:20:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T09:20:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:opportunity-discovery",
+      jobKind: "opportunity-discovery",
+      scheduledAt: Date.parse("2026-07-16T09:15:00Z"),
+    });
+  });
+
+  it("counts architecture and pull request review as separate checked jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    pullRequest:",
+          "      enabled: true",
+          "    pullRequestReview:",
+          "      enabled: true",
+          '      schedule: "30 11 * * *"',
+        ].join("\n"),
+      ),
+    );
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now: Date.parse("2026-07-16T11:35:00Z"),
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(3);
+  });
+
+  it("counts architecture and bug-fix as separate checked jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    bugFix:",
+          "      enabled: true",
+          '      schedule: "45 11 * * *"',
+        ].join("\n"),
+      ),
+    );
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now: Date.parse("2026-07-16T11:50:00Z"),
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(3);
+  });
+
+  it("counts architecture and test-coverage as separate checked jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    testCoverage:",
+          "      enabled: true",
+          '      schedule: "20 14 * * *"',
+        ].join("\n"),
+      ),
+    );
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now: Date.parse("2026-07-16T14:25:00Z"),
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(3);
+  });
+
+  it("schedules repository-wide pull request review jobs", () => {
+    const config = parseLoopConfigYaml(`${configText}
+prReview:
+  repositories:
+    - id: janitor
+      name: PR Janitor
+      path: /repo/janitor
+      repo: OctopusGarage/janitor
+      agent: codex
+      schedule: "30 11 * * *"
+      base: dev
+      autoMerge: true
+`);
+    const now = Date.parse("2026-07-16T11:35:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(3);
+    expect(summary.dueProjects).toContainEqual(
+      expect.objectContaining({
+        projectId: "janitor",
+        jobKey: "pr-review:janitor",
+        jobKind: "repository-pull-request-review",
+        scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+      }),
+    );
+  });
+
+  it("schedules workspace architecture jobs as one multi-repository target", () => {
+    const config = parseLoopConfigYaml(`${configText}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+        pullRequest:
+          enabled: true
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+        pullRequest:
+          enabled: true
+    architecture:
+      enabled: true
+      schedule: "30 11 * * *"
+      goal: Improve frontend/backend architecture together.
+`);
+    const now = Date.parse("2026-07-16T11:35:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(3);
+    expect(summary.dueProjects).toContainEqual(
+      expect.objectContaining({
+        projectId: "geo",
+        name: "Geo Workspace",
+        jobKey: "workspace:geo:architecture",
+        jobKind: "workspace-architecture",
+        scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+      }),
+    );
+  });
+
+  it("schedules workspace maintenance jobs as multi-repository targets", () => {
+    const config = parseLoopConfigYaml(`${configText}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+        pullRequest:
+          enabled: true
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+        pullRequest:
+          enabled: true
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    bugFix:
+      enabled: true
+      schedule: "30 11 * * *"
+    testCoverage:
+      enabled: true
+      schedule: "35 11 * * *"
+    securityMaintenance:
+      enabled: true
+      schedule: "40 11 * * *"
+    opportunityDiscovery:
+      enabled: true
+      schedule: "45 11 * * *"
+    pullRequestReview:
+      enabled: true
+      schedule: "50 11 * * *"
+`);
+    const now = Date.parse("2026-07-16T11:55:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: now,
+        "workspace:geo:bug-fix": Date.parse("2026-07-16T11:25:00Z"),
+        "workspace:geo:test-coverage": Date.parse("2026-07-16T11:25:00Z"),
+        "workspace:geo:security-maintenance": Date.parse("2026-07-16T11:25:00Z"),
+        "workspace:geo:opportunity-discovery": Date.parse("2026-07-16T11:25:00Z"),
+        "workspace:geo:pull-request-review": Date.parse("2026-07-16T11:25:00Z"),
+      },
+    });
+
+    expect(summary.checked).toBe(8);
+    expect(summary.dueProjects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:bug-fix",
+          jobKind: "bug-fix",
+          scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+        }),
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:test-coverage",
+          jobKind: "test-coverage",
+          scheduledAt: Date.parse("2026-07-16T11:35:00Z"),
+        }),
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:security-maintenance",
+          jobKind: "security-maintenance",
+          scheduledAt: Date.parse("2026-07-16T11:40:00Z"),
+        }),
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:opportunity-discovery",
+          jobKind: "opportunity-discovery",
+          scheduledAt: Date.parse("2026-07-16T11:45:00Z"),
+        }),
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:pull-request-review",
+          jobKind: "pull-request-review",
+          scheduledAt: Date.parse("2026-07-16T11:50:00Z"),
+        }),
+      ]),
+    );
+  });
+
+  it("schedules workspace harness-auto jobs as multi-repository targets", () => {
+    const config = parseLoopConfigYaml(`${configText}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    harnessAuto:
+      enabled: true
+      schedule: "50 16 * * *"
+      maxRounds: 4
+`);
+    const now = Date.parse("2026-07-16T16:55:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: now,
+        "workspace:geo:harness-auto": Date.parse("2026-07-16T16:45:00Z"),
+      },
+    });
+
+    expect(summary.dueProjects).toContainEqual(
+      expect.objectContaining({
+        projectId: "geo",
+        name: "Geo Workspace",
+        jobKey: "workspace:geo:harness-auto",
+        jobKind: "harness-auto",
+        scheduledAt: Date.parse("2026-07-16T16:50:00Z"),
+      }),
+    );
+  });
+
+  it("uses architecture jitter defaults for workspace architecture jobs", () => {
+    const config = parseLoopConfigYaml(`scheduler:
+  jitter:
+    enabled: true
+    seed: local-stable
+    architectureMaxDelayMinutes: 10
+${configText}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+    architecture:
+      enabled: true
+      schedule: "10 10 * * *"
+      goal: Improve frontend/backend architecture together.
+      scheduleJitterMinutes: 0
+`);
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now: scheduledAt,
+      lastFired: {
+        "workspace:geo:architecture": Date.parse("2026-07-16T10:05:00Z"),
+      },
+    });
+
+    expect(summary.dueProjects).toContainEqual(
+      expect.objectContaining({
+        projectId: "geo",
+        jobKind: "workspace-architecture",
+        scheduledAt,
+        effectiveAt: scheduledAt,
+        jitterMs: 0,
+      }),
+    );
+  });
+
+  it("delays due jobs until their deterministic jitter effective time", () => {
+    const config = parseLoopConfigYaml(`scheduler:
+  jitter:
+    enabled: true
+    seed: local-stable
+    architectureMaxDelayMinutes: 10
+${configText}`);
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const beforeJitter = scheduledAt + 60_000;
+    const afterJitter = scheduledAt + 180_000;
+
+    const early = runLoopSchedulerTick({
+      config,
+      now: beforeJitter,
+      lastFired: {
+        due: Date.parse("2026-07-16T10:05:00Z"),
+      },
+    });
+    const due = runLoopSchedulerTick({
+      config,
+      now: afterJitter,
+      lastFired: {
+        due: Date.parse("2026-07-16T10:05:00Z"),
+      },
+    });
+
+    expect(early.due).toBe(0);
+    expect(early.skipped).toContainEqual(
+      expect.objectContaining({
+        projectId: "due",
+        reason: "not-due",
+        scheduledAt,
+        jitterMs: expect.any(Number),
+        effectiveAt: expect.any(Number),
+      }),
+    );
+    expect(early.skipped.find((item) => item.projectId === "due")?.effectiveAt).toBeGreaterThan(
+      beforeJitter,
+    );
+    expect(due.due).toBe(1);
+    expect(due.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      scheduledAt,
+      effectiveAt: early.skipped.find((item) => item.projectId === "due")?.effectiveAt,
+      jitterMs: early.skipped.find((item) => item.projectId === "due")?.jitterMs,
+    });
+  });
+
+  it("does not miss the first scheduled fire when startup happens inside the jitter window", () => {
+    const config = parseLoopConfigYaml(`scheduler:
+  jitter:
+    enabled: true
+    seed: local-stable
+    architectureMaxDelayMinutes: 30
+projects:
+  - id: due
+    name: Due
+    path: /repo/due
+    agent: codex
+    schedule: "0 10 * * *"
+    goal: Improve due project.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run assess
+`);
+    const scheduledAt = Date.parse("2026-07-16T10:00:00Z");
+    const firstStartup = scheduledAt + 20 * 60_000;
+    const summary = runLoopSchedulerTick({
+      config,
+      now: firstStartup,
+      lastFired: {},
+    });
+
+    const delayed = summary.skipped.find((item) => item.projectId === "due");
+    if (summary.due === 0) {
+      expect(delayed).toMatchObject({
+        reason: "not-due",
+        scheduledAt,
+        effectiveAt: expect.any(Number),
+        jitterMs: expect.any(Number),
+      });
+      expect(delayed?.effectiveAt).toBeGreaterThan(firstStartup);
+    } else {
+      expect(summary.dueProjects[0]).toMatchObject({
+        projectId: "due",
+        scheduledAt,
+      });
+    }
+  });
+
+  it("uses per-job jitter overrides before global defaults", () => {
+    const config = parseLoopConfigYaml(
+      configText
+        .replace(
+          'schedule: "*/5 * * * *"',
+          ['schedule: "*/5 * * * *"', "    scheduleJitterMinutes: 0"].join("\n"),
+        )
+        .replace(
+          "projects:",
+          [
+            "scheduler:",
+            "  jitter:",
+            "    enabled: true",
+            "    seed: local-stable",
+            "    architectureMaxDelayMinutes: 10",
+            "projects:",
+          ].join("\n"),
+        ),
+    );
+
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const summary = runLoopSchedulerTick({
+      config,
+      now: scheduledAt,
+      lastFired: {
+        due: Date.parse("2026-07-16T10:05:00Z"),
+      },
+    });
+
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      scheduledAt,
+      effectiveAt: scheduledAt,
+      jitterMs: 0,
+    });
   });
 });

@@ -141,6 +141,27 @@ describe("loadConfig (real schema)", () => {
     expect(cfg.maxWaitDoneTotalMs).toBe(3600000);
   });
 
+  it("configures session idle reaping with conservative defaults and explicit disable", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).sessionIdleReaper).toEqual({
+      tickMs: 3_600_000,
+      maxIdleMs: 259_200_000,
+    });
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        SESSION_IDLE_REAPER_TICK_MS: "",
+        SESSION_IDLE_REAPER_MAX_IDLE_MS: "",
+      }).sessionIdleReaper,
+    ).toEqual({ tickMs: 3_600_000, maxIdleMs: 259_200_000 });
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        SESSION_IDLE_REAPER_TICK_MS: "0",
+        SESSION_IDLE_REAPER_MAX_IDLE_MS: "0",
+      }).sessionIdleReaper,
+    ).toEqual({ tickMs: 0, maxIdleMs: 0 });
+  });
+
   it("a non-empty but non-numeric env var still throws (a real typo)", () => {
     expect(() => loadConfig({ TELEGRAM_BOT_TOKEN: "t", POLL_INTERVAL_MS: "abc" })).toThrow();
   });

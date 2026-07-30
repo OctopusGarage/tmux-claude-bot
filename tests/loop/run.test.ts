@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import {
+  type LoopAgentTaskInvocation,
   type LoopRunCommandInvocation,
   runLoopProject,
   runLoopProjectAsync,
@@ -55,6 +56,34 @@ projects:
       enabled: true
       perRound: true
       branch: loop/hub
+    allowedActions: [tests, docs, small-refactor]
+    blockedActions: [direct-model-api, dependency-upgrade, broad-rewrite]
+`;
+
+const pullRequestConfigText = `
+projects:
+  - id: hub
+    name: Hub
+    path: /repo/hub
+    agent: codex
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    execution:
+      agent: true
+    assessment:
+      command: npm run assess
+    eval:
+      agent: true
+      minScore: 90
+    commit:
+      enabled: true
+      perRound: true
+      branch: loop/hub
+    pullRequest:
+      enabled: true
+      base: main
+      switchBack: main
     allowedActions: [tests, docs, small-refactor]
     blockedActions: [direct-model-api, dependency-upgrade, broad-rewrite]
 `;
@@ -219,6 +248,7 @@ describe("runLoopProject", () => {
   it("plans a safe finding, runs it through an agent adapter, verifies it, and commits", () => {
     const config = parseLoopConfigYaml(executableConfigText);
     const agentPrompts: string[] = [];
+    const agentTasks: LoopAgentTaskInvocation[] = [];
     const commandInvocations: LoopRunCommandInvocation[] = [];
     const gitCommands: string[][] = [];
 
@@ -260,6 +290,7 @@ describe("runLoopProject", () => {
         return { status: 0, stdout: "verified", stderr: "" };
       },
       runAgentTask: (invocation) => {
+        agentTasks.push(invocation);
         agentPrompts.push(invocation.prompt);
         return { status: 0, stdout: "agent changed files", stderr: "" };
       },
@@ -292,6 +323,10 @@ describe("runLoopProject", () => {
       }),
     ]);
     expect(agentPrompts[0]).toContain("Add focused parser regression tests.");
+    expect(agentTasks[0]?.contextReset).toBe("compact");
+    expect(agentPrompts[0]).toContain(
+      "If a project verification or commit hook fails because of an existing dependency advisory",
+    );
     expect(commandInvocations.map((invocation) => invocation.kind)).toEqual([
       "assessment",
       "verification",
@@ -315,6 +350,417 @@ describe("runLoopProject", () => {
       ["status", "--porcelain"],
       ["rev-parse", "HEAD"],
     ]);
+  });
+
+  it("skips architecture optimization when the assessment score already reaches the target", () => {
+    const config = parseLoopConfigYaml(
+      executableConfigText.replace("targetScore: 90", "targetScore: 95"),
+    );
+    const commandInvocations: LoopRunCommandInvocation[] = [];
+    const gitCommands: string[][] = [];
+    let agentTasks = 0;
+
+    const summary = runLoopProject({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        commandInvocations.push(invocation);
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              score: 95,
+              findings: [
+                {
+                  id: "f1",
+                  title: "Extract parser tests",
+                  action: "tests",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["tests/parser.test.ts"],
+                  prompt: "Add focused parser regression tests.",
+                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "should not run", stderr: "" };
+      },
+      runAgentTask: () => {
+        agentTasks++;
+        return { status: 0, stdout: "should not run", stderr: "" };
+      },
+      runGit: (invocation) => {
+        gitCommands.push(invocation.args);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(summary).toMatchObject({
+      status: "passed",
+      committed: false,
+      executed: 1,
+    });
+    expect(commandInvocations.map((invocation) => invocation.kind)).toEqual(["assessment"]);
+    expect(agentTasks).toBe(0);
+    expect(gitCommands).toEqual([]);
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({
+        findingId: "target-score-reached",
+        status: "skipped",
+        reason:
+          "assessment score 95 is >= targetScore 95; skipping optimization to avoid over-optimization",
+      }),
+    ]);
+  });
+
+  it("pushes a committed loop branch, opens a PR with run details, and switches back to main", async () => {
+    const config = parseLoopConfigYaml(pullRequestConfigText);
+    const gitCommands: string[][] = [];
+    const prCommands: string[] = [];
+    const agentPrompts: string[] = [];
+
+    const summary = await runLoopProjectAsync({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              score: 72,
+              findings: [
+                {
+                  id: "f1",
+                  title: "Extract parser tests",
+                  action: "tests",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["tests/parser.test.ts"],
+                  prompt: "Add focused parser regression tests.",
+                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.kind === "eval") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              passed: true,
+              score: 94,
+              findings: [],
+              suggestedBotImprovements: [],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.kind === "pr") {
+          prCommands.push(invocation.command);
+          return { status: 0, stdout: "https://github.test/repo/pull/1\n", stderr: "" };
+        }
+        return { status: 0, stdout: "verified", stderr: "" };
+      },
+      runAgentTask: async (invocation) => {
+        agentPrompts.push(invocation.prompt);
+        return { status: 0, stdout: "agent changed files", stderr: "" };
+      },
+      runAgentEval: async () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          passed: true,
+          score: 94,
+          findings: [],
+          suggestedBotImprovements: [],
+        }),
+        stderr: "",
+      }),
+      runGit: (invocation) => {
+        gitCommands.push(invocation.args);
+        if (invocation.args.join(" ") === "diff --cached --quiet") {
+          return { status: 1, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "rev-parse HEAD") {
+          return { status: 0, stdout: "abc123\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({ findingId: "f1", status: "committed", commitSha: "abc123" }),
+    ]);
+    expect(agentPrompts[0]).toContain("Do not open browser windows");
+    expect(gitCommands).toEqual([
+      ["switch", "loop/hub"],
+      ["add", "--", "tests/parser.test.ts"],
+      ["diff", "--cached", "--quiet"],
+      ["commit", "-m", "loop(hub): Extract parser tests"],
+      ["status", "--porcelain"],
+      ["rev-parse", "HEAD"],
+      ["status", "--porcelain"],
+      ["log", "-1", "--stat", "--oneline"],
+      ["push", "-u", "origin", "loop/hub"],
+      ["switch", "main"],
+    ]);
+    expect(prCommands).toHaveLength(1);
+    expect(prCommands[0]).toContain("gh pr create");
+    expect(prCommands[0]).toContain("--base 'main'");
+    expect(prCommands[0]).toContain("--head 'loop/hub'");
+    expect(prCommands[0]).toContain("Extract parser tests");
+    expect(summary.commands.map((command) => command.kind)).toContain("pr");
+  });
+
+  it("opens a PR after creating a missing loop branch during commit setup", async () => {
+    const config = parseLoopConfigYaml(pullRequestConfigText);
+    const gitCommands: string[][] = [];
+    const prCommands: string[] = [];
+
+    const summary = await runLoopProjectAsync({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              findings: [
+                {
+                  id: "f1",
+                  title: "Extract parser tests",
+                  action: "tests",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["tests/parser.test.ts"],
+                  prompt: "Add focused parser regression tests.",
+                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.kind === "pr") {
+          prCommands.push(invocation.command);
+          return { status: 0, stdout: "https://github.test/repo/pull/2\n", stderr: "" };
+        }
+        return { status: 0, stdout: "ok", stderr: "" };
+      },
+      runAgentTask: async () => ({ status: 0, stdout: "agent changed files", stderr: "" }),
+      runAgentEval: async () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          passed: true,
+          score: 94,
+          findings: [],
+          suggestedBotImprovements: [],
+        }),
+        stderr: "",
+      }),
+      runGit: (invocation) => {
+        gitCommands.push(invocation.args);
+        if (invocation.args.join(" ") === "switch loop/hub") {
+          return { status: 128, stdout: "", stderr: "fatal: invalid reference: loop/hub" };
+        }
+        if (invocation.args.join(" ") === "diff --cached --quiet") {
+          return { status: 1, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "rev-parse HEAD") {
+          return { status: 0, stdout: "abc123\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(prCommands).toHaveLength(1);
+    expect(gitCommands).toEqual([
+      ["switch", "loop/hub"],
+      ["switch", "-c", "loop/hub"],
+      ["add", "--", "tests/parser.test.ts"],
+      ["diff", "--cached", "--quiet"],
+      ["commit", "-m", "loop(hub): Extract parser tests"],
+      ["status", "--porcelain"],
+      ["rev-parse", "HEAD"],
+      ["status", "--porcelain"],
+      ["log", "-1", "--stat", "--oneline"],
+      ["push", "-u", "origin", "loop/hub"],
+      ["switch", "main"],
+    ]);
+    expect(summary.commands).toContainEqual(
+      expect.objectContaining({
+        kind: "commit",
+        command: "git switch loop/hub; git switch -c loop/hub",
+        status: 0,
+        stderr: expect.stringContaining("fatal: invalid reference: loop/hub"),
+      }),
+    );
+  });
+
+  it("publishes a recovered dirty-worktree commit as a PR and switches back", async () => {
+    const config = parseLoopConfigYaml(
+      pullRequestConfigText.replace(
+        "pullRequest:",
+        `recovery:
+      agent: true
+      dirtyWorktree: true
+      maxAttempts: 1
+    pullRequest:`,
+      ),
+    );
+    const gitCommands: string[][] = [];
+    const prCommands: string[] = [];
+    const evalPrompts: string[] = [];
+    let statusChecks = 0;
+
+    const summary = await runLoopProjectAsync({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.kind === "pr") {
+          prCommands.push(invocation.command);
+          return { status: 0, stdout: "https://github.test/repo/pull/3\n", stderr: "" };
+        }
+        return { status: 0, stdout: "ok", stderr: "" };
+      },
+      runAgentTask: async () => ({
+        status: 0,
+        stdout: "recovered and committed existing dirty slice",
+        stderr: "",
+      }),
+      runAgentEval: async (invocation) => {
+        evalPrompts.push(invocation.prompt);
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            passed: true,
+            score: 95,
+            findings: ["dirty recovery was verified before publishing"],
+            suggestedBotImprovements: [],
+          }),
+          stderr: "",
+        };
+      },
+      runGit: (invocation) => {
+        gitCommands.push(invocation.args);
+        if (invocation.args.join(" ") === "status --porcelain") {
+          statusChecks++;
+          return {
+            status: 0,
+            stdout: statusChecks === 1 ? " M src/recovered.ts\n" : "",
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({
+        findingId: "dirty-worktree-recovery",
+        status: "committed",
+      }),
+    ]);
+    expect(evalPrompts).toHaveLength(1);
+    expect(prCommands).toHaveLength(1);
+    expect(prCommands[0]).toContain("gh pr create");
+    expect(prCommands[0]).toContain("Recover dirty worktree");
+    expect(gitCommands).toEqual([
+      ["status", "--porcelain"],
+      ["status", "--porcelain"],
+      ["status", "--porcelain"],
+      ["log", "-1", "--stat", "--oneline"],
+      ["push", "-u", "origin", "loop/hub"],
+      ["switch", "main"],
+    ]);
+  });
+
+  it("does not push or open a PR when the final pre-PR worktree review is dirty", async () => {
+    const config = parseLoopConfigYaml(pullRequestConfigText);
+    const gitCommands: string[][] = [];
+    const prCommands: string[] = [];
+    let postCommitStatusChecks = 0;
+
+    const summary = await runLoopProjectAsync({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              findings: [
+                {
+                  id: "f1",
+                  title: "Extract parser tests",
+                  action: "tests",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["tests/parser.test.ts"],
+                  prompt: "Add focused parser regression tests.",
+                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                },
+              ],
+              suggestedBotImprovements: [],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.kind === "pr") {
+          prCommands.push(invocation.command);
+        }
+        return { status: 0, stdout: "ok", stderr: "" };
+      },
+      runAgentTask: async () => ({ status: 0, stdout: "agent changed files", stderr: "" }),
+      runAgentEval: async () => ({
+        status: 0,
+        stdout: JSON.stringify({ passed: true, score: 94, findings: [] }),
+        stderr: "",
+      }),
+      runGit: (invocation) => {
+        gitCommands.push(invocation.args);
+        if (invocation.args.join(" ") === "diff --cached --quiet") {
+          return { status: 1, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          postCommitStatusChecks++;
+          return {
+            status: 0,
+            stdout: postCommitStatusChecks >= 2 ? " M src/unreviewed.ts\n" : "",
+            stderr: "",
+          };
+        }
+        if (invocation.args.join(" ") === "rev-parse HEAD") {
+          return { status: 0, stdout: "abc123\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("failed");
+    expect(prCommands).toEqual([]);
+    expect(summary.commands).toContainEqual(
+      expect.objectContaining({
+        kind: "pr",
+        command: "pull request skipped: final worktree review is dirty",
+        status: 1,
+        stderr: "M src/unreviewed.ts",
+      }),
+    );
+    expect(gitCommands).not.toContainEqual(["push", "-u", "origin", "loop/hub"]);
+    expect(gitCommands).not.toContainEqual(["switch", "main"]);
   });
 
   it("recovers a committed round when verified changes remain outside affected files", () => {
@@ -450,6 +896,9 @@ describe("runLoopProject", () => {
     ]);
     expect(agentPrompts).toHaveLength(2);
     expect(agentPrompts[1]).toContain("worktree still has verified changes");
+    expect(agentPrompts[1]).toContain(
+      "If the remaining blocker is a dependency audit or commit-hook dependency advisory",
+    );
     expect(summary.commands.map((command) => command.command)).toContain(
       "agent-post-commit-recovery",
     );
@@ -670,6 +1119,9 @@ describe("runLoopProject", () => {
       }),
     ]);
     expect(agentPrompts[0]).toContain("dirty worktree");
+    expect(agentPrompts[0]).toContain(
+      "If project gates or commit hooks fail only because of a dependency advisory",
+    );
     expect(gitCommands).toEqual([
       ["status", "--porcelain"],
       ["status", "--porcelain"],

@@ -160,7 +160,7 @@ program
 program
   .command("autopilot [project] [verb...]")
   .description(
-    "no args: status across sessions · <project>: its autopilot view · <project> <verb>: drive it (on|off|stop|`goal <id>`|`goals <id,id> [rounds N]`|confirm|reject)",
+    "no args: status across sessions · <project>: its autopilot view · <project> <verb>: drive it (on|off|stop|`goal <id>`|`goals <id,id> [rounds N]`|confirm|reject|delegate [requirement])",
   )
   .option("--json", "output JSON")
   .action(async (project: string | undefined, verb: string[], o) => {
@@ -260,6 +260,10 @@ program
   .command("open <project>")
   .description(
     "switch to / start a project — by name (incl. stopped) or a filesystem path to create a new one",
+  )
+  .option(
+    "--agent <kind>",
+    "start with a specific agent when the project is stopped (claude|codex)",
   )
   .option("--json", "output JSON")
   .action(async (project, o) => (await ctl()).cmdOpen(project, o));
@@ -485,6 +489,120 @@ batch
     const { SchedulerStore } = await import("./core/scheduler/scheduler-store.js");
     stopRun(new SchedulerStore());
     console.log("run stopped");
+  });
+
+const task = program.command("task").description("report external scheduled task status");
+
+task
+  .command("audit")
+  .description("run the daily scheduled task audit through the running bot")
+  .option("--now <time>", "override current time for automation/testing (epoch ms or ISO)")
+  .option("--force", "run immediately even if the configured schedule is not due")
+  .option("--json", "output JSON")
+  .action(async (o: { now?: string; force?: boolean; json?: boolean }) => {
+    const { cmdTaskAudit } = await ctl();
+    await cmdTaskAudit(o);
+  });
+
+task
+  .command("report")
+  .description("record an external scheduled task in the shared daily task ledger")
+  .requiredOption("--id <id>", "stable task id")
+  .requiredOption(
+    "--source <source>",
+    "task source: article-monitor, radar-monitor, external-monitor, launchd, loop-engineering, batch-scheduler, daily-audit",
+  )
+  .requiredOption("--name <name>", "human readable task name")
+  .requiredOption("--scheduled-at <time>", "scheduled time, epoch ms or ISO")
+  .requiredOption("--status <status>", "running, success, failed, or skipped")
+  .option("--started-at <time>", "start time, epoch ms or ISO")
+  .option("--ended-at <time>", "end time, epoch ms or ISO")
+  .option("--summary <text>", "short result summary")
+  .option("--error <text>", "failure reason")
+  .option("--report <path>", "path to a generated report")
+  .option(
+    "--repair-status <status>",
+    "repair state: not-needed, pending, running, fixed, blocked, failed, superseded, or not-reproducible",
+  )
+  .option("--json", "output JSON")
+  .action(async (o) => {
+    const { recordExternalTaskReport } = await import("./core/tasks/task-report.js");
+    const sources = new Set([
+      "loop-engineering",
+      "batch-scheduler",
+      "article-monitor",
+      "radar-monitor",
+      "external-monitor",
+      "launchd",
+      "daily-audit",
+    ]);
+    const statuses = new Set(["running", "success", "failed", "skipped"]);
+    const repairStatuses = new Set([
+      "not-needed",
+      "pending",
+      "running",
+      "fixed",
+      "blocked",
+      "failed",
+      "superseded",
+      "not-reproducible",
+    ]);
+    const parseTime = (value: string | undefined): number | undefined => {
+      if (value === undefined) return undefined;
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : Date.parse(value);
+    };
+    const scheduledAt = parseTime(o.scheduledAt);
+    if (scheduledAt === undefined || Number.isNaN(scheduledAt)) {
+      console.error(`invalid --scheduled-at "${o.scheduledAt}"`);
+      process.exit(1);
+    }
+    const startedAt = parseTime(o.startedAt);
+    if (o.startedAt !== undefined && (startedAt === undefined || Number.isNaN(startedAt))) {
+      console.error(`invalid --started-at "${o.startedAt}"`);
+      process.exit(1);
+    }
+    const endedAt = parseTime(o.endedAt);
+    if (o.endedAt !== undefined && (endedAt === undefined || Number.isNaN(endedAt))) {
+      console.error(`invalid --ended-at "${o.endedAt}"`);
+      process.exit(1);
+    }
+    if (!sources.has(o.source)) {
+      console.error(`invalid --source "${o.source}"`);
+      process.exit(1);
+    }
+    if (!statuses.has(o.status)) {
+      console.error(`invalid --status "${o.status}"`);
+      process.exit(1);
+    }
+    if (o.repairStatus !== undefined && !repairStatuses.has(o.repairStatus)) {
+      console.error(`invalid --repair-status "${o.repairStatus}"`);
+      process.exit(1);
+    }
+    const report = {
+      taskId: o.id,
+      source: o.source as Parameters<typeof recordExternalTaskReport>[0]["source"],
+      name: o.name,
+      scheduledAt,
+      status: o.status as Parameters<typeof recordExternalTaskReport>[0]["status"],
+      ...(o.summary !== undefined ? { summary: o.summary } : {}),
+      ...(o.error !== undefined ? { error: o.error } : {}),
+      ...(o.report !== undefined ? { reportPath: o.report } : {}),
+      ...(o.repairStatus !== undefined
+        ? {
+            repairStatus: o.repairStatus as NonNullable<
+              Parameters<typeof recordExternalTaskReport>[0]["repairStatus"]
+            >,
+          }
+        : {}),
+    };
+    recordExternalTaskReport({
+      ...report,
+      ...(startedAt !== undefined ? { startedAt } : {}),
+      ...(endedAt !== undefined ? { endedAt } : {}),
+    });
+    const result = { ok: true, taskId: o.id };
+    console.log(o.json ? JSON.stringify(result) : `recorded ${o.id}`);
   });
 
 const loop = program.command("loop").description("validate Loop Engineering configs");

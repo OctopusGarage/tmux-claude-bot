@@ -2,6 +2,8 @@ import { createLogger } from "../../shared/utils/logger.js";
 import {
   markSessionRunning,
   markSessionStopped,
+  markSessionUsed,
+  sessionLastUsedAt,
   sessionRunningSince,
 } from "../agents/runningSessions.js";
 import type { HandlerDeps } from "../deps.js";
@@ -37,6 +39,7 @@ export async function runRunningSweep(deps: HandlerDeps, bootAt: number): Promis
     try {
       if (await deps.agent.checkIfRunning(session)) {
         markSessionRunning(session);
+        if (sessionLastUsedAt(session) === null) markSessionUsed(session);
       } else {
         const since = sessionRunningSince(session);
         if (since !== null && since >= bootAt) markSessionStopped(session);

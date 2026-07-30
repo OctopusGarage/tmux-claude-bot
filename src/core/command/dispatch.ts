@@ -62,7 +62,7 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-const INTERACTIVE_SHELL_LOOKUP_TIMEOUT_MS = 5000;
+const INTERACTIVE_SHELL_LOOKUP_TIMEOUT_MS = 8000;
 const interactiveShellVisibilityCache = new Map<string, boolean>();
 
 function interactiveShellVisibilityCacheKey(bin: string): string {
@@ -231,8 +231,9 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
   if (!isMessageAction(msg.action)) {
     throw new Error(`Unknown action: ${msg.action}`);
   }
+  const text = queuedMessageText(msg);
 
-  log.info(`action=${msg.action} session=${session} text_len=${msg.text?.length ?? 0}`);
+  log.info(`action=${msg.action} session=${session} text_len=${text.length}`);
 
   const liveSession = await resolveLiveSessionName(deps.bridge, session);
   if (!liveSession) {
@@ -262,7 +263,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
   switch (msg.action) {
     case "text": {
       await deps.agent.waitUntilInputReady(session);
-      const promptText = msg.text ?? "";
+      const promptText = text;
       log.info(`sending keys session=${session}`);
       await deps.bridge.sendKeys(promptText, session);
       log.info(`keys sent, waiting for done session=${session}`);
@@ -276,8 +277,9 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       try {
         let round = await deps.agent.waitUntilDone(session);
         let waitedMs = deps.config.maxWaitDoneMs;
+        const maxWaitDoneTotalMs = msg.maxWaitDoneTotalMs ?? deps.config.maxWaitDoneTotalMs;
         let noticed = false;
-        while (!round.done && waitedMs < deps.config.maxWaitDoneTotalMs) {
+        while (!round.done && waitedMs < maxWaitDoneTotalMs) {
           if (!noticed) {
             msg.notify?.(m.taskStillRunningNotice);
             noticed = true;
@@ -422,6 +424,11 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       throw new Error(`Unknown action: ${_exhaustive}`);
     }
   }
+}
+
+function queuedMessageText(msg: QueuedMessage): string {
+  const text = (msg as { text?: string }).text;
+  return typeof text === "string" ? text : "";
 }
 
 function chatChannelOrDefault(channel: QueuedMessage["channel"]): "telegram" | "lark" {

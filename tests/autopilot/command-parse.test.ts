@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyAutopilotVerb, parseAutopilotVerb } from "../../src/core/autopilot/controls.js";
+import { parseDelegateRequirement } from "../../src/core/autopilot/delegated-task.js";
 import { isGlobalKeepAlive } from "../../src/core/autopilot/global-flag.js";
 import { AutopilotStore } from "../../src/core/autopilot/state-store.js";
 import { messages } from "../../src/core/i18n/index.js";
@@ -32,6 +33,19 @@ describe("parseAutopilotVerb", () => {
     expect(parseAutopilotVerb("global on")).toEqual({ verb: "global", on: true });
     expect(parseAutopilotVerb("global off")).toEqual({ verb: "global", on: false });
     expect(parseAutopilotVerb("global")).toEqual({ verb: "global", on: true });
+  });
+});
+
+describe("parseDelegateRequirement", () => {
+  it("parses explicit and context-backed delegate verbs", () => {
+    expect(parseDelegateRequirement("delegate implement the agreed feature")).toBe(
+      "implement the agreed feature",
+    );
+    const defaultRequirement = parseDelegateRequirement("delegate");
+    expect(defaultRequirement).toContain("current user-confirmed task");
+    expect(defaultRequirement).toContain("existing PRs");
+    expect(defaultRequirement).toContain("auto-merge");
+    expect(parseDelegateRequirement("on")).toBeNull();
   });
 });
 

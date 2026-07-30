@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlClient } from "../../../src/adapters/control/client.js";
 import { startControlServer } from "../../../src/adapters/control/server.js";
 import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
+import { performStart } from "../../../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
+import { runDailyTaskAuditServiceTick } from "../../../src/core/tasks/daily-audit-service.js";
 
 // Stub the core collaborators each op delegates to — we're covering the control
 // transport's DISPATCH + wiring, not re-testing dashboard/recovery/logs internals.
@@ -72,6 +74,14 @@ vi.mock("../../../src/core/session/output.js", () => ({
 vi.mock("../../../src/core/projects/sessionPathMap.js", () => ({
   getPathBySession: vi.fn(() => undefined),
 }));
+vi.mock("../../../src/core/tasks/daily-audit-service.js", () => ({
+  runDailyTaskAuditServiceTick: vi.fn(async () => ({
+    fired: true,
+    scheduledAt: 1785399600000,
+    failures: 1,
+  })),
+  dispatchDailyTaskRepair: vi.fn(),
+}));
 
 type EnqueueVerdict = "queued" | "duplicate" | false;
 function fakeDeps(
@@ -80,7 +90,23 @@ function fakeDeps(
 ): HandlerDeps {
   return {
     bridge: { capturePaneColored: async (s: string) => `PANE for ${s}` },
-    config: { projectSessionPrefix: prefix },
+    config: {
+      projectSessionPrefix: prefix,
+      claudeStartCommand: "claude",
+      startCommands: [
+        { label: "Claude", command: "claude", agent: "claude" },
+        { label: "Codex", command: "codex", agent: "codex" },
+      ],
+      taskAudit: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "both",
+        autoRepair: true,
+        repairBranch: "dev",
+      },
+      loopEngineering: { configFile: "/tmp/loop.yml", supervisor: { enabled: true } },
+    },
     queue: {
       enqueue:
         enqueue ??
@@ -109,6 +135,7 @@ describe("control server op dispatch (real unix socket)", () => {
   let client: ControlClient;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     dir = mkdtempSync(join(tmpdir(), "tcb-ctlops-"));
     process.env.TCB_STATE_DIR = dir;
     h.openResult = { status: "switched", sessionName: "sOpen" };
@@ -175,6 +202,26 @@ describe("control server op dispatch (real unix socket)", () => {
     });
   });
 
+  it("runs the daily task audit through the running bot", async () => {
+    const c = await connected();
+
+    await expect(c.taskAudit({ now: 1785399600000, force: true })).resolves.toEqual({
+      fired: true,
+      scheduledAt: 1785399600000,
+      failures: 1,
+    });
+    expect(runDailyTaskAuditServiceTick).toHaveBeenCalledWith(
+      expect.objectContaining({
+        now: 1785399600000,
+        force: true,
+        config: expect.objectContaining({ autoRepair: true }),
+        notifications: expect.any(Object),
+        loopConfigFile: "/tmp/loop.yml",
+        dispatchRepair: expect.any(Function),
+      }),
+    );
+  });
+
   it("routes notify attachments through the notification gateway", async () => {
     const deps = fakeDeps();
     const c = await connected(deps);
@@ -192,6 +239,39 @@ describe("control server op dispatch (real unix socket)", () => {
     });
   });
 
+  it("routes structured opportunity notifications through the notification gateway", async () => {
+    const deps = fakeDeps();
+    const c = await connected(deps);
+    const opportunities = [
+      {
+        id: "api-20260729-abc123",
+        title: "Add explain command",
+        projectName: "api",
+        category: "developer-experience",
+        confidence: "high",
+        estimatedComplexity: "small",
+        status: "proposed",
+        value: "Faster support.",
+      },
+    ];
+
+    await c.notify({
+      channel: "lark",
+      source: "opportunity-discovery",
+      title: "Opportunity suggestions: api",
+      session: "tmux_proj_api",
+      opportunities,
+    });
+
+    expect(deps.notifications.notify).toHaveBeenCalledWith({
+      channel: "lark",
+      source: "opportunity-discovery",
+      title: "Opportunity suggestions: api",
+      session: "tmux_proj_api",
+      opportunities,
+    });
+  });
+
   it("logs op returns 'no session' when the filter is empty", async () => {
     const c = await connected();
     expect(await c.logs("")).toBe("no session");
@@ -201,6 +281,9 @@ describe("control server op dispatch (real unix socket)", () => {
     const c = await connected();
     const switched = await c.open("p1");
     expect(switched).toMatchObject({ status: "switched", session: "sOpen", started: "running" });
+    expect(performStart).toHaveBeenLastCalledWith(expect.anything(), "sOpen", undefined);
+    await c.open("p1", { agent: "codex" });
+    expect(performStart).toHaveBeenLastCalledWith(expect.anything(), "sOpen", "codex");
     h.openResult = { status: "not-found" };
     expect(await c.open("nope")).toEqual({ status: "not-found" });
   });
@@ -209,6 +292,8 @@ describe("control server op dispatch (real unix socket)", () => {
     const c = await connected();
     const created = await c.openPath("/some/dir");
     expect(created).toMatchObject({ status: "created", session: "sNew", started: "running" });
+    await c.openPath("/some/dir", { agent: "claude" });
+    expect(performStart).toHaveBeenLastCalledWith(expect.anything(), "sNew", "claude");
     h.openPathResult = { status: "invalid", error: "not-allowed", resolvedPath: "/x" };
     expect(await c.openPath("/x")).toEqual({
       status: "invalid",

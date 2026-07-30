@@ -127,8 +127,8 @@ const en: SetupMessages = {
   mlxPathPrompt: "mlx_whisper binary path (Enter to skip)",
   voiceLangPrompt: "Voice recognition language (zh/en/yue/ja/es/auto)",
   keepAwakeIntro:
-    "Keep this Mac awake so the bot stays reachable from your phone (it goes offline when the Mac sleeps).",
-  keepAwakePrompt: "Keep the Mac awake while the bot runs? (y/N)",
+    "Keep this Mac awake on AC power so the bot stays reachable from your phone while plugged in.",
+  keepAwakePrompt: "Keep the Mac awake on AC power while the bot runs? (y/N)",
   keepAwakeClamshellHint:
     "Note: works with the lid OPEN or an external display. For lid-closed (clamshell) use, also run: sudo pmset -a disablesleep 1",
   homeOperatorIntro:
@@ -191,8 +191,8 @@ const zh: SetupMessages = {
     "按回车先跳过。稍后启用：运行 `npm run whisper:install` 会自动填好此项。（无需手动输入路径。）",
   mlxPathPrompt: "mlx_whisper 可执行文件路径（回车跳过）",
   voiceLangPrompt: "语音识别语言（zh/en/yue/ja/es/auto）",
-  keepAwakeIntro: "保持这台 Mac 唤醒，手机才能随时连上 bot（Mac 休眠后 bot 会掉线）。",
-  keepAwakePrompt: "运行期间保持 Mac 唤醒？(y/N)",
+  keepAwakeIntro: "接通电源时保持这台 Mac 唤醒，便于手机持续连接 bot。",
+  keepAwakePrompt: "运行期间仅在接通电源时保持 Mac 唤醒？(y/N)",
   keepAwakeClamshellHint:
     "提示：仅在开盖或接外接显示器时有效。合盖（clamshell）使用还需手动执行：sudo pmset -a disablesleep 1",
   homeOperatorIntro:
@@ -255,8 +255,8 @@ const yue: SetupMessages = {
     "撳 Enter 暫時略過。之後啟用：執行 `npm run whisper:install` 會自動填好呢項。（唔使手動輸入路徑。）",
   mlxPathPrompt: "mlx_whisper 執行檔路徑（Enter 略過）",
   voiceLangPrompt: "語音識別語言（zh/en/yue/ja/es/auto）",
-  keepAwakeIntro: "保持這台 Mac 喚醒，手機才能隨時連上 bot（Mac 休眠後 bot 會離線）。",
-  keepAwakePrompt: "運行期間保持 Mac 喚醒？(y/N)",
+  keepAwakeIntro: "接通電源時保持這台 Mac 喚醒，便於手機持續連接 bot。",
+  keepAwakePrompt: "運行期間僅在接通電源時保持 Mac 喚醒？(y/N)",
   keepAwakeClamshellHint:
     "提示：僅在開蓋或接外接顯示器時有效。合蓋（clamshell）使用還需手動執行：sudo pmset -a disablesleep 1",
   homeOperatorIntro:
@@ -319,8 +319,8 @@ const zhTW: SetupMessages = {
     "按 Enter 先略過。稍後啟用：執行 `npm run whisper:install` 會自動填好此項。（無需手動輸入路徑。）",
   mlxPathPrompt: "mlx_whisper 執行檔路徑（Enter 略過）",
   voiceLangPrompt: "語音辨識語言（zh/en/yue/ja/es/auto）",
-  keepAwakeIntro: "保持這台 Mac 喚醒，手機才能隨時連上 bot（Mac 休眠後 bot 會離線）。",
-  keepAwakePrompt: "執行期間保持 Mac 喚醒？(y/N)",
+  keepAwakeIntro: "接通電源時保持這台 Mac 喚醒，便於手機持續連接 bot。",
+  keepAwakePrompt: "執行期間僅在接通電源時保持 Mac 喚醒？(y/N)",
   keepAwakeClamshellHint:
     "提示：僅在開蓋或接外接顯示器時有效。闔蓋（clamshell）使用還需手動執行：sudo pmset -a disablesleep 1",
   homeOperatorIntro:
@@ -387,8 +387,8 @@ const ja: SetupMessages = {
   mlxPathPrompt: "mlx_whisper バイナリのパス（Enter でスキップ）",
   voiceLangPrompt: "音声認識の言語（zh/en/yue/ja/es/auto）",
   keepAwakeIntro:
-    "Mac をスリープさせず、スマホからいつでも bot に接続できるようにします（スリープすると bot はオフラインになります）。",
-  keepAwakePrompt: "bot の実行中は Mac をスリープさせない？(y/N)",
+    "電源接続中は Mac をスリープさせず、スマホから bot に接続し続けられるようにします。",
+  keepAwakePrompt: "bot の実行中、電源接続時のみ Mac をスリープさせない？(y/N)",
   keepAwakeClamshellHint:
     "注意：ふたを開けた状態または外部ディスプレイ接続時に有効です。ふたを閉じた（クラムシェル）運用には別途 sudo pmset -a disablesleep 1 を実行してください。",
   homeOperatorIntro:
@@ -457,8 +457,8 @@ const es: SetupMessages = {
   mlxPathPrompt: "Ruta del binario mlx_whisper (Enter para omitir)",
   voiceLangPrompt: "Idioma de reconocimiento de voz (zh/en/yue/ja/es/auto)",
   keepAwakeIntro:
-    "Mantén este Mac despierto para que el bot siga accesible desde el teléfono (si el Mac duerme, el bot se desconecta).",
-  keepAwakePrompt: "¿Mantener el Mac despierto mientras el bot está en marcha? (y/N)",
+    "Mantén este Mac despierto con alimentación de corriente para que el bot siga accesible desde el teléfono.",
+  keepAwakePrompt: "¿Mantener el Mac despierto con corriente mientras el bot está en marcha? (y/N)",
   keepAwakeClamshellHint:
     "Nota: funciona con la tapa abierta o una pantalla externa. Para uso con la tapa cerrada (clamshell), ejecuta también: sudo pmset -a disablesleep 1",
   homeOperatorIntro:

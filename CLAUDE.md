@@ -215,6 +215,65 @@ such as `.semgrep`, config files, docs, and lockfiles. The loop runner treats a
 dirty worktree after staging those affected files as a failed round; update the
 assessment contract instead of letting verified changes sit uncommitted.
 
+## Supervisor and System Gate Boundary
+
+Agent supervisors execute target-project work; the bot system enforces final
+acceptance. Do not blur those responsibilities.
+
+- The supervisor may self-heal target-project work: sync the target branch,
+  create the work branch, delegate to the live project agent, fix code, add
+  tests, run local verification, commit, open or update the PR, clean PR body
+  noise, and switch the target repo back to the configured branch.
+- The system layer must independently enforce run acceptance: work-order state,
+  supervisor summary parsing, PR lookup, mergeability, CI/check interpretation,
+  auto-merge completion, switch-back branch, and clean worktree.
+- If a target project's code, tests, PR body, branch state, or local verification
+  are wrong, let the supervisor repair the target project through the configured
+  agent session.
+- If a completed or nearly completed run is misclassified because system gate
+  logic is wrong, fix this repo. Do not ask the target agent to work around
+  system acceptance bugs, and do not weaken the gate by trusting only the
+  supervisor's self-report.
+- System gates should distinguish pending, blocking, and advisory checks. Pending
+  checks should be waited on before final judgment; merged PRs should not be
+  failed retroactively by non-blocking advisory checks that arrive after merge.
+
+### Long-running Task Traceability
+
+Loop Engineering, opportunity discovery, PR review, autopilot delegation, daily
+audit, and any other long-running supervised workflow must be diagnosable from
+persisted logs and run artifacts without replaying the task.
+
+- Log every major lifecycle transition at INFO with stable identifiers: task
+  type, project id, run id, scheduled/effective time, supervisor session, target
+  session or repository path, branch/base/switchBack policy, and whether the run
+  is read-only, commit-enabled, PR-enabled, or auto-merge-enabled.
+- Log non-obvious decisions and skips with the reason, not just the outcome:
+  skipped because not due, already active, duplicate/cooldown, dirty worktree,
+  busy supervisor, busy target session, invalid output, pending CI, advisory
+  check, blocked gate, or recovery attempt exhausted.
+- Persist a clear artifact trail for every run: work order, work-order state,
+  final supervisor summary, generated report paths, opportunity reports, PR URL
+  or merge result when applicable, final branch, final worktree cleanliness, and
+  verification commands/results.
+- When a supervisor or target agent self-heals, retries, interrupts stale work,
+  compacts/clears context, or switches between local-only and delegated work,
+  record that transition explicitly in both logs and the final summary.
+- If a run fails or is marked blocked, the reason must name the failing gate and
+  the exact evidence path/command/log needed for follow-up. Avoid vague summaries
+  such as "agent failed" when the actionable cause is invalid output, missing
+  final marker, PR lookup failure, CI pending, branch mismatch, or dirty
+  worktree.
+- After the system accepts a run, log and summarize the final state that matters
+  operationally: completed/failed/cancelled status, notification delivery result
+  when applicable, whether suggestions were stored, whether a PR was created or
+  merged, and which branch the target repository is left on.
+
+Do not treat observability as optional polish. A workflow is not complete if a
+future maintainer cannot answer "what ran, what did it decide, what changed, what
+was sent, and why did it stop?" from `tcb logs`, the run directory, and the final
+summary.
+
 ## Active Goal Discipline
 
 Do not turn a broad active goal into an endless opportunistic sweep. A broad

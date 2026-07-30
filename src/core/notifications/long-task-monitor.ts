@@ -4,6 +4,7 @@ import type { DashboardSnapshot } from "../dashboard/dashboard.js";
 import { buildDashboard } from "../dashboard/dashboard.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
+import type { ConversationRound } from "../read/transcript.js";
 import type { NotificationGateway, NotificationRequest } from "./gateway.js";
 import type { OwnerActivityTracker } from "./owner-activity.js";
 import { resolveNotificationTargetPlan } from "./target-resolver.js";
@@ -12,7 +13,12 @@ export const LONG_TASK_CHECK_MS = 5 * 60 * 1000;
 export const LONG_TASK_THRESHOLD_MS = 3 * 60 * 1000;
 
 type SnapshotProvider = () => Promise<Pick<DashboardSnapshot, "sessions" | "generatedAt">>;
-type LatestHistoryProvider = (session: string) => Promise<string | null>;
+type FinishedTaskWindow = {
+  key: string;
+  startedAt: number;
+  finishedBefore?: number;
+};
+type LatestHistoryProvider = (session: string, task: FinishedTaskWindow) => Promise<string | null>;
 
 type WatchedTask = {
   session: string;
@@ -76,7 +82,7 @@ export class LongTaskMonitor {
 
       if (watched && watched.key !== row.task.key) {
         this.watched.delete(row.session);
-        if (watched.armed) await this.notifyFinished(watched, "completed");
+        if (watched.armed) await this.notifyFinished(watched, "completed", row.task.startedAt);
       }
 
       const taskMs = row.taskMs ?? 0;
@@ -97,13 +103,21 @@ export class LongTaskMonitor {
     }
   }
 
-  private async notifyFinished(task: WatchedTask, reason: string): Promise<void> {
+  private async notifyFinished(
+    task: WatchedTask,
+    reason: string,
+    finishedBefore?: number,
+  ): Promise<void> {
     const channels = this.notifications.registeredChannels();
     if (channels.length === 0) return;
 
     let latestHistory: string | null = null;
     try {
-      latestHistory = await this.latestHistory(task.session);
+      latestHistory = await this.latestHistory(task.session, {
+        key: task.key,
+        startedAt: task.startedAt,
+        ...(finishedBefore !== undefined ? { finishedBefore } : {}),
+      });
     } catch (err) {
       log.warn("failed to read latest history for long-task notification", {
         session: task.session,
@@ -178,10 +192,12 @@ export function startLongTaskMonitor(
     snapshot: () => buildDashboard(deps),
     notifications: deps.notifications,
     ownerActivity: deps.ownerActivity,
-    latestHistory: async (session) => {
+    latestHistory: async (session, task) => {
       const projectPath = getPathBySession(session) ?? session;
-      const latest = await readAgentRecentConversations(deps.configResolver, session, projectPath);
-      return latest[0]?.assistant ?? null;
+      return latestAssistantForTaskWindow(
+        await readAgentRecentConversations(deps.configResolver, session, projectPath),
+        task,
+      );
     },
     ...(opts.thresholdMs !== undefined ? { thresholdMs: opts.thresholdMs } : {}),
   });
@@ -191,4 +207,22 @@ export function startLongTaskMonitor(
   const timer = setInterval(tick, opts.checkMs ?? LONG_TASK_CHECK_MS);
   (timer as { unref?: () => void }).unref?.();
   return () => clearInterval(timer);
+}
+
+function latestAssistantForTaskWindow(
+  rounds: ConversationRound[],
+  task: FinishedTaskWindow,
+): string | null {
+  for (const round of rounds) {
+    const assistant = round.assistant.trim();
+    if (!assistant) continue;
+    if (round.timeMs === undefined) {
+      if (task.finishedBefore === undefined) return assistant;
+      continue;
+    }
+    if (round.timeMs < task.startedAt) continue;
+    if (task.finishedBefore !== undefined && round.timeMs >= task.finishedBefore) continue;
+    return assistant;
+  }
+  return null;
 }

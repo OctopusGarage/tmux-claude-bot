@@ -17,8 +17,16 @@ function createMockResolver(): ConfigResolver {
 function createMockBridge(
   mockExecFile: ReturnType<typeof vi.fn>,
   getSessionName: () => Promise<string>,
+  onWrite: (file: string, data: string) => void = () => {},
 ): TmuxBridge {
-  return new TmuxBridge({ execFile: mockExecFile as any, getSessionName });
+  return new TmuxBridge({
+    execFile: mockExecFile as any,
+    getSessionName,
+    writeFile: async (file, data) => {
+      onWrite(file, data);
+    },
+    unlinkFile: async () => {},
+  });
 }
 
 function createOutputProcessor(maxOutputLines = 100, maxMessageLength = 4000): OutputProcessor {
@@ -556,9 +564,9 @@ describe("ClaudeRunner", () => {
 
     it("resumes the EXACT live session id (--resume <id>) when the process exposes it", async () => {
       const typed: string[] = [];
+      bridge = createMockBridge(mockExecFile, getSessionName, (_file, data) => typed.push(data));
       mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
         if (cmd === "tmux" && args[0] === "send-keys") typed.push(args[args.length - 1] ?? "");
-        if (cmd === "tmux" && args[0] === "set-buffer") typed.push(args[args.length - 1] ?? "");
         if (cmd === "tmux" && args[0] === "capture-pane") return { stdout: "❯ ", stderr: "" };
         return { stdout: "", stderr: "" };
       });

@@ -2,7 +2,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isSessionRunning, markSessionRunning } from "../src/core/agents/runningSessions.js";
+import {
+  isSessionRunning,
+  markSessionRunning,
+  markSessionUsed,
+  sessionLastUsedAt,
+} from "../src/core/agents/runningSessions.js";
 import { runRunningSweep, startRunningSweep } from "../src/core/recovery/running-sweep.js";
 import { fakeDeps } from "./adapters/lark/_fakes.js";
 
@@ -47,6 +52,20 @@ describe("runRunningSweep", () => {
     expect(isSessionRunning("tmux_proj_c")).toBe(true); // gone → left for recovery
     expect(isSessionRunning("tmux_proj_d")).toBe(true); // desktop-started → newly tracked
     expect(isSessionRunning("tmux_proj_e")).toBe(true); // pre-reboot bare shell → kept for /recover
+    expect(sessionLastUsedAt("tmux_proj_d")).not.toBeNull();
+  });
+
+  it("does not refresh an existing last-used timestamp on every sweep", async () => {
+    markSessionRunning("tmux_proj_a", BOOT + 100);
+    markSessionUsed("tmux_proj_a", BOOT + 200);
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_a"]) },
+      agent: { checkIfRunning: vi.fn(async () => true) },
+    });
+
+    await runRunningSweep(deps, BOOT);
+
+    expect(sessionLastUsedAt("tmux_proj_a")).toBe(BOOT + 200);
   });
 
   it("treats a session-list failure as a skipped best-effort sweep", async () => {

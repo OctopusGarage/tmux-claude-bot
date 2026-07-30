@@ -1,10 +1,13 @@
+import { join } from "node:path";
 import type {
   NotificationChannelSelection,
   NotificationLevel,
+  NotificationOpportunity,
   NotificationResult,
 } from "../../core/notifications/gateway.js";
 import type { PromptTranslateCommandResult } from "../../core/read/prompt-translation.js";
 import { appStateFile } from "../../shared/state-dir.js";
+import type { AgentKind } from "../../shared/types.js";
 
 /**
  * Local control transport — the wire protocol shared by the bot's control server
@@ -19,6 +22,17 @@ export function controlSocketPath(): string {
   return appStateFile("control.sock");
 }
 
+/** Candidate client socket paths. The server binds only {@link controlSocketPath},
+ * but CLI/TUI clients may inherit an old app-home TCB_STATE_DIR while launchd uses
+ * the newer app-home/state directory. Try the nested state socket as a compatibility
+ * fallback without changing where state files are read/written. */
+export function controlSocketCandidatePaths(): string[] {
+  const primary = controlSocketPath();
+  const configured = process.env.TCB_STATE_DIR;
+  const nested = configured ? join(configured, "state", "control.sock") : null;
+  return nested && nested !== primary ? [primary, nested] : [primary];
+}
+
 /** Client → server. `id` correlates the synchronous response; a `send` is acked
  * immediately and its eventual reply arrives as a `reply` event. */
 export type ControlRequest =
@@ -27,8 +41,8 @@ export type ControlRequest =
   | { id: number; op: "send"; session: string; text: string }
   | { id: number; op: "control"; session: string; action: string }
   | { id: number; op: "projects" }
-  | { id: number; op: "open"; sid: string }
-  | { id: number; op: "openPath"; path: string }
+  | { id: number; op: "open"; sid: string; agent?: AgentKind }
+  | { id: number; op: "openPath"; path: string; agent?: AgentKind }
   | { id: number; op: "orphans" }
   | { id: number; op: "adopt"; pid: number }
   | { id: number; op: "recover" }
@@ -36,6 +50,7 @@ export type ControlRequest =
   | { id: number; op: "sysload" }
   | { id: number; op: "inputs"; session: string }
   | { id: number; op: "promptTranslate"; arg: string }
+  | { id: number; op: "taskAudit"; now?: number; force?: boolean }
   | {
       id: number;
       op: "notify";
@@ -46,9 +61,9 @@ export type ControlRequest =
       source?: string;
       session?: string;
       attachments?: { path: string; caption?: string }[];
+      opportunities?: NotificationOpportunity[];
     }
   | { id: number; op: "autopilot"; session: string; verb: string }
-  | { id: number; op: "autopilotView"; session: string }
   | { id: number; op: "sendAttachment"; session: string; filePath: string; caption?: string };
 
 export type ControlResponse =

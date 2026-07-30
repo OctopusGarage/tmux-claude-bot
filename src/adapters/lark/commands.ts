@@ -38,6 +38,7 @@ export type ViewName =
   | "autopilot"
   | "goals"
   | "batch"
+  | "opportunity"
   | "prompts";
 
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
@@ -74,6 +75,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   autopilot: "autopilot",
   goals: "goals",
   batch: "batch",
+  opportunity: "opportunity",
   prompts: "prompts",
 };
 

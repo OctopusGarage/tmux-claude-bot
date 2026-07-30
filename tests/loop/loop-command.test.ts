@@ -138,7 +138,7 @@ describe("runLoopCommand", () => {
     expect(text.stdout).toContain("loop tick completed: checked 1, scheduled 1, due 1, executed 0");
 
     const json = runLoopCommand(["tick", file, "--now", "2026-07-16T10:10:00Z", "--json"]);
-    expect(JSON.parse(json.stdout ?? "{}")).toMatchObject({ phase: "due-only", due: 0 });
+    expect(JSON.parse(json.stdout ?? "{}")).toMatchObject({ phase: "due-only", due: 1 });
   });
 
   it("runs command-backed projects and records reports plus backlog items", () => {

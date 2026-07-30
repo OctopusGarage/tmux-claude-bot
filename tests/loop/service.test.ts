@@ -150,4 +150,163 @@ projects:
     ]);
     expect(listLoopReports()).toEqual([expect.objectContaining({ projectId: "hub" })]);
   });
+
+  it("does not advance the schedule anchor when a due project never completes a run", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-state-"));
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-service-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = join(dir, "loop.yml");
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    execution:
+      agent: true
+    assessment:
+      command: npm run assess
+    allowedActions: [tests]
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    await expect(
+      runLoopServiceTickAsync({
+        configFile: file,
+        now,
+        schedulerStore,
+        runCommand: (invocation) => {
+          if (invocation.kind === "assessment") {
+            return {
+              status: 0,
+              stdout: JSON.stringify({
+                findings: [
+                  {
+                    id: "f1",
+                    title: "Add parser regression",
+                    action: "tests",
+                    confidence: "high",
+                    autofixSafety: "safe",
+                    affectedFiles: ["tests/parser.test.ts"],
+                    prompt: "Add a focused parser regression test.",
+                    verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+          return { status: 0, stdout: "verified", stderr: "" };
+        },
+        runAgentTask: async () => {
+          throw new Error("agent session disappeared before enqueue");
+        },
+      }),
+    ).rejects.toThrow(/agent session disappeared/);
+
+    expect(schedulerStore.getLastFired()).toEqual({});
+
+    const retry = await runLoopServiceTickAsync({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) => {
+        if (invocation.kind === "assessment") {
+          return { status: 0, stdout: JSON.stringify({ findings: [] }), stderr: "" };
+        }
+        return { status: 0, stdout: "verified", stderr: "" };
+      },
+    });
+
+    expect(retry).toMatchObject({ due: 1, ran: 1, failed: 0 });
+    expect(schedulerStore.getLastFired()).toEqual({ hub: now });
+  });
+
+  it("does not advance the schedule anchor when agent dispatch fails before work can run", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-state-"));
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-service-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = join(dir, "loop.yml");
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    execution:
+      agent: true
+    recovery:
+      agent: true
+      maxAttempts: 1
+    assessment:
+      command: npm run assess
+    allowedActions: [tests]
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    const first = await runLoopServiceTickAsync({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) => {
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              findings: [
+                {
+                  id: "f1",
+                  title: "Add parser regression",
+                  action: "tests",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["tests/parser.test.ts"],
+                  prompt: "Add a focused parser regression test.",
+                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "verified", stderr: "" };
+      },
+      runAgentTask: async () => ({
+        status: 1,
+        stdout: "",
+        stderr: "Codex did not become ready in time",
+      }),
+    });
+    const second = await runLoopServiceTickAsync({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) => {
+        if (invocation.kind === "assessment") {
+          return { status: 0, stdout: JSON.stringify({ findings: [] }), stderr: "" };
+        }
+        return { status: 0, stdout: "verified", stderr: "" };
+      },
+    });
+
+    expect(first).toMatchObject({ due: 1, ran: 1, failed: 1 });
+    expect(second).toMatchObject({ due: 1, ran: 1, failed: 0 });
+    expect(schedulerStore.getLastFired()).toEqual({ hub: now });
+  });
 });

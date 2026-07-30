@@ -24,6 +24,34 @@ class FakeBot {
   stop = vi.fn(async () => {});
 }
 
+class FakeInlineKeyboard {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>> = [[]];
+
+  text(text: string, callback_data: string): this {
+    this.inline_keyboard.at(-1)?.push({ text, callback_data });
+    return this;
+  }
+
+  row(): this {
+    if ((this.inline_keyboard.at(-1)?.length ?? 0) > 0) this.inline_keyboard.push([]);
+    return this;
+  }
+}
+
+function mockGrammy(): void {
+  vi.doMock("grammy", () => ({
+    Bot: FakeBot,
+    InlineKeyboard: FakeInlineKeyboard,
+    GrammyError: class GrammyError extends Error {
+      error_code: number;
+      constructor(message = "grammy", error_code = 500) {
+        super(message);
+        this.error_code = error_code;
+      }
+    },
+  }));
+}
+
 function deps(): HandlerDeps {
   return {
     config: {
@@ -50,16 +78,7 @@ describe("startTelegram notification registration", () => {
   });
 
   it("registers a telegram owner notification sender", async () => {
-    vi.doMock("grammy", () => ({
-      Bot: FakeBot,
-      GrammyError: class GrammyError extends Error {
-        error_code: number;
-        constructor(message = "grammy", error_code = 500) {
-          super(message);
-          this.error_code = error_code;
-        }
-      },
-    }));
+    mockGrammy();
     vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
     vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({
       registerHandlers: vi.fn(),
@@ -95,17 +114,81 @@ describe("startTelegram notification registration", () => {
     );
   });
 
-  it("records telegram as the recent owner activity channel for authorized updates", async () => {
-    vi.doMock("grammy", () => ({
-      Bot: FakeBot,
-      GrammyError: class GrammyError extends Error {
-        error_code: number;
-        constructor(message = "grammy", error_code = 500) {
-          super(message);
-          this.error_code = error_code;
-        }
-      },
+  it("renders opportunity discovery notifications with telegram action buttons", async () => {
+    mockGrammy();
+    vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
+    vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({
+      registerHandlers: vi.fn(),
     }));
+    vi.doMock("../../../src/adapters/telegram/voice-handler.js", () => ({
+      registerVoiceHandler: vi.fn(),
+    }));
+    vi.doMock("../../../src/adapters/telegram/media.js", () => ({ sendTelegramAttachment }));
+
+    const { startTelegram } = await import("../../../src/adapters/telegram/start.js");
+    const d = deps();
+    const register = vi.spyOn(d.notifications, "register");
+
+    await startTelegram(d);
+    const sender = register.mock.calls.find((c) => c[0] === "telegram")?.[1];
+    await sender?.("Opportunity suggestions: alcove", {
+      title: "Opportunity suggestions: alcove",
+      source: "opportunity-discovery",
+      session: "tmux_proj_alcove",
+      opportunities: [
+        {
+          id: "alcove-20260729-ad409ff3",
+          title: "Add explain command",
+          projectName: "alcove",
+          category: "developer-experience",
+          confidence: "high",
+          estimatedComplexity: "small",
+          status: "proposed",
+          value: "Faster support.",
+        },
+      ],
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "12345",
+      "Opportunity suggestions: alcove",
+      expect.objectContaining({
+        reply_markup: expect.objectContaining({
+          inline_keyboard: expect.arrayContaining([
+            expect.arrayContaining([
+              expect.objectContaining({ callback_data: "od:ad409ff3" }),
+              expect.objectContaining({ callback_data: "ox:ad409ff3" }),
+            ]),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("runs the notification-ready callback after registering the sender", async () => {
+    mockGrammy();
+    vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
+    vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({
+      registerHandlers: vi.fn(),
+    }));
+    vi.doMock("../../../src/adapters/telegram/voice-handler.js", () => ({
+      registerVoiceHandler: vi.fn(),
+    }));
+    vi.doMock("../../../src/adapters/telegram/media.js", () => ({ sendTelegramAttachment }));
+
+    const { startTelegram } = await import("../../../src/adapters/telegram/start.js");
+    const d = deps();
+    const onNotificationsReady = vi.fn(() => {
+      expect(d.notifications.registeredChannels()).toEqual(["telegram"]);
+    });
+
+    await startTelegram(d, { onNotificationsReady });
+
+    expect(onNotificationsReady).toHaveBeenCalledTimes(1);
+  });
+
+  it("records telegram as the recent owner activity channel for authorized updates", async () => {
+    mockGrammy();
     vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
     vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({
       registerHandlers: vi.fn(),

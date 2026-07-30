@@ -1,4 +1,3 @@
-import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import {
   actionButtonRows,
   actionConfirmationText,
@@ -10,6 +9,8 @@ import {
 } from "../../core/command/action-registry.js";
 import type { MessageAction } from "../../core/command/actions.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
+import type { NotificationOpportunity } from "../../core/notifications/gateway.js";
+import type { OpportunitySuggestion } from "../../core/opportunities/types.js";
 import type { BrowseView } from "../../core/projects/dir-browser.js";
 import type { ProjectPickerLikeRow } from "../../core/projects/project-session-picker.js";
 import {
@@ -91,6 +92,12 @@ const shell = (title: string, elements: object[]): object => ({
   header: { title: { tag: "plain_text", content: title } },
   body: { elements },
 });
+
+function compactLine(value: string, max = 120): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
+}
 
 /** Voice recognition-language picker — mirrors Telegram's button picker. The
  * active language is marked and inert; tapping another sends `voicelang` with the
@@ -283,6 +290,7 @@ function controlRows(group = false, running = true): ButtonSpec[][] {
       { text: m.btnInputs, value: { cmd: "inputs" } },
       { text: m.btnStatus, value: { cmd: "status" } },
       { text: m.btnQueue, value: { cmd: "queuestatus" } },
+      { text: m.btnApDelegate, value: { cmd: "ap_delegate" }, style: "primary" },
     ],
     // Host-wide ops — p2p only (never leak all-session info / recovery into a group).
     ...(group
@@ -291,7 +299,6 @@ function controlRows(group = false, running = true): ButtonSpec[][] {
           [
             { text: m.btnDashboard, value: { cmd: "dashboard" } },
             { text: m.btnRecover, value: { cmd: "recover" } },
-            { text: `${UI_ICONS.feature.autopilot} Autopilot`, value: { cmd: "ap_panel" } },
           ],
         ]),
     lastRow,
@@ -342,7 +349,7 @@ export function startPickerCard(
  * and a help button. The title carries the 📂 project so the user sees which
  * session answered. */
 export function resultCard(output: string, title = "Agent", group = false): object {
-  const body = output?.trim() ? output : messages("lark").emptyOutput;
+  const body = output.trim() ? output : messages("lark").emptyOutput;
   return shell(title, [md(body), HR, ...controlActions(group)]);
 }
 
@@ -350,14 +357,14 @@ export function resultCard(output: string, title = "Agent", group = false): obje
  * control buttons the result card carries. Pass `running=false` to adapt the
  * panel to the idle (launch/navigate) shortcuts. */
 export function viewCard(title: string, body: string, group = false, running = true): object {
-  const content = body?.trim() ? body : messages("lark").emptyPane;
+  const content = body.trim() ? body : messages("lark").emptyPane;
   return shell(title, [md(content), HR, ...controlActions(group, running)]);
 }
 
 /** A peek page WITHOUT the control panel — for the non-last chunks of a paged
  * /peek (only the bottom card carries the controls). */
 export function peekChunkCard(title: string, body: string): object {
-  return shell(title, [md(body?.trim() ? body : messages("lark").emptyPane)]);
+  return shell(title, [md(body.trim() ? body : messages("lark").emptyPane)]);
 }
 
 /** Recent-inputs picker: one button per input; tapping fetches it back as an editable
@@ -481,6 +488,86 @@ export function adoptDoneCard(body: string, sid: string): object {
   return shell(UI_ICONS.tone.ok, [
     md(body),
     gridRow([{ text: m.btnAdoptAttach, value: { cmd: "adoptattach", sid } }]),
+  ]);
+}
+
+export function opportunityDigestCard(input: {
+  title: string;
+  body: string;
+  opportunities: NotificationOpportunity[];
+  allowDelegate?: boolean;
+}): object {
+  const ids = input.opportunities.map((opportunity) => opportunity.id);
+  const projectNames = [
+    ...new Set(input.opportunities.map((opportunity) => opportunity.projectName)),
+  ];
+  const projectLabel =
+    projectNames.length === 0
+      ? "项目"
+      : projectNames.length === 1
+        ? projectNames[0]
+        : `${projectNames.length} 个项目`;
+  const elements: object[] = [
+    md(
+      input.allowDelegate === true
+        ? `${projectLabel} · ${input.opportunities.length} 个建议\n可以继续讨论；确认要执行时，请使用 Autopilot 托管。`
+        : `${projectLabel} · ${input.opportunities.length} 个建议\n先参与讨论，确认清楚后再托管执行。`,
+    ),
+  ];
+  for (const [index, opportunity] of input.opportunities.entries()) {
+    elements.push(HR);
+    elements.push(md(`**${index + 1}. ${opportunity.title}**\n${compactLine(opportunity.value)}`));
+  }
+  elements.push(
+    HR,
+    gridRow(
+      input.allowDelegate === true
+        ? [
+            { text: "继续讨论", value: { cmd: "oppdiscussall", ids }, style: "primary" },
+            { text: "暂不处理", value: { cmd: "oppdismissall", ids } },
+          ]
+        : [
+            { text: "讨论全部", value: { cmd: "oppdiscussall", ids }, style: "primary" },
+            { text: "暂不处理", value: { cmd: "oppdismissall", ids } },
+          ],
+    ),
+  );
+  return shell(input.title, elements);
+}
+
+export function opportunityDetailCard(
+  suggestion: OpportunitySuggestion,
+  opts: { allowDelegate?: boolean; title?: string } = {},
+): object {
+  const buttons: ButtonSpec[] = [
+    { text: "参与讨论", value: { cmd: "oppdiscuss", id: suggestion.id }, style: "primary" },
+    { text: "暂不处理", value: { cmd: "oppdismiss", id: suggestion.id } },
+  ];
+  return shell(opts.title ?? suggestion.title, [
+    md(
+      [
+        `**${suggestion.title}**`,
+        `ID: ${suggestion.id}`,
+        `Project: ${suggestion.projectName}`,
+        `Category: ${suggestion.category} · Confidence: ${suggestion.confidence} · Complexity: ${suggestion.estimatedComplexity} · Status: ${suggestion.status}`,
+        "",
+        "**Problem**",
+        suggestion.problem,
+        "",
+        "**Value**",
+        suggestion.value,
+        "",
+        "**Recommended approach**",
+        suggestion.recommendedApproach,
+        "",
+        "**Acceptance criteria**",
+        ...suggestion.acceptanceCriteria.map((item) => `- ${item}`),
+        "",
+        "**Non-goals**",
+        ...suggestion.nonGoals.map((item) => `- ${item}`),
+      ].join("\n"),
+    ),
+    gridRow(buttons),
   ]);
 }
 
@@ -727,88 +814,26 @@ export function helpCard(
   ]);
 }
 
-/** Autopilot panel card: progressive disclosure from the AutopilotView. Every
- * button carries the session in its signed value. Mirrors the Telegram panel.
- * Pass `group=true` in a bound group to omit the host-wide global toggle. */
-export function autopilotPanelCard(view: AutopilotView, session: string, group = false): object {
+/** Autopilot panel card for supervisor-backed delegation. */
+export function autopilotPanelCard(
+  session: string,
+  _group = false,
+  delegateActive = false,
+): object {
   const m = messages("lark");
   const rows: ButtonSpec[][] = [];
-  if (view.gatePending) {
-    rows.push([
-      { text: m.btnApConfirm, value: { cmd: "ap_confirm", s: session }, style: "primary" },
-      { text: m.btnApContinue, value: { cmd: "ap_reject", s: session } },
-    ]);
-  }
-  if (!view.enabled) {
-    rows.push([{ text: m.btnApEnable, value: { cmd: "ap_toggle", s: session }, style: "primary" }]);
-  } else {
-    rows.push([
-      { text: m.btnApDisable, value: { cmd: "ap_toggle", s: session } },
-      { text: m.btnApPickGoals, value: { cmd: "ap_pick", s: session } },
-    ]);
-    // The global toggle is host-wide: omit it in bound groups where the chat is
-    // scoped to a single project (same policy as the host-wide buttons elsewhere).
-    if (!group) {
-      const globalRow: ButtonSpec[] = [
-        {
-          text: view.globalOn ? m.btnApGlobalOff : m.btnApGlobalOn,
-          value: { cmd: "ap_global", s: session, on: !view.globalOn },
-        },
-      ];
-      if (view.mode === "cycle")
-        globalRow.push({
-          text: m.btnApStop,
-          value: { cmd: "ap_stop", s: session },
-          style: "danger",
-        });
-      rows.push(globalRow);
-    } else if (view.mode === "cycle") {
-      // In a group: keep the stop button (per-session op) but drop global toggle.
-      rows.push([{ text: m.btnApStop, value: { cmd: "ap_stop", s: session }, style: "danger" }]);
-    }
-  }
+  rows.push([
+    {
+      text: delegateActive ? m.btnApCancelDelegate : m.btnApDelegate,
+      value: { cmd: delegateActive ? "ap_cancel_delegate" : "ap_delegate", s: session },
+      ...(delegateActive ? { style: "danger" } : {}),
+    },
+  ]);
   return shell(m.autopilotTitle, [
-    md(view.statusLine),
+    md(m.autopilotDelegatePanelBody),
     HR,
     ...rows.flatMap((row) => gridRows(row)),
   ]);
-}
-
-/** Goal-cycle picker card: a toggle button per catalog goal (✓ when selected), a
- * rounds stepper, a start button. Re-sent on every toggle (Feishu can't update). */
-export function autopilotGoalPickerCard(view: AutopilotView, session: string): object {
-  const m = messages("lark");
-  const goalRows: ButtonSpec[][] = [];
-  view.goals.forEach((g, i) => {
-    const spec: ButtonSpec = {
-      text: g.selected ? `✓ ${g.title}` : g.title,
-      value: { cmd: "ap_goal_toggle", s: session, id: g.id },
-      ...(g.skills.length > 0 ? { hoverText: `${g.title} · skill: ${g.skills.join(", ")}` } : {}),
-    };
-    if (i % 2 === 0) goalRows.push([spec]);
-    else goalRows.at(-1)?.push(spec);
-  });
-  const n = view.goals.filter((g) => g.selected).length;
-  const elements: object[] = [md(m.autopilotTitle), ...goalRows.flatMap((row) => gridRows(row))];
-  elements.push(
-    gridRow([
-      { text: m.btnApRoundsMinus, value: { cmd: "ap_rounds", s: session, delta: -1 } },
-      { text: m.apRoundsLabel(view.rounds), value: { cmd: "noop" } },
-      { text: m.btnApRoundsPlus, value: { cmd: "ap_rounds", s: session, delta: 1 } },
-    ]),
-  );
-  if (n > 0)
-    elements.push(
-      gridRow([
-        {
-          text: m.btnApStartCycle(n, view.rounds),
-          value: { cmd: "ap_start", s: session },
-          style: "primary",
-        },
-      ]),
-    );
-  elements.push(gridRow([{ text: m.btnApBack, value: { cmd: "ap_panel", s: session } }]));
-  return shell(m.autopilotTitle, elements);
 }
 
 /** The interactive human-gate card pushed to the owner: confirm / continue,

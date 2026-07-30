@@ -83,4 +83,40 @@ describe("completeLoopSupervisorRun", () => {
 
     expect(completion.retrySchedule).toBe(false);
   });
+
+  it("returns retrySchedule when supervisor output is missing the final marker", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-supervisor-completion-"));
+
+    const completion = completeLoopSupervisorRun({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      result: {
+        status: "invalid-output",
+        reason: "missing-final-marker",
+        output: "target agent is still finishing the delegated slice",
+      },
+    });
+
+    expect(completion.retrySchedule).toBe(true);
+  });
+
+  it("returns retrySchedule for invalid supervisor summary JSON", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-supervisor-completion-"));
+
+    const completion = completeLoopSupervisorRun({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      result: {
+        status: "invalid-output",
+        reason: "invalid-summary",
+        output: "[LOOP_SUPERVISOR_DONE:wo-completion]\n{}",
+      },
+    });
+
+    expect(completion.retrySchedule).toBe(true);
+  });
 });

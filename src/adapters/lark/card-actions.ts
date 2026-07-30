@@ -1,25 +1,32 @@
+import { spawnSync } from "node:child_process";
 import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import {
   adoptOrphan,
+  attachCommand,
   composeAdoptOutcome,
-  copyAttachCommand,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
-import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
-import { applyAutopilotVerb, goalsVerb } from "../../core/autopilot/controls.js";
 import {
-  adjustRounds,
-  clearPicker,
-  getPicker,
-  toggleGoal,
-} from "../../core/autopilot/picker-state.js";
-import { AutopilotStore } from "../../core/autopilot/state-store.js";
+  cancelActiveDelegatedTask,
+  formatActiveDelegateCancel,
+  formatActiveDelegateStart,
+  hasActiveDelegatedTaskForSession,
+  parseDelegateRequirement,
+  startActiveDelegatedTask,
+} from "../../core/autopilot/delegated-task.js";
 import { planMessageAction } from "../../core/command/action-plan.js";
 import { performRestart, performStart } from "../../core/command/dispatch.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import type { ForeignAction } from "../../core/infra/status-install.js";
+import { runOpportunityCommand } from "../../core/opportunities/command.js";
+import { OpportunityStore } from "../../core/opportunities/store.js";
+import {
+  formatOpportunityAgentDiscussionPrompt,
+  formatOpportunityBatchAgentDiscussionPrompt,
+  formatOpportunityBatchDelegateRequirement,
+} from "../../core/opportunities/view.js";
 import {
   type BrowseAction,
   browseCwd,
@@ -71,11 +78,11 @@ import {
   actionConfirmationCard,
   adoptConfirmCard,
   adoptDoneCard,
-  autopilotGoalPickerCard,
-  autopilotPanelCard,
   browseCard,
   helpCard,
   langCard,
+  opportunityDetailCard,
+  opportunityDigestCard,
   startPickerCard,
   voiceLangCard,
 } from "./cards.js";
@@ -132,6 +139,7 @@ type CardValue =
       /** qcancel: the session + queued-message id to cancel. */
       s?: string;
       id?: string;
+      ids?: string[];
       /** prompts: short-id for pget; tag short-id for pfilter/ppage; page number for ppage. */
       tagSid?: string;
       page?: number;
@@ -478,7 +486,7 @@ async function handleRecoverExec({ channel, deps, evt, chatKind }: CardCtx): Pro
   );
 }
 
-/** "View on computer": copy the attach command to the host clipboard on demand. */
+/** "View on computer": show the attach command on demand. */
 async function handleAdoptAttach({ channel, deps, evt, value }: CardCtx): Promise<void> {
   if (!value?.sid) return;
   const session = await resolveAliveSessionByShortId(deps, value.sid);
@@ -486,7 +494,7 @@ async function handleAdoptAttach({ channel, deps, evt, value }: CardCtx): Promis
     await sendText(channel, evt.chatId, messages("lark").sessionGone);
     return;
   }
-  await sendText(channel, evt.chatId, messages("lark").adoptAttachHint(copyAttachCommand(session)));
+  await sendText(channel, evt.chatId, messages("lark").adoptAttachHint(attachCommand(session)));
 }
 
 /** Apply a usage-install foreign-statusLine choice (p2p only) and re-render. */
@@ -543,10 +551,9 @@ async function handleBrowseCancel({ channel, evt }: CardCtx): Promise<void> {
 
 const browseIdx = (ctx: CardCtx): number => ctx.value?.idx ?? 0;
 
-// --- Autopilot handlers -----------------------------------------------------
+// --- Supervisor delegation handlers ----------------------------------------
 
-/** Resolve the session for an autopilot card action. Button-driven actions carry
- * `value.s`; the entry button `ap_panel` resolves from the chat's current project. */
+/** Resolve the session for a delegation card action. */
 async function apSession(ctx: CardCtx): Promise<string | undefined> {
   const s = (ctx.value as { s?: string } | undefined)?.s;
   if (s) return s;
@@ -554,104 +561,329 @@ async function apSession(ctx: CardCtx): Promise<string | undefined> {
   return project ?? undefined;
 }
 
-/** Re-render the autopilot panel card for a given session. */
-async function renderApPanel(ctx: CardCtx, session: string): Promise<void> {
-  const store = new AutopilotStore();
-  const view = buildAutopilotView(store, session, messages("lark"));
-  // isProjectGroup is keyed by the RAW chatId (store.has(chatId)) — NOT a chatScope.
-  const group = isProjectGroup(ctx.evt.chatId);
-  await sendCard(ctx.channel, ctx.evt.chatId, autopilotPanelCard(view, session, group));
+async function handleApDelegate(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  const requirement = parseDelegateRequirement("delegate");
+  if (requirement === null) return;
+  const result = await startActiveDelegatedTask(ctx.deps, { session, requirement });
+  await sendText(ctx.channel, ctx.evt.chatId, formatActiveDelegateStart(result));
 }
 
-async function handleApPanel(ctx: CardCtx): Promise<void> {
+async function handleApCancelDelegate(ctx: CardCtx): Promise<void> {
   const session = await apSession(ctx);
-  if (!session) {
-    await sendText(ctx.channel, ctx.evt.chatId, messages("lark").noCurrentProjectShort);
+  if (!session) return;
+  const result = await cancelActiveDelegatedTask(ctx.deps, { session });
+  await sendText(ctx.channel, ctx.evt.chatId, formatActiveDelegateCancel(result));
+}
+
+function opportunityId(ctx: CardCtx): string | null {
+  const id = ctx.value?.id;
+  return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+}
+
+function opportunityIds(ctx: CardCtx): string[] {
+  return Array.isArray(ctx.value?.ids)
+    ? ctx.value.ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : [];
+}
+
+function loadOpportunities(ids: string[]): {
+  suggestions: NonNullable<ReturnType<OpportunityStore["get"]>>[];
+  missing: string[];
+} {
+  const store = new OpportunityStore();
+  const suggestions: NonNullable<ReturnType<OpportunityStore["get"]>>[] = [];
+  const missing: string[] = [];
+  for (const id of ids) {
+    const suggestion = store.get(id);
+    if (suggestion === null) missing.push(id);
+    else suggestions.push(suggestion);
+  }
+  return { suggestions, missing };
+}
+
+function opportunityNotificationRows(
+  suggestions: NonNullable<ReturnType<OpportunityStore["get"]>>[],
+) {
+  return suggestions.map((suggestion) => ({
+    id: suggestion.id,
+    title: suggestion.title,
+    projectName: suggestion.projectName,
+    category: suggestion.category,
+    confidence: suggestion.confidence,
+    estimatedComplexity: suggestion.estimatedComplexity,
+    status: suggestion.status,
+    value: suggestion.value,
+  }));
+}
+
+function opportunityDiscussionBlockReason(
+  deps: HandlerDeps,
+  session: string,
+  projectPath: string,
+): string | null {
+  if (
+    deps.queue.isSessionProcessing(session) ||
+    deps.queue.getCurrentSessionMessage(session) !== undefined ||
+    deps.queue.getSessionQueue(session).length > 0 ||
+    hasActiveDelegatedTaskForSession(session)
+  ) {
+    return "项目 agent 当前正在处理任务或已有排队消息，暂时不能参与讨论。请等当前任务完成后再试。";
+  }
+
+  const status = spawnSync("git", ["status", "--short"], {
+    cwd: projectPath,
+    encoding: "utf8",
+  });
+  if (status.status !== 0) {
+    const reason = [status.stderr, status.stdout].filter(Boolean).join("\n").trim();
+    return `无法确认项目 git 状态，暂时不能参与讨论。\n${reason || "git status --short failed"}`;
+  }
+  const dirty = status.stdout.trim();
+  if (dirty.length > 0) {
+    const preview = dirty.split(/\r?\n/).slice(0, 12).join("\n");
+    return `项目工作区不干净，暂时不能参与讨论。请先处理现有改动后再试。\n\n${preview}`;
+  }
+  return null;
+}
+
+async function handleOpportunityShow(ctx: CardCtx): Promise<void> {
+  const id = opportunityId(ctx);
+  if (id === null) return;
+  const suggestion = new OpportunityStore().get(id);
+  if (suggestion === null) {
+    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${id}`);
     return;
   }
-  await renderApPanel(ctx, session);
+  await sendCard(
+    ctx.channel,
+    ctx.evt.chatId,
+    opportunityDetailCard(suggestion, {
+      allowDelegate: true,
+      title: `Opportunity: ${suggestion.title}`,
+    }),
+  );
 }
 
-async function handleApToggle(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  const store = new AutopilotStore();
-  const m = messages("lark");
-  applyAutopilotVerb(store, session, store.get(session).enabled ? "off" : "on", m);
-  await renderApPanel(ctx, session);
-}
-
-async function handleApGlobal(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  const on = (ctx.value as { on?: boolean }).on === true;
-  const store = new AutopilotStore();
-  applyAutopilotVerb(store, session, `global ${on ? "on" : "off"}`, messages("lark"));
-  await renderApPanel(ctx, session);
-}
-
-async function handleApStop(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  applyAutopilotVerb(new AutopilotStore(), session, "stop", messages("lark"));
-  await renderApPanel(ctx, session);
-}
-
-async function handleApPick(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  const view = buildAutopilotView(new AutopilotStore(), session, messages("lark"));
-  await sendCard(ctx.channel, ctx.evt.chatId, autopilotGoalPickerCard(view, session));
-}
-
-async function handleApGoalToggle(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  const id = (ctx.value as { id?: string }).id;
-  if (id) toggleGoal(session, id);
-  const view = buildAutopilotView(new AutopilotStore(), session, messages("lark"));
-  await sendCard(ctx.channel, ctx.evt.chatId, autopilotGoalPickerCard(view, session));
-}
-
-async function handleApRounds(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  const delta = (ctx.value as { delta?: number }).delta;
-  if (delta === 1 || delta === -1)
-    adjustRounds(session, delta, ctx.deps.config.autopilot.maxRounds);
-  const view = buildAutopilotView(new AutopilotStore(), session, messages("lark"));
-  await sendCard(ctx.channel, ctx.evt.chatId, autopilotGoalPickerCard(view, session));
-}
-
-async function handleApStart(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  const picker = getPicker(session);
-  if (picker.selected.length > 0) {
-    applyAutopilotVerb(
-      new AutopilotStore(),
-      session,
-      goalsVerb(picker.selected, picker.rounds),
-      messages("lark"),
-      ctx.deps.config.autopilot.maxRounds,
-    );
-    clearPicker(session);
+async function handleOpportunityDiscuss(ctx: CardCtx): Promise<void> {
+  const id = opportunityId(ctx);
+  if (id === null) return;
+  const store = new OpportunityStore();
+  const suggestion = store.get(id);
+  if (suggestion === null) {
+    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${id}`);
+    return;
   }
-  await renderApPanel(ctx, session);
+  const opened = await createProjectFromPath(
+    ctx.deps,
+    chatScope("lark", ctx.evt.chatId),
+    suggestion.projectPath,
+  );
+  if (opened.status !== "created" && opened.status !== "switched") {
+    const reason =
+      opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
+    await sendText(ctx.channel, ctx.evt.chatId, `Cannot open project for discussion: ${reason}`);
+    return;
+  }
+  const blocked = opportunityDiscussionBlockReason(
+    ctx.deps,
+    opened.sessionName,
+    opened.projectPath,
+  );
+  if (blocked !== null) {
+    await sendText(ctx.channel, ctx.evt.chatId, blocked);
+    return;
+  }
+  store.updateStatus(id, "discussing");
+  await sendCard(
+    ctx.channel,
+    ctx.evt.chatId,
+    opportunityDetailCard(
+      { ...suggestion, status: "discussing" },
+      {
+        allowDelegate: true,
+        title: `Discussing: ${suggestion.title}`,
+      },
+    ),
+  );
+  await enqueueLarkAction(
+    ctx.channel,
+    ctx.deps,
+    ctx.evt.chatId,
+    ctx.evt.messageId,
+    "text",
+    formatOpportunityAgentDiscussionPrompt(suggestion),
+    opened.sessionName,
+    ctx.chatKind === "p2p",
+  );
 }
 
-async function handleApConfirm(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  applyAutopilotVerb(new AutopilotStore(), session, "confirm", messages("lark"));
-  await renderApPanel(ctx, session);
+async function handleOpportunityDismiss(ctx: CardCtx): Promise<void> {
+  const id = opportunityId(ctx);
+  if (id === null) return;
+  const updated = new OpportunityStore().updateStatus(id, "dismissed");
+  await sendText(
+    ctx.channel,
+    ctx.evt.chatId,
+    updated === null ? `Opportunity not found: ${id}` : `Skipped opportunity ${id}.`,
+  );
 }
 
-async function handleApReject(ctx: CardCtx): Promise<void> {
-  const session = await apSession(ctx);
-  if (!session) return;
-  applyAutopilotVerb(new AutopilotStore(), session, "reject", messages("lark"));
-  await renderApPanel(ctx, session);
+async function handleOpportunityDelegate(ctx: CardCtx): Promise<void> {
+  const id = opportunityId(ctx);
+  if (id === null) return;
+  const suggestion = new OpportunityStore().get(id);
+  if (suggestion === null) {
+    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${id}`);
+    return;
+  }
+  const result = await runOpportunityCommand(
+    ctx.deps,
+    chatScope("lark", ctx.evt.chatId),
+    `delegate ${id}`,
+  );
+  await sendText(ctx.channel, ctx.evt.chatId, result.body);
+}
+
+async function handleOpportunityDiscussAll(ctx: CardCtx): Promise<void> {
+  const ids = opportunityIds(ctx);
+  if (ids.length === 0) return;
+  const { suggestions, missing } = loadOpportunities(ids);
+  if (missing.length > 0 || suggestions.length === 0) {
+    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${missing.join(", ")}`);
+    return;
+  }
+  const first = suggestions[0];
+  if (first === undefined) return;
+  if (suggestions.some((suggestion) => suggestion.projectPath !== first.projectPath)) {
+    await sendText(
+      ctx.channel,
+      ctx.evt.chatId,
+      "Cannot discuss mixed-project opportunities together.",
+    );
+    return;
+  }
+  const opened = await createProjectFromPath(
+    ctx.deps,
+    chatScope("lark", ctx.evt.chatId),
+    first.projectPath,
+  );
+  if (opened.status !== "created" && opened.status !== "switched") {
+    const reason =
+      opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
+    await sendText(ctx.channel, ctx.evt.chatId, `Cannot open project for discussion: ${reason}`);
+    return;
+  }
+  const blocked = opportunityDiscussionBlockReason(
+    ctx.deps,
+    opened.sessionName,
+    opened.projectPath,
+  );
+  if (blocked !== null) {
+    await sendText(ctx.channel, ctx.evt.chatId, blocked);
+    return;
+  }
+  const store = new OpportunityStore();
+  for (const suggestion of suggestions) store.updateStatus(suggestion.id, "discussing");
+  const discussing = suggestions.map((suggestion) => ({
+    ...suggestion,
+    status: "discussing" as const,
+  }));
+  await sendCard(
+    ctx.channel,
+    ctx.evt.chatId,
+    opportunityDigestCard({
+      title: `Discussing opportunities: ${first.projectName}`,
+      body: `Project: ${first.projectName}\nSuggestions: ${suggestions.length}\nDiscuss these together before implementation.`,
+      opportunities: opportunityNotificationRows(discussing),
+      allowDelegate: true,
+    }),
+  );
+  await enqueueLarkAction(
+    ctx.channel,
+    ctx.deps,
+    ctx.evt.chatId,
+    ctx.evt.messageId,
+    "text",
+    formatOpportunityBatchAgentDiscussionPrompt(suggestions),
+    opened.sessionName,
+    ctx.chatKind === "p2p",
+  );
+}
+
+async function handleOpportunityDismissAll(ctx: CardCtx): Promise<void> {
+  const ids = opportunityIds(ctx);
+  if (ids.length === 0) return;
+  const store = new OpportunityStore();
+  let skipped = 0;
+  const missing: string[] = [];
+  for (const id of ids) {
+    if (store.updateStatus(id, "dismissed") === null) missing.push(id);
+    else skipped++;
+  }
+  await sendText(
+    ctx.channel,
+    ctx.evt.chatId,
+    missing.length > 0
+      ? `Skipped ${skipped} opportunities. Missing: ${missing.join(", ")}`
+      : `Skipped ${skipped} opportunities.`,
+  );
+}
+
+async function handleOpportunityDelegateAll(ctx: CardCtx): Promise<void> {
+  const ids = opportunityIds(ctx);
+  if (ids.length === 0) return;
+  const { suggestions, missing } = loadOpportunities(ids);
+  if (missing.length > 0 || suggestions.length === 0) {
+    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${missing.join(", ")}`);
+    return;
+  }
+  const first = suggestions[0];
+  if (first === undefined) return;
+  if (suggestions.some((suggestion) => suggestion.projectPath !== first.projectPath)) {
+    await sendText(
+      ctx.channel,
+      ctx.evt.chatId,
+      "Cannot delegate mixed-project opportunities together.",
+    );
+    return;
+  }
+  const opened = await createProjectFromPath(
+    ctx.deps,
+    chatScope("lark", ctx.evt.chatId),
+    first.projectPath,
+  );
+  if (opened.status !== "created" && opened.status !== "switched") {
+    const reason =
+      opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
+    await sendText(ctx.channel, ctx.evt.chatId, `Cannot open project for delegation: ${reason}`);
+    return;
+  }
+  const result = await startActiveDelegatedTask(ctx.deps, {
+    session: opened.sessionName,
+    requirement: formatOpportunityBatchDelegateRequirement(suggestions),
+    opportunityIds: suggestions.map((suggestion) => suggestion.id),
+  });
+  if (result.status !== "queued") {
+    await sendText(ctx.channel, ctx.evt.chatId, `Delegate blocked: ${result.reason}`);
+    return;
+  }
+  const store = new OpportunityStore();
+  for (const suggestion of suggestions) {
+    store.updateStatus(suggestion.id, "delegated", Date.now(), { delegatedRunId: result.runId });
+  }
+  await sendText(
+    ctx.channel,
+    ctx.evt.chatId,
+    [
+      `Delegated ${suggestions.length} opportunities as one batch.`,
+      `runId: ${result.runId}`,
+      `project: ${result.projectId}`,
+      `supervisor: ${result.supervisorSession}`,
+      ...(result.reportDir !== null ? [`report: ${result.reportDir}`] : []),
+    ].join("\n"),
+  );
 }
 
 /**
@@ -746,17 +978,17 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   restartpick: handleRestartPick,
   inputredo: handleInputRedo,
   qcancel: handleQueueCancel,
-  // --- Autopilot panel ---
-  ap_panel: handleApPanel,
-  ap_toggle: handleApToggle,
-  ap_global: handleApGlobal,
-  ap_stop: handleApStop,
-  ap_pick: handleApPick,
-  ap_goal_toggle: handleApGoalToggle,
-  ap_rounds: handleApRounds,
-  ap_start: handleApStart,
-  ap_confirm: handleApConfirm,
-  ap_reject: handleApReject,
+  // --- Supervisor delegation ---
+  ap_delegate: handleApDelegate,
+  ap_cancel_delegate: handleApCancelDelegate,
+  // --- Opportunity discovery proposal cards ---
+  oppshow: handleOpportunityShow,
+  oppdiscuss: handleOpportunityDiscuss,
+  oppdismiss: handleOpportunityDismiss,
+  oppdelegate: handleOpportunityDelegate,
+  oppdiscussall: handleOpportunityDiscussAll,
+  oppdismissall: handleOpportunityDismissAll,
+  oppdelegateall: handleOpportunityDelegateAll,
   // --- Prompt library (mirrors Telegram pp/pf/pn callbacks) ---
   pget: async ({ channel, deps, evt, value, chatKind }) => {
     if (chatKind !== "p2p") return;
@@ -865,7 +1097,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
 
         const planned = await planMessageAction({
           deps,
-          action: cmd === "confirm" ? String(value?.action ?? "") : cmd,
+          action: cmd === "confirm" ? String(value.action ?? "") : cmd,
           confirmed: cmd === "confirm",
           session:
             cmd === "confirm" || cmd === "start" || cmd === "restart"

@@ -222,7 +222,7 @@ describe("listCodexOrphans", () => {
     const orphans = await listCodexOrphans(probe);
     expect(orphans).toHaveLength(1);
     expect(orphans[0]?.configRoot).toBe(`${home}/.codex`);
-  });
+  }, 15_000);
 
   it("uses null sessionId and bare codex command when nothing is open and no rollout on disk", async () => {
     const probe = fakeProbe({

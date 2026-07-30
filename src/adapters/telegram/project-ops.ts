@@ -42,9 +42,7 @@ export async function startOrPickAfterCreate(
  */
 
 export {
-  aliveProjectButtons,
   botSelfRepoWarning,
-  recentProjectButtons,
   removeProjectBySession,
   resolveAliveSessionByShortId,
   switchToProject,

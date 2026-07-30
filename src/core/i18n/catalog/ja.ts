@@ -147,7 +147,7 @@ export const ja: Messages = {
     "同じプロジェクトで Claude/Codex が既に実行中です。元のプロセスには触れず中止しました。並行して引き継ぐ場合は「独立セッションとして引き継ぐ」を選んでください。",
   btnAdoptAttach: "💻 PC のターミナルで見る（任意）",
   adoptAttachHint: (cmd: string) =>
-    `✅ 接続コマンドは「PC」のクリップボードにコピー済みです（スマホ側でコピーする必要はありません）。PC に戻ったらターミナルに貼り付けて Enter を押すだけで入れます。この手順は任意です。\nコマンド: ${cmd}`,
+    `✅ セッションを見るには、PC のターミナルでこの任意コマンドを実行してください:\nコマンド: ${cmd}`,
 
   doneShort: "完了",
   agentNotRunningRestart:
@@ -412,12 +412,15 @@ export const ja: Messages = {
   cmdDashboard: "グローバルダッシュボードを表示（全セッションの状態概要）",
   cmdBatch:
     "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",
-  cmdAutopilot: "セッション autopilot を管理（目標、キープアライブ、グローバル管理）",
+  cmdAutopilot: "現在のセッション作業を Loop Supervisor に委任",
+  cmdOpportunity: "提案された改善機会を確認し、承認した作業を委任",
   cmdGoals: "autopilot 目標プリセットを一覧表示",
   cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
+  autopilotDelegatePanelBody:
+    "現在のセッション文脈を Loop Supervisor に委任し、実装、レビュー、検証、PR 処理、最終通知まで進めます。",
   autopilotNotifyPaused: (session, reason) => `🛑 autopilot を一時停止 [${session}]：${reason}`,
   autopilotNotifyStopped: (session, reason) => `⏹️ autopilot を停止 [${session}]：${reason}`,
   autopilotNotifyUsage: (session, pct) =>
@@ -446,9 +449,11 @@ export const ja: Messages = {
   autopilotStatus: (o) =>
     `Autopilot：${o.enabled ? "オン" : "オフ"}（${o.pureKeepAlive ? "キープアライブ" : "目標駆動"}、介入 ${o.iterations} 回、persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw) =>
-    `不明なサブコマンド「${raw}」。使い方：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} autopilot を有効化`,
-  btnApDisable: "⏹ autopilot を無効化",
+    `不明なサブコマンド「${raw}」。使い方：/autopilot [delegate [requirement]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
+  btnApEnable: `${UI_ICONS.feature.autopilot} キープアライブ/目標を有効化`,
+  btnApDisable: "⏹ キープアライブ/目標を無効化",
+  btnApDelegate: "🚀 Supervisorで継続",
+  btnApCancelDelegate: "⛔ 委任をキャンセル",
   btnApPickGoals: "🎯 目標を選択",
   btnApGlobalOn: "🌐 グローバル:オン",
   btnApGlobalOff: "🌐 グローバル:オフ",

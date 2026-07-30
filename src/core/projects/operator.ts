@@ -13,6 +13,20 @@ export function loopSupervisorSessionName(prefix: string): string {
   return `${prefix}loop-supervisor`;
 }
 
+/** Reserved loop supervisor pool names. Pool size 1 keeps the legacy name. */
+export function loopSupervisorSessionNames(prefix: string, poolSize: number): string[] {
+  const size = Number.isFinite(poolSize) ? Math.max(1, Math.floor(poolSize)) : 1;
+  const base = loopSupervisorSessionName(prefix);
+  if (size === 1) return [base];
+  return Array.from({ length: size }, (_unused, idx) => `${base}-${idx + 1}`);
+}
+
+/** True iff `session` is a reserved loop supervisor, including pool slots. */
+export function isLoopSupervisorSessionName(session: string, prefix: string): boolean {
+  const base = loopSupervisorSessionName(prefix);
+  return session === base || new RegExp(`^${escapeRegExp(base)}-[1-9]\\d*$`).test(session);
+}
+
 /** True iff `session` is the reserved operator session for this prefix. */
 export function isOperator(session: string, prefix: string): boolean {
   return session === operatorSessionName(prefix);
@@ -20,7 +34,11 @@ export function isOperator(session: string, prefix: string): boolean {
 
 /** True iff `session` is reserved bot infrastructure, not a user project. */
 export function isReservedInfrastructureSession(session: string, prefix: string): boolean {
-  return session === operatorSessionName(prefix) || session === loopSupervisorSessionName(prefix);
+  return session === operatorSessionName(prefix) || isLoopSupervisorSessionName(session, prefix);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Resolve the target session for a channel: an explicit current project wins;

@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PersistedMessage } from "../../src/core/command/queue.js";
 import { MessageQueue } from "../../src/core/command/queue.js";
 import {
@@ -14,9 +14,25 @@ import { listLoopReports } from "../../src/core/loop/report.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { sessionNameFromPath } from "../../src/core/projects/sessionPathMap.js";
 
+let originalStateDir: string | undefined;
+
+beforeEach(() => {
+  originalStateDir = process.env.TCB_STATE_DIR;
+  process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-state-"));
+});
+
+afterEach(() => {
+  if (originalStateDir === undefined) {
+    delete process.env.TCB_STATE_DIR;
+  } else {
+    process.env.TCB_STATE_DIR = originalStateDir;
+  }
+});
+
 function queueDeps(projectPath: string, live: boolean, liveAgent?: "claude" | "codex" | null) {
   const prefix = "tmux_proj_";
   const liveSession = sessionNameFromPath(projectPath, prefix);
+  const liveSessions = new Set(live ? [liveSession] : []);
   const queue = new MessageQueue(
     30,
     join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
@@ -27,13 +43,13 @@ function queueDeps(projectPath: string, live: boolean, liveAgent?: "claude" | "c
       queue,
       config: { projectSessionPrefix: prefix },
       bridge: {
-        hasSession: async (sessionName: string) => live && sessionName === liveSession,
+        hasSession: async (sessionName: string) => liveSessions.has(sessionName),
       },
       ...(liveAgent !== undefined
         ? {
             configResolver: {
               detectAgentKind: async (sessionName: string) =>
-                live && sessionName === liveSession ? liveAgent : null,
+                liveSessions.has(sessionName) ? liveAgent : null,
             },
           }
         : {}),
@@ -72,6 +88,41 @@ describe("createLoopQueueAgentTaskRunner", () => {
     expect(result).toEqual({ status: 0, stdout: "agent done", stderr: "" });
     expect(handled).toEqual([
       `${sessionNameFromPath(projectPath, "tmux_proj_")}:Fix one safe finding`,
+    ]);
+  });
+
+  it("queues compact before a loop task when a round reset is requested", async () => {
+    const projectPath = "/repo/hub";
+    const { queue, deps } = queueDeps(projectPath, true);
+    const handled: Array<{ action: string; text: string }> = [];
+    queue.setHandler(async (message) => {
+      handled.push({ action: message.action, text: message.text });
+      message.resolve(message.action === "compact" ? "compacted" : "agent done");
+    });
+
+    const result = await createLoopQueueAgentTaskRunner(deps)({
+      projectId: "hub",
+      projectName: "Hub",
+      agent: "codex",
+      cwd: projectPath,
+      prompt: "Fix one safe finding",
+      contextReset: "compact",
+      finding: {
+        id: "f1",
+        title: "Focused test gap",
+        action: "tests",
+        confidence: "high",
+        autofixSafety: "safe",
+        affectedFiles: ["tests/parser.test.ts"],
+        prompt: "Add focused tests",
+        verificationCommands: ["npm test -- tests/parser.test.ts"],
+      },
+    });
+
+    expect(result).toEqual({ status: 0, stdout: "agent done", stderr: "" });
+    expect(handled).toEqual([
+      { action: "compact", text: "" },
+      { action: "text", text: "Fix one safe finding" },
     ]);
   });
 
@@ -141,6 +192,68 @@ describe("createLoopQueueAgentTaskRunner", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('no live project session for loop project "hub"');
     expect(queue.isEmpty()).toBe(true);
+  });
+
+  it("starts a missing project session before queueing scheduled loop work", async () => {
+    const projectPath = "/repo/hub";
+    const prefix = "tmux_proj_";
+    const liveSession = sessionNameFromPath(projectPath, prefix);
+    const liveSessions = new Set<string>();
+    let liveAgent: "claude" | "codex" | null = null;
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const created: string[] = [];
+    const started: string[] = [];
+    queue.setHandler(async (message) => {
+      message.resolve(`handled ${message.sessionName}`);
+    });
+
+    const result = await createLoopQueueAgentTaskRunner({
+      queue,
+      config: { projectSessionPrefix: prefix },
+      bridge: {
+        hasSession: async (sessionName: string) => liveSessions.has(sessionName),
+        createSession: async (sessionName: string, cwd?: string) => {
+          created.push(`${sessionName}:${cwd ?? ""}`);
+          liveSessions.add(sessionName);
+          return true;
+        },
+      },
+      agent: {
+        start: async (sessionName?: string) => {
+          if (sessionName !== undefined) {
+            started.push(sessionName);
+            liveAgent = "codex";
+          }
+        },
+      },
+      configResolver: {
+        detectAgentKind: async (sessionName: string) =>
+          liveSessions.has(sessionName) ? liveAgent : null,
+      },
+    })({
+      projectId: "hub",
+      projectName: "Hub",
+      agent: "codex",
+      cwd: projectPath,
+      prompt: "Fix one safe finding",
+      finding: {
+        id: "f1",
+        title: "Focused test gap",
+        action: "tests",
+        confidence: "high",
+        autofixSafety: "safe",
+        affectedFiles: ["tests/parser.test.ts"],
+        prompt: "Add focused tests",
+        verificationCommands: ["npm test -- tests/parser.test.ts"],
+      },
+    });
+
+    expect(result).toEqual({ status: 0, stdout: `handled ${liveSession}`, stderr: "" });
+    expect(created).toEqual([`${liveSession}:${projectPath}`]);
+    expect(started).toEqual([liveSession]);
   });
 
   it("fails without queueing when the live project session uses the wrong agent", async () => {
@@ -226,8 +339,10 @@ describe("createLoopSupervisorTaskRunner", () => {
       },
     };
     const handled: string[] = [];
+    const waitHorizons: Array<number | undefined> = [];
     queue.setHandler(async (message) => {
       handled.push(`${message.sessionName}:${message.text}`);
+      waitHorizons.push(message.maxWaitDoneTotalMs);
       message.resolve("supervisor done");
     });
 
@@ -236,10 +351,45 @@ describe("createLoopSupervisorTaskRunner", () => {
       prompt: "Run supervised work order",
       signal: new AbortController().signal,
       workOrder,
+      timeoutMs: 7_200_000,
     });
 
     expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
     expect(handled).toEqual(["tmux_proj_loop-supervisor:Run supervised work order"]);
+    expect(waitHorizons).toEqual([7_200_000]);
+  });
+
+  it("queues clear before a loop supervisor work order when requested", async () => {
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const deps = {
+      queue,
+      config: { projectSessionPrefix: "tmux_proj_" },
+      bridge: {
+        hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor-1",
+      },
+    };
+    const handled: Array<{ action: string; text: string }> = [];
+    queue.setHandler(async (message) => {
+      handled.push({ action: message.action, text: message.text });
+      message.resolve(message.action === "clear" ? "cleared" : "supervisor done");
+    });
+
+    const result = await createLoopSupervisorTaskRunner(deps)({
+      session: "tmux_proj_loop-supervisor-1",
+      prompt: "Run supervised work order",
+      signal: new AbortController().signal,
+      workOrder,
+      contextReset: "clear",
+    });
+
+    expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
+    expect(handled).toEqual([
+      { action: "clear", text: "" },
+      { action: "text", text: "Run supervised work order" },
+    ]);
   });
 
   it("persists queued loop supervisor work so scheduled work survives a restart", async () => {

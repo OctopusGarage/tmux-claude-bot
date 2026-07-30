@@ -14,7 +14,7 @@ run npm run knip
 run npm run depcruise
 run npm run lint:deep
 run npm run smoke
-run npm audit --audit-level=high
+run scripts/audit-high.sh
 
 if command -v shellcheck >/dev/null 2>&1; then
   run npm run lint:sh

@@ -2,9 +2,11 @@ import type { Bot } from "grammy";
 import { readAgentSessions } from "../../core/agents/read.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
-import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
-import { formatGoalsList } from "../../core/autopilot/goals/goals-view.js";
-import { AutopilotStore } from "../../core/autopilot/state-store.js";
+import {
+  formatActiveDelegateStart,
+  parseDelegateRequirement,
+  startActiveDelegatedTask,
+} from "../../core/autopilot/delegated-task.js";
 import { buildHelpBody, getTelegramActions } from "../../core/command/action-registry.js";
 import { startDisposition } from "../../core/command/dispatch.js";
 import { restorePersistedChannel } from "../../core/command/queue-restore.js";
@@ -20,6 +22,7 @@ import {
 } from "../../core/infra/system-load.js";
 import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
+import { runOpportunityCommand } from "../../core/opportunities/command.js";
 import {
   createSubfolder,
   isAwaitingFolderName,
@@ -383,7 +386,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
   // Owner-only: switch the channel's current project back to the operator session.
   bot.command("home", async (ctx) => {
-    if (ctx.chat?.type !== "private") return; // private chat only (mirrors Lark p2p) — don't point a group's scope at the operator
+    if (ctx.chat.type !== "private") return; // private chat only (mirrors Lark p2p) — don't point a group's scope at the operator
     const result = homeCommandResult(
       deps.config.homeOperator.enabled,
       deps.config.projectSessionPrefix,
@@ -400,7 +403,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   // Private chat only (mirrors /home). Supports keyword search and tag filtering
   // via inline-button callbacks (pp / pf / pn).
   bot.command("prompts", async (ctx) => {
-    if (ctx.chat?.type !== "private") return;
+    if (ctx.chat.type !== "private") return;
     const promptLib = makePromptLib(deps.config);
     if (!promptLib.isEnabled()) {
       await reply(ctx, "info", messages("telegram").promptsDisabled, { replyTarget });
@@ -457,56 +460,57 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     });
   });
 
-  // Per-session autopilot control: /autopilot [on|off|keepalive on|off|stop]
-  // Resolve the target session the same way /logs does (reply-routing first,
-  // then the chat's current project), so it works from any reply context.
+  // Supervisor-backed Autopilot: /autopilot [requirement] delegates the current
+  // session context to the Loop Supervisor. The old keep-alive/goal-cycle
+  // Autopilot surface is intentionally not exposed.
   bot.command("autopilot", async (ctx) => {
     const session = await resolveSessionFromReply(ctx, replyTarget, deps);
     if (!session) {
       await reply(ctx, "err", MSG.noSession);
       return;
     }
-    const arg = (ctx.match ?? "").toString();
-    const body = applyAutopilotVerb(
-      new AutopilotStore(),
+    const arg = ctx.match.toString().trim();
+    const delegatedRequirement =
+      parseDelegateRequirement(
+        arg.length === 0 || /^delegate\b/i.test(arg) ? arg || "delegate" : `delegate ${arg}`,
+      ) ?? parseDelegateRequirement("delegate");
+    if (delegatedRequirement === null) return;
+    const result = await startActiveDelegatedTask(deps, {
       session,
-      arg,
-      messages("telegram"),
-      deps.config.autopilot.maxRounds,
-    );
-    await reply(ctx, "view", messages("telegram").autopilotTitle, {
-      session,
-      body,
-      replyTarget,
+      requirement: delegatedRequirement,
     });
+    await reply(
+      ctx,
+      result.status === "queued" ? "ok" : "err",
+      messages("telegram").autopilotTitle,
+      {
+        session,
+        body: formatActiveDelegateStart(result),
+        replyTarget,
+      },
+    );
   });
 
   // Owner-only: batch scheduler status and control.
   bot.command("batch", async (ctx) => {
-    const arg = (ctx.match ?? "").toString();
+    const arg = ctx.match.toString();
     const body = runBatchCommand(arg);
     await reply(ctx, "view", "Batch", { body, replyTarget });
   });
 
-  bot.command("goals", async (ctx) => {
-    const body = formatGoalsList(messages("telegram"));
-    await reply(ctx, "view", messages("telegram").goalsTitle, {
-      body,
+  bot.command("opportunity", async (ctx) => {
+    const result = await runOpportunityCommand(deps, tgScope(ctx), ctx.match.toString());
+    await reply(ctx, result.tone as Tone, "Opportunity", {
+      body: result.body,
       replyTarget,
     });
   });
 
   bot.command("ws", async (ctx) => {
     const raw = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
-    await runWorkspaceCommand(
-      deps,
-      "telegram",
-      String(ctx.chat?.id ?? 0),
-      raw,
-      async (kind, text) => {
-        await reply(ctx, kind, text);
-      },
-    );
+    await runWorkspaceCommand(deps, "telegram", String(ctx.chat.id), raw, async (kind, text) => {
+      await reply(ctx, kind, text);
+    });
   });
 
   // Inline-button taps: control panel (esc/interrupt/enter/restart) and the
@@ -515,7 +519,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
-    const chatId = ctx.chat?.id ?? "unknown";
+    const chatId = ctx.chat.id;
     log.info(`message received chat=${chatId} text_len=${text.length}`);
 
     if (text.length > deps.config.maxInboundLength) {
@@ -569,7 +573,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       // acks: a rewrite blocked by dedup is reported, never silently re-enqueued as a
       // fresh prompt (which dedup would then drop, losing the edit).
       const ackMsgId = String(replyToMsg.message_id);
-      const chatId = ctx.chat?.id ?? 0;
+      const chatId = ctx.chat.id;
       const rw = await rewriteUserPromptByAck(deps.queue, {
         source: "telegram",
         ackMsgId,
@@ -597,7 +601,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
     const switchMatch = text.match(/^\/switch_([a-zA-Z0-9]{6})$/);
     if (switchMatch) {
-      const id = switchMatch[1] ?? "";
+      const id = regexCapture(switchMatch);
       try {
         const sessionName = await resolveAliveSessionByShortId(deps, id);
         if (!sessionName) {
@@ -617,7 +621,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
     const removeMatch = text.match(/^\/remove_([a-zA-Z0-9]{6})$/);
     if (removeMatch) {
-      const id = removeMatch[1] ?? "";
+      const id = regexCapture(removeMatch);
       try {
         const sessionName = await resolveAliveSessionByShortId(deps, id);
         if (!sessionName) {
@@ -635,14 +639,14 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
     const addProjectMatch = text.match(/^\/add_project_([a-zA-Z0-9]{6})$/);
     if (addProjectMatch) {
-      await addRecentProjectBySid(deps, ctx, addProjectMatch[1] ?? "", replyTarget);
+      await addRecentProjectBySid(deps, ctx, regexCapture(addProjectMatch), replyTarget);
       return;
     }
 
     const resolved = targetSession ?? (await deps.currentProject.get(tgScope(ctx)));
     const currentSessionName = resolveTargetSession(
       resolved,
-      deps.config.homeOperator.enabled && ctx.chat?.type === "private",
+      deps.config.homeOperator.enabled && ctx.chat.type === "private",
       deps.config.projectSessionPrefix,
     );
     if (!currentSessionName) {
@@ -668,6 +672,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       replyTarget,
     });
   });
+}
+
+function regexCapture(match: RegExpMatchArray): string {
+  return typeof match[1] === "string" ? match[1] : "";
 }
 
 /**

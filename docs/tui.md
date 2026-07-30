@@ -63,7 +63,7 @@ TUI is open, the TUI auto-reconnects.
 | `s` | **projects** overlay — every project (live `●` + stopped `◌`, recents included); `Enter` **opens + starts** the selected one (switch to a project / start a stopped one), `Esc` to close |
 | `R` | **recover** — reboot recovery: relaunch the agents that were running before a restart (status shows launched / shell-only / already-alive counts) |
 | `T` | toggle local control prompt translation between off and Argos zh→en; full language-pair control is available with `tcb prompt-translate status|off|on [from] [to]` |
-| `A` | **autopilot** panel — enable or disable autopilot for the current session; pick one or more goal-cycles with a multi-select list and set the number of rounds; toggle the global keep-alive; stop autopilot. When a goal pauses at a `humanGate` phase, a banner appears — press `A` to confirm and continue in-place. |
+| `A` | Autopilot is no longer a keep-alive/goal-cycle panel. Use `tcb autopilot <project> [requirement]` or the chat **Continue via supervisor** action to delegate clarified work to the Loop Supervisor. |
 | `a` | **attach** — drop into the session's real, fully-interactive pane; the TUI resumes when you detach (`Ctrl-b d`). When already attached, it switches client instead |
 | `q` | quit the TUI (the bot keeps running) |
 

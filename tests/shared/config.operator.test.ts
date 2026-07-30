@@ -30,7 +30,13 @@ describe("homeOperator config", () => {
 describe("loop supervisor config", () => {
   it("defaults to disabled, codex, empty dir", () => {
     const c = loadConfig({ ...base } as NodeJS.ProcessEnv);
-    expect(c.loopEngineering.supervisor).toEqual({ enabled: false, dir: "", agent: "codex" });
+    expect(c.loopEngineering.supervisor).toEqual({
+      enabled: false,
+      dir: "",
+      agent: "codex",
+      poolSize: 1,
+      resetBeforeWorkOrder: "clear",
+    });
   });
 
   it("blank LOOP_SUPERVISOR_ENABLED stays disabled", () => {
@@ -49,11 +55,15 @@ describe("loop supervisor config", () => {
       LOOP_SUPERVISOR_ENABLED: "true",
       LOOP_SUPERVISOR_DIR: "/workspace/loop-supervisor",
       LOOP_SUPERVISOR_AGENT: "claude",
+      LOOP_SUPERVISOR_POOL_SIZE: "3",
+      LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER: "compact",
     } as NodeJS.ProcessEnv);
     expect(c.loopEngineering.supervisor).toEqual({
       enabled: true,
       dir: "/workspace/loop-supervisor",
       agent: "claude",
+      poolSize: 3,
+      resetBeforeWorkOrder: "compact",
     });
   });
 });

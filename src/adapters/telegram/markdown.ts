@@ -77,7 +77,7 @@ export function tablesToCodeBlocks(md: string): string {
     }
     const rows = [splitTableRow(line)];
     let j = i + 2; // skip header + separator
-    while (true) {
+    for (;;) {
       const row = lines[j];
       if (row === undefined || !row.includes("|") || row.trim() === "") break;
       rows.push(splitTableRow(row));

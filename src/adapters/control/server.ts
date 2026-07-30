@@ -7,9 +7,11 @@ import {
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
 import { validateAttachment } from "../../core/attachments/classify.js";
-import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
-import { applyAutopilotVerb } from "../../core/autopilot/controls.js";
-import { AutopilotStore } from "../../core/autopilot/state-store.js";
+import {
+  formatActiveDelegateStart,
+  parseDelegateRequirement,
+  startActiveDelegatedTask,
+} from "../../core/autopilot/delegated-task.js";
 import { performStart } from "../../core/command/dispatch.js";
 import { newMessageId } from "../../core/command/enqueue.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
@@ -41,6 +43,11 @@ import {
 } from "../../core/read/user-prompt-intake.js";
 import { recoverProjects } from "../../core/recovery/recover.js";
 import { renderPeekPane } from "../../core/session/output.js";
+import {
+  dispatchDailyTaskRepair,
+  runDailyTaskAuditServiceTick,
+} from "../../core/tasks/daily-audit-service.js";
+import type { AgentKind } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { appVersion } from "../../shared/version.js";
 import {
@@ -58,6 +65,26 @@ const ACTIVITY_DEBOUNCE_MS = 300;
 // active project + as the open/switch scope; the TUI always acts on an explicit
 // session, so this never affects routing).
 const CONTROL_SCOPE = "control";
+
+function commandForAgent(deps: HandlerDeps, agent: AgentKind | undefined): string | undefined {
+  if (agent === undefined) return undefined;
+  return (
+    deps.config.startCommands.find((command) => command.agent === agent)?.command ??
+    (agent === "claude" ? deps.config.claudeStartCommand : undefined)
+  );
+}
+
+async function performStartForRequestedAgent(
+  deps: HandlerDeps,
+  sessionName: string,
+  agent: AgentKind | undefined,
+): Promise<"started" | "already-running"> {
+  const command = commandForAgent(deps, agent);
+  if (agent !== undefined && command === undefined) {
+    throw new Error(`no start command is configured for agent: ${agent}`);
+  }
+  return await performStart(deps, sessionName, command);
+}
 
 /**
  * Start the local control server: a unix-socket transport that makes the running
@@ -200,7 +227,7 @@ async function handleRequest(
         // "already-running" if it was). Covers both "switch project" and "start".
         const res = await openRecentProjectBySid(deps, CONTROL_SCOPE, req.sid);
         if (res.status === "created" || res.status === "switched") {
-          const started = await performStart(deps, res.sessionName);
+          const started = await performStartForRequestedAgent(deps, res.sessionName, req.agent);
           ok({ status: res.status, session: res.sessionName, started });
         } else {
           ok(res);
@@ -213,7 +240,7 @@ async function handleRequest(
         // create-then-start as `open`; invalid/error pass through for the client.
         const res = await createProjectFromPath(deps, CONTROL_SCOPE, req.path);
         if (res.status === "created" || res.status === "switched") {
-          const started = await performStart(deps, res.sessionName);
+          const started = await performStartForRequestedAgent(deps, res.sessionName, req.agent);
           ok({ status: res.status, session: res.sessionName, started });
         } else {
           ok(res);
@@ -283,6 +310,18 @@ async function handleRequest(
         ok({ body: formatPromptTranslateCommandResult(status), status });
         return;
       }
+      case "taskAudit":
+        ok(
+          await runDailyTaskAuditServiceTick({
+            now: req.now ?? Date.now(),
+            config: deps.config.taskAudit,
+            notifications: deps.notifications,
+            dispatchRepair: (request) => dispatchDailyTaskRepair(deps, request),
+            loopConfigFile: deps.config.loopEngineering.configFile,
+            force: req.force ?? false,
+          }),
+        );
+        return;
       case "notify":
         ok(
           await deps.notifications.notify({
@@ -293,30 +332,29 @@ async function handleRequest(
             ...(req.source !== undefined ? { source: req.source } : {}),
             ...(req.session !== undefined ? { session: req.session } : {}),
             ...(req.attachments !== undefined ? { attachments: req.attachments } : {}),
+            ...(req.opportunities !== undefined ? { opportunities: req.opportunities } : {}),
           }),
         );
         return;
       case "autopilot": {
-        const status = applyAutopilotVerb(
-          new AutopilotStore(),
-          req.session,
-          req.verb,
-          messages("telegram"),
-          deps.config.autopilot.maxRounds,
-        );
-        ok({ status });
+        const verb = req.verb.trim();
+        const delegatedRequirement =
+          parseDelegateRequirement(
+            verb.length === 0 || /^delegate\b/i.test(verb)
+              ? verb || "delegate"
+              : `delegate ${verb}`,
+          ) ?? parseDelegateRequirement("delegate");
+        if (delegatedRequirement === null) {
+          ok({ status: "Autopilot delegate failed: could not build a delegation requirement." });
+          return;
+        }
+        const result = await startActiveDelegatedTask(deps, {
+          session: req.session,
+          requirement: delegatedRequirement,
+        });
+        ok({ status: formatActiveDelegateStart(result) });
         return;
       }
-      case "autopilotView":
-        ok(
-          buildAutopilotView(
-            new AutopilotStore(),
-            req.session,
-            messages("telegram"),
-            deps.config.autopilot.maxRounds,
-          ),
-        );
-        return;
       case "sendAttachment": {
         const res = await handleSendAttachment(deps, {
           session: req.session,

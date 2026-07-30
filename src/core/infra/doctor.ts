@@ -46,7 +46,7 @@ export interface DoctorProbes {
   serviceLoaded(): Promise<boolean>;
   botProcessCount(): Promise<number>;
   /** macOS: whether the bot's keep-awake caffeinate is live RIGHT NOW. Matches the
-   * bot's unique `caffeinate -i -s -w` signature (claude uses `-i -t`, so no clash). */
+   * bot's unique `caffeinate -s -w` signature. */
   caffeinateActive(): Promise<boolean>;
   /** macOS: lid (clamshell) state — true=closed, false=open, null=no laptop lid. */
   clamshellClosed(): Promise<boolean | null>;
@@ -95,7 +95,7 @@ export function defaultProbes(root: string = process.cwd()): DoctorProbes {
     },
     caffeinateActive: async () => {
       try {
-        await run("pgrep", ["-f", "caffeinate -i -s -w"]);
+        await run("pgrep", ["-f", "caffeinate -s -w"]);
         return true;
       } catch {
         return false; // pgrep exits 1 when there are no matches
@@ -243,14 +243,14 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
     const keepAwake = envMap?.get("TCB_KEEP_AWAKE");
     if (keepAwake === "1" || keepAwake === "true") {
       if (await probes.caffeinateActive()) {
-        ok("keep-awake on and active (caffeinate -i -s asserting)");
+        ok("keep-awake on and active (caffeinate -s asserting on AC power)");
       } else {
         info(
           "keep-awake on but no caffeinate running — start/restart the bot to apply (it's the bot process that holds it)",
         );
       }
 
-      // caffeinate -i -s does NOT cover a closed lid; only `pmset disablesleep`
+      // caffeinate -s does NOT cover a closed lid; only `pmset disablesleep`
       // does. Surface the real lid + disablesleep state so closing the lid
       // without disablesleep — which WILL sleep the Mac and drop the bot — is a
       // hard fail rather than a silent surprise.

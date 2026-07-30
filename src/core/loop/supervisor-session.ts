@@ -1,15 +1,19 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { CODEX_SKIP_PERMS, SKIP_PERMS } from "../agents/resume-command.js";
 import { markSessionStopped } from "../agents/runningSessions.js";
 import { performStart as defaultPerformStart } from "../command/dispatch.js";
 import type { HandlerDeps } from "../deps.js";
-import { loopSupervisorSessionName } from "../projects/operator.js";
+import {
+  isLoopSupervisorSessionName,
+  loopSupervisorSessionName,
+  loopSupervisorSessionNames,
+} from "../projects/operator.js";
 import { setPathForSession } from "../projects/sessionPathMap.js";
 
-export { loopSupervisorSessionName } from "../projects/operator.js";
+export { loopSupervisorSessionName, loopSupervisorSessionNames } from "../projects/operator.js";
 
 const log = createLogger("loop.supervisor-session");
 
@@ -17,11 +21,11 @@ const LOOP_SUPERVISOR_INSTRUCTIONS = `# Loop Supervisor
 
 You are the Loop Supervisor for tmux-claude-bot.
 
-This directory is the persistent working home for the reserved
-\`tmux_proj_loop-supervisor\` session. It is not a product repository. Its job is
-to receive scheduled Loop Engineering work orders from tmux-claude-bot, supervise
-delivery through the existing project agent sessions, and return a machine-readable
-completion summary.
+This directory is the persistent working home for a reserved loop supervisor
+session. It is not a product repository. Its job is to receive scheduled Loop
+Engineering work orders from tmux-claude-bot, supervise delivery through the
+existing project agent sessions, and return a machine-readable completion
+summary.
 
 ## Responsibilities
 
@@ -64,11 +68,28 @@ completion summary.
 `;
 
 export function isLoopSupervisorSession(session: string, prefix: string): boolean {
-  return session === loopSupervisorSessionName(prefix);
+  return isLoopSupervisorSessionName(session, prefix);
 }
 
-export function loopSupervisorDir(config: Pick<HandlerDeps["config"], "loopEngineering">): string {
-  return config.loopEngineering.supervisor.dir || join(appStateDir(), "loop-supervisor");
+export function loopSupervisorDir(
+  config: {
+    loopEngineering: {
+      supervisor: { dir: string; poolSize?: number } & Record<string, unknown>;
+    } & Record<string, unknown>;
+    projectSessionPrefix?: string;
+  },
+  sessionName?: string,
+): string {
+  const configuredDir = config.loopEngineering.supervisor.dir;
+  const prefix = config.projectSessionPrefix ?? "tmux_proj_";
+  const sessions = loopSupervisorSessionNames(
+    prefix,
+    config.loopEngineering.supervisor.poolSize ?? 1,
+  );
+  const effectiveSession = sessionName ?? sessions[0] ?? loopSupervisorSessionName(prefix);
+  if (sessions.length <= 1) return configuredDir || join(appStateDir(), "loop-supervisor");
+  const slotDirName = basename(effectiveSession).replace(/^.*loop-supervisor/, "loop-supervisor");
+  return join(configuredDir || appStateDir(), slotDirName);
 }
 
 export function provisionLoopSupervisorHome(dir: string): void {
@@ -99,10 +120,17 @@ function resolveSupervisorStartCommand(config: HandlerDeps["config"]): string {
 export async function startLoopSupervisor(
   deps: HandlerDeps,
   performStart: typeof defaultPerformStart = defaultPerformStart,
-): Promise<void> {
-  if (!deps.config.loopEngineering.supervisor.enabled) return;
-  const name = loopSupervisorSessionName(deps.config.projectSessionPrefix);
-  const dir = loopSupervisorDir(deps.config);
+  sessionName?: string,
+): Promise<boolean> {
+  if (!deps.config.loopEngineering.supervisor.enabled) return false;
+  const name =
+    sessionName ??
+    loopSupervisorSessionNames(
+      deps.config.projectSessionPrefix,
+      deps.config.loopEngineering.supervisor.poolSize,
+    )[0] ??
+    loopSupervisorSessionName(deps.config.projectSessionPrefix);
+  const dir = loopSupervisorDir(deps.config, name);
   try {
     provisionLoopSupervisorHome(dir);
     if (!(await deps.bridge.isPaneAlive(name))) {
@@ -110,9 +138,28 @@ export async function startLoopSupervisor(
     }
     setPathForSession(name, dir);
     const start = await performStart(deps, name, resolveSupervisorStartCommand(deps.config));
+    await deps.agent.waitUntilReady(name);
     markSessionStopped(name);
-    log.info("loop supervisor session ensured", { data: { session: name, dir, start } });
+    const alive = await deps.bridge.isPaneAlive(name);
+    log.info("loop supervisor session ensured", { data: { session: name, dir, start, alive } });
+    return alive;
   } catch (err) {
     log.error("failed to start loop supervisor session", { err });
+    return false;
   }
+}
+
+export async function startLoopSupervisors(
+  deps: HandlerDeps,
+  performStart: typeof defaultPerformStart = defaultPerformStart,
+): Promise<boolean> {
+  if (!deps.config.loopEngineering.supervisor.enabled) return false;
+  const sessions = loopSupervisorSessionNames(
+    deps.config.projectSessionPrefix,
+    deps.config.loopEngineering.supervisor.poolSize,
+  );
+  const results = await Promise.all(
+    sessions.map((session) => startLoopSupervisor(deps, performStart, session)),
+  );
+  return results.every(Boolean);
 }

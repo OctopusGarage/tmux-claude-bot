@@ -3,7 +3,7 @@ import type { ConfigResolver } from "./agent-config-resolver.js";
 import { resolveAgentKind } from "./agentKindMap.js";
 import { recordLiveSessionId } from "./live-session-id.js";
 import type { AgentRunner } from "./runner.js";
-import { markSessionRunning, markSessionStopped } from "./runningSessions.js";
+import { markSessionRunning, markSessionStopped, markSessionUsed } from "./runningSessions.js";
 
 /**
  * Routes every AgentRunner call to the claude or codex backend based on which
@@ -48,6 +48,7 @@ export class AgentRunnerDispatcher implements AgentRunner {
     const { runner, resolved } = await this.pick(sessionName);
     await runner.start(sessionName, command);
     markSessionRunning(resolved);
+    markSessionUsed(resolved);
   }
 
   async startWithResume(
@@ -75,6 +76,7 @@ export class AgentRunnerDispatcher implements AgentRunner {
     // acceptable and a read-back here would buy little.
     recordLiveSessionId(resolved, sessionId);
     markSessionRunning(resolved);
+    markSessionUsed(resolved);
   }
 
   async waitUntilReady(sessionName?: string): Promise<void> {
@@ -103,11 +105,13 @@ export class AgentRunnerDispatcher implements AgentRunner {
     const { runner, resolved } = await this.pick(sessionName);
     await runner.gracefulRestart(sessionName);
     markSessionRunning(resolved);
+    markSessionUsed(resolved);
   }
 
   async gracefulRestartWithContinue(sessionName?: string, command?: string): Promise<void> {
     const { runner, resolved } = await this.pick(sessionName);
     await runner.gracefulRestartWithContinue(sessionName, command);
     markSessionRunning(resolved);
+    markSessionUsed(resolved);
   }
 }

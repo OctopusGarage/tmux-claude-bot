@@ -13,7 +13,7 @@ import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
 import { registerHandlers } from "./handlers.js";
-import { buildAutopilotGateKeyboard } from "./keyboards.js";
+import { buildAutopilotGateKeyboard, buildOpportunityNotificationKeyboard } from "./keyboards.js";
 import { sendTelegramAttachment } from "./media.js";
 import { createReplyTargetMap } from "./reply-target.js";
 import { createRouteHealthStore, type RouteName } from "./transport/route-health.js";
@@ -45,7 +45,7 @@ export function isFatalPollingError(err: unknown): boolean {
 
 export async function startTelegram(
   deps: HandlerDeps,
-  opts: { recoveredFromCrash?: boolean } = {},
+  opts: { recoveredFromCrash?: boolean; onNotificationsReady?: () => void } = {},
 ): Promise<void> {
   const { config, queue } = deps;
 
@@ -226,9 +226,17 @@ export async function startTelegram(
           : undefined;
       return bot.api.sendMessage(owner, text, reply_markup ? { reply_markup } : {}).then(() => {});
     });
-    deps.notifications.register("telegram", (message) =>
-      bot.api.sendMessage(owner, message).then(() => {}),
-    );
+    deps.notifications.register("telegram", (message, req) => {
+      const reply_markup =
+        req?.source === "opportunity-discovery" && req.opportunities?.length
+          ? buildOpportunityNotificationKeyboard(req.opportunities)
+          : undefined;
+      return (
+        reply_markup
+          ? bot.api.sendMessage(owner, message, { reply_markup })
+          : bot.api.sendMessage(owner, message)
+      ).then(() => {});
+    });
     deps.notifications.registerAttachment("telegram", (filePath, kind, caption) =>
       sendTelegramAttachment(bot.api, owner, filePath, kind, caption),
     );
@@ -239,6 +247,7 @@ export async function startTelegram(
   deps.channelSenders.register("telegram", (chatId, filePath, kind, caption) =>
     sendTelegramAttachment(bot.api, chatId, filePath, kind, caption),
   );
+  opts.onNotificationsReady?.();
 
   // grammy's long-poll loop blocks until the bot is stopped. Through a flaky
   // proxy, getUpdates fails transiently — most often a 409 when a previous
@@ -260,7 +269,13 @@ export async function startTelegram(
       });
       return; // resolved → bot.stop() was called (clean shutdown)
     } catch (err) {
-      if (stopping) throw err; // clean-shutdown path
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown flips this flag from the onStop cleanup closure while the polling promise is active
+      if (stopping) {
+        log.info(
+          `Telegram polling stopped after shutdown request: ${err instanceof Error ? err.message : err}`,
+        );
+        return;
+      }
       if (isFatalPollingError(err)) {
         // A revoked/invalid token can't be retried away. Stop Telegram but keep
         // the process alive — Lark / TUI / CLI must not die with it.

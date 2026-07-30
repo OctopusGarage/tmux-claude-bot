@@ -3,9 +3,9 @@ import { renderNotice } from "../../core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { boundLarkGroupForSession } from "../../core/notifications/target-resolver.js";
-import { autopilotGateCard } from "./cards.js";
+import { autopilotGateCard, opportunityDigestCard } from "./cards.js";
 import { type LarkMediaClient, sendLarkAttachment } from "./media.js";
-import { sendText } from "./replies.js";
+import { sendCard, sendText } from "./replies.js";
 import { clientFor, notifyLarkOwner, notifyLarkOwnerCard } from "./resource.js";
 
 type LarkConfig = NonNullable<HandlerDeps["config"]["lark"]>;
@@ -24,6 +24,22 @@ export function registerLarkNotifications(
   if ([...cfg.allowedOpenIds][0] !== undefined) {
     deps.notifications.register("lark", async (message, req) => {
       const target = boundLarkGroupForSession(req?.session);
+      const card =
+        req?.source === "opportunity-discovery" && req.opportunities?.length
+          ? opportunityDigestCard({
+              title: req.title,
+              body: req.body ?? message,
+              opportunities: req.opportunities,
+            })
+          : null;
+      if (card !== null) {
+        if (target) {
+          await sendCard(channel, target.chatId, card);
+          return;
+        }
+        await notifyLarkOwnerCard(cfg, card);
+        return;
+      }
       if (target) {
         await sendText(channel, target.chatId, message);
         return;
