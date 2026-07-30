@@ -679,7 +679,7 @@ workspaces:
       workOrder: activeWorkOrder,
       supervisorSession: "tmux_proj_loop-supervisor-1",
       status: "in-flight",
-      now: Date.parse("2026-07-16T10:06:00Z"),
+      now: Date.now(),
     });
     const sessions: string[] = [];
 

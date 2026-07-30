@@ -58,6 +58,10 @@ export type NotificationOptions = {
 };
 
 const CHANNELS: NotificationChannel[] = ["telegram", "lark"];
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_SAFE_MESSAGE_LIMIT = 3900;
+const TELEGRAM_TRUNCATION_NOTICE =
+  "\n\n[truncated for Telegram; see the linked report/logs for full details]";
 
 const LEVEL_PREFIX: Record<NotificationLevel, string> = {
   info: "ℹ️",
@@ -96,7 +100,7 @@ export class NotificationGateway {
           return { channel, ok: false, error: "no sender registered", messageSent: false };
         let messageSent = false;
         try {
-          await sender(message, req);
+          await sender(messageForChannel(channel, message), req);
           messageSent = true;
           const attachmentSender = this.attachmentSenders.get(channel);
           if (attachments.length > 0 && !attachmentSender) {
@@ -162,4 +166,10 @@ export function formatNotification(req: NotificationRequest): string {
   const head = lines.join("\n");
   const body = req.body?.trimEnd();
   return body ? `${head}\n\n${body}` : head;
+}
+
+function messageForChannel(channel: NotificationChannel, message: string): string {
+  if (channel !== "telegram" || message.length <= TELEGRAM_MESSAGE_LIMIT) return message;
+  const maxBody = Math.max(0, TELEGRAM_SAFE_MESSAGE_LIMIT - TELEGRAM_TRUNCATION_NOTICE.length);
+  return `${message.slice(0, maxBody).trimEnd()}${TELEGRAM_TRUNCATION_NOTICE}`;
 }

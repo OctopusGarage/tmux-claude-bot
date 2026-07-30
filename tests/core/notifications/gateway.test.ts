@@ -57,6 +57,27 @@ describe("NotificationGateway", () => {
     });
   });
 
+  it("truncates long Telegram notifications before sending", async () => {
+    const gateway = new NotificationGateway();
+    const telegram = vi.fn(async (_message: string) => {});
+    const lark = vi.fn(async (_message: string) => {});
+    gateway.register("telegram", telegram);
+    gateway.register("lark", lark);
+
+    const result = await gateway.notify({
+      channel: "both",
+      title: "Daily audit",
+      body: "x".repeat(6000),
+    });
+
+    expect(result.status).toBe("sent");
+    const telegramMessage = telegram.mock.calls[0]?.[0] ?? "";
+    const larkMessage = lark.mock.calls[0]?.[0] ?? "";
+    expect(telegramMessage).toContain("truncated for Telegram");
+    expect(telegramMessage.length).toBeLessThanOrEqual(4096);
+    expect(larkMessage.length).toBeGreaterThan(5000);
+  });
+
   it("fails a requested channel that has no registered sender", async () => {
     const gateway = new NotificationGateway();
 

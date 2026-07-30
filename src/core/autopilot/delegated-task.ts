@@ -5,6 +5,7 @@ import { createLogger } from "../../shared/utils/logger.js";
 import type { HandlerDeps } from "../deps.js";
 import { createLoopSupervisorTaskRunner } from "../loop/agent-queue.js";
 import { type LoopProjectConfig, parseLoopConfigYaml } from "../loop/config.js";
+import { recoverInvalidOutputFromFinalSummary } from "../loop/final-summary-recovery.js";
 import {
   runGitCommand,
   runShellCommand,
@@ -20,7 +21,9 @@ import {
 import { completeLoopSupervisorRun } from "../loop/supervisor-completion.js";
 import { loopSupervisorSessionNames, startLoopSupervisor } from "../loop/supervisor-session.js";
 import {
+  listRecoverableFailedLoopSupervisorWorkOrders,
   listUnfinishedLoopSupervisorWorkOrders,
+  type UnfinishedLoopSupervisorWorkOrder,
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
 } from "../loop/supervisor-state.js";
@@ -158,22 +161,23 @@ export async function startActiveDelegatedTask(
     };
   }
 
-  const active = listUnfinishedLoopSupervisorWorkOrders();
-  if (active.some((record) => record.workOrder.projectPath === projectPath)) {
+  const reserved = listReservedSupervisorWorkOrders();
+  if (reserved.some((record) => record.workOrder.projectPath === projectPath)) {
     return {
       status: "blocked",
       reason: `project already has active delegated work: ${projectPath}`,
     };
   }
 
-  const supervisorSession = selectSupervisorSession(deps, active);
-  if (supervisorSession === null) {
+  const candidates = selectSupervisorSessionCandidates(deps, reserved);
+  if (candidates.length === 0) {
     return { status: "blocked", reason: "all loop supervisor sessions have active work" };
   }
-  if (!(await startLoopSupervisor(deps, undefined, supervisorSession))) {
+  const supervisorSession = await ensureFirstAvailableSupervisor(deps, candidates);
+  if (supervisorSession === null) {
     return {
       status: "blocked",
-      reason: `failed to ensure loop supervisor session "${supervisorSession}"`,
+      reason: `failed to ensure loop supervisor sessions: ${candidates.join(", ")}`,
     };
   }
 
@@ -271,16 +275,40 @@ function findLoopProjectPolicy(deps: HandlerDeps, projectPath: string): LoopProj
   }
 }
 
-function selectSupervisorSession(
+function listReservedSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  const byRunDir = new Map<string, UnfinishedLoopSupervisorWorkOrder>();
+  for (const record of [
+    ...listUnfinishedLoopSupervisorWorkOrders(),
+    ...listRecoverableFailedLoopSupervisorWorkOrders(),
+  ]) {
+    byRunDir.set(record.runDir, record);
+  }
+  return [...byRunDir.values()];
+}
+
+function selectSupervisorSessionCandidates(
   deps: HandlerDeps,
-  activeWork: ReturnType<typeof listUnfinishedLoopSupervisorWorkOrders>,
-): string | null {
+  activeWork: UnfinishedLoopSupervisorWorkOrder[],
+): string[] {
   const active = new Set(activeWork.map((record) => record.state.supervisorSession));
   const sessions = loopSupervisorSessionNames(
     deps.config.projectSessionPrefix,
     deps.config.loopEngineering.supervisor.poolSize,
   );
-  return sessions.find((session) => !active.has(session)) ?? null;
+  return sessions.filter((session) => !active.has(session));
+}
+
+async function ensureFirstAvailableSupervisor(
+  deps: HandlerDeps,
+  candidates: string[],
+): Promise<string | null> {
+  for (const session of candidates) {
+    if (await startLoopSupervisor(deps, undefined, session)) return session;
+    log.warn("active delegated task skipped unavailable loop supervisor session", {
+      data: { session },
+    });
+  }
+  return null;
 }
 
 async function runActiveDelegatedTaskInBackground(
@@ -300,6 +328,7 @@ async function runActiveDelegatedTaskInBackground(
     dispatch,
   });
 
+  result = recoverInvalidOutputFromFinalSummary(workOrder, result);
   let gate = runSupervisedSystemGateOutcome({
     project: systemGateProjectFromWorkOrder(workOrder),
     workOrder,
@@ -335,6 +364,7 @@ async function runActiveDelegatedTaskInBackground(
       previousOutput: gate.result.output,
       cancelSignal,
     });
+    result = recoverInvalidOutputFromFinalSummary(workOrder, result);
     gate = runSupervisedSystemGateOutcome({
       project: systemGateProjectFromWorkOrder(workOrder),
       workOrder,

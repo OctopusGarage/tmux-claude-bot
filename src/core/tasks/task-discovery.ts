@@ -31,7 +31,10 @@ export function mergeDiscoveredTaskRecords(
   for (const record of ledgerRecords) {
     const reconciled = reconcileLoopLedgerArtifact(record);
     const discovered = merged.get(reconciled.taskId);
-    if (discovered !== undefined && shouldPreferDiscoveredRecord(reconciled, discovered)) continue;
+    if (discovered !== undefined && shouldPreferDiscoveredRecord(reconciled, discovered)) {
+      merged.set(reconciled.taskId, mergeClosedRepairResolution(reconciled, discovered));
+      continue;
+    }
     merged.set(reconciled.taskId, reconciled);
   }
   return [...merged.values()].sort(
@@ -50,13 +53,47 @@ function shouldPreferDiscoveredRecord(
   );
 }
 
+function mergeClosedRepairResolution(
+  ledgerRecord: ScheduledTaskRecord,
+  discoveredRecord: ScheduledTaskRecord,
+): ScheduledTaskRecord {
+  if (
+    ledgerRecord.source !== "loop-engineering" ||
+    discoveredRecord.source !== "loop-engineering" ||
+    !isClosedRepairStatus(ledgerRecord.repairStatus) ||
+    !isRepairableStatus(discoveredRecord.status)
+  ) {
+    return discoveredRecord;
+  }
+  const repairStatus = ledgerRecord.repairStatus;
+  if (repairStatus === undefined) return discoveredRecord;
+  return {
+    ...discoveredRecord,
+    repairStatus,
+    ...(ledgerRecord.error !== undefined ? { error: ledgerRecord.error } : {}),
+    ...(ledgerRecord.failureKind !== undefined ? { failureKind: ledgerRecord.failureKind } : {}),
+    ...(ledgerRecord.summary !== undefined ? { summary: ledgerRecord.summary } : {}),
+    updatedAt: Math.max(ledgerRecord.updatedAt, discoveredRecord.updatedAt),
+  };
+}
+
+function isClosedRepairStatus(status: ScheduledTaskRecord["repairStatus"]): boolean {
+  return ["fixed", "not-needed", "blocked", "superseded", "not-reproducible"].includes(
+    status ?? "pending",
+  );
+}
+
+function isRepairableStatus(status: ScheduledTaskRecord["status"]): boolean {
+  return ["failed", "missing", "running-timeout"].includes(status);
+}
+
 function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTaskRecord {
   if (record.source !== "loop-engineering") return record;
   const finalSummaryPath = finalSummaryPathForLedgerRecord(record);
   if (finalSummaryPath === null) return record;
   const finalSummary = readJsonRecord(finalSummaryPath);
   if (finalSummary === null) return record;
-  return recordForSupervisorFinalSummary({
+  const reconciled = recordForSupervisorFinalSummary({
     projectId: projectIdFromLoopTaskId(record.taskId) ?? projectIdFromLoopTaskName(record.name),
     jobKind: jobKindFromLoopTaskId(record.taskId),
     scheduledAt: record.scheduledAt,
@@ -65,6 +102,7 @@ function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTask
     path: finalSummaryPath,
     summary: finalSummary,
   });
+  return mergeClosedRepairResolution(record, reconciled);
 }
 
 function finalSummaryPathForLedgerRecord(record: ScheduledTaskRecord): string | null {

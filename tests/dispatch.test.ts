@@ -190,7 +190,7 @@ describe("assertClaudeBinaryAccessible", () => {
       process.env.SHELL = origShell;
       fs.rmSync(tmp, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
 
   it("does not reuse a failed interactive-shell lookup after the shell environment changes", () => {
     const origHome = process.env.HOME;

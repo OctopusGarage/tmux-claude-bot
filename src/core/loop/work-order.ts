@@ -1447,9 +1447,11 @@ function loopControlCliCommand(): string {
   const cwd = process.cwd();
   const tsxBin = join(cwd, "node_modules", ".bin", "tsx");
   const sourceCli = join(cwd, "src", "cli.ts");
-  return existsSync(tsxBin) && existsSync(sourceCli)
-    ? `${shellQuote(tsxBin)} ${shellQuote(sourceCli)}`
-    : "tcb";
+  const command =
+    existsSync(tsxBin) && existsSync(sourceCli)
+      ? `${shellQuote(tsxBin)} ${shellQuote(sourceCli)}`
+      : "tcb";
+  return `TCB_STATE_DIR=${shellQuote(appStateDir())} ${command}`;
 }
 
 export function buildLoopSupervisorFinalizationPrompt(
