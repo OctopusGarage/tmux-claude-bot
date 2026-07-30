@@ -111,6 +111,26 @@ describe("control server ↔ client (real unix socket)", () => {
     expect(enqueued[0]).toMatchObject({ sessionName: "sessC", action: "restart", text: "" });
   });
 
+  it("marks sends from a loop supervisor session as system-origin control work", async () => {
+    const { deps, enqueued } = fakeDeps();
+    server = startControlServer(deps);
+    await new Promise((r) => setTimeout(r, 60));
+    client = new ControlClient();
+    await client.connect();
+
+    const ack = await client.send("sessB", "supervisor prompt", {
+      callerSession: "tmux_proj_loop-supervisor-1",
+    });
+
+    expect(ack.status).toBe("queued");
+    expect(enqueued[0]).toMatchObject({
+      sessionName: "sessB",
+      action: "text",
+      text: "supervisor prompt",
+      origin: "system",
+    });
+  });
+
   it("auto-reconnects when the connection drops (server still up)", async () => {
     const { deps } = fakeDeps();
     server = startControlServer(deps);
