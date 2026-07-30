@@ -38,7 +38,7 @@ export function controlSocketCandidatePaths(): string[] {
 export type ControlRequest =
   | { id: number; op: "snapshot" }
   | { id: number; op: "peek"; session: string; lines?: number }
-  | { id: number; op: "send"; session: string; text: string }
+  | { id: number; op: "send"; session: string; text: string; callerSession?: string }
   | { id: number; op: "control"; session: string; action: string }
   | { id: number; op: "projects" }
   | { id: number; op: "open"; sid: string; agent?: AgentKind }

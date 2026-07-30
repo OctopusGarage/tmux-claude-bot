@@ -211,8 +211,9 @@ export async function cmdSend(
   await withClient(async (c) => {
     const session = await resolveSession(c, ref);
     // No-wait: ack and return. Wait (default): block for the reply event (or timeout).
+    const callerSession = currentTmuxSession();
     if (opts.wait === false) {
-      const ack = await c.send(session, text);
+      const ack = await c.send(session, text, callerSession ? { callerSession } : {});
       return opts.json ? json({ session, ...ack }) : out(`queued → ${ref}`);
     }
     const reply = new Promise<string>((resolve, reject) => {
@@ -238,7 +239,7 @@ export async function cmdSend(
       c.on("reply", onReply);
       c.on("error", onErr);
     });
-    await c.send(session, text);
+    await c.send(session, text, callerSession ? { callerSession } : {});
     const output = await reply;
     if (opts.json) return json({ session, reply: output });
     out(output);

@@ -123,8 +123,17 @@ export class ControlClient extends EventEmitter {
   peek(session: string, lines: number): Promise<string> {
     return this.req({ op: "peek", session, lines }) as Promise<string>;
   }
-  send(session: string, text: string): Promise<{ status: string }> {
-    return this.req({ op: "send", session, text }) as Promise<{ status: string }>;
+  send(
+    session: string,
+    text: string,
+    opts: { callerSession?: string } = {},
+  ): Promise<{ status: string }> {
+    return this.req({
+      op: "send",
+      session,
+      text,
+      ...(opts.callerSession !== undefined ? { callerSession: opts.callerSession } : {}),
+    }) as Promise<{ status: string }>;
   }
   control(session: string, action: string): Promise<{ status: string }> {
     return this.req({ op: "control", session, action }) as Promise<{ status: string }>;

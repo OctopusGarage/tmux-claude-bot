@@ -24,7 +24,7 @@ import {
 } from "../../core/infra/system-load.js";
 import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
-import { isOperator } from "../../core/projects/operator.js";
+import { isLoopSupervisorSessionName, isOperator } from "../../core/projects/operator.js";
 import {
   createProjectFromPath,
   openRecentProjectBySid,
@@ -214,7 +214,13 @@ async function handleRequest(
           fail("cannot send to the operator session");
           return;
         }
-        await enqueueControl(deps, req.session, "text", req.text, send, ok, fail);
+        await enqueueControl(deps, req.session, "text", req.text, send, ok, fail, {
+          origin:
+            req.callerSession !== undefined &&
+            isLoopSupervisorSessionName(req.callerSession, deps.config.projectSessionPrefix)
+              ? "system"
+              : "user",
+        });
         return;
       case "control":
         await enqueueControl(deps, req.session, req.action, "", send, ok, fail);
@@ -383,6 +389,7 @@ async function enqueueControl(
   send: (msg: ServerMessage) => void,
   ok: (data: unknown) => void,
   fail: (error: string) => void,
+  opts: { origin?: "user" | "system" } = {},
 ): Promise<void> {
   const prepared =
     action === "text"
@@ -400,6 +407,7 @@ async function enqueueControl(
     chatId: "control",
     sessionName: session,
     action,
+    origin: opts.origin ?? "user",
     ephemeral: true,
     resolve: (output) => send({ event: "reply", session, output }),
     reject: (err) => send({ event: "error", session, error: err.message }),
