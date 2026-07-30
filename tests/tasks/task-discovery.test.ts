@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   discoverLaunchdScheduledTasks,
   discoverLoopEngineeringScheduledTasks,
@@ -9,6 +9,13 @@ import {
 } from "../../src/core/tasks/task-discovery.js";
 import type { ScheduledTaskRecord } from "../../src/core/tasks/task-ledger.js";
 import { singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
+
+const originalStateDir = process.env.TCB_STATE_DIR;
+
+afterEach(() => {
+  if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+  else process.env.TCB_STATE_DIR = originalStateDir;
+});
 
 function plist(input: {
   label: string;
@@ -157,6 +164,160 @@ describe("mergeDiscoveredTaskRecords", () => {
     };
 
     expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([ledgerRecord]);
+  });
+
+  it("uses completed loop artifacts instead of stale failed loop ledger records", () => {
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "failed",
+      error: "supervisor-failed",
+      repairStatus: "running",
+      updatedAt: scheduledAt + 1000,
+    };
+    const { error: _error, ...recordWithoutError } = ledgerRecord;
+    const discovered: ScheduledTaskRecord = {
+      ...recordWithoutError,
+      status: "success",
+      repairStatus: "not-needed",
+      summary: "Supervisor final summary completed.",
+      updatedAt: scheduledAt + 2000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([discovered]);
+  });
+
+  it("uses later-success resolution instead of stale running loop ledger records", () => {
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "running",
+      repairStatus: "running",
+      updatedAt: scheduledAt + 1000,
+    };
+    const discovered: ScheduledTaskRecord = {
+      ...ledgerRecord,
+      status: "failed",
+      error: "loop supervisor final status blocked",
+      repairStatus: "fixed",
+      summary: "Superseded by later successful loop run.",
+      updatedAt: scheduledAt + 2000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([discovered]);
+  });
+
+  it("reconciles stale loop ledger failures from supervisor final summaries next to reports", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-report-artifact-"));
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runDir = join(root, "loop-runs", "geo-backend", `${scheduledAt}-geo-backend-bug-fix`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "supervisor.md"), "old failure transcript", "utf8");
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["Final retry completed and verified."],
+      }),
+      "utf8",
+    );
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "failed",
+      error: "supervisor-failed",
+      reportPath: join(runDir, "supervisor.md"),
+      repairStatus: "running",
+      updatedAt: scheduledAt + 1000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [])).toEqual([
+      expect.objectContaining({
+        taskId: ledgerRecord.taskId,
+        status: "success",
+        repairStatus: "not-needed",
+        summary: "Final retry completed and verified.",
+        reportPath: join(runDir, "supervisor-final-summary.json"),
+      }),
+    ]);
+  });
+
+  it("reconciles stale running loop ledger records from the state loop-runs directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-state-artifact-"));
+    process.env.TCB_STATE_DIR = root;
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runDir = join(root, "loop-runs", "alcove", `${scheduledAt}-alcove-harness-auto`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["Harness run completed and merged."],
+      }),
+      "utf8",
+    );
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:alcove:harness-auto:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "alcove harness-auto",
+      scheduledAt,
+      status: "running",
+      repairStatus: "running",
+      updatedAt: scheduledAt + 1000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [])).toEqual([
+      expect.objectContaining({
+        taskId: ledgerRecord.taskId,
+        status: "success",
+        repairStatus: "not-needed",
+        summary: "Harness run completed and merged.",
+      }),
+    ]);
+  });
+
+  it("closes blocked supervisor final summaries as blocked repair status", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-blocked-artifact-"));
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runDir = join(root, "loop-runs", "tmux-claude-bot", `${scheduledAt}-tmux-claude-bot`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        actionsTaken: ["Stopped because the target worktree was dirty before base sync."],
+      }),
+      "utf8",
+    );
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:tmux-claude-bot:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "tmux-claude-bot architecture",
+      scheduledAt,
+      status: "failed",
+      error: "blocked",
+      reportPath: join(runDir, "supervisor.md"),
+      repairStatus: "running",
+      updatedAt: scheduledAt + 1000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [])).toEqual([
+      expect.objectContaining({
+        taskId: ledgerRecord.taskId,
+        status: "failed",
+        error: "loop supervisor final status blocked",
+        repairStatus: "blocked",
+        summary: "Stopped because the target worktree was dirty before base sync.",
+      }),
+    ]);
   });
 });
 

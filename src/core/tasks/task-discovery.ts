@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { LoopConfig } from "../loop/config.js";
 import { parseLoopConfigYaml } from "../loop/config.js";
@@ -28,10 +28,104 @@ export function mergeDiscoveredTaskRecords(
 ): ScheduledTaskRecord[] {
   const merged = new Map<string, ScheduledTaskRecord>();
   for (const record of discoveredRecords) merged.set(record.taskId, record);
-  for (const record of ledgerRecords) merged.set(record.taskId, record);
+  for (const record of ledgerRecords) {
+    const reconciled = reconcileLoopLedgerArtifact(record);
+    const discovered = merged.get(reconciled.taskId);
+    if (discovered !== undefined && shouldPreferDiscoveredRecord(reconciled, discovered)) continue;
+    merged.set(reconciled.taskId, reconciled);
+  }
   return [...merged.values()].sort(
     (a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId),
   );
+}
+
+function shouldPreferDiscoveredRecord(
+  ledgerRecord: ScheduledTaskRecord,
+  discoveredRecord: ScheduledTaskRecord,
+): boolean {
+  return (
+    ledgerRecord.source === "loop-engineering" &&
+    discoveredRecord.source === "loop-engineering" &&
+    discoveredRecord.status !== "expected"
+  );
+}
+
+function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTaskRecord {
+  if (record.source !== "loop-engineering") return record;
+  const finalSummaryPath = finalSummaryPathForLedgerRecord(record);
+  if (finalSummaryPath === null) return record;
+  const finalSummary = readJsonRecord(finalSummaryPath);
+  if (finalSummary === null) return record;
+  return recordForSupervisorFinalSummary({
+    projectId: projectIdFromLoopTaskId(record.taskId) ?? projectIdFromLoopTaskName(record.name),
+    jobKind: jobKindFromLoopTaskId(record.taskId),
+    scheduledAt: record.scheduledAt,
+    taskId: record.taskId,
+    now: Math.max(record.updatedAt, record.endedAt ?? record.startedAt ?? record.scheduledAt),
+    path: finalSummaryPath,
+    summary: finalSummary,
+  });
+}
+
+function finalSummaryPathForLedgerRecord(record: ScheduledTaskRecord): string | null {
+  if (record.reportPath !== undefined) {
+    const fromReport = finalSummaryPathNearReport(record.reportPath);
+    if (fromReport !== null) return fromReport;
+  }
+  const projectId =
+    projectIdFromLoopTaskId(record.taskId) ?? projectIdFromLoopTaskName(record.name);
+  if (projectId === "unknown") return null;
+  const runRoot = join(appStateDir(), "loop-runs", projectId);
+  if (!existsSync(runRoot)) return null;
+  const prefix = `${record.scheduledAt}-`;
+  for (const name of readdirSync(runRoot)) {
+    if (!name.startsWith(prefix)) continue;
+    const candidate = join(runRoot, name, "supervisor-final-summary.json");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function finalSummaryPathNearReport(reportPath: string): string | null {
+  const candidates = [
+    join(dirname(reportPath), "supervisor-final-summary.json"),
+    reportPath.replace(/supervisor(?:-summary)?\.json$/, "supervisor-final-summary.json"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function projectIdFromLoopTaskId(taskId: string): string | null {
+  const parts = taskId.split(":");
+  if (parts[0] !== "loop") return null;
+  if (parts[1] === "pr-review") return parts[2] ?? null;
+  if (parts[1] === "workspace") return parts[2] ?? null;
+  return parts[1] ?? null;
+}
+
+function jobKindFromLoopTaskId(taskId: string): LoopDiscoveredJobKind {
+  const parts = taskId.split(":");
+  if (parts[1] === "pr-review") return "repository-pull-request-review";
+  if (parts[1] === "workspace") return taskKindFromName(parts[3]);
+  return parts.length === 3 ? "architecture" : taskKindFromName(parts[2]);
+}
+
+function projectIdFromLoopTaskName(name: string): string {
+  return name.split(/\s+/)[0] ?? "unknown";
+}
+
+function taskKindFromName(value: string | undefined): LoopDiscoveredJobKind {
+  if (value === "bug-fix") return "bug-fix";
+  if (value === "test-coverage") return "test-coverage";
+  if (value === "security-maintenance") return "security-maintenance";
+  if (value === "harness-auto") return "harness-auto";
+  if (value === "opportunity-discovery") return "opportunity-discovery";
+  if (value === "pull-request-review") return "pull-request-review";
+  if (value === "repository-pull-request-review") return "repository-pull-request-review";
+  if (value === "workspace-architecture") return "workspace-architecture";
+  return "architecture";
 }
 
 export function discoverLaunchdScheduledTasks(input: {
@@ -568,7 +662,7 @@ function recordForSupervisorFinalSummary(input: {
     error: `loop supervisor final status ${status}`,
     summary: summaryText,
     reportPath: input.path,
-    repairStatus: "pending",
+    repairStatus: status === "blocked" ? "blocked" : "pending",
     updatedAt: input.now,
   };
 }
