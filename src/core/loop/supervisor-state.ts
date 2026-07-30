@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
-import type { LoopWorkOrder } from "./work-order.js";
+import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
 export type LoopSupervisorWorkOrderStateStatus =
   | "dispatching"
@@ -37,6 +37,13 @@ const TERMINAL_STATES = new Set<LoopSupervisorWorkOrderStateStatus>([
   "failed",
   "cancelled",
 ]);
+const RECOVERABLE_FAILED_RESULTS = new Set<LoopSupervisedRunResult["status"]>([
+  "dispatch-failed",
+  "dispatch-timeout",
+  "invalid-output",
+]);
+const STALE_UNFINISHED_RESERVATION_MS = 12 * 60 * 60 * 1000;
+const INVALID_FINAL_SUMMARY_GRACE_MS = 5 * 60 * 1000;
 
 function reportsRoot(): string {
   return join(appStateDir(), "loop-runs");
@@ -166,6 +173,47 @@ function isDirectory(path: string): boolean {
 }
 
 export function listUnfinishedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  return listLoopSupervisorWorkOrders(
+    (state, workOrder) =>
+      !TERMINAL_STATES.has(state.status) &&
+      unfinishedWorkOrderCanStillProgress(state, workOrder, Date.now()),
+  );
+}
+
+export function listRecoverableFailedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  return listLoopSupervisorWorkOrders(
+    (state, workOrder) =>
+      state.status === "failed" &&
+      state.resultStatus !== undefined &&
+      RECOVERABLE_FAILED_RESULTS.has(state.resultStatus) &&
+      parseSupervisorFinalSummaryFile(workOrder).ok,
+  );
+}
+
+function hasFinalSummaryFileForState(state: LoopSupervisorWorkOrderState): boolean {
+  return existsSync(
+    join(reportsRoot(), state.projectId, state.runId, "supervisor-final-summary.json"),
+  );
+}
+
+function isStaleUnfinishedState(state: LoopSupervisorWorkOrderState, now: number): boolean {
+  return now - state.updatedAt > STALE_UNFINISHED_RESERVATION_MS;
+}
+
+function unfinishedWorkOrderCanStillProgress(
+  state: LoopSupervisorWorkOrderState,
+  workOrder: LoopWorkOrder,
+  now: number,
+): boolean {
+  const finalSummaryExists = hasFinalSummaryFileForState(state);
+  if (!finalSummaryExists) return !isStaleUnfinishedState(state, now);
+  if (parseSupervisorFinalSummaryFile(workOrder).ok) return true;
+  return now - state.updatedAt <= INVALID_FINAL_SUMMARY_GRACE_MS;
+}
+
+function listLoopSupervisorWorkOrders(
+  includeState: (state: LoopSupervisorWorkOrderState, workOrder: LoopWorkOrder) => boolean,
+): UnfinishedLoopSupervisorWorkOrder[] {
   const root = reportsRoot();
   if (!existsSync(root)) return [];
   const records: UnfinishedLoopSupervisorWorkOrder[] = [];
@@ -176,9 +224,10 @@ export function listUnfinishedLoopSupervisorWorkOrders(): UnfinishedLoopSupervis
       const runDir = join(projectDir, runId);
       if (!isDirectory(runDir)) continue;
       const state = parseState(readJsonFile(statePath(runDir)));
-      if (state === null || TERMINAL_STATES.has(state.status)) continue;
+      if (state === null) continue;
       const workOrder = parseWorkOrder(readJsonFile(workOrderPath(runDir)));
       if (workOrder === null) continue;
+      if (!includeState(state, workOrder)) continue;
       records.push({ workOrder, state, runDir });
     }
   }

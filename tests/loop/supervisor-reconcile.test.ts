@@ -104,6 +104,27 @@ function writeUnfinishedRun(stateDir: string, order: LoopWorkOrder): string {
   return runDir;
 }
 
+function writeRecoverableFailedRun(stateDir: string, order: LoopWorkOrder): string {
+  const runDir = writeUnfinishedRun(stateDir, order);
+  writeFileSync(
+    join(runDir, "work-order-state.json"),
+    `${JSON.stringify(
+      {
+        status: "failed",
+        resultStatus: "dispatch-failed",
+        projectId: "hub",
+        runId: order.id,
+        supervisorSession: "tmux_proj_loop-supervisor",
+        scheduledAt: order.scheduledAt,
+        updatedAt: 1_000,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return runDir;
+}
+
 describe("loop supervisor work order reconciliation", () => {
   it("completes an in-flight work order from the final summary file after a bot restart", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
@@ -131,6 +152,28 @@ describe("loop supervisor work order reconciliation", () => {
         endedAt: 2_000,
       }),
     ]);
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "completed"',
+    );
+  });
+
+  it("recovers a dispatch-failed work order when the supervisor final summary arrives late", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = workOrder(stateDir, projectDir);
+    const runDir = writeRecoverableFailedRun(stateDir, order);
+
+    const result = reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 2_000,
+      runCommand: () => {
+        throw new Error("PR commands should not run without supervisor commits");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
     expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
       '"status": "completed"',
     );

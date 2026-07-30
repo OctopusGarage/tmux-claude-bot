@@ -120,6 +120,7 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("You are the Loop Supervisor for tmux-claude-bot.");
     expect(prompt).toContain("Do not call model-provider APIs.");
     expect(prompt).toContain('send <project> "<task>"');
+    expect(prompt).toContain("TCB_STATE_DIR=");
     expect(prompt).toContain("dashboard --json");
     expect(prompt).toContain("open '/repo/datavibe' --agent codex");
     expect(prompt).toContain("git status --short must be clean");

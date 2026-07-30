@@ -18,6 +18,10 @@ import {
 } from "./agent-queue.js";
 import { LoopBacklogStore } from "./backlog.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
+import {
+  recoverInvalidOutputFromFinalSummary,
+  supervisorFinalStatusToRunStatus,
+} from "./final-summary-recovery.js";
 import { writeLoopRunReport } from "./report.js";
 import {
   type LoopGitInvocation,
@@ -37,11 +41,12 @@ import { completeLoopSupervisorRun } from "./supervisor-completion.js";
 import { allocateLoopSupervisorBatches, type LoopSupervisorResetMode } from "./supervisor-pool.js";
 import { loopSupervisorSessionNames, startLoopSupervisor } from "./supervisor-session.js";
 import {
+  listRecoverableFailedLoopSupervisorWorkOrders,
   listUnfinishedLoopSupervisorWorkOrders,
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
 } from "./supervisor-state.js";
-import type { LoopSupervisorFinalSummary, LoopWorkOrder } from "./work-order.js";
+import type { LoopWorkOrder } from "./work-order.js";
 import {
   buildLoopWorkOrder,
   buildLoopWorkspaceWorkOrder,
@@ -496,6 +501,7 @@ export async function runLoopServiceTickAsync(input: {
         }
       }
     }
+    result = recoverInvalidOutputFromFinalSummary(workOrder, result);
     let gate = runSupervisedSystemGateOutcome({
       project: systemGateProjectFromWorkOrder(workOrder),
       workOrder,
@@ -545,6 +551,7 @@ export async function runLoopServiceTickAsync(input: {
         maxAttempts: maxSupervisorRevisionAttempts,
         previousOutput: gate.result.output,
       });
+      result = recoverInvalidOutputFromFinalSummary(workOrder, result);
       gate = runSupervisedSystemGateOutcome({
         project: systemGateProjectFromWorkOrder(workOrder),
         workOrder,
@@ -1222,7 +1229,10 @@ export function reconcileLoopSupervisorWorkOrders(input: {
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): { checked: number; recovered: number; failed: number } {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
-  const unfinished = listUnfinishedLoopSupervisorWorkOrders();
+  const unfinished = [
+    ...listUnfinishedLoopSupervisorWorkOrders(),
+    ...listRecoverableFailedLoopSupervisorWorkOrders(),
+  ];
   const schedulerStore = new LoopSchedulerStore();
   const taskLedger = new DailyTaskLedger();
   let checked = 0;
@@ -1236,7 +1246,7 @@ export function reconcileLoopSupervisorWorkOrders(input: {
     checked++;
 
     let result: LoopSupervisedRunResult = {
-      status: mapRecoveredSupervisorStatus(parsed.summary.status),
+      status: supervisorFinalStatusToRunStatus(parsed.summary.status),
       summary: parsed.summary,
       output: `recovered supervisor final summary from ${
         record.workOrder.finalSummaryPath ?? "work order state"
@@ -1338,17 +1348,6 @@ function jobKeyForWorkOrder(workOrder: LoopWorkOrder): string {
       : `workspace:${workOrder.projectId}:opportunity-discovery`;
   }
   return workOrder.projectId;
-}
-
-function mapRecoveredSupervisorStatus(
-  status: LoopSupervisorFinalSummary["status"],
-): Exclude<
-  LoopSupervisedRunResult["status"],
-  "dispatch-failed" | "dispatch-timeout" | "invalid-output"
-> {
-  if (status === "failed") return "supervisor-failed";
-  if (status === "timeout") return "supervisor-timeout";
-  return status;
 }
 
 type SupervisedSystemGateOutcome = {

@@ -213,6 +213,74 @@ describe("mergeDiscoveredTaskRecords", () => {
     expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([discovered]);
   });
 
+  it("preserves closed loop repair status when discovery sees the same failed artifact again", () => {
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:alcove:opportunity-discovery:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "alcove opportunity-discovery",
+      scheduledAt,
+      status: "failed",
+      error: "loop supervisor final status failed",
+      repairStatus: "superseded",
+      summary: "Superseded by later successful task loop:alcove:opportunity-discovery:later.",
+      updatedAt: scheduledAt + 3000,
+    };
+    const discovered: ScheduledTaskRecord = {
+      ...ledgerRecord,
+      repairStatus: "pending",
+      summary: "Original failed artifact was rediscovered.",
+      updatedAt: scheduledAt + 1000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([
+      expect.objectContaining({
+        taskId: ledgerRecord.taskId,
+        status: "failed",
+        repairStatus: "superseded",
+        summary: ledgerRecord.summary,
+        updatedAt: scheduledAt + 3000,
+      }),
+    ]);
+  });
+
+  it("preserves closed loop repair status when reconciling a failed final summary artifact", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-closed-artifact-"));
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runDir = join(root, "loop-runs", "alcove", `${scheduledAt}-alcove-opportunity-discovery`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "failed",
+        actionsTaken: ["Original discovery run failed before a later run succeeded."],
+      }),
+      "utf8",
+    );
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:alcove:opportunity-discovery:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "alcove opportunity-discovery",
+      scheduledAt,
+      status: "failed",
+      error: "loop supervisor final status failed",
+      reportPath: join(runDir, "supervisor.md"),
+      repairStatus: "superseded",
+      summary: "Superseded by later successful task loop:alcove:opportunity-discovery:later.",
+      updatedAt: scheduledAt + 3000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [])).toEqual([
+      expect.objectContaining({
+        taskId: ledgerRecord.taskId,
+        status: "failed",
+        repairStatus: "superseded",
+        summary: ledgerRecord.summary,
+        updatedAt: scheduledAt + 3000,
+      }),
+    ]);
+  });
+
   it("reconciles stale loop ledger failures from supervisor final summaries next to reports", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-report-artifact-"));
     const scheduledAt = Date.parse("2026-07-27T01:00:00Z");

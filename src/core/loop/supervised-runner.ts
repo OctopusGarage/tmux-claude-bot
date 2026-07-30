@@ -1,3 +1,4 @@
+import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
 import {
   buildLoopSupervisorFinalizationPrompt,
   buildLoopSupervisorPrompt,
@@ -218,7 +219,11 @@ function parseDispatchOutput(
     return { status: "invalid-output", reason: parsed.reason, output };
   }
 
-  return { status: mapSupervisorStatus(parsed.summary.status), summary: parsed.summary, output };
+  return {
+    status: supervisorFinalStatusToRunStatus(parsed.summary.status),
+    summary: parsed.summary,
+    output,
+  };
 }
 
 function joinOutput(result: SupervisorDispatchResult): string {
@@ -234,17 +239,6 @@ function isTimedOutResult(
   result: LoopSupervisedRunResult | TimedOutResult,
 ): result is TimedOutResult {
   return "timedOut" in result;
-}
-
-function mapSupervisorStatus(
-  status: LoopSupervisorFinalSummary["status"],
-): Exclude<
-  LoopSupervisedRunResult["status"],
-  "dispatch-failed" | "dispatch-timeout" | "invalid-output"
-> {
-  if (status === "failed") return "supervisor-failed";
-  if (status === "timeout") return "supervisor-timeout";
-  return status;
 }
 
 function abortReason(signal: AbortSignal): string {
