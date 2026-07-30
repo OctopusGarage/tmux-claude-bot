@@ -15,7 +15,13 @@ import {
   discoverLaunchdScheduledTasks,
   discoverLoopEngineeringScheduledTasks,
 } from "./task-discovery.js";
-import { DailyTaskLedger, type TaskAuditItem } from "./task-ledger.js";
+import {
+  DailyTaskLedger,
+  previousSingaporeDayWindow,
+  type ScheduledTaskRecord,
+  type TaskAuditItem,
+  type TaskWindow,
+} from "./task-ledger.js";
 import { buildDailyAuditRepairPrompt } from "./task-repair.js";
 
 const log = createLogger("tasks.daily-audit-service");
@@ -68,6 +74,11 @@ export async function runDailyTaskAuditServiceTick(input: {
   if (typeof scheduledAt !== "number") return { fired: false, reason: scheduledAt };
   const ledger = input.ledger ?? new DailyTaskLedger();
   const taskId = `daily-audit:${scheduledAt}`;
+  recordDailyAuditSelfFindings({
+    ledger,
+    window: previousSingaporeDayWindow(input.now),
+    now: input.now,
+  });
   ledger.expect({
     taskId,
     source: "daily-audit",
@@ -110,7 +121,7 @@ export async function runDailyTaskAuditServiceTick(input: {
           for (const item of result.repairCandidates) {
             ledger.markRepairStatus(item.taskId, {
               repairStatus: "running",
-              updatedAt: Date.now(),
+              updatedAt: input.now,
               summary: appendRepairSummary(item.summary, "Daily audit auto-repair delegated."),
             });
           }
@@ -146,13 +157,21 @@ export async function runDailyTaskAuditServiceTick(input: {
     ledger.fail(taskId, {
       endedAt: Date.now(),
       error,
-      summary: `failures=${result.repairCandidates.length} repair-dispatch=${repairDispatch}`,
+      summary: auditRunSummary({
+        failures: result.repairCandidates.length,
+        repairDispatch,
+        notificationStatus: notificationResult.status,
+      }),
     });
     return { fired: true, scheduledAt, failures: result.repairCandidates.length };
   }
   ledger.finish(taskId, {
     endedAt: Date.now(),
-    summary: `failures=${result.repairCandidates.length} repair-dispatch=${repairDispatch}`,
+    summary: auditRunSummary({
+      failures: result.repairCandidates.length,
+      repairDispatch,
+      notificationStatus: notificationResult.status,
+    }),
   });
   store.setLastFired(scheduledAt);
   return { fired: true, scheduledAt, failures: result.repairCandidates.length };
@@ -243,4 +262,78 @@ export async function dispatchDailyTaskRepair(
 function appendRepairSummary(current: string | undefined, addition: string): string {
   if (current === undefined || current.trim().length === 0) return addition;
   return `${current}\n${addition}`;
+}
+
+function auditRunSummary(input: {
+  failures: number;
+  repairDispatch: string;
+  notificationStatus: string;
+}): string {
+  return `failures=${input.failures} repair-dispatch=${input.repairDispatch} notification=${input.notificationStatus}`;
+}
+
+function recordDailyAuditSelfFindings(input: {
+  ledger: DailyTaskLedger;
+  window: TaskWindow;
+  now: number;
+}): void {
+  const records = input.ledger.listForWindow(input.window);
+  const existingSelfRecords = new Map(
+    records
+      .filter((record) => record.taskId.startsWith("daily-audit:self:"))
+      .map((record) => [record.taskId, record]),
+  );
+  for (const record of records) {
+    const issue = dailyAuditSelfIssue(record);
+    if (issue === null) continue;
+    const taskId = `daily-audit:self:${record.scheduledAt}`;
+    const existing = existingSelfRecords.get(taskId);
+    if (existing?.repairStatus === "running" || isClosedSelfRepairStatus(existing?.repairStatus)) {
+      continue;
+    }
+    input.ledger.expect({
+      taskId,
+      source: "daily-audit",
+      name: "Daily task audit self-check",
+      scheduledAt: record.scheduledAt,
+      summary: `Self-check for ${record.taskId}.`,
+    });
+    input.ledger.fail(taskId, {
+      endedAt: input.now,
+      error: issue,
+      summary: `Daily Task Audit self-check found previous audit issue: ${issue}`,
+    });
+  }
+}
+
+function dailyAuditSelfIssue(record: ScheduledTaskRecord): string | null {
+  if (record.source !== "daily-audit") return null;
+  if (record.taskId.startsWith("daily-audit:self:")) return null;
+  if (
+    record.status === "failed" ||
+    record.status === "running" ||
+    record.status === "running-timeout"
+  ) {
+    return `previous audit status=${record.status}${record.error ? ` error=${record.error}` : ""}`;
+  }
+  const summary = record.summary ?? "";
+  const repairDispatch = summary.match(/\brepair-dispatch=([^\s]+)/)?.[1];
+  if (
+    repairDispatch === "failed" ||
+    repairDispatch === "unavailable" ||
+    repairDispatch === "blocked"
+  ) {
+    return `previous audit repair-dispatch=${repairDispatch}`;
+  }
+  const notification = summary.match(/\bnotification=([^\s]+)/)?.[1];
+  if (notification === "partial" || notification === "failed") {
+    return `previous audit notification=${notification}`;
+  }
+  return null;
+}
+
+function isClosedSelfRepairStatus(status: ScheduledTaskRecord["repairStatus"]): boolean {
+  return ["fixed", "not-needed", "blocked", "superseded", "not-reproducible"].includes(
+    status ?? "pending",
+  );
 }

@@ -95,6 +95,12 @@ Keep the intelligent automation terms distinct:
   tmux-claude-bot-owned launchd/Loop Engineering tasks plus reported ledger tasks,
   sends the final Telegram/Feishu result, and can dispatch supervisor repair when
   `TASK_AUDIT_AUTO_REPAIR=true`.
+- Daily Task Audit must also audit its own previous execution before trusting the
+  rest of the schedule report. A previous audit that failed, timed out, left
+  `repair-dispatch=failed|blocked|unavailable`, or delivered only a partial/failed
+  final notification is a first-class self-repair candidate. Do not remove this
+  recursion guard: self-repair records already marked `running` must not be
+  dispatched again until their current repair resolves.
 - Daily Task Audit auto-repair must be evidence-led. For each unresolved item,
   the delegated repair task must first state the concrete problem, verify it from
   ledger/report/log/git/scheduler evidence, classify whether it is a bot bug or an

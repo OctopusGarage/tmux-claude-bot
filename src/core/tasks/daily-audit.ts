@@ -39,7 +39,7 @@ export async function runDailyTaskAudit(input: {
     window,
   });
   const repairCandidates = summary.items.filter(
-    (item) => isRepairableStatus(item.status) && !isClosedRepairStatus(item.repairStatus),
+    (item) => isRepairableStatus(item.status) && isRepairDispatchableStatus(item.repairStatus),
   );
   if (input.notify !== undefined) {
     await input.notify(
@@ -130,6 +130,11 @@ function isClosedRepairStatus(status: TaskAuditItem["repairStatus"]): boolean {
   return ["fixed", "not-needed", "blocked", "superseded", "not-reproducible"].includes(
     status ?? "pending",
   );
+}
+
+function isRepairDispatchableStatus(status: TaskAuditItem["repairStatus"]): boolean {
+  if (status === "running") return false;
+  return !isClosedRepairStatus(status);
 }
 
 function isRepairableStatus(status: TaskAuditItem["status"]): boolean {

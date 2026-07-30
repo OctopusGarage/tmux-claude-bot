@@ -663,6 +663,13 @@ failure, fix only tmux-claude-bot bugs on the repair branch, run
 Target-project failures and external service, auth, or network failures are
 reported as blockers rather than patched blindly.
 
+The audit also checks its own previous execution. If the previous daily audit
+failed, timed out, could not dispatch auto-repair, or only partially delivered
+its final notification, the next audit records a `daily-audit:self:<scheduledAt>`
+self-repair item and routes it through the same auto-repair pipeline. Active
+self-repair items are not re-dispatched while their repair status is `running`,
+which prevents recursive repair storms.
+
 ---
 
 ## 12. Managing the service

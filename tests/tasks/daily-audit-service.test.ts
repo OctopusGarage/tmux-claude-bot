@@ -241,8 +241,126 @@ describe("runDailyTaskAuditServiceTick", () => {
       })[0],
     ).toMatchObject({
       status: "success",
-      summary: "failures=1 repair-dispatch=failed",
+      summary: expect.stringContaining("failures=1 repair-dispatch=failed"),
     });
+  });
+
+  it("self-audits the previous daily audit when its repair dispatch failed", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-self-repair-"));
+    const notifications = new NotificationGateway();
+    const sentMessages: string[] = [];
+    const send = vi.fn(async (message: string) => {
+      sentMessages.push(message);
+    });
+    notifications.register("lark", send);
+    const ledger = new DailyTaskLedger();
+    const previousAuditAt = Date.parse("2026-07-28T02:00:00Z");
+    const currentAuditAt = Date.parse("2026-07-29T02:00:00Z");
+    ledger.expect({
+      taskId: `daily-audit:${previousAuditAt}`,
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.finish(`daily-audit:${previousAuditAt}`, {
+      endedAt: previousAuditAt + 1000,
+      summary: "failures=1 repair-dispatch=failed notification=sent",
+    });
+    const dispatchRepair = vi.fn(async () => ({
+      status: "queued" as const,
+      detail: "runId=self-repair-1",
+    }));
+
+    const result = await runDailyTaskAuditServiceTick({
+      now: Date.parse("2026-07-29T02:05:00Z"),
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: true,
+        repairBranch: "dev",
+      },
+      notifications,
+      ledger,
+      dispatchRepair,
+      discover: () => [],
+    });
+
+    expect(result).toMatchObject({ fired: true, scheduledAt: currentAuditAt, failures: 1 });
+    expect(dispatchRepair).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repairBranch: "dev",
+        items: [
+          expect.objectContaining({
+            taskId: `daily-audit:self:${previousAuditAt}`,
+            source: "daily-audit",
+            status: "failed",
+            error: expect.stringContaining("repair-dispatch=failed"),
+          }),
+        ],
+      }),
+    );
+    expect(sentMessages[0]).toContain("daily-audit:self:");
+    expect(sentMessages[0]).toContain("repair-dispatch: queued - runId=self-repair-1");
+  });
+
+  it("self-audits partial previous audit notification without re-dispatching active self repair", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-self-active-"));
+    const notifications = new NotificationGateway();
+    const send = vi.fn(async () => {});
+    notifications.register("lark", send);
+    const ledger = new DailyTaskLedger();
+    const previousAuditAt = Date.parse("2026-07-28T02:00:00Z");
+    const selfTaskId = `daily-audit:self:${previousAuditAt}`;
+    ledger.expect({
+      taskId: `daily-audit:${previousAuditAt}`,
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.finish(`daily-audit:${previousAuditAt}`, {
+      endedAt: previousAuditAt + 1000,
+      summary: "failures=0 repair-dispatch=not-needed notification=partial",
+    });
+    ledger.expect({
+      taskId: selfTaskId,
+      source: "daily-audit",
+      name: "Daily task audit self-check",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.fail(selfTaskId, {
+      endedAt: previousAuditAt + 2000,
+      error: "previous audit notification=partial",
+    });
+    ledger.markRepairStatus(selfTaskId, {
+      repairStatus: "running",
+      updatedAt: previousAuditAt + 3000,
+      summary: "Self repair already delegated.",
+    });
+    const dispatchRepair = vi.fn(async () => ({
+      status: "queued" as const,
+      detail: "runId=duplicate-self-repair",
+    }));
+
+    const result = await runDailyTaskAuditServiceTick({
+      now: Date.parse("2026-07-29T02:05:00Z"),
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: true,
+        repairBranch: "dev",
+      },
+      notifications,
+      ledger,
+      dispatchRepair,
+      discover: () => [],
+    });
+
+    expect(result).toMatchObject({ fired: true, failures: 0 });
+    expect(dispatchRepair).not.toHaveBeenCalled();
   });
 
   it("does not mark the audit complete when the final notification cannot be delivered", async () => {
