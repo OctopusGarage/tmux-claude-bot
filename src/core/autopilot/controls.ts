@@ -7,12 +7,6 @@ import { defaultState } from "./types.js";
 
 export const MAX_ROUNDS_FALLBACK = 10;
 
-/** Build the `goals <ids> rounds N` verb string — the single source every surface's
- * goal picker uses and parseAutopilotVerb parses back. */
-export function goalsVerb(ids: string[], rounds: number): string {
-  return `goals ${ids.join(",")} rounds ${rounds}`;
-}
-
 /** Begin a fresh autopilot run for a session — resets all safety counters and
  * stamps startedAt so the wall-clock budget starts now. */
 export function autopilotEnable(

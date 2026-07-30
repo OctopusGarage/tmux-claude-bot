@@ -2,7 +2,7 @@
   "name": "@octopusgarage/tmux-claude-bot",
   "version": "0.2.1",
   "license": "MIT",
-  "description": "Drive Claude Code & Codex agents in tmux from Telegram, Feishu/Lark, a CLI or a TUI — multi-project sessions, voice prompts, and goal-driven autopilot. macOS & Linux",
+  "description": "Drive Claude Code & Codex agents in tmux from Telegram, Feishu/Lark, a CLI or a TUI — multi-project sessions, voice prompts, and supervisor-backed delegation. macOS & Linux",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/OctopusGarage/tmux-claude-bot.git"

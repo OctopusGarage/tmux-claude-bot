@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
-import { writeFile as defaultWriteFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { unlink as defaultUnlinkFile, writeFile as defaultWriteFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { sleep as defaultSleep } from "../../shared/utils/sleep.js";
 import { TERMINAL_MODE_RESET_SEQUENCE } from "../../shared/utils/terminal-modes.js";
@@ -16,6 +19,7 @@ export type ExecFileLike = (
   options?: ExecFileOptions,
 ) => Promise<ExecResult>;
 export type WriteFileLike = (file: string, data: string) => Promise<void>;
+export type UnlinkFileLike = (file: string) => Promise<void>;
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_SUBMIT_SETTLE_MS = 50;
@@ -34,10 +38,15 @@ function nextSendBufferName(): string {
   return `tcb-send-${process.pid}-${Date.now()}-${sendBufferCounter}`;
 }
 
+function sendBufferFilePath(bufferName: string): string {
+  return join(tmpdir(), `${bufferName}-${randomUUID()}.txt`);
+}
+
 export class TmuxBridge {
   private readonly execFile: ExecFileLike;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly writeFile: WriteFileLike;
+  private readonly unlinkFile: UnlinkFileLike;
   private getSessionName: () => Promise<string>;
   private readonly window: number;
   private readonly pane: number;
@@ -48,6 +57,7 @@ export class TmuxBridge {
     execFile?: ExecFileLike;
     sleep?: (ms: number) => Promise<void>;
     writeFile?: WriteFileLike;
+    unlinkFile?: UnlinkFileLike;
     getSessionName: () => Promise<string>;
     window?: number;
     pane?: number;
@@ -57,6 +67,7 @@ export class TmuxBridge {
     this.execFile = options.execFile ?? defaultExecFile;
     this.sleep = options.sleep ?? defaultSleep;
     this.writeFile = options.writeFile ?? defaultWriteFile;
+    this.unlinkFile = options.unlinkFile ?? defaultUnlinkFile;
     this.getSessionName = options.getSessionName;
     this.window = options.window ?? 0;
     this.pane = options.pane ?? 0;
@@ -105,8 +116,12 @@ export class TmuxBridge {
     const target = await this.formatTarget(sessionName);
     await this.cancelCopyMode(target);
     const bufferName = nextSendBufferName();
+    const bufferFile = sendBufferFilePath(bufferName);
     try {
-      await this.execFile("tmux", ["set-buffer", "-b", bufferName, text], { timeout: 10000 });
+      await this.writeFile(bufferFile, text);
+      await this.execFile("tmux", ["load-buffer", "-b", bufferName, bufferFile], {
+        timeout: 10000,
+      });
       await this.execFile("tmux", ["paste-buffer", "-p", "-b", bufferName, "-t", target], {
         timeout: 10000,
       });
@@ -115,6 +130,11 @@ export class TmuxBridge {
     } finally {
       try {
         await this.execFile("tmux", ["delete-buffer", "-b", bufferName], { timeout: 10000 });
+      } catch {
+        // Best-effort cleanup; a send failure should surface as the original error.
+      }
+      try {
+        await this.unlinkFile(bufferFile);
       } catch {
         // Best-effort cleanup; a send failure should surface as the original error.
       }

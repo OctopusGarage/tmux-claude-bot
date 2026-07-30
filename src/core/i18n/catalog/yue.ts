@@ -143,8 +143,7 @@ export const yue: Messages = {
   adoptProjectRunning:
     "已有相同項目正在運行 Claude/Codex。已中止，未動原程序——如需並行接管，請選擇「接管為獨立會話」。",
   btnAdoptAttach: "💻 在電腦終端查看（可選）",
-  adoptAttachHint: (cmd: string) =>
-    `✅ 接入指令已複製到「電腦」的剪貼簿（不必在手機上複製）。回到電腦後，在終端直接貼上並按 Enter 即可進入查看——此步驟為可選。\n指令：${cmd}`,
+  adoptAttachHint: (cmd: string) => `✅ 如需查看會話，可喺電腦終端執行呢個可選指令：\n指令：${cmd}`,
 
   doneShort: "完成",
   agentNotRunningRestart: "未運行，請使用 /resume 恢復，或 /start 新建",
@@ -396,12 +395,15 @@ export const yue: Messages = {
   homeOperatorSwitched: "🏠 已切換至主控操作員工作階段",
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
   cmdBatch: "批次排程器：查看狀態或控制批次運行（start/pause/resume/stop/report）",
-  cmdAutopilot: "管理工作階段智能託管（目標/保活/全域託管）",
+  cmdAutopilot: "將目前工作階段交畀 Loop Supervisor 託管推進",
+  cmdOpportunity: "睇主動機會建議，並託管已確認嘅工作",
   cmdGoals: "列出 autopilot 目標預設",
   cmdSysload: "查看本機負載/發熱/失控進程",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
+  autopilotDelegatePanelBody:
+    "將目前工作階段上下文交畀 Loop Supervisor，繼續完成實作、複核、驗證、PR 處理同最終通知。",
   autopilotNotifyPaused: (session, reason) => `🛑 autopilot 已暫停 [${session}]：${reason}`,
   autopilotNotifyStopped: (session, reason) => `⏹️ autopilot 已停止 [${session}]：${reason}`,
   autopilotNotifyUsage: (session, pct) => `🛑 autopilot 目標暫停 [${session}]：用量達 ${pct}% 門檻`,
@@ -428,9 +430,11 @@ export const yue: Messages = {
   autopilotStatus: (o) =>
     `Autopilot：${o.enabled ? "開" : "關"}（${o.pureKeepAlive ? "純保活" : "隨目標"}，已干預 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw) =>
-    `未知子命令「${raw}」。用法：/autopilot [on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} 開啟智能托管`,
-  btnApDisable: "⏹ 關閉智能托管",
+    `未知子命令「${raw}」。用法：/autopilot [delegate [需求]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
+  btnApEnable: `${UI_ICONS.feature.autopilot} 開啟保活/目標`,
+  btnApDisable: "⏹ 關閉保活/目標",
+  btnApDelegate: "🚀 繼續託管推進",
+  btnApCancelDelegate: "⛔ 取消託管",
   btnApPickGoals: "🎯 選目標",
   btnApGlobalOn: "🌐 全域:開",
   btnApGlobalOff: "🌐 全域:關",

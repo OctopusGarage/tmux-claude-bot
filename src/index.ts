@@ -2,7 +2,6 @@ import { startControlServer } from "./adapters/control/server.js";
 import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
-import { startAutopilot } from "./core/autopilot/manager.js";
 import {
   acquireInstanceLock,
   InstanceLockHeldError,
@@ -148,9 +147,6 @@ await init();
 startRunningSweep(deps, config.runningSweepMs);
 startSessionIdleReaper(deps, config.sessionIdleReaper);
 
-// Start the autopilot background loop (coalesced tick on transcript activity +
-// fallback interval). No-op when AUTOPILOT_TICK_MS=0.
-startAutopilot(deps);
 startScheduler(deps);
 startLoopEngineering(deps, config.loopEngineering);
 // Boot the background Loop Supervisor session. No-op unless explicitly enabled.

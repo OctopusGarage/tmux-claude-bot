@@ -13,6 +13,8 @@ import {
 } from "../../src/core/loop/service.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
 import { buildRepositoryPullRequestReviewWorkOrder } from "../../src/core/loop/work-order.js";
+import { NotificationGateway } from "../../src/core/notifications/gateway.js";
+import { sessionNameFromPath } from "../../src/core/projects/sessionPathMap.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -111,6 +113,100 @@ function finalMarkerFromPrompt(prompt: string): string {
 }
 
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("dispatches opportunity discovery work orders and sends new suggestions", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-opportunity-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-opportunity-project-"));
+    const configFile = writeLoopConfig({
+      projectPath: projectDir,
+      schedule: "0 0 * * *",
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      projectExtra: [
+        "    opportunityDiscovery:",
+        "      enabled: true",
+        '      schedule: "15 9 * * *"',
+        "      notificationChannel: lark",
+        "      maxSuggestions: 1",
+        "      minConfidence: medium",
+      ].join("\n"),
+    });
+    const telegramMessages: string[] = [];
+    const larkMessages: string[] = [];
+    const larkSessions: Array<string | undefined> = [];
+    const notifications = new NotificationGateway();
+    notifications.register("telegram", async (message) => {
+      telegramMessages.push(message);
+    });
+    notifications.register("lark", async (message, req) => {
+      larkMessages.push(message);
+      larkSessions.push(req?.session);
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T09:20:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask: async (request) => {
+        if (request.workOrder.opportunityReportPath === undefined) {
+          throw new Error("expected opportunity report path");
+        }
+        writeFileSync(
+          request.workOrder.opportunityReportPath,
+          JSON.stringify({
+            projectId: request.workOrder.projectId,
+            projectName: request.workOrder.projectName,
+            generatedAt: "2026-07-16T09:20:00.000Z",
+            coverage: "partial",
+            checkedSignals: ["README", "scripts"],
+            skippedSignals: [],
+            suggestions: [
+              {
+                title: "Add guided setup verification",
+                category: "developer-experience",
+                confidence: "high",
+                problem: "Setup issues require manual command chasing.",
+                whyNow: "Doctor and setup commands already exist.",
+                value: "Reduces owner time diagnosing installs.",
+                evidence: ["doctor command exists", "setup command exists"],
+                recommendedApproach: "Add a single setup verification summary.",
+                alternatives: ["Only document manual commands"],
+                acceptanceCriteria: ["Verification summary reports pass/fail checks"],
+                risks: ["May duplicate doctor output"],
+                nonGoals: ["Do not change setup behavior"],
+                estimatedComplexity: "small",
+                delegateRequirement: "Add a setup verification summary using existing checks.",
+              },
+            ],
+          }),
+        );
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: request.workOrder.projectId,
+            actionsTaken: ["discovered one opportunity"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
+      notifications,
+      projectSessionPrefix: "tmux_proj_",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(telegramMessages).toEqual([]);
+    expect(larkSessions).toEqual([sessionNameFromPath(projectDir, "tmux_proj_")]);
+    expect(larkMessages.join("\n")).toContain("Opportunity suggestions: Hub");
+    expect(larkMessages.join("\n")).toContain("Add guided setup verification");
+    expect(larkMessages.join("\n")).toContain("/opportunity delegate");
+  });
+
   it("dispatches supervised test-coverage work orders with the coverage branch", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-test-coverage-"));
@@ -390,6 +486,179 @@ prReview:
     expect(sessions).toEqual(["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"]);
     expect(resets).toEqual(["clear", "clear"]);
     expect(maxInFlight).toBe(2);
+  });
+
+  it("lets harness-auto consume covered same-project subtasks in the same tick", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-harness-conflict-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-harness-conflict-project-"));
+    const configFile = join(projectDir, "loop.yml");
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Improve project health.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    runner:
+      kind: agent-supervised
+    execution:
+      agent: true
+    allowedActions: [tests]
+    bugFix:
+      enabled: true
+      schedule: "10 10 * * *"
+    harnessAuto:
+      enabled: true
+      schedule: "10 10 * * *"
+      tasks:
+        - kind: bug-fix
+          enabled: true
+          weight: 1
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const dispatchedKinds: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:15:00Z"),
+      schedulerStore,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask: async (request) => {
+        dispatchedKinds.push(request.workOrder.task?.kind ?? "architecture");
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: request.workOrder.projectId,
+            actionsTaken: ["harness-auto checked bug-fix scope"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(dispatchedKinds).toEqual(["harness-auto"]);
+    expect(schedulerStore.getLastFired()).toMatchObject({
+      "hub:harness-auto": scheduledAt,
+      "hub:bug-fix": scheduledAt,
+    });
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toContainEqual(
+      expect.objectContaining({
+        taskId: `loop:hub:bug-fix:${scheduledAt}`,
+        status: "skipped",
+        summary: "hub:harness-auto harness-auto covers bug-fix",
+      }),
+    );
+  });
+
+  it("defers overlapping workspace and child-project work without consuming the child schedule", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-conflict-state-"));
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-conflict-"));
+    const backend = join(root, "geo-backend");
+    const frontend = join(root, "geo-frontend");
+    const configFile = join(root, "loop.yml");
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: geo-backend
+    name: Geo Backend
+    path: ${backend}
+    agent: codex
+    goal: Fix backend bugs.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    runner:
+      kind: agent-supervised
+    execution:
+      agent: true
+    allowedActions: [tests]
+    bugFix:
+      enabled: true
+      schedule: "10 10 * * *"
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: ${root}
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: ${backend}
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: ${frontend}
+        role: frontend
+    architecture:
+      enabled: true
+      schedule: "10 10 * * *"
+      goal: Improve frontend/backend architecture together.
+      runner:
+        kind: agent-supervised
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const dispatchedIds: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:15:00Z"),
+      schedulerStore,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        dispatchedIds.push(request.workOrder.projectId);
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: request.workOrder.projectId,
+            actionsTaken: ["workspace architecture checked cross-repo contracts"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(dispatchedIds).toEqual(["geo"]);
+    expect(schedulerStore.getLastFired()).toMatchObject({
+      "workspace:geo:architecture": scheduledAt,
+    });
+    expect(schedulerStore.getLastFired()).not.toHaveProperty("geo-backend:bug-fix");
   });
 
   it("does not dispatch new work to active supervisor sessions or active project paths", async () => {

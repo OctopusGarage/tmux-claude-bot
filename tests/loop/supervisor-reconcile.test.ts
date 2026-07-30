@@ -210,6 +210,93 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
+  it("reconciles opportunity discovery work orders without PR gates", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(
+      projectDir,
+      [
+        "    opportunityDiscovery:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+      ].join("\n"),
+    );
+    const order = {
+      ...workOrder(stateDir, projectDir),
+      id: "1784196600000-hub-opportunity-discovery",
+      task: {
+        kind: "opportunity-discovery",
+        maxRounds: 1,
+        maxSuggestions: 3,
+        minConfidence: "medium",
+        categories: ["product-feature"],
+        cooldownDays: 14,
+        requireEvidence: true,
+      },
+      commitPolicy: {
+        enabled: true,
+        perRound: true,
+        branch: "loop/hub/architecture/1784196600000-hub-opportunity-discovery",
+      },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:1784196600000-hub-opportunity-discovery]",
+      finalSummaryPath: join(
+        stateDir,
+        "loop-runs",
+        "hub",
+        "1784196600000-hub-opportunity-discovery",
+        "supervisor-final-summary.json",
+      ),
+    } satisfies LoopWorkOrder;
+    const runDir = writeUnfinishedRun(stateDir, order);
+    writeFileSync(
+      order.finalSummaryPath ?? "",
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["wrote opportunity report"],
+        delegatedTasks: [
+          {
+            projectId: "hub",
+            status: "interrupted-read-only-discovery-after-local-report-completed",
+          },
+        ],
+        finalVerification: "passed",
+        commits: [],
+        followUps: ["Discuss suggestions before delegating implementation"],
+      })}\n`,
+    );
+
+    const result = reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 2_000,
+      runCommand: () => {
+        throw new Error("PR commands should not run for opportunity discovery");
+      },
+      runGit: () => {
+        throw new Error("git gates should not run for opportunity discovery");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "completed"',
+    );
+  });
+
   it("reconciles bug-fix work orders with the bug-fix scheduler key", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
@@ -259,6 +346,66 @@ describe("loop supervisor work order reconciliation", () => {
         .map((record) => [record.taskId, record.status, record.source]),
     ).toEqual([
       [`loop:hub:bug-fix:${Date.parse("2026-07-16T10:10:00Z")}`, "success", "loop-engineering"],
+    ]);
+  });
+
+  it("reconciles harness-auto work orders with the harness-auto scheduler key", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(
+      projectDir,
+      [
+        "    harnessAuto:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "      maxRounds: 2",
+        "      strategy: health-first",
+        "      stopWhen:",
+        "        healthScoreAtLeast: 95",
+        "        noConfirmedIssues: true",
+      ].join("\n"),
+    );
+    const order = {
+      ...workOrder(stateDir, projectDir),
+      id: "1784196600000-hub-harness-auto",
+      task: {
+        kind: "harness-auto",
+        maxRounds: 2,
+        strategy: "health-first",
+        stopWhen: { healthScoreAtLeast: 95, noConfirmedIssues: true },
+        tasks: [],
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:1784196600000-hub-harness-auto]",
+      finalSummaryPath: join(
+        stateDir,
+        "loop-runs",
+        "hub",
+        "1784196600000-hub-harness-auto",
+        "supervisor-final-summary.json",
+      ),
+    } satisfies LoopWorkOrder;
+    writeUnfinishedRun(stateDir, order);
+
+    const result = reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 2_000,
+      runCommand: () => {
+        throw new Error("PR commands should not run without supervisor commits");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(
+      new DailyTaskLedger()
+        .listForWindow(singaporeDayWindow("2026-07-16"))
+        .map((record) => [record.taskId, record.status, record.source]),
+    ).toEqual([
+      [
+        `loop:hub:harness-auto:${Date.parse("2026-07-16T10:10:00Z")}`,
+        "success",
+        "loop-engineering",
+      ],
     ]);
   });
 });

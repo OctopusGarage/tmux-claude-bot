@@ -7,10 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlClient } from "../../../src/adapters/control/client.js";
 import { startControlServer } from "../../../src/adapters/control/server.js";
-import { startCycleState } from "../../../src/core/autopilot/goals/goal-state.js";
 import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
-import { AutopilotStore } from "../../../src/core/autopilot/state-store.js";
-import { defaultState } from "../../../src/core/autopilot/types.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 
@@ -53,7 +50,18 @@ function fakeDeps(
   enqueue?: (m: QueuedMessage) => EnqueueVerdict,
 ): HandlerDeps {
   return {
-    config: { autopilot: { maxRounds: 10 } },
+    config: {
+      autopilot: { maxRounds: 10 },
+      loopEngineering: {
+        supervisor: {
+          enabled: false,
+          agent: "codex",
+          poolSize: 1,
+          resetBeforeWorkOrder: "clear",
+        },
+      },
+      projectSessionPrefix: "tmux_proj_",
+    },
     bridge: { capturePaneColored: async (s: string) => `PANE for ${s}` },
     queue: {
       enqueue:
@@ -94,28 +102,17 @@ describe("control autopilot ops (real unix socket)", () => {
     return client;
   }
 
-  it("autopilot verb 'on' enables the session and returns a status string", async () => {
+  it("autopilot verb text is treated as a supervisor delegation requirement", async () => {
     const c = await connected();
     const result = await c.autopilot("s2", "on");
-    expect(result).toMatchObject({ status: expect.any(String) });
-    expect(new AutopilotStore().get("s2").enabled).toBe(true);
+    expect(result.status).toContain("Autopilot delegate blocked");
   });
 
-  it("autopilotView returns the view with mode 'cycle' after startCycleState", async () => {
-    // Set up cycle state before connecting
-    new AutopilotStore().set(
-      "s1",
-      startCycleState(defaultState(), ["fix-tests", "code-review"], 2),
-    );
+  it("autopilot delegate returns a supervisor-backed status instead of usage text", async () => {
     const c = await connected();
-    const view = await c.autopilotView("s1");
-    expect(view).toMatchObject({ mode: "cycle", enabled: true });
-  });
-
-  it("autopilotView returns mode 'off' for a session with no state", async () => {
-    const c = await connected();
-    const view = await c.autopilotView("unknown-session");
-    expect(view).toMatchObject({ mode: "off", enabled: false });
+    const result = await c.autopilot("s2", "delegate finish the agreed feature");
+    expect(result.status).toContain("Autopilot delegate blocked");
+    expect(result.status).toContain("LOOP_SUPERVISOR_ENABLED");
   });
 
   it("push: autopilot notice broadcast reaches the client as an 'autopilot' event", async () => {

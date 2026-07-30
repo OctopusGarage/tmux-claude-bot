@@ -339,8 +339,10 @@ describe("createLoopSupervisorTaskRunner", () => {
       },
     };
     const handled: string[] = [];
+    const waitHorizons: Array<number | undefined> = [];
     queue.setHandler(async (message) => {
       handled.push(`${message.sessionName}:${message.text}`);
+      waitHorizons.push(message.maxWaitDoneTotalMs);
       message.resolve("supervisor done");
     });
 
@@ -349,10 +351,12 @@ describe("createLoopSupervisorTaskRunner", () => {
       prompt: "Run supervised work order",
       signal: new AbortController().signal,
       workOrder,
+      timeoutMs: 7_200_000,
     });
 
     expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
     expect(handled).toEqual(["tmux_proj_loop-supervisor:Run supervised work order"]);
+    expect(waitHorizons).toEqual([7_200_000]);
   });
 
   it("queues clear before a loop supervisor work order when requested", async () => {

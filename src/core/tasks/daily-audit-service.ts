@@ -1,10 +1,10 @@
 import type { AppConfig } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { newMessageId } from "../command/enqueue.js";
+import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
-import { loopSupervisorSessionNames, startLoopSupervisor } from "../loop/supervisor-session.js";
 import type { NotificationGateway } from "../notifications/gateway.js";
+import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { nextFire } from "../scheduler/scheduling.js";
 import {
   buildDailyTaskAuditNotification,
@@ -30,7 +30,11 @@ export type DailyTaskRepairDispatch = (input: {
   repoPath: string;
   repairBranch: string;
   items: TaskAuditItem[];
-}) => Promise<void>;
+}) => Promise<DailyTaskRepairDispatchResult | undefined>;
+
+export type DailyTaskRepairDispatchResult =
+  | { status: "queued"; detail: string }
+  | { status: "blocked"; detail: string };
 
 export class DailyTaskAuditStore {
   private readonly fired = new JsonMapStore<number>("daily_task_audit_lastfired.json");
@@ -53,18 +57,15 @@ export async function runDailyTaskAuditServiceTick(input: {
   dispatchRepair?: DailyTaskRepairDispatch;
   discover?: ScheduledTaskDiscovery;
   loopConfigFile?: string;
+  force?: boolean;
 }): Promise<DailyTaskAuditServiceTickResult> {
   if (!input.config.enabled || input.config.tickMs === 0)
     return { fired: false, reason: "disabled" };
   const store = input.store ?? new DailyTaskAuditStore();
-  const last = store.getLastFired();
-  const scheduled = latestDueFire(
-    input.config.schedule,
-    last ?? input.now - FIRST_TICK_LOOKBACK_MS,
-    input.now,
-  );
-  if (scheduled.kind !== "due") return { fired: false, reason: scheduled.kind };
-  const scheduledAt = scheduled.scheduledAt;
+  const scheduledAt = input.force
+    ? input.now
+    : dueScheduledAt(input.config.schedule, store, input.now);
+  if (typeof scheduledAt !== "number") return { fired: false, reason: scheduledAt };
   const ledger = input.ledger ?? new DailyTaskLedger();
   const taskId = `daily-audit:${scheduledAt}`;
   ledger.expect({
@@ -96,12 +97,24 @@ export async function runDailyTaskAuditServiceTick(input: {
       repairDispatch = "unavailable";
     } else {
       try {
-        await input.dispatchRepair({
+        const dispatchResult = await input.dispatchRepair({
           repoPath: process.cwd(),
           repairBranch: input.config.repairBranch,
           items: result.repairCandidates,
         });
-        repairDispatch = "queued";
+        if (dispatchResult?.status === "blocked") {
+          repairDispatch = `blocked - ${dispatchResult.detail}`;
+        } else {
+          repairDispatch =
+            dispatchResult?.detail === undefined ? "queued" : `queued - ${dispatchResult.detail}`;
+          for (const item of result.repairCandidates) {
+            ledger.markRepairStatus(item.taskId, {
+              repairStatus: "running",
+              updatedAt: Date.now(),
+              summary: appendRepairSummary(item.summary, "Daily audit auto-repair delegated."),
+            });
+          }
+        }
       } catch (err) {
         repairDispatch = "failed";
         log.warn("daily task audit auto repair dispatch failed", { err });
@@ -143,6 +156,16 @@ export async function runDailyTaskAuditServiceTick(input: {
   });
   store.setLastFired(scheduledAt);
   return { fired: true, scheduledAt, failures: result.repairCandidates.length };
+}
+
+function dueScheduledAt(
+  schedule: string,
+  store: DailyTaskAuditStore,
+  now: number,
+): number | "invalid-schedule" | "not-due" {
+  const last = store.getLastFired();
+  const scheduled = latestDueFire(schedule, last ?? now - FIRST_TICK_LOOKBACK_MS, now);
+  return scheduled.kind === "due" ? scheduled.scheduledAt : scheduled.kind;
 }
 
 function latestDueFire(
@@ -190,37 +213,34 @@ function isBotOwnedLaunchdLabel(label: string): boolean {
   return label === "com.octopusgarage.tmux-claude-bot";
 }
 
-async function dispatchDailyTaskRepair(
+export async function dispatchDailyTaskRepair(
   deps: HandlerDeps,
   request: Parameters<DailyTaskRepairDispatch>[0],
-): Promise<void> {
+): Promise<DailyTaskRepairDispatchResult> {
   if (!deps.config.loopEngineering.supervisor.enabled) {
     log.warn("daily task audit auto repair skipped because loop supervisor is disabled");
-    return;
+    return { status: "blocked", detail: "loop supervisor is disabled" };
   }
-  const supervisor =
-    loopSupervisorSessionNames(
-      deps.config.projectSessionPrefix,
-      deps.config.loopEngineering.supervisor.poolSize,
-    )[0] ?? "unconfigured-loop-supervisor";
-  if (!(await startLoopSupervisor(deps, undefined, supervisor))) {
-    log.warn("daily task audit auto repair skipped because loop supervisor could not start");
-    return;
-  }
+  const session = sessionNameFromPath(request.repoPath, deps.config.projectSessionPrefix);
+  setPathForSession(session, request.repoPath);
   const prompt = buildDailyAuditRepairPrompt(request);
-  const verdict = deps.queue.enqueue({
-    id: newMessageId(),
-    text: prompt,
-    chatId: "daily-task-audit",
-    sessionName: supervisor,
-    action: "text",
-    channel: "control",
-    origin: "system",
-    promptSource: "control",
-    resolve: () => {},
-    reject: (err) => log.warn("daily task audit repair prompt failed", { err }),
+  const result = await startActiveDelegatedTask(deps, {
+    session,
+    requirement: prompt,
   });
-  if (verdict !== "queued") {
-    log.warn("daily task audit auto repair could not be queued", { data: { verdict } });
+  if (result.status === "blocked") {
+    log.warn("daily task audit auto repair could not be delegated", {
+      data: { reason: result.reason },
+    });
+    return { status: "blocked", detail: result.reason };
   }
+  return {
+    status: "queued",
+    detail: `runId=${result.runId} project=${result.projectId} supervisor=${result.supervisorSession}`,
+  };
+}
+
+function appendRepairSummary(current: string | undefined, addition: string): string {
+  if (current === undefined || current.trim().length === 0) return addition;
+  return `${current}\n${addition}`;
 }

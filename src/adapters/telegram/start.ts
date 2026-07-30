@@ -13,7 +13,7 @@ import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
 import { registerHandlers } from "./handlers.js";
-import { buildAutopilotGateKeyboard } from "./keyboards.js";
+import { buildAutopilotGateKeyboard, buildOpportunityNotificationKeyboard } from "./keyboards.js";
 import { sendTelegramAttachment } from "./media.js";
 import { createReplyTargetMap } from "./reply-target.js";
 import { createRouteHealthStore, type RouteName } from "./transport/route-health.js";
@@ -226,9 +226,17 @@ export async function startTelegram(
           : undefined;
       return bot.api.sendMessage(owner, text, reply_markup ? { reply_markup } : {}).then(() => {});
     });
-    deps.notifications.register("telegram", (message) =>
-      bot.api.sendMessage(owner, message).then(() => {}),
-    );
+    deps.notifications.register("telegram", (message, req) => {
+      const reply_markup =
+        req?.source === "opportunity-discovery" && req.opportunities?.length
+          ? buildOpportunityNotificationKeyboard(req.opportunities)
+          : undefined;
+      return (
+        reply_markup
+          ? bot.api.sendMessage(owner, message, { reply_markup })
+          : bot.api.sendMessage(owner, message)
+      ).then(() => {});
+    });
     deps.notifications.registerAttachment("telegram", (filePath, kind, caption) =>
       sendTelegramAttachment(bot.api, owner, filePath, kind, caption),
     );
@@ -261,6 +269,7 @@ export async function startTelegram(
       });
       return; // resolved → bot.stop() was called (clean shutdown)
     } catch (err) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown flips this flag from the onStop cleanup closure while the polling promise is active
       if (stopping) {
         log.info(
           `Telegram polling stopped after shutdown request: ${err instanceof Error ? err.message : err}`,

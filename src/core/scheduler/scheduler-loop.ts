@@ -260,7 +260,7 @@ export async function schedulerTick(ctx: TickCtx): Promise<void> {
       // Bug #6 logging: log only when the pool actually unpaused (now >= resumeAt),
       // symmetric with the "paused pool on account quota" INFO above — not on every
       // still-paused tick.
-      if (before?.paused && pools[agent]?.paused === false) {
+      if (before.paused && pools[agent]?.paused === false) {
         log.info("scheduler resumed pool", { data: { agent } });
       }
     } else if (run.tasks.some((t) => t.agent === agent && t.status === "running")) {

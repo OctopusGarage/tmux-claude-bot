@@ -271,6 +271,77 @@ describe("runLoopSchedulerTick", () => {
     });
   });
 
+  it("schedules harness-auto jobs independently from component jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    harnessAuto:",
+          "      enabled: true",
+          '      schedule: "50 16 * * *"',
+          "      branch: loop/due/harness-auto",
+          "      maxRounds: 4",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T16:55:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T16:55:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:harness-auto",
+      jobKind: "harness-auto",
+      scheduledAt: Date.parse("2026-07-16T16:50:00Z"),
+    });
+  });
+
+  it("schedules opportunity-discovery jobs independently from implementation jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    opportunityDiscovery:",
+          "      enabled: true",
+          '      schedule: "15 9 * * *"',
+          "      maxSuggestions: 2",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T09:20:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T09:20:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:opportunity-discovery",
+      jobKind: "opportunity-discovery",
+      scheduledAt: Date.parse("2026-07-16T09:15:00Z"),
+    });
+  });
+
   it("counts architecture and pull request review as separate checked jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
@@ -392,10 +463,14 @@ workspaces:
         name: Geo Backend
         path: /repo/realestate/geo-backend
         role: backend
+        pullRequest:
+          enabled: true
       - id: geo-frontend
         name: Geo Frontend
         path: /repo/realestate/geo-frontend
         role: frontend
+        pullRequest:
+          enabled: true
     architecture:
       enabled: true
       schedule: "30 11 * * *"
@@ -417,6 +492,148 @@ workspaces:
         jobKey: "workspace:geo:architecture",
         jobKind: "workspace-architecture",
         scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+      }),
+    );
+  });
+
+  it("schedules workspace maintenance jobs as multi-repository targets", () => {
+    const config = parseLoopConfigYaml(`${configText}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+        pullRequest:
+          enabled: true
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+        pullRequest:
+          enabled: true
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    bugFix:
+      enabled: true
+      schedule: "30 11 * * *"
+    testCoverage:
+      enabled: true
+      schedule: "35 11 * * *"
+    securityMaintenance:
+      enabled: true
+      schedule: "40 11 * * *"
+    opportunityDiscovery:
+      enabled: true
+      schedule: "45 11 * * *"
+    pullRequestReview:
+      enabled: true
+      schedule: "50 11 * * *"
+`);
+    const now = Date.parse("2026-07-16T11:55:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: now,
+        "workspace:geo:bug-fix": Date.parse("2026-07-16T11:25:00Z"),
+        "workspace:geo:test-coverage": Date.parse("2026-07-16T11:25:00Z"),
+        "workspace:geo:security-maintenance": Date.parse("2026-07-16T11:25:00Z"),
+        "workspace:geo:opportunity-discovery": Date.parse("2026-07-16T11:25:00Z"),
+        "workspace:geo:pull-request-review": Date.parse("2026-07-16T11:25:00Z"),
+      },
+    });
+
+    expect(summary.checked).toBe(8);
+    expect(summary.dueProjects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:bug-fix",
+          jobKind: "bug-fix",
+          scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+        }),
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:test-coverage",
+          jobKind: "test-coverage",
+          scheduledAt: Date.parse("2026-07-16T11:35:00Z"),
+        }),
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:security-maintenance",
+          jobKind: "security-maintenance",
+          scheduledAt: Date.parse("2026-07-16T11:40:00Z"),
+        }),
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:opportunity-discovery",
+          jobKind: "opportunity-discovery",
+          scheduledAt: Date.parse("2026-07-16T11:45:00Z"),
+        }),
+        expect.objectContaining({
+          projectId: "geo",
+          name: "Geo Workspace",
+          jobKey: "workspace:geo:pull-request-review",
+          jobKind: "pull-request-review",
+          scheduledAt: Date.parse("2026-07-16T11:50:00Z"),
+        }),
+      ]),
+    );
+  });
+
+  it("schedules workspace harness-auto jobs as multi-repository targets", () => {
+    const config = parseLoopConfigYaml(`${configText}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    harnessAuto:
+      enabled: true
+      schedule: "50 16 * * *"
+      maxRounds: 4
+`);
+    const now = Date.parse("2026-07-16T16:55:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: now,
+        "workspace:geo:harness-auto": Date.parse("2026-07-16T16:45:00Z"),
+      },
+    });
+
+    expect(summary.dueProjects).toContainEqual(
+      expect.objectContaining({
+        projectId: "geo",
+        name: "Geo Workspace",
+        jobKey: "workspace:geo:harness-auto",
+        jobKind: "harness-auto",
+        scheduledAt: Date.parse("2026-07-16T16:50:00Z"),
       }),
     );
   });

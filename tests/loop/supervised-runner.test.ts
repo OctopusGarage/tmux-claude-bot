@@ -105,6 +105,35 @@ describe("runLoopSupervisedProjectAsync", () => {
     expect(signal?.aborted).toBe(true);
   });
 
+  it("returns cancelled and aborts dispatch when the external signal is cancelled", async () => {
+    let signal: AbortSignal | undefined;
+    const controller = new AbortController();
+    const running = runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      cancelSignal: controller.signal,
+      dispatch: (request) => {
+        signal = request.signal;
+        return new Promise(() => {});
+      },
+    });
+
+    controller.abort("cancelled by user");
+    const result = await running;
+
+    expect(result).toMatchObject({
+      status: "cancelled",
+      summary: {
+        status: "cancelled",
+        projectId: "datavibe",
+        finalVerification: "not-run",
+      },
+      output: "cancelled by user",
+    });
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("returns failed when dispatch throws synchronously", async () => {
     const result = await runLoopSupervisedProjectAsync({
       workOrder,

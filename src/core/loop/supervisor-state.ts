@@ -11,7 +11,8 @@ export type LoopSupervisorWorkOrderStateStatus =
   | "in-flight"
   | "needs-revision"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export type LoopSupervisorWorkOrderState = {
   status: LoopSupervisorWorkOrderStateStatus;
@@ -31,7 +32,11 @@ export type UnfinishedLoopSupervisorWorkOrder = {
   runDir: string;
 };
 
-const TERMINAL_STATES = new Set<LoopSupervisorWorkOrderStateStatus>(["completed", "failed"]);
+const TERMINAL_STATES = new Set<LoopSupervisorWorkOrderStateStatus>([
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
 function reportsRoot(): string {
   return join(appStateDir(), "loop-runs");
@@ -80,6 +85,7 @@ export function workOrderStateForResult(
   result: LoopSupervisedRunResult,
 ): LoopSupervisorWorkOrderStateStatus {
   if (result.status === "invalid-output") return "in-flight";
+  if (result.status === "cancelled") return "cancelled";
   return result.status === "completed" ? "completed" : "failed";
 }
 
@@ -97,9 +103,15 @@ function parseState(value: unknown): LoopSupervisorWorkOrderState | null {
     return null;
   }
   if (
-    !["dispatching", "queued", "in-flight", "needs-revision", "completed", "failed"].includes(
-      record.status,
-    )
+    ![
+      "dispatching",
+      "queued",
+      "in-flight",
+      "needs-revision",
+      "completed",
+      "failed",
+      "cancelled",
+    ].includes(record.status)
   ) {
     return null;
   }

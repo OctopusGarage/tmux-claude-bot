@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { LoopConfig } from "../loop/config.js";
 import { parseLoopConfigYaml } from "../loop/config.js";
@@ -28,10 +28,104 @@ export function mergeDiscoveredTaskRecords(
 ): ScheduledTaskRecord[] {
   const merged = new Map<string, ScheduledTaskRecord>();
   for (const record of discoveredRecords) merged.set(record.taskId, record);
-  for (const record of ledgerRecords) merged.set(record.taskId, record);
+  for (const record of ledgerRecords) {
+    const reconciled = reconcileLoopLedgerArtifact(record);
+    const discovered = merged.get(reconciled.taskId);
+    if (discovered !== undefined && shouldPreferDiscoveredRecord(reconciled, discovered)) continue;
+    merged.set(reconciled.taskId, reconciled);
+  }
   return [...merged.values()].sort(
     (a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId),
   );
+}
+
+function shouldPreferDiscoveredRecord(
+  ledgerRecord: ScheduledTaskRecord,
+  discoveredRecord: ScheduledTaskRecord,
+): boolean {
+  return (
+    ledgerRecord.source === "loop-engineering" &&
+    discoveredRecord.source === "loop-engineering" &&
+    discoveredRecord.status !== "expected"
+  );
+}
+
+function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTaskRecord {
+  if (record.source !== "loop-engineering") return record;
+  const finalSummaryPath = finalSummaryPathForLedgerRecord(record);
+  if (finalSummaryPath === null) return record;
+  const finalSummary = readJsonRecord(finalSummaryPath);
+  if (finalSummary === null) return record;
+  return recordForSupervisorFinalSummary({
+    projectId: projectIdFromLoopTaskId(record.taskId) ?? projectIdFromLoopTaskName(record.name),
+    jobKind: jobKindFromLoopTaskId(record.taskId),
+    scheduledAt: record.scheduledAt,
+    taskId: record.taskId,
+    now: Math.max(record.updatedAt, record.endedAt ?? record.startedAt ?? record.scheduledAt),
+    path: finalSummaryPath,
+    summary: finalSummary,
+  });
+}
+
+function finalSummaryPathForLedgerRecord(record: ScheduledTaskRecord): string | null {
+  if (record.reportPath !== undefined) {
+    const fromReport = finalSummaryPathNearReport(record.reportPath);
+    if (fromReport !== null) return fromReport;
+  }
+  const projectId =
+    projectIdFromLoopTaskId(record.taskId) ?? projectIdFromLoopTaskName(record.name);
+  if (projectId === "unknown") return null;
+  const runRoot = join(appStateDir(), "loop-runs", projectId);
+  if (!existsSync(runRoot)) return null;
+  const prefix = `${record.scheduledAt}-`;
+  for (const name of readdirSync(runRoot)) {
+    if (!name.startsWith(prefix)) continue;
+    const candidate = join(runRoot, name, "supervisor-final-summary.json");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function finalSummaryPathNearReport(reportPath: string): string | null {
+  const candidates = [
+    join(dirname(reportPath), "supervisor-final-summary.json"),
+    reportPath.replace(/supervisor(?:-summary)?\.json$/, "supervisor-final-summary.json"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function projectIdFromLoopTaskId(taskId: string): string | null {
+  const parts = taskId.split(":");
+  if (parts[0] !== "loop") return null;
+  if (parts[1] === "pr-review") return parts[2] ?? null;
+  if (parts[1] === "workspace") return parts[2] ?? null;
+  return parts[1] ?? null;
+}
+
+function jobKindFromLoopTaskId(taskId: string): LoopDiscoveredJobKind {
+  const parts = taskId.split(":");
+  if (parts[1] === "pr-review") return "repository-pull-request-review";
+  if (parts[1] === "workspace") return taskKindFromName(parts[3]);
+  return parts.length === 3 ? "architecture" : taskKindFromName(parts[2]);
+}
+
+function projectIdFromLoopTaskName(name: string): string {
+  return name.split(/\s+/)[0] ?? "unknown";
+}
+
+function taskKindFromName(value: string | undefined): LoopDiscoveredJobKind {
+  if (value === "bug-fix") return "bug-fix";
+  if (value === "test-coverage") return "test-coverage";
+  if (value === "security-maintenance") return "security-maintenance";
+  if (value === "harness-auto") return "harness-auto";
+  if (value === "opportunity-discovery") return "opportunity-discovery";
+  if (value === "pull-request-review") return "pull-request-review";
+  if (value === "repository-pull-request-review") return "repository-pull-request-review";
+  if (value === "workspace-architecture") return "workspace-architecture";
+  return "architecture";
 }
 
 export function discoverLaunchdScheduledTasks(input: {
@@ -141,6 +235,23 @@ export function discoverLoopEngineeringScheduledTasks(input: {
         }),
       );
     }
+    if (project.harnessAuto.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: project.id,
+          jobKey: `${project.id}:harness-auto`,
+          jobKind: "harness-auto",
+          schedule: project.harnessAuto.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(project.harnessAuto.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: project.harnessAuto.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
     if (project.pullRequestReview.enabled) {
       records.push(
         ...loopScheduleRecords({
@@ -192,6 +303,108 @@ export function discoverLoopEngineeringScheduledTasks(input: {
         ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
       }),
     );
+    if (workspace.bugFix.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:bug-fix`,
+          jobKind: "bug-fix",
+          schedule: workspace.bugFix.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.bugFix.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.bugFix.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.testCoverage.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:test-coverage`,
+          jobKind: "test-coverage",
+          schedule: workspace.testCoverage.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.testCoverage.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.testCoverage.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.securityMaintenance.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:security-maintenance`,
+          jobKind: "security-maintenance",
+          schedule: workspace.securityMaintenance.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.securityMaintenance.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.securityMaintenance.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.harnessAuto.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:harness-auto`,
+          jobKind: "harness-auto",
+          schedule: workspace.harnessAuto.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.harnessAuto.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.harnessAuto.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.opportunityDiscovery.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:opportunity-discovery`,
+          jobKind: "opportunity-discovery",
+          schedule: workspace.opportunityDiscovery.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.opportunityDiscovery.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.opportunityDiscovery.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
+    if (workspace.pullRequestReview.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: workspace.id,
+          jobKey: `workspace:${workspace.id}:pull-request-review`,
+          jobKind: "pull-request-review",
+          schedule: workspace.pullRequestReview.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(workspace.pullRequestReview.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: workspace.pullRequestReview.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
   }
   return records.sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
 }
@@ -278,7 +491,7 @@ function recordForLoopRunArtifact(input: {
   now: number;
   loopRunsDir?: string;
 }): ScheduledTaskRecord | null {
-  const runId = loopRunId(input.scheduledAt, input.projectId, input.jobKind);
+  const runId = loopRunId(input.scheduledAt, input.projectId, input.jobKind, input.jobKey);
   const runDir = join(
     input.loopRunsDir ?? join(appStateDir(), "loop-runs"),
     input.projectId,
@@ -286,6 +499,7 @@ function recordForLoopRunArtifact(input: {
   );
   const latestSuccess = latestSuccessfulLoopRunAfter({
     projectId: input.projectId,
+    jobKey: input.jobKey,
     jobKind: input.jobKind,
     scheduledAt: input.scheduledAt,
     now: input.now,
@@ -323,6 +537,7 @@ function recordForLoopRunArtifact(input: {
 
 function latestSuccessfulLoopRunAfter(input: {
   projectId: string;
+  jobKey: string;
   jobKind: LoopDiscoveredJobKind;
   scheduledAt: number;
   now: number;
@@ -332,7 +547,7 @@ function latestSuccessfulLoopRunAfter(input: {
   if (!existsSync(root)) return null;
   let latest: { scheduledAt: number; path: string } | null = null;
   for (const name of readdirSync(root)) {
-    const match = loopRunDirMatch(name, input.projectId, input.jobKind);
+    const match = loopRunDirMatch(name, input.projectId, input.jobKind, input.jobKey);
     if (match === null || match.scheduledAt <= input.scheduledAt || match.scheduledAt > input.now) {
       continue;
     }
@@ -350,24 +565,40 @@ function loopRunDirMatch(
   name: string,
   projectId: string,
   jobKind: LoopDiscoveredJobKind,
+  jobKey: string,
 ): { scheduledAt: number } | null {
-  const suffix = loopRunSuffix(projectId, jobKind);
+  const suffix = loopRunSuffix(projectId, jobKind, jobKey);
   if (!name.endsWith(suffix)) return null;
   const raw = name.slice(0, -suffix.length);
   if (!/^\d+$/.test(raw)) return null;
   return { scheduledAt: Number(raw) };
 }
 
-function loopRunId(scheduledAt: number, projectId: string, jobKind: LoopDiscoveredJobKind): string {
-  return `${scheduledAt}${loopRunSuffix(projectId, jobKind)}`;
+function loopRunId(
+  scheduledAt: number,
+  projectId: string,
+  jobKind: LoopDiscoveredJobKind,
+  jobKey: string,
+): string {
+  return `${scheduledAt}${loopRunSuffix(projectId, jobKind, jobKey)}`;
 }
 
-function loopRunSuffix(projectId: string, jobKind: LoopDiscoveredJobKind): string {
+function loopRunSuffix(projectId: string, jobKind: LoopDiscoveredJobKind, jobKey: string): string {
+  const workspaceJob = jobKey.startsWith("workspace:");
   if (jobKind === "architecture") return `-${projectId}`;
   if (jobKind === "workspace-architecture") return `-${projectId}-workspace`;
+  if (workspaceJob && jobKind === "bug-fix") return `-${projectId}-workspace-bug-fix`;
+  if (workspaceJob && jobKind === "test-coverage") return `-${projectId}-workspace-test-coverage`;
+  if (workspaceJob && jobKind === "security-maintenance")
+    return `-${projectId}-workspace-security-maintenance`;
+  if (workspaceJob && jobKind === "harness-auto") return `-${projectId}-workspace-harness-auto`;
+  if (workspaceJob && jobKind === "opportunity-discovery")
+    return `-${projectId}-workspace-opportunity-discovery`;
+  if (workspaceJob && jobKind === "pull-request-review") return `-${projectId}-workspace-pr-review`;
   if (jobKind === "bug-fix") return `-${projectId}-bug-fix`;
   if (jobKind === "test-coverage") return `-${projectId}-test-coverage`;
   if (jobKind === "security-maintenance") return `-${projectId}-security-maintenance`;
+  if (jobKind === "harness-auto") return `-${projectId}-harness-auto`;
   if (jobKind === "repository-pull-request-review") return `-${projectId}-repo-pr-review`;
   return `-${projectId}-pr-review`;
 }
@@ -431,7 +662,7 @@ function recordForSupervisorFinalSummary(input: {
     error: `loop supervisor final status ${status}`,
     summary: summaryText,
     reportPath: input.path,
-    repairStatus: "pending",
+    repairStatus: status === "blocked" ? "blocked" : "pending",
     updatedAt: input.now,
   };
 }

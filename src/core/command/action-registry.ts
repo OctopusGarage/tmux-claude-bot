@@ -423,15 +423,16 @@ const DIAGNOSTICS: readonly HelpRow[] = [
     {
       cmds: ["autopilot"],
       descKey: "cmdAutopilot",
-      argHint: " [on|off|goals|global]",
-      telegramDescription: "Toggle/inspect keep-alive autopilot for this session",
+      argHint: " [requirement]",
+      telegramDescription: "Delegate current work to the Loop Supervisor",
     },
   ],
   [
     {
-      cmds: ["goals"],
-      descKey: "cmdGoals",
-      telegramDescription: "List autopilot goal presets",
+      cmds: ["opportunity"],
+      descKey: "cmdOpportunity",
+      argHint: " [list|show|discuss|delegate|dismiss|snooze <id>]",
+      telegramDescription: "Review and delegate proactive opportunity suggestions",
     },
   ],
   [

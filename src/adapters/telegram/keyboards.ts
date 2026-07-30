@@ -1,5 +1,4 @@
 import { InlineKeyboard } from "grammy";
-import type { AutopilotView } from "../../core/autopilot/autopilot-view.js";
 import {
   actionButtonRows,
   actionConfirmationText,
@@ -10,6 +9,7 @@ import {
 } from "../../core/command/action-registry.js";
 import { isMessageAction, type MessageAction } from "../../core/command/actions.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
+import type { NotificationOpportunity } from "../../core/notifications/gateway.js";
 import type { BrowseAction, BrowseView } from "../../core/projects/dir-browser.js";
 import type { ProjectPickerLikeRow } from "../../core/projects/project-session-picker.js";
 import { projectSessionPrimaryIntent } from "../../core/projects/project-session-surface.js";
@@ -81,17 +81,13 @@ export type CallbackAction =
   | { kind: "browseselect" }
   | { kind: "browsenewfolder" }
   | { kind: "browsecancel" }
-  | { kind: "apPanel"; sid: string }
-  | { kind: "apToggle"; sid: string }
-  | { kind: "apGlobal"; sid: string; on: boolean }
-  | { kind: "apStop"; sid: string }
   | { kind: "apBack"; sid: string }
-  | { kind: "apPick"; sid: string }
-  | { kind: "apGoalToggle"; sid: string; idx: number }
-  | { kind: "apRounds"; sid: string; delta: number }
-  | { kind: "apStart"; sid: string }
+  | { kind: "apDelegate"; sid: string }
+  | { kind: "apCancelDelegate"; sid: string }
   | { kind: "apConfirm"; sid: string }
   | { kind: "apContinue"; sid: string }
+  | { kind: "opportunityDiscussAll"; tokens: string[] }
+  | { kind: "opportunityDismissAll"; tokens: string[] }
   | { kind: "promptget"; sid: string }
   | { kind: "promptfilter"; tagSid: string }
   | { kind: "promptpage"; page: number; tagSid: string }
@@ -236,44 +232,24 @@ export function parseCallbackData(data: string): CallbackAction | null {
       return null;
     return { kind: "statusinstall", action: a as StatusInstallAction };
   }
-  if (tag === "ap") {
+  if (tag === "apl" || tag === "apd" || tag === "apz") {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
-    return { kind: "apPanel", sid };
-  }
-  if (tag === "apt" || tag === "apstop" || tag === "apl") {
-    const sid = parts[1];
-    if (parts.length !== 2 || !sid) return null;
-    const kind = tag === "apt" ? "apToggle" : tag === "apstop" ? "apStop" : "apBack";
+    const kind = tag === "apd" ? "apDelegate" : tag === "apz" ? "apCancelDelegate" : "apBack";
     return { kind, sid } as CallbackAction;
-  }
-  if (tag === "apglobal") {
-    const on = parts[1];
-    const sid = parts[2];
-    if (parts.length !== 3 || (on !== "1" && on !== "0") || !sid) return null;
-    return { kind: "apGlobal", sid, on: on === "1" };
-  }
-  if (tag === "apg" || tag === "apgo") {
-    const sid = parts[1];
-    if (parts.length !== 2 || !sid) return null;
-    return { kind: tag === "apg" ? "apPick" : "apStart", sid };
-  }
-  if (tag === "apgt") {
-    const idx = Number(parts[1]);
-    const sid = parts[2];
-    if (parts.length !== 3 || !Number.isInteger(idx) || idx < 0 || !sid) return null;
-    return { kind: "apGoalToggle", sid, idx };
-  }
-  if (tag === "apr") {
-    const delta = Number(parts[1]);
-    const sid = parts[2];
-    if (parts.length !== 3 || (delta !== 1 && delta !== -1) || !sid) return null;
-    return { kind: "apRounds", sid, delta };
   }
   if (tag === "apc" || tag === "apx") {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
     return { kind: tag === "apc" ? "apConfirm" : "apContinue", sid };
+  }
+  if (tag === "od" || tag === "ox") {
+    const tokens = parseOpportunityTokens(parts[1]);
+    if (parts.length !== 2 || tokens.length === 0) return null;
+    return {
+      kind: tag === "od" ? "opportunityDiscussAll" : "opportunityDismissAll",
+      tokens,
+    };
   }
   if (tag === "br") return parseBrowseData(parts);
   if (tag !== undefined && tag in SID_TAGS) {
@@ -282,6 +258,15 @@ export function parseCallbackData(data: string): CallbackAction | null {
     return { kind: SID_TAGS[tag] as SidKind, sid };
   }
   return null;
+}
+
+function parseOpportunityTokens(value: string | undefined): string[] {
+  if (value === undefined) return [];
+  const tokens = value
+    .split(",")
+    .map((token) => token.trim())
+    .filter((token) => /^[A-Za-z0-9._-]{4,16}$/.test(token));
+  return [...new Set(tokens)];
 }
 
 function isVoiceLang(code: string): boolean {
@@ -512,7 +497,8 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
     .text(m.btnQueue, "qs")
     .text(m.btnRecover, "rcv")
     .row()
-    .text(`${UI_ICONS.feature.autopilot} Autopilot`, `ap:${sid}`)
+    .text(m.btnApDelegate, `apd:${sid}`)
+    .row()
     .text(voiceButtonLabel, voiceButtonData)
     .text(m.btnPromptTranslate, "ptm")
     .row()
@@ -654,26 +640,6 @@ export function buildRecentKeyboard(projects: RecentButton[]): InlineKeyboard {
   return kb;
 }
 
-/** Goal-cycle picker: every catalog goal as a toggle (✓ when selected), a
- * rounds stepper, and a start button summarising the selection. Goals are keyed
- * by catalog index (apgt:<idx>:<sid>) to fit callback_data. */
-export function buildAutopilotGoalPicker(view: AutopilotView, sid: string): InlineKeyboard {
-  const m = messages("telegram");
-  const kb = new InlineKeyboard();
-  view.goals.forEach((g, i) => {
-    kb.text(g.selected ? `✓ ${g.title}` : g.title, `apgt:${i}:${sid}`);
-    if (i % 2 === 1) kb.row();
-  });
-  kb.row();
-  kb.text(m.btnApRoundsMinus, `apr:-1:${sid}`)
-    .text(m.apRoundsLabel(view.rounds), "noop")
-    .text(m.btnApRoundsPlus, `apr:1:${sid}`)
-    .row();
-  const n = view.goals.filter((g) => g.selected).length;
-  if (n > 0) kb.text(m.btnApStartCycle(n, view.rounds), `apgo:${sid}`).row();
-  return kb.text(m.btnApBack, `ap:${sid}`); // back to the panel
-}
-
 /** The two buttons attached to a human-gate push notification. */
 export function buildAutopilotGateKeyboard(sid: string): InlineKeyboard {
   const m = messages("telegram");
@@ -682,26 +648,30 @@ export function buildAutopilotGateKeyboard(sid: string): InlineKeyboard {
     .text(m.btnApContinue, `apx:${sid}`);
 }
 
-/** Autopilot panel: progressive disclosure from the AutopilotView.
- * OFF → a single "enable" button; ON → toggle/pick-goals/global/stop; a pending
- * human gate surfaces confirm/continue at the top. Tapping routes to apt/apg/
- * apglobal/apstop and (gate) apc/apx. */
-export function buildAutopilotPanelKeyboard(view: AutopilotView, sid: string): InlineKeyboard {
+/** Autopilot now means supervisor-backed delegation only. */
+export function buildAutopilotPanelKeyboard(sid: string, delegateActive = false): InlineKeyboard {
   const m = messages("telegram");
-  const kb = new InlineKeyboard();
-  if (view.gatePending) {
-    kb.text(m.btnApConfirm, `apc:${sid}`).text(m.btnApContinue, `apx:${sid}`).row();
-  }
-  if (!view.enabled) {
-    return kb.text(m.btnApEnable, `apt:${sid}`).row().text(m.btnApBack, `apl:${sid}`);
-  }
-  kb.text(m.btnApDisable, `apt:${sid}`).text(m.btnApPickGoals, `apg:${sid}`).row();
-  kb.text(
-    view.globalOn ? m.btnApGlobalOff : m.btnApGlobalOn,
-    `apglobal:${view.globalOn ? 0 : 1}:${sid}`,
-  );
-  if (view.mode === "cycle") kb.text(m.btnApStop, `apstop:${sid}`);
-  return kb.row().text(m.btnApBack, `apl:${sid}`);
+  return new InlineKeyboard()
+    .text(
+      delegateActive ? m.btnApCancelDelegate : m.btnApDelegate,
+      `${delegateActive ? "apz" : "apd"}:${sid}`,
+    )
+    .row()
+    .text(m.btnApBack, `apl:${sid}`);
+}
+
+export function buildOpportunityNotificationKeyboard(
+  opportunities: NotificationOpportunity[],
+): InlineKeyboard | undefined {
+  const tokens = opportunities.map((opportunity) => opportunityCallbackToken(opportunity.id));
+  if (tokens.length === 0) return undefined;
+  const encoded = tokens.join(",");
+  if (`od:${encoded}`.length > 64 || `ox:${encoded}`.length > 64) return undefined;
+  return new InlineKeyboard().text("讨论全部", `od:${encoded}`).text("暂不处理", `ox:${encoded}`);
+}
+
+export function opportunityCallbackToken(id: string): string {
+  return id.split("-").at(-1)?.trim() || id.slice(-8);
 }
 
 export { PROMPTS_PAGE_SIZE, type PromptsView } from "../../core/promptlib/view.js";

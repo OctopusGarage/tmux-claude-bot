@@ -1,19 +1,17 @@
 # Agent skills and capability registry
 
-Some built-in autopilot goals (`src/core/autopilot/goals/catalog.ts`) and Loop
-Engineering tasks drive the coding agent by asking it to run a **skill** — e.g.
+Loop Engineering tasks drive the coding agent by asking it to run a **skill** — e.g.
 *"use your code-review skill if one is available."* The skill lives in the
 **agent's** environment (Claude Code / Codex running in the project session),
 **not** in this repo, so it is not installed by `npm install` / the deploy.
 
-The shared capability registry lives under `src/core/skills`. Autopilot consumes
-it for goal skill intents; Loop Engineering consumes it for scheduled
-maintenance tasks and `tcb loop skills ...` commands.
+The shared capability registry lives under `src/core/skills`. Loop Engineering
+consumes it for scheduled maintenance tasks and `tcb loop skills ...` commands.
 
-The goal prompts are written to **degrade gracefully**: *"use your X skill if one
+The task prompts are written to **degrade gracefully**: *"use your X skill if one
 is available"* — if the skill is missing, the agent follows the prose steps in
-the prompt instead. Installing the skill makes the goal materially better; not
-installing it is not fatal.
+the prompt instead. Installing the skill makes the maintenance task materially
+better; not installing it is not fatal.
 
 ## Registry
 

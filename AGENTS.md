@@ -46,6 +46,66 @@ pre-push hook runs this command too. If a remote CI failure exposes a category
 not covered locally, update `scripts/verify-local.sh`, the hook, or this file so
 future agents see the same failure before push.
 
+## Project-Scoped Notifications
+
+For proactive notifications tied to a project, workspace, run, delegated task,
+or tmux session, always carry the project/session identity through the
+notification request. Feishu/Lark delivery must prefer the project-bound group
+for that session, and fall back to the owner only when no bound group exists.
+Do not send project-scoped notices as generic owner DMs just because the
+notification gateway can send without a session.
+
+Telegram currently remains owner-directed unless a feature has an explicit
+Telegram project-chat target. When a notification can choose channels, keep the
+channel selection configurable (`lark`, `telegram`, or `both`) and log the
+requested channel, resolved session, registered channels, delivery status, and
+per-channel delivery results so routing mistakes are auditable from logs.
+
+## Cross-Channel Feature Parity
+
+Feishu/Lark, Telegram, the TUI, and the control API are delivery shells around
+the same bot capabilities. When adding or changing a user-facing command,
+button, card action, notification workflow, or delegated-task control, review
+all supported shells in the same slice and keep behavior equivalent by default.
+Do not implement a Feishu-only interaction and forget the Telegram equivalent,
+or vice versa.
+
+Allowed differences must be intentional and documented near the implementation
+or tests. Examples: Telegram currently has no project-bound group concept, so
+project-group routing can remain Lark-specific; a Lark interactive card may map
+to a Telegram inline keyboard, slash command, or concise text action instead of
+an identical UI. The standard is capability parity, not pixel-level UI parity.
+
+Before finishing a cross-channel feature, check the matching handlers,
+callbacks/card-actions, keyboards/cards, command registry, notification routing,
+usage docs, and tests. If a shell is deliberately unsupported, leave a clear
+reason and make the user-facing fallback explicit.
+
+## Intelligent Automation Taxonomy
+
+Keep the intelligent automation terms distinct:
+
+- Loop Engineering is the scheduled project/workspace health platform.
+- Loop Supervisor is the managed Claude/Codex worker that executes bounded WorkOrders.
+- Autopilot means active delegation of a user-confirmed current task to the Loop
+  Supervisor; do not reuse the name for legacy keepalive or goal-cycle UI.
+- Opportunity Discovery is read-only proposal generation. Discussion and
+  implementation remain separate; execution goes through active delegation.
+- Daily Task Audit is the bot's self-check/self-healing schedule audit. It checks
+  tmux-claude-bot-owned launchd/Loop Engineering tasks plus reported ledger tasks,
+  sends the final Telegram/Feishu result, and can dispatch supervisor repair when
+  `TASK_AUDIT_AUTO_REPAIR=true`.
+- Daily Task Audit auto-repair must be evidence-led. For each unresolved item,
+  the delegated repair task must first state the concrete problem, verify it from
+  ledger/report/log/git/scheduler evidence, classify whether it is a bot bug or an
+  external/target-project condition, and only then edit this repo. Do not submit a
+  repair task that skips the problem statement and review gate.
+- `pullRequestReview` is scoped to configured project/workspace loop PRs;
+  `prReview.repositories` is the repository-wide open-PR queue processor.
+- Workspace tasks are generic multi-repository WorkOrders. Use top-level
+  `workspace.runner`; `architecture.runner` is legacy compatibility for the
+  architecture task, not the workspace feature boundary.
+
 ## Usage Documentation Lookup
 
 When the task is about how to use tmux-claude-bot, available commands, setup,

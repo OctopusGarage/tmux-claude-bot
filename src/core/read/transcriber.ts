@@ -84,7 +84,7 @@ export async function transcribeOgg(
  *  its captured output, falling back to the last non-empty line, capped so a
  *  progress-bar dump can't flood the log/error. */
 function whisperReason(result: { stdout: string; stderr: string }): string {
-  const text = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
+  const text = `${result.stderr}\n${result.stdout}`.trim();
   const lines = text.split("\n").map((l) => l.trim());
   const operative = lines.find((l) => /Skipping|Error|Traceback/.test(l));
   return (operative ?? lines.filter(Boolean).pop() ?? "no diagnostic output").slice(0, 300);

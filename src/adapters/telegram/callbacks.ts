@@ -1,28 +1,29 @@
+import { spawnSync } from "node:child_process";
 import type { Context } from "grammy";
 import { getAgentRuntimeRecord } from "../../core/agents/agent-runtime-records.js";
 import { resolveAgentKind } from "../../core/agents/agentKindMap.js";
 import { orphanLabel } from "../../core/agents/takeover.js";
 import {
   adoptOrphan,
+  attachCommand,
   composeAdoptOutcome,
-  copyAttachCommand,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
-import { buildAutopilotView } from "../../core/autopilot/autopilot-view.js";
-import { applyAutopilotVerb, goalsVerb } from "../../core/autopilot/controls.js";
-import { listGoals } from "../../core/autopilot/goals/catalog.js";
 import {
-  adjustRounds,
-  clearPicker,
-  getPicker,
-  toggleGoal,
-} from "../../core/autopilot/picker-state.js";
-import { AutopilotStore } from "../../core/autopilot/state-store.js";
+  cancelActiveDelegatedTask,
+  formatActiveDelegateCancel,
+  formatActiveDelegateStart,
+  hasActiveDelegatedTaskForSession,
+  parseDelegateRequirement,
+  startActiveDelegatedTask,
+} from "../../core/autopilot/delegated-task.js";
 import { planMessageAction } from "../../core/command/action-plan.js";
 import { executeMessage, performRestart, performStart } from "../../core/command/dispatch.js";
 import type { QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
+import { OpportunityStore } from "../../core/opportunities/store.js";
+import { formatOpportunityBatchAgentDiscussionPrompt } from "../../core/opportunities/view.js";
 import {
   browseCwd,
   clearBrowse,
@@ -66,13 +67,12 @@ import {
   buildActionConfirmationKeyboard,
   buildAdoptConfirmKeyboard,
   buildAdoptDoneKeyboard,
-  buildAutopilotGoalPicker,
-  buildAutopilotPanelKeyboard,
   buildBrowseKeyboard,
   buildControlKeyboard,
   buildExpandedControlKeyboard,
   buildFreeLabelKeyboard,
   buildLangKeyboard,
+  buildOpportunityNotificationKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
   buildPromptTranslateKeyboard,
@@ -145,112 +145,54 @@ export async function handleCallbackQuery(
       }
       return;
     }
-    // Autopilot panel: open, toggle on/off, global on/off, stop, back.
-    if (
-      parsed.kind === "apPanel" ||
-      parsed.kind === "apToggle" ||
-      parsed.kind === "apGlobal" ||
-      parsed.kind === "apStop" ||
-      parsed.kind === "apBack"
-    ) {
+    // Autopilot now means supervisor-backed delegation only. The old
+    // keep-alive/goal-cycle callbacks are intentionally not handled here.
+    if (parsed.kind === "apDelegate" || parsed.kind === "apCancelDelegate") {
       await safeAnswerCallback(ctx);
       const session = await resolveAliveSessionByShortId(deps, parsed.sid);
       if (!session) return;
-      const store = new AutopilotStore();
-      const m = messages("telegram");
-      if (parsed.kind === "apToggle") {
-        applyAutopilotVerb(store, session, store.get(session).enabled ? "off" : "on", m);
-      } else if (parsed.kind === "apGlobal") {
-        applyAutopilotVerb(store, session, `global ${parsed.on ? "on" : "off"}`, m);
-      } else if (parsed.kind === "apStop") {
-        applyAutopilotVerb(store, session, "stop", m);
+      if (parsed.kind === "apDelegate") {
+        const requirement = parseDelegateRequirement("delegate");
+        if (requirement === null) return;
+        const result = await startActiveDelegatedTask(deps, { session, requirement });
+        await reply(
+          ctx,
+          result.status === "queued" ? "ok" : "err",
+          messages("telegram").autopilotTitle,
+          {
+            session,
+            body: formatActiveDelegateStart(result),
+            replyTarget,
+          },
+        );
+      } else {
+        const result = await cancelActiveDelegatedTask(deps, { session });
+        await reply(
+          ctx,
+          result.status === "cancelled" ? "ok" : "err",
+          messages("telegram").autopilotTitle,
+          {
+            session,
+            body: formatActiveDelegateCancel(result),
+            replyTarget,
+          },
+        );
       }
-      // apBack → return to the control keyboard; everything else → re-render the panel
-      const kb =
-        parsed.kind === "apBack"
-          ? buildExpandedControlKeyboard(parsed.sid)
-          : buildAutopilotPanelKeyboard(buildAutopilotView(store, session, m), parsed.sid);
       try {
         await timeApi("editMessageReplyMarkup", () =>
-          ctx.editMessageReplyMarkup({ reply_markup: kb }),
+          ctx.editMessageReplyMarkup({ reply_markup: buildExpandedControlKeyboard(parsed.sid) }),
         );
       } catch {
         /* message gone/unchanged */
       }
       return;
     }
-    // Autopilot goal picker: open picker, toggle a goal, adjust rounds, start cycle.
-    if (
-      parsed.kind === "apPick" ||
-      parsed.kind === "apGoalToggle" ||
-      parsed.kind === "apRounds" ||
-      parsed.kind === "apStart"
-    ) {
-      await safeAnswerCallback(ctx);
-      const session = await resolveAliveSessionByShortId(deps, parsed.sid);
-      if (!session) return;
-      const store = new AutopilotStore();
-      const m = messages("telegram");
-      const goals = listGoals();
-      if (parsed.kind === "apGoalToggle") {
-        const g = goals[parsed.idx];
-        if (g) toggleGoal(session, g.id);
-      } else if (parsed.kind === "apRounds") {
-        adjustRounds(session, parsed.delta, deps.config.autopilot.maxRounds);
-      } else if (parsed.kind === "apStart") {
-        const sel = getPicker(session).selected;
-        if (sel.length > 0) {
-          applyAutopilotVerb(
-            store,
-            session,
-            goalsVerb(sel, getPicker(session).rounds),
-            m,
-            deps.config.autopilot.maxRounds,
-          );
-          clearPicker(session);
-          // back to the panel showing the running cycle
-          const kb = buildAutopilotPanelKeyboard(buildAutopilotView(store, session, m), parsed.sid);
-          try {
-            await timeApi("editMessageReplyMarkup", () =>
-              ctx.editMessageReplyMarkup({ reply_markup: kb }),
-            );
-          } catch {
-            /* gone/unchanged */
-          }
-          return;
-        }
-      }
-      // re-render the picker
-      const kb = buildAutopilotGoalPicker(buildAutopilotView(store, session, m), parsed.sid);
-      try {
-        await timeApi("editMessageReplyMarkup", () =>
-          ctx.editMessageReplyMarkup({ reply_markup: kb }),
-        );
-      } catch {
-        /* gone/unchanged */
-      }
+    if (parsed.kind === "apBack" || parsed.kind === "apConfirm" || parsed.kind === "apContinue") {
+      await safeAnswerCallback(ctx, "旧 Autopilot 保活/目标入口已下线");
       return;
     }
-    // Autopilot human gate: confirm (mark done) or continue (keep polishing).
-    if (parsed.kind === "apConfirm" || parsed.kind === "apContinue") {
-      await safeAnswerCallback(ctx);
-      const session = await resolveAliveSessionByShortId(deps, parsed.sid);
-      if (!session) return;
-      const store = new AutopilotStore();
-      const m = messages("telegram");
-      applyAutopilotVerb(store, session, parsed.kind === "apConfirm" ? "confirm" : "reject", m);
-      try {
-        await timeApi("editMessageReplyMarkup", () =>
-          ctx.editMessageReplyMarkup({
-            reply_markup: buildAutopilotPanelKeyboard(
-              buildAutopilotView(store, session, m),
-              parsed.sid,
-            ),
-          }),
-        );
-      } catch {
-        /* gone/unchanged */
-      }
+    if (parsed.kind === "opportunityDiscussAll" || parsed.kind === "opportunityDismissAll") {
+      await handleOpportunityCallback(ctx, deps, replyTarget, parsed);
       return;
     }
     // Toggle the project list between switch mode and delete mode — re-fetch
@@ -558,8 +500,9 @@ export async function handleCallbackQuery(
       await safeAnswerCallback(ctx, messages("telegram").recoverCancelled);
       return;
     }
-    // "View on computer": copy the attach command to the host clipboard on demand
-    // (auto-attaching the original terminal isn't possible — see takeover-service).
+    // "View on computer": show the attach command on demand. Do not mutate the
+    // host clipboard from a remote chat callback; it is surprising and can
+    // overwrite unrelated clipboard contents.
     if (parsed.kind === "adoptattach") {
       const session = await resolveAliveSessionByShortId(deps, parsed.sid);
       if (!session) {
@@ -567,7 +510,7 @@ export async function handleCallbackQuery(
         return;
       }
       await safeAnswerCallback(ctx);
-      await reply(ctx, "ok", messages("telegram").adoptAttachHint(copyAttachCommand(session)), {
+      await reply(ctx, "ok", messages("telegram").adoptAttachHint(attachCommand(session)), {
         session,
         replyTarget,
       });
@@ -663,7 +606,7 @@ export async function handleCallbackQuery(
         return;
       }
       const tags = await lib.listTags();
-      const tagSid = parsed.kind === "promptfilter" ? parsed.tagSid : (parsed.tagSid ?? "");
+      const tagSid = parsed.kind === "promptfilter" ? parsed.tagSid : parsed.tagSid;
       const tagFilter = tagSid ? ((await resolveTagByShortId(lib, tagSid, tags)) ?? "") : "";
       const page = parsed.kind === "promptpage" ? parsed.page : 0;
       await sendPromptsPage(ctx, lib, page, tagFilter, replyTarget, tags);
@@ -733,8 +676,6 @@ export async function handleCallbackQuery(
       await reply(ctx, "ok", msg, { session: sessionName, replyTarget });
       return;
     }
-    if (parsed.kind !== "act" && parsed.kind !== "actconfirm") return;
-
     const planned = await planMessageAction({
       deps,
       action: parsed.action,
@@ -795,4 +736,139 @@ export async function handleCallbackQuery(
     log.error("callback handler failed", { err });
     await safeAnswerCallback(ctx, messages("telegram").toastError);
   }
+}
+
+async function handleOpportunityCallback(
+  ctx: Context,
+  deps: HandlerDeps,
+  replyTarget: ReplyTargetMap,
+  parsed:
+    | { kind: "opportunityDiscussAll"; tokens: string[] }
+    | { kind: "opportunityDismissAll"; tokens: string[] },
+): Promise<void> {
+  const store = new OpportunityStore();
+  const resolved = resolveOpportunityTokens(store, parsed.tokens);
+  if (resolved.missing.length > 0 || resolved.suggestions.length === 0) {
+    await safeAnswerCallback(ctx, "Opportunity not found");
+    await reply(ctx, "err", `Opportunity not found: ${resolved.missing.join(", ")}`, {
+      replyTarget,
+    });
+    return;
+  }
+
+  if (parsed.kind === "opportunityDismissAll") {
+    let skipped = 0;
+    for (const suggestion of resolved.suggestions) {
+      if (store.updateStatus(suggestion.id, "dismissed") !== null) skipped++;
+    }
+    await safeAnswerCallback(ctx, "Skipped");
+    await reply(ctx, "ok", `Skipped ${skipped} opportunities.`, { replyTarget });
+    try {
+      await timeApi("editMessageReplyMarkup", () => ctx.editMessageReplyMarkup());
+    } catch {
+      /* message may be gone */
+    }
+    return;
+  }
+
+  const first = resolved.suggestions[0];
+  if (first === undefined) return;
+  if (resolved.suggestions.some((suggestion) => suggestion.projectPath !== first.projectPath)) {
+    await safeAnswerCallback(ctx, "Mixed projects are not supported");
+    await reply(ctx, "err", "Cannot discuss mixed-project opportunities together.", {
+      replyTarget,
+    });
+    return;
+  }
+  const opened = await createProjectFromPath(deps, tgScope(ctx), first.projectPath);
+  if (opened.status !== "created" && opened.status !== "switched") {
+    const reason =
+      opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
+    await safeAnswerCallback(ctx, "Cannot open project");
+    await reply(ctx, "err", `Cannot open project for discussion: ${reason}`, { replyTarget });
+    return;
+  }
+  const blocked = opportunityDiscussionBlockReason(deps, opened.sessionName, opened.projectPath);
+  if (blocked !== null) {
+    await safeAnswerCallback(ctx, "Blocked");
+    await reply(ctx, "warn", blocked, { replyTarget });
+    return;
+  }
+
+  for (const suggestion of resolved.suggestions) store.updateStatus(suggestion.id, "discussing");
+  await safeAnswerCallback(ctx, "Discussion started");
+  await reply(ctx, "info", `Discussing ${resolved.suggestions.length} opportunities.`, {
+    session: opened.sessionName,
+    replyTarget,
+    replyMarkup: buildOpportunityNotificationKeyboard(
+      resolved.suggestions.map((suggestion) => ({
+        id: suggestion.id,
+        title: suggestion.title,
+        projectName: suggestion.projectName,
+        category: suggestion.category,
+        confidence: suggestion.confidence,
+        estimatedComplexity: suggestion.estimatedComplexity,
+        status: "discussing",
+        value: suggestion.value,
+      })),
+    ),
+  });
+  await enqueueSessionCommand(
+    ctx,
+    deps,
+    opened.sessionName,
+    "text",
+    formatOpportunityBatchAgentDiscussionPrompt(resolved.suggestions),
+  );
+}
+
+function resolveOpportunityTokens(
+  store: OpportunityStore,
+  tokens: string[],
+): {
+  suggestions: NonNullable<ReturnType<OpportunityStore["get"]>>[];
+  missing: string[];
+} {
+  const all = store.list();
+  const suggestions: NonNullable<ReturnType<OpportunityStore["get"]>>[] = [];
+  const missing: string[] = [];
+  for (const token of tokens) {
+    const matches = all.filter((suggestion) => suggestion.id.endsWith(`-${token}`));
+    if (matches.length === 1 && matches[0] !== undefined) {
+      suggestions.push(matches[0]);
+    } else {
+      missing.push(token);
+    }
+  }
+  return { suggestions, missing };
+}
+
+function opportunityDiscussionBlockReason(
+  deps: HandlerDeps,
+  session: string,
+  projectPath: string,
+): string | null {
+  if (
+    deps.queue.isSessionProcessing(session) ||
+    deps.queue.getCurrentSessionMessage(session) !== undefined ||
+    deps.queue.getSessionQueue(session).length > 0 ||
+    hasActiveDelegatedTaskForSession(session)
+  ) {
+    return "项目 agent 当前正在处理任务或已有排队消息，暂时不能参与讨论。请等当前任务完成后再试。";
+  }
+
+  const status = spawnSync("git", ["status", "--short"], {
+    cwd: projectPath,
+    encoding: "utf8",
+  });
+  if (status.status !== 0) {
+    const reason = [status.stderr, status.stdout].filter(Boolean).join("\n").trim();
+    return `无法确认项目 git 状态，暂时不能参与讨论。\n${reason || "git status --short failed"}`;
+  }
+  const dirty = status.stdout.trim();
+  if (dirty.length > 0) {
+    const preview = dirty.split(/\r?\n/).slice(0, 12).join("\n");
+    return `项目工作区不干净，暂时不能参与讨论。请先处理现有改动后再试。\n\n${preview}`;
+  }
+  return null;
 }

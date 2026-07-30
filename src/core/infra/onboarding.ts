@@ -58,7 +58,8 @@ export function serializeEnv(template: string, values: Record<string, string>): 
 
 /** Extract the sender id (+ optional username) from a grammY/Bot-API update. */
 export function parseCaptureUpdate(update: unknown): { id: string; username?: string } | null {
-  const from = (update as { message?: { from?: { id?: number; username?: string } } })?.message
+  if (typeof update !== "object" || update === null) return null;
+  const from = (update as { message?: { from?: { id?: number; username?: string } } }).message
     ?.from;
   if (!from || typeof from.id !== "number") return null;
   return from.username ? { id: String(from.id), username: from.username } : { id: String(from.id) };

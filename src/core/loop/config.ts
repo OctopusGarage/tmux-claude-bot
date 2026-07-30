@@ -144,6 +144,95 @@ const securityMaintenanceSchema = z
     allowStaticAnalysisFixes: true,
   });
 
+const harnessAutoTaskKindSchema = z.enum([
+  "architecture",
+  "bug-fix",
+  "test-coverage",
+  "security-maintenance",
+]);
+
+const harnessAutoSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    branch: z.string().min(1).optional(),
+    maxRounds: z.number().int().positive().default(3),
+    strategy: z.enum(["health-first", "risk-first", "configured-order"]).default("health-first"),
+    tasks: z
+      .array(
+        z
+          .object({
+            kind: harnessAutoTaskKindSchema,
+            enabled: z.boolean().default(true),
+            weight: z.number().int().positive().default(1),
+          })
+          .strict(),
+      )
+      .default([
+        { kind: "bug-fix", enabled: true, weight: 40 },
+        { kind: "security-maintenance", enabled: true, weight: 30 },
+        { kind: "test-coverage", enabled: true, weight: 20 },
+        { kind: "architecture", enabled: true, weight: 10 },
+      ]),
+    stopWhen: z
+      .object({
+        healthScoreAtLeast: z.number().int().min(0).max(100).default(95),
+        noConfirmedIssues: z.boolean().default(true),
+      })
+      .strict()
+      .default({ healthScoreAtLeast: 95, noConfirmedIssues: true }),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({
+    enabled: false,
+    maxRounds: 3,
+    strategy: "health-first",
+    tasks: [
+      { kind: "bug-fix", enabled: true, weight: 40 },
+      { kind: "security-maintenance", enabled: true, weight: 30 },
+      { kind: "test-coverage", enabled: true, weight: 20 },
+      { kind: "architecture", enabled: true, weight: 10 },
+    ],
+    stopWhen: { healthScoreAtLeast: 95, noConfirmedIssues: true },
+  });
+
+const opportunityCategorySchema = z.enum([
+  "product-feature",
+  "workflow-automation",
+  "developer-experience",
+  "reliability",
+  "architecture",
+  "testing",
+  "security",
+]);
+
+const opportunityDiscoverySchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    notificationChannel: z.enum(["telegram", "lark", "both"]).optional(),
+    maxSuggestions: z.number().int().min(1).max(5).default(3),
+    minConfidence: z.enum(["low", "medium", "high"]).default("medium"),
+    categories: z
+      .array(opportunityCategorySchema)
+      .default(["product-feature", "workflow-automation", "developer-experience", "reliability"]),
+    cooldownDays: z.number().int().min(0).max(365).default(14),
+    requireEvidence: z.boolean().default(true),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({
+    enabled: false,
+    maxSuggestions: 3,
+    minConfidence: "medium",
+    categories: ["product-feature", "workflow-automation", "developer-experience", "reliability"],
+    cooldownDays: 14,
+    requireEvidence: true,
+  });
+
 const repositoryPullRequestReviewSchema = z
   .object({
     id: z.string().min(1),
@@ -215,8 +304,15 @@ const workspaceSchema = z
     name: z.string().min(1),
     root: z.string().min(1),
     agent: agentSchema,
+    runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
     repositories: z.array(workspaceRepositorySchema).min(2),
     architecture: workspaceArchitectureSchema,
+    bugFix: bugFixSchema,
+    testCoverage: testCoverageSchema,
+    securityMaintenance: securityMaintenanceSchema,
+    harnessAuto: harnessAutoSchema,
+    opportunityDiscovery: opportunityDiscoverySchema,
+    pullRequestReview: pullRequestReviewSchema,
     allowedActions: z.array(actionSchema).default(["tests", "docs", "small-refactor"]),
     blockedActions: z
       .array(actionSchema)
@@ -271,6 +367,8 @@ const projectSchema = z
     bugFix: bugFixSchema,
     testCoverage: testCoverageSchema,
     securityMaintenance: securityMaintenanceSchema,
+    harnessAuto: harnessAutoSchema,
+    opportunityDiscovery: opportunityDiscoverySchema,
     pullRequestReview: pullRequestReviewSchema,
     allowedActions: z.array(actionSchema).default([]),
     blockedActions: z.array(actionSchema).default([]),
@@ -296,6 +394,8 @@ const loopConfigSchema = z
             bugFixMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             testCoverageMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             securityMaintenanceMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            harnessAutoMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            opportunityDiscoveryMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             pullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             repositoryPullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
           })
@@ -307,6 +407,8 @@ const loopConfigSchema = z
             bugFixMaxDelayMinutes: 0,
             testCoverageMaxDelayMinutes: 0,
             securityMaintenanceMaxDelayMinutes: 0,
+            harnessAutoMaxDelayMinutes: 0,
+            opportunityDiscoveryMaxDelayMinutes: 0,
             pullRequestReviewMaxDelayMinutes: 0,
             repositoryPullRequestReviewMaxDelayMinutes: 0,
           }),
@@ -320,6 +422,8 @@ const loopConfigSchema = z
           bugFixMaxDelayMinutes: 0,
           testCoverageMaxDelayMinutes: 0,
           securityMaintenanceMaxDelayMinutes: 0,
+          harnessAutoMaxDelayMinutes: 0,
+          opportunityDiscoveryMaxDelayMinutes: 0,
           pullRequestReviewMaxDelayMinutes: 0,
           repositoryPullRequestReviewMaxDelayMinutes: 0,
         },
@@ -355,13 +459,20 @@ export type LoopValidationIssue = {
   projectId?: string;
 };
 
+type LoopScheduledJobKind =
+  | "architecture"
+  | "bug-fix"
+  | "test-coverage"
+  | "security-maintenance"
+  | "harness-auto"
+  | "opportunity-discovery"
+  | "pull-request-review";
+
 export type LoopProjectValidationSummary = {
   id: string;
   name: string;
   scheduled: boolean;
-  scheduledJobs: Array<
-    "architecture" | "bug-fix" | "test-coverage" | "security-maintenance" | "pull-request-review"
-  >;
+  scheduledJobs: LoopScheduledJobKind[];
   assessment: { mode: "command" };
   eval: { mode: "command" | "agent" | "none"; minScore: number | null };
   execution: { agent: boolean };
@@ -370,20 +481,34 @@ export type LoopProjectValidationSummary = {
   readiness: { runnable: boolean; issueCount: number; issues: LoopValidationIssue[] };
 };
 
+export type LoopWorkspaceValidationSummary = {
+  id: string;
+  name: string;
+  repositoryCount: number;
+  scheduled: boolean;
+  scheduledJobs: LoopScheduledJobKind[];
+  runner: { kind: "system" | "agent-supervised" };
+  readiness: { runnable: boolean; issueCount: number; issues: LoopValidationIssue[] };
+};
+
 export type LoopValidationSummary = {
   ok: boolean;
   phase: "validate-only";
   projectCount: number;
+  workspaceCount: number;
   catalogSkillCount: number;
   approvedSkillCount: number;
   readinessSummary: {
     runnableProjectCount: number;
     scheduledProjectCount: number;
+    runnableWorkspaceCount: number;
+    scheduledWorkspaceCount: number;
     issueCount: number;
     errorCount: number;
     warningCount: number;
   };
   projects: LoopProjectValidationSummary[];
+  workspaces: LoopWorkspaceValidationSummary[];
   skills: {
     applyCommandConfigured: boolean;
     approved: Array<{
@@ -468,6 +593,25 @@ function ensurePhaseOneBoundaries(config: LoopConfig): void {
         errors.push(`projects.${index}.securityMaintenance requires runner.kind=agent-supervised`);
       }
     }
+    if (project.harnessAuto.enabled) {
+      if (project.harnessAuto.schedule === undefined) {
+        errors.push(`projects.${index}.harnessAuto.schedule is required when enabled`);
+      }
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(`projects.${index}.harnessAuto requires runner.kind=agent-supervised`);
+      }
+      if (!project.harnessAuto.tasks.some((task) => task.enabled)) {
+        errors.push(`projects.${index}.harnessAuto requires at least one enabled task`);
+      }
+    }
+    if (project.opportunityDiscovery.enabled) {
+      if (project.opportunityDiscovery.schedule === undefined) {
+        errors.push(`projects.${index}.opportunityDiscovery.schedule is required when enabled`);
+      }
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(`projects.${index}.opportunityDiscovery requires runner.kind=agent-supervised`);
+      }
+    }
     const minScore = project.eval?.minScore;
     if (minScore !== undefined && minScore < project.targetScore) {
       errors.push(`projects.${index}.eval.minScore must be >= targetScore`);
@@ -482,8 +626,57 @@ function ensurePhaseOneBoundaries(config: LoopConfig): void {
     if (workspace.architecture.enabled && workspace.architecture.schedule === undefined) {
       errors.push(`workspaces.${index}.architecture.schedule is required when enabled`);
     }
-    if (workspace.architecture.runner.kind !== "agent-supervised") {
+    if (workspace.runner.kind !== "agent-supervised") {
+      errors.push(`workspaces.${index}.runner requires kind=agent-supervised`);
+    }
+    if (
+      workspace.architecture.enabled &&
+      workspace.architecture.runner.kind !== "agent-supervised"
+    ) {
       errors.push(`workspaces.${index}.architecture requires runner.kind=agent-supervised`);
+    }
+    if (workspace.bugFix.enabled && workspace.bugFix.schedule === undefined) {
+      errors.push(`workspaces.${index}.bugFix.schedule is required when enabled`);
+    }
+    if (workspace.testCoverage.enabled && workspace.testCoverage.schedule === undefined) {
+      errors.push(`workspaces.${index}.testCoverage.schedule is required when enabled`);
+    }
+    if (
+      workspace.securityMaintenance.enabled &&
+      workspace.securityMaintenance.schedule === undefined
+    ) {
+      errors.push(`workspaces.${index}.securityMaintenance.schedule is required when enabled`);
+    }
+    if (workspace.harnessAuto.enabled && workspace.harnessAuto.schedule === undefined) {
+      errors.push(`workspaces.${index}.harnessAuto.schedule is required when enabled`);
+    }
+    if (
+      workspace.harnessAuto.enabled &&
+      !workspace.harnessAuto.tasks.some((task) => task.enabled)
+    ) {
+      errors.push(`workspaces.${index}.harnessAuto requires at least one enabled task`);
+    }
+    if (
+      workspace.opportunityDiscovery.enabled &&
+      workspace.opportunityDiscovery.schedule === undefined
+    ) {
+      errors.push(`workspaces.${index}.opportunityDiscovery.schedule is required when enabled`);
+    }
+    if (workspace.opportunityDiscovery.enabled && workspace.runner.kind !== "agent-supervised") {
+      errors.push(`workspaces.${index}.opportunityDiscovery requires runner.kind=agent-supervised`);
+    }
+    if (workspace.pullRequestReview.enabled) {
+      if (workspace.pullRequestReview.schedule === undefined) {
+        errors.push(`workspaces.${index}.pullRequestReview.schedule is required when enabled`);
+      }
+      if (workspace.runner.kind !== "agent-supervised") {
+        errors.push(`workspaces.${index}.pullRequestReview requires runner.kind=agent-supervised`);
+      }
+      if (!workspace.repositories.some((repository) => repository.pullRequest.enabled)) {
+        errors.push(
+          `workspaces.${index}.pullRequestReview requires at least one repository pullRequest.enabled=true`,
+        );
+      }
     }
   }
   if (errors.length > 0) throw new Error(`invalid loop config: ${errors.join("; ")}`);
@@ -521,25 +714,67 @@ function projectIssues(project: LoopProjectConfig): LoopValidationIssue[] {
   return issues;
 }
 
+function workspaceIssues(_workspace: LoopWorkspaceConfig): LoopValidationIssue[] {
+  return [];
+}
+
+function scheduledProjectJobs(project: LoopProjectConfig): LoopScheduledJobKind[] {
+  return [
+    ...(project.schedule !== undefined ? (["architecture"] as const) : []),
+    ...(project.bugFix.enabled && project.bugFix.schedule !== undefined
+      ? (["bug-fix"] as const)
+      : []),
+    ...(project.testCoverage.enabled && project.testCoverage.schedule !== undefined
+      ? (["test-coverage"] as const)
+      : []),
+    ...(project.securityMaintenance.enabled && project.securityMaintenance.schedule !== undefined
+      ? (["security-maintenance"] as const)
+      : []),
+    ...(project.harnessAuto.enabled && project.harnessAuto.schedule !== undefined
+      ? (["harness-auto"] as const)
+      : []),
+    ...(project.opportunityDiscovery.enabled && project.opportunityDiscovery.schedule !== undefined
+      ? (["opportunity-discovery"] as const)
+      : []),
+    ...(project.pullRequestReview.enabled && project.pullRequestReview.schedule !== undefined
+      ? (["pull-request-review"] as const)
+      : []),
+  ];
+}
+
+function scheduledWorkspaceJobs(workspace: LoopWorkspaceConfig): LoopScheduledJobKind[] {
+  return [
+    ...(workspace.architecture.enabled && workspace.architecture.schedule !== undefined
+      ? (["architecture"] as const)
+      : []),
+    ...(workspace.bugFix.enabled && workspace.bugFix.schedule !== undefined
+      ? (["bug-fix"] as const)
+      : []),
+    ...(workspace.testCoverage.enabled && workspace.testCoverage.schedule !== undefined
+      ? (["test-coverage"] as const)
+      : []),
+    ...(workspace.securityMaintenance.enabled &&
+    workspace.securityMaintenance.schedule !== undefined
+      ? (["security-maintenance"] as const)
+      : []),
+    ...(workspace.harnessAuto.enabled && workspace.harnessAuto.schedule !== undefined
+      ? (["harness-auto"] as const)
+      : []),
+    ...(workspace.opportunityDiscovery.enabled &&
+    workspace.opportunityDiscovery.schedule !== undefined
+      ? (["opportunity-discovery"] as const)
+      : []),
+    ...(workspace.pullRequestReview.enabled && workspace.pullRequestReview.schedule !== undefined
+      ? (["pull-request-review"] as const)
+      : []),
+  ];
+}
+
 export function validateLoopConfig(text: string): LoopValidationSummary {
   const config = parseLoopConfigYaml(text);
   const projects = config.projects.map((project): LoopProjectValidationSummary => {
     const issues = projectIssues(project);
-    const scheduledJobs = [
-      ...(project.schedule !== undefined ? (["architecture"] as const) : []),
-      ...(project.bugFix.enabled && project.bugFix.schedule !== undefined
-        ? (["bug-fix"] as const)
-        : []),
-      ...(project.testCoverage.enabled && project.testCoverage.schedule !== undefined
-        ? (["test-coverage"] as const)
-        : []),
-      ...(project.securityMaintenance.enabled && project.securityMaintenance.schedule !== undefined
-        ? (["security-maintenance"] as const)
-        : []),
-      ...(project.pullRequestReview.enabled && project.pullRequestReview.schedule !== undefined
-        ? (["pull-request-review"] as const)
-        : []),
-    ];
+    const scheduledJobs = scheduledProjectJobs(project);
     const errorCount = issues.filter((issue) => issue.severity === "error").length;
     return {
       id: project.id,
@@ -567,23 +802,48 @@ export function validateLoopConfig(text: string): LoopValidationSummary {
       },
     };
   });
-  const issues = projects.flatMap((project) => project.readiness.issues);
+  const workspaces = config.workspaces.map((workspace): LoopWorkspaceValidationSummary => {
+    const issues = workspaceIssues(workspace);
+    const scheduledJobs = scheduledWorkspaceJobs(workspace);
+    const errorCount = issues.filter((issue) => issue.severity === "error").length;
+    return {
+      id: workspace.id,
+      name: workspace.name,
+      repositoryCount: workspace.repositories.length,
+      scheduled: scheduledJobs.length > 0,
+      scheduledJobs,
+      runner: { kind: workspace.runner.kind },
+      readiness: {
+        runnable: errorCount === 0,
+        issueCount: issues.length,
+        issues,
+      },
+    };
+  });
+  const issues = [
+    ...projects.flatMap((project) => project.readiness.issues),
+    ...workspaces.flatMap((workspace) => workspace.readiness.issues),
+  ];
   const errorCount = issues.filter((issue) => issue.severity === "error").length;
   const warningCount = issues.filter((issue) => issue.severity === "warning").length;
   return {
     ok: errorCount === 0,
     phase: "validate-only",
     projectCount: projects.length,
+    workspaceCount: workspaces.length,
     catalogSkillCount: config.skills.catalog.length,
     approvedSkillCount: config.skills.approved.length,
     readinessSummary: {
       runnableProjectCount: projects.filter((project) => project.readiness.runnable).length,
       scheduledProjectCount: projects.filter((project) => project.scheduled).length,
+      runnableWorkspaceCount: workspaces.filter((workspace) => workspace.readiness.runnable).length,
+      scheduledWorkspaceCount: workspaces.filter((workspace) => workspace.scheduled).length,
       issueCount: issues.length,
       errorCount,
       warningCount,
     },
     projects,
+    workspaces,
     skills: {
       applyCommandConfigured: config.skills.applyCommand !== undefined,
       approved: config.skills.approved.map((skill) => ({

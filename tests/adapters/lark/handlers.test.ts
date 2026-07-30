@@ -19,7 +19,9 @@ const { recordReplyTarget, removeReplyTargetSession } = await import(
 const { requestNewFolder, startBrowse, clearBrowse } = await import(
   "../../../src/core/projects/dir-browser.js"
 );
+const { bindGroup } = await import("../../../src/core/projects/group-bindings.js");
 const { chatScope } = await import("../../../src/core/projects/project-manager.js");
+const { OpportunityStore } = await import("../../../src/core/opportunities/store.js");
 const { fakeChannel, fakeDeps, fakeMessage } = await import("./_fakes.js");
 const nodeFs = await import("node:fs");
 const nodeOs = await import("node:os");
@@ -82,6 +84,65 @@ describe("makeMessageHandler", () => {
 
     expect(channel.sent).toHaveLength(0);
     expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("handles /opportunity commands in bound project groups", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = nodeFs.mkdtempSync(
+      nodePath.join(nodeOs.tmpdir(), "tcb-lark-opportunity-"),
+    );
+    try {
+      bindGroup("chat-1", { workspacePath: "/tmp", sessionName: "proj-1", label: "tmp" });
+      new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "tmp",
+          projectName: "Tmp",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["logs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Improve repair visibility",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Repair status is hard to inspect.",
+              whyNow: "Opportunity notifications are sent to project groups.",
+              value: "Makes follow-up faster.",
+              evidence: ["operator asked from the project group"],
+              recommendedApproach: "Show repair status in the summary.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["The summary includes the opportunity"],
+              risks: ["Message length can grow"],
+              nonGoals: ["Do not start implementation"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Improve repair visibility.",
+            },
+          ],
+        },
+        projectPath: "/tmp",
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        bridge: { hasSession: vi.fn(async () => true) },
+        currentProject: { get: vi.fn(async () => "proj-1") },
+      });
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ chatType: "group" as never, content: "/opportunity show 1" }));
+
+      expect(channel.texts().join("\n")).toContain("Improve repair visibility");
+      expect(deps.queue.enqueued).toHaveLength(0);
+    } finally {
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
   });
 
   it("routes audio resources to the voice handler path (non-text content)", async () => {
