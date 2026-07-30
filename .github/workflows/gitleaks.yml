@@ -5,9 +5,9 @@ name: Gitleaks
 # redaction in src/shared/utils/logger.ts.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 # Read-only: the scan only checks out history and runs the gitleaks CLI.
 permissions:
