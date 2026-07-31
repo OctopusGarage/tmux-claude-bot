@@ -1,6 +1,6 @@
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
@@ -9,8 +9,14 @@ import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
   reconcileLoopSupervisorWorkOrders,
   runLoopServiceTickAsync,
+  runSupervisedSystemGateOutcome,
   startLoopEngineering,
+  writeSupervisedSystemGateArtifact,
 } from "../../src/core/loop/service.js";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
 import { buildRepositoryPullRequestReviewWorkOrder } from "../../src/core/loop/work-order.js";
 import { NotificationGateway } from "../../src/core/notifications/gateway.js";
@@ -113,6 +119,140 @@ function finalMarkerFromPrompt(prompt: string): string {
 }
 
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("returns explicit system gate evidence for accepted report-only work", () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: { enabled: false, base: "main", switchBack: "main", autoMerge: false },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: () => ({
+        kind: "system",
+        command: "",
+        cwd: "/tmp/hub",
+        status: 0,
+        stdout: "",
+        stderr: "",
+      }),
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("no mutating git or PR gate required");
+  });
+
+  it("rejects completed supervisor results when the review gate blocks", () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: { enabled: false, base: "main", switchBack: "main", autoMerge: false },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["issue evidence was incomplete"],
+            postMutationReview: [],
+            aiReview: "failed",
+            deterministicGates: [],
+            decision: "block",
+            notes: ["do not accept without proof"],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: () => ({
+        kind: "system",
+        command: "",
+        cwd: "/tmp/hub",
+        status: 0,
+        stdout: "",
+        stderr: "",
+      }),
+    });
+
+    expect(outcome.failures).toContain("supervisor reviewGate decision is block");
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("marks system gate artifacts unaccepted when the supervisor result is not completed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "dispatch-failed" as const,
+      reason: "worker was already leased",
+      output: "worker was already leased",
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [],
+        evidence: ["supervisor result was dispatch-failed; system acceptance gate skipped"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "dispatch-failed",
+      accepted: false,
+    });
+  });
+
   it("dispatches opportunity discovery work orders and sends new suggestions", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-opportunity-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-opportunity-project-"));
@@ -249,6 +389,19 @@ describe("runLoopServiceTickAsync supervised routing", () => {
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
       },
       runSupervisorTask: async (request) => {
+        writeLoopSupervisorWorkerLeaseState({
+          leases: [
+            {
+              workerSession: request.session,
+              workOrderId: request.workOrder.id,
+              projectId: request.workOrder.projectId,
+              projectPath: request.workOrder.projectPath,
+              status: "active",
+              leasedAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          ],
+        });
         dispatched.push({
           projectId: request.workOrder.projectId,
           branch: request.workOrder.commitPolicy.branch,
@@ -271,6 +424,7 @@ describe("runLoopServiceTickAsync supervised routing", () => {
       },
       supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
       resetSupervisorBeforeWorkOrder: "compact",
+      projectSessionPrefix: "tmux_proj_",
     });
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
@@ -284,6 +438,7 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     expect(dispatched[0]?.prompt).toContain(
       "compact --yes before each delegated test-coverage round",
     );
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
   });
 
   it("dispatches one workspace architecture work order and gates every repository", async () => {
@@ -361,8 +516,10 @@ workspaces:
       runSupervisorTask: async (request) => {
         dispatchedProjectIds.push(request.workOrder.projectId);
         expect(request.prompt).toContain("Workspace architecture task.");
-        expect(request.prompt).toContain("open geo-backend --agent codex");
-        expect(request.prompt).toContain("open geo-frontend --agent codex");
+        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-backend'");
+        expect(request.prompt).toContain(`'${backend}' --agent codex`);
+        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-frontend'");
+        expect(request.prompt).toContain(`'${frontend}' --agent codex`);
         const marker = finalMarkerFromPrompt(request.prompt);
         return {
           status: 0,
@@ -380,6 +537,7 @@ workspaces:
       },
       supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
       resetSupervisorBeforeWorkOrder: "compact",
+      projectSessionPrefix: "tmux_proj_",
     });
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
@@ -661,6 +819,116 @@ workspaces:
     expect(schedulerStore.getLastFired()).not.toHaveProperty("geo-backend:bug-fix");
   });
 
+  it("lets workspace harness-auto consume covered child-project subtasks in the same tick", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-workspace-harness-conflict-state-"),
+    );
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-harness-conflict-"));
+    const backend = join(root, "geo-backend");
+    const frontend = join(root, "geo-frontend");
+    const configFile = join(root, "loop.yml");
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: geo-backend
+    name: Geo Backend
+    path: ${backend}
+    agent: codex
+    goal: Fix backend bugs.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    runner:
+      kind: agent-supervised
+    execution:
+      agent: true
+    allowedActions: [tests]
+    bugFix:
+      enabled: true
+      schedule: "10 10 * * *"
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: ${root}
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: ${backend}
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: ${frontend}
+        role: frontend
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    runner:
+      kind: agent-supervised
+    harnessAuto:
+      enabled: true
+      schedule: "10 10 * * *"
+      tasks:
+        - kind: bug-fix
+          enabled: true
+          weight: 1
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const dispatchedKinds: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:15:00Z"),
+      schedulerStore,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        dispatchedKinds.push(request.workOrder.task?.kind ?? "architecture");
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: request.workOrder.projectId,
+            actionsTaken: ["workspace harness-auto checked child bug-fix scope"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(dispatchedKinds).toEqual(["harness-auto"]);
+    expect(schedulerStore.getLastFired()).toMatchObject({
+      "workspace:geo:harness-auto": scheduledAt,
+      "geo-backend:bug-fix": scheduledAt,
+    });
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toContainEqual(
+      expect.objectContaining({
+        taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+        status: "skipped",
+        summary: "workspace:geo:harness-auto harness-auto covers bug-fix",
+      }),
+    );
+  });
+
   it("does not dispatch new work to active supervisor sessions or active project paths", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const repoOne = mkdtempSync(join(tmpdir(), "tcb-loop-repo-one-"));
@@ -861,6 +1129,82 @@ prReview:
       status: "failed",
       error: "blocked",
     });
+  });
+
+  it("reconciles active worker leases left behind by terminal completed work orders", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
+    const configText = `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: mesh-talk-all-prs
+      name: Mesh Talk PRs
+      path: ${projectDir}
+      repo: OctopusGarage/mesh-talk
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`;
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(configFile, configText);
+    const config = parseLoopConfigYaml(configText);
+    const repository = config.prReview.repositories[0];
+    if (repository === undefined) throw new Error("expected repository review config");
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const workOrder = buildRepositoryPullRequestReviewWorkOrder({
+      config,
+      repository,
+      scheduledAt,
+      runId: `${scheduledAt}-mesh-talk-all-prs-repo-pr-review`,
+    });
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: scheduledAt + 1_000,
+      resultStatus: "completed",
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          projectPath: workOrder.projectPath,
+          status: "active",
+          leasedAt: scheduledAt,
+          updatedAt: scheduledAt + 1_000,
+        },
+      ],
+    });
+
+    const result = reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 2_000,
+      runCommand: () => {
+        throw new Error("terminal lease reconciliation should not run shell gates");
+      },
+    });
+
+    expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
   });
 
   it("does not require a loop commit branch for completed repository PR review merges", async () => {
@@ -1141,8 +1485,19 @@ prReview:
     expect(dispatched).toHaveLength(1);
     expect(dispatched[0]).toContain("Loop Supervisor");
     expect(dispatched[0]).toContain('"projectId": "hub"');
-    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
-      '"status": "completed"',
+    const summaryPath = supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub");
+    expect(readFileSync(summaryPath, "utf8")).toContain('"status": "completed"');
+    expect(
+      JSON.parse(readFileSync(join(dirname(summaryPath), "system-gate.json"), "utf8")),
+    ).toEqual(
+      expect.objectContaining({
+        workOrderId: `${Date.parse("2026-07-16T10:10:00Z")}-hub`,
+        projectId: "hub",
+        resultStatus: "completed",
+        accepted: true,
+        evidence: expect.arrayContaining(["no mutating git or PR gate required"]),
+        failures: [],
+      }),
     );
     expect(
       new DailyTaskLedger()
@@ -1507,10 +1862,21 @@ prReview:
       projectPath: projectDir,
       runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
     });
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const staleRunDir = join(process.env.TCB_STATE_DIR, "loop-runs", "hub", `${scheduledAt}-hub`);
+    mkdirSync(staleRunDir, { recursive: true });
+    writeFileSync(
+      join(staleRunDir, "supervisor-final-summary.json"),
+      '{"status":"completed","projectId":"hub","actionsTaken":["stale"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}\n',
+    );
+    writeFileSync(
+      join(staleRunDir, "system-gate.json"),
+      '{"resultStatus":"completed","accepted":true}\n',
+    );
 
     const result = await runLoopServiceTickAsync({
       configFile: file,
-      now: Date.parse("2026-07-16T10:10:00Z"),
+      now: scheduledAt,
       schedulerStore: new LoopSchedulerStore(),
       runCommand: () => {
         throw new Error("system runner should not run");
@@ -1527,8 +1893,12 @@ prReview:
     expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
       '"status": "invalid-output"',
     );
+    expect(JSON.parse(readFileSync(join(staleRunDir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "invalid-output",
+      accepted: false,
+    });
     expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))[0]).toMatchObject({
-      taskId: `loop:hub:${Date.parse("2026-07-16T10:10:00Z")}`,
+      taskId: `loop:hub:${scheduledAt}`,
       source: "loop-engineering",
       status: "failed",
       error: "invalid-output",

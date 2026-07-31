@@ -67,6 +67,65 @@ describe("runSessionIdleReaper", () => {
     });
   });
 
+  it("kills long-idle loop worker tmux sessions instead of routing them to user chat cleanup", async () => {
+    setPathForSession("tmux_proj_loop-worker-api", "/repo/api");
+    setPathForSession("tmux_proj_loop-supervisor-1", "/repo/supervisor");
+    markSessionUsed("tmux_proj_loop-worker-api", now - 10_000);
+    markSessionUsed("tmux_proj_loop-supervisor-1", now - 10_000);
+
+    const exit = vi.fn(async () => {});
+    const killSession = vi.fn(async () => {});
+    const deps = fakeDeps({
+      session: null,
+      bridge: {
+        listProjectSessions: vi.fn(async () => [
+          "tmux_proj_loop-worker-api",
+          "tmux_proj_loop-supervisor-1",
+        ]),
+        paneCurrentPath: vi.fn(async () => "/repo/api"),
+        killSession,
+      },
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        exit,
+      },
+    });
+
+    const summary = await runSessionIdleReaper(deps, { now, maxIdleMs });
+
+    expect(killSession).toHaveBeenCalledWith("tmux_proj_loop-worker-api");
+    expect(exit).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      checked: 1,
+      closed: 1,
+      failures: 0,
+    });
+  });
+
+  it("kills stale stopped loop worker tmux sessions after the idle threshold", async () => {
+    setPathForSession("tmux_proj_loop-worker-api", "/repo/api");
+    markSessionUsed("tmux_proj_loop-worker-api", now - 10_000);
+
+    const killSession = vi.fn(async () => {});
+    const deps = fakeDeps({
+      session: null,
+      bridge: {
+        listProjectSessions: vi.fn(async () => ["tmux_proj_loop-worker-api"]),
+        paneCurrentPath: vi.fn(async () => "/repo/api"),
+        killSession,
+      },
+      agent: {
+        checkIfRunning: vi.fn(async () => false),
+        exit: vi.fn(async () => {}),
+      },
+    });
+
+    const summary = await runSessionIdleReaper(deps, { now, maxIdleMs });
+
+    expect(killSession).toHaveBeenCalledWith("tmux_proj_loop-worker-api");
+    expect(summary.closed).toBe(1);
+  });
+
   it("seeds unknown last-used timestamps instead of closing old untracked sessions", async () => {
     setPathForSession("tmux_proj_unknown", "/repo/unknown");
     const exit = vi.fn(async () => {});

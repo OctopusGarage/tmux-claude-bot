@@ -26,8 +26,10 @@ describe("parsePlanYaml", () => {
     });
     expect(p.schedule).toEqual({ kind: "cron", cron: "0 2 * * *" });
   });
-  it("rejects an unknown goal id with a clear message", () => {
-    expect(() => parsePlanYaml(good.replace("fix-tests", "no-such-goal"))).toThrow(/no-such-goal/);
+  it("accepts arbitrary non-empty goal labels", () => {
+    expect(parsePlanYaml(good.replace("fix-tests", "no-such-goal")).projects[0]?.goals).toEqual([
+      "no-such-goal",
+    ]);
   });
   it("rejects an unknown agent", () => {
     expect(() => parsePlanYaml(good.replace("agent: claude", "agent: gemini"))).toThrow(/agent/i);

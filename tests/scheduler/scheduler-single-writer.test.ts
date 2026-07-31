@@ -1,16 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import { type AutopilotState, defaultState } from "../../src/core/autopilot/types.js";
+import { describe, expect, it } from "vitest";
 import { schedulerTick, type TickCtx } from "../../src/core/scheduler/scheduler-loop.js";
 import type { Plan, PoolState, Run, TaskState } from "../../src/core/scheduler/types.js";
-
-function fakeAutopilot() {
-  const map = new Map<string, AutopilotState>();
-  return {
-    map,
-    get: (s: string) => map.get(s) ?? defaultState(),
-    set: (s: string, st: AutopilotState) => void map.set(s, st),
-  };
-}
 
 const plan: Plan = {
   id: "p",
@@ -53,7 +43,6 @@ function ctx(over: Partial<TickCtx>): TickCtx {
     run: undefined,
     pools: { claude: { paused: false } } as Record<string, PoolState>,
     lastFired: {},
-    autopilot: fakeAutopilot(),
     resolveSession: (t) => t.project,
     readUsage: async () => null,
     isGated: () => false,
@@ -68,15 +57,11 @@ function ctx(over: Partial<TickCtx>): TickCtx {
 describe("schedulerTick single-writer (re-read guard)", () => {
   // (1) External STOP during the hoisted awaits: getActiveRun returns undefined
   // (the stop nulled the run + already released sessions). The in-flight tick
-  // must NOT resurrect the run (save a non-null run) nor re-enable its sessions
-  // via reconcile (autopilot.set to admit).
+  // must NOT resurrect the run (save a non-null run) nor re-admit its tasks.
   it("does not resurrect or re-admit when a stop lands during awaits", async () => {
-    const ap = fakeAutopilot();
-    const setSpy = vi.spyOn(ap, "set");
     const saves: Array<Run | undefined> = [];
     const c = ctx({
       run: activeRun(),
-      autopilot: ap,
       getActiveRun: () => undefined, // external stop landed during awaits
       isAlive: async () => true,
       readUsage: async () => null,
@@ -85,8 +70,6 @@ describe("schedulerTick single-writer (re-read guard)", () => {
     await schedulerTick(c);
     // No save wrote a non-null run (the run is not resurrected).
     expect(saves.filter((r) => r !== undefined)).toHaveLength(0);
-    // reconcile never ran → no autopilot admission write.
-    expect(setSpy).not.toHaveBeenCalled();
   });
 
   // (1b) External STOP+START during the awaits: the store now holds a DIFFERENT
@@ -115,12 +98,9 @@ describe("schedulerTick single-writer (re-read guard)", () => {
   // The tick must adopt paused — save a paused run, admit nothing.
   it("adopts an external pause that lands during awaits", async () => {
     const run = activeRun({ tasks: [runningTask({ status: "queued" })] });
-    const ap = fakeAutopilot();
-    const setSpy = vi.spyOn(ap, "set");
     let savedRun: Run | undefined;
     const c = ctx({
       run,
-      autopilot: ap,
       getActiveRun: () => ({ ...run, status: "paused" }),
       isAlive: async () => true,
       save: (r) => {
@@ -131,7 +111,6 @@ describe("schedulerTick single-writer (re-read guard)", () => {
     expect(savedRun?.status).toBe("paused");
     // queued task stays queued — nothing admitted to running.
     expect(savedRun?.tasks[0]?.status).toBe("queued");
-    expect(setSpy).not.toHaveBeenCalled();
   });
 
   // (3) No external change: getActiveRun returns the same run. Normal admission
@@ -156,12 +135,9 @@ describe("schedulerTick single-writer (re-read guard)", () => {
   // consumed inside the await-free critical section).
   it("pauses the pool via the pre-fetched usage map when over threshold", async () => {
     const run = activeRun();
-    const ap = fakeAutopilot();
-    ap.set("/a", { ...ap.get("/a"), enabled: true });
     let savedPools: Record<string, PoolState> = {};
     const c = ctx({
       run,
-      autopilot: ap,
       getActiveRun: () => run,
       isAlive: async () => true,
       readUsage: async () => ({
@@ -179,7 +155,6 @@ describe("schedulerTick single-writer (re-read guard)", () => {
     });
     await schedulerTick(c);
     expect(savedPools.claude?.paused).toBe(true);
-    expect(ap.get("/a").enabled).toBe(false);
   });
 
   // Backward-compat: when getActiveRun is omitted the re-read is a no-op using

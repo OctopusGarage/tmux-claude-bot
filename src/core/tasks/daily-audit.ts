@@ -59,9 +59,10 @@ export function buildDailyTaskAuditNotification(input: {
   channel?: NotificationChannelSelection;
   repairDispatch?: string;
 }): NotificationRequest {
+  const activeIssues = activeIssueItems(input.summary.items);
   return {
     ...(input.channel !== undefined ? { channel: input.channel } : {}),
-    level: input.repairCandidates.length > 0 ? "warning" : "success",
+    level: activeIssues.length > 0 ? "warning" : "success",
     source: "daily-task-audit",
     title: `Daily scheduled task audit: ${input.summary.window?.label ?? "unknown window"}`,
     body: renderDailyTaskAudit(input.summary, input.repairCandidates, {
@@ -76,6 +77,8 @@ export function renderDailyTaskAudit(
   opts: { repairDispatch?: string } = {},
 ): string {
   const counts = summary.counts;
+  const activeIssues = activeIssueItems(summary.items);
+  const closedFailures = closedFailureItems(summary.items);
   const lines = [
     "Summary:",
     `- success: ${counts.success}`,
@@ -84,6 +87,9 @@ export function renderDailyTaskAudit(
     `- running: ${counts.running}`,
     `- running-timeout: ${counts.runningTimeout}`,
     `- skipped: ${counts.skipped}`,
+    `- active-issues: ${activeIssues.length}`,
+    `- repair-candidates: ${repairCandidates.length}`,
+    `- closed-failures: ${closedFailures.length}`,
   ];
   if (opts.repairDispatch !== undefined) {
     lines.push(`- repair-dispatch: ${opts.repairDispatch}`);
@@ -114,9 +120,7 @@ export function renderDailyTaskAudit(
       );
     }
   }
-  const closed = summary.items.filter(
-    (item) => isRepairableStatus(item.status) && isClosedRepairStatus(item.repairStatus),
-  );
+  const closed = closedFailures;
   if (closed.length > 0) {
     lines.push("", "Closed failures:");
     for (const item of closed) {
@@ -124,6 +128,19 @@ export function renderDailyTaskAudit(
     }
   }
   return lines.filter((line) => line.length > 0).join("\n");
+}
+
+function activeIssueItems(items: TaskAuditItem[]): TaskAuditItem[] {
+  return items.filter((item) => {
+    if (item.status === "running") return true;
+    return isRepairableStatus(item.status) && !isClosedRepairStatus(item.repairStatus);
+  });
+}
+
+function closedFailureItems(items: TaskAuditItem[]): TaskAuditItem[] {
+  return items.filter(
+    (item) => isRepairableStatus(item.status) && isClosedRepairStatus(item.repairStatus),
+  );
 }
 
 function isClosedRepairStatus(status: TaskAuditItem["repairStatus"]): boolean {

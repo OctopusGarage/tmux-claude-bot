@@ -461,8 +461,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   // Supervisor-backed Autopilot: /autopilot [requirement] delegates the current
-  // session context to the Loop Supervisor. The old keep-alive/goal-cycle
-  // Autopilot surface is intentionally not exposed.
+  // session context to the Loop Supervisor.
   bot.command("autopilot", async (ctx) => {
     const session = await resolveSessionFromReply(ctx, replyTarget, deps);
     if (!session) {

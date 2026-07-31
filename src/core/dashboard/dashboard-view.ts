@@ -90,9 +90,8 @@ function formatSessionBlock(row: SessionRow, options: DashboardFormatOptions = {
   const uptime = `⏱ up ${humanizeMs(row.uptimeMs)}`;
   const usage = row.usage ? formatUsageParts(row.usage) : "";
   const total = row.cumulativeBusyMs > 0 ? `Σ ${humanizeMs(row.cumulativeBusyMs)}` : "";
-  const auto = row.autopilot ? `✈️ auto·${row.autopilot.iterations}` : "";
 
-  const detail = [agent, type, group, path, state, uptime, usage, total, auto]
+  const detail = [agent, type, group, path, state, uptime, usage, total]
     .filter(Boolean)
     .join(" · ");
   return `${dot} ${label}\n   ↳ ${detail}`;
@@ -103,12 +102,11 @@ function formatSessionBlock(row: SessionRow, options: DashboardFormatOptions = {
 export function formatHeader(s: DashboardSnapshot): string {
   const uptime = s.global.botUptimeMs !== null ? humanizeMs(s.global.botUptimeMs) : "?";
   const adapters = formatAdapters(s.global.adapters);
-  const autoSuffix = s.global.autopilotCount > 0 ? ` · ✈️ ${s.global.autopilotCount} auto` : "";
   return (
     `🤖 tmux-claude-bot · v${s.global.version}\n` +
     `⏱ up ${uptime} · 🗂 ${s.global.sessionCount} sessions · ` +
     `▶ ${s.global.runningCount} running · 🟢 ${s.global.busyCount} busy · ` +
-    `📬 queue ${s.global.queueDepth} · 🔌 ${adapters}${autoSuffix}`
+    `📬 queue ${s.global.queueDepth} · 🔌 ${adapters}`
   );
 }
 

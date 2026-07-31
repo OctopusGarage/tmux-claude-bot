@@ -33,14 +33,6 @@ const blankTolerantString = (def: string): z.ZodType<string> =>
 
 const optionalRawEnv = z.preprocess((v) => (v === undefined ? "" : v), z.string().default(""));
 
-function preferredEnvInt(
-  preferredRaw: string,
-  legacyValue: number,
-  preferredSchema: z.ZodType<number>,
-): number {
-  return preferredRaw.trim() === "" ? legacyValue : preferredSchema.parse(preferredRaw);
-}
-
 // Exported so the docs contract test can assert every supported key is
 // documented in .env.example (legacy aliases excepted).
 export const envSchema = z.object({
@@ -130,47 +122,23 @@ export const envSchema = z.object({
   LARK_VOICE_TRANSLATE_FROM: z.string().default(""),
   LARK_VOICE_TRANSLATE_TO: z.string().default(""),
   ARGOS_TRANSLATE_PYTHON: z.string().default(""),
-  // --- Legacy autopilot keep-alive / goal cycle. Active delegation uses Loop
-  // Supervisor work orders; do not route new scheduled automation through this. ---
-  AUTOPILOT_TICK_MS: blankTolerantNonNegativeInt(8000),
-  AUTOPILOT_IDLE_GRACE_MS: blankTolerantPositiveInt(20000),
-  AUTOPILOT_COOLDOWN_MS: blankTolerantPositiveInt(30000),
-  AUTOPILOT_MAX_ITERATIONS: blankTolerantPositiveInt(30),
-  AUTOPILOT_MAX_WALLCLOCK_MS: blankTolerantPositiveInt(3600000),
-  AUTOPILOT_IDLE_PROMPT_TEXT: blankTolerantString("请继续完成当前任务"),
-  // A distinct, clearer recovery prompt for transient API errors — so the agent
-  // retries the interrupted step rather than reading a bare "继续" as a new task.
-  AUTOPILOT_API_ERROR_PROMPT_TEXT: blankTolerantString(
-    "刚才因 API 错误中断,请重试并继续当前任务,不要开始新任务",
-  ),
-  AUTOPILOT_MAX_RECOVERY_ATTEMPTS: blankTolerantPositiveInt(5),
-  AUTOPILOT_RETRY_MAX: blankTolerantPositiveInt(5),
-  AUTOPILOT_RETRY_BASE_MS: blankTolerantPositiveInt(30000),
-  AUTOPILOT_RETRY_FACTOR: blankTolerantPositiveInt(2),
-  AUTOPILOT_RETRY_MAX_MS: blankTolerantPositiveInt(120000),
-  AUTOPILOT_RETRY_JITTER: z.string().default("true"),
-  // Server-busy / overload / rate-limit errors get a much slower backoff curve.
-  AUTOPILOT_RETRY_BUSY_BASE_MS: blankTolerantPositiveInt(180000),
-  AUTOPILOT_RETRY_BUSY_MAX_MS: blankTolerantPositiveInt(600000),
-  AUTOPILOT_GOALS_DIR: z.string().default(""),
-  AUTOPILOT_USAGE_PAUSE_PCT: blankTolerantNonNegativeInt(0),
-  AUTOPILOT_KEEPALIVE_DONE_MARKER: blankTolerantString("TASK_DONE"),
-  AUTOPILOT_KEEPALIVE_DONE_PROMPT: blankTolerantString(
-    "全部完成后请单独回复一行 [TASK_DONE] 表示整个任务已完成。",
-  ),
-  AUTOPILOT_MAX_ROUNDS: blankTolerantPositiveInt(10),
-  AUTOPILOT_BETWEEN_GOALS: z.preprocess(
-    (v) => (v === "" ? "compact" : v),
-    z.enum(["none", "compact", "clear"]).catch("compact"),
-  ),
-  // --- Batch scheduler. BATCH_SCHEDULER_TICK_MS=0 disables the loop.
-  // AUTOPILOT_SCHEDULER_* are legacy aliases kept for existing installs. ---
+  // --- Batch scheduler. BATCH_SCHEDULER_TICK_MS=0 disables the loop. ---
   BATCH_SCHEDULER_TICK_MS: optionalRawEnv,
   BATCH_SCHEDULER_QUOTA_PCT: optionalRawEnv,
   BATCH_SCHEDULER_REPROBE_MS: optionalRawEnv,
-  AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
-  AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
-  AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
+  // --- Runtime guardian. Watches bot-owned automation artifacts while the bot
+  // is running and can delegate narrow self-repair for confirmed system issues. ---
+  RUNTIME_GUARDIAN_ENABLED: blankTolerantString("false"),
+  RUNTIME_GUARDIAN_MODE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["observe", "fast-heal"]).default("fast-heal"),
+  ),
+  RUNTIME_GUARDIAN_TICK_MS: blankTolerantNonNegativeInt(120000),
+  RUNTIME_GUARDIAN_LOOKBACK_MS: blankTolerantNonNegativeInt(86_400_000),
+  RUNTIME_GUARDIAN_COOLDOWN_MS: blankTolerantNonNegativeInt(1_800_000),
+  RUNTIME_GUARDIAN_REPO_PATH: z.string().default(""),
+  RUNTIME_GUARDIAN_REPAIR_BRANCH: blankTolerantString("dev"),
+  RUNTIME_GUARDIAN_MAX_FINDINGS_PER_TICK: blankTolerantPositiveInt(3),
   // --- Daily scheduled task audit. TASK_AUDIT_TICK_MS=0 disables the loop. ---
   TASK_AUDIT_ENABLED: blankTolerantString("false"),
   TASK_AUDIT_SCHEDULE: blankTolerantString("0 2 * * *"),
@@ -376,52 +344,21 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
     autoRecover: parsed.AUTO_RECOVER !== "false" && parsed.AUTO_RECOVER !== "0",
     keepAwake: parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true",
     lark,
-    autopilot: {
-      tickMs: parsed.AUTOPILOT_TICK_MS,
-      idleGraceMs: parsed.AUTOPILOT_IDLE_GRACE_MS,
-      cooldownMs: parsed.AUTOPILOT_COOLDOWN_MS,
-      maxIterations: parsed.AUTOPILOT_MAX_ITERATIONS,
-      maxWallClockMs: parsed.AUTOPILOT_MAX_WALLCLOCK_MS,
-      idlePromptText: parsed.AUTOPILOT_IDLE_PROMPT_TEXT,
-      apiErrorPromptText: parsed.AUTOPILOT_API_ERROR_PROMPT_TEXT,
-      maxRecoveryAttempts: parsed.AUTOPILOT_MAX_RECOVERY_ATTEMPTS,
-      retry: {
-        maxRetries: parsed.AUTOPILOT_RETRY_MAX,
-        baseDelayMs: parsed.AUTOPILOT_RETRY_BASE_MS,
-        backoffFactor: parsed.AUTOPILOT_RETRY_FACTOR,
-        maxDelayMs: parsed.AUTOPILOT_RETRY_MAX_MS,
-        jitter: parsed.AUTOPILOT_RETRY_JITTER !== "false" && parsed.AUTOPILOT_RETRY_JITTER !== "0",
-      },
-      retryBusy: {
-        maxRetries: parsed.AUTOPILOT_RETRY_MAX,
-        baseDelayMs: parsed.AUTOPILOT_RETRY_BUSY_BASE_MS,
-        backoffFactor: parsed.AUTOPILOT_RETRY_FACTOR,
-        maxDelayMs: parsed.AUTOPILOT_RETRY_BUSY_MAX_MS,
-        jitter: parsed.AUTOPILOT_RETRY_JITTER !== "false" && parsed.AUTOPILOT_RETRY_JITTER !== "0",
-      },
-      goalsDir: parsed.AUTOPILOT_GOALS_DIR,
-      usagePausePct: parsed.AUTOPILOT_USAGE_PAUSE_PCT,
-      keepAliveDoneMarker: parsed.AUTOPILOT_KEEPALIVE_DONE_MARKER,
-      keepAliveDonePrompt: parsed.AUTOPILOT_KEEPALIVE_DONE_PROMPT,
-      maxRounds: parsed.AUTOPILOT_MAX_ROUNDS,
-      betweenGoals: parsed.AUTOPILOT_BETWEEN_GOALS,
-    },
     scheduler: {
-      tickMs: preferredEnvInt(
-        parsed.BATCH_SCHEDULER_TICK_MS,
-        parsed.AUTOPILOT_SCHEDULER_TICK_MS,
-        blankTolerantNonNegativeInt(parsed.AUTOPILOT_SCHEDULER_TICK_MS),
-      ),
-      quotaPct: preferredEnvInt(
-        parsed.BATCH_SCHEDULER_QUOTA_PCT,
-        parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
-        blankTolerantPositiveInt(parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT),
-      ),
-      reprobeMs: preferredEnvInt(
-        parsed.BATCH_SCHEDULER_REPROBE_MS,
-        parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
-        blankTolerantPositiveInt(parsed.AUTOPILOT_SCHEDULER_REPROBE_MS),
-      ),
+      tickMs: blankTolerantNonNegativeInt(8000).parse(parsed.BATCH_SCHEDULER_TICK_MS),
+      quotaPct: blankTolerantPositiveInt(99).parse(parsed.BATCH_SCHEDULER_QUOTA_PCT),
+      reprobeMs: blankTolerantPositiveInt(1_800_000).parse(parsed.BATCH_SCHEDULER_REPROBE_MS),
+    },
+    runtimeGuardian: {
+      enabled:
+        parsed.RUNTIME_GUARDIAN_ENABLED !== "false" && parsed.RUNTIME_GUARDIAN_ENABLED !== "0",
+      mode: parsed.RUNTIME_GUARDIAN_MODE,
+      tickMs: parsed.RUNTIME_GUARDIAN_TICK_MS,
+      lookbackMs: parsed.RUNTIME_GUARDIAN_LOOKBACK_MS,
+      cooldownMs: parsed.RUNTIME_GUARDIAN_COOLDOWN_MS,
+      repoPath: parsed.RUNTIME_GUARDIAN_REPO_PATH.trim(),
+      repairBranch: parsed.RUNTIME_GUARDIAN_REPAIR_BRANCH,
+      maxFindingsPerTick: parsed.RUNTIME_GUARDIAN_MAX_FINDINGS_PER_TICK,
     },
     taskAudit: {
       enabled: parsed.TASK_AUDIT_ENABLED !== "false" && parsed.TASK_AUDIT_ENABLED !== "0",

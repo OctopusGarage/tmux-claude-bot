@@ -445,6 +445,9 @@ describe("runDailyTaskAuditServiceTick", () => {
     expect(prompt).toContain("Review and confirmation gate:");
     expect(prompt).toContain("For each item, first write the concrete problem statement");
     expect(prompt).toContain("Do not edit code until the failure is independently confirmed");
+    expect(prompt).toContain("pre-mutation review");
+    expect(prompt).toContain("post-mutation review");
+    expect(prompt).toContain("deterministic gates remain authoritative");
     expect(prompt).toContain("loop:geo:bug-fix:1");
   });
 

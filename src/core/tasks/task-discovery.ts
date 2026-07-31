@@ -91,17 +91,15 @@ function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTask
   if (record.source !== "loop-engineering") return record;
   const finalSummaryPath = finalSummaryPathForLedgerRecord(record);
   if (finalSummaryPath === null) return record;
-  const finalSummary = readJsonRecord(finalSummaryPath);
-  if (finalSummary === null) return record;
-  const reconciled = recordForSupervisorFinalSummary({
+  const reconciled = recordForSupervisorArtifacts({
     projectId: projectIdFromLoopTaskId(record.taskId) ?? projectIdFromLoopTaskName(record.name),
     jobKind: jobKindFromLoopTaskId(record.taskId),
     scheduledAt: record.scheduledAt,
     taskId: record.taskId,
     now: Math.max(record.updatedAt, record.endedAt ?? record.startedAt ?? record.scheduledAt),
-    path: finalSummaryPath,
-    summary: finalSummary,
+    runDir: dirname(finalSummaryPath),
   });
+  if (reconciled === null) return record;
   return mergeClosedRepairResolution(record, reconciled);
 }
 
@@ -543,34 +541,98 @@ function recordForLoopRunArtifact(input: {
     now: input.now,
     ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
   });
-  const finalSummaryPath = join(runDir, "supervisor-final-summary.json");
-  const finalSummary = readJsonRecord(finalSummaryPath);
-  if (finalSummary !== null) {
-    return withLaterSuccessResolution(
-      recordForSupervisorFinalSummary({
-        ...input,
-        path: finalSummaryPath,
-        summary: finalSummary,
-      }),
-      latestSuccess,
-    );
-  }
-
-  const supervisorSummaryPath = join(runDir, "supervisor-summary.json");
-  const supervisorSummary = readJsonRecord(supervisorSummaryPath);
-  if (supervisorSummary !== null) {
-    return withLaterSuccessResolution(
-      recordForSupervisorSummary({
-        ...input,
-        runDir,
-        path: supervisorSummaryPath,
-        summary: supervisorSummary,
-      }),
-      latestSuccess,
-    );
+  const artifactRecord = recordForSupervisorArtifacts({
+    ...input,
+    runDir,
+  });
+  if (artifactRecord !== null) {
+    return withLaterSuccessResolution(artifactRecord, latestSuccess);
   }
 
   return null;
+}
+
+function recordForSupervisorArtifacts(input: {
+  projectId: string;
+  jobKind: LoopDiscoveredJobKind;
+  scheduledAt: number;
+  taskId: string;
+  now: number;
+  runDir: string;
+}): ScheduledTaskRecord | null {
+  const systemGatePath = join(input.runDir, "system-gate.json");
+  const systemGate = readJsonRecord(systemGatePath);
+  if (systemGate?.accepted === false) {
+    return recordForSystemGateFailure({
+      ...input,
+      path: systemGatePath,
+      gate: systemGate,
+    });
+  }
+  const finalSummaryPath = join(input.runDir, "supervisor-final-summary.json");
+  const finalSummary = readJsonRecord(finalSummaryPath);
+  const supervisorSummaryPath = join(input.runDir, "supervisor-summary.json");
+  const supervisorSummary = readJsonRecord(supervisorSummaryPath);
+  if (
+    finalSummary !== null &&
+    supervisorSummary !== null &&
+    shouldPreferSupervisorSummaryOverFinalSummary(supervisorSummary)
+  ) {
+    return recordForSupervisorSummary({
+      ...input,
+      path: supervisorSummaryPath,
+      summary: supervisorSummary,
+    });
+  }
+  if (finalSummary !== null) {
+    return recordForSupervisorFinalSummary({
+      ...input,
+      path: finalSummaryPath,
+      summary: finalSummary,
+    });
+  }
+  if (supervisorSummary !== null) {
+    return recordForSupervisorSummary({
+      ...input,
+      path: supervisorSummaryPath,
+      summary: supervisorSummary,
+    });
+  }
+  return null;
+}
+
+function recordForSystemGateFailure(input: {
+  projectId: string;
+  jobKind: LoopDiscoveredJobKind;
+  scheduledAt: number;
+  taskId: string;
+  now: number;
+  path: string;
+  gate: Record<string, unknown>;
+}): ScheduledTaskRecord {
+  const failures = Array.isArray(input.gate.failures)
+    ? input.gate.failures.filter((failure): failure is string => typeof failure === "string")
+    : [];
+  return {
+    taskId: input.taskId,
+    source: "loop-engineering",
+    name: `${input.projectId} ${input.jobKind}`,
+    scheduledAt: input.scheduledAt,
+    status: "failed",
+    error:
+      failures.length === 0
+        ? "supervised system gate rejected the run"
+        : `supervised system gate failed: ${failures.join("; ")}`,
+    summary: "System gate rejected a completed supervisor run.",
+    reportPath: input.path,
+    repairStatus: "pending",
+    updatedAt: input.now,
+  };
+}
+
+function shouldPreferSupervisorSummaryOverFinalSummary(summary: Record<string, unknown>): boolean {
+  const status = typeof summary.status === "string" ? summary.status : "unknown";
+  return status !== "completed" && status !== "invalid-output";
 }
 
 function latestSuccessfulLoopRunAfter(input: {
@@ -679,6 +741,21 @@ function recordForSupervisorFinalSummary(input: {
   const summaryText =
     parseFirstString(input.summary.actionsTaken) ?? `final summary status ${status}`;
   if (status === "completed") {
+    const anomaly = completedFinalSummaryAnomaly(input.summary);
+    if (anomaly !== null) {
+      return {
+        taskId: input.taskId,
+        source: "loop-engineering",
+        name: `${input.projectId} ${input.jobKind}`,
+        scheduledAt: input.scheduledAt,
+        status: "failed",
+        error: anomaly,
+        summary: summaryText,
+        reportPath: input.path,
+        repairStatus: "pending",
+        updatedAt: input.now,
+      };
+    }
     return {
       taskId: input.taskId,
       source: "loop-engineering",
@@ -703,6 +780,26 @@ function recordForSupervisorFinalSummary(input: {
     repairStatus: status === "blocked" ? "blocked" : "pending",
     updatedAt: input.now,
   };
+}
+
+function completedFinalSummaryAnomaly(summary: Record<string, unknown>): string | null {
+  const finalVerification = summary.finalVerification;
+  if (typeof finalVerification === "string" && finalVerification.trim() !== "passed") {
+    return `loop supervisor completed with finalVerification=${finalVerification.trim() || "empty"}`;
+  }
+  const followUps = Array.isArray(summary.followUps)
+    ? summary.followUps.filter((item): item is string => typeof item === "string")
+    : [];
+  const riskyFollowUp = followUps.find(isRiskyFollowUp);
+  return riskyFollowUp === undefined
+    ? null
+    : `loop supervisor completed with unresolved risky follow-up: ${riskyFollowUp}`;
+}
+
+function isRiskyFollowUp(value: string): boolean {
+  return /\b(blocked|failed|failure|error|dirty|permission|unauthorized|forbidden|timeout|timed out|ci|merge conflict|conflicted|not verified|verification failed|not clean|manual intervention)\b/i.test(
+    value,
+  );
 }
 
 function recordForSupervisorSummary(input: {

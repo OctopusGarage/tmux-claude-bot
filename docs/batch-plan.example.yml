@@ -33,7 +33,7 @@ schedule:
 
 # Default task settings applied to every project unless overridden per-project.
 defaults:
-  rounds: 1    # number of autopilot rounds per goal phase
+  rounds: 1    # number of agent rounds per goal phase
   retries: 1   # how many times to retry a failed task before marking it failed
 
 # List of projects to run. At least one project is required.

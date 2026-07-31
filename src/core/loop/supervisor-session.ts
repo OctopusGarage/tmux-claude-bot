@@ -12,6 +12,11 @@ import {
   loopSupervisorSessionNames,
 } from "../projects/operator.js";
 import { setPathForSession } from "../projects/sessionPathMap.js";
+import {
+  consumeExpiredRetainedSupervisorWorkerLeases,
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "./supervisor-pool.js";
 
 export { loopSupervisorSessionName, loopSupervisorSessionNames } from "../projects/operator.js";
 
@@ -132,6 +137,7 @@ export async function startLoopSupervisor(
     loopSupervisorSessionName(deps.config.projectSessionPrefix);
   const dir = loopSupervisorDir(deps.config, name);
   try {
+    await cleanupExpiredRetainedSupervisorWorker(deps, name);
     provisionLoopSupervisorHome(dir);
     if (!(await deps.bridge.isPaneAlive(name))) {
       await deps.bridge.createSession(name, dir);
@@ -146,6 +152,46 @@ export async function startLoopSupervisor(
   } catch (err) {
     log.error("failed to start loop supervisor session", { err });
     return false;
+  }
+}
+
+async function cleanupExpiredRetainedSupervisorWorker(
+  deps: HandlerDeps,
+  sessionName: string,
+): Promise<void> {
+  const consumed = consumeExpiredRetainedSupervisorWorkerLeases(
+    readLoopSupervisorWorkerLeaseState(),
+    Date.now(),
+  );
+  const expired = consumed.expired.filter((lease) => lease.workerSession === sessionName);
+  if (expired.length === 0) return;
+  writeLoopSupervisorWorkerLeaseState({
+    leases: [
+      ...consumed.state.leases,
+      ...consumed.expired.filter((lease) => lease.workerSession !== sessionName),
+    ],
+  });
+  for (const lease of expired) {
+    try {
+      await deps.bridge.killSession(lease.workerSession);
+      log.info("expired retained loop supervisor worker session killed", {
+        data: {
+          session: lease.workerSession,
+          workOrderId: lease.workOrderId,
+          projectId: lease.projectId,
+          retainUntil: lease.retainUntil,
+        },
+      });
+    } catch (err) {
+      log.warn("failed to kill expired retained loop supervisor worker session", {
+        err,
+        data: {
+          session: lease.workerSession,
+          workOrderId: lease.workOrderId,
+          projectId: lease.projectId,
+        },
+      });
+    }
   }
 }
 

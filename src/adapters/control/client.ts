@@ -175,6 +175,27 @@ export class ControlClient extends EventEmitter {
       message?: string;
     }>;
   }
+  openWorker(
+    session: string,
+    path: string,
+    opts: { agent?: AgentKind } = {},
+  ): Promise<{
+    status: string;
+    session?: string;
+    started?: string;
+    error?: string;
+    resolvedPath?: string;
+    message?: string;
+  }> {
+    return this.req({ op: "openWorker", session, path, ...opts }) as Promise<{
+      status: string;
+      session?: string;
+      started?: string;
+      error?: string;
+      resolvedPath?: string;
+      message?: string;
+    }>;
+  }
   /** Claude/Codex processes running OUTSIDE tmux that the bot could adopt. */
   orphans(): Promise<
     { pid: number; agent: "claude" | "codex"; busy: "busy" | "idle" | "unknown"; label: string }[]

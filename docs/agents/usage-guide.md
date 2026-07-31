@@ -113,9 +113,11 @@ commit/PR settings, the bot also checks the final worktree, switch-back branch,
 PR mergeability, and CI rollup after the supervisor reports completion. When
 `pullRequest.autoMerge: true` is set, the bot merges the checked PR and
 fast-forwards the local switch-back branch afterward. Use
-`pullRequest.githubAccount` when PR commands must run under a specific `gh`
-account; the loop uses a command-local `GH_TOKEN` for that account instead of the
-global active `gh` identity. To run a separate real-bug repair loop, add
+`pullRequest.githubAccount` when a project must run GitHub CLI commands under a
+specific `gh` account; the loop uses a command-local `GH_TOKEN` for `gh api`,
+`gh pr`, `gh run`, and related commands instead of the global active `gh`
+identity, including security-maintenance runs that only read GitHub alerts. To
+run a separate real-bug repair loop, add
 `bugFix.enabled: true` with its own `schedule`, `branch`, `maxRounds`, and
 `maxBugsPerRound`; the supervisor must prove a functional or reliability bug
 before editing, use the bug-fix branch instead of the architecture branch, avoid

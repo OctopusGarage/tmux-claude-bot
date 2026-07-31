@@ -2,8 +2,6 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { profileFor } from "../agents/registry.js";
 import type { AgentKind } from "../agents/types.js";
 import type { AutopilotNotice } from "../autopilot/notifier.js";
-import { AutopilotStore } from "../autopilot/state-store.js";
-import type { AutopilotState } from "../autopilot/types.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
@@ -11,7 +9,7 @@ import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import { accountQuotaHit, pausePool, resumeAtFrom, resumePool } from "./quota.js";
 import { renderSummary } from "./report.js";
 import { resumeUngatedTasks } from "./resume.js";
-import { applyNotice, failOrRetry, reconcile } from "./scheduler.js";
+import { failOrRetry, reconcile } from "./scheduler.js";
 import { SchedulerStore } from "./scheduler-store.js";
 import { hasActiveRun, materializeRun, nextFire } from "./scheduling.js";
 import { type Plan, type PoolState, type Run, type TaskState, TERMINAL_STATUSES } from "./types.js";
@@ -25,7 +23,6 @@ export type TickCtx = {
   pools: Record<string, PoolState>;
   /** planId → last fire epoch-ms; MUTATED in place to prevent re-fire */
   lastFired: Record<string, number>;
-  autopilot: { get(s: string): AutopilotState; set(s: string, st: AutopilotState): void };
   resolveSession: (t: TaskState) => string;
   readUsage: (agent: AgentKind) => Promise<UsageSnapshot | null>;
   isGated: (session: string) => boolean;
@@ -33,12 +30,6 @@ export type TickCtx = {
   reprobeMs: number; // fallback resume delay when no reset time is known
   save: (run: Run | undefined, pools: Record<string, PoolState>) => void;
   notify: (notice: AutopilotNotice) => void;
-  /** Bug #1 fix: drain the notice queue accumulated since the last tick.
-   * Notices are enqueued by the subscription callback and applied here inside
-   * the serialized tick to prevent the lost-update race where a "complete"
-   * notice written directly to the store gets overwritten by the in-flight
-   * tick's save. Defaults to () => [] for backward-compat. */
-  drainNotices?: () => AutopilotNotice[];
   /** Bug #3 fix: check whether a tmux session+pane is alive.
    * Used to detect dead sessions for running tasks and fail/retry them.
    * Defaults to () => true when omitted (backward-compat). */
@@ -105,18 +96,7 @@ export async function schedulerTick(ctx: TickCtx): Promise<void> {
   let run = ctx.run;
   let pools = ctx.pools;
 
-  // ───────────────────────── async PHASE (no store/autopilot writes) ──────────
-  // Bug #1 fix: drain + apply notices enqueued since the last tick BEFORE any
-  // other processing. Notices arrive from the subscription callback (which only
-  // enqueues them rather than writing the store directly), so a "complete"
-  // notice that arrived while a previous tick was awaiting readUsage is applied
-  // to THIS run snapshot rather than being lost when the tick calls save().
-  if (ctx.drainNotices) {
-    for (const n of ctx.drainNotices()) {
-      if (run && "session" in n) run = applyNotice(run, n);
-    }
-  }
-
+  // ───────────────────────── async PHASE (no store writes) ───────────────────
   // Bug #3 fix: for every "running" task whose tmux session is no longer alive,
   // apply failOrRetry immediately so the task doesn't hang indefinitely waiting
   // for a completion notice that will never arrive (e.g. after a desktop-kill or
@@ -273,12 +253,6 @@ export async function schedulerTick(ctx: TickCtx): Promise<void> {
         ({ run, pools } = pausePool(run, pools, agent, resumeAt));
         log.info("scheduler paused pool on account quota", { data: { agent, resumeAt } });
         ctx.notify({ kind: "batchPoolPaused", runId: run.runId, agent, resumeAt });
-        for (const t of run.tasks) {
-          if (t.agent === agent && t.status === "paused-quota" && t.sessionName) {
-            const s = t.sessionName;
-            ctx.autopilot.set(s, { ...ctx.autopilot.get(s), enabled: false });
-          }
-        }
       }
     }
   }
@@ -287,29 +261,9 @@ export async function schedulerTick(ctx: TickCtx): Promise<void> {
   // The operator session is never a plan target: plans specify explicit project
   // paths, and the operator has no project path. No exclusion code needed here.
   run = reconcile(run, caps, pools, {
-    autopilot: ctx.autopilot,
     resolveSession: ctx.resolveSession,
     now: ctx.now,
   });
-
-  // Bug #5 fix: clear viaScheduler once a task reaches a terminal state, BUT only
-  // when no other task on the same session is still non-terminal. Two plan entries
-  // can share the same project path → same sessionName; clearing prematurely would
-  // re-expose the still-running task to the supervisor usage-gate.
-  for (const t of run.tasks) {
-    if (TERMINAL_STATUSES.has(t.status) && t.sessionName) {
-      const s = t.sessionName;
-      const stillBusy = run.tasks.some(
-        (o) => o.sessionName === s && !TERMINAL_STATUSES.has(o.status),
-      );
-      if (!stillBusy) {
-        const st = ctx.autopilot.get(s);
-        if (st.viaScheduler === true) {
-          ctx.autopilot.set(s, { ...st, viaScheduler: false });
-        }
-      }
-    }
-  }
 
   if (run.tasks.length > 0 && run.tasks.every((t) => TERMINAL_STATUSES.has(t.status))) {
     finalizeRun(ctx, run, pools);
@@ -318,23 +272,13 @@ export async function schedulerTick(ctx: TickCtx): Promise<void> {
   ctx.save(run, pools);
 }
 
-/** Finalize an all-terminal run: release every session's viaScheduler, mark the
- * run done, broadcast completion, advance the plan's lastFired anchor (so cron
+/** Finalize an all-terminal run: mark the run done, broadcast completion,
+ * advance the plan's lastFired anchor (so cron
  * catch-up ticks are skipped — nextFire(ctx.now) returns the next FUTURE
  * occurrence), and persist with NO active run. Used by BOTH the early
  * all-terminal check (Bug #2: completes even when a pause landed this tick) and
  * the normal end-of-tick completion — so the logic is never duplicated. */
 function finalizeRun(ctx: TickCtx, run: Run, pools: Record<string, PoolState>): void {
-  // Release viaScheduler for every session in the (fully terminal) run.
-  for (const t of run.tasks) {
-    if (t.sessionName) {
-      const s = t.sessionName;
-      const st = ctx.autopilot.get(s);
-      if (st.viaScheduler === true) {
-        ctx.autopilot.set(s, { ...st, viaScheduler: false });
-      }
-    }
-  }
   const done: Run = { ...run, status: "done", endedAt: ctx.now };
   recordBatchRunCompleted(ctx, done);
   log.info("scheduler run complete", { data: { plan: done.planId } });
@@ -396,7 +340,6 @@ export function startScheduler(deps: HandlerDeps): () => void {
   }
   const store = new SchedulerStore();
   const taskLedger = new DailyTaskLedger();
-  const autopilot = new AutopilotStore();
   const quotaPct = deps.config.scheduler.quotaPct;
   const reprobeMs = deps.config.scheduler.reprobeMs;
 
@@ -410,13 +353,6 @@ export function startScheduler(deps: HandlerDeps): () => void {
     Date.now(),
   );
   const lastFired = store.getLastFired();
-
-  // Bug #1 fix: notice queue — the subscription enqueues here; schedulerTick
-  // drains and applies inside the serialized pass to prevent the lost-update
-  // where a direct store.setActiveRun call gets overwritten by an in-flight
-  // tick's save().
-  const noticeQueue: AutopilotNotice[] = [];
-  const drainNotices = (): AutopilotNotice[] => noticeQueue.splice(0);
 
   const readUsage = async (agent: AgentKind): Promise<UsageSnapshot | null> => {
     const run = store.getActiveRun();
@@ -433,8 +369,6 @@ export function startScheduler(deps: HandlerDeps): () => void {
       .readUsage(deps.configResolver, sessionName, cwd)
       .catch(() => null);
   };
-  const isGated = (session: string) => autopilot.get(session).humanGatePending === true;
-
   // Bug #3 fix: announce a newly-active run once, centrally — covers scheduled
   // fires AND manual `/batch start` (which writes the store directly without
   // notifying). Seeded with the restored run's id so a run recovered on boot is
@@ -470,10 +404,9 @@ export function startScheduler(deps: HandlerDeps): () => void {
       run: store.getActiveRun(),
       pools,
       lastFired,
-      autopilot,
       resolveSession: (t) => t.sessionName ?? t.project,
       readUsage,
-      isGated,
+      isGated: () => false,
       quotaPct,
       reprobeMs,
       save: (run, p) => {
@@ -483,8 +416,6 @@ export function startScheduler(deps: HandlerDeps): () => void {
         store.setPools(p);
       },
       notify: (n) => void deps.notifier.broadcast(n),
-      // Bug #1 fix: drain the notice queue inside the serialized tick.
-      drainNotices,
       // Bug #3 fix: liveness check for running tasks (dead session → fail/retry).
       isAlive: (s) => deps.bridge.isPaneAlive(s),
       // Single-writer fix: re-read the live run at the critical-section boundary
@@ -504,16 +435,9 @@ export function startScheduler(deps: HandlerDeps): () => void {
       });
   };
 
-  // Bug #1 fix: enqueue session notices rather than writing the store directly.
-  // Direct writes race with an in-flight tick suspended at readUsage — the tick's
-  // save() call would overwrite the notice-applied state. Enqueueing + draining
-  // inside the serialized schedulerTick eliminates the lost-update.
-  // Batch-level notices (no session field) only trigger a tick, no enqueue.
-  deps.notifier.register(async (notice) => {
-    // Only act when a batch run is active — plan-firing is handled by the interval,
-    // so a notice for a non-scheduler session (the common case) needs no tick.
+  deps.notifier.register(async () => {
+    // Only prod an active run; plan firing is handled by the interval.
     if (!store.getActiveRun()) return;
-    if ("session" in notice) noticeQueue.push(notice);
     tick();
   });
 

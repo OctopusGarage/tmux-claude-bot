@@ -76,7 +76,7 @@ describe("pausePool / resumePool", () => {
   it("a never-started queued task is NOT marked resuming after a pause/resume cycle", () => {
     // Pool cap >= 2 (e.g. max-3-claude): a running + a queued claude task. Quota pauses
     // the pool. Only the running-origin task carries progress; the queued one must come
-    // back admittable FRESH, not resuming (it has no goal-cycle to continue).
+    // back admittable fresh, not resuming.
     const r0 = run([
       task({ project: "/run", status: "running" }),
       task({ project: "/queue", status: "queued" }),
@@ -97,6 +97,6 @@ describe("pausePool / resumePool", () => {
     const { run: r2, pools: p2 } = resumePool(r0, pools, "claude", 100);
     expect(p2.claude?.paused).toBe(false);
     expect(r2.tasks[0]?.status).toBe("queued");
-    expect(r2.tasks[0]?.resuming).toBe(true); // must preserve goal-cycle progress on resume
+    expect(r2.tasks[0]?.resuming).toBe(true); // must preserve resume intent
   });
 });

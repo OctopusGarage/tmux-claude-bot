@@ -160,28 +160,17 @@ program
 program
   .command("autopilot [project] [verb...]")
   .description(
-    "no args: status across sessions · <project>: its autopilot view · <project> <verb>: drive it (on|off|stop|`goal <id>`|`goals <id,id> [rounds N]`|confirm|reject|delegate [requirement])",
+    "<project> [delegate [requirement]|cancel]: delegate the current session's work to the Loop Supervisor",
   )
   .option("--json", "output JSON")
   .action(async (project: string | undefined, verb: string[], o) => {
     if (project) return (await ctl()).cmdAutopilot(project, verb, o);
-    try {
-      const { bootstrap } = await import("./bootstrap.js");
-      const { buildAutopilotSnapshot, formatAutopilotText } = await import(
-        "./core/autopilot/autopilot-snapshot.js"
-      );
-      const deps = bootstrap();
-      const snap = await buildAutopilotSnapshot(deps);
-      process.stdout.write(
-        o.json ? `${JSON.stringify(snap, null, 2)}\n` : `${formatAutopilotText(snap)}\n`,
-      );
-      process.exit(0); // bootstrap starts a live fs.watch (activity watcher) that would otherwise hang the process
-    } catch (err) {
-      process.stderr.write(
-        `autopilot failed: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-      process.exit(1);
-    }
+    const message =
+      "Usage: tcb autopilot <project> [delegate [requirement]|cancel]\nAutopilot now means supervisor-backed delegation only.\n";
+    process.stdout.write(
+      o.json ? `${JSON.stringify({ usage: message.trim() }, null, 2)}\n` : message,
+    );
+    process.exit(0);
   });
 
 program
@@ -267,6 +256,13 @@ program
   )
   .option("--json", "output JSON")
   .action(async (project, o) => (await ctl()).cmdOpen(project, o));
+
+program
+  .command("open-worker <session> <path>")
+  .description("start an isolated automation worker session at a project path")
+  .option("--agent <kind>", "start with a specific agent when the worker is stopped (claude|codex)")
+  .option("--json", "output JSON")
+  .action(async (session, projectPath, o) => (await ctl()).cmdOpenWorker(session, projectPath, o));
 
 program
   .command("adopt [pid]")

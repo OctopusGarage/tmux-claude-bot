@@ -43,6 +43,7 @@ export type ControlRequest =
   | { id: number; op: "projects" }
   | { id: number; op: "open"; sid: string; agent?: AgentKind }
   | { id: number; op: "openPath"; path: string; agent?: AgentKind }
+  | { id: number; op: "openWorker"; session: string; path: string; agent?: AgentKind }
   | { id: number; op: "orphans" }
   | { id: number; op: "adopt"; pid: number }
   | { id: number; op: "recover" }
@@ -84,8 +85,7 @@ export type ControlEvent =
   | { event: "activity" }
   | { event: "reply"; session: string; output: string }
   | { event: "notify"; session: string; text: string }
-  | { event: "error"; session: string; error: string }
-  | { event: "autopilot"; session: string; kind: string };
+  | { event: "error"; session: string; error: string };
 
 export type ServerMessage = ControlResponse | ControlEvent;
 

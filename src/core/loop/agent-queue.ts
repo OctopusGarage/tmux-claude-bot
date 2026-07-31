@@ -19,6 +19,12 @@ import type {
   LoopRunCommandResult,
 } from "./run.js";
 import type { SupervisorDispatchRequest } from "./supervised-runner.js";
+import {
+  leaseLoopSupervisorWorker,
+  readLoopSupervisorWorkerLeaseState,
+  releaseLoopSupervisorWorker,
+  writeLoopSupervisorWorkerLeaseState,
+} from "./supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "./supervisor-state.js";
 import {
   loopSupervisorControlRestore,
@@ -27,6 +33,7 @@ import {
 import type { LoopWorkOrder } from "./work-order.js";
 
 const log = createLogger("loop.agent-queue");
+const DEFAULT_WORKER_FAILURE_RETAIN_MS = 72 * 60 * 60 * 1000;
 
 type QueueDeps = {
   bridge: {
@@ -220,9 +227,38 @@ async function enqueueLoopAgentPromptToSession(
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
 
+  const lease = leaseLoopSupervisorWorker({
+    state: readLoopSupervisorWorkerLeaseState(),
+    supervisorSession: sessionName,
+    workOrder,
+    now: Date.now(),
+    retainFailureForMs:
+      (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000,
+  });
+  writeLoopSupervisorWorkerLeaseState(lease.state);
+  if (lease.status === "unavailable") {
+    log.info("loop supervisor worker lease unavailable", {
+      session: sessionName,
+      data: { workOrderId: workOrder.id, projectId: workOrder.projectId, reason: lease.reason },
+    });
+    return { status: 1, stdout: "", stderr: lease.reason };
+  }
+  log.info("loop supervisor worker leased", {
+    session: sessionName,
+    data: {
+      workOrderId: workOrder.id,
+      projectId: workOrder.projectId,
+      projectPath: workOrder.projectPath,
+    },
+  });
+
   const resetResult = await enqueueContextResetIfNeeded(deps, sessionName, contextReset);
-  if (resetResult !== null && resetResult.status !== 0) return resetResult;
+  if (resetResult !== null && resetResult.status !== 0) {
+    releaseSupervisorWorkerLease(workOrder, "failure");
+    return resetResult;
+  }
   if (signal?.aborted) {
+    releaseSupervisorWorkerLease(workOrder, "failure");
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
 
@@ -237,6 +273,7 @@ async function enqueueLoopAgentPromptToSession(
     signal?.addEventListener("abort", abort, { once: true });
     const settle = (result: LoopRunCommandResult): void => {
       signal?.removeEventListener("abort", abort);
+      if (result.status !== 0) releaseSupervisorWorkerLease(workOrder, "failure");
       resolve(result);
     };
     const verdict = deps.queue.enqueue({
@@ -276,6 +313,32 @@ async function enqueueLoopAgentPromptToSession(
         now: Date.now(),
       });
     }
+  });
+}
+
+function releaseSupervisorWorkerLease(
+  workOrder: LoopWorkOrder,
+  result: "success" | "failure",
+): void {
+  const retainFailureForMs =
+    (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000 ||
+    DEFAULT_WORKER_FAILURE_RETAIN_MS;
+  writeLoopSupervisorWorkerLeaseState(
+    releaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      workOrderId: workOrder.id,
+      result,
+      now: Date.now(),
+      retainFailureForMs,
+    }),
+  );
+  log.info("loop supervisor worker lease settled", {
+    data: {
+      workOrderId: workOrder.id,
+      projectId: workOrder.projectId,
+      result,
+      retainFailureForMs,
+    },
   });
 }
 

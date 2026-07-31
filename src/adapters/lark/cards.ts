@@ -836,19 +836,6 @@ export function autopilotPanelCard(
   ]);
 }
 
-/** The interactive human-gate card pushed to the owner: confirm / continue,
- * carrying the gated session. */
-export function autopilotGateCard(session: string): object {
-  const m = messages("lark");
-  return shell(m.autopilotTitle, [
-    md(m.autopilotNotifyAwaitHuman(session)),
-    gridRow([
-      { text: m.btnApConfirm, value: { cmd: "ap_confirm", s: session }, style: "primary" },
-      { text: m.btnApContinue, value: { cmd: "ap_reject", s: session } },
-    ]),
-  ]);
-}
-
 export type { PromptsView } from "../../core/promptlib/view.js";
 
 /** Prompt library browse card: tag filter row, one button per prompt, paging nav. */

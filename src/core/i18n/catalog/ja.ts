@@ -159,6 +159,8 @@ export const ja: Messages = {
   agentResumeMissingState:
     "復元できる前回セッションの状態がありません。/start で新規開始してください。",
   agentAlreadyRunning: "✅ すでに実行中です（再起動は不要）",
+  agentInputNotReady:
+    "Agent is not ready to receive input yet. Try again shortly; restart this session if it keeps happening.",
   projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
     `プロジェクトの自動化タスクが実行中のため、通常メッセージは一時的にブロックされています。\nタスク: ${taskKind}\nプロジェクト: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nタスク完了を待つか、確認/キャンセルしてから続行してください。`,
   agentStartedWith: (label) => `✅ 「${label}」で起動しました`,
@@ -416,70 +418,22 @@ export const ja: Messages = {
     "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",
   cmdAutopilot: "現在のセッション作業を Loop Supervisor に委任",
   cmdOpportunity: "提案された改善機会を確認し、承認した作業を委任",
-  cmdGoals: "autopilot 目標プリセットを一覧表示",
   cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "現在のセッション文脈を Loop Supervisor に委任し、実装、レビュー、検証、PR 処理、最終通知まで進めます。",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot を一時停止 [${session}]：${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot を停止 [${session}]：${reason}`,
-  autopilotNotifyUsage: (session, pct) =>
-    `🛑 autopilot 目標を一時停止 [${session}]：使用量が ${pct}% に到達`,
-  autopilotNotifyMaxIter: (session) => `⏹️ autopilot 目標を停止 [${session}]：最大反復回数に到達`,
-  autopilotNotifyWallClock: (session) => `⏹️ autopilot 目標を停止 [${session}]：時間上限に到達`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]：フェーズ完了の可能性 — /autopilot confirm で確認、/autopilot reject で続行`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ autopilot 目標完了 [${session}]：${goalId}（確認してください）`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ autopilot サイクル完了 [${session}]：${rounds} 周回完了（確認してください）`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ autopilot キープアライブ完了 [${session}]：完了マーカーを検出`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]：目標 ${goalId} を開始（${pos}/${total} · ${round}/${rounds} 周）`,
   batchRunStarted: (planId, tasks) =>
     `🚀 バッチ実行を開始しました：プラン ${planId}、${tasks} 件のタスク`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ バッチプールを一時停止 [${agent}]：クォータ上限に達しました。再開予定：${resumeAt}`,
   batchRunComplete: (summary) => `✅ バッチ実行完了\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "グローバル保活をオン:すべてのアクティブなセッションを自動管理(個別に除外するには /autopilot off)"
-      : "グローバル保活をオフ",
-  autopilotStatus: (o) =>
-    `Autopilot：${o.enabled ? "オン" : "オフ"}（${o.pureKeepAlive ? "キープアライブ" : "目標駆動"}、介入 ${o.iterations} 回、persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw) =>
-    `不明なサブコマンド「${raw}」。使い方：/autopilot [delegate [requirement]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} キープアライブ/目標を有効化`,
-  btnApDisable: "⏹ キープアライブ/目標を無効化",
+    `不明なサブコマンド「${raw}」。使い方：/autopilot [requirement] または /autopilot delegate [requirement]`,
   btnApDelegate: "🚀 Supervisorで継続",
   btnApCancelDelegate: "⛔ 委任をキャンセル",
-  btnApPickGoals: "🎯 目標を選択",
-  btnApGlobalOn: "🌐 グローバル:オン",
-  btnApGlobalOff: "🌐 グローバル:オフ",
-  btnApStop: "⏹ 目標を停止",
-  btnApConfirm: "✅ 完了を確認",
-  btnApContinue: "▶️ 続行",
   btnApBack: "↩︎ 戻る",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) => `▶️ 開始(${n} 個の目標 · ${rounds} 周)`,
-  apRoundsLabel: (rounds: number) => `周回数:${rounds}`,
-  goalTestCoverage: "テストカバレッジ向上",
-  goalFixTests: "テスト修正",
-  goalCodeReview: "コードレビュー",
-  goalAddFeature: "機能追加",
-  goalRefactorElegant: "エレガントにリファクタリング",
-  goalUiPolish: "UI を磨く",
-  goalImproveArchitecture: "アーキテクチャ品質向上",
-  goalHardenStandards: "規約とゲートを強化",
-  goalPolishGithub: "GitHub プロジェクトを整備",
-  goalSyncDocs: "ドキュメントとコードの整合",
-  autopilotGoalStarted: (id) => `目標を開始：${id}`,
-  autopilotUnknownGoal: (ids) => `不明な目標。利用可能：${ids}`,
-  goalsTitle: "🎯 目標プリセット",
   noLogsContext:
     "現在のセッションがありません。プロジェクトを選択するか trace を指定してください（/logs <traceId>）。",
 

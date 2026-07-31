@@ -244,6 +244,13 @@ Loop Engineering, opportunity discovery, PR review, autopilot delegation, daily
 audit, and any other long-running supervised workflow must be diagnosable from
 persisted logs and run artifacts without replaying the task.
 
+Long-running WorkOrders must use isolated execution context. The configured
+`projectPath` or workspace repository path is the only trusted target directory;
+verify `git -C <path> rev-parse --show-toplevel` before sync, assessment, edits,
+PR review, or mutating commands. Do not inject scheduled or delegated WorkOrders
+into ordinary user chat. Record worker/session lease, reset action, expected
+path, actual toplevel, cleanup decision, and retention/TTL in the run artifacts.
+
 - Log every major lifecycle transition at INFO with stable identifiers: task
   type, project id, run id, scheduled/effective time, supervisor session, target
   session or repository path, branch/base/switchBack policy, and whether the run
@@ -372,10 +379,9 @@ string-embed context fields.
 
 **Verbosity:** `LOG_LEVEL` env var (DEBUG|INFO|WARN|ERROR, default INFO). DEBUG is
 reserved for high-volume flow tracing that is noise at steady state but invaluable
-when diagnosing — notably the autopilot's degraded-signal probes (`autopilot.signal`
-logs at DEBUG when a pane/transcript read falls back, so a stalled tick reads as
-"probe failed" rather than looking identical to "genuinely idle"). Run the bot with
-`LOG_LEVEL=DEBUG` when testing why autopilot did / didn't act.
+when diagnosing — notably session/activity probes that distinguish "probe failed"
+from "genuinely idle" when a pane or transcript read falls back. Run the bot with
+`LOG_LEVEL=DEBUG` when testing why an automation or delegated task did / didn't act.
 
 **Querying:**
 - CLI: `tcb logs [--session <n>] [--trace <id>] [--level WARN] [--days N] [-n 50] [--json]`
@@ -591,13 +597,13 @@ Single-context: one `CONTEXT.md` at repo root + `docs/adr/`. For project/session
 relationship rules, also read `docs/domain/project-session-model.md`. See
 `docs/agents/domain.md`.
 
-### Skills the autopilot goals rely on
+### Skills supervised automation relies on
 
-Some goals drive the agent by asking it to run a skill (`use your code-review /
-simplify / improve-codebase-architecture skill if available`). Those skills live
-in the agent's environment, not this repo. `docs/agents/skills.md` is the
-registry of their sources + install/update steps; add a row when a new
-skill-backed goal is introduced.
+Some supervised tasks drive the agent by asking it to run a skill (`use your
+code-review / simplify / improve-codebase-architecture skill if available`).
+Those skills live in the agent's environment, not this repo.
+`docs/agents/skills.md` is the registry of their sources + install/update steps;
+add a row when a new skill-backed task family or workflow is introduced.
 
 <!-- rtk-instructions v2 -->
 # RTK (Rust Token Killer) - Token-Optimized Commands

@@ -29,6 +29,12 @@ describe("buildDailyAuditRepairPrompt", () => {
     expect(prompt).toContain("continue the evidence review and classification");
     expect(prompt).toContain("report the branch sync blocker separately");
     expect(prompt).toContain("Fix one failure at a time");
+    expect(prompt).toContain("pre-mutation review");
+    expect(prompt).toContain("post-mutation review");
+    expect(prompt).toContain(
+      "AI review/eval may be used only through the existing Claude Code / Codex control surface",
+    );
+    expect(prompt).toContain("deterministic gates remain authoritative");
     expect(prompt).toContain("npm run verify:local");
     expect(prompt).toContain("commit");
     expect(prompt).toContain("radar:daily:failed");

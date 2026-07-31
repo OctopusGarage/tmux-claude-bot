@@ -68,6 +68,16 @@ describe("loop supervisor work order", () => {
       id: "1752643800000-datavibe",
       projectId: "datavibe",
       projectPath: "/repo/datavibe",
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/datavibe",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+      },
       agent: "codex",
       maxRounds: 3,
       targetScore: 90,
@@ -117,28 +127,49 @@ describe("loop supervisor work order", () => {
     const prompt = buildLoopSupervisorPrompt(workOrder);
 
     expect(workOrder.notificationSession).toBe("tmux_proj_-repo-datavibe");
+    expect(workOrder.workerSession).toBe("tmux_proj_loop-worker-datavibe");
     expect(prompt).toContain("You are the Loop Supervisor for tmux-claude-bot.");
     expect(prompt).toContain("Do not call model-provider APIs.");
     expect(prompt).toContain('send <project> "<task>"');
     expect(prompt).toContain("TCB_STATE_DIR=");
     expect(prompt).toContain("dashboard --json");
-    expect(prompt).toContain("open '/repo/datavibe' --agent codex");
-    expect(prompt).toContain("git status --short must be clean");
-    expect(prompt).toContain("git fetch origin main");
-    expect(prompt).toContain("git switch main");
-    expect(prompt).toContain("git pull --ff-only origin main");
+    expect(prompt).toContain(
+      "open-worker 'tmux_proj_loop-worker-datavibe' '/repo/datavibe' --agent codex",
+    );
+    expect(prompt).not.toContain("open '/repo/datavibe' --agent codex");
+    expect(prompt).toContain("Execution isolation:");
+    expect(prompt).toContain("lease a dedicated supervised worker context");
+    expect(prompt).toContain("Expected worktree: /repo/datavibe");
+    expect(prompt).toContain("git -C '/repo/datavibe' rev-parse --show-toplevel");
+    expect(prompt).toContain("must equal /repo/datavibe");
+    expect(prompt).toContain("do not inject this WorkOrder into ordinary user chat");
+    expect(prompt).toContain("release the worker after successful system acceptance");
+    expect(prompt).toContain("retain the worker for 72 hour(s) on failure");
+    expect(prompt).toContain("git -C '/repo/datavibe' status --short must be clean");
+    expect(prompt).toContain("git -C '/repo/datavibe' fetch origin main");
+    expect(prompt).toContain("git -C '/repo/datavibe' switch main");
+    expect(prompt).toContain("git -C '/repo/datavibe' pull --ff-only origin main");
+    expect(prompt).not.toContain("cd '/repo/datavibe' && git status");
     expect(prompt).toContain("do not optimize stale code");
     expect(prompt).toContain("supervisor-final-summary.json");
     expect(prompt).toContain("verify");
-    expect(prompt).toContain("dashboard --json shows the target project running");
     expect(prompt).toContain(
-      "control <project> compact --yes before each delegated optimization round.",
+      "dashboard --json shows tmux_proj_loop-worker-datavibe running with the configured agent and path /repo/datavibe",
+    );
+    expect(prompt).toContain(
+      "control tmux_proj_loop-worker-datavibe compact --yes before each delegated optimization round.",
     );
     expect(prompt).toContain(
       'status must be exactly one of: "completed", "blocked", "failed", "timeout", "cancelled"',
     );
     expect(prompt).toContain('Use "completed" for successful no-op runs');
     expect(prompt).toContain('finalVerification must be one string only: "passed"');
+    expect(prompt).toContain("reviewGate must be an object");
+    expect(prompt).toContain("preMutationReview must list the evidence checked before editing");
+    expect(prompt).toContain("AI review is advisory evidence only");
+    expect(prompt).toContain("Deterministic gates remain authoritative");
+    expect(prompt).toContain("long or potentially unbounded verification commands");
+    expect(prompt).toContain("explicit timeout");
     expect(prompt).not.toContain("tcb status");
     expect(prompt).toContain(finalMarkerForWorkOrder("1752643800000-datavibe"));
   });
@@ -236,9 +267,9 @@ describe("loop supervisor work order", () => {
       maxAttempts: 2,
     });
     expect(workOrder.allowedActions).toContain("dependency-upgrade");
-    expect(prompt).toContain("git fetch origin dev");
-    expect(prompt).toContain("git switch dev");
-    expect(prompt).toContain("git pull --ff-only origin dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' fetch origin dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' switch dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' pull --ff-only origin dev");
     expect(prompt).toContain("inherits the target project's PR policy");
     expect(prompt).toContain(
       "loop/datavibe/active-delegate/1752643800000-datavibe-active-delegate",
@@ -280,6 +311,7 @@ describe("loop supervisor work order", () => {
       scheduledAt: 1752643800000,
       runId: "1752643800000-datavibe-bug-fix",
       jobKind: "bug-fix",
+      projectSessionPrefix: "tmux_proj_",
     });
 
     const prompt = buildLoopSupervisorPrompt(workOrder);
@@ -312,7 +344,7 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("partial coverage must not be presented as proof");
     expect(prompt).toContain("Stop when a round finds no confirmed real bugs");
     expect(prompt).toContain(
-      "control <project> compact --yes before each delegated bug-fix round.",
+      "control tmux_proj_loop-worker-datavibe compact --yes before each delegated bug-fix round.",
     );
     expect(prompt).toContain("Focus on scheduler, gate, and state consistency bugs.");
     expect(prompt).toContain("loop/datavibe/bug-fix/1752643800000-datavibe-bug-fix");
@@ -382,8 +414,8 @@ describe("loop supervisor work order", () => {
     expect(workOrder.assessment).toEqual({ command: "true" });
     expect(workOrder.eval).toBeUndefined();
     expect(prompt).toContain("Opportunity discovery task.");
-    expect(prompt).toContain("git fetch origin dev");
-    expect(prompt).toContain("git switch dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' fetch origin dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' switch dev");
     expect(prompt).toContain("do not edit files, commit, push, create branches");
     expect(prompt).toContain("Produce at most 2 suggestion(s)");
     expect(prompt).toContain("Minimum confidence is medium");
@@ -612,6 +644,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("architecture(weight=5)");
     expect(prompt).toContain("Do not run all subtasks mechanically");
     expect(prompt).toContain("one run id and one PR branch/PR per repository");
+    expect(prompt).toContain('send <project> "<long task>" --no-wait');
+    expect(prompt).toContain('send <project> "<task>" --no-wait');
+    expect(prompt).toContain("do not treat the absence of an immediate reply as a failed send");
     expect(prompt).toContain("Harness subtask policy: bug-fix.");
     expect(prompt).toContain("Bug finding and repair task.");
     expect(prompt).toContain("Harness subtask policy: security-maintenance.");
@@ -660,8 +695,45 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("mergeability");
     expect(prompt).toContain("CI/status checks");
     expect(prompt).toContain("gh auth token --user 'miao2016'");
-    expect(prompt).toContain("git switch dev");
-    expect(prompt).toContain("git pull --ff-only origin dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' switch dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' pull --ff-only origin dev");
+  });
+
+  it("renders security-maintenance GitHub checks with the configured project account", () => {
+    const project = {
+      ...firstProject(),
+      securityMaintenance: {
+        enabled: true,
+        schedule: "10 16 * * *",
+        maxRounds: 2,
+        allowDependencyUpdates: true,
+        allowConfigHardening: true,
+        allowStaticAnalysisFixes: true,
+      },
+      pullRequest: {
+        enabled: false,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: false,
+        githubAccount: "miao2016",
+      },
+    };
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe-security",
+      jobKind: "security-maintenance",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(workOrder.pullRequestPolicy).toMatchObject({ githubAccount: "miao2016" });
+    expect(prompt).toContain("Security maintenance task.");
+    expect(prompt).toContain("gh auth token --user 'miao2016'");
+    expect(prompt).toContain("For every GitHub CLI command");
+    expect(prompt).toContain("gh api");
+    expect(prompt).toContain("do not rely on the global gh active account");
   });
 
   it("renders a repository-wide pull request review prompt for all open PRs", () => {
@@ -745,7 +817,7 @@ prReview:
     expect(prompt).toContain("review passes are repeated on the updated PR");
     expect(prompt).toContain("Only repair small deterministic check failures.");
     expect(prompt).toContain("gh auth token --user 'Kingson4Wu'");
-    expect(prompt).toContain("git switch dev");
+    expect(prompt).toContain("git -C '/repo/tmux-claude-bot' switch dev");
     expect(prompt).toContain("do not call tcb open for the synthetic *-all-prs id");
     expect(prompt).not.toContain("open tmux-claude-bot --agent codex");
     expect(prompt).not.toContain("open tmux-claude-bot-all-prs --agent codex");
@@ -804,6 +876,7 @@ workspaces:
       workspace,
       scheduledAt: 1752643800000,
       runId: "1752643800000-geo-workspace",
+      projectSessionPrefix: "tmux_proj_",
     });
     const prompt = buildLoopSupervisorPrompt(workOrder);
 
@@ -811,18 +884,25 @@ workspaces:
       task: { kind: "workspace-architecture" },
       projectId: "geo",
       projectPath: "/repo/realestate",
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/realestate",
+        contextReset: "compact",
+      },
       maxRounds: 3,
       targetScore: 95,
       workspace: {
         repositories: [
           {
             id: "geo-backend",
+            workerSession: "tmux_proj_loop-worker-geo-backend",
             role: "backend",
             path: "/repo/realestate/geo-backend",
             agent: "codex",
           },
           {
             id: "geo-frontend",
+            workerSession: "tmux_proj_loop-worker-geo-frontend",
             role: "frontend",
             path: "/repo/realestate/geo-frontend",
             agent: "codex",
@@ -831,7 +911,22 @@ workspaces:
       },
     });
     expect(prompt).toContain("Workspace architecture task.");
+    expect(prompt).toContain("Expected worktree: /repo/realestate");
+    expect(prompt).toContain("git -C '/repo/realestate' rev-parse --show-toplevel");
+    expect(prompt).toContain(
+      "For workspace repository geo-backend, verify git toplevel is /repo/realestate/geo-backend",
+    );
+    expect(prompt).toContain(
+      "For workspace repository geo-frontend, verify git toplevel is /repo/realestate/geo-frontend",
+    );
     expect(prompt).toContain("Treat Geo Workspace as one bounded workspace with 2 repositories.");
+    expect(prompt).toContain(
+      "Workspace root /repo/realestate is a coordination directory and may contain multiple independent git repositories.",
+    );
+    expect(prompt).toContain("do not require the workspace root itself to be a git repository");
+    expect(prompt).toContain(
+      "verify the affected repository's git toplevel equals that repository path",
+    );
     expect(prompt).toContain("cross-repository evaluation reaches or exceeds it");
     expect(prompt).toContain("contracts between repositories");
     expect(prompt).toContain("API routes, schemas, generated clients, shared DTOs");
@@ -839,6 +934,10 @@ workspaces:
     expect(prompt).toContain("update all affected repositories in the same round");
     expect(prompt).toContain("Each repository keeps its own git branch and pull request.");
     expect(prompt).toContain("Use one shared run id");
+    expect(prompt).toContain(
+      "workspace task uses the repository-scoped branch and PR policy listed above",
+    );
+    expect(prompt).not.toContain("do not create a PR branch");
     expect(prompt).toContain(
       "For geo-backend, use branch loop/geo-backend/architecture/1752643800000-geo-workspace",
     );
@@ -849,10 +948,16 @@ workspaces:
       "For geo-frontend, use branch loop/geo-frontend/architecture/1752643800000-geo-workspace",
     );
     expect(prompt).toContain("use the repository's normal GitHub CLI identity");
-    expect(prompt).toContain("cd '/repo/realestate/geo-backend' && git status --short");
-    expect(prompt).toContain("cd '/repo/realestate/geo-frontend' && git status --short");
-    expect(prompt).toContain("open geo-backend --agent codex");
-    expect(prompt).toContain("open geo-frontend --agent codex");
+    expect(prompt).toContain("geo-backend: git -C '/repo/realestate/geo-backend' status --short");
+    expect(prompt).toContain("geo-frontend: git -C '/repo/realestate/geo-frontend' status --short");
+    expect(prompt).not.toContain("cd '/repo/realestate/geo-backend' && git status");
+    expect(prompt).not.toContain("cd '/repo/realestate/geo-frontend' && git status");
+    expect(prompt).toContain(
+      "open-worker 'tmux_proj_loop-worker-geo-backend' '/repo/realestate/geo-backend' --agent codex",
+    );
+    expect(prompt).toContain(
+      "open-worker 'tmux_proj_loop-worker-geo-frontend' '/repo/realestate/geo-frontend' --agent codex",
+    );
     expect(prompt).toContain("Focus on API contracts and shared data semantics.");
   });
 
@@ -909,6 +1014,7 @@ workspaces:
       scheduledAt: 1752643800000,
       runId: "1752643800000-geo-workspace-bug-fix",
       jobKind: "bug-fix",
+      projectSessionPrefix: "tmux_proj_",
     });
     const prompt = buildLoopSupervisorPrompt(workOrder);
 
@@ -929,10 +1035,14 @@ workspaces:
     expect(prompt).toContain(
       "For geo-frontend, use branch loop/geo-frontend/bug-fix/1752643800000-geo-workspace-bug-fix",
     );
-    expect(prompt).toContain("open geo-backend --agent codex");
-    expect(prompt).toContain("open geo-frontend --agent codex");
     expect(prompt).toContain(
-      "control <project> compact --yes before each delegated bug-fix round.",
+      "open-worker 'tmux_proj_loop-worker-geo-backend' '/repo/realestate/geo-backend' --agent codex",
+    );
+    expect(prompt).toContain(
+      "open-worker 'tmux_proj_loop-worker-geo-frontend' '/repo/realestate/geo-frontend' --agent codex",
+    );
+    expect(prompt).toContain(
+      "control <worker-session> compact --yes before each delegated bug-fix round.",
     );
     expect(prompt).toContain("Focus on backend/frontend contract bugs.");
     expect(prompt).not.toContain("Architecture target score");
@@ -1136,8 +1246,8 @@ prReview:
       "Review every open pull request in OctopusGarage/app for base branch main",
     );
     expect(prompt).toContain("gh pr list --repo OctopusGarage/app --state open --base main");
-    expect(prompt).toContain("git switch dev");
-    expect(prompt).toContain("git pull --ff-only origin dev");
+    expect(prompt).toContain("git -C '/repo/app' switch dev");
+    expect(prompt).toContain("git -C '/repo/app' pull --ff-only origin dev");
   });
 
   it("syncs the configured switchBack branch when a PR policy defines one", () => {
@@ -1160,14 +1270,125 @@ prReview:
 
     const prompt = buildLoopSupervisorPrompt(workOrder);
 
-    expect(prompt).toContain("git fetch origin release");
-    expect(prompt).toContain("git switch release");
-    expect(prompt).toContain("git pull --ff-only origin release");
+    expect(prompt).toContain("git -C '/repo/datavibe' fetch origin release");
+    expect(prompt).toContain("git -C '/repo/datavibe' switch release");
+    expect(prompt).toContain("git -C '/repo/datavibe' pull --ff-only origin release");
     expect(prompt).toContain("gh auth token --user 'Kingson4Wu'");
     expect(prompt).toContain("do not rely on the global gh active account");
   });
 
   it("parses the final marker and JSON summary", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        '{"status":"completed","projectId":"datavibe","actionsTaken":["verified"],"delegatedTasks":[],"finalVerification":"passed","reviewGate":{"preMutationReview":["confirmed bounded issue"],"postMutationReview":["diff reviewed"],"aiReview":"passed","deterministicGates":["npm test"],"decision":"pass","notes":[]},"commits":[],"followUps":[]}',
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.status).toBe("completed");
+      expect(result.summary.finalVerification).toBe("passed");
+      expect(result.summary.reviewGate).toMatchObject({
+        aiReview: "passed",
+        decision: "pass",
+        deterministicGates: ["npm test"],
+      });
+    }
+  });
+
+  it("parses structured deterministic gate evidence in reviewGate", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "completed",
+          projectId: "datavibe",
+          actionsTaken: ["verified"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: ["no diff"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "git status",
+                command: "git status --short",
+                result: "passed",
+                evidence: "clean",
+                ignoredExtra: "not part of the persisted contract",
+              },
+            ],
+            decision: "pass",
+            notes: ["read-only task"],
+          },
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.reviewGate?.deterministicGates).toEqual([
+        {
+          name: "git status",
+          command: "git status --short",
+          result: "passed",
+          evidence: "clean",
+        },
+      ]);
+    }
+  });
+
+  it("accepts a singleton reviewGate notes string from supervisor summaries", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "blocked",
+          projectId: "datavibe",
+          actionsTaken: ["verified"],
+          delegatedTasks: [],
+          finalVerification: "failed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: ["full test gate did not finish"],
+            aiReview: "passed",
+            deterministicGates: [
+              {
+                name: "full test",
+                command: "npm test",
+                result: "failed",
+                evidence: "timeout",
+              },
+            ],
+            decision: "block",
+            notes: "Do not accept without a completed deterministic test gate.",
+          },
+          commits: [],
+          followUps: ["rerun with an explicit timeout"],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.reviewGate?.notes).toEqual([
+        "Do not accept without a completed deterministic test gate.",
+      ]);
+      expect(result.summary.reviewGate?.decision).toBe("block");
+    }
+  });
+
+  it("keeps old final summaries parseable when reviewGate is absent", () => {
     const result = parseSupervisorFinalSummary(
       [
         "done",
@@ -1178,10 +1399,7 @@ prReview:
     );
 
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.summary.status).toBe("completed");
-      expect(result.summary.finalVerification).toBe("passed");
-    }
+    if (result.ok) expect(result.summary.reviewGate).toBeUndefined();
   });
 
   it("normalizes structured final verification from supervisor output", () => {
@@ -1319,6 +1537,7 @@ prReview:
     );
     expect(prompt).toContain('Use "completed" for successful no-op runs');
     expect(prompt).toContain('finalVerification must be one string only: "passed"');
+    expect(prompt).toContain("reviewGate must be an object");
     expect(prompt).toContain(finalMarkerForWorkOrder("1752643800000-datavibe"));
   });
 

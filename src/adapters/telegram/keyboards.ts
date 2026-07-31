@@ -84,8 +84,6 @@ export type CallbackAction =
   | { kind: "apBack"; sid: string }
   | { kind: "apDelegate"; sid: string }
   | { kind: "apCancelDelegate"; sid: string }
-  | { kind: "apConfirm"; sid: string }
-  | { kind: "apContinue"; sid: string }
   | { kind: "opportunityDiscussAll"; tokens: string[] }
   | { kind: "opportunityDismissAll"; tokens: string[] }
   | { kind: "promptget"; sid: string }
@@ -237,11 +235,6 @@ export function parseCallbackData(data: string): CallbackAction | null {
     if (parts.length !== 2 || !sid) return null;
     const kind = tag === "apd" ? "apDelegate" : tag === "apz" ? "apCancelDelegate" : "apBack";
     return { kind, sid } as CallbackAction;
-  }
-  if (tag === "apc" || tag === "apx") {
-    const sid = parts[1];
-    if (parts.length !== 2 || !sid) return null;
-    return { kind: tag === "apc" ? "apConfirm" : "apContinue", sid };
   }
   if (tag === "od" || tag === "ox") {
     const tokens = parseOpportunityTokens(parts[1]);
@@ -638,14 +631,6 @@ export function buildRecentKeyboard(projects: RecentButton[]): InlineKeyboard {
     if (i < projects.length - 1) kb.row();
   });
   return kb;
-}
-
-/** The two buttons attached to a human-gate push notification. */
-export function buildAutopilotGateKeyboard(sid: string): InlineKeyboard {
-  const m = messages("telegram");
-  return new InlineKeyboard()
-    .text(m.btnApConfirm, `apc:${sid}`)
-    .text(m.btnApContinue, `apx:${sid}`);
 }
 
 /** Autopilot now means supervisor-backed delegation only. */

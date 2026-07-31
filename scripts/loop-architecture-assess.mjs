@@ -65,18 +65,42 @@ function latestCompletedRunScore(projectId, stateDir) {
     .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
 
   for (const dir of dirs) {
-    const summary = readJson(join(dir, "supervisor-summary.json"));
+    const summary =
+      readJson(join(dir, "supervisor-final-summary.json")) ??
+      readJson(join(dir, "supervisor-summary.json"));
     if (!summary) continue;
     if (summary.status !== "completed") continue;
-    const verification = summary.finalVerification;
-    const gates = verification?.qualityGates;
-    const pr = verification?.pullRequest;
-    const gateEvidence = Array.isArray(gates) && gates.some((gate) => /passed/i.test(String(gate)));
-    const prEvidence = typeof pr === "string" && /mergeable=MERGEABLE|MERGEABLE/.test(pr);
+    const systemGate = readJson(join(dir, "system-gate.json"));
+    const reviewGate = summary.reviewGate ?? systemGate?.supervisorReviewGate;
+    const deterministicGates = Array.isArray(reviewGate?.deterministicGates)
+      ? reviewGate.deterministicGates
+      : [];
+    const passedGateCount = deterministicGates.filter((gate) => {
+      if (typeof gate === "string") return /passed|success|clean|merged/i.test(gate);
+      return gate?.result === "passed";
+    }).length;
+    const finalVerificationPassed = summary.finalVerification === "passed";
+    const acceptedBySystem = systemGate?.accepted === true || systemGate?.resultStatus === "completed";
+    const mergedEvidence =
+      systemGate?.resultStatus === "completed" &&
+      JSON.stringify([summary.actionsTaken, reviewGate?.deterministicGates, systemGate?.evidence])
+        .toLowerCase()
+        .includes("merge");
+    const commitEvidence = Array.isArray(summary.commits) && summary.commits.length > 0;
     let score = 8;
-    if (gateEvidence) score += 4;
-    if (prEvidence) score += 3;
-    return { score, notes: [`recent completed loop evidence: ${basename(dir)}`] };
+    if (finalVerificationPassed) score += 3;
+    if (acceptedBySystem) score += 3;
+    if (passedGateCount >= 3) score += 3;
+    if (commitEvidence) score += 2;
+    if (mergedEvidence) score += 4;
+    return {
+      score,
+      notes: [
+        `recent completed loop evidence: ${basename(dir)}${
+          acceptedBySystem ? " (system accepted)" : ""
+        }`,
+      ],
+    };
   }
 
   return { score: 0, notes: ["no completed supervisor loop evidence"] };
@@ -127,7 +151,7 @@ function architectureScore(input) {
   notes.push(`architecture guard files: ${guardFiles.length}/${input.guardFiles.length}`);
 
   const previous = latestCompletedRunScore(input.projectId, input.stateDir);
-  score += Math.min(5, previous.score);
+  score += Math.min(15, previous.score);
   notes.push(...previous.notes);
 
   return {

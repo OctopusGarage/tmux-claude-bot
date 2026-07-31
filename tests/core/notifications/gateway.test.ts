@@ -52,7 +52,13 @@ describe("NotificationGateway", () => {
       status: "partial",
       deliveries: [
         { channel: "telegram", ok: true },
-        { channel: "lark", ok: false, error: "lark down" },
+        {
+          channel: "lark",
+          ok: false,
+          error: "lark down",
+          messageSent: false,
+          failedStage: "message",
+        },
       ],
     });
   });
@@ -83,7 +89,15 @@ describe("NotificationGateway", () => {
 
     await expect(gateway.notify({ channel: "telegram", title: "Hello" })).resolves.toEqual({
       status: "failed",
-      deliveries: [{ channel: "telegram", ok: false, error: "no sender registered" }],
+      deliveries: [
+        {
+          channel: "telegram",
+          ok: false,
+          error: "no sender registered",
+          messageSent: false,
+          failedStage: "sender-missing",
+        },
+      ],
     });
   });
 
@@ -92,7 +106,15 @@ describe("NotificationGateway", () => {
 
     await expect(gateway.notify({ title: "Hello" })).resolves.toEqual({
       status: "failed",
-      deliveries: [{ channel: "telegram", ok: false, error: "no sender registered" }],
+      deliveries: [
+        {
+          channel: "telegram",
+          ok: false,
+          error: "no sender registered",
+          messageSent: false,
+          failedStage: "sender-missing",
+        },
+      ],
     });
   });
 
@@ -190,7 +212,15 @@ describe("NotificationGateway", () => {
       ),
     ).resolves.toEqual({
       status: "partial",
-      deliveries: [{ channel: "lark", ok: false, error: "upload failed" }],
+      deliveries: [
+        {
+          channel: "lark",
+          ok: false,
+          error: "upload failed",
+          messageSent: true,
+          failedStage: "attachment",
+        },
+      ],
     });
   });
 
@@ -210,7 +240,15 @@ describe("NotificationGateway", () => {
       ),
     ).resolves.toEqual({
       status: "partial",
-      deliveries: [{ channel: "telegram", ok: false, error: "no attachment sender registered" }],
+      deliveries: [
+        {
+          channel: "telegram",
+          ok: false,
+          error: "no attachment sender registered",
+          messageSent: true,
+          failedStage: "attachment-sender-missing",
+        },
+      ],
     });
     expect(telegram).toHaveBeenCalledWith(
       "ℹ️ Radar ready",
@@ -236,7 +274,15 @@ describe("NotificationGateway", () => {
       ),
     ).resolves.toEqual({
       status: "partial",
-      deliveries: [{ channel: "telegram", ok: false, error: "file not found: missing.html" }],
+      deliveries: [
+        {
+          channel: "telegram",
+          ok: false,
+          error: "file not found: missing.html",
+          messageSent: true,
+          failedStage: "attachment-validation",
+        },
+      ],
     });
     expect(telegram).toHaveBeenCalledTimes(1);
     expect(attach).not.toHaveBeenCalled();

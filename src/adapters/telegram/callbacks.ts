@@ -145,8 +145,7 @@ export async function handleCallbackQuery(
       }
       return;
     }
-    // Autopilot now means supervisor-backed delegation only. The old
-    // keep-alive/goal-cycle callbacks are intentionally not handled here.
+    // Autopilot now means supervisor-backed delegation only.
     if (parsed.kind === "apDelegate" || parsed.kind === "apCancelDelegate") {
       await safeAnswerCallback(ctx);
       const session = await resolveAliveSessionByShortId(deps, parsed.sid);
@@ -187,8 +186,8 @@ export async function handleCallbackQuery(
       }
       return;
     }
-    if (parsed.kind === "apBack" || parsed.kind === "apConfirm" || parsed.kind === "apContinue") {
-      await safeAnswerCallback(ctx, "旧 Autopilot 保活/目标入口已下线");
+    if (parsed.kind === "apBack") {
+      await safeAnswerCallback(ctx);
       return;
     }
     if (parsed.kind === "opportunityDiscussAll" || parsed.kind === "opportunityDismissAll") {

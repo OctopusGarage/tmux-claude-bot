@@ -14,8 +14,10 @@ import {
   runGitCommand,
   runShellCommand,
   runSupervisedSystemGateOutcome,
+  type SupervisedSystemGateOutcome,
   supervisorRevisionFailures,
   systemGateProjectFromWorkOrder,
+  writeSupervisedSystemGateArtifact,
 } from "../loop/service.js";
 import {
   type LoopSupervisedRunResult,
@@ -23,6 +25,12 @@ import {
   runLoopSupervisorRevisionAsync,
 } from "../loop/supervised-runner.js";
 import { completeLoopSupervisorRun } from "../loop/supervisor-completion.js";
+import {
+  leaseLoopSupervisorWorker,
+  readLoopSupervisorWorkerLeaseState,
+  releaseLoopSupervisorWorker,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../loop/supervisor-pool.js";
 import { loopSupervisorSessionNames, startLoopSupervisor } from "../loop/supervisor-session.js";
 import {
   listUnfinishedLoopSupervisorWorkOrders,
@@ -171,14 +179,6 @@ export async function startActiveDelegatedTask(
   if (candidates.length === 0) {
     return { status: "blocked", reason: "all loop supervisor sessions have active work" };
   }
-  const supervisorSession = await ensureFirstAvailableSupervisor(deps, candidates);
-  if (supervisorSession === null) {
-    return {
-      status: "blocked",
-      reason: `failed to ensure loop supervisor sessions: ${candidates.join(", ")}`,
-    };
-  }
-
   const agent =
     (await deps.configResolver.detectAgentKind?.(input.session).catch(() => null)) ??
     deps.config.loopEngineering.supervisor.agent;
@@ -197,8 +197,16 @@ export async function startActiveDelegatedTask(
     scheduledAt: now,
     runId,
     timeoutMs: DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS,
+    projectSessionPrefix: deps.config.projectSessionPrefix,
     ...(projectPolicy !== null ? { projectPolicy } : {}),
   });
+  const supervisorSession = await reserveFirstAvailableSupervisor(deps, candidates, workOrder, now);
+  if (supervisorSession === null) {
+    return {
+      status: "blocked",
+      reason: `failed to reserve loop supervisor sessions: ${candidates.join(", ")}`,
+    };
+  }
 
   writeLoopSupervisorWorkOrderState({
     workOrder,
@@ -277,7 +285,12 @@ function selectSupervisorSessionCandidates(
   deps: HandlerDeps,
   activeWork: UnfinishedLoopSupervisorWorkOrder[],
 ): string[] {
-  const active = new Set(activeWork.map((record) => record.state.supervisorSession));
+  const active = new Set([
+    ...activeWork.map((record) => record.state.supervisorSession),
+    ...readLoopSupervisorWorkerLeaseState()
+      .leases.filter((lease) => lease.status === "active")
+      .map((lease) => lease.workerSession),
+  ]);
   const sessions = loopSupervisorSessionNames(
     deps.config.projectSessionPrefix,
     deps.config.loopEngineering.supervisor.poolSize,
@@ -285,14 +298,32 @@ function selectSupervisorSessionCandidates(
   return sessions.filter((session) => !active.has(session));
 }
 
-async function ensureFirstAvailableSupervisor(
+async function reserveFirstAvailableSupervisor(
   deps: HandlerDeps,
   candidates: string[],
+  workOrder: LoopWorkOrder,
+  now: number,
 ): Promise<string | null> {
+  const retainFailureForMs =
+    (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000;
   for (const session of candidates) {
-    if (await startLoopSupervisor(deps, undefined, session)) return session;
-    log.warn("active delegated task skipped unavailable loop supervisor session", {
-      data: { session },
+    if (!(await startLoopSupervisor(deps, undefined, session))) {
+      log.warn("active delegated task skipped unavailable loop supervisor session", {
+        data: { session },
+      });
+      continue;
+    }
+    const leased = leaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      supervisorSession: session,
+      workOrder,
+      now,
+      retainFailureForMs,
+    });
+    writeLoopSupervisorWorkerLeaseState(leased.state);
+    if (leased.status === "leased") return session;
+    log.warn("active delegated task skipped leased loop supervisor session", {
+      data: { session, reason: leased.reason },
     });
   }
   return null;
@@ -362,7 +393,7 @@ async function runActiveDelegatedTaskInBackground(
     revisionFailures = supervisorRevisionFailures(gate.failures);
   }
 
-  finishActiveDelegatedTask(deps, workOrder, supervisorSession, startedAt, gate.result);
+  finishActiveDelegatedTask(deps, workOrder, supervisorSession, startedAt, gate);
 }
 
 function finishActiveDelegatedTask(
@@ -370,15 +401,23 @@ function finishActiveDelegatedTask(
   workOrder: LoopWorkOrder,
   supervisorSession: string,
   startedAt: number,
-  result: LoopSupervisedRunResult,
+  gate: SupervisedSystemGateOutcome,
 ): void {
   const endedAt = Date.now();
+  const result = gate.result;
   const completion = completeLoopSupervisorRun({
     workOrder,
     supervisorSession,
     startedAt,
     endedAt,
     result,
+  });
+  writeSupervisedSystemGateArtifact({
+    workOrder,
+    report: completion.report,
+    gate,
+    result,
+    writtenAt: endedAt,
   });
   writeLoopSupervisorWorkOrderState({
     workOrder,
@@ -387,6 +426,7 @@ function finishActiveDelegatedTask(
     now: endedAt,
     resultStatus: result.status,
   });
+  settleActiveDelegatedSupervisorLease(workOrder, result, endedAt);
   const implementedOpportunityIds = markImplementedOpportunitiesForCompletedDelegation({
     runId: workOrder.id,
     resultStatus: result.status,
@@ -416,6 +456,24 @@ function finishActiveDelegatedTask(
       `Summary: ${summary}`,
     ].join("\n"),
   });
+}
+
+function settleActiveDelegatedSupervisorLease(
+  workOrder: LoopWorkOrder,
+  result: LoopSupervisedRunResult,
+  now: number,
+): void {
+  const retainFailureForMs =
+    (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000;
+  writeLoopSupervisorWorkerLeaseState(
+    releaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      workOrderId: workOrder.id,
+      result: result.status === "completed" ? "success" : "failure",
+      now,
+      retainFailureForMs,
+    }),
+  );
 }
 
 function projectIdForSession(session: string, projectPath: string): string {

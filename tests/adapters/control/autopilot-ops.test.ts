@@ -115,14 +115,10 @@ describe("control autopilot ops (real unix socket)", () => {
     expect(result.status).toContain("LOOP_SUPERVISOR_ENABLED");
   });
 
-  it("push: autopilot notice broadcast reaches the client as an 'autopilot' event", async () => {
-    const notifier = new NotifierRegistry();
-    const c = await connected(fakeDeps(notifier));
-    const received = new Promise<{ session: string; kind: string }>((resolve) => {
-      c.once("autopilot", (msg: { session: string; kind: string }) => resolve(msg));
-    });
-    await notifier.broadcast({ kind: "awaitHuman", session: "s1", goalId: "g" });
-    const evt = await received;
-    expect(evt).toMatchObject({ session: "s1", kind: "awaitHuman" });
+  it("autopilot cancel uses the cancellation path instead of starting a new delegate", async () => {
+    const c = await connected();
+    const result = await c.autopilot("s2", "cancel");
+    expect(result.status).toContain("No active delegated task");
+    expect(result.status).not.toContain("Autopilot delegate blocked");
   });
 });

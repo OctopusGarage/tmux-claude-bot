@@ -111,10 +111,12 @@ describe("runDailyTaskAudit", () => {
     expect(result.repairCandidates).toEqual([]);
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
-        level: "success",
+        level: "warning",
         body: expect.stringContaining("running: 1"),
       }),
     );
+    expect(notifiedBody(notify)).toContain("active-issues: 1");
+    expect(notifiedBody(notify)).toContain("repair-candidates: 0");
   });
 
   it("keeps superseded failures in the report but excludes them from repair candidates", async () => {
@@ -156,6 +158,8 @@ describe("runDailyTaskAudit", () => {
       }),
     );
     expect(notifiedBodies[0]).toContain("repair: fixed");
+    expect(notifiedBodies[0]).toContain("active-issues: 0");
+    expect(notifiedBodies[0]).toContain("closed-failures: 1");
     expect(notifiedBodies[0]).toContain("Closed failures:");
   });
 
@@ -192,6 +196,13 @@ describe("runDailyTaskAudit", () => {
       failureKind: "external-ci",
     });
     expect(notifiedBodies[0]).toContain("failure-kind: external-ci");
+    expect(notifiedBodies[0]).toContain("active-issues: 1");
+    expect(notifiedBodies[0]).toContain("repair-candidates: 1");
     expect(notifiedBodies[0]).toContain("kind=external-ci");
   });
 });
+
+function notifiedBody(notify: ReturnType<typeof vi.fn>): string {
+  const first = notify.mock.calls[0]?.[0] as { body?: string } | undefined;
+  return first?.body ?? "";
+}

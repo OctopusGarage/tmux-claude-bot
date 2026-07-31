@@ -154,6 +154,8 @@ export const en: Messages = {
   agentResumed: "🔄 Resumed the previous session",
   agentResumeMissingState: "No resumable previous session state — use /start to create a new one.",
   agentAlreadyRunning: "✅ Already running",
+  agentInputNotReady:
+    "The agent is not ready to receive input yet. Try again shortly; if it keeps happening, restart this session.",
   projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
     `Project automation is running, so ordinary messages are blocked for now.\nTask: ${taskKind}\nProject: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nWait for the task to finish, or inspect/cancel it before continuing.`,
   agentStartedWith: (label) => `✅ Started with "${label}"`,
@@ -405,71 +407,21 @@ Send any text → forwarded to the agent → reply`,
   cmdBatch: "Batch scheduler: view status or control a batch run (start/pause/resume/stop/report)",
   cmdAutopilot: "Delegate the current session's work to the Loop Supervisor",
   cmdOpportunity: "Review proactive opportunity suggestions and delegate approved work",
-  cmdGoals: "List autopilot goal presets",
   cmdSysload: "Show machine load, heat, and runaway processes",
   sysloadTitle: "🖥 System load",
   dashboardTitle: "📊 Dashboard",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "Delegate the current session context to the Loop Supervisor for implementation, review, verification, PR handling, and final notification.",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot paused [${session}]: ${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot stopped [${session}]: ${reason}`,
-  autopilotNotifyUsage: (session, pct) =>
-    `🛑 autopilot goal paused [${session}]: usage reached the ${pct}% threshold`,
-  autopilotNotifyMaxIter: (session) =>
-    `⏹️ autopilot goal stopped [${session}]: max iterations reached`,
-  autopilotNotifyWallClock: (session) =>
-    `⏹️ autopilot goal stopped [${session}]: time budget exhausted`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]: phase looks done — confirm with /autopilot confirm or resume with /autopilot reject`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ autopilot goal complete [${session}]: ${goalId} (please confirm)`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ autopilot cycle complete [${session}]: ${rounds} round(s) done (please confirm)`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ autopilot keep-alive task complete [${session}]: completion marker seen`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]: starting goal ${goalId} (${pos}/${total} · round ${round}/${rounds})`,
   batchRunStarted: (planId, tasks) => `🚀 Batch run started: plan ${planId}, ${tasks} task(s)`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ Batch pool paused [${agent}]: quota reached, resuming at ${resumeAt}`,
   batchRunComplete: (summary) => `✅ Batch run complete\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "Global keep-alive ON: all live sessions are auto-managed (use /autopilot off to exclude one)"
-      : "Global keep-alive OFF",
-  autopilotStatus: (o) =>
-    `Autopilot: ${o.enabled ? "on" : "off"} (${o.pureKeepAlive ? "keep-alive" : "goal-driven"}, ${o.iterations} interventions, persona=${o.persona})${o.goal ? ` (goal ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
   autopilotUsage: (raw) =>
     `Unknown subcommand "${raw}". Usage: /autopilot [requirement] or /autopilot delegate [requirement]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} Enable keep-alive/goals`,
-  btnApDisable: "⏹ Disable keep-alive/goals",
   btnApDelegate: "🚀 Continue via supervisor",
   btnApCancelDelegate: "⛔ Cancel delegate",
-  btnApPickGoals: "🎯 Pick goals",
-  btnApGlobalOn: "🌐 Global: on",
-  btnApGlobalOff: "🌐 Global: off",
-  btnApStop: "⏹ Stop goal",
-  btnApConfirm: "✅ Confirm done",
-  btnApContinue: "▶️ Keep polishing",
   btnApBack: "↩︎ Back",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) => `▶️ Start (${n} goal(s) · ${rounds} round(s))`,
-  apRoundsLabel: (rounds: number) => `Rounds: ${rounds}`,
-  goalTestCoverage: "Raise test coverage",
-  goalFixTests: "Fix failing tests",
-  goalCodeReview: "Code review",
-  goalAddFeature: "Add feature",
-  goalRefactorElegant: "Refactor to elegant",
-  goalUiPolish: "Polish UI",
-  goalImproveArchitecture: "Improve architecture",
-  goalHardenStandards: "Harden standards & gates",
-  goalPolishGithub: "Polish GitHub presence",
-  goalSyncDocs: "Align docs with code",
-  autopilotGoalStarted: (id) => `Goal started: ${id}`,
-  autopilotUnknownGoal: (ids) => `Unknown goal. Available: ${ids}`,
-  goalsTitle: "🎯 Goal presets",
   noLogsContext: "No current session. Select a project or specify a trace (/logs <traceId>).",
 
   // ── group binding (Feishu) ──

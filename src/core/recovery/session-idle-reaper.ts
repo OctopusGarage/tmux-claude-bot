@@ -1,8 +1,12 @@
 import { createLogger } from "../../shared/utils/logger.js";
 import { readAgentActivitySnapshot } from "../agents/activity-snapshot.js";
-import { markSessionUsed, sessionLastUsedAt } from "../agents/runningSessions.js";
+import {
+  markSessionStopped,
+  markSessionUsed,
+  sessionLastUsedAt,
+} from "../agents/runningSessions.js";
 import type { HandlerDeps } from "../deps.js";
-import { listUserProjectSessions } from "../projects/operator.js";
+import { isLoopWorkerSessionName, isReservedInfrastructureSession } from "../projects/operator.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 
 const log = createLogger("recovery.idle-reaper");
@@ -27,15 +31,16 @@ export async function runSessionIdleReaper(
     failures: 0,
   };
 
-  let sessions: string[];
+  let sessions: ReapableSession[];
   try {
-    sessions = await listUserProjectSessions(deps);
+    sessions = await listReapableSessions(deps);
   } catch (err) {
     log.warn("idle reaper: could not list sessions", { err });
     return { ...summary, failures: 1 };
   }
 
-  for (const session of sessions) {
+  for (const candidate of sessions) {
+    const { session } = candidate;
     summary.checked++;
     try {
       const decision = await idleReaperDecision(
@@ -44,16 +49,23 @@ export async function runSessionIdleReaper(
         currentSessions,
         now,
         input.maxIdleMs,
+        candidate.kind === "loop-worker",
       );
       if (decision.kind === "skip") {
         increment(summary.skipped, decision.reason);
         continue;
       }
-      await deps.agent.exit(session);
+      if (candidate.kind === "loop-worker") {
+        await deps.bridge.killSession(session);
+        markSessionStopped(session);
+      } else {
+        await deps.agent.exit(session);
+      }
       summary.closed++;
-      log.info("idle reaper closed unused agent", {
+      log.info("idle reaper closed unused session", {
         session,
         data: {
+          kind: candidate.kind,
           idleMs: decision.idleMs,
           lastUsedAt: new Date(decision.lastUsedAt).toISOString(),
         },
@@ -82,12 +94,29 @@ type IdleReaperDecision =
         | "not-idle-long-enough";
     };
 
+type ReapableSession = { session: string; kind: "user" | "loop-worker" };
+
+async function listReapableSessions(deps: HandlerDeps): Promise<ReapableSession[]> {
+  const prefix = deps.config.projectSessionPrefix;
+  const sessions: ReapableSession[] = [];
+  for (const session of await deps.bridge.listProjectSessions()) {
+    if (isLoopWorkerSessionName(session, prefix)) {
+      sessions.push({ session, kind: "loop-worker" });
+      continue;
+    }
+    if (isReservedInfrastructureSession(session, prefix)) continue;
+    sessions.push({ session, kind: "user" });
+  }
+  return sessions;
+}
+
 async function idleReaperDecision(
   deps: HandlerDeps,
   session: string,
   currentSessions: Set<string>,
   now: number,
   maxIdleMs: number,
+  closeStoppedSession: boolean,
 ): Promise<IdleReaperDecision> {
   if (currentSessions.has(session)) return { kind: "skip", reason: "current" };
   if (deps.queue.size(session) > 0 || deps.queue.isSessionProcessing(session)) {
@@ -107,7 +136,7 @@ async function idleReaperDecision(
     pathDriftFailure: "ignore",
   });
 
-  if (!activity.running) return { kind: "skip", reason: "not-running" };
+  if (!activity.running && !closeStoppedSession) return { kind: "skip", reason: "not-running" };
   if (activity.busy) {
     markSessionUsed(session, now);
     return { kind: "skip", reason: "busy" };

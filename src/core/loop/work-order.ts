@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { NotificationChannelSelection } from "../notifications/gateway.js";
 import { opportunityReportPath } from "../opportunities/store.js";
+import { loopWorkerSessionName } from "../projects/operator.js";
 import { sessionNameFromPath } from "../projects/sessionPathMap.js";
 import type { ApprovedSkill } from "../skills/schema.js";
 import type {
@@ -20,8 +21,40 @@ export type LoopSupervisorFinalSummary = {
   actionsTaken: string[];
   delegatedTasks: Array<{ projectId: string; status: string } | string>;
   finalVerification: "passed" | "failed" | "not-run" | "unknown";
+  reviewGate?: LoopSupervisorReviewGate;
   commits: string[];
   followUps: string[];
+};
+
+export type LoopSupervisorReviewGate = {
+  preMutationReview: string[];
+  postMutationReview: string[];
+  aiReview: "passed" | "failed" | "not-run" | "not-applicable";
+  deterministicGates: LoopSupervisorReviewGateDeterministicGate[];
+  decision: "pass" | "block" | "fail";
+  notes: string[];
+};
+
+type LoopSupervisorReviewGateDeterministicGateObject = {
+  name: string;
+  command?: string;
+  result: "passed" | "failed" | "skipped" | "not-run";
+  evidence?: string;
+};
+
+export type LoopSupervisorReviewGateDeterministicGate =
+  | string
+  | LoopSupervisorReviewGateDeterministicGateObject;
+
+type LoopExecutionIsolation = {
+  mode: "supervised-worker";
+  expectedWorktree: string;
+  contextReset: "compact" | "clear";
+  cleanup: {
+    success: "release-worker";
+    failure: "retain-for-ttl";
+    retainFailureForHours: number;
+  };
 };
 
 type HarnessAutoSubtaskKind = "architecture" | "bug-fix" | "test-coverage" | "security-maintenance";
@@ -157,8 +190,10 @@ export type LoopWorkOrder = {
   projectId: string;
   projectName: string;
   projectPath: string;
+  executionIsolation?: LoopExecutionIsolation;
   relatedOpportunityIds?: string[];
   notificationSession?: string;
+  workerSession?: string;
   agent: LoopProjectConfig["agent"];
   goal: string;
   maxRounds: number;
@@ -183,6 +218,7 @@ export type LoopWorkOrder = {
       role: string;
       agent: LoopProjectConfig["agent"];
       pullRequest: LoopProjectConfig["pullRequest"];
+      workerSession?: string;
     }>;
   };
   requiredFinalMarker: string;
@@ -209,6 +245,20 @@ const FINAL_VERIFICATION_STATUSES = new Set<LoopSupervisorFinalSummary["finalVer
   "not-run",
   "unknown",
 ]);
+const REVIEW_GATE_AI_REVIEW_STATUSES = new Set<LoopSupervisorReviewGate["aiReview"]>([
+  "passed",
+  "failed",
+  "not-run",
+  "not-applicable",
+]);
+const REVIEW_GATE_DECISIONS = new Set<LoopSupervisorReviewGate["decision"]>([
+  "pass",
+  "block",
+  "fail",
+]);
+const REVIEW_GATE_DETERMINISTIC_GATE_RESULTS = new Set<
+  LoopSupervisorReviewGateDeterministicGateObject["result"]
+>(["passed", "failed", "skipped", "not-run"]);
 
 export function finalMarkerForWorkOrder(workOrderId: string): string {
   return `[LOOP_SUPERVISOR_DONE:${workOrderId}]`;
@@ -259,8 +309,12 @@ export function buildLoopWorkOrder(input: {
     projectId: input.project.id,
     projectName: input.project.name,
     projectPath: input.project.path,
+    executionIsolation: defaultExecutionIsolation(input.project.path),
     ...(input.projectSessionPrefix !== undefined
-      ? { notificationSession: sessionNameFromPath(input.project.path, input.projectSessionPrefix) }
+      ? {
+          notificationSession: sessionNameFromPath(input.project.path, input.projectSessionPrefix),
+          workerSession: loopWorkerSessionName(input.projectSessionPrefix, input.project.id),
+        }
       : {}),
     agent: input.project.agent,
     goal: input.project.goal,
@@ -312,6 +366,7 @@ export function buildRepositoryPullRequestReviewWorkOrder(input: {
     projectId: repository.id,
     projectName: repository.name,
     projectPath: repository.path,
+    executionIsolation: defaultExecutionIsolation(repository.path),
     agent: repository.agent,
     goal: `Review and merge eligible pull requests for ${repository.repo}.`,
     maxRounds: 1,
@@ -344,6 +399,7 @@ export function buildWorkspaceArchitectureWorkOrder(input: {
   workspace: LoopWorkspaceConfig;
   scheduledAt: number;
   runId: string;
+  projectSessionPrefix?: string;
 }): LoopWorkOrder {
   return buildLoopWorkspaceWorkOrder({ ...input, jobKind: "workspace-architecture" });
 }
@@ -403,8 +459,12 @@ export function buildLoopWorkspaceWorkOrder(input: {
     projectId: workspace.id,
     projectName: workspace.name,
     projectPath: workspace.root,
+    executionIsolation: defaultExecutionIsolation(workspace.root),
     ...(input.projectSessionPrefix !== undefined
-      ? { notificationSession: sessionNameFromPath(workspace.root, input.projectSessionPrefix) }
+      ? {
+          notificationSession: sessionNameFromPath(workspace.root, input.projectSessionPrefix),
+          workerSession: loopWorkerSessionName(input.projectSessionPrefix, workspace.id),
+        }
       : {}),
     agent: workspace.agent,
     goal: architectureTask ? workspace.architecture.goal : workspaceTaskGoal(workspace, task.kind),
@@ -433,6 +493,9 @@ export function buildLoopWorkspaceWorkOrder(input: {
         role: repository.role,
         agent: repository.agent ?? workspace.agent,
         pullRequest: repository.pullRequest,
+        ...(input.projectSessionPrefix !== undefined
+          ? { workerSession: loopWorkerSessionName(input.projectSessionPrefix, repository.id) }
+          : {}),
       })),
     },
     requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
@@ -455,6 +518,7 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
   runId: string;
   skills?: { approved: ApprovedSkill[] };
   timeoutMs?: number;
+  projectSessionPrefix?: string;
   projectPolicy?: LoopProjectConfig;
 }): LoopWorkOrder {
   const projectPolicy = input.projectPolicy;
@@ -473,10 +537,14 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
     projectId: input.projectId,
     projectName: input.projectName,
     projectPath: input.projectPath,
+    executionIsolation: defaultExecutionIsolation(input.projectPath),
     ...(input.opportunityIds !== undefined && input.opportunityIds.length > 0
       ? { relatedOpportunityIds: [...input.opportunityIds] }
       : {}),
     notificationSession: input.session,
+    ...(input.projectSessionPrefix !== undefined
+      ? { workerSession: loopWorkerSessionName(input.projectSessionPrefix, input.projectId) }
+      : {}),
     agent: input.agent,
     goal: input.requirement,
     maxRounds: 1,
@@ -508,6 +576,19 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
     },
     requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
     finalSummaryPath: finalSummaryPathForWorkOrder(input.projectId, input.runId),
+  };
+}
+
+function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsolation {
+  return {
+    mode: "supervised-worker",
+    expectedWorktree,
+    contextReset: "compact",
+    cleanup: {
+      success: "release-worker",
+      failure: "retain-for-ttl",
+      retainFailureForHours: 72,
+    },
   };
 }
 
@@ -577,6 +658,7 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
     "- Do not add model SDKs, model API keys, or direct model HTTP integrations.",
     "- Respect allowedActions and blockedActions exactly.",
     "- Preserve unrelated user work and avoid broad rewrites.",
+    ...executionIsolationPolicy(workOrder),
     syncPolicy(workOrder, baseBranch),
     "- If the base sync fails, the worktree is dirty, or fast-forward is impossible, stop and report blocked; do not optimize stale code.",
     commitBranchPolicy(workOrder),
@@ -587,21 +669,65 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
     `- ${cli} dashboard --json`,
     `- ${cli} sessions`,
     `- ${cli} open <project> --agent <claude|codex>`,
+    `- ${cli} open-worker <session> <path> --agent <claude|codex>`,
     `- ${cli} peek <project>`,
     `- ${cli} control <project> compact --yes`,
     `- ${cli} send <project> "<task>"`,
+    `- ${cli} send <project> "<long task>" --no-wait, then poll with ${cli} peek <project> until the worker reaches a safe handoff.`,
     `- ${cli} loop run <config> <projectId>`,
     `- ${cli} notify ...`,
     "",
     "Required final response:",
     `- Write the strict JSON final summary to ${shellQuote(finalSummaryPath)} before printing the final marker.`,
-    "- The JSON file must contain fields: status, projectId, actionsTaken, delegatedTasks, finalVerification, commits, followUps. delegatedTasks must be an array of strings, or objects with only projectId and status.",
+    ...finalSummaryContractLines(),
     `- status must be exactly one of: ${SUPERVISOR_FINAL_STATUS_LIST}. Use "completed" for successful no-op runs; do not use "passed", "complete", "done", or "success" as status.`,
     `- Then print ${workOrder.requiredFinalMarker} on its own line. You may print the same strict JSON after it, but the file is authoritative.`,
-    '- finalVerification must be one string only: "passed", "failed", "not-run", or "unknown"; put detailed verification notes in actionsTaken or followUps, not in finalVerification.',
-    "- commits must contain only real commit hashes or strings that start with a real commit hash; put PR URLs, PR numbers, and status notes in actionsTaken or followUps.",
-    "- Before finalizing a PR task, bug-fix task, test-coverage task, security-maintenance task, or architecture task that opened a PR, re-read the PR body and remove known generated review/release-note blocks such as CodeRabbit auto-generated summaries; the PR body must contain only the intended human-authored summary, verification, and notes.",
+    ...finalSummaryValidationLines(),
   ].join("\n");
+}
+
+function finalSummaryContractLines(): string[] {
+  return [
+    "- The JSON file must contain fields: status, projectId, actionsTaken, delegatedTasks, finalVerification, reviewGate, commits, followUps. delegatedTasks must be an array of strings, or objects with only projectId and status.",
+    "- reviewGate must be an object with fields: preMutationReview, postMutationReview, aiReview, deterministicGates, decision, notes.",
+    "- reviewGate.preMutationReview must list the evidence checked before editing, including why the issue or task is real, bounded, allowed, and verifiable; use [] only for read-only/no-op tasks and explain that in notes.",
+    "- reviewGate.postMutationReview must list the diff/risk review performed after editing; include regression, security, data, scheduler/state, notification, PR/merge, and switch-back risks when relevant.",
+    '- reviewGate.aiReview must be one of "passed", "failed", "not-run", or "not-applicable". It means review through the existing Claude Code / Codex control surface only; do not call model-provider APIs.',
+    '- reviewGate.deterministicGates must list the concrete non-AI gates used for final acceptance, such as tests, typecheck, lint, local verification, CI, PR mergeability, clean worktree, switch-back branch, and notification/report artifacts. Prefer objects with name, result, command, and evidence; string entries are also accepted for simple gates. Object result must be one of "passed", "failed", "skipped", or "not-run".',
+    '- reviewGate.decision must be "pass", "block", or "fail". Completed code-changing runs require "pass"; use "block" when evidence is incomplete or an external/system condition prevents safe completion.',
+  ];
+}
+
+function finalSummaryValidationLines(): string[] {
+  return [
+    '- finalVerification must be one string only: "passed", "failed", "not-run", or "unknown"; put detailed verification notes in actionsTaken, reviewGate, or followUps, not in finalVerification.',
+    "- commits must contain only real commit hashes or strings that start with a real commit hash; put PR URLs, PR numbers, and status notes in actionsTaken or followUps.",
+    "- AI review is advisory evidence only. Deterministic gates remain authoritative for final acceptance; if AI review and deterministic gates disagree, record the disagreement in reviewGate.notes and do not mark the run completed unless deterministic gates pass.",
+    "- Run long or potentially unbounded verification commands with an explicit timeout. If a command exceeds that timeout, stop waiting, record the gate as failed or skipped with concrete evidence in reviewGate.deterministicGates, and report blocked or failed instead of leaving the WorkOrder in flight.",
+    "- Before finalizing a PR task, bug-fix task, test-coverage task, security-maintenance task, architecture task, runtime-guardian repair, or daily-audit repair that opened a PR or changed code, re-read the PR body/diff and remove known generated review/release-note blocks such as CodeRabbit auto-generated summaries; the PR body must contain only the intended human-authored summary, verification, and notes.",
+  ];
+}
+
+function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
+  const isolation =
+    workOrder.executionIsolation ?? defaultExecutionIsolation(workOrder.projectPath);
+  return [
+    "Execution isolation:",
+    `- This WorkOrder must lease a dedicated supervised worker context for run ${workOrder.id}; do not inject this WorkOrder into ordinary user chat or an unrelated project session.`,
+    `- Expected worktree: ${isolation.expectedWorktree}. Before any sync, assessment, edit, PR review, or shell command that mutates state, run git -C ${shellQuote(isolation.expectedWorktree)} rev-parse --show-toplevel and verify it must equal ${isolation.expectedWorktree}. If it does not match, stop and report blocked.`,
+    ...workspaceWorktreeVerificationPolicy(workOrder),
+    `- Reset the delegated worker context with ${isolation.contextReset} before substantive task execution and between unrelated subtasks; preserve only the WorkOrder JSON and current verified evidence.`,
+    `- Record the leased worker/session name, expected worktree, actual git toplevel, reset action, and cleanup decision in actionsTaken or followUps so the run can be replayed from persisted artifacts.`,
+    `- On completion, release the worker after successful system acceptance; retain the worker for ${isolation.cleanup.retainFailureForHours} hour(s) on failure, timeout, cancellation, or invalid output so the transcript can be inspected, then allow cleanup.`,
+  ];
+}
+
+function workspaceWorktreeVerificationPolicy(workOrder: LoopWorkOrder): string[] {
+  if (workOrder.workspace === undefined) return [];
+  return workOrder.workspace.repositories.map(
+    (repository) =>
+      `- For workspace repository ${repository.id}, verify git toplevel is ${repository.path} before touching that repository.`,
+  );
 }
 
 function taskSpecificPolicy(workOrder: LoopWorkOrder, baseBranch: string): string[] {
@@ -803,11 +929,14 @@ function workOrderTask(workOrder: LoopWorkOrder): NonNullable<LoopWorkOrder["tas
 function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
   if (workOrder.task?.kind === "active-delegated-task") {
     if (workOrder.commitPolicy.enabled && workOrder.pullRequestPolicy?.enabled) {
-      return `- Before delegated work, sync the target base branch: cd ${shellQuote(workOrder.projectPath)} && git status --short must be clean, then git fetch origin ${baseBranch}, git switch ${baseBranch}, and git pull --ff-only origin ${baseBranch}.`;
+      return `- Before delegated work, sync the target base branch with target-pinned git commands: ${syncRepositoryCommands(
+        workOrder.projectPath,
+        baseBranch,
+      )}.`;
     }
     return [
       "- Before delegated work, inspect the target repository state from the current branch and preserve the user's active branch context.",
-      `- Run git status --short in ${shellQuote(workOrder.projectPath)} and record whether unrelated user work is present before editing.`,
+      `- Run ${gitInWorktree(workOrder.projectPath, "status --short")} and record whether unrelated user work is present before editing.`,
       "- Do not switch branches, pull, rebase, merge, or discard local changes unless the user requirement explicitly asks for it or it is necessary and safe to complete the delegated task.",
     ].join("\n");
   }
@@ -816,11 +945,30 @@ function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
       "- Before assessment or delegated work, sync every workspace repository:",
       ...workOrder.workspace.repositories.map(
         (repository) =>
-          `  - cd ${shellQuote(repository.path)} && git status --short must be clean, then git fetch origin ${repository.pullRequest.switchBack}, git switch ${repository.pullRequest.switchBack}, and git pull --ff-only origin ${repository.pullRequest.switchBack}.`,
+          `  - ${repository.id}: ${syncRepositoryCommands(
+            repository.path,
+            repository.pullRequest.switchBack,
+          )}.`,
       ),
     ].join("\n");
   }
-  return `- Before assessment or delegated work, sync the target base branch: cd ${shellQuote(workOrder.projectPath)} && git status --short must be clean, then git fetch origin ${baseBranch}, git switch ${baseBranch}, and git pull --ff-only origin ${baseBranch}.`;
+  return `- Before assessment or delegated work, sync the target base branch with target-pinned git commands: ${syncRepositoryCommands(
+    workOrder.projectPath,
+    baseBranch,
+  )}.`;
+}
+
+function syncRepositoryCommands(path: string, branch: string): string {
+  return [
+    `${gitInWorktree(path, "status --short")} must be clean`,
+    gitInWorktree(path, `fetch origin ${branch}`),
+    gitInWorktree(path, `switch ${branch}`),
+    gitInWorktree(path, `pull --ff-only origin ${branch}`),
+  ].join(", then ");
+}
+
+function gitInWorktree(path: string, args: string): string {
+  return `git -C ${shellQuote(path)} ${args}`;
 }
 
 function architecturePolicy(workOrder: LoopWorkOrder): string[] {
@@ -837,6 +985,8 @@ function workspacePolicy(workOrder: LoopWorkOrder): string[] {
   return [
     "Workspace multi-repository task.",
     `- Treat ${workOrder.projectName} as one bounded workspace with ${workOrder.workspace.repositories.length} repositories.`,
+    `- Workspace root ${workOrder.workspace.root} is a coordination directory and may contain multiple independent git repositories. Verify it exists, but do not require the workspace root itself to be a git repository.`,
+    "- Git safety checks are repository-scoped: before syncing, assessing, editing, committing, pushing, or opening a PR, verify the affected repository's git toplevel equals that repository path.",
     "- First decide which repositories are actually affected. Do not force every repository to change. When the evidence points to only one repository, keep the change there.",
     "- Inspect contracts between repositories before editing affected areas: API routes, schemas, generated clients, shared DTOs, auth/session assumptions, build/deploy coupling, error handling, and data/state ownership.",
     "- If a change crosses repository boundaries, update all affected repositories in the same round and verify the contract from every affected side.",
@@ -1238,12 +1388,17 @@ function agentSessionPolicy(workOrder: LoopWorkOrder, cli: string): string[] {
   const task = workOrderTask(workOrder);
   if (workOrder.workspace !== undefined) {
     return [
-      "- This workspace task may delegate to multiple real project sessions; do not create a synthetic workspace product session.",
+      "- This workspace task may delegate to multiple isolated loop worker sessions; do not use ordinary user chat sessions.",
       ...workOrder.workspace.repositories.flatMap((repository) => [
-        `- Open ${repository.name} with the configured agent: ${cli} open ${repository.id} --agent ${repository.agent}.`,
-        `- After opening ${repository.id}, verify ${cli} dashboard --json shows that real project running with the configured agent.`,
+        `- Open ${repository.name} in its isolated loop worker: ${openWorkerCommand(
+          cli,
+          repository.workerSession ?? repository.id,
+          repository.path,
+          repository.agent,
+        )}.`,
+        `- After opening ${repository.name}, verify ${cli} dashboard --json shows ${repository.workerSession ?? repository.id} running with the configured agent and path ${repository.path}.`,
       ]),
-      contextResetPolicy(workOrder, cli),
+      contextResetPolicy(workOrder, cli, "<worker-session>"),
     ];
   }
   if (task.kind === "repository-pull-request-review") {
@@ -1253,15 +1408,34 @@ function agentSessionPolicy(workOrder: LoopWorkOrder, cli: string): string[] {
       "- If you need to delegate code editing to a project session, open the real repository path manually; do not require that as a gate for PR review.",
     ];
   }
+  const workerSession = workOrder.workerSession ?? workOrder.notificationSession;
+  if (workerSession !== undefined) {
+    return [
+      `- Open the target project in its isolated loop worker: ${openWorkerCommand(
+        cli,
+        workerSession,
+        workOrder.projectPath,
+        workOrder.agent,
+      )}.`,
+      `- Use ${workerSession} for all delegated worker commands: ${cli} peek ${workerSession}, ${cli} control ${workerSession} <action>, and ${cli} send ${workerSession} "<task>" --no-wait for long delegated work. Do not send this WorkOrder to the ordinary user project session.`,
+      `- After a no-wait worker delegation, poll ${cli} peek ${workerSession} and repository state until the worker reaches a safe handoff; do not treat the absence of an immediate reply as a failed send.`,
+      `- After opening, verify ${cli} dashboard --json shows ${workerSession} running with the configured agent and path ${workOrder.projectPath}; if it does not, stop and report blocked.`,
+      contextResetPolicy(workOrder, cli, workerSession),
+    ];
+  }
   return [
     `- Open the target project with the configured agent: ${cli} open ${shellQuote(workOrder.projectPath)} --agent ${workOrder.agent}.`,
     `- After opening, verify ${cli} dashboard --json shows the target project running with the configured agent; if it does not, stop and report blocked.`,
-    contextResetPolicy(workOrder, cli),
+    `- For long delegated project work, use ${cli} send <project> "<task>" --no-wait, then poll ${cli} peek <project> and repository state until the project reaches a safe handoff; do not treat the absence of an immediate reply as a failed send.`,
+    contextResetPolicy(workOrder, cli, "<project>"),
   ];
 }
 
 function commitBranchPolicy(workOrder: LoopWorkOrder): string {
   const task = workOrderTask(workOrder);
+  if (workOrder.workspace !== undefined) {
+    return "- This workspace task uses the repository-scoped branch and PR policy listed above; the top-level workspace commitPolicy is only a container default and must not block repository branches or PRs.";
+  }
   if (task.kind === "active-delegated-task") {
     if (workOrder.commitPolicy.enabled && workOrder.commitPolicy.branch !== undefined) {
       return `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other delegated branch.`;
@@ -1285,42 +1459,51 @@ function commitBranchPolicy(workOrder: LoopWorkOrder): string {
     : "- If commits are disabled or no commit branch is configured, do not create a PR branch.";
 }
 
-function contextResetPolicy(workOrder: LoopWorkOrder, cli: string): string {
+function contextResetPolicy(workOrder: LoopWorkOrder, cli: string, targetRef: string): string {
   const task = workOrderTask(workOrder);
   if (task.kind === "pull-request-review") {
-    return `- Run ${cli} control <project> compact --yes before each delegated review pass.`;
+    return `- Run ${cli} control ${targetRef} compact --yes before each delegated review pass.`;
   }
   if (task.kind === "bug-fix") {
-    return `- Run ${cli} control <project> compact --yes before each delegated bug-fix round.`;
+    return `- Run ${cli} control ${targetRef} compact --yes before each delegated bug-fix round.`;
   }
   if (task.kind === "test-coverage") {
-    return `- Run ${cli} control <project> compact --yes before each delegated test-coverage round.`;
+    return `- Run ${cli} control ${targetRef} compact --yes before each delegated test-coverage round.`;
   }
   if (task.kind === "security-maintenance") {
-    return `- Run ${cli} control <project> compact --yes before each delegated security-maintenance round.`;
+    return `- Run ${cli} control ${targetRef} compact --yes before each delegated security-maintenance round.`;
   }
   if (task.kind === "harness-auto") {
-    return `- Run ${cli} control <project> compact --yes before each delegated harness-auto round and before switching between different subtask types.`;
+    return `- Run ${cli} control ${targetRef} compact --yes before each delegated harness-auto round and before switching between different subtask types.`;
   }
   if (task.kind === "active-delegated-task") {
-    return `- Run ${cli} control <project> compact --yes before each delegated task slice when context is stale or before a major verification/review pass.`;
+    return `- Run ${cli} control ${targetRef} compact --yes before each delegated task slice when context is stale or before a major verification/review pass.`;
   }
   if (task.kind === "opportunity-discovery") {
-    return `- Run ${cli} control <project> compact --yes before the discovery pass if the target session context is stale.`;
+    return `- Run ${cli} control ${targetRef} compact --yes before the discovery pass if the target session context is stale.`;
   }
   if (task.kind === "repository-pull-request-review") {
-    return `- Run ${cli} control <project> compact --yes before each delegated repository PR review pass.`;
+    return `- Run ${cli} control ${targetRef} compact --yes before each delegated repository PR review pass.`;
   }
-  return `- Run ${cli} control <project> compact --yes before each delegated optimization round.`;
+  return `- Run ${cli} control ${targetRef} compact --yes before each delegated optimization round.`;
+}
+
+function openWorkerCommand(
+  cli: string,
+  workerSession: string,
+  projectPath: string,
+  agent: LoopProjectConfig["agent"],
+): string {
+  return `${cli} open-worker ${shellQuote(workerSession)} ${shellQuote(projectPath)} --agent ${agent}`;
 }
 
 function githubIdentityPolicy(workOrder: LoopWorkOrder): string {
   const account = workOrder.pullRequestPolicy?.githubAccount;
-  if (!workOrder.pullRequestPolicy?.enabled || account === undefined) {
+  if (account === undefined) {
     return "- For GitHub CLI commands, use the repository's normal gh context.";
   }
   const tokenCommand = `GH_TOKEN="$(gh auth token --user ${shellQuote(account)})"`;
-  return `- For every GitHub CLI PR command, use the configured account with a command-local token: ${tokenCommand} gh pr <create|view|merge> ...; do not rely on the global gh active account.`;
+  return `- For every GitHub CLI command, use the configured account with a command-local token: ${tokenCommand} gh <api|pr|run|repo> ...; for multi-command shells, first run export ${tokenCommand}. This includes GitHub security findings checks such as gh api; do not rely on the global gh active account.`;
 }
 
 function commitPolicyForWorkOrder(
@@ -1480,12 +1663,10 @@ export function buildLoopSupervisorFinalizationPrompt(
     "",
     "Required final response:",
     `- Write the strict JSON final summary to ${shellQuote(finalSummaryPath)} before printing the final marker.`,
-    "- The JSON file must contain fields: status, projectId, actionsTaken, delegatedTasks, finalVerification, commits, followUps. delegatedTasks must be an array of strings, or objects with only projectId and status.",
+    ...finalSummaryContractLines(),
     `- status must be exactly one of: ${SUPERVISOR_FINAL_STATUS_LIST}. Use "completed" for successful no-op runs; do not use "passed", "complete", "done", or "success" as status.`,
     `- Then print ${workOrder.requiredFinalMarker} on its own line. You may print the same strict JSON after it, but the file is authoritative.`,
-    '- finalVerification must be one string only: "passed", "failed", "not-run", or "unknown"; put detailed verification notes in actionsTaken or followUps, not in finalVerification.',
-    "- commits must contain only real commit hashes or strings that start with a real commit hash; put PR URLs, PR numbers, and status notes in actionsTaken or followUps.",
-    "- Before finalizing a PR task, bug-fix task, test-coverage task, security-maintenance task, or architecture task that opened a PR, re-read the PR body and remove known generated review/release-note blocks such as CodeRabbit auto-generated summaries; the PR body must contain only the intended human-authored summary, verification, and notes.",
+    ...finalSummaryValidationLines(),
   ].join("\n");
 }
 
@@ -1526,11 +1707,10 @@ export function buildLoopSupervisorRevisionPrompt(input: {
     "",
     "Required final response:",
     `- Write the strict JSON final summary to ${shellQuote(finalSummaryPath)} before printing the final marker.`,
-    "- The JSON file must contain fields: status, projectId, actionsTaken, delegatedTasks, finalVerification, commits, followUps. delegatedTasks must be an array of strings, or objects with only projectId and status.",
+    ...finalSummaryContractLines(),
     `- status must be exactly one of: ${SUPERVISOR_FINAL_STATUS_LIST}. Use "completed" for successful no-op runs; do not use "passed", "complete", "done", or "success" as status.`,
     `- Then print ${input.workOrder.requiredFinalMarker} on its own line. The file is authoritative.`,
-    '- finalVerification must be one string only: "passed", "failed", "not-run", or "unknown"; put detailed verification notes in actionsTaken or followUps, not in finalVerification.',
-    "- commits must contain only real commit hashes or strings that start with a real commit hash; put PR URLs, PR numbers, and status notes in actionsTaken or followUps.",
+    ...finalSummaryValidationLines(),
   ].join("\n");
 }
 
@@ -1615,6 +1795,7 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
   const actionsTaken = parseStringArray(value.actionsTaken);
   const delegatedTasks = parseDelegatedTasks(value.delegatedTasks);
   const finalVerification = parseFinalVerification(value.finalVerification, status);
+  const reviewGate = value.reviewGate === undefined ? undefined : parseReviewGate(value.reviewGate);
   const commits = parseStringArray(value.commits);
   const followUps = parseStringArray(value.followUps);
 
@@ -1624,6 +1805,7 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
     actionsTaken === null ||
     delegatedTasks === null ||
     finalVerification === null ||
+    reviewGate === null ||
     commits === null ||
     followUps === null
   ) {
@@ -1636,9 +1818,80 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
     actionsTaken,
     delegatedTasks,
     finalVerification,
+    ...(reviewGate !== undefined ? { reviewGate } : {}),
     commits,
     followUps,
   };
+}
+
+function parseReviewGate(value: unknown): LoopSupervisorReviewGate | null {
+  if (!isRecord(value)) return null;
+  const preMutationReview = parseStringArray(value.preMutationReview);
+  const postMutationReview = parseStringArray(value.postMutationReview);
+  const aiReview =
+    typeof value.aiReview === "string" &&
+    REVIEW_GATE_AI_REVIEW_STATUSES.has(value.aiReview as LoopSupervisorReviewGate["aiReview"])
+      ? (value.aiReview as LoopSupervisorReviewGate["aiReview"])
+      : null;
+  const deterministicGates = parseDeterministicGates(value.deterministicGates);
+  const decision =
+    typeof value.decision === "string" &&
+    REVIEW_GATE_DECISIONS.has(value.decision as LoopSupervisorReviewGate["decision"])
+      ? (value.decision as LoopSupervisorReviewGate["decision"])
+      : null;
+  const notes = parseStringArrayOrSingleton(value.notes);
+  if (
+    preMutationReview === null ||
+    postMutationReview === null ||
+    aiReview === null ||
+    deterministicGates === null ||
+    decision === null ||
+    notes === null
+  ) {
+    return null;
+  }
+  return {
+    preMutationReview,
+    postMutationReview,
+    aiReview,
+    deterministicGates,
+    decision,
+    notes,
+  };
+}
+
+function parseDeterministicGates(
+  value: unknown,
+): LoopSupervisorReviewGate["deterministicGates"] | null {
+  if (!Array.isArray(value)) return null;
+  const gates: LoopSupervisorReviewGate["deterministicGates"] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      gates.push(item);
+      continue;
+    }
+    if (!isRecord(item)) return null;
+    const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : null;
+    const command =
+      typeof item.command === "string" && item.command.trim() ? item.command.trim() : undefined;
+    const evidence =
+      typeof item.evidence === "string" && item.evidence.trim() ? item.evidence.trim() : undefined;
+    const result =
+      typeof item.result === "string" &&
+      REVIEW_GATE_DETERMINISTIC_GATE_RESULTS.has(
+        item.result as LoopSupervisorReviewGateDeterministicGateObject["result"],
+      )
+        ? (item.result as LoopSupervisorReviewGateDeterministicGateObject["result"])
+        : null;
+    if (name === null || result === null) return null;
+    gates.push({
+      name,
+      result,
+      ...(command !== undefined ? { command } : {}),
+      ...(evidence !== undefined ? { evidence } : {}),
+    });
+  }
+  return gates;
 }
 
 function parseDelegatedTasks(value: unknown): LoopSupervisorFinalSummary["delegatedTasks"] | null {
@@ -1676,6 +1929,11 @@ function delegatedTaskRecordDescription(item: Record<string, unknown>): string |
 
 function parseStringArray(value: unknown): string[] | null {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : null;
+}
+
+function parseStringArrayOrSingleton(value: unknown): string[] | null {
+  if (typeof value === "string") return [value];
+  return parseStringArray(value);
 }
 
 function parseSupervisorFinalStatus(value: unknown): SupervisorFinalStatus | null {

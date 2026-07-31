@@ -18,6 +18,7 @@ import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { autoRecoverOnBoot } from "./core/recovery/recover.js";
 import { startRunningSweep } from "./core/recovery/running-sweep.js";
 import { startSessionIdleReaper } from "./core/recovery/session-idle-reaper.js";
+import { startRuntimeGuardian } from "./core/runtime-guardian/service.js";
 import { startScheduler } from "./core/scheduler/scheduler-loop.js";
 import { startDailyTaskAudit } from "./core/tasks/daily-audit-service.js";
 import { createLogger } from "./shared/utils/logger.js";
@@ -172,6 +173,7 @@ let notificationDrivenServicesStarted = false;
 const startNotificationDrivenServices = (): void => {
   if (notificationDrivenServicesStarted) return;
   notificationDrivenServicesStarted = true;
+  startRuntimeGuardian(deps);
   startDailyTaskAudit(deps);
   startLongTaskMonitor(deps);
 };

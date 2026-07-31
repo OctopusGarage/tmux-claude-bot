@@ -5,6 +5,7 @@ import {
   isReservedInfrastructureSession,
   listUserProjectSessions,
   loopSupervisorSessionNames,
+  loopWorkerSessionName,
   operatorSessionName,
   resolveTargetSession,
 } from "../../src/core/projects/operator.js";
@@ -21,7 +22,16 @@ describe("operator identity", () => {
     expect(isReservedInfrastructureSession("tmux_proj_home", "tmux_proj_")).toBe(true);
     expect(isReservedInfrastructureSession("tmux_proj_loop-supervisor", "tmux_proj_")).toBe(true);
     expect(isReservedInfrastructureSession("tmux_proj_loop-supervisor-2", "tmux_proj_")).toBe(true);
+    expect(isReservedInfrastructureSession("tmux_proj_loop-worker-api", "tmux_proj_")).toBe(true);
     expect(isReservedInfrastructureSession("tmux_proj_free_1", "tmux_proj_")).toBe(false);
+  });
+  it("derives stable reserved loop worker names from project ids", () => {
+    expect(loopWorkerSessionName("tmux_proj_", "geo-backend")).toBe(
+      "tmux_proj_loop-worker-geo-backend",
+    );
+    expect(loopWorkerSessionName("tmux_proj_", "geo.backend")).toBe(
+      "tmux_proj_loop-worker-geo_backend",
+    );
   });
   it("keeps the legacy supervisor name for a single slot and numbered names for pools", () => {
     expect(loopSupervisorSessionNames("tmux_proj_", 1)).toEqual(["tmux_proj_loop-supervisor"]);
@@ -69,6 +79,7 @@ describe("listUserProjectSessions", () => {
       "tmux_proj_home",
       "tmux_proj_loop-supervisor",
       "tmux_proj_loop-supervisor-1",
+      "tmux_proj_loop-worker-my-app",
       "tmux_proj_-my-app",
       "tmux_proj_free_1",
     ]);
@@ -76,6 +87,7 @@ describe("listUserProjectSessions", () => {
     expect(result).not.toContain("tmux_proj_home");
     expect(result).not.toContain("tmux_proj_loop-supervisor");
     expect(result).not.toContain("tmux_proj_loop-supervisor-1");
+    expect(result).not.toContain("tmux_proj_loop-worker-my-app");
     expect(result).toContain("tmux_proj_-my-app");
     expect(result).toContain("tmux_proj_free_1");
   });

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  autopilotGateCard,
-  autopilotPanelCard,
-  opportunityDigestCard,
-} from "../../../src/adapters/lark/cards.js";
+import { autopilotPanelCard, opportunityDigestCard } from "../../../src/adapters/lark/cards.js";
 
 describe("lark autopilot cards", () => {
   it("panel only exposes supervisor delegation", () => {
@@ -41,13 +37,6 @@ describe("lark autopilot cards", () => {
     expect(j).not.toContain("ap_toggle");
     expect(j).toContain("ap_delegate");
   });
-  it("gate card → two buttons carrying the session", () => {
-    const j = JSON.stringify(autopilotGateCard("s1"));
-    expect(j).toContain("ap_confirm");
-    expect(j).toContain("ap_reject");
-    expect(j).toContain("s1");
-  });
-
   it("panel group=false → global toggle omitted", () => {
     const j = JSON.stringify(autopilotPanelCard("s1", false));
     expect(j).not.toContain("ap_global");

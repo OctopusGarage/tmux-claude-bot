@@ -1,5 +1,6 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import net from "node:net";
+import { setAgentKind } from "../../core/agents/agentKindMap.js";
 import { orphanBusyState, orphanLabel } from "../../core/agents/takeover.js";
 import {
   adoptOrphan,
@@ -8,6 +9,8 @@ import {
 } from "../../core/agents/takeover-service.js";
 import { validateAttachment } from "../../core/attachments/classify.js";
 import {
+  cancelActiveDelegatedTask,
+  formatActiveDelegateCancel,
   formatActiveDelegateStart,
   parseDelegateRequirement,
   startActiveDelegatedTask,
@@ -24,14 +27,19 @@ import {
 } from "../../core/infra/system-load.js";
 import { queryLogs } from "../../core/logs/log-query.js";
 import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
-import { isLoopSupervisorSessionName, isOperator } from "../../core/projects/operator.js";
+import {
+  isLoopSupervisorSessionName,
+  isLoopWorkerSessionName,
+  isOperator,
+} from "../../core/projects/operator.js";
 import {
   createProjectFromPath,
   openRecentProjectBySid,
   recentProjectButtons,
+  resolveProjectPath,
 } from "../../core/projects/project-ops.js";
 import { resolveReplyTarget } from "../../core/projects/session-reply-target.js";
-import { getPathBySession } from "../../core/projects/sessionPathMap.js";
+import { getPathBySession, setPathForSession } from "../../core/projects/sessionPathMap.js";
 import {
   applyPromptTranslateCommand,
   formatPromptTranslateCommandResult,
@@ -104,13 +112,8 @@ export function startControlServer(deps: HandlerDeps): net.Server {
     log.warn("could not remove stale control socket", { err });
   }
 
-  // Per-connection send fns; registered once per connect, removed on close.
-  // The pusher is registered ONCE (not per-connection) so it doesn't leak.
+  // Per-connection send fns; removed on close.
   const clients = new Set<(m: ServerMessage) => void>();
-  deps.notifier.register(async (notice) => {
-    if (!("session" in notice)) return;
-    for (const s of clients) s({ event: "autopilot", session: notice.session, kind: notice.kind });
-  });
 
   const server = net.createServer((conn) => {
     conn.setEncoding("utf8");
@@ -253,6 +256,44 @@ async function handleRequest(
         }
         return;
       }
+      case "openWorker": {
+        if (!isLoopWorkerSessionName(req.session, deps.config.projectSessionPrefix)) {
+          ok({
+            status: "invalid",
+            error: "invalid-worker-session",
+            message: `worker session must match ${deps.config.projectSessionPrefix}loop-worker-*`,
+          });
+          return;
+        }
+        const resolved = await resolveProjectPath(req.path, deps.config.cdAllowedDirs);
+        if (resolved.error !== undefined) {
+          ok({ status: "invalid", error: resolved.error, resolvedPath: resolved.resolvedPath });
+          return;
+        }
+        const mapped = getPathBySession(req.session);
+        const live = await deps.bridge.hasSession(req.session);
+        if (live && mapped !== null && mapped !== resolved.resolvedPath) {
+          ok({
+            status: "error",
+            message: `worker session ${req.session} is already mapped to ${mapped}`,
+          });
+          return;
+        }
+        if (!live) await deps.bridge.createSession(req.session, resolved.resolvedPath);
+        setPathForSession(req.session, resolved.resolvedPath);
+        if (req.agent !== undefined) {
+          setAgentKind(req.session, req.agent);
+          deps.configResolver.invalidate(req.session);
+        }
+        const started = await performStartForRequestedAgent(deps, req.session, req.agent);
+        ok({
+          status: live ? "switched" : "created",
+          session: req.session,
+          started,
+          resolvedPath: resolved.resolvedPath,
+        });
+        return;
+      }
       case "orphans": {
         // Claude/Codex running OUTSIDE tmux that the bot could adopt.
         const orphans = await findAdoptableOrphans();
@@ -344,6 +385,11 @@ async function handleRequest(
         return;
       case "autopilot": {
         const verb = req.verb.trim();
+        if (/^(?:cancel|stop|cancel-delegate|cancel_delegate)$/i.test(verb)) {
+          const result = await cancelActiveDelegatedTask(deps, { session: req.session });
+          ok({ status: formatActiveDelegateCancel(result) });
+          return;
+        }
         const delegatedRequirement =
           parseDelegateRequirement(
             verb.length === 0 || /^delegate\b/i.test(verb)

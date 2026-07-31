@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { allRunningSessions, markSessionRunning } from "../../src/core/agents/runningSessions.js";
 import type { HandlerDeps } from "../../src/core/deps.js";
 import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
+import {
   isLoopSupervisorSession,
   loopSupervisorDir,
   loopSupervisorSessionName,
@@ -139,6 +143,63 @@ describe("loop supervisor session", () => {
     expect(performStart.mock.calls[0]?.[2]).toContain("--yolo");
     expect(getPathBySession(session)).toBe(expectedDir);
     expect(allRunningSessions()).not.toContain(session);
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it("cleans up expired retained supervisor workers before ensuring the session", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "failed-run",
+          projectId: "hub",
+          projectPath: "/repo/hub",
+          status: "retained",
+          leasedAt: 1_000,
+          updatedAt: 2_000,
+          retainUntil: Date.now() - 1,
+        },
+      ],
+    });
+    const createSession = vi.fn(async () => true);
+    const killSession = vi.fn(async () => {});
+    const isPaneAlive = vi
+      .fn(async () => false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+    const waitUntilReady = vi.fn(async () => {});
+    const deps = {
+      bridge: {
+        createSession,
+        killSession,
+        isPaneAlive,
+      },
+      agent: { waitUntilReady },
+      config: {
+        projectSessionPrefix: "tmux_proj_",
+        loopEngineering: {
+          configFile: "",
+          tickMs: 0,
+          supervisor: { enabled: true, dir: "", agent: "codex" as const },
+        },
+        startCommands: [{ agent: "codex" as const, command: "codex", label: "codex" }],
+        claudeStartCommand: "claude",
+      },
+    };
+    const performStart = vi.fn(
+      async (_deps: HandlerDeps, _session: string, _command?: string) => "started" as const,
+    );
+
+    await expect(startLoopSupervisor(deps as never, performStart)).resolves.toBe(true);
+
+    expect(killSession).toHaveBeenCalledWith("tmux_proj_loop-supervisor");
+    expect(createSession).toHaveBeenCalledWith(
+      "tmux_proj_loop-supervisor",
+      join(stateDir, "loop-supervisor"),
+    );
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
     rmSync(stateDir, { recursive: true, force: true });
   });
 

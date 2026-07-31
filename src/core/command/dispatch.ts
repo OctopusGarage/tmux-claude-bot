@@ -285,7 +285,16 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
           );
         }
       }
-      await deps.agent.waitUntilInputReady(session);
+      try {
+        await deps.agent.waitUntilInputReady(session);
+      } catch (err) {
+        if (msg.origin === "system") throw err;
+        log.warn("text rejected: agent input surface not ready", {
+          err,
+          data: { session, action: msg.action, channel: msg.channel },
+        });
+        return m.agentInputNotReady;
+      }
       const promptText = text;
       log.info(`sending keys session=${session}`);
       await deps.bridge.sendKeys(promptText, session);

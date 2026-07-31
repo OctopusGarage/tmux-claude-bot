@@ -160,6 +160,7 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 | `tcb send <project> "<prompt>"` | send a prompt to a project's agent; **waits for the reply** (`--no-wait` / `--timeout <s>`) |
 | `tcb peek <project>` | print a snapshot of its session pane |
 | `tcb open <project> [--agent claude\|codex]` | switch to / start a project; `--agent` selects the start command when the project is stopped |
+| `tcb open-worker <session> <path> [--agent claude\|codex]` | start an isolated automation worker at a project path without switching the human current project; session must be named `<projectSessionPrefix>loop-worker-*`; intended for Loop Supervisor / recovery scripts |
 | `tcb adopt [pid]` | list unmanaged claude/codex processes, or adopt one by PID (stops it, resumes under management) |
 | `tcb control <project> <esc\|enter\|resume\|restart\|…>` | send a control action; `restart` / `clear` / `compact` / `exit` prompt for confirmation (`--yes` for scripts) |
 | `tcb attach <file...>` | send an image/file to the session's chat; defaults to the current session (`--to <project>`, `--caption <text>`) |
@@ -226,9 +227,9 @@ Before finalizing, it must review the diff, run relevant verification, assess
 coverage for touched risk paths, use existing deterministic or agent-backed evals
 when justified, and follow the configured PR/merge/switch-back policy.
 
-The old Autopilot keep-alive and goal-cycle flow is not a user-facing feature.
-The bot does not start that background loop, and chat/control cards do not expose
-enable/disable, goal picker, global keep-alive, or human-gate controls.
+The old Autopilot keep-alive and goal-cycle implementation has been removed.
+The bot does not expose enable/disable, goal picker, global keep-alive, or
+human-gate controls.
 
 ### Telegram button controls
 
@@ -278,12 +279,19 @@ Each scheduled project chooses a runner:
   `pullRequest.autoMerge: true` is configured, the system gate merges the PR after
   those checks pass, switches to `pullRequest.switchBack`, and fast-forwards it
   from `origin`. Set `pullRequest.githubAccount` when the repository needs a
-  specific GitHub CLI identity; PR create/view/merge commands then use a
-  command-local `GH_TOKEN` from `gh auth token --user <account>` instead of the
-  global active `gh` account. If the supervisor response misses the required final marker, the
-  loop treats the scheduled fire as unfinished and retries it on a later tick
-  instead of marking it complete. The WorkOrder instructs the supervisor to run
-  `tcb control <project> compact --yes` before each delegated optimization round.
+  specific GitHub CLI identity; every GitHub CLI command for that WorkOrder,
+  including `gh api` security-alert checks and PR create/view/merge commands,
+  uses a command-local `GH_TOKEN` from `gh auth token --user <account>` instead
+  of the global active `gh` account. If the supervisor response misses the
+  required final marker, the loop treats the scheduled fire as unfinished and
+  retries it on a later tick instead of marking it complete. The WorkOrder
+  instructs the supervisor to use `tcb open-worker <session> <path>` and then
+  run `tcb control <worker-session> compact --yes` before each delegated
+  optimization round. These loop worker sessions are reserved automation
+  infrastructure and do not replace or receive prompts from the ordinary human
+  project chat session. Long-idle loop workers are reclaimed by the session idle
+  reaper, which kills the worker tmux session after the configured idle threshold
+  instead of routing cleanup through the ordinary project chat lifecycle.
   When the supervisor reports completion but the bot's system gate finds a
   recoverable validation failure, such as a dirty worktree, wrong switch-back
   branch, missing PR cleanup, pending/failing PR checks, or PR hygiene issue, the
@@ -597,8 +605,8 @@ HOME_OPERATOR_DIR=            # blank → <state-dir>/home (auto-created)
 - `/home` — switch a Telegram or Feishu/Lark channel back to the operator at any time.
 - The operator runs `--dangerously-skip-permissions` (it can't respond to interactive
   prompts — messages to it go straight to the agent).
-- It is excluded from autopilot and the global keep-alive scheduler; `tcb send`
-  and relay commands refuse it as a target to avoid loops.
+- It is excluded from project work targets; `tcb send` and relay commands refuse
+  it as a target to avoid loops.
 - The dashboard shows it as "home operator", not a work project.
 
 ---
@@ -607,9 +615,7 @@ HOME_OPERATOR_DIR=            # blank → <state-dir>/home (auto-created)
 
 Run a set of agent tasks across multiple projects on a schedule (cron, one-shot, or immediate).
 Use `BATCH_SCHEDULER_TICK_MS`, `BATCH_SCHEDULER_QUOTA_PCT`, and
-`BATCH_SCHEDULER_REPROBE_MS` for runtime tuning. The older
-`AUTOPILOT_SCHEDULER_*` variables are compatibility aliases only; if both are
-set, `BATCH_SCHEDULER_*` wins.
+`BATCH_SCHEDULER_REPROBE_MS` for runtime tuning.
 
 **Quick start:**
 

@@ -289,6 +289,27 @@ export async function cmdOpen(
   }).catch(fail);
 }
 
+export async function cmdOpenWorker(
+  session: string,
+  projectPath: string,
+  opts: { json?: boolean; agent?: string },
+): Promise<void> {
+  await withClient(async (c) => {
+    const agent = parseAgentOption(opts);
+    const openOpts = agent === undefined ? {} : { agent };
+    const abs = resolve(process.cwd(), expandTilde(projectPath));
+    const res = await c.openWorker(session, abs, openOpts);
+    if (opts.json) return json(res);
+    if (res.status === "created" || res.status === "switched") {
+      out(`open-worker ${session}: ${res.status}${res.started ? ` (${res.started})` : ""}`);
+    } else if (res.status === "invalid") {
+      fail(new Error(`cannot open worker at "${projectPath}": ${res.error} (${res.resolvedPath})`));
+    } else {
+      fail(new Error(res.message ?? `open-worker failed: ${res.status}`));
+    }
+  }).catch(fail);
+}
+
 /** List unmanaged claude/codex processes, or adopt one by PID (stop it, then
  * resume it under a managed session). Mirrors the chat /adopt flow. */
 export async function cmdAdopt(pid: string | undefined, opts: { json?: boolean }): Promise<void> {

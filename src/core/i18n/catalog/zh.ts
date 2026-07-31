@@ -163,6 +163,7 @@ export const zh = {
   agentResumed: "🔄 已恢复原会话",
   agentResumeMissingState: "没有可恢复的原会话状态，请用 /start 新建。",
   agentAlreadyRunning: "✅ 已在运行中，无需重复启动",
+  agentInputNotReady: "Agent 暂时还没准备好接收输入，请稍后重试；如果持续出现，请重启该会话。",
   projectAutomationBusy: (taskKind: string, projectId: string, runId: string, supervisor: string) =>
     `项目正在执行自动化任务，暂时不能发送普通消息。\n任务：${taskKind}\n项目：${projectId}\nRun：${runId}\nSupervisor：${supervisor}\n\n请等待任务完成，或先查看/取消该任务后再继续。`,
   agentStartedWith: (label: string) => `✅ 已用「${label}」启动`,
@@ -428,84 +429,22 @@ export const zh = {
   cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
   cmdAutopilot: "把当前会话工作托管给 Loop Supervisor 推进",
   cmdOpportunity: "查看主动机会建议，并托管已确认的工作",
-  cmdGoals: "列出 autopilot 目标预设",
   cmdSysload: "查看本机负载/发热/跑飞进程",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "把当前会话上下文托管给 Loop Supervisor，继续完成实现、复核、验证、PR 处理和最终通知。",
-  autopilotNotifyPaused: (session: string, reason: string) =>
-    `🛑 autopilot 已暂停 [${session}]：${reason}`,
-  autopilotNotifyStopped: (session: string, reason: string) =>
-    `⏹️ autopilot 已停止 [${session}]：${reason}`,
-  autopilotNotifyUsage: (session: string, pct: number) =>
-    `🛑 autopilot 目标暂停 [${session}]：用量达 ${pct}% 阈值`,
-  autopilotNotifyMaxIter: (session: string) => `⏹️ autopilot 目标停止 [${session}]：已达最大迭代`,
-  autopilotNotifyWallClock: (session: string) => `⏹️ autopilot 目标停止 [${session}]：已达时长上限`,
-  autopilotNotifyAwaitHuman: (session: string) =>
-    `🎯 autopilot [${session}]：阶段判定完成，请确认（/autopilot confirm）或继续（/autopilot reject）`,
-  autopilotNotifyGoalComplete: (session: string, goalId: string) =>
-    `✅ autopilot 目标完成 [${session}]：${goalId}（请确认）`,
-  autopilotNotifyCycleComplete: (session: string, rounds: number) =>
-    `✅ autopilot 循环完成 [${session}]：已跑满 ${rounds} 轮（请确认）`,
-  autopilotNotifyKeepaliveDone: (session: string) =>
-    `✅ autopilot 保活任务完成 [${session}]：检测到完成标记`,
-  autopilotNotifyGoalAdvance: (
-    session: string,
-    goalId: string,
-    pos: number,
-    total: number,
-    round: number,
-    rounds: number,
-  ) => `➡️ autopilot [${session}]：进入目标 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 轮）`,
   batchRunStarted: (planId: string, tasks: number) =>
     `🚀 批次运行已启动：计划 ${planId}，共 ${tasks} 个任务`,
   batchPoolPaused: (agent: string, resumeAt: string) =>
     `⏸ 批次池已暂停 [${agent}]：额度已达上限，预计恢复 ${resumeAt}`,
   batchRunComplete: (summary: string) => `✅ 批次运行完成\n${summary}`,
-  autopilotGlobal: (on: boolean): string =>
-    on
-      ? "已开启全局托管:所有活跃会话自动保活(某个会话用 /autopilot off 单独退出)"
-      : "已关闭全局托管",
-  autopilotStatus: (o: {
-    enabled: boolean;
-    pureKeepAlive: boolean;
-    iterations: number;
-    persona: string;
-    goal?: { id: string; phaseIndex: number };
-  }) =>
-    `Autopilot：${o.enabled ? "开" : "关"}（${o.pureKeepAlive ? "纯保活" : "随目标"}，已干预 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目标 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw: string) =>
     `未知子命令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} 开启保活/目标`,
-  btnApDisable: "⏹ 关闭保活/目标",
   btnApDelegate: "🚀 继续托管推进",
   btnApCancelDelegate: "⛔ 取消托管",
-  btnApPickGoals: "🎯 选目标",
-  btnApGlobalOn: "🌐 全局:开",
-  btnApGlobalOff: "🌐 全局:关",
-  btnApStop: "⏹ 停止目标",
-  btnApConfirm: "✅ 确认完成",
-  btnApContinue: "▶️ 继续打磨",
   btnApBack: "↩︎ 返回",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) => `▶️ 开始(${n} 个目标 · ${rounds} 轮)`,
-  apRoundsLabel: (rounds: number) => `轮数:${rounds}`,
-  goalTestCoverage: "提升测试覆盖",
-  goalFixTests: "修复测试",
-  goalCodeReview: "代码评审",
-  goalAddFeature: "添加功能",
-  goalRefactorElegant: "重构为优雅专业",
-  goalUiPolish: "打磨界面",
-  goalImproveArchitecture: "提升架构质量",
-  goalHardenStandards: "加固工程规范与门禁",
-  goalPolishGithub: "GitHub 专业化",
-  goalSyncDocs: "文档与代码对齐",
-  autopilotGoalStarted: (id: string) => `已启动目标：${id}`,
-  autopilotUnknownGoal: (ids: string) => `未知目标。可用：${ids}`,
-  goalsTitle: "🎯 目标预设",
   noLogsContext: "无当前会话，请先选择项目或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──

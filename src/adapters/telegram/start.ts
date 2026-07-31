@@ -6,14 +6,13 @@ import { renderNotice } from "../../core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { markCleanShutdown } from "../../core/infra/lifecycle.js";
-import { sessionShortId } from "../../shared/utils/hash.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
 import { registerHandlers } from "./handlers.js";
-import { buildAutopilotGateKeyboard, buildOpportunityNotificationKeyboard } from "./keyboards.js";
+import { buildOpportunityNotificationKeyboard } from "./keyboards.js";
 import { sendTelegramAttachment } from "./media.js";
 import { createReplyTargetMap } from "./reply-target.js";
 import { createRouteHealthStore, type RouteName } from "./transport/route-health.js";
@@ -220,11 +219,7 @@ export async function startTelegram(
   if (owner !== undefined) {
     deps.notifier.register((notice) => {
       const text = renderNotice(notice, messages("telegram"));
-      const reply_markup =
-        notice.kind === "awaitHuman"
-          ? buildAutopilotGateKeyboard(sessionShortId(notice.session))
-          : undefined;
-      return bot.api.sendMessage(owner, text, reply_markup ? { reply_markup } : {}).then(() => {});
+      return bot.api.sendMessage(owner, text).then(() => {});
     });
     deps.notifications.register("telegram", (message, req) => {
       const reply_markup =

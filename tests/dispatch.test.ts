@@ -747,6 +747,43 @@ describe("executeMessage — text action with history", () => {
     expect(d.agent.waitUntilInputReady).toHaveBeenCalledWith("proj-1");
   });
 
+  it("returns a user-facing not-ready message instead of leaking raw Codex readiness errors", async () => {
+    const d = liveFakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilInputReady: vi.fn(async () => {
+          throw new Error("Codex did not become ready in time");
+        }),
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE" })),
+      } as never,
+      bridge: {
+        sendKeys: vi.fn(async () => {}),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    await expect(executeMessage(msg("text", { text: "build the feature" }), d)).resolves.toBe(
+      "Agent 暂时还没准备好接收输入，请稍后重试；如果持续出现，请重启该会话。",
+    );
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("preserves readiness failures for system-origin text so automation can retry", async () => {
+    const d = liveFakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilInputReady: vi.fn(async () => {
+          throw new Error("Codex did not become ready in time");
+        }),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    await expect(
+      executeMessage(msg("text", { text: "system work", origin: "system" }), d),
+    ).rejects.toThrow("Codex did not become ready in time");
+  });
+
   it("keeps waiting across timeout rounds and notifies once, then resolves the real result", async () => {
     const waitUntilDone = vi
       .fn()

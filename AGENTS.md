@@ -9,6 +9,18 @@ goal into an endless opportunistic sweep: verify and commit or clean up each
 slice, stop after each slice to report exact state, and defer or revert useful
 but out-of-scope edits instead of keeping them silently.
 
+## Automation Session Isolation
+
+For Loop Engineering, Autopilot, PR review, harness-auto, Daily Task Audit repair,
+Runtime Guardian repair, and other long-running WorkOrders, keep execution
+context isolated from ordinary user chat. A WorkOrder's configured
+`projectPath` / workspace repository path is the only trusted target location.
+Before sync, assessment, edits, PR review, or mutating shell commands, verify
+`git -C <path> rev-parse --show-toplevel` matches that configured path; block
+rather than guessing when it does not. Record the worker/session name, expected
+path, actual toplevel, reset action, cleanup decision, and final gate result in
+persisted artifacts so failed runs can be replayed after worker cleanup.
+
 Do not implement bot-owned AI behavior by writing code or scripts that call
 model-provider APIs directly. AI-backed behavior must route through the
 currently running Claude Code / Codex agent sessions or the bot/agent control
@@ -88,7 +100,8 @@ Keep the intelligent automation terms distinct:
 - Loop Engineering is the scheduled project/workspace health platform.
 - Loop Supervisor is the managed Claude/Codex worker that executes bounded WorkOrders.
 - Autopilot means active delegation of a user-confirmed current task to the Loop
-  Supervisor; do not reuse the name for legacy keepalive or goal-cycle UI.
+  Supervisor. Do not reintroduce keepalive, goal-cycle, goal-picker, global
+  keepalive, confirm/reject gate, or scheduler alias behavior under this name.
 - Opportunity Discovery is read-only proposal generation. Discussion and
   implementation remain separate; execution goes through active delegation.
 - Daily Task Audit is the bot's self-check/self-healing schedule audit. It checks
@@ -106,6 +119,32 @@ Keep the intelligent automation terms distinct:
   ledger/report/log/git/scheduler evidence, classify whether it is a bot bug or an
   external/target-project condition, and only then edit this repo. Do not submit a
   repair task that skips the problem statement and review gate.
+- Runtime Guardian is near-real-time self-healing for tmux-claude-bot runtime
+  artifacts. In `fast-heal` mode it delegates narrow fixes through the existing
+  Loop Supervisor path after concrete evidence is found; it must not edit target
+  project repositories and must still rely on system gates for final acceptance.
+- Supervisor, worker, Runtime Guardian, Daily Task Audit repair, and other
+  autonomous code-changing flows need explicit review/eval boundaries. Use AI
+  review only through the existing Claude Code / Codex control surface, and use
+  it to reduce risk before mutation or finalization: confirm the issue is real,
+  check reachability and severity, compare the planned edit against the stated
+  scope, review the diff after editing, and ask whether the fix could introduce a
+  regression. AI review is advisory evidence, not a replacement for deterministic
+  gates such as tests, typecheck, lint, PR mergeability, CI, clean worktree, and
+  switch-back checks.
+- Long-running deterministic gates must be bounded. Wrap potentially unbounded
+  commands such as full test suites, integration tests, E2E tests, external
+  scanners, or CI polling with an explicit timeout. If the timeout is reached,
+  stop waiting, record the exact command, elapsed time, partial evidence, and
+  exit/termination reason in the run artifact, then report blocked or failed
+  instead of leaving the WorkOrder in flight.
+- Do not add review loops that encourage churn. If the issue is low-confidence,
+  not reproducible, cosmetic, or outside the task contract, record the finding
+  and stop instead of editing. If AI review and deterministic evidence disagree,
+  prefer the deterministic gate for final acceptance and record the disagreement
+  in the run artifact. Runtime Guardian fast-heal may be more aggressive about
+  dispatch timing, but the repair task must still make a bounded, evidence-led
+  change and commit only verified fixes.
 - User-originated ordinary prompts must respect project automation ownership: if
   the target project has an unfinished or recoverable Loop Supervisor WorkOrder,
   block with a clear message instead of typing into the project agent. Keep
@@ -113,12 +152,37 @@ Keep the intelligent automation terms distinct:
   supervisor prompts because they are part of the owning task.
 - `pullRequestReview` is scoped to configured project/workspace loop PRs;
   `prReview.repositories` is the repository-wide open-PR queue processor.
-- The batch scheduler is configured with `BATCH_SCHEDULER_*`. Keep
-  `AUTOPILOT_SCHEDULER_*` only as legacy aliases; new automation must not extend
-  those old names.
+- The batch scheduler is configured only with `BATCH_SCHEDULER_*`. Do not add or
+  document `AUTOPILOT_SCHEDULER_*` aliases.
 - Workspace tasks are generic multi-repository WorkOrders. Use top-level
   `workspace.runner`; `architecture.runner` is legacy compatibility for the
   architecture task, not the workspace feature boundary.
+- When a project or repository config sets `pullRequest.githubAccount` or
+  `githubAccount`, every GitHub CLI command in that WorkOrder must use that
+  account through a command-local `GH_TOKEN` from `gh auth token --user <account>`.
+  This applies to `gh api`, `gh pr`, `gh run`, `gh repo`, and security-alert
+  checks, even when the task does not create a PR. Do not rely on the global
+  active `gh` account for configured projects.
+
+Treat intelligent automation as one supervised platform. New scheduled tasks,
+chat buttons, active-delegation flows, PR-review handlers, repair paths, and
+proposal workflows should materialize a bounded WorkOrder, run through the Loop
+Supervisor and isolated worker path, persist `system-gate.json`, write ledger/log
+evidence, and notify through the notification gateway. Do not add a side-channel
+prompt directly into ordinary project chat or a feature-specific completion gate
+unless the exception is documented in `docs/intelligent-automation.md`.
+
+When extending automation, update the conflict model in the same slice. Prove
+with tests whether the new work edits a project, workspace, PR branch, runtime
+artifact, notification state, or task ledger; then define what happens when it
+overlaps active supervisor work, a harness-auto containing run, repository-wide
+PR review, opportunity discussion/delegation, or an ordinary user prompt.
+
+Keep the WorkOrder interface deep rather than wide. If a new task kind needs
+special policy, prefer a task-specific builder/helper behind the existing
+WorkOrder contract. Do not make callers learn task-specific completion rules,
+notification rules, or path-resolution rules outside the WorkOrder/system-gate
+surface.
 
 ## Usage Documentation Lookup
 

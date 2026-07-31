@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
-  buildAutopilotGateKeyboard,
   buildAutopilotPanelKeyboard,
   buildOpportunityNotificationKeyboard,
   parseCallbackData,
@@ -57,13 +56,9 @@ describe("autopilot telegram callbacks", () => {
     expect(data).toContain("apd:abc123");
   });
 
-  it("parses gate prefixes and builds the gate keyboard", () => {
-    expect(parseCallbackData("apc:abc123")).toEqual({ kind: "apConfirm", sid: "abc123" });
-    expect(parseCallbackData("apx:abc123")).toEqual({ kind: "apContinue", sid: "abc123" });
-    const data = buildAutopilotGateKeyboard("abc123")
-      .inline_keyboard.flat()
-      .map((b) => (b as { callback_data?: string }).callback_data);
-    expect(data).toEqual(["apc:abc123", "apx:abc123"]);
+  it("does not parse old gate prefixes", () => {
+    expect(parseCallbackData("apc:abc123")).toBeNull();
+    expect(parseCallbackData("apx:abc123")).toBeNull();
   });
 
   it("parses opportunity notification callbacks", () => {

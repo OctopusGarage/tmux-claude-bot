@@ -159,6 +159,8 @@ export const es: Messages = {
   agentResumeMissingState:
     "No hay estado de sesión anterior para reanudar — usa /start para crear una nueva.",
   agentAlreadyRunning: "✅ Ya está en ejecución",
+  agentInputNotReady:
+    "The agent is not ready to receive input yet. Try again shortly; restart this session if it keeps happening.",
   projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
     `Hay una automatización del proyecto en ejecución; los mensajes normales quedan bloqueados por ahora.\nTarea: ${taskKind}\nProyecto: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nEspera a que termine, o revísala/cancélala antes de continuar.`,
   agentStartedWith: (label) => `✅ Iniciado con «${label}»`,
@@ -418,73 +420,22 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
     "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",
   cmdAutopilot: "Delegar el trabajo de la sesión actual al Loop Supervisor",
   cmdOpportunity: "Revisar oportunidades propuestas y delegar el trabajo aprobado",
-  cmdGoals: "Listar presets de objetivos de autopilot",
   cmdSysload: "Ver carga, temperatura y procesos descontrolados",
   sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "Delega el contexto de la sesión actual al Loop Supervisor para implementar, revisar, verificar, gestionar PRs y notificar el resultado final.",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot en pausa [${session}]: ${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot detenido [${session}]: ${reason}`,
-  autopilotNotifyUsage: (session, pct) =>
-    `🛑 objetivo de autopilot en pausa [${session}]: el uso alcanzó el umbral del ${pct}%`,
-  autopilotNotifyMaxIter: (session) =>
-    `⏹️ objetivo de autopilot detenido [${session}]: máximo de iteraciones alcanzado`,
-  autopilotNotifyWallClock: (session) =>
-    `⏹️ objetivo de autopilot detenido [${session}]: presupuesto de tiempo agotado`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]: la fase parece completa — confirma con /autopilot confirm o continúa con /autopilot reject`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ objetivo de autopilot completado [${session}]: ${goalId} (confirma por favor)`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ ciclo de autopilot completado [${session}]: ${rounds} ronda(s) (confirma)`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ tarea keep-alive de autopilot completada [${session}]: marcador de fin detectado`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]: objetivo ${goalId} (${pos}/${total} · ronda ${round}/${rounds})`,
   batchRunStarted: (planId, tasks) =>
     `🚀 Ejecución de lote iniciada: plan ${planId}, ${tasks} tarea(s)`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ Pool de lote pausado [${agent}]: cuota alcanzada, reanudación en ${resumeAt}`,
   batchRunComplete: (summary) => `✅ Ejecución de lote completada\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "Mantener activo global ACTIVADO: todas las sesiones activas se gestionan (usa /autopilot off para excluir una)"
-      : "Mantener activo global DESACTIVADO",
-  autopilotStatus: (o) =>
-    `Autopilot: ${o.enabled ? "activado" : "desactivado"} (${o.pureKeepAlive ? "mantener activo" : "por objetivo"}, ${o.iterations} intervenciones, persona=${o.persona})${o.goal ? ` (objetivo ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
   autopilotUsage: (raw) =>
-    `Subcomando desconocido «${raw}». Uso: /autopilot [delegate [requisito]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} Activar keep-alive/objetivos`,
-  btnApDisable: "⏹ Desactivar keep-alive/objetivos",
+    `Subcomando desconocido «${raw}». Uso: /autopilot [requisito] o /autopilot delegate [requisito]`,
   btnApDelegate: "🚀 Continuar con supervisor",
   btnApCancelDelegate: "⛔ Cancelar delegación",
-  btnApPickGoals: "🎯 Elegir objetivos",
-  btnApGlobalOn: "🌐 Global: sí",
-  btnApGlobalOff: "🌐 Global: no",
-  btnApStop: "⏹ Detener objetivo",
-  btnApConfirm: "✅ Confirmar",
-  btnApContinue: "▶️ Continuar",
   btnApBack: "↩︎ Volver",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) =>
-    `▶️ Iniciar (${n} objetivo(s) · ${rounds} ronda(s))`,
-  apRoundsLabel: (rounds: number) => `Rondas: ${rounds}`,
-  goalTestCoverage: "Aumentar cobertura de pruebas",
-  goalFixTests: "Reparar pruebas",
-  goalCodeReview: "Revisión de código",
-  goalAddFeature: "Añadir función",
-  goalRefactorElegant: "Refactorizar con elegancia",
-  goalUiPolish: "Pulir interfaz",
-  goalImproveArchitecture: "Mejorar la arquitectura",
-  goalHardenStandards: "Reforzar estándares y controles",
-  goalPolishGithub: "Pulir la presencia en GitHub",
-  goalSyncDocs: "Alinear la documentación con el código",
-  autopilotGoalStarted: (id) => `Objetivo iniciado: ${id}`,
-  autopilotUnknownGoal: (ids) => `Objetivo desconocido. Disponibles: ${ids}`,
-  goalsTitle: "🎯 Objetivos predefinidos",
   noLogsContext:
     "No hay sesión actual. Selecciona un proyecto o especifica un trace (/logs <traceId>).",
 

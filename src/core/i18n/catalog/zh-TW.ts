@@ -152,6 +152,7 @@ export const zhTW: Messages = {
   agentResumed: "🔄 已復原原工作階段",
   agentResumeMissingState: "沒有可復原的原工作階段狀態，請用 /start 新建。",
   agentAlreadyRunning: "✅ 已在執行中，無需重複啟動",
+  agentInputNotReady: "Agent 暫時還沒準備好接收輸入，請稍後重試；如果持續出現，請重啟此會話。",
   projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
     `專案正在執行自動化任務，暫時不能傳送一般訊息。\n任務：${taskKind}\n專案：${projectId}\nRun：${runId}\nSupervisor：${supervisor}\n\n請等待任務完成，或先查看/取消該任務後再繼續。`,
   agentStartedWith: (label) => `✅ 已用「${label}」啟動`,
@@ -397,68 +398,21 @@ export const zhTW: Messages = {
   cmdBatch: "批次排程器：查看狀態或控制批次執行（start/pause/resume/stop/report）",
   cmdAutopilot: "把目前工作階段交給 Loop Supervisor 託管推進",
   cmdOpportunity: "查看主動機會建議，並託管已確認的工作",
-  cmdGoals: "列出 autopilot 目標預設",
   cmdSysload: "查看本機負載/發熱/失控程序",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "把目前工作階段上下文交給 Loop Supervisor，繼續完成實作、複核、驗證、PR 處理和最終通知。",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot 已暫停 [${session}]：${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot 已停止 [${session}]：${reason}`,
-  autopilotNotifyUsage: (session, pct) => `🛑 autopilot 目標暫停 [${session}]：用量達 ${pct}% 門檻`,
-  autopilotNotifyMaxIter: (session) => `⏹️ autopilot 目標停止 [${session}]：已達最大迭代`,
-  autopilotNotifyWallClock: (session) => `⏹️ autopilot 目標停止 [${session}]：已達時長上限`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]：階段判定完成，請確認（/autopilot confirm）或繼續（/autopilot reject）`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ autopilot 目標完成 [${session}]：${goalId}（請確認）`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ autopilot 循環完成 [${session}]：已跑滿 ${rounds} 輪（請確認）`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ autopilot 保活任務完成 [${session}]：偵測到完成標記`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]：進入目標 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 輪）`,
   batchRunStarted: (planId, tasks) => `🚀 批次執行已啟動：計劃 ${planId}，共 ${tasks} 個任務`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ 批次池已暫停 [${agent}]：額度已達上限，預計恢復 ${resumeAt}`,
   batchRunComplete: (summary) => `✅ 批次執行完成\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "已開啟全域託管:所有活躍工作階段自動保活(某個工作階段用 /autopilot off 單獨退出)"
-      : "已關閉全域託管",
-  autopilotStatus: (o) =>
-    `Autopilot：${o.enabled ? "開" : "關"}（${o.pureKeepAlive ? "純保活" : "隨目標"}，已干預 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw) =>
-    `未知子指令「${raw}」。用法：/autopilot [delegate [需求]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} 開啟保活/目標`,
-  btnApDisable: "⏹ 關閉保活/目標",
+    `未知子指令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
   btnApDelegate: "🚀 繼續託管推進",
   btnApCancelDelegate: "⛔ 取消託管",
-  btnApPickGoals: "🎯 選目標",
-  btnApGlobalOn: "🌐 全域:開",
-  btnApGlobalOff: "🌐 全域:關",
-  btnApStop: "⏹ 停止目標",
-  btnApConfirm: "✅ 確認完成",
-  btnApContinue: "▶️ 繼續打磨",
   btnApBack: "↩︎ 返回",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) => `▶️ 開始(${n} 個目標 · ${rounds} 輪)`,
-  apRoundsLabel: (rounds: number) => `輪數:${rounds}`,
-  goalTestCoverage: "提升測試覆蓋",
-  goalFixTests: "修復測試",
-  goalCodeReview: "程式碼審查",
-  goalAddFeature: "新增功能",
-  goalRefactorElegant: "重構為優雅專業",
-  goalUiPolish: "打磨介面",
-  goalImproveArchitecture: "提升架構品質",
-  goalHardenStandards: "加固工程規範與門禁",
-  goalPolishGithub: "GitHub 專業化",
-  goalSyncDocs: "文件與程式碼對齊",
-  autopilotGoalStarted: (id) => `已啟動目標：${id}`,
-  autopilotUnknownGoal: (ids) => `未知目標。可用：${ids}`,
-  goalsTitle: "🎯 目標預設",
   noLogsContext: "無目前工作階段，請先選擇專案或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──

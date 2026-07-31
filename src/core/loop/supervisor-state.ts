@@ -190,6 +190,10 @@ export function listRecoverableFailedLoopSupervisorWorkOrders(): UnfinishedLoopS
   );
 }
 
+export function listTerminalLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  return listLoopSupervisorWorkOrders((state) => TERMINAL_STATES.has(state.status));
+}
+
 function hasFinalSummaryFileForState(state: LoopSupervisorWorkOrderState): boolean {
   return existsSync(
     join(reportsRoot(), state.projectId, state.runId, "supervisor-final-summary.json"),

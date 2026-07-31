@@ -1,17 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { type AutopilotState, defaultState } from "../../src/core/autopilot/types.js";
 import { schedulerTick, type TickCtx } from "../../src/core/scheduler/scheduler-loop.js";
 import { materializeRun } from "../../src/core/scheduler/scheduling.js";
 import type { Plan, PoolState, Run } from "../../src/core/scheduler/types.js";
-
-function fakeAutopilot() {
-  const map = new Map<string, AutopilotState>();
-  return {
-    map,
-    get: (s: string) => map.get(s) ?? defaultState(),
-    set: (s: string, st: AutopilotState) => void map.set(s, st),
-  };
-}
 
 const plan: Plan = {
   id: "p",
@@ -30,7 +20,6 @@ function ctx(over: Partial<TickCtx>): TickCtx {
     run: undefined,
     pools: { claude: { paused: false } } as Record<string, PoolState>,
     lastFired: {},
-    autopilot: fakeAutopilot(),
     resolveSession: (t) => t.sessionName ?? t.project,
     readUsage: async () => null,
     isGated: () => false,
