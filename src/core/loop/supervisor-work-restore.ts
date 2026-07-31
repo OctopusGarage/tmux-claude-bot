@@ -1,5 +1,12 @@
 import type { PersistedMessage, QueuedMessage } from "../command/queue.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
+import {
+  runGitCommand,
+  runShellCommand,
+  runSupervisedSystemGateOutcome,
+  systemGateProjectFromWorkOrder,
+  writeSupervisedSystemGateArtifact,
+} from "./supervised-system-gate.js";
 import { completeLoopSupervisorRun } from "./supervisor-completion.js";
 import { workOrderStateForResult, writeLoopSupervisorWorkOrderState } from "./supervisor-state.js";
 import {
@@ -131,19 +138,34 @@ function writeRestoredSupervisorReport(
   now: (() => number) | undefined,
 ): void {
   const endedAt = now?.() ?? Date.now();
-  completeLoopSupervisorRun({
+  const gate = runSupervisedSystemGateOutcome({
+    project: systemGateProjectFromWorkOrder(restore.workOrder),
+    workOrder: restore.workOrder,
+    result,
+    runCommand: runShellCommand,
+    runGit: runGitCommand,
+  });
+  const gatedResult = gate.result;
+  const completion = completeLoopSupervisorRun({
     workOrder: restore.workOrder,
     supervisorSession: restore.supervisorSession,
     startedAt: restore.queuedAt,
     endedAt,
-    result,
+    result: gatedResult,
+  });
+  writeSupervisedSystemGateArtifact({
+    workOrder: restore.workOrder,
+    report: completion.report,
+    gate,
+    result: gatedResult,
+    writtenAt: endedAt,
   });
   writeLoopSupervisorWorkOrderState({
     workOrder: restore.workOrder,
     supervisorSession: restore.supervisorSession,
-    status: workOrderStateForResult(result),
+    status: workOrderStateForResult(gatedResult),
     now: endedAt,
-    resultStatus: result.status,
+    resultStatus: gatedResult.status,
   });
 }
 

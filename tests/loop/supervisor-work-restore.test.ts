@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -95,5 +95,23 @@ describe("supervisor work restore", () => {
         text: "Review restored work",
       }),
     ]);
+    const gatePath = join(
+      process.env.TCB_STATE_DIR,
+      "loop-runs",
+      "hub",
+      "wo-restore",
+      "system-gate.json",
+    );
+    expect(existsSync(gatePath)).toBe(true);
+    expect(JSON.parse(readFileSync(gatePath, "utf8"))).toEqual(
+      expect.objectContaining({
+        workOrderId: "wo-restore",
+        projectId: "hub",
+        resultStatus: "completed",
+        accepted: true,
+        evidence: expect.arrayContaining(["no mutating git or PR gate required"]),
+        failures: [],
+      }),
+    );
   });
 });
