@@ -911,13 +911,15 @@ workspaces:
       },
     });
     expect(prompt).toContain("Workspace architecture task.");
-    expect(prompt).toContain("Expected worktree: /repo/realestate");
-    expect(prompt).toContain("git -C '/repo/realestate' rev-parse --show-toplevel");
+    expect(prompt).toContain("Workspace coordination root: /repo/realestate");
     expect(prompt).toContain(
-      "For workspace repository geo-backend, verify git toplevel is /repo/realestate/geo-backend",
+      "repository work must happen in the repository-specific expected worktrees",
     );
     expect(prompt).toContain(
-      "For workspace repository geo-frontend, verify git toplevel is /repo/realestate/geo-frontend",
+      "For workspace repository geo-backend, expected worktree is /repo/realestate/geo-backend",
+    );
+    expect(prompt).toContain(
+      "For workspace repository geo-frontend, expected worktree is /repo/realestate/geo-frontend",
     );
     expect(prompt).toContain("Treat Geo Workspace as one bounded workspace with 2 repositories.");
     expect(prompt).toContain(

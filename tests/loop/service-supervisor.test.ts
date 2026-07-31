@@ -446,6 +446,25 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-"));
     const backend = join(root, "geo-backend");
     const frontend = join(root, "geo-frontend");
+    mkdirSync(backend, { recursive: true });
+    mkdirSync(frontend, { recursive: true });
+    mkdirSync(join(backend, ".git"));
+    mkdirSync(join(frontend, ".git"));
+    const expectedRunId = "1784196600000-geo-workspace";
+    const backendWorktree = join(
+      process.env.TCB_STATE_DIR,
+      "loop-worktrees",
+      "geo",
+      expectedRunId,
+      "geo-backend",
+    );
+    const frontendWorktree = join(
+      process.env.TCB_STATE_DIR,
+      "loop-worktrees",
+      "geo",
+      expectedRunId,
+      "geo-frontend",
+    );
     const configFile = join(root, "loop.yml");
     writeFileSync(
       configFile,
@@ -505,6 +524,31 @@ workspaces:
       },
       runGit: (invocation) => {
         gitCalls.push(invocation);
+        const command = invocation.args.join(" ");
+        if (invocation.cwd === backend && command === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${backend}\n`, stderr: "" };
+        }
+        if (invocation.cwd === frontend && command === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${frontend}\n`, stderr: "" };
+        }
+        if (invocation.cwd === backendWorktree && command === "rev-parse --show-toplevel") {
+          return { status: 1, stdout: "", stderr: "not a git repository" };
+        }
+        if (invocation.cwd === frontendWorktree && command === "rev-parse --show-toplevel") {
+          return { status: 1, stdout: "", stderr: "not a git repository" };
+        }
+        if (
+          invocation.cwd === backend &&
+          command === `worktree add --detach ${backendWorktree} HEAD`
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (
+          invocation.cwd === frontend &&
+          command === `worktree add --detach ${frontendWorktree} HEAD`
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
         if (invocation.args.join(" ") === "status --porcelain") {
           return { status: 0, stdout: "", stderr: "" };
         }
@@ -515,11 +559,17 @@ workspaces:
       },
       runSupervisorTask: async (request) => {
         dispatchedProjectIds.push(request.workOrder.projectId);
+        expect(request.workOrder.workspace?.repositories).toMatchObject([
+          { id: "geo-backend", path: backendWorktree, sourcePath: backend },
+          { id: "geo-frontend", path: frontendWorktree, sourcePath: frontend },
+        ]);
         expect(request.prompt).toContain("Workspace architecture task.");
         expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-backend'");
-        expect(request.prompt).toContain(`'${backend}' --agent codex`);
+        expect(request.prompt).toContain(`'${backendWorktree}' --agent codex`);
         expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-frontend'");
-        expect(request.prompt).toContain(`'${frontend}' --agent codex`);
+        expect(request.prompt).toContain(`'${frontendWorktree}' --agent codex`);
+        expect(request.prompt).toContain(`Original workspace repository geo-backend: ${backend}`);
+        expect(request.prompt).toContain(`Original workspace repository geo-frontend: ${frontend}`);
         const marker = finalMarkerFromPrompt(request.prompt);
         return {
           status: 0,
@@ -542,12 +592,18 @@ workspaces:
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
     expect(dispatchedProjectIds).toEqual(["geo"]);
-    expect(gitCalls).toEqual([
-      { cwd: backend, args: ["status", "--porcelain"] },
-      { cwd: backend, args: ["branch", "--show-current"] },
-      { cwd: frontend, args: ["status", "--porcelain"] },
-      { cwd: frontend, args: ["branch", "--show-current"] },
-    ]);
+    expect(gitCalls).toContainEqual({
+      cwd: backend,
+      args: ["worktree", "add", "--detach", backendWorktree, "HEAD"],
+    });
+    expect(gitCalls).toContainEqual({
+      cwd: frontend,
+      args: ["worktree", "add", "--detach", frontendWorktree, "HEAD"],
+    });
+    expect(gitCalls).toContainEqual({ cwd: backendWorktree, args: ["status", "--porcelain"] });
+    expect(gitCalls).toContainEqual({ cwd: frontendWorktree, args: ["status", "--porcelain"] });
+    expect(gitCalls).toContainEqual({ cwd: backend, args: ["branch", "--show-current"] });
+    expect(gitCalls).toContainEqual({ cwd: frontend, args: ["branch", "--show-current"] });
   });
 
   it("dispatches independent supervised targets across the supervisor pool with a clear reset", async () => {

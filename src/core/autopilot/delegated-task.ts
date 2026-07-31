@@ -9,6 +9,7 @@ import {
 import type { HandlerDeps } from "../deps.js";
 import { createLoopSupervisorTaskRunner } from "../loop/agent-queue.js";
 import { type LoopProjectConfig, parseLoopConfigYaml } from "../loop/config.js";
+import { prepareLoopExecutionWorktrees } from "../loop/execution-worktree.js";
 import { recoverInvalidOutputFromFinalSummary } from "../loop/final-summary-recovery.js";
 import {
   runGitCommand,
@@ -186,7 +187,7 @@ export async function startActiveDelegatedTask(
   const projectId = projectIdForSession(input.session, projectPath);
   const runId = `${now}-${projectId}-active-delegate`;
   const projectPolicy = findLoopProjectPolicy(deps, projectPath);
-  const workOrder = buildActiveDelegatedTaskWorkOrder({
+  let workOrder = buildActiveDelegatedTaskWorkOrder({
     session: input.session,
     projectId,
     projectName: basename(projectPath) || projectId,
@@ -200,6 +201,7 @@ export async function startActiveDelegatedTask(
     projectSessionPrefix: deps.config.projectSessionPrefix,
     ...(projectPolicy !== null ? { projectPolicy } : {}),
   });
+  workOrder = prepareLoopExecutionWorktrees({ workOrder, runGit: runGitCommand });
   const supervisorSession = await reserveFirstAvailableSupervisor(deps, candidates, workOrder, now);
   if (supervisorSession === null) {
     return {
@@ -489,9 +491,18 @@ function findActiveDelegatedTask(projectPath: string) {
   return (
     listUnfinishedLoopSupervisorWorkOrders().find(
       (record) =>
-        record.workOrder.projectPath === projectPath &&
+        workOrderMatchesProjectPath(record.workOrder, projectPath) &&
         record.workOrder.task?.kind === "active-delegated-task",
     ) ?? null
+  );
+}
+
+function workOrderMatchesProjectPath(workOrder: LoopWorkOrder, projectPath: string): boolean {
+  const target = resolve(projectPath);
+  return (
+    resolve(workOrder.projectPath) === target ||
+    (workOrder.executionIsolation?.sourceWorktree !== undefined &&
+      resolve(workOrder.executionIsolation.sourceWorktree) === target)
   );
 }
 
