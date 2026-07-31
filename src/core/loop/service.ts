@@ -2305,35 +2305,25 @@ function runSupervisedAutoMerge(input: {
     }
   }
 
-  for (const args of [
-    ["switch", input.project.pullRequest.switchBack],
-    ["pull", "--ff-only", "origin", input.project.pullRequest.switchBack],
-  ]) {
-    const result = input.runGit({ cwd: input.project.path, args });
-    if (result.status !== 0) {
-      failures.push(
-        `git ${args.join(" ")} failed: ${result.stderr || result.stdout || "unknown error"}`,
-      );
-      return failures;
-    }
-  }
-  return failures;
+  return syncSwitchBackBranch(input);
 }
 
 function syncSwitchBackBranch(input: {
   project: SupervisedSystemGateProject;
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): string[] {
-  const result = input.runGit({
-    cwd: input.project.path,
-    args: ["pull", "--ff-only", "origin", input.project.pullRequest.switchBack],
-  });
-  if (result.status === 0) return [];
-  return [
-    `git pull --ff-only origin ${input.project.pullRequest.switchBack} failed: ${
-      result.stderr || result.stdout || "unknown error"
-    }`,
-  ];
+  const branch = input.project.pullRequest.switchBack;
+  for (const args of [
+    ["fetch", "origin", branch],
+    ["switch", branch],
+    ["merge", "--ff-only", "FETCH_HEAD"],
+  ]) {
+    const result = input.runGit({ cwd: input.project.path, args });
+    if (result.status !== 0) {
+      return [`git ${args.join(" ")} failed: ${result.stderr || result.stdout || "unknown error"}`];
+    }
+  }
+  return [];
 }
 
 function runGithubAccountPermissionGate(input: {

@@ -241,7 +241,7 @@ describe("loop supervisor session", () => {
     expect(performStart.mock.calls[0]?.[2]).toContain("--dangerously-skip-permissions");
   });
 
-  it("does not report ensured when the supervisor agent is not input-ready", async () => {
+  it("reports ensured when the supervisor pane is alive even if the input-ready probe is slow", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-supervisor-"));
     const createSession = vi.fn(async () => true);
     const deps = {
@@ -269,7 +269,7 @@ describe("loop supervisor session", () => {
       async (_deps: HandlerDeps, _session: string, _command?: string) => "already-running" as const,
     );
 
-    await expect(startLoopSupervisor(deps as never, performStart)).resolves.toBe(false);
+    await expect(startLoopSupervisor(deps as never, performStart)).resolves.toBe(true);
 
     expect(createSession).not.toHaveBeenCalled();
     expect(deps.agent.waitUntilReady).toHaveBeenCalledWith("tmux_proj_loop-supervisor");

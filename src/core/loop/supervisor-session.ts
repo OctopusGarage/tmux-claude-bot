@@ -144,7 +144,14 @@ export async function startLoopSupervisor(
     }
     setPathForSession(name, dir);
     const start = await performStart(deps, name, resolveSupervisorStartCommand(deps.config));
-    await deps.agent.waitUntilReady(name);
+    try {
+      await deps.agent.waitUntilReady(name);
+    } catch (err) {
+      log.warn("loop supervisor session readiness check did not complete; dispatch will verify", {
+        err,
+        data: { session: name, dir },
+      });
+    }
     markSessionStopped(name);
     const alive = await deps.bridge.isPaneAlive(name);
     log.info("loop supervisor session ensured", { data: { session: name, dir, start, alive } });

@@ -38,6 +38,11 @@ export type QueuedMessage = {
    * prompts use the configured global horizon; supervised loop work orders can
    * safely wait longer because they are bounded by their own WorkOrder timeout. */
   maxWaitDoneTotalMs?: number | undefined;
+  /** Optional task-specific completion probe. System-owned long tasks can finish
+   * by writing durable artifacts before the agent UI becomes idle; when this
+   * returns true, the queue resolves with the latest pane output instead of
+   * waiting for an idle marker. */
+  doneProbe?: ((output: string) => boolean) | undefined;
   /** Optional lifecycle hook fired after the item is dequeued and before the
    * queue handler types into the target session. Used by persisted control work
    * to distinguish queued from already-dispatched WorkOrders across restarts. */

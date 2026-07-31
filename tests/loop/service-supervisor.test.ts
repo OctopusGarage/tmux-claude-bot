@@ -1259,7 +1259,13 @@ prReview:
         if (invocation.args.join(" ") === "branch --show-current") {
           return { status: 0, stdout: "dev\n", stderr: "" };
         }
-        if (invocation.args.join(" ") === "pull --ff-only origin dev") {
+        if (invocation.args.join(" ") === "fetch origin dev") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "switch dev") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "merge --ff-only FETCH_HEAD") {
           return { status: 0, stdout: "Already up to date.\n", stderr: "" };
         }
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
@@ -1287,7 +1293,9 @@ prReview:
     expect(gitInvocations).toEqual([
       "status --porcelain",
       "branch --show-current",
-      "pull --ff-only origin dev",
+      "fetch origin dev",
+      "switch dev",
+      "merge --ff-only FETCH_HEAD",
     ]);
     expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))[0]).toMatchObject({
       taskId: `loop:pr-review:net-auto-switch-all-prs:${Date.parse("2026-07-16T10:10:00Z")}`,
@@ -1345,7 +1353,13 @@ prReview:
         if (invocation.args.join(" ") === "branch --show-current") {
           return { status: 0, stdout: "dev\n", stderr: "" };
         }
-        if (invocation.args.join(" ") === "pull --ff-only origin dev") {
+        if (invocation.args.join(" ") === "fetch origin dev") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "switch dev") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "merge --ff-only FETCH_HEAD") {
           return { status: 1, stdout: "", stderr: "fatal: Not possible to fast-forward" };
         }
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
@@ -1374,7 +1388,7 @@ prReview:
       supervisorSummaryPath(process.env.TCB_STATE_DIR, "mesh-talk-all-prs"),
       "utf8",
     );
-    expect(summary).toContain("git pull --ff-only origin dev failed");
+    expect(summary).toContain("git merge --ff-only FETCH_HEAD failed");
     expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))[0]).toMatchObject({
       taskId: `loop:pr-review:mesh-talk-all-prs:${Date.parse("2026-07-16T10:10:00Z")}`,
       status: "failed",
@@ -2781,8 +2795,9 @@ prReview:
       ["status", "--porcelain"],
       ["branch", "--show-current"],
       ["show", "--format=", "--name-only", "abc123"],
+      ["fetch", "origin", "dev"],
       ["switch", "dev"],
-      ["pull", "--ff-only", "origin", "dev"],
+      ["merge", "--ff-only", "FETCH_HEAD"],
     ]);
   });
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -368,6 +368,59 @@ describe("createLoopSupervisorTaskRunner", () => {
         status: "active",
       }),
     ]);
+  });
+
+  it("marks supervisor queue work done when the final marker or final summary is visible", async () => {
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const deps = {
+      queue,
+      config: { projectSessionPrefix: "tmux_proj_" },
+      bridge: {
+        hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+      },
+    };
+    const finalSummaryDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      workOrder.projectId,
+      workOrder.id,
+    );
+    const workOrderWithSummaryPath = {
+      ...workOrder,
+      finalSummaryPath: join(finalSummaryDir, "supervisor-final-summary.json"),
+    };
+    mkdirSync(finalSummaryDir, { recursive: true });
+    writeFileSync(
+      workOrderWithSummaryPath.finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: workOrder.projectId,
+        actionsTaken: ["done"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const probes: boolean[] = [];
+    queue.setHandler(async (message) => {
+      probes.push(message.doneProbe?.("still shows active turn") ?? false);
+      probes.push(message.doneProbe?.(`${workOrder.requiredFinalMarker}\nsummary`) ?? false);
+      message.resolve("supervisor done");
+    });
+
+    const result = await createLoopSupervisorTaskRunner(deps)({
+      session: "tmux_proj_loop-supervisor",
+      prompt: "Run supervised work order",
+      signal: new AbortController().signal,
+      workOrder: workOrderWithSummaryPath,
+    });
+
+    expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
+    expect(probes).toEqual([true, true]);
   });
 
   it("blocks supervisor work when the worker is already leased", async () => {

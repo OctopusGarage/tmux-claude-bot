@@ -768,7 +768,7 @@ describe("executeMessage — text action with history", () => {
     expect(d.bridge.sendKeys).not.toHaveBeenCalled();
   });
 
-  it("preserves readiness failures for system-origin text so automation can retry", async () => {
+  it("preserves readiness failures for system-origin text after the retry horizon", async () => {
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
@@ -776,12 +776,38 @@ describe("executeMessage — text action with history", () => {
           throw new Error("Codex did not become ready in time");
         }),
       } as never,
+      config: { maxWaitDoneMs: 1, maxWaitDoneTotalMs: 5 } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
 
     await expect(
       executeMessage(msg("text", { text: "system work", origin: "system" }), d),
     ).rejects.toThrow("Codex did not become ready in time");
+  });
+
+  it("retries input readiness for system-origin text within the long-task horizon", async () => {
+    const waitUntilInputReady = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Codex did not become ready in time"))
+      .mockRejectedValueOnce(new Error("Codex did not become ready in time"))
+      .mockResolvedValueOnce(undefined);
+    const d = liveFakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilInputReady,
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "DONE" })),
+      } as never,
+      config: { maxWaitDoneMs: 1, maxWaitDoneTotalMs: 100 } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    await expect(
+      executeMessage(
+        msg("text", { text: "system work", origin: "system", maxWaitDoneTotalMs: 100 }),
+        d,
+      ),
+    ).resolves.toBe("DONE");
+    expect(waitUntilInputReady).toHaveBeenCalledTimes(3);
   });
 
   it("keeps waiting across timeout rounds and notifies once, then resolves the real result", async () => {
@@ -806,6 +832,30 @@ describe("executeMessage — text action with history", () => {
     expect(waitUntilDone).toHaveBeenCalledTimes(3);
     expect(notices).toHaveLength(1); // one notice at the first timeout, not one per round
     expect(notices[0]).toContain("任务仍在进行中");
+  });
+
+  it("resolves a system-owned task when its done probe passes before the agent becomes idle", async () => {
+    const waitUntilDone = vi.fn(async () => ({
+      done: false,
+      output: "[LOOP_SUPERVISOR_DONE:wo-1]\nfinal summary written",
+    }));
+    const d = liveFakeDeps({
+      agent: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
+      config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 1000 } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    const out = await executeMessage(
+      msg("text", {
+        text: "supervised work",
+        origin: "system",
+        doneProbe: (output) => output.includes("[LOOP_SUPERVISOR_DONE:wo-1]"),
+      }),
+      d,
+    );
+
+    expect(out).toContain("[LOOP_SUPERVISOR_DONE:wo-1]");
+    expect(waitUntilDone).toHaveBeenCalledTimes(1);
   });
 
   it("gives up at the total-wait horizon with the still-running reply", async () => {
