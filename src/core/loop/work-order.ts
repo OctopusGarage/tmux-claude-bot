@@ -49,6 +49,8 @@ export type LoopSupervisorReviewGateDeterministicGate =
 type LoopExecutionIsolation = {
   mode: "supervised-worker";
   expectedWorktree: string;
+  sourceWorktree?: string;
+  preparedBy?: "system-git-worktree";
   contextReset: "compact" | "clear";
   cleanup: {
     success: "release-worker";
@@ -592,6 +594,24 @@ function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsola
   };
 }
 
+export function withLoopExecutionWorktree(
+  workOrder: LoopWorkOrder,
+  executionWorktree: string,
+): LoopWorkOrder {
+  const isolation =
+    workOrder.executionIsolation ?? defaultExecutionIsolation(workOrder.projectPath);
+  return {
+    ...workOrder,
+    projectPath: executionWorktree,
+    executionIsolation: {
+      ...isolation,
+      expectedWorktree: executionWorktree,
+      sourceWorktree: isolation.sourceWorktree ?? workOrder.projectPath,
+      preparedBy: "system-git-worktree",
+    },
+  };
+}
+
 function workspaceTaskGoal(
   workspace: LoopWorkspaceConfig,
   taskKind:
@@ -711,10 +731,18 @@ function finalSummaryValidationLines(): string[] {
 function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
   const isolation =
     workOrder.executionIsolation ?? defaultExecutionIsolation(workOrder.projectPath);
+  const sourceWorktreeLines =
+    isolation.sourceWorktree === undefined
+      ? []
+      : [
+          `- Original project worktree: ${isolation.sourceWorktree}. Do not edit, switch branches, pull, merge, rebase, or commit in this original worktree while executing the WorkOrder; it is reserved for the user's normal session.`,
+          "- The worker must use the expected isolated worktree for all assessment, edits, commits, PR inspection, and verification unless a command is explicitly checking that the original worktree stayed clean and on its configured branch.",
+        ];
   return [
     "Execution isolation:",
     `- This WorkOrder must lease a dedicated supervised worker context for run ${workOrder.id}; do not inject this WorkOrder into ordinary user chat or an unrelated project session.`,
     `- Expected worktree: ${isolation.expectedWorktree}. Before any sync, assessment, edit, PR review, or shell command that mutates state, run git -C ${shellQuote(isolation.expectedWorktree)} rev-parse --show-toplevel and verify it must equal ${isolation.expectedWorktree}. If it does not match, stop and report blocked.`,
+    ...sourceWorktreeLines,
     ...workspaceWorktreeVerificationPolicy(workOrder),
     `- Reset the delegated worker context with ${isolation.contextReset} before substantive task execution and between unrelated subtasks; preserve only the WorkOrder JSON and current verified evidence.`,
     `- Record the leased worker/session name, expected worktree, actual git toplevel, reset action, and cleanup decision in actionsTaken or followUps so the run can be replayed from persisted artifacts.`,
@@ -927,11 +955,13 @@ function workOrderTask(workOrder: LoopWorkOrder): NonNullable<LoopWorkOrder["tas
 }
 
 function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
+  const isolation = workOrder.executionIsolation;
   if (workOrder.task?.kind === "active-delegated-task") {
     if (workOrder.commitPolicy.enabled && workOrder.pullRequestPolicy?.enabled) {
       return `- Before delegated work, sync the target base branch with target-pinned git commands: ${syncRepositoryCommands(
         workOrder.projectPath,
         baseBranch,
+        isolation,
       )}.`;
     }
     return [
@@ -955,10 +985,22 @@ function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
   return `- Before assessment or delegated work, sync the target base branch with target-pinned git commands: ${syncRepositoryCommands(
     workOrder.projectPath,
     baseBranch,
+    isolation,
   )}.`;
 }
 
-function syncRepositoryCommands(path: string, branch: string): string {
+function syncRepositoryCommands(
+  path: string,
+  branch: string,
+  isolation?: LoopExecutionIsolation,
+): string {
+  if (isolation?.preparedBy === "system-git-worktree") {
+    return [
+      `${gitInWorktree(path, "status --short")} must be clean`,
+      gitInWorktree(path, `fetch origin ${branch}`),
+      gitInWorktree(path, `switch --detach origin/${branch}`),
+    ].join(", then ");
+  }
   return [
     `${gitInWorktree(path, "status --short")} must be clean`,
     gitInWorktree(path, `fetch origin ${branch}`),
@@ -1438,7 +1480,9 @@ function commitBranchPolicy(workOrder: LoopWorkOrder): string {
   }
   if (task.kind === "active-delegated-task") {
     if (workOrder.commitPolicy.enabled && workOrder.commitPolicy.branch !== undefined) {
-      return `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other delegated branch.`;
+      return workOrder.executionIsolation?.preparedBy === "system-git-worktree"
+        ? `- In the isolated worktree, create or reset the WorkOrder branch from the synced base with git -C ${shellQuote(workOrder.projectPath)} switch -C ${shellQuote(workOrder.commitPolicy.branch)} origin/${baseBranchForWorkOrder(workOrder)}, then use commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other delegated branch.`
+        : `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other delegated branch.`;
     }
     return "- This active delegated task must preserve the user's current branch by default; commit or PR only if the user requirement or later project policy explicitly asks for it.";
   }
@@ -1455,7 +1499,9 @@ function commitBranchPolicy(workOrder: LoopWorkOrder): string {
     return "- This review task must not create a new PR branch; bounded repair may commit only on an eligible PR's existing same-repository head branch.";
   }
   return workOrder.commitPolicy.branch
-    ? `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other loop branch.`
+    ? workOrder.executionIsolation?.preparedBy === "system-git-worktree"
+      ? `- In the isolated worktree, create or reset the WorkOrder branch from the synced base with git -C ${shellQuote(workOrder.projectPath)} switch -C ${shellQuote(workOrder.commitPolicy.branch)} origin/${baseBranchForWorkOrder(workOrder)}, then use commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other loop branch.`
+      : `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other loop branch.`
     : "- If commits are disabled or no commit branch is configured, do not create a PR branch.";
 }
 
