@@ -134,6 +134,61 @@ prReview:
     expect(config.prReview.repositories[0]?.scheduleJitterMinutes).toBe(12);
   });
 
+  it("parses worktree isolation overrides for supervised work orders", () => {
+    const config = parseLoopConfigYaml(`
+projects:
+  - id: hub
+    name: Hub
+    path: /repo/hub
+    agent: codex
+    worktreeIsolation: source
+    schedule: "0 2 * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 3
+    targetScore: 90
+    assessment:
+      command: npm run assess
+    execution:
+      agent: true
+workspaces:
+  - id: geo
+    name: Geo
+    root: /repo/geo
+    agent: codex
+    worktreeIsolation: isolated
+    repositories:
+      - id: backend
+        name: Backend
+        path: /repo/geo/backend
+        role: api
+        worktreeIsolation: source
+      - id: frontend
+        name: Frontend
+        path: /repo/geo/frontend
+        role: web
+    architecture:
+      enabled: true
+      schedule: "0 3 * * *"
+      goal: Improve cross-repository boundaries.
+prReview:
+  repositories:
+    - id: mesh-talk-all-prs
+      name: mesh-talk all PRs
+      path: /repo/mesh-talk
+      repo: OctopusGarage/mesh-talk
+      agent: codex
+      schedule: "45 3 * * *"
+      switchBack: dev
+      worktreeIsolation: isolated
+`);
+
+    expect(config.projects[0]?.worktreeIsolation).toBe("source");
+    expect(config.workspaces[0]?.worktreeIsolation).toBe("isolated");
+    expect(config.workspaces[0]?.repositories[0]?.worktreeIsolation).toBe("source");
+    expect(config.workspaces[0]?.repositories[1]?.worktreeIsolation).toBeUndefined();
+    expect(config.prReview.repositories[0]?.worktreeIsolation).toBe("isolated");
+  });
+
   it("parses test coverage jobs for meaningful coverage improvement", () => {
     const text = validConfig.replace(
       "allowedActions:",

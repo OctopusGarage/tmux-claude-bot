@@ -39,7 +39,11 @@ import {
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
 } from "../loop/supervisor-state.js";
-import { buildActiveDelegatedTaskWorkOrder, type LoopWorkOrder } from "../loop/work-order.js";
+import {
+  buildActiveDelegatedTaskWorkOrder,
+  type LoopWorkOrder,
+  type LoopWorktreeIsolationMode,
+} from "../loop/work-order.js";
 import { markImplementedOpportunitiesForCompletedDelegation } from "../opportunities/delegation-completion.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 
@@ -150,7 +154,12 @@ export async function cancelActiveDelegatedTask(
 
 export async function startActiveDelegatedTask(
   deps: HandlerDeps,
-  input: { session: string; requirement: string; opportunityIds?: string[] },
+  input: {
+    session: string;
+    requirement: string;
+    opportunityIds?: string[];
+    worktreeIsolation?: LoopWorktreeIsolationMode;
+  },
 ): Promise<ActiveDelegatedTaskStartResult> {
   if (!deps.config.loopEngineering.supervisor.enabled) {
     return {
@@ -201,7 +210,12 @@ export async function startActiveDelegatedTask(
     projectSessionPrefix: deps.config.projectSessionPrefix,
     ...(projectPolicy !== null ? { projectPolicy } : {}),
   });
-  workOrder = prepareLoopExecutionWorktrees({ workOrder, runGit: runGitCommand });
+  workOrder = prepareLoopExecutionWorktrees({
+    workOrder,
+    runGit: runGitCommand,
+    defaultMode:
+      input.worktreeIsolation ?? deps.config.loopEngineering.supervisor.worktreeIsolation,
+  });
   const supervisorSession = await reserveFirstAvailableSupervisor(deps, candidates, workOrder, now);
   if (supervisorSession === null) {
     return {

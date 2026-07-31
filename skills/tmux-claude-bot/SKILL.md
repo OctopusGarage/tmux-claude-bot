@@ -11,7 +11,18 @@ CLI**. The bot must be running; if a command says it can't reach the control soc
 tell the user to start it (`tcb service start`). You are the **operator**, a separate
 process — not one of the managed sessions.
 
-## The verbs (this is the whole interface)
+## Start from docs, then use the CLI
+
+For user-facing usage, read `docs/agents/usage-guide.md` first, then
+`docs/manual.md`, `docs/commands.md`, or `docs/tui.md` for exact syntax. Do not
+infer undocumented flags from source code.
+
+For intelligent automation terminology, read `docs/intelligent-automation.md`.
+Autopilot, Loop Engineering, Opportunity Discovery, PR review, Daily Task Audit,
+and Runtime Guardian are WorkOrder/supervisor-backed flows, not ordinary chat
+prompts.
+
+## The core verbs
 
 - **List** — `tcb sessions` (running ones) / `tcb projects` (all, incl. stopped).
   Add `--json` to parse the result.
@@ -24,6 +35,17 @@ process — not one of the managed sessions.
 - **Control keys** — `tcb control <project> <esc|enter|interrupt|restart|clear|compact|up|down|tab>`.
 - **Status / health** — `tcb dashboard` (all sessions), `tcb sysload` (machine load /
   heat / runaway processes), `tcb doctor` (install health).
+- **Delegate clarified work** — `tcb autopilot <project> [requirement]`. Use this
+  after the user has clarified a task and wants the supervisor to finish
+  implementation, review, tests/evals when justified, PR policy, and final
+  validation. Do not simulate Autopilot by sending a long prompt to the ordinary
+  project chat.
+- **Audit scheduled work** — `tcb task audit --force` checks the bot-hosted
+  schedule ledger and can dispatch configured self-repair.
+- **Loop Engineering admin** — `tcb loop validate|tick|reports|backlog|skills …`
+  validates and inspects scheduled WorkOrders. Manual command-backed project runs
+  are for local/system runners; agent-supervised code-changing work belongs to
+  the managed Loop Supervisor.
 
 **Reference a project by name** — a unique substring works (`geo` → `geo-backend`).
 Never type the raw internal session id. If a name is ambiguous, the CLI lists the
@@ -43,11 +65,24 @@ matches; pick the right one or ask the user.
 
 - `send` can take a while — the agent is working; the command returns its reply when
   done. For a long task, bump `--timeout` or use `--no-wait` and check back with `tcb peek`.
+- If the target project has active or recoverable Loop Supervisor work, do not
+  inject unrelated ordinary chat into that project. Use status/peek/log controls,
+  wait, cancel explicitly, or use the supervisor-backed delegation path.
 - Don't send a prompt to the session that is THIS process. If unsure which sessions
   exist, `tcb sessions` first.
 - When you can't resolve a request to one of these commands, say so and run `tcb doctor`;
   don't invent flags. `tcb --help` and `tcb <command> --help` are the authoritative,
   always-current reference — consult them rather than guessing.
+
+## Modern automation shortcuts
+
+- Clarified current task -> `tcb autopilot <project> "[requirement]"`.
+- Proactive suggestions -> `/opportunity list|show|discuss|dismiss` in chat;
+  execute approved work through Autopilot/supervisor delegation.
+- Yesterday's schedules -> `tcb task audit --force`.
+- Loop config health -> `tcb loop validate <config> --json`.
+- Loop run history -> `tcb loop reports list --json` and
+  `tcb loop backlog list --all --json`.
 
 ## Sending an image or file to the user
 

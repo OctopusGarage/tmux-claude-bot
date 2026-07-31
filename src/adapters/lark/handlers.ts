@@ -113,7 +113,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         }
       }
 
-      // Reply to a "已排队" ack with new text → rewrite that still-waiting message
+      // Reply to a localized queued ack with new text: rewrite that still-waiting message.
       // in place. TERMINAL unless it wasn't one of our acks (mirrors Telegram): a
       // rewrite blocked by dedup is reported, never silently re-enqueued.
       if (msg.replyToMessageId && msg.rawContentType === "text") {

@@ -567,7 +567,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     const replyToMsg = ctx.message.reply_to_message;
     let targetSession: string | null = null;
     if (replyToMsg) {
-      // Reply to a "已排队" ack with new text → rewrite that still-waiting message
+      // Reply to a localized queued ack with new text: rewrite that still-waiting message.
       // in place (keeps its queue position). TERMINAL unless it wasn't one of our
       // acks: a rewrite blocked by dedup is reported, never silently re-enqueued as a
       // fresh prompt (which dedup would then drop, losing the edit).

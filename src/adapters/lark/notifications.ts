@@ -15,7 +15,14 @@ export function registerLarkNotifications(
   cfg: LarkConfig,
   channel: LarkChannel,
 ): void {
-  deps.notifier.register((notice) => notifyLarkOwner(cfg, renderNotice(notice, messages("lark"))));
+  deps.notifier.register(async (notice) => {
+    await deps.notifications.notify({
+      channel: "lark",
+      source: "batch-scheduler",
+      title: "Batch scheduler",
+      body: renderNotice(notice, messages("lark")),
+    });
+  });
 
   if ([...cfg.allowedOpenIds][0] !== undefined) {
     deps.notifications.register("lark", async (message, req) => {
@@ -42,17 +49,18 @@ export function registerLarkNotifications(
       }
       await notifyLarkOwner(cfg, message);
     });
-    deps.notifications.registerAttachment("lark", (filePath, kind, caption) =>
-      sendLarkAttachment(
+    deps.notifications.registerAttachment("lark", (filePath, kind, caption, req) => {
+      const target = boundLarkGroupForSession(req?.session);
+      return sendLarkAttachment(
         clientFor(cfg) as unknown as LarkMediaClient,
-        [...cfg.allowedOpenIds][0] ?? "",
+        target?.chatId ?? [...cfg.allowedOpenIds][0] ?? "",
         filePath,
         kind,
         caption,
         undefined,
-        "open_id",
-      ),
-    );
+        target ? undefined : "open_id",
+      );
+    });
   }
 
   deps.channelSenders.register("lark", (chatId, filePath, kind, caption) =>

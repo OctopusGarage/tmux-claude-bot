@@ -30,6 +30,7 @@ describe("no env var crashes startup when left blank", () => {
       TASK_AUDIT_CHANNEL: "both",
       TASK_AUDIT_AUTO_REPAIR: "true",
       TASK_AUDIT_REPAIR_BRANCH: "dev",
+      TASK_AUDIT_REPAIR_WORKTREE_ISOLATION: "source",
     });
 
     expect(config.taskAudit).toEqual({
@@ -39,6 +40,7 @@ describe("no env var crashes startup when left blank", () => {
       channel: "both",
       autoRepair: true,
       repairBranch: "dev",
+      repairWorktreeIsolation: "source",
     });
   });
 

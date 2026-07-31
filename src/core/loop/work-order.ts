@@ -50,7 +50,8 @@ type LoopExecutionIsolation = {
   mode: "supervised-worker";
   expectedWorktree: string;
   sourceWorktree?: string;
-  preparedBy?: "system-git-worktree";
+  worktreeIsolation: "isolated" | "source" | "auto";
+  preparedBy?: "system-git-worktree" | "source-worktree";
   contextReset: "compact" | "clear";
   cleanup: {
     success: "release-worker";
@@ -218,6 +219,7 @@ export type LoopWorkOrder = {
       name: string;
       path: string;
       sourcePath?: string;
+      worktreeIsolation?: LoopWorktreeIsolationMode;
       role: string;
       agent: LoopProjectConfig["agent"];
       pullRequest: LoopProjectConfig["pullRequest"];
@@ -312,7 +314,10 @@ export function buildLoopWorkOrder(input: {
     projectId: input.project.id,
     projectName: input.project.name,
     projectPath: input.project.path,
-    executionIsolation: defaultExecutionIsolation(input.project.path),
+    executionIsolation: configuredExecutionIsolation(
+      input.project.path,
+      input.project.worktreeIsolation,
+    ),
     ...(input.projectSessionPrefix !== undefined
       ? {
           notificationSession: sessionNameFromPath(input.project.path, input.projectSessionPrefix),
@@ -369,7 +374,7 @@ export function buildRepositoryPullRequestReviewWorkOrder(input: {
     projectId: repository.id,
     projectName: repository.name,
     projectPath: repository.path,
-    executionIsolation: defaultExecutionIsolation(repository.path),
+    executionIsolation: configuredExecutionIsolation(repository.path, repository.worktreeIsolation),
     agent: repository.agent,
     goal: `Review and merge eligible pull requests for ${repository.repo}.`,
     maxRounds: 1,
@@ -462,7 +467,7 @@ export function buildLoopWorkspaceWorkOrder(input: {
     projectId: workspace.id,
     projectName: workspace.name,
     projectPath: workspace.root,
-    executionIsolation: defaultExecutionIsolation(workspace.root),
+    executionIsolation: configuredExecutionIsolation(workspace.root, workspace.worktreeIsolation),
     ...(input.projectSessionPrefix !== undefined
       ? {
           notificationSession: sessionNameFromPath(workspace.root, input.projectSessionPrefix),
@@ -493,6 +498,7 @@ export function buildLoopWorkspaceWorkOrder(input: {
         id: repository.id,
         name: repository.name,
         path: repository.path,
+        ...repositoryWorktreeIsolationPolicy(repository, workspace),
         role: repository.role,
         agent: repository.agent ?? workspace.agent,
         pullRequest: repository.pullRequest,
@@ -540,7 +546,10 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
     projectId: input.projectId,
     projectName: input.projectName,
     projectPath: input.projectPath,
-    executionIsolation: defaultExecutionIsolation(input.projectPath),
+    executionIsolation: configuredExecutionIsolation(
+      input.projectPath,
+      input.projectPolicy?.worktreeIsolation,
+    ),
     ...(input.opportunityIds !== undefined && input.opportunityIds.length > 0
       ? { relatedOpportunityIds: [...input.opportunityIds] }
       : {}),
@@ -586,6 +595,7 @@ function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsola
   return {
     mode: "supervised-worker",
     expectedWorktree,
+    worktreeIsolation: "auto",
     contextReset: "compact",
     cleanup: {
       success: "release-worker",
@@ -593,6 +603,16 @@ function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsola
       retainFailureForHours: 72,
     },
   };
+}
+
+export type LoopWorktreeIsolationMode = LoopExecutionIsolation["worktreeIsolation"];
+
+function configuredExecutionIsolation(
+  expectedWorktree: string,
+  worktreeIsolation?: LoopWorktreeIsolationMode,
+): LoopExecutionIsolation {
+  const isolation = defaultExecutionIsolation(expectedWorktree);
+  return worktreeIsolation === undefined ? isolation : { ...isolation, worktreeIsolation };
 }
 
 export function withLoopExecutionWorktree(
@@ -607,15 +627,35 @@ export function withLoopExecutionWorktree(
     executionIsolation: {
       ...isolation,
       expectedWorktree: executionWorktree,
+      worktreeIsolation: "isolated",
       sourceWorktree: isolation.sourceWorktree ?? workOrder.projectPath,
       preparedBy: "system-git-worktree",
     },
   };
 }
 
+export function withLoopSourceWorktree(workOrder: LoopWorkOrder): LoopWorkOrder {
+  const isolation =
+    workOrder.executionIsolation ?? defaultExecutionIsolation(workOrder.projectPath);
+  return {
+    ...workOrder,
+    executionIsolation: {
+      ...isolation,
+      expectedWorktree: workOrder.projectPath,
+      worktreeIsolation: "source",
+      preparedBy: "source-worktree",
+    },
+  };
+}
+
 export function withLoopWorkspaceRepositoryExecutionWorktrees(
   workOrder: LoopWorkOrder,
-  repositories: Array<{ id: string; path: string; sourcePath?: string }>,
+  repositories: Array<{
+    id: string;
+    path: string;
+    sourcePath?: string;
+    worktreeIsolation?: LoopWorktreeIsolationMode;
+  }>,
 ): LoopWorkOrder {
   if (workOrder.workspace === undefined) return workOrder;
   const replacements = new Map(repositories.map((repository) => [repository.id, repository]));
@@ -630,10 +670,21 @@ export function withLoopWorkspaceRepositoryExecutionWorktrees(
           ...repository,
           path: replacement.path,
           ...(replacement.sourcePath !== undefined ? { sourcePath: replacement.sourcePath } : {}),
+          ...(replacement.worktreeIsolation !== undefined
+            ? { worktreeIsolation: replacement.worktreeIsolation }
+            : {}),
         };
       }),
     },
   };
+}
+
+function repositoryWorktreeIsolationPolicy(
+  repository: LoopWorkspaceConfig["repositories"][number],
+  workspace: LoopWorkspaceConfig,
+): { worktreeIsolation?: LoopWorktreeIsolationMode } {
+  const worktreeIsolation = repository.worktreeIsolation ?? workspace.worktreeIsolation;
+  return worktreeIsolation === undefined ? {} : { worktreeIsolation };
 }
 
 function workspaceTaskGoal(
@@ -767,12 +818,17 @@ function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
     ];
   }
   const sourceWorktreeLines =
-    isolation.sourceWorktree === undefined
-      ? []
-      : [
-          `- Original project worktree: ${isolation.sourceWorktree}. Do not edit, switch branches, pull, merge, rebase, or commit in this original worktree while executing the WorkOrder; it is reserved for the user's normal session.`,
-          "- The worker must use the expected isolated worktree for all assessment, edits, commits, PR inspection, and verification unless a command is explicitly checking that the original worktree stayed clean and on its configured branch.",
-        ];
+    isolation.preparedBy === "source-worktree"
+      ? [
+          "- Worktree mode: source. This is an explicitly configured live/source execution: the dedicated worker session operates in the source worktree so verified self-repair can take effect in the running dev profile. This does not allow using the ordinary human chat session.",
+          "- Before editing in source mode, verify the worktree is clean and still on the intended branch; if user changes appear, stop and report blocked.",
+        ]
+      : isolation.sourceWorktree === undefined
+        ? []
+        : [
+            `- Original project worktree: ${isolation.sourceWorktree}. Do not edit, switch branches, pull, merge, rebase, or commit in this original worktree while executing the WorkOrder; it is reserved for the user's normal session.`,
+            "- The worker must use the expected isolated worktree for all assessment, edits, commits, PR inspection, and verification unless a command is explicitly checking that the original worktree stayed clean and on its configured branch.",
+          ];
   return [
     "Execution isolation:",
     `- This WorkOrder must lease a dedicated supervised worker context for run ${workOrder.id}; do not inject this WorkOrder into ordinary user chat or an unrelated project session.`,
@@ -788,7 +844,12 @@ function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
 function workspaceWorktreeVerificationPolicy(workOrder: LoopWorkOrder): string[] {
   if (workOrder.workspace === undefined) return [];
   return workOrder.workspace.repositories.flatMap((repository) => [
-    `- For workspace repository ${repository.id}, expected worktree is ${repository.path}. Verify git toplevel is ${repository.path} before touching that repository.`,
+    `- For workspace repository ${repository.id}, expected worktree is ${repository.path}. Verify git toplevel is ${repository.path} before touching that repository. Worktree mode: ${repository.worktreeIsolation ?? "auto"}.`,
+    ...(repository.worktreeIsolation === "source"
+      ? [
+          `- Workspace repository ${repository.id} is explicitly using source execution. Keep the dedicated worker context, verify the source worktree is clean before edits, and stop if unrelated user changes appear.`,
+        ]
+      : []),
     ...(repository.sourcePath === undefined
       ? []
       : [
@@ -1032,7 +1093,7 @@ function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
 function syncRepositoryCommands(
   path: string,
   branch: string,
-  isolation?: { preparedBy?: "system-git-worktree" },
+  isolation?: { preparedBy?: "system-git-worktree" | "source-worktree" },
 ): string {
   if (isolation?.preparedBy === "system-git-worktree") {
     return [

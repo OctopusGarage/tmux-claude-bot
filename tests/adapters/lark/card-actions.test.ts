@@ -226,8 +226,8 @@ describe("makeCardActionHandler", () => {
   });
 
   // peek/listalive/recent render cards; current/queuestatus render text. history
-  // renders a card only when the session has a path mapping (otherwise a "缺少路径"
-  // text hint) — covered separately in views.test.ts, so it's excluded here.
+  // renders a card only when the session has a path mapping; otherwise it renders
+  // a localized text hint. views.test.ts covers that branch, so it is excluded here.
   it.each([
     ["peek", "card"],
     ["listalive", "card"],
@@ -311,6 +311,7 @@ describe("makeCardActionHandler", () => {
               agent: "codex",
               poolSize: 1,
               resetBeforeWorkOrder: "compact",
+              worktreeIsolation: "isolated",
             },
           },
         },
@@ -747,8 +748,8 @@ describe("makeCardActionHandler", () => {
     const deps = fakeDeps();
     const handler = makeCardActionHandler(channel, deps);
 
-    // No recent lines match → replies the "未找到短 id" message; that's enough to
-    // prove the addrecent branch was taken.
+    // No recent lines match, so the localized short-id-not-found reply proves the
+    // addrecent branch was taken.
     await handler(evt({ cmd: "addrecent", sid: "nomatch" }));
 
     expect(channel.texts().some((t) => t.includes("未找到短 id"))).toBe(true);

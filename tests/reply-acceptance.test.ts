@@ -51,7 +51,7 @@ describe("queue acceptance replies", () => {
 
     const rt = createReplyTargetMap(tmpDir);
 
-    // Simulate: queue was empty → "已接收" reply first
+    // Simulate: queue was empty, so the accepted reply was sent first.
     await reply(ctx, "ok", "已接收", { session: "tmux_proj_test", replyTarget: rt });
 
     const resolved = rt.resolve(msgId);
@@ -65,7 +65,7 @@ describe("queue acceptance replies", () => {
 
     const rt = createReplyTargetMap(tmpDir);
 
-    // Simulate: queue had items → "已进队列" reply
+    // Simulate: queue had items, so the queued reply was sent first.
     await reply(ctx, "queued", "已进队列，位置 3", { session: "tmux_proj_test", replyTarget: rt });
 
     expect(rt.resolve(msgId)).toBe("tmux_proj_test");

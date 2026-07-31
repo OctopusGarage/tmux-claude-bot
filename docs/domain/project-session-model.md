@@ -50,7 +50,7 @@ User-facing surfaces should describe the domain, not the implementation:
 
 Presentation rule:
 
-- Say "Session" / "会话" in status lines and project lists.
+- Say "Session" in status lines and project lists.
 - Say "Project" for the managed workspace.
 - Say "Workspace" for the directory/path.
 - Say "Agent" only for Claude/Codex state.

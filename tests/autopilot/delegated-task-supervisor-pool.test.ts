@@ -42,6 +42,7 @@ function config(poolSize: number): AppConfig {
         dir: join(process.env.TCB_STATE_DIR ?? tmpdir(), "supervisors"),
         poolSize,
         resetBeforeWorkOrder: "compact",
+        worktreeIsolation: "isolated",
       },
     },
   } as unknown as AppConfig;

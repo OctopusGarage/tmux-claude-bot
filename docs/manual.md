@@ -132,13 +132,16 @@ The installer drops global launchers in `~/.local/bin`, so `tcb …` (and the fu
 `~/.local/bin` isn't on your `PATH`, add it; or run `node dist/cli.js …` from the
 install dir.)
 
+For the complete maintained CLI command and option surface, see
+[docs/cli-reference.md](cli-reference.md).
+
 | Command | What it does |
 |---------|--------------|
 | `tcb run` | run the bot in the foreground (what the service runs) |
 | `tcb setup` / `tcb setup:lark` | guided setup wizard / add Feishu via QR |
 | `tcb doctor` | health checks against the install |
 | `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
-| `tcb autopilot` | autopilot status across all sessions (`--json` for raw) |
+| `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
 | `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
 | `tcb loop validate\|tick\|run <file>` / `tcb loop reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |
 | `tcb sysload` | machine load, thermal state, top CPU, runaway shells |
@@ -216,7 +219,7 @@ refresh the skill. It lands at `~/.claude/skills/tmux-claude-bot/SKILL.md` and
 Autopilot means **supervisor-backed delegation**. After a task has been clarified
 in a project session, use `/autopilot [requirement]`,
 `/autopilot delegate [requirement]`, `tcb autopilot <project> [requirement]`, or
-the **Continue via supervisor** / **继续托管推进** button to hand the work to the
+the **Continue via supervisor** button to hand the work to the
 reserved Loop Supervisor.
 
 If the requirement is omitted, the supervisor treats the current session context
@@ -244,7 +247,7 @@ control socket as the chat adapters and queues the same supervisor WorkOrder.
 
 ### Lark/Feishu button controls
 
-In a project-bound group or private chat, tap **继续托管推进** or send
+In a project-bound group or private chat, tap **Continue via supervisor** or send
 `/autopilot [requirement]`. Feishu notifications are routed to the bound project
 group when one exists, otherwise to the owner fallback configured for the bot.
 
@@ -379,6 +382,7 @@ LOOP_SUPERVISOR_AGENT=codex       # codex (default) or claude
 LOOP_SUPERVISOR_DIR=              # blank -> <state-dir>/loop-supervisor
 LOOP_SUPERVISOR_POOL_SIZE=1       # >1 starts tmux_proj_loop-supervisor-1/-2/...
 LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER=clear
+LOOP_SUPERVISOR_WORKTREE_ISOLATION=isolated # isolated | source | auto
 TCB_LOOP_SUPERVISOR_REVISION_MAX_ATTEMPTS=3
 ```
 
@@ -619,7 +623,7 @@ Use `BATCH_SCHEDULER_TICK_MS`, `BATCH_SCHEDULER_QUOTA_PCT`, and
 
 **Quick start:**
 
-1. Define a YAML plan file (see `docs/batch-plan.example.yml` for the full schema).
+1. Define a YAML plan file (see `docs/examples/batch-plan.example.yml` for the full schema).
 2. `tcb batch load <file>` — parse, validate, and save the plan.
 3. `tcb batch start <id>` — materialise and activate a run immediately.
 4. `tcb batch status` — print the live task table for the active run.
@@ -655,6 +659,7 @@ TASK_AUDIT_TICK_MS=300000
 TASK_AUDIT_CHANNEL=both           # telegram | lark | both
 TASK_AUDIT_AUTO_REPAIR=true
 TASK_AUDIT_REPAIR_BRANCH=dev
+TASK_AUDIT_REPAIR_WORKTREE_ISOLATION=isolated
 ```
 
 Run the same audit immediately through the running bot:

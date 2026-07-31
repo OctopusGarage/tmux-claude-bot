@@ -58,6 +58,7 @@ function fakeDeps(
           agent: "codex",
           poolSize: 1,
           resetBeforeWorkOrder: "clear",
+          worktreeIsolation: "isolated",
         },
       },
       projectSessionPrefix: "tmux_proj_",

@@ -166,7 +166,7 @@ describe("sendQueueStatus", () => {
     await sendQueueStatus(channel, deps, "chat-1");
 
     const text = channel.texts().join("\n");
-    // The in-flight message is rendered under ▶, not counted in 排队中.
+    // The in-flight message is rendered under the active marker, not counted as queued.
     expect(text).toContain("排队中： 2");
     expect(text).toContain("▶ in-flight");
     expect(text).not.toContain("排队中： 3");

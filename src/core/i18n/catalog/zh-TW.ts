@@ -2,7 +2,7 @@ import { UI_ICONS } from "../../../shared/ui/icons.js";
 import type { Messages } from "./zh.js";
 
 /** Traditional Chinese (Taiwan) catalog. Typed `: Messages`, so it must
- * implement every key in zh.ts. Localised vocabulary (專案/佇列/預設/辨識). */
+ * implement every key in zh.ts. Localized vocabulary belongs in string values. */
 export const zhTW: Messages = {
   ackReceived: "已接收",
   queuedAt: (pos) => `已排隊 · 第 ${pos} 位`,

@@ -1,7 +1,7 @@
 import { UI_ICONS } from "../../../shared/ui/icons.js";
 import type { Messages } from "./zh.js";
 
-/** Traditional-Chinese written register (繁體書面語) — the register real
+/** Traditional-Chinese written register for Cantonese-facing surfaces — the register real
  * Cantonese / Hong Kong software UIs use: Traditional characters + formal
  * written grammar, not colloquial spoken Cantonese. Typed `: Messages`, so it
  * must implement every key in zh.ts. */

@@ -58,6 +58,7 @@ export type NotificationAttachmentSendFn = (
   path: string,
   kind: AttachmentKind,
   caption?: string,
+  request?: NotificationRequest,
 ) => Promise<void>;
 
 export type NotificationOptions = {
@@ -140,7 +141,7 @@ export class NotificationGateway {
               };
             }
             try {
-              await attachmentSender?.(attachment.path, validation.kind, attachment.caption);
+              await attachmentSender?.(attachment.path, validation.kind, attachment.caption, req);
             } catch (err) {
               return {
                 channel,

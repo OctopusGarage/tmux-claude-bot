@@ -2,13 +2,17 @@
 
 ## Purpose
 
-Run a bounded architecture-improvement loop for this repo. The loop uses
+Run a bounded architecture-improvement loop for this repo. The manual loop uses
 `$improve-codebase-architecture` to find deepening opportunities, then implements
 at most one low-risk improvement per round, re-scores the repo, and stops when the
 architecture is good enough.
 
 This workflow is for preventing endless optimization. It optimizes until the repo
 is maintainable enough, not until no refactor remains.
+
+For scheduled or delegated architecture work, the source of truth is the Loop
+Engineering WorkOrder path in `docs/intelligent-automation.md`. This file is the
+local/manual compatibility workflow used by `/arch-loop` and `$arch-loop`.
 
 ## Trigger
 
@@ -24,7 +28,7 @@ Do not run on every PR or schedule. This is a deliberate maintenance loop.
 
 Project shortcut:
 
-- `/arch-loop` runs the strict loop with defaults: target score `88`, max rounds
+- `/arch-loop` runs the strict loop with defaults: target score `95`, max rounds
   `3`, fresh scan, no reused candidate pool.
 - `/arch-loop score-only` rescans and scores without editing files.
 - `/arch-loop target=90 max_rounds=1` runs a one-round stretch pass that still
@@ -34,9 +38,9 @@ Project shortcut:
 
 Defaults:
 
-- target score: `88`
+- target score: `95`
 - minimum healthy score: `82`
-- stretch score: `90`
+- stretch score: `95`
 - max rounds: `3`
 - max candidate per round: `1`
 - minimum candidate strength to auto-implement: `Strong`
@@ -53,10 +57,11 @@ Optional overrides:
 ## Score Rubric
 
 Score out of 100 after baseline and after every round. The default target is
-`88`: high enough to require a professional, clear, reliable structure, but low
-enough that the loop still stops before speculative polish. Treat `82` as the
-minimum healthy line, not the default stop line. Treat `90` as a stretch target
-that usually needs maintainer confirmation before larger design work.
+`95`: high enough to avoid unnecessary edits when the architecture is already
+strong, and explicit enough to stop optimization-for-its-own-sake. Treat `82` as
+the minimum healthy line, not the default stop line. Scores at or above `95`
+should stop without code changes unless the user explicitly asks for a narrower
+verified improvement.
 
 - Module depth: 25
   - Deep modules hide meaningful behavior behind small interfaces.
@@ -105,6 +110,8 @@ currently justified.
 4. Run `$improve-codebase-architecture`.
 5. Use the generated report plus direct code inspection to assign a baseline
    score using the rubric.
+   Read generated reports yourself; do not open them in a browser unless the
+   user explicitly asks.
 6. Select the first candidate only if it satisfies all of:
    - `Strong`, or clearly low-risk `Worth exploring`
    - improves locality or module depth
@@ -225,26 +232,18 @@ to record an ADR so future runs do not re-suggest it.
 
 ## Automation Path
 
-Level 1: this Markdown workflow.
+The automated path already exists in Loop Engineering:
 
-- Human or agent follows the workflow manually.
-- Best while thresholds and scoring are still being tuned.
+- Scheduled project or workspace architecture jobs materialize a bounded
+  WorkOrder.
+- The Loop Supervisor leases an isolated worker, verifies the configured
+  project/workspace paths, assesses the architecture score, and stops when the
+  target score is met.
+- If a change is justified, it runs a narrow implementation round, verifies,
+  commits, creates or updates one PR for the run, and lets the system gate check
+  PR/CI/mergeability/switch-back/clean-worktree evidence.
+- Reports are read by the agent/system; they are not browser-opened unless the
+  user explicitly asks.
 
-Level 2: `.claude/workflows/architecture-loop.mjs`.
-
-- Programmatically run finder agents, score candidates, choose the top safe
-  candidate, and emit a brief.
-- Still require a checkpoint before code changes unless the candidate is `Strong`
-  and matches the auto-implement rules.
-
-Level 3: personal skill.
-
-- Extract this workflow into an agent skill once it has been used successfully on
-  multiple repos.
-- The skill should wrap `$improve-codebase-architecture`, not replace it.
-
-Level 4: tmux-claude-bot autopilot goal.
-
-- Only after Level 2 is stable.
-- The goal can run the loop inside a Project Session, stop at the target score,
-  and notify the maintainer with a brief.
+Keep this manual workflow aligned with `docs/intelligent-automation.md`; do not
+add a second automation semantics here.

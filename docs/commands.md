@@ -71,10 +71,15 @@ No typing needed: the help card's **🗂 Project groups** button opens a context
 The help card's **🧩 Parallel group** button (private chat) creates a *second* group on a recent project, bound to a fresh numbered independent session. This bypasses the one-workspace-one-group rule so the same directory can host multiple parallel agents, one per group.
 
 **Required Feishu app scopes** for group-binding:
-- `im:message.group_msg` — "获取群组中所有消息" (a *sensitive* scope) — receive **all** messages in a bound project group, enabling no-`@` typing. Without it the bot only receives `@`-mentions in groups (`im:message.group_at_msg:readonly`), so a bound group would require `@bot` on every message.
+- `im:message.group_msg` — receive **all** messages in a bound project group,
+  enabling no-`@` typing. This is a sensitive scope. Without it the bot only
+  receives `@`-mentions in groups (`im:message.group_at_msg:readonly`), so a
+  bound group would require `@bot` on every message.
 - `im:chat` — let `/newgroup` auto-create the bound private group. Optional: without it `/newgroup` fails gracefully and you use `/bind` instead.
 
-> Note: after adding a scope in 权限管理 you must publish a new version (版本管理与发布) for it to take effect. `im:message.group_msg` is a sensitive scope and may require an extra approval step.
+> Note: after adding a scope in the Feishu/Lark developer console, publish a new
+> app version for it to take effect. `im:message.group_msg` is a sensitive scope
+> and may require an extra approval step.
 
 ## Non-Command Special Handling
 

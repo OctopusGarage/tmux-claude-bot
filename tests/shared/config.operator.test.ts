@@ -36,6 +36,7 @@ describe("loop supervisor config", () => {
       agent: "codex",
       poolSize: 1,
       resetBeforeWorkOrder: "clear",
+      worktreeIsolation: "isolated",
     });
   });
 
@@ -57,6 +58,7 @@ describe("loop supervisor config", () => {
       LOOP_SUPERVISOR_AGENT: "claude",
       LOOP_SUPERVISOR_POOL_SIZE: "3",
       LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER: "compact",
+      LOOP_SUPERVISOR_WORKTREE_ISOLATION: "source",
     } as NodeJS.ProcessEnv);
     expect(c.loopEngineering.supervisor).toEqual({
       enabled: true,
@@ -64,6 +66,7 @@ describe("loop supervisor config", () => {
       agent: "claude",
       poolSize: 3,
       resetBeforeWorkOrder: "compact",
+      worktreeIsolation: "source",
     });
   });
 });

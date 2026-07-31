@@ -85,7 +85,7 @@ formatters should reference semantic keys instead of hardcoding emoji.
 | `feature.inputs` | 🔁 | Recent inputs / re-run. |
 | `feature.dashboard` | 📊 | Dashboard. |
 | `feature.adopt` | 🧲 | Take over unmanaged agent. |
-| `feature.autopilot` | ✈️ | Autopilot / hands-free agent loop. |
+| `feature.autopilot` | ✈️ | Supervisor-backed Autopilot delegation. |
 | `feature.tag` | 🏷 | Prompt tag. |
 
 ## Rules

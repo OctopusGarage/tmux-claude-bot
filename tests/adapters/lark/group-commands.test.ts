@@ -38,16 +38,16 @@ const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
 /**
  * Default locale is zh (see src/core/i18n/index.ts: DEFAULT_UI_LANG = "zh").
  * zh strings for group binding messages:
- *   groupNewGroupOnlyInP2p  → "`/newgroup` 仅在与机器人的私聊中有效。"
- *   groupTargetUsage        → "用法：`<命令> <绝对路径 | ~/路径 | 工作区名称>`"
- *   groupCreateFailed(msg)  → `❌ 创建群组失败：${msg}…`
- *   groupBoundWelcome(l,p)  → `🎉 群组已绑定到 **${l}**…`
- *   groupBindOnlyInGroup    → "在私聊中请使用 `/newgroup`，`/bind` 仅在群组内有效。"
- *   groupUnbindOnlyInGroup  → "在私聊中无法解绑，`/unbind` 仅在群组内有效。"
- *   groupUnbound            → "🔓 此群组已解除与工作区的绑定。"
- *   groupNotBound           → "此群组尚未绑定工作区。"
- *   groupRestored(label)    → `🔄 已恢复此群组 → **${label}**。`
- *   groupMissingPath(label) → `⚠️ **${label}** 的工作区路径已不存在。`
+ *   groupNewGroupOnlyInP2p  -> localized p2p-only error
+ *   groupTargetUsage        -> localized target usage text
+ *   groupCreateFailed(msg)  -> localized group-create failure
+ *   groupBoundWelcome(l,p)  -> localized group-bound welcome
+ *   groupBindOnlyInGroup    -> localized group-only bind error
+ *   groupUnbindOnlyInGroup  -> localized group-only unbind error
+ *   groupUnbound            -> localized group-unbound confirmation
+ *   groupNotBound           -> localized group-not-bound hint
+ *   groupRestored(label)    -> localized group-restored confirmation
+ *   groupMissingPath(label) -> localized missing-path warning
  */
 
 describe("group-commands", () => {

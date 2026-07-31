@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePath, sep } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
+import type { WorktreeIsolationMode } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { agentIsIdle } from "../command/agent-ready.js";
 import type { HandlerDeps } from "../deps.js";
@@ -303,6 +304,7 @@ export async function runLoopServiceTickAsync(input: {
   notifications?: NotificationGateway;
   projectSessionPrefix?: string;
   resetSupervisorBeforeWorkOrder?: LoopSupervisorResetMode;
+  supervisorWorktreeIsolation?: WorktreeIsolationMode;
   ensureSupervisorSession?: (sessionName: string) => Promise<boolean>;
   isSupervisorSessionAvailable?: (sessionName: string) => Promise<boolean>;
   defaultSupervisorTimeoutMs?: number;
@@ -460,6 +462,7 @@ export async function runLoopServiceTickAsync(input: {
     workOrder = prepareLoopExecutionWorktrees({
       workOrder,
       ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
+      defaultMode: input.supervisorWorktreeIsolation ?? "isolated",
     });
     if (workOrder.finalSummaryPath !== undefined) {
       mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
@@ -1237,6 +1240,7 @@ export function startLoopEngineering(
           deps.config.loopEngineering.supervisor.poolSize,
         ),
         resetSupervisorBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
+        supervisorWorktreeIsolation: deps.config.loopEngineering.supervisor.worktreeIsolation,
         ...(deps.config.loopEngineering.supervisor.enabled
           ? {
               ensureSupervisorSession: async (sessionName) =>
