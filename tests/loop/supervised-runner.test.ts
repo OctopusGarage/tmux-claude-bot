@@ -2,7 +2,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runLoopSupervisedProjectAsync } from "../../src/core/loop/supervised-runner.js";
+import {
+  runLoopSupervisedProjectAsync,
+  runLoopSupervisorRevisionAsync,
+} from "../../src/core/loop/supervised-runner.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
 const defaultFinalSummaryPath = join(
@@ -352,6 +355,46 @@ describe("runLoopSupervisedProjectAsync", () => {
       status: "dispatch-failed",
       reason: "command timed out",
       output: "command timed out",
+    });
+  });
+});
+
+describe("runLoopSupervisorRevisionAsync", () => {
+  it("uses the shared finalization fallback when revision output is missing the final marker", async () => {
+    const prompts: string[] = [];
+    const result = await runLoopSupervisorRevisionAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      failures: ["system gate rejected the final summary"],
+      attempt: 1,
+      maxAttempts: 2,
+      previousOutput: "previous supervisor output",
+      dispatch: async (request) => {
+        prompts.push(request.prompt);
+        expect(request.session).toBe("tmux_proj_loop-supervisor");
+        expect(request.timeoutMs).toBe(1000);
+        if (prompts.length === 1) {
+          expect(request.prompt).toContain("system gate rejected the final summary");
+          return { status: 0, stdout: "revision repaired state but omitted marker", stderr: "" };
+        }
+        expect(request.prompt).toContain("revision repaired state but omitted marker");
+        return {
+          status: 0,
+          stdout:
+            '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":["finalized revision"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}',
+          stderr: "",
+        };
+      },
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(result).toMatchObject({
+      status: "completed",
+      summary: {
+        actionsTaken: ["finalized revision"],
+        finalVerification: "passed",
+      },
     });
   });
 });

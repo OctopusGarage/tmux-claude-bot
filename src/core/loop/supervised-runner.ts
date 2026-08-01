@@ -62,6 +62,10 @@ export type LoopSupervisorRevisionInput = LoopSupervisedRunnerInput & {
   previousOutput: string;
 };
 
+type SupervisorPromptSequenceInput = LoopSupervisedRunnerInput & {
+  prompt: string;
+};
+
 export async function runLoopSupervisedProjectAsync(
   input: LoopSupervisedRunnerInput,
 ): Promise<LoopSupervisedRunResult> {
@@ -138,52 +142,47 @@ async function runSupervisorDispatchSequence(
   input: LoopSupervisedRunnerInput,
   signal: AbortSignal,
 ): Promise<LoopSupervisedRunResult> {
-  const first = await input.dispatch({
-    session: input.supervisorSession,
-    prompt: buildLoopSupervisorPrompt(input.workOrder),
+  return runSupervisorPromptSequence(
+    {
+      ...input,
+      prompt: buildLoopSupervisorPrompt(input.workOrder),
+    },
     signal,
-    workOrder: input.workOrder,
-    timeoutMs: input.timeoutMs,
-    ...(input.resetBeforeWorkOrder !== undefined
-      ? { contextReset: input.resetBeforeWorkOrder }
-      : {}),
-  });
-  const firstParsed = parseDispatchOutput(first, input.workOrder);
-  if (firstParsed.status !== "invalid-output") {
-    return firstParsed;
-  }
-
-  const finalization = await input.dispatch({
-    session: input.supervisorSession,
-    prompt: buildLoopSupervisorFinalizationPrompt(input.workOrder, firstParsed.output),
-    signal,
-    workOrder: input.workOrder,
-    timeoutMs: input.timeoutMs,
-  });
-  const secondParsed = parseDispatchOutput(finalization, input.workOrder);
-  if (secondParsed.status !== "invalid-output") return secondParsed;
-  return {
-    ...secondParsed,
-    output: [firstParsed.output, secondParsed.output].filter(Boolean).join("\n"),
-  };
+  );
 }
 
 async function runSupervisorRevisionSequence(
   input: LoopSupervisorRevisionInput,
   signal: AbortSignal,
 ): Promise<LoopSupervisedRunResult> {
+  return runSupervisorPromptSequence(
+    {
+      ...input,
+      prompt: buildLoopSupervisorRevisionPrompt({
+        workOrder: input.workOrder,
+        failures: input.failures,
+        attempt: input.attempt,
+        maxAttempts: input.maxAttempts,
+        previousOutput: input.previousOutput,
+      }),
+    },
+    signal,
+  );
+}
+
+async function runSupervisorPromptSequence(
+  input: SupervisorPromptSequenceInput,
+  signal: AbortSignal,
+): Promise<LoopSupervisedRunResult> {
   const first = await input.dispatch({
     session: input.supervisorSession,
-    prompt: buildLoopSupervisorRevisionPrompt({
-      workOrder: input.workOrder,
-      failures: input.failures,
-      attempt: input.attempt,
-      maxAttempts: input.maxAttempts,
-      previousOutput: input.previousOutput,
-    }),
+    prompt: input.prompt,
     signal,
     workOrder: input.workOrder,
     timeoutMs: input.timeoutMs,
+    ...(input.resetBeforeWorkOrder !== undefined
+      ? { contextReset: input.resetBeforeWorkOrder }
+      : {}),
   });
   const firstParsed = parseDispatchOutput(first, input.workOrder);
   if (firstParsed.status !== "invalid-output") {
