@@ -112,7 +112,9 @@ reserved supervisor with `LOOP_SUPERVISOR_ENABLED=true` and set a project
 commit/PR settings, the bot also checks the final worktree, switch-back branch,
 PR mergeability, and CI rollup after the supervisor reports completion. When
 `pullRequest.autoMerge: true` is set, the bot merges the checked PR and
-fast-forwards the local switch-back branch afterward. Use
+fast-forwards the local switch-back branch afterward. Set
+`pullRequest.mergeMethod` to `squash`, `merge`, or `rebase` to choose the GitHub
+CLI merge mode; the default is `squash`. Use
 `pullRequest.githubAccount` when a project must run GitHub CLI commands under a
 specific `gh` account; the loop uses a command-local `GH_TOKEN` for `gh api`,
 `gh pr`, `gh run`, and related commands instead of the global active `gh`
@@ -138,7 +140,8 @@ reachability and severity before editing, avoid blind dependency churn, run the
 relevant security check plus local verification, and document impact, fix,
 verification, and residual risk in the PR. To review and merge loop-created PRs
 on a later schedule, add `pullRequestReview.enabled: true`
-with its own `schedule`, `lookbackHours`, `consecutivePasses`, and `autoMerge`;
+with its own `schedule`, `lookbackHours`, `consecutivePasses`, `autoMerge`, and
+optional `mergeMethod`;
 the supervisor performs repeat review passes focused on bugs, CI, and
 mergeability rather than nits.
 To run one orchestrated project-health loop instead of several mechanical

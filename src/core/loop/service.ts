@@ -1989,6 +1989,7 @@ export function systemGateProjectFromWorkOrder(
       base: "main",
       switchBack: "main",
       autoMerge: false,
+      mergeMethod: "squash",
     },
   };
 }
@@ -2381,7 +2382,7 @@ function runSupervisedAutoMerge(input: {
         ghCommandPrefix(input.project),
         "pr merge",
         shellQuoteLocal(input.commitBranch),
-        "--squash",
+        mergeMethodFlag(input.project.pullRequest.mergeMethod),
         "--delete-branch",
       ].join(" "),
       cwd: input.project.path,
@@ -2394,6 +2395,10 @@ function runSupervisedAutoMerge(input: {
   }
 
   return syncSwitchBackBranch(input);
+}
+
+function mergeMethodFlag(method: "squash" | "merge" | "rebase" | undefined): string {
+  return `--${method ?? "squash"}`;
 }
 
 function syncSwitchBackBranch(input: {

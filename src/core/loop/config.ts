@@ -14,6 +14,7 @@ import {
 const agentSchema = skillAgentSchema;
 const worktreeIsolationSchema = z.enum(["isolated", "source", "auto"]);
 const cleanupPolicySchema = z.enum(["conservative", "balanced", "aggressive"]);
+const pullRequestMergeMethodSchema = z.enum(["squash", "merge", "rebase"]);
 const actionSchema = z.enum([
   "tests",
   "docs",
@@ -79,10 +80,17 @@ const pullRequestReviewSchema = z
     lookbackHours: z.number().int().positive().default(36),
     consecutivePasses: z.number().int().positive().default(2),
     autoMerge: z.boolean().default(false),
+    mergeMethod: pullRequestMergeMethodSchema.default("squash"),
     prompt: z.string().min(1).optional(),
   })
   .strict()
-  .default({ enabled: false, lookbackHours: 36, consecutivePasses: 2, autoMerge: false });
+  .default({
+    enabled: false,
+    lookbackHours: 36,
+    consecutivePasses: 2,
+    autoMerge: false,
+    mergeMethod: "squash",
+  });
 
 const bugFixSchema = z
   .object({
@@ -259,6 +267,7 @@ const repositoryPullRequestReviewSchema = z
     lookbackHours: z.number().int().positive().default(72),
     consecutivePasses: z.number().int().positive().default(2),
     autoMerge: z.boolean().default(false),
+    mergeMethod: pullRequestMergeMethodSchema.default("squash"),
     repair: z
       .object({
         enabled: z.boolean().default(true),
@@ -291,10 +300,17 @@ const workspaceRepositorySchema = z
         base: z.string().min(1).default("main"),
         switchBack: z.string().min(1).default("main"),
         autoMerge: z.boolean().default(false),
+        mergeMethod: pullRequestMergeMethodSchema.default("squash"),
         githubAccount: z.string().min(1).optional(),
       })
       .strict()
-      .default({ enabled: false, base: "main", switchBack: "main", autoMerge: false }),
+      .default({
+        enabled: false,
+        base: "main",
+        switchBack: "main",
+        autoMerge: false,
+        mergeMethod: "squash",
+      }),
   })
   .strict();
 
@@ -378,10 +394,17 @@ const projectSchema = z
         base: z.string().min(1).default("main"),
         switchBack: z.string().min(1).default("main"),
         autoMerge: z.boolean().default(false),
+        mergeMethod: pullRequestMergeMethodSchema.default("squash"),
         githubAccount: z.string().min(1).optional(),
       })
       .strict()
-      .default({ enabled: false, base: "main", switchBack: "main", autoMerge: false }),
+      .default({
+        enabled: false,
+        base: "main",
+        switchBack: "main",
+        autoMerge: false,
+        mergeMethod: "squash",
+      }),
     bugFix: bugFixSchema,
     testCoverage: testCoverageSchema,
     securityMaintenance: securityMaintenanceSchema,

@@ -126,7 +126,13 @@ describe("runLoopServiceTickAsync supervised routing", () => {
         name: "Hub",
         path: "/tmp/hub",
         commit: { enabled: false, perRound: false },
-        pullRequest: { enabled: false, base: "main", switchBack: "main", autoMerge: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
       },
       workOrder: {
         id: "run-1",
@@ -174,7 +180,13 @@ describe("runLoopServiceTickAsync supervised routing", () => {
         name: "Hub",
         path: "/tmp/hub",
         commit: { enabled: false, perRound: false },
-        pullRequest: { enabled: false, base: "main", switchBack: "main", autoMerge: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
       },
       workOrder: {
         id: "run-1",
@@ -2778,6 +2790,7 @@ prReview:
         "      base: dev",
         "      switchBack: dev",
         "      autoMerge: true",
+        "      mergeMethod: merge",
         "      githubAccount: Kingson4Wu",
       ].join("\n"),
     });
@@ -2828,6 +2841,7 @@ prReview:
         expect(request.prompt).toContain('"base": "dev"');
         expect(request.prompt).toContain('"switchBack": "dev"');
         expect(request.prompt).toContain('"autoMerge": true');
+        expect(request.prompt).toContain('"mergeMethod": "merge"');
         expect(request.prompt).toContain('"githubAccount": "Kingson4Wu"');
         expect(request.prompt).toContain("gh auth token --user 'Kingson4Wu'");
         expect(request.prompt).toContain('"branch": "loop/hub/architecture/1784196600000-hub"');
@@ -2845,7 +2859,7 @@ prReview:
     expect(prCommands).toEqual([
       "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh repo view --json viewerPermission",
       "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh pr view 'loop/hub/architecture/1784196600000-hub' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
-      "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh pr merge 'loop/hub/architecture/1784196600000-hub' --squash --delete-branch",
+      "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh pr merge 'loop/hub/architecture/1784196600000-hub' --merge --delete-branch",
     ]);
     expect(gitCommands).toEqual([
       ["status", "--porcelain"],

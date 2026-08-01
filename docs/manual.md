@@ -280,8 +280,9 @@ Each scheduled project chooses a runner:
   reports completion: clean worktree, expected switch-back branch, PR lookup,
   mergeability, and completed successful/neutral/skipped CI checks. If
   `pullRequest.autoMerge: true` is configured, the system gate merges the PR after
-  those checks pass, switches to `pullRequest.switchBack`, and fast-forwards it
-  from `origin`. Set `pullRequest.githubAccount` when the repository needs a
+  those checks pass, using `pullRequest.mergeMethod` (`squash`, `merge`, or
+  `rebase`; default `squash`), switches to `pullRequest.switchBack`, and
+  fast-forwards it from `origin`. Set `pullRequest.githubAccount` when the repository needs a
   specific GitHub CLI identity; every GitHub CLI command for that WorkOrder,
   including `gh api` security-alert checks and PR create/view/merge commands,
   uses a command-local `GH_TOKEN` from `gh auth token --user <account>` instead
@@ -336,14 +337,16 @@ Each scheduled project chooses a runner:
   session and supervisor, reviews loop-created PRs for that project from the
   configured lookback window, requires the configured number of clean review
   passes, and only auto-merges when CI/status checks and mergeability are
-  acceptable. It is intended to catch introduced bugs and operational risks, not
-  to block on style nits.
+  acceptable. Set `mergeMethod` to `squash`, `merge`, or `rebase` to choose the
+  GitHub CLI merge mode; the default is `squash`. It is intended to catch
+  introduced bugs and operational risks, not to block on style nits.
   `prReview.repositories` is the repository-scoped all-open-PR processor. It is
   configured outside `projects` and can review every open PR in a GitHub
   repository, optionally repair small same-repository PR branch issues, then
-  merge eligible PRs. Use `pullRequestReview` for loop-created PRs belonging to a
-  configured project or workspace; use `prReview.repositories` when the desired
-  target is a repository's complete open PR queue.
+  merge eligible PRs using its configured `mergeMethod` (`squash`, `merge`, or
+  `rebase`; default `squash`). Use `pullRequestReview` for loop-created PRs
+  belonging to a configured project or workspace; use `prReview.repositories`
+  when the desired target is a repository's complete open PR queue.
   `harnessAuto` is a higher-level project-health orchestration job. It has one
   schedule and one run id, then chooses from enabled subtasks such as
   architecture, bug-fix, test-coverage, and security-maintenance after assessing
@@ -514,6 +517,7 @@ projects:
       lookbackHours: 48
       consecutivePasses: 2
       autoMerge: true
+      mergeMethod: squash
       prompt: >
         Review loop-created PRs from the previous day. Do not nitpick; focus on
         introduced bugs, broken tests, CI failures, mergeability, data loss,

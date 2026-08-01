@@ -225,6 +225,7 @@ describe("loop supervisor work order", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: true,
+        mergeMethod: "squash" as const,
         githubAccount: "Kingson4Wu",
       },
       recovery: {
@@ -259,6 +260,7 @@ describe("loop supervisor work order", () => {
       base: "dev",
       switchBack: "dev",
       autoMerge: true,
+      mergeMethod: "squash" as const,
       githubAccount: "Kingson4Wu",
     });
     expect(workOrder.recovery).toMatchObject({
@@ -275,7 +277,7 @@ describe("loop supervisor work order", () => {
       "loop/datavibe/active-delegate/1752643800000-datavibe-active-delegate",
     );
     expect(prompt).toContain("open or update one PR against dev");
-    expect(prompt).toContain("allow auto-merge only after all gates pass");
+    expect(prompt).toContain("allow auto-merge with --squash only after all gates pass");
     expect(prompt).toContain("switch the local worktree back to dev");
     expect(prompt).toContain("GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\"");
     expect(prompt).not.toContain("must preserve the user's current branch by default");
@@ -304,6 +306,7 @@ describe("loop supervisor work order", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: false,
+        mergeMethod: "squash" as const,
       },
     };
     const workOrder = buildLoopWorkOrder({
@@ -380,6 +383,7 @@ describe("loop supervisor work order", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: true,
+        mergeMethod: "squash" as const,
       },
       eval: {
         command: "npm run eval",
@@ -414,6 +418,7 @@ describe("loop supervisor work order", () => {
       base: "dev",
       switchBack: "dev",
       autoMerge: false,
+      mergeMethod: "squash" as const,
     });
     expect(workOrder.assessment).toEqual({ command: "true" });
     expect(workOrder.eval).toBeUndefined();
@@ -456,6 +461,7 @@ describe("loop supervisor work order", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: false,
+        mergeMethod: "squash" as const,
       },
     };
     const workOrder = buildLoopWorkOrder({
@@ -523,6 +529,7 @@ describe("loop supervisor work order", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: false,
+        mergeMethod: "squash" as const,
       },
     };
     const workOrder = buildLoopWorkOrder({
@@ -617,6 +624,7 @@ describe("loop supervisor work order", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: false,
+        mergeMethod: "squash" as const,
       },
     };
     const workOrder = buildLoopWorkOrder({
@@ -684,6 +692,7 @@ describe("loop supervisor work order", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: true,
+        mergeMethod: "squash" as const,
         githubAccount: "miao2016",
       },
       pullRequestReview: {
@@ -692,6 +701,7 @@ describe("loop supervisor work order", () => {
         lookbackHours: 36,
         consecutivePasses: 2,
         autoMerge: true,
+        mergeMethod: "squash" as const,
         prompt: "Review yesterday's loop PRs. Focus on introduced bugs, not nitpicks.",
       },
     };
@@ -732,6 +742,7 @@ describe("loop supervisor work order", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: false,
+        mergeMethod: "squash" as const,
         githubAccount: "miao2016",
       },
     };
@@ -778,6 +789,7 @@ prReview:
       lookbackHours: 72
       consecutivePasses: 2
       autoMerge: true
+      mergeMethod: rebase
       repair:
         enabled: true
         maxAttempts: 1
@@ -804,6 +816,7 @@ prReview:
         maxAttempts: 1,
         prompt: "Only repair small deterministic check failures.",
       },
+      mergeMethod: "rebase",
     });
     expect(workOrder.task).not.toHaveProperty("base");
     expect(workOrder.pullRequestPolicy).toMatchObject({ base: "dev", switchBack: "dev" });
@@ -818,6 +831,7 @@ prReview:
     expect(prompt).toContain('final status must be "blocked" or "failed", not "completed"');
     expect(prompt).toContain("do not ignore older open PRs");
     expect(prompt).toContain("Run two independent review passes");
+    expect(prompt).toContain("merge the PR with GitHub CLI using --rebase");
     expect(prompt).toContain("required reviews are missing");
     expect(prompt).toContain("state=MERGED");
     expect(prompt).toContain("stop waiting on mergeability");
@@ -1211,6 +1225,7 @@ workspaces:
       kind: "pull-request-review",
       lookbackHours: 48,
       autoMerge: true,
+      mergeMethod: "squash" as const,
     });
     expect(workOrder.maxRounds).toBe(1);
     expect(prompt).toContain("Workspace pull request review and merge task.");
@@ -1277,6 +1292,7 @@ prReview:
         base: "dev",
         switchBack: "release",
         autoMerge: true,
+        mergeMethod: "squash" as const,
         githubAccount: "Kingson4Wu",
       },
     };

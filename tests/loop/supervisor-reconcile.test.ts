@@ -64,7 +64,13 @@ function workOrder(stateDir: string, projectPath: string): LoopWorkOrder {
     execution: { agent: true },
     recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: true },
-    pullRequestPolicy: { enabled: false, base: "main", switchBack: "main", autoMerge: false },
+    pullRequestPolicy: {
+      enabled: false,
+      base: "main",
+      switchBack: "main",
+      autoMerge: false,
+      mergeMethod: "squash",
+    },
     requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
     finalSummaryPath: join(stateDir, "loop-runs", "hub", runId, "supervisor-final-summary.json"),
   };
@@ -207,6 +213,7 @@ describe("loop supervisor work order reconciliation", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: false,
+        mergeMethod: "squash" as const,
       },
     } satisfies LoopWorkOrder;
     const runDir = writeUnfinishedRun(stateDir, order);
@@ -294,6 +301,7 @@ describe("loop supervisor work order reconciliation", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: true,
+        mergeMethod: "squash" as const,
       },
       requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:1784196600000-hub-opportunity-discovery]",
       finalSummaryPath: join(

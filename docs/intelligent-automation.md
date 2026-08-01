@@ -320,7 +320,9 @@ There are two PR review surfaces:
 
 Both should focus on introduced bugs, failing checks, mergeability, security,
 data loss, migrations, and user-visible regressions. They should not block on
-style nits.
+style nits. When auto-merge is enabled, both use the configured `mergeMethod`
+(`squash`, `merge`, or `rebase`; default `squash`) rather than assuming one
+GitHub merge mode.
 
 Repository-wide PR review may repair only small, deterministic failures on
 same-repository PR branches. It should not edit fork PRs, drafts, merge-conflict

@@ -859,6 +859,7 @@ workspaces:
           "      lookbackHours: 36",
           "      consecutivePasses: 2",
           "      autoMerge: true",
+          "      mergeMethod: merge",
           "      prompt: Focus on bugs, CI, mergeability, and user-visible regressions.",
           "    allowedActions:",
         ].join("\n"),
@@ -871,6 +872,7 @@ workspaces:
       lookbackHours: 36,
       consecutivePasses: 2,
       autoMerge: true,
+      mergeMethod: "merge",
       prompt: "Focus on bugs, CI, mergeability, and user-visible regressions.",
     });
     const text = validConfig.replace(
@@ -977,6 +979,7 @@ prReview:
       lookbackHours: 72
       consecutivePasses: 2
       autoMerge: true
+      mergeMethod: rebase
       repair:
         enabled: true
         maxAttempts: 1
@@ -991,6 +994,7 @@ prReview:
       switchBack: "dev",
       githubAccount: "Kingson4Wu",
       autoMerge: true,
+      mergeMethod: "rebase",
       repair: {
         enabled: true,
         maxAttempts: 1,

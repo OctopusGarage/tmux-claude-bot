@@ -175,6 +175,7 @@ export type LoopWorkOrder = {
         lookbackHours: number;
         consecutivePasses: number;
         autoMerge: boolean;
+        mergeMethod: "squash" | "merge" | "rebase";
         prompt?: string;
       }
     | {
@@ -184,6 +185,7 @@ export type LoopWorkOrder = {
         lookbackHours: number;
         consecutivePasses: number;
         autoMerge: boolean;
+        mergeMethod: "squash" | "merge" | "rebase";
         repair: {
           enabled: boolean;
           maxAttempts: number;
@@ -406,6 +408,7 @@ export function buildRepositoryPullRequestReviewWorkOrder(input: {
       base: repository.base ?? repository.switchBack,
       switchBack: repository.switchBack,
       autoMerge: repository.autoMerge,
+      mergeMethod: repository.mergeMethod,
       ...(repository.githubAccount !== undefined
         ? { githubAccount: repository.githubAccount }
         : {}),
@@ -506,7 +509,13 @@ export function buildLoopWorkspaceWorkOrder(input: {
     execution: { agent: true },
     recovery: { agent: true, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: false },
-    pullRequestPolicy: { enabled: false, base: "main", switchBack: "main", autoMerge: false },
+    pullRequestPolicy: {
+      enabled: false,
+      base: "main",
+      switchBack: "main",
+      autoMerge: false,
+      mergeMethod: "squash",
+    },
     workspace: {
       root: workspace.root,
       repositories: workspace.repositories.map((repository) => ({
@@ -601,6 +610,7 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
       base: "main",
       switchBack: "main",
       autoMerge: false,
+      mergeMethod: "squash",
     },
     requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
     finalSummaryPath: finalSummaryPathForWorkOrder(input.projectId, input.runId),
@@ -1035,6 +1045,7 @@ function pullRequestReviewTask(
     lookbackHours: policy.lookbackHours,
     consecutivePasses: policy.consecutivePasses,
     autoMerge: policy.autoMerge,
+    mergeMethod: policy.mergeMethod,
     ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
   };
 }
@@ -1067,6 +1078,7 @@ function repositoryPullRequestReviewTask(
     lookbackHours: policy.lookbackHours,
     consecutivePasses: policy.consecutivePasses,
     autoMerge: policy.autoMerge,
+    mergeMethod: policy.mergeMethod,
     repair: {
       enabled: policy.repair.enabled,
       maxAttempts: policy.repair.maxAttempts,
@@ -1506,7 +1518,7 @@ function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): 
       "- Inspect each repository's PR diff, files changed, commits, review comments, mergeability, and CI/status checks before deciding.",
       "- If checks are pending, inconclusive, failing, required reviews are missing, the PR is a draft, mergeability is unknown/conflicting, or the branch is behind in a way GitHub cannot update safely, do not merge; record the exact blocker.",
       task.autoMerge
-        ? "- If both review passes pass and CI/status checks are successful, merge the PR according to that repository's pullRequest policy, then sync the repository's local switch-back branch."
+        ? "- If both review passes pass and CI/status checks are successful, merge the PR according to that repository's pullRequest policy, including its configured mergeMethod, then sync the repository's local switch-back branch."
         : "- Do not merge automatically; report the review decision only.",
       '- Final status may be "completed" only after every in-scope workspace PR has a recorded review decision.',
       task.prompt !== undefined ? `- Additional review instruction: ${task.prompt}` : "",
@@ -1521,7 +1533,7 @@ function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): 
     "- Inspect the PR diff, files changed, commits, mergeability, and CI/status checks before deciding.",
     "- If checks are pending, inconclusive, failing, or mergeability is unknown/conflicting, do not merge; record the exact blocker.",
     task.autoMerge
-      ? "- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI, then sync the local switch-back branch."
+      ? `- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI using ${mergeMethodFlag(task.mergeMethod)}, then sync the local switch-back branch.`
       : "- Do not merge automatically; report the review decision only.",
     task.prompt !== undefined ? `- Additional review instruction: ${task.prompt}` : "",
   ].filter(Boolean);
@@ -1551,13 +1563,17 @@ function repositoryPullRequestReviewPolicy(
     "- When polling after a repair push or merge attempt, always request PR state and mergedAt in addition to mergeability and checks. If GitHub reports state=MERGED, stop waiting on mergeability, verify checks and local switch-back state, then write the final summary.",
     ...repositoryPullRequestRepairPolicy(task),
     task.autoMerge
-      ? "- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI, then sync the local switch-back branch."
+      ? `- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI using ${mergeMethodFlag(task.mergeMethod)}, then sync the local switch-back branch.`
       : "- Do not merge automatically; report the review decision only.",
     task.autoMerge
       ? '- Final status must be "completed" only when every in-scope open PR was merged or explicitly skipped for a non-actionable reason such as draft, do-not-merge, external fork without permission, or required review. If any in-scope PR remains open because of a fixable blocker, conflict, failed/pending check, or unattempted repair, final status must be "blocked" or "failed", not "completed".'
       : '- Final status may be "completed" only after every in-scope open PR has a recorded review decision.',
     task.prompt !== undefined ? `- Additional review instruction: ${task.prompt}` : "",
   ].filter(Boolean);
+}
+
+function mergeMethodFlag(method: "squash" | "merge" | "rebase" | undefined): string {
+  return `--${method ?? "squash"}`;
 }
 
 function repositoryPullRequestRepairPolicy(
@@ -1617,7 +1633,7 @@ function activeDelegatedTaskPolicy(workOrder: LoopWorkOrder): string[] {
       ? "- If the project already has an agent-backed or deterministic AI eval surface relevant to the touched behavior, run or update it when justified. Do not add direct model API calls, model SDKs, or model API keys."
       : "- Do not add or run AI eval work for this WorkOrder.",
     projectManagedPr
-      ? `- This delegated task inherits the target project's PR policy: branch from ${pullRequestPolicy.base}, use ${workOrder.commitPolicy.branch}, open or update one PR against ${pullRequestPolicy.base}, verify CI and mergeability, ${pullRequestPolicy.autoMerge ? "allow auto-merge only after all gates pass" : "leave the PR open after checks"}, then switch the local worktree back to ${pullRequestPolicy.switchBack} and fast-forward it.`
+      ? `- This delegated task inherits the target project's PR policy: branch from ${pullRequestPolicy.base}, use ${workOrder.commitPolicy.branch}, open or update one PR against ${pullRequestPolicy.base}, verify CI and mergeability, ${pullRequestPolicy.autoMerge ? `allow auto-merge with ${mergeMethodFlag(pullRequestPolicy.mergeMethod)} only after all gates pass` : "leave the PR open after checks"}, then switch the local worktree back to ${pullRequestPolicy.switchBack} and fast-forward it.`
       : "- No project PR policy was matched for this delegated task; preserve the current branch and do not create commits or PRs unless the user requirement explicitly asks for it.",
     "- Final status may be completed only after implementation, review, verification, and any justified coverage/eval work are done or explicitly recorded as not applicable.",
   ];
