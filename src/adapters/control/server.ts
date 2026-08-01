@@ -156,16 +156,21 @@ export function startControlServer(deps: HandlerDeps): net.Server {
 
   server.on("error", (err) => log.error("control server error", { err }));
   server.listen(sockPath, () => {
-    try {
-      chmodSync(sockPath, 0o600);
-    } catch (err) {
-      log.error("control socket permission hardening failed", { err });
-      server.close();
-      return;
-    }
+    if (!hardenControlSocket(sockPath, server)) return;
     log.info(`control server listening`, { data: { sock: sockPath } });
   });
   return server;
+}
+
+export function hardenControlSocket(sockPath: string, server: Pick<net.Server, "close">): boolean {
+  try {
+    chmodSync(sockPath, 0o600);
+    return true;
+  } catch (err) {
+    log.error("control socket permission hardening failed", { err });
+    server.close();
+    return false;
+  }
 }
 
 export async function handleSendAttachment(
