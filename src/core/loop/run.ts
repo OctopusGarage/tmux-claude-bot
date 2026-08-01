@@ -666,6 +666,91 @@ function completeSummary(input: {
   };
 }
 
+function latestEvalResult(commands: LoopRunCommandSummary[]): LoopEvalResult | null {
+  const evalCommand = lastEvalCommand(commands);
+  return evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null;
+}
+
+function publishPullRequestFromLatestEval(input: {
+  project: LoopProjectConfig;
+  rounds: LoopRoundSummary[];
+  commands: LoopRunCommandSummary[];
+  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+  runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): void {
+  if (input.runGit === undefined) return;
+  runPullRequestPublish({
+    project: input.project,
+    rounds: input.rounds,
+    evalResult: latestEvalResult(input.commands),
+    commands: input.commands,
+    runCommand: input.runCommand,
+    runGit: input.runGit,
+  });
+}
+
+function finalizeDirtyRecoveryRun(input: {
+  dirty: "handled" | "failed";
+  project: LoopProjectConfig;
+  approvedSkills: ApprovedSkill[];
+  env: Record<string, string>;
+  commands: LoopRunCommandSummary[];
+  rounds: LoopRoundSummary[];
+  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+  runAgentEval?: (invocation: LoopAgentEvalInvocation) => LoopRunCommandResult;
+  runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): LoopRunSummary {
+  if (input.dirty === "handled" && !input.rounds.some((round) => round.status === "failed")) {
+    runEval({
+      project: input.project,
+      env: input.env,
+      commands: input.commands,
+      runCommand: input.runCommand,
+      ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
+    });
+    publishPullRequestFromLatestEval(input);
+  }
+  return completeSummary({
+    project: input.project,
+    approvedSkills: input.approvedSkills,
+    commands: input.commands,
+    rounds: input.rounds,
+    evalResult: latestEvalResult(input.commands),
+    fallbackSuggestedBotImprovements: [],
+  });
+}
+
+async function finalizeDirtyRecoveryRunAsync(input: {
+  dirty: "handled" | "failed";
+  project: LoopProjectConfig;
+  approvedSkills: ApprovedSkill[];
+  env: Record<string, string>;
+  commands: LoopRunCommandSummary[];
+  rounds: LoopRoundSummary[];
+  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+  runAgentEval?: (invocation: LoopAgentEvalInvocation) => Promise<LoopRunCommandResult>;
+  runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): Promise<LoopRunSummary> {
+  if (input.dirty === "handled" && !input.rounds.some((round) => round.status === "failed")) {
+    await runEvalAsync({
+      project: input.project,
+      env: input.env,
+      commands: input.commands,
+      runCommand: input.runCommand,
+      ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
+    });
+    publishPullRequestFromLatestEval(input);
+  }
+  return completeSummary({
+    project: input.project,
+    approvedSkills: input.approvedSkills,
+    commands: input.commands,
+    rounds: input.rounds,
+    evalResult: latestEvalResult(input.commands),
+    fallbackSuggestedBotImprovements: [],
+  });
+}
+
 function runPreflightCommands(input: {
   project: LoopProjectConfig;
   env: Record<string, string>;
@@ -1525,34 +1610,16 @@ export function runLoopProject(input: {
     ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
   });
   if (dirty !== "clean") {
-    if (dirty === "handled" && !rounds.some((round) => round.status === "failed")) {
-      runEval({
-        project,
-        env,
-        commands,
-        runCommand: input.runCommand,
-        ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
-      });
-      const evalCommand = lastEvalCommand(commands);
-      if (input.runGit !== undefined) {
-        runPullRequestPublish({
-          project,
-          rounds,
-          evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
-          commands,
-          runCommand: input.runCommand,
-          runGit: input.runGit,
-        });
-      }
-    }
-    const evalCommand = lastEvalCommand(commands);
-    return completeSummary({
+    return finalizeDirtyRecoveryRun({
+      dirty,
       project,
       approvedSkills: input.config.skills.approved,
+      env,
       commands,
       rounds,
-      evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
-      fallbackSuggestedBotImprovements: [],
+      runCommand: input.runCommand,
+      ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
+      ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
     });
   }
 
@@ -1761,28 +1828,22 @@ export function runLoopProject(input: {
         runCommand: input.runCommand,
         ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
       });
-      const evalCommand = lastEvalCommand(commands);
-      if (input.runGit !== undefined) {
-        runPullRequestPublish({
-          project,
-          rounds,
-          evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
-          commands,
-          runCommand: input.runCommand,
-          runGit: input.runGit,
-        });
-      }
+      publishPullRequestFromLatestEval({
+        project,
+        rounds,
+        commands,
+        runCommand: input.runCommand,
+        ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
+      });
     }
   }
 
-  const evalCommand = lastEvalCommand(commands);
-  const evalResult = evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null;
   return completeSummary({
     project,
     approvedSkills: input.config.skills.approved,
     commands,
     rounds,
-    evalResult,
+    evalResult: latestEvalResult(commands),
     fallbackSuggestedBotImprovements: assessmentResult.suggestedBotImprovements,
   });
 }
@@ -1808,34 +1869,16 @@ export async function runLoopProjectAsync(input: {
     ...(input.runAgentTask !== undefined ? { runAgentTask: input.runAgentTask } : {}),
   });
   if (dirty !== "clean") {
-    if (dirty === "handled" && !rounds.some((round) => round.status === "failed")) {
-      await runEvalAsync({
-        project,
-        env,
-        commands,
-        runCommand: input.runCommand,
-        ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
-      });
-      const evalCommand = lastEvalCommand(commands);
-      if (input.runGit !== undefined) {
-        runPullRequestPublish({
-          project,
-          rounds,
-          evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
-          commands,
-          runCommand: input.runCommand,
-          runGit: input.runGit,
-        });
-      }
-    }
-    const evalCommand = lastEvalCommand(commands);
-    return completeSummary({
+    return await finalizeDirtyRecoveryRunAsync({
+      dirty,
       project,
       approvedSkills: input.config.skills.approved,
+      env,
       commands,
       rounds,
-      evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
-      fallbackSuggestedBotImprovements: [],
+      runCommand: input.runCommand,
+      ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
+      ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
     });
   }
 
@@ -2038,28 +2081,22 @@ export async function runLoopProjectAsync(input: {
         runCommand: input.runCommand,
         ...(input.runAgentEval !== undefined ? { runAgentEval: input.runAgentEval } : {}),
       });
-      const evalCommand = lastEvalCommand(commands);
-      if (input.runGit !== undefined) {
-        runPullRequestPublish({
-          project,
-          rounds,
-          evalResult: evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null,
-          commands,
-          runCommand: input.runCommand,
-          runGit: input.runGit,
-        });
-      }
+      publishPullRequestFromLatestEval({
+        project,
+        rounds,
+        commands,
+        runCommand: input.runCommand,
+        ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
+      });
     }
   }
 
-  const evalCommand = lastEvalCommand(commands);
-  const evalResult = evalCommand !== undefined ? parseEvalResult(evalCommand.stdout) : null;
   return completeSummary({
     project,
     approvedSkills: input.config.skills.approved,
     commands,
     rounds,
-    evalResult,
+    evalResult: latestEvalResult(commands),
     fallbackSuggestedBotImprovements: assessmentResult.suggestedBotImprovements,
   });
 }

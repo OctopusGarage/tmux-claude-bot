@@ -5,6 +5,11 @@ import {
   skillAgentSchema,
   skillCatalogEntrySchema,
 } from "../skills/schema.js";
+import {
+  type LoopScheduledJobKind,
+  projectScheduledJobKinds,
+  workspaceScheduledJobKinds,
+} from "./task-family.js";
 
 const agentSchema = skillAgentSchema;
 const worktreeIsolationSchema = z.enum(["isolated", "source", "auto"]);
@@ -472,15 +477,6 @@ export type LoopValidationIssue = {
   projectId?: string;
 };
 
-type LoopScheduledJobKind =
-  | "architecture"
-  | "bug-fix"
-  | "test-coverage"
-  | "security-maintenance"
-  | "harness-auto"
-  | "opportunity-discovery"
-  | "pull-request-review";
-
 export type LoopProjectValidationSummary = {
   id: string;
   name: string;
@@ -732,55 +728,11 @@ function workspaceIssues(_workspace: LoopWorkspaceConfig): LoopValidationIssue[]
 }
 
 function scheduledProjectJobs(project: LoopProjectConfig): LoopScheduledJobKind[] {
-  return [
-    ...(project.schedule !== undefined ? (["architecture"] as const) : []),
-    ...(project.bugFix.enabled && project.bugFix.schedule !== undefined
-      ? (["bug-fix"] as const)
-      : []),
-    ...(project.testCoverage.enabled && project.testCoverage.schedule !== undefined
-      ? (["test-coverage"] as const)
-      : []),
-    ...(project.securityMaintenance.enabled && project.securityMaintenance.schedule !== undefined
-      ? (["security-maintenance"] as const)
-      : []),
-    ...(project.harnessAuto.enabled && project.harnessAuto.schedule !== undefined
-      ? (["harness-auto"] as const)
-      : []),
-    ...(project.opportunityDiscovery.enabled && project.opportunityDiscovery.schedule !== undefined
-      ? (["opportunity-discovery"] as const)
-      : []),
-    ...(project.pullRequestReview.enabled && project.pullRequestReview.schedule !== undefined
-      ? (["pull-request-review"] as const)
-      : []),
-  ];
+  return projectScheduledJobKinds(project);
 }
 
 function scheduledWorkspaceJobs(workspace: LoopWorkspaceConfig): LoopScheduledJobKind[] {
-  return [
-    ...(workspace.architecture.enabled && workspace.architecture.schedule !== undefined
-      ? (["architecture"] as const)
-      : []),
-    ...(workspace.bugFix.enabled && workspace.bugFix.schedule !== undefined
-      ? (["bug-fix"] as const)
-      : []),
-    ...(workspace.testCoverage.enabled && workspace.testCoverage.schedule !== undefined
-      ? (["test-coverage"] as const)
-      : []),
-    ...(workspace.securityMaintenance.enabled &&
-    workspace.securityMaintenance.schedule !== undefined
-      ? (["security-maintenance"] as const)
-      : []),
-    ...(workspace.harnessAuto.enabled && workspace.harnessAuto.schedule !== undefined
-      ? (["harness-auto"] as const)
-      : []),
-    ...(workspace.opportunityDiscovery.enabled &&
-    workspace.opportunityDiscovery.schedule !== undefined
-      ? (["opportunity-discovery"] as const)
-      : []),
-    ...(workspace.pullRequestReview.enabled && workspace.pullRequestReview.schedule !== undefined
-      ? (["pull-request-review"] as const)
-      : []),
-  ];
+  return workspaceScheduledJobKinds(workspace);
 }
 
 export function validateLoopConfig(text: string): LoopValidationSummary {

@@ -1,15 +1,7 @@
 import type { LoopConfig } from "./config.js";
+import type { LoopTaskSchedulerJobKind } from "./task-family.js";
 
-export type LoopJitterJobKind =
-  | "architecture"
-  | "workspace-architecture"
-  | "bug-fix"
-  | "test-coverage"
-  | "security-maintenance"
-  | "harness-auto"
-  | "opportunity-discovery"
-  | "pull-request-review"
-  | "repository-pull-request-review";
+export type LoopJitterJobKind = LoopTaskSchedulerJobKind;
 
 export function loopScheduleJitterMs(input: {
   config: LoopConfig;

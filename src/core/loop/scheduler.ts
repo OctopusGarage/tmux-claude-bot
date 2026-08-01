@@ -1,16 +1,16 @@
 import { JsonMapStore } from "../infra/json-map-store.js";
 import { nextFire } from "../scheduler/scheduling.js";
-import type {
-  LoopConfig,
-  LoopProjectConfig,
-  LoopRepositoryPullRequestReviewConfig,
-  LoopWorkspaceConfig,
-} from "./config.js";
+import type { LoopConfig } from "./config.js";
 import {
   type LoopJitterJobKind,
   loopScheduleJitterMaxMs,
   loopScheduleJitterMs,
 } from "./schedule-jitter.js";
+import {
+  type LoopScheduledJob,
+  projectScheduledJobs,
+  workspaceScheduledJobs,
+} from "./task-family.js";
 
 const FIRST_TICK_LOOKBACK_MS = 10 * 60_000;
 
@@ -68,7 +68,7 @@ export class LoopSchedulerStore {
 }
 
 function scheduledFire(
-  job: ScheduledJob,
+  job: LoopScheduledJob,
   config: LoopConfig,
   lastFired: number | undefined,
   now: number,
@@ -174,105 +174,9 @@ export function runLoopSchedulerTick(input: LoopTickInput): LoopTickSummary {
   };
 }
 
-type ScheduledJob = {
-  project: LoopProjectConfig | LoopRepositoryPullRequestReviewConfig | LoopWorkspaceConfig;
-  jobKey: string;
-  jobKind: LoopJitterJobKind;
-  schedule: string | undefined;
-  scheduleJitterMinutes?: number;
-};
-
-function scheduledJobs(config: LoopConfig): ScheduledJob[] {
+function scheduledJobs(config: LoopConfig): LoopScheduledJob[] {
   return [
-    ...config.projects.flatMap((project) => [
-      {
-        project,
-        jobKey: project.id,
-        jobKind: "architecture" as const,
-        schedule: project.schedule,
-        ...(project.scheduleJitterMinutes !== undefined
-          ? { scheduleJitterMinutes: project.scheduleJitterMinutes }
-          : {}),
-      },
-      ...(project.bugFix.enabled
-        ? [
-            {
-              project,
-              jobKey: `${project.id}:bug-fix`,
-              jobKind: "bug-fix" as const,
-              schedule: project.bugFix.schedule,
-              ...(project.bugFix.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: project.bugFix.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(project.testCoverage.enabled
-        ? [
-            {
-              project,
-              jobKey: `${project.id}:test-coverage`,
-              jobKind: "test-coverage" as const,
-              schedule: project.testCoverage.schedule,
-              ...(project.testCoverage.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: project.testCoverage.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(project.securityMaintenance.enabled
-        ? [
-            {
-              project,
-              jobKey: `${project.id}:security-maintenance`,
-              jobKind: "security-maintenance" as const,
-              schedule: project.securityMaintenance.schedule,
-              ...(project.securityMaintenance.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: project.securityMaintenance.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(project.harnessAuto.enabled
-        ? [
-            {
-              project,
-              jobKey: `${project.id}:harness-auto`,
-              jobKind: "harness-auto" as const,
-              schedule: project.harnessAuto.schedule,
-              ...(project.harnessAuto.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: project.harnessAuto.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(project.opportunityDiscovery.enabled
-        ? [
-            {
-              project,
-              jobKey: `${project.id}:opportunity-discovery`,
-              jobKind: "opportunity-discovery" as const,
-              schedule: project.opportunityDiscovery.schedule,
-              ...(project.opportunityDiscovery.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: project.opportunityDiscovery.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(project.pullRequestReview.enabled
-        ? [
-            {
-              project,
-              jobKey: `${project.id}:pull-request-review`,
-              jobKind: "pull-request-review" as const,
-              schedule: project.pullRequestReview.schedule,
-              ...(project.pullRequestReview.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: project.pullRequestReview.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-    ]),
+    ...config.projects.flatMap(projectScheduledJobs),
     ...config.prReview.repositories.map((repository) => ({
       project: repository,
       jobKey: `pr-review:${repository.id}`,
@@ -282,99 +186,11 @@ function scheduledJobs(config: LoopConfig): ScheduledJob[] {
         ? { scheduleJitterMinutes: repository.scheduleJitterMinutes }
         : {}),
     })),
-    ...config.workspaces.flatMap((workspace) => [
-      {
-        project: workspace,
-        jobKey: `workspace:${workspace.id}:architecture`,
-        jobKind: "workspace-architecture" as const,
-        schedule: workspace.architecture.enabled ? workspace.architecture.schedule : undefined,
-        ...(workspace.architecture.scheduleJitterMinutes !== undefined
-          ? { scheduleJitterMinutes: workspace.architecture.scheduleJitterMinutes }
-          : {}),
-      },
-      ...(workspace.bugFix.enabled
-        ? [
-            {
-              project: workspace,
-              jobKey: `workspace:${workspace.id}:bug-fix`,
-              jobKind: "bug-fix" as const,
-              schedule: workspace.bugFix.schedule,
-              ...(workspace.bugFix.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: workspace.bugFix.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(workspace.testCoverage.enabled
-        ? [
-            {
-              project: workspace,
-              jobKey: `workspace:${workspace.id}:test-coverage`,
-              jobKind: "test-coverage" as const,
-              schedule: workspace.testCoverage.schedule,
-              ...(workspace.testCoverage.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: workspace.testCoverage.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(workspace.securityMaintenance.enabled
-        ? [
-            {
-              project: workspace,
-              jobKey: `workspace:${workspace.id}:security-maintenance`,
-              jobKind: "security-maintenance" as const,
-              schedule: workspace.securityMaintenance.schedule,
-              ...(workspace.securityMaintenance.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: workspace.securityMaintenance.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(workspace.harnessAuto.enabled
-        ? [
-            {
-              project: workspace,
-              jobKey: `workspace:${workspace.id}:harness-auto`,
-              jobKind: "harness-auto" as const,
-              schedule: workspace.harnessAuto.schedule,
-              ...(workspace.harnessAuto.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: workspace.harnessAuto.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(workspace.opportunityDiscovery.enabled
-        ? [
-            {
-              project: workspace,
-              jobKey: `workspace:${workspace.id}:opportunity-discovery`,
-              jobKind: "opportunity-discovery" as const,
-              schedule: workspace.opportunityDiscovery.schedule,
-              ...(workspace.opportunityDiscovery.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: workspace.opportunityDiscovery.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-      ...(workspace.pullRequestReview.enabled
-        ? [
-            {
-              project: workspace,
-              jobKey: `workspace:${workspace.id}:pull-request-review`,
-              jobKind: "pull-request-review" as const,
-              schedule: workspace.pullRequestReview.schedule,
-              ...(workspace.pullRequestReview.scheduleJitterMinutes !== undefined
-                ? { scheduleJitterMinutes: workspace.pullRequestReview.scheduleJitterMinutes }
-                : {}),
-            },
-          ]
-        : []),
-    ]),
+    ...config.workspaces.flatMap(workspaceScheduledJobs),
   ];
 }
 
-function scheduleJitterMs(job: ScheduledJob, config: LoopConfig, scheduledAt: number): number {
+function scheduleJitterMs(job: LoopScheduledJob, config: LoopConfig, scheduledAt: number): number {
   return loopScheduleJitterMs({
     config,
     jobKey: job.jobKey,
@@ -386,7 +202,7 @@ function scheduleJitterMs(job: ScheduledJob, config: LoopConfig, scheduledAt: nu
   });
 }
 
-function scheduleJitterMaxMs(job: ScheduledJob, config: LoopConfig): number {
+function scheduleJitterMaxMs(job: LoopScheduledJob, config: LoopConfig): number {
   return loopScheduleJitterMaxMs({
     config,
     jobKind: job.jobKind,
