@@ -17,6 +17,16 @@ export type LoopSupervisorCompletion = {
   retrySchedule: boolean;
 };
 
+export type LoopSupervisorScheduleRetryKind =
+  | "supervisor-dispatch-unavailable"
+  | "supervisor-output-contract"
+  | "not-retryable";
+
+export type LoopSupervisorScheduleRetry = {
+  retrySchedule: boolean;
+  kind: LoopSupervisorScheduleRetryKind;
+};
+
 export function completeLoopSupervisorRun(
   input: LoopSupervisorCompletionInput,
 ): LoopSupervisorCompletion {
@@ -38,14 +48,18 @@ export function completeLoopSupervisorRun(
   }
   return {
     report,
-    retrySchedule: shouldRetrySupervisedSchedule(input.result),
+    retrySchedule: classifyLoopSupervisorScheduleRetry(input.result).retrySchedule,
   };
 }
 
-function shouldRetrySupervisedSchedule(result: LoopSupervisedRunResult): boolean {
-  if (result.status === "invalid-output") return true;
-  if (result.status !== "dispatch-failed") return false;
-  return [
+export function classifyLoopSupervisorScheduleRetry(
+  result: LoopSupervisedRunResult,
+): LoopSupervisorScheduleRetry {
+  if (result.status === "invalid-output") {
+    return { retrySchedule: true, kind: "supervisor-output-contract" };
+  }
+  if (result.status !== "dispatch-failed") return { retrySchedule: false, kind: "not-retryable" };
+  const retryDispatch = [
     "missing loop supervisor session name",
     "missing loop supervisor dispatch adapter",
     "did not become ready in time",
@@ -55,4 +69,8 @@ function shouldRetrySupervisedSchedule(result: LoopSupervisedRunResult): boolean
     "loop supervisor task was cancelled before enqueue",
     "loop supervisor task was cancelled",
   ].some((reason) => result.reason.includes(reason));
+  if (retryDispatch) {
+    return { retrySchedule: true, kind: "supervisor-dispatch-unavailable" };
+  }
+  return { retrySchedule: false, kind: "not-retryable" };
 }

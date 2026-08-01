@@ -178,6 +178,43 @@ describe("prepareLoopExecutionWorktrees", () => {
     });
   });
 
+  it("does not switch an explicitly source-isolated work order to an isolated worktree", () => {
+    const repo = makeRepo();
+    const calls: LoopGitInvocation[] = [];
+    const failures: unknown[] = [];
+    const baseWorkOrder = workOrder(repo);
+    if (baseWorkOrder.executionIsolation === undefined) {
+      throw new Error("expected execution isolation in test fixture");
+    }
+
+    const prepared = prepareLoopExecutionWorktrees({
+      workOrder: {
+        ...baseWorkOrder,
+        executionIsolation: {
+          ...baseWorkOrder.executionIsolation,
+          worktreeIsolation: "source",
+        },
+      },
+      runGit: gitStub(repo, calls, { dirty: true }),
+      defaultMode: "isolated",
+      onPreparationFailure: (failure) => failures.push(failure),
+    });
+
+    expect(prepared.projectPath).toBe(repo);
+    expect(prepared.executionIsolation?.worktreeIsolation).toBe("source");
+    expect(prepared.executionIsolation?.preparedBy).toBeUndefined();
+    expect(calls.map((call) => call.args.slice(0, 3).join(" "))).not.toContain(
+      "worktree add --detach",
+    );
+    expect(failures).toEqual([
+      {
+        repositoryId: "repo",
+        sourceWorktree: repo,
+        reason: "source execution worktree could not be prepared",
+      },
+    ]);
+  });
+
   it("lets read-only opportunity discovery use source mode when auto is requested", () => {
     const repo = makeRepo();
     const calls: LoopGitInvocation[] = [];
