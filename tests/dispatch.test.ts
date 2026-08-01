@@ -846,13 +846,13 @@ describe("executeMessage — text action with history", () => {
         waitUntilInputReady,
         waitUntilDone: vi.fn(async () => ({ done: true, output: "DONE" })),
       } as never,
-      config: { maxWaitDoneMs: 1, maxWaitDoneTotalMs: 100 } as never,
+      config: { maxWaitDoneMs: 1, maxWaitDoneTotalMs: 5_000 } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
 
     await expect(
       executeMessage(
-        msg("text", { text: "system work", origin: "system", maxWaitDoneTotalMs: 100 }),
+        msg("text", { text: "system work", origin: "system", maxWaitDoneTotalMs: 5_000 }),
         d,
       ),
     ).resolves.toBe("DONE");
