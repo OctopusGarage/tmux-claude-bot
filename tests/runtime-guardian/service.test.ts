@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/superviso
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import {
   buildRuntimeGuardianRepairPrompt,
+  checkRuntimeGuardianRepairReadiness,
   discoverRuntimeGuardianFindings,
   type RuntimeGuardianFinding,
   RuntimeGuardianStore,
@@ -23,6 +25,7 @@ function runtimeConfig(
   return {
     enabled: true,
     mode: "fast-heal",
+    worktreeIsolation: "auto",
     tickMs: 120000,
     lookbackMs: 86_400_000,
     cooldownMs: 1_800_000,
@@ -75,6 +78,7 @@ describe("runtime guardian", () => {
     expect(config.runtimeGuardian).toMatchObject({
       enabled: false,
       mode: "fast-heal",
+      worktreeIsolation: "auto",
       tickMs: 120000,
       lookbackMs: 86_400_000,
       cooldownMs: 1_800_000,
@@ -200,6 +204,21 @@ describe("runtime guardian", () => {
       detail: "runtime guardian repo has uncommitted changes",
     });
     expect(dispatchRepair).not.toHaveBeenCalled();
+  });
+
+  it("blocks source-worktree repair when runtime guardian is not on the repair branch", () => {
+    const repo = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-branch-"));
+    execFileSync("git", ["init", "-b", "feature"], { cwd: repo, stdio: "ignore" });
+
+    const result = checkRuntimeGuardianRepairReadiness(repo, {
+      repairBranch: "dev",
+      worktreeIsolation: "source",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "runtime guardian source repair requires branch dev; current branch is feature",
+    });
   });
 
   it("discovers completed supervisor work orders that are missing system gate evidence", () => {

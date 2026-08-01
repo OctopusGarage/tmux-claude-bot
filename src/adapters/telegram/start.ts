@@ -218,8 +218,14 @@ export async function startTelegram(
   const owner = [...config.telegramAllowedUserIds][0];
   if (owner !== undefined) {
     deps.notifier.register((notice) => {
-      const text = renderNotice(notice, messages("telegram"));
-      return bot.api.sendMessage(owner, text).then(() => {});
+      return deps.notifications
+        .notify({
+          channel: "telegram",
+          source: "batch-scheduler",
+          title: "Batch scheduler",
+          body: renderNotice(notice, messages("telegram")),
+        })
+        .then(() => {});
     });
     deps.notifications.register("telegram", (message, req) => {
       const reply_markup =

@@ -246,6 +246,7 @@ export async function dispatchDailyTaskRepair(
   const result = await startActiveDelegatedTask(deps, {
     session,
     requirement: prompt,
+    worktreeIsolation: deps.config.taskAudit.repairWorktreeIsolation,
   });
   if (result.status === "blocked") {
     log.warn("daily task audit auto repair could not be delegated", {

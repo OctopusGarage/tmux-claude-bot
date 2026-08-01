@@ -1,5 +1,5 @@
 # Batch plan — full-schema example
-# Load with: tcb batch load docs/batch-plan.example.yml
+# Load with: tcb batch load docs/examples/batch-plan.example.yml
 # See docs/manual.md §8 for command reference.
 
 # Unique plan identifier (used in tcb batch start / export).

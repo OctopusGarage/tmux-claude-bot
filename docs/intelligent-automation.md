@@ -6,8 +6,9 @@ and configuration relationships so future changes do not blur Loop Engineering,
 Loop Supervisor, Autopilot, Opportunity Discovery, PR review, Daily Task Audit,
 or Runtime Guardian.
 
-For command-level usage, see `docs/manual.md`, `docs/commands.md`, and
-`docs/agents/usage-guide.md`.
+For the end-to-end architecture view, see
+`docs/intelligent-automation-architecture.md`. For command-level usage, see
+`docs/manual.md`, `docs/commands.md`, and `docs/agents/usage-guide.md`.
 
 ## System Model
 
@@ -113,6 +114,12 @@ centralized.
 - Ordinary user chat stays in the project-bound session. Scheduled jobs,
   Autopilot delegation, PR review, harness-auto, Daily Task Audit repair, and
   other bounded WorkOrders must not be injected into that ordinary chat context.
+- Worktree isolation is configurable per WorkOrder family and defaults to
+  `isolated`. `source` mode keeps the dedicated supervisor/worker context but
+  executes in the source worktree; use it only for explicit live/self-repair
+  flows after clean-worktree preflight. `auto` resolves to the safe default for
+  the task family, with read-only opportunity discovery allowed to avoid a
+  disposable worktree.
 - Every WorkOrder carries the authoritative `projectId`, `projectPath`, and
   execution-isolation contract. The configured path is the only trusted source
   for selecting a target repository.
@@ -364,6 +371,9 @@ WorkOrder. `observe` records the finding without repair delegation.
 By default it only considers terminal artifacts updated within
 `RUNTIME_GUARDIAN_LOOKBACK_MS` so enabling it does not replay historical
 pre-guardian backlog as fresh runtime incidents.
+`RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
+source-worktree execution so managed-dev self-repair can take effect quickly; set
+it to `isolated` for PR-style conservative repair.
 
 Runtime Guardian must keep these boundaries:
 

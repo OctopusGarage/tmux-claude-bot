@@ -12,7 +12,7 @@ That helped, but all three layers still lived inside the Telegram world: grammY'
 views. There was no **seam** between *what a command means* and *how Telegram
 delivers it*.
 
-We now plan a second messaging front-end (Feishu / 飞书). The tmux management,
+We now plan a second messaging front-end, Feishu/Lark. The tmux management,
 Claude lifecycle, command semantics, queue, project management, and history
 reading are all platform-independent and must be reused. Only the message
 ingestion, rendering, keyboards/reactions/typing, and network transport are

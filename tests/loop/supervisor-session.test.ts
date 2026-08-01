@@ -40,7 +40,14 @@ describe("loop supervisor session", () => {
         loopEngineering: {
           configFile: "",
           tickMs: 0,
-          supervisor: { enabled: true, dir: "/custom/supervisor", agent: "codex" },
+          supervisor: {
+            enabled: true,
+            dir: "/custom/supervisor",
+            agent: "codex",
+            poolSize: 1,
+            resetBeforeWorkOrder: "clear" as const,
+            worktreeIsolation: "isolated" as const,
+          },
         },
       }),
     ).toBe("/custom/supervisor");
@@ -49,7 +56,14 @@ describe("loop supervisor session", () => {
         loopEngineering: {
           configFile: "",
           tickMs: 0,
-          supervisor: { enabled: true, dir: "", agent: "codex" },
+          supervisor: {
+            enabled: true,
+            dir: "",
+            agent: "codex",
+            poolSize: 1,
+            resetBeforeWorkOrder: "clear" as const,
+            worktreeIsolation: "isolated" as const,
+          },
         },
       }),
     ).toBe(join(stateDir, "loop-supervisor"));
@@ -95,7 +109,14 @@ describe("loop supervisor session", () => {
         loopEngineering: {
           configFile: "",
           tickMs: 0,
-          supervisor: { enabled: false, dir: "", agent: "codex" as const },
+          supervisor: {
+            enabled: false,
+            dir: "",
+            agent: "codex" as const,
+            poolSize: 1,
+            resetBeforeWorkOrder: "clear" as const,
+            worktreeIsolation: "isolated" as const,
+          },
         },
         startCommands: [{ agent: "codex" as const, command: "codex", label: "codex" }],
         claudeStartCommand: "claude",
@@ -122,7 +143,14 @@ describe("loop supervisor session", () => {
         loopEngineering: {
           configFile: "",
           tickMs: 0,
-          supervisor: { enabled: true, dir: "", agent: "codex" as const },
+          supervisor: {
+            enabled: true,
+            dir: "",
+            agent: "codex" as const,
+            poolSize: 1,
+            resetBeforeWorkOrder: "clear" as const,
+            worktreeIsolation: "isolated" as const,
+          },
         },
         startCommands: [{ agent: "codex" as const, command: "codex", label: "codex" }],
         claudeStartCommand: "claude",
@@ -182,7 +210,14 @@ describe("loop supervisor session", () => {
         loopEngineering: {
           configFile: "",
           tickMs: 0,
-          supervisor: { enabled: true, dir: "", agent: "codex" as const },
+          supervisor: {
+            enabled: true,
+            dir: "",
+            agent: "codex" as const,
+            poolSize: 1,
+            resetBeforeWorkOrder: "clear" as const,
+            worktreeIsolation: "isolated" as const,
+          },
         },
         startCommands: [{ agent: "codex" as const, command: "codex", label: "codex" }],
         claudeStartCommand: "claude",

@@ -85,6 +85,61 @@ describe("registerLarkNotifications", () => {
     );
   });
 
+  it("routes lark session notification attachments to the bound project group", async () => {
+    mocks.boundLarkGroupForSession.mockReturnValue({ chatId: "oc_group" });
+    const { registerLarkNotifications } = await import(
+      "../../../src/adapters/lark/notifications.js"
+    );
+    const d = deps();
+    const registerAttachment = vi.spyOn(d.notifications, "registerAttachment");
+
+    registerLarkNotifications(d, larkConfig(), channel as never);
+    const attachmentSender = registerAttachment.mock.calls.find((c) => c[0] === "lark")?.[1];
+    await attachmentSender?.("/tmp/report.html", "file", "Radar report", {
+      title: "Long task finished: api",
+      session: "tmux_proj_api",
+    });
+
+    expect(mocks.boundLarkGroupForSession).toHaveBeenCalledWith("tmux_proj_api");
+    expect(mocks.sendLarkAttachment).toHaveBeenCalledWith(
+      expect.anything(),
+      "oc_group",
+      "/tmp/report.html",
+      "file",
+      "Radar report",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("routes batch owner notices through the notification gateway", async () => {
+    const { registerLarkNotifications } = await import(
+      "../../../src/adapters/lark/notifications.js"
+    );
+    const d = deps();
+    const notify = vi.spyOn(d.notifications, "notify");
+
+    registerLarkNotifications(d, larkConfig(), channel as never);
+    await d.notifier.broadcast({
+      kind: "batchRunStarted",
+      runId: "r1",
+      planId: "plan-a",
+      tasks: 2,
+    });
+
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "lark",
+        source: "batch-scheduler",
+        title: "Batch scheduler",
+      }),
+    );
+    expect(mocks.notifyLarkOwner).toHaveBeenCalledWith(
+      d.config.lark,
+      expect.stringContaining("Batch scheduler"),
+    );
+  });
+
   it("routes lark session notifications to the bound project group", async () => {
     mocks.boundLarkGroupForSession.mockReturnValue({ chatId: "oc_group" });
     const { registerLarkNotifications } = await import(

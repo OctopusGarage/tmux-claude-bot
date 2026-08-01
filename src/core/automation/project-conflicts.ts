@@ -33,8 +33,8 @@ export function findProjectAutomationConflict(
 ): ProjectAutomationConflict | null {
   const targetPath = resolve(projectPath);
   const record =
-    listReservedLoopSupervisorWorkOrders().find(
-      (candidate) => resolve(candidate.workOrder.projectPath) === targetPath,
+    listReservedLoopSupervisorWorkOrders().find((candidate) =>
+      workOrderResourcePaths(candidate.workOrder).some((path) => resolve(path) === targetPath),
     ) ?? null;
   if (record === null) return null;
   return {
@@ -47,6 +47,24 @@ export function findProjectAutomationConflict(
     supervisorSession: record.state.supervisorSession,
     runDir: record.runDir,
   };
+}
+
+function workOrderResourcePaths(workOrder: UnfinishedLoopSupervisorWorkOrder["workOrder"]) {
+  if (workOrder.workspace !== undefined) {
+    return [
+      workOrder.workspace.root,
+      ...workOrder.workspace.repositories.flatMap((repository) => [
+        repository.path,
+        ...(repository.sourcePath === undefined ? [] : [repository.sourcePath]),
+      ]),
+    ];
+  }
+  return [
+    workOrder.projectPath,
+    ...(workOrder.executionIsolation?.sourceWorktree === undefined
+      ? []
+      : [workOrder.executionIsolation.sourceWorktree]),
+  ];
 }
 
 export function findProjectAutomationConflictForSession(

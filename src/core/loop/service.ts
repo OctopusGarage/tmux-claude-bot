@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePath, sep } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
+import type { WorktreeIsolationMode } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { agentIsIdle } from "../command/agent-ready.js";
 import type { HandlerDeps } from "../deps.js";
@@ -18,6 +19,7 @@ import {
 } from "./agent-queue.js";
 import { LoopBacklogStore } from "./backlog.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
+import { prepareLoopExecutionWorktrees } from "./execution-worktree.js";
 import {
   recoverInvalidOutputFromFinalSummary,
   supervisorFinalStatusToRunStatus,
@@ -302,6 +304,7 @@ export async function runLoopServiceTickAsync(input: {
   notifications?: NotificationGateway;
   projectSessionPrefix?: string;
   resetSupervisorBeforeWorkOrder?: LoopSupervisorResetMode;
+  supervisorWorktreeIsolation?: WorktreeIsolationMode;
   ensureSupervisorSession?: (sessionName: string) => Promise<boolean>;
   isSupervisorSessionAvailable?: (sessionName: string) => Promise<boolean>;
   defaultSupervisorTimeoutMs?: number;
@@ -414,7 +417,7 @@ export async function runLoopServiceTickAsync(input: {
         resetBeforeWorkOrder: resetSupervisorBeforeWorkOrder,
       },
     });
-    const workOrder =
+    let workOrder =
       repository !== undefined
         ? buildRepositoryPullRequestReviewWorkOrder({
             config,
@@ -456,6 +459,11 @@ export async function runLoopServiceTickAsync(input: {
                             ? "bug-fix"
                             : "architecture",
             });
+    workOrder = prepareLoopExecutionWorktrees({
+      workOrder,
+      ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
+      defaultMode: input.supervisorWorktreeIsolation ?? "isolated",
+    });
     if (workOrder.finalSummaryPath !== undefined) {
       mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
     }
@@ -1094,10 +1102,18 @@ function resourcePathsForWorkOrder(workOrder: LoopWorkOrder): string[] {
   if (workOrder.workspace !== undefined) {
     return normalizeResourcePaths([
       workOrder.workspace.root,
-      ...workOrder.workspace.repositories.map((repository) => repository.path),
+      ...workOrder.workspace.repositories.flatMap((repository) => [
+        repository.path,
+        ...(repository.sourcePath === undefined ? [] : [repository.sourcePath]),
+      ]),
     ]);
   }
-  return normalizeResourcePaths([workOrder.projectPath]);
+  return normalizeResourcePaths([
+    workOrder.projectPath,
+    ...(workOrder.executionIsolation?.sourceWorktree === undefined
+      ? []
+      : [workOrder.executionIsolation.sourceWorktree]),
+  ]);
 }
 
 function normalizeResourcePaths(paths: readonly string[]): string[] {
@@ -1224,6 +1240,7 @@ export function startLoopEngineering(
           deps.config.loopEngineering.supervisor.poolSize,
         ),
         resetSupervisorBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
+        supervisorWorktreeIsolation: deps.config.loopEngineering.supervisor.worktreeIsolation,
         ...(deps.config.loopEngineering.supervisor.enabled
           ? {
               ensureSupervisorSession: async (sessionName) =>
@@ -1530,6 +1547,7 @@ export function runSupervisedSystemGateOutcome(input: {
   const discoveryOnlyTask = input.workOrder.task?.kind === "opportunity-discovery";
   const requiresGitGate =
     !discoveryOnlyTask && (input.project.commit.enabled || input.project.pullRequest.enabled);
+  const sourceWorktree = input.workOrder.executionIsolation?.sourceWorktree;
   if (input.workOrder.workspace !== undefined && input.runGit !== undefined) {
     failures.push(...workspaceRepositoryGate(input.workOrder.workspace, input.runGit));
     if (failures.length === 0) {
@@ -1551,17 +1569,20 @@ export function runSupervisedSystemGateOutcome(input: {
     }
 
     if (input.project.pullRequest.enabled) {
-      const branch = input.runGit({ cwd: input.project.path, args: ["branch", "--show-current"] });
-      if (branch.status !== 0) {
-        failures.push(
-          `git branch check failed: ${branch.stderr || branch.stdout || "unknown error"}`,
+      failures.push(
+        ...switchBackWorktreeGate({
+          path: sourceWorktree ?? input.project.path,
+          expectedBranch: input.project.pullRequest.switchBack,
+          isolated: sourceWorktree !== undefined,
+          runGit: input.runGit,
+        }),
+      );
+      if (failures.length === 0) {
+        evidence.push(
+          sourceWorktree === undefined
+            ? `target branch switched back to ${input.project.pullRequest.switchBack}`
+            : `source worktree remained clean on ${input.project.pullRequest.switchBack}`,
         );
-      } else if (branch.stdout.trim() !== input.project.pullRequest.switchBack) {
-        failures.push(
-          `project branch is "${branch.stdout.trim()}", expected "${input.project.pullRequest.switchBack}"`,
-        );
-      } else {
-        evidence.push(`target branch switched back to ${input.project.pullRequest.switchBack}`);
       }
 
       if (
@@ -1571,7 +1592,7 @@ export function runSupervisedSystemGateOutcome(input: {
       ) {
         failures.push(
           ...syncSwitchBackBranch({
-            project: input.project,
+            project: syncBackProjectForWorkOrder(input.project, input.workOrder),
             runGit: input.runGit,
           }),
         );
@@ -1704,7 +1725,7 @@ export function runSupervisedSystemGateOutcome(input: {
             input.runGit !== undefined
           ) {
             const autoMergeFailures = runSupervisedAutoMerge({
-              project: input.project,
+              project: syncBackProjectForWorkOrder(input.project, input.workOrder),
               commitBranch,
               prState: prGate.state,
               runCommand: input.runCommand,
@@ -1870,6 +1891,17 @@ function workspaceRepositoryGate(
     if (status.stdout.trim().length > 0) {
       failures.push(`${repository.id} worktree is dirty: ${status.stdout.trim()}`);
     }
+    if (repository.sourcePath !== undefined) {
+      failures.push(
+        ...switchBackWorktreeGate({
+          path: repository.sourcePath,
+          expectedBranch: repository.pullRequest.switchBack,
+          isolated: true,
+          runGit,
+        }).map((failure) => `${repository.id} ${failure}`),
+      );
+      continue;
+    }
     const branch = runGit({ cwd: repository.path, args: ["branch", "--show-current"] });
     if (branch.status !== 0) {
       failures.push(
@@ -1886,6 +1918,49 @@ function workspaceRepositoryGate(
     }
   }
   return failures;
+}
+
+function switchBackWorktreeGate(input: {
+  path: string;
+  expectedBranch: string;
+  isolated: boolean;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): string[] {
+  const failures: string[] = [];
+  if (input.isolated) {
+    const status = input.runGit({ cwd: input.path, args: ["status", "--porcelain"] });
+    if (status.status !== 0) {
+      failures.push(
+        `source git status failed: ${status.stderr || status.stdout || "unknown error"}`,
+      );
+    } else if (status.stdout.trim().length > 0) {
+      failures.push(
+        `source worktree is dirty after supervisor completion: ${status.stdout.trim()}`,
+      );
+    }
+  }
+
+  const branch = input.runGit({ cwd: input.path, args: ["branch", "--show-current"] });
+  if (branch.status !== 0) {
+    failures.push(
+      `${input.isolated ? "source" : "target"} git branch check failed: ${
+        branch.stderr || branch.stdout || "unknown error"
+      }`,
+    );
+  } else if (branch.stdout.trim() !== input.expectedBranch) {
+    failures.push(
+      `${input.isolated ? "source" : "target"} branch is "${branch.stdout.trim()}", expected "${input.expectedBranch}"`,
+    );
+  }
+  return failures;
+}
+
+function syncBackProjectForWorkOrder(
+  project: SupervisedSystemGateProject,
+  workOrder: LoopWorkOrder,
+): SupervisedSystemGateProject {
+  const sourceWorktree = workOrder.executionIsolation?.sourceWorktree;
+  return sourceWorktree === undefined ? project : { ...project, path: sourceWorktree };
 }
 
 export function systemGateProjectFromWorkOrder(

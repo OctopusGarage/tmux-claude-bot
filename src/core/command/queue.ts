@@ -280,7 +280,7 @@ export class MessageQueue {
     const removed = this.sessionQueues.get(sessionName)?.remove((m) => m.id === msgId);
     if (!removed) return false;
     // The reject closure IS the user-facing confirmation (the adapter passes its
-    // localized "已取消" text as the reason) — typed so the closure confirms it
+    // localized cancellation text as the reason — typed so the closure confirms it
     // plainly instead of showing an error/recovery surface.
     removed.reject(new QueueCancelledError(reason));
     this.persist();
@@ -442,7 +442,7 @@ export class MessageQueue {
 
     // Idle-gate: don't type into a pane busy with work this queue didn't start
     // (the user driving the agent on the desktop). Hold the message — leave it
-    // QUEUED, so it still counts in size()/"排队中" — and recheck shortly.
+    // QUEUED, so it still counts in size()/queued status — and recheck shortly.
     //
     // ONLY a `text` prompt is gated — it's the one action that types into the
     // agent's input. Control verbs (restart/exit/start/esc/…) must NEVER be held

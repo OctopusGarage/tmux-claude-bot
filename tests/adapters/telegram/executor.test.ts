@@ -127,7 +127,7 @@ describe("handleQueuedCommand", () => {
     await handleQueuedCommand(ctx, deps, "status");
 
     expect(deps.queue.enqueued).toHaveLength(0);
-    // executeMessage("status") returns "🟢 Claude 运行中".
+    // executeMessage("status") returns a localized running status.
     expect(ctx.texts().some((t) => t.includes("运行中"))).toBe(true);
   });
 

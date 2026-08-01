@@ -32,6 +32,11 @@ const blankTolerantString = (def: string): z.ZodType<string> =>
   z.preprocess((v) => (v === "" ? undefined : v), z.string().min(1).default(def));
 
 const optionalRawEnv = z.preprocess((v) => (v === undefined ? "" : v), z.string().default(""));
+const worktreeIsolationSchema = (def: "isolated" | "source" | "auto") =>
+  z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["isolated", "source", "auto"]).default(def),
+  );
 
 // Exported so the docs contract test can assert every supported key is
 // documented in .env.example (legacy aliases excepted).
@@ -133,6 +138,7 @@ export const envSchema = z.object({
     (v) => (v === "" ? undefined : v),
     z.enum(["observe", "fast-heal"]).default("fast-heal"),
   ),
+  RUNTIME_GUARDIAN_WORKTREE_ISOLATION: worktreeIsolationSchema("auto"),
   RUNTIME_GUARDIAN_TICK_MS: blankTolerantNonNegativeInt(120000),
   RUNTIME_GUARDIAN_LOOKBACK_MS: blankTolerantNonNegativeInt(86_400_000),
   RUNTIME_GUARDIAN_COOLDOWN_MS: blankTolerantNonNegativeInt(1_800_000),
@@ -149,6 +155,7 @@ export const envSchema = z.object({
   ),
   TASK_AUDIT_AUTO_REPAIR: blankTolerantString("false"),
   TASK_AUDIT_REPAIR_BRANCH: blankTolerantString("dev"),
+  TASK_AUDIT_REPAIR_WORKTREE_ISOLATION: worktreeIsolationSchema("isolated"),
   // --- Loop Engineering. Blank config file or tick 0 disables the managed loop. ---
   LOOP_ENGINEERING_CONFIG_FILE: z.string().default(""),
   LOOP_ENGINEERING_TICK_MS: blankTolerantNonNegativeInt(300000),
@@ -163,6 +170,7 @@ export const envSchema = z.object({
     (v) => (v === "" ? undefined : v),
     z.enum(["none", "compact", "clear"]).default("clear"),
   ),
+  LOOP_SUPERVISOR_WORKTREE_ISOLATION: worktreeIsolationSchema("isolated"),
   // --- Home operator session ---
   HOME_OPERATOR_ENABLED: blankTolerantString("false"),
   HOME_OPERATOR_DIR: z.string().default(""),
@@ -353,6 +361,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       enabled:
         parsed.RUNTIME_GUARDIAN_ENABLED !== "false" && parsed.RUNTIME_GUARDIAN_ENABLED !== "0",
       mode: parsed.RUNTIME_GUARDIAN_MODE,
+      worktreeIsolation: parsed.RUNTIME_GUARDIAN_WORKTREE_ISOLATION,
       tickMs: parsed.RUNTIME_GUARDIAN_TICK_MS,
       lookbackMs: parsed.RUNTIME_GUARDIAN_LOOKBACK_MS,
       cooldownMs: parsed.RUNTIME_GUARDIAN_COOLDOWN_MS,
@@ -368,6 +377,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       autoRepair:
         parsed.TASK_AUDIT_AUTO_REPAIR !== "false" && parsed.TASK_AUDIT_AUTO_REPAIR !== "0",
       repairBranch: parsed.TASK_AUDIT_REPAIR_BRANCH,
+      repairWorktreeIsolation: parsed.TASK_AUDIT_REPAIR_WORKTREE_ISOLATION,
     },
     loopEngineering: {
       configFile: parsed.LOOP_ENGINEERING_CONFIG_FILE.trim(),
@@ -379,6 +389,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
         agent: parsed.LOOP_SUPERVISOR_AGENT,
         poolSize: parsed.LOOP_SUPERVISOR_POOL_SIZE,
         resetBeforeWorkOrder: parsed.LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER,
+        worktreeIsolation: parsed.LOOP_SUPERVISOR_WORKTREE_ISOLATION,
       },
     },
     homeOperator: {

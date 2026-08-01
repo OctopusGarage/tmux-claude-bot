@@ -7,9 +7,11 @@ description: Use when the user asks for /arch-loop, arch-loop, architecture heal
 
 ## Overview
 
-Run this repo's bounded architecture deepening loop. Treat `/arch-loop` as a
-compatibility phrase from Claude; in Codex the project-local entry point is
-`$arch-loop` or selecting `arch-loop` from `/skills`.
+Run this repo's bounded architecture health loop as a local/manual compatibility
+workflow. Treat `/arch-loop` as a compatibility phrase from Claude; in Codex the
+project-local entry point is `$arch-loop` or selecting `arch-loop` from
+`/skills`. Scheduled and delegated architecture work must use the Loop
+Engineering WorkOrder path described in `docs/intelligent-automation.md`.
 
 ## Required Inputs
 
@@ -17,6 +19,8 @@ Before scoring or editing, read these repo files:
 
 - `CLAUDE.md`
 - `CONTEXT.md`
+- `docs/intelligent-automation.md`
+- `docs/automation-alignment.md`
 - `workflows/architecture-deepening-loop.md`
 - relevant ADRs under `docs/adr/`
 
@@ -27,7 +31,7 @@ the arch loop cannot run.
 
 Accept the same arguments as `.claude/commands/arch-loop.md`:
 
-- `target=<number>` overrides the target score. Default: `88`.
+- `target=<number>` overrides the target score. Default: `95`.
 - `max_rounds=<number>` overrides the maximum implementation rounds. Default: `3`.
 - `dry-run` or `score-only` rescans and scores without editing files.
 - `focus:<area>` focuses the scan on one area while still scoring the whole repo.
@@ -40,7 +44,8 @@ particular:
 - Start from a fresh scan of the current worktree; do not reuse an old candidate
   pool.
 - Use `$improve-codebase-architecture` when available to produce a fresh
-  baseline report and candidate list.
+  baseline report and candidate list. Read generated reports yourself; do not
+  open them in a browser unless the user explicitly asks.
 - Score the repo out of 100 using the workflow rubric: module depth, locality,
   testability, domain clarity, and change safety.
 - Stop without editing when the baseline score already meets the target.

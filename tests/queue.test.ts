@@ -127,7 +127,7 @@ describe("MessageQueue", () => {
 
       queue.enqueue(createTestMessage({ id: "1", text: "a", action: "text" }));
 
-      // While busy: the message stays QUEUED (counts in size, "排队中"), unrun.
+      // While busy: the message stays QUEUED, counts in size, and remains unrun.
       await new Promise((r) => setTimeout(r, 60));
       expect(results).toEqual([]);
       expect(queue.size("s1")).toBe(1);

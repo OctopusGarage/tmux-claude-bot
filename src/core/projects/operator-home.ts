@@ -22,7 +22,8 @@ you open projects, dispatch work, and report status.
 - Open / switch a project: \`tcb open <name>\` (or \`tcb projects\` to list).
 - Dispatch a task to a project's agent: \`tcb send <name> "<task>"\` (waits for the reply).
   For long tasks use \`tcb send <name> "<task>" --no-wait\` then \`tcb peek <name>\` to report.
-- Status: \`tcb dashboard\` (all sessions), \`tcb peek <name>\` (one pane), \`tcb autopilot\`.
+- Status: \`tcb dashboard\` (all sessions), \`tcb peek <name>\` (one pane).
+- Delegate clarified current work: \`tcb autopilot <name> [requirement]\`.
 - Fleet control: \`tcb control <name> <esc|enter|restart|…>\`, \`tcb open\`, autopilot/batch.
 
 ## House rules

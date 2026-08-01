@@ -161,7 +161,7 @@ project group that received the suggestion. Feishu opportunity notifications are
 interactive cards: related suggestions in one notification are discussed as a
 single batch by default. The notification card keeps discussion and execution
 separate; after owner approval, use the project control panel's **Continue via
-supervisor** / **继续托管推进** button or `/autopilot delegate` so all implementation
+supervisor** button or `/autopilot delegate` so all implementation
 work goes through the same Loop Supervisor active-delegation pipeline.
 For coordinated frontend/backend or otherwise coupled repositories, add a
 `workspaces` entry. Workspace jobs create one scheduled multi-repository
@@ -181,7 +181,7 @@ it to the reserved Loop Supervisor. If the requirement text is omitted, the
 supervisor uses the current session context plus repository state as the source
 of truth: live pane, git status, recent commits, existing PRs, and prior
 verification output. Telegram/Feishu expose the same one-click action as
-**Continue via supervisor** / **继续托管推进**. It then drives
+**Continue via supervisor**. It then drives
 the target project agent through implementation, review, relevant tests, coverage
 review for touched risk paths, any justified existing agent-backed/deterministic
 AI eval, and the configured PR/merge/switch-back policy. The command returns a

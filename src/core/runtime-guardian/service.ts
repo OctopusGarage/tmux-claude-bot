@@ -52,6 +52,10 @@ export type RuntimeGuardianRepairDispatchResult =
 export type RuntimeGuardianFindingDiscovery = () => RuntimeGuardianFinding[];
 export type RuntimeGuardianRepairReadinessCheck = (
   repoPath: string,
+  opts?: {
+    repairBranch: string;
+    worktreeIsolation: AppConfig["runtimeGuardian"]["worktreeIsolation"];
+  },
 ) => { ok: true } | { ok: false; reason: string };
 
 export class RuntimeGuardianStore {
@@ -136,7 +140,11 @@ export async function runRuntimeGuardianTick(input: {
     };
   }
 
-  const readiness = (input.checkRepairReadiness ?? checkRuntimeGuardianRepairReadiness)(repoPath);
+  const worktreeIsolation = runtimeGuardianRepairWorktreeIsolation(input.config);
+  const readiness = (input.checkRepairReadiness ?? checkRuntimeGuardianRepairReadiness)(repoPath, {
+    repairBranch: input.config.repairBranch,
+    worktreeIsolation,
+  });
   if (!readiness.ok) {
     log.warn("runtime guardian repair blocked by readiness check", {
       data: { reason: readiness.reason, repoPath, findings: findings.map(loggableFinding) },
@@ -263,6 +271,10 @@ export function discoverRuntimeGuardianFindings(
 
 export function checkRuntimeGuardianRepairReadiness(
   repoPath: string,
+  opts?: {
+    repairBranch: string;
+    worktreeIsolation: AppConfig["runtimeGuardian"]["worktreeIsolation"];
+  },
 ): { ok: true } | { ok: false; reason: string } {
   const result = spawnSync("git", ["-C", repoPath, "status", "--porcelain"], {
     encoding: "utf8",
@@ -282,6 +294,26 @@ export function checkRuntimeGuardianRepairReadiness(
         "runtime guardian repo has uncommitted changes; self-repair waits for a clean worktree",
     };
   }
+  if (opts?.worktreeIsolation === "source") {
+    const branch = spawnSync("git", ["-C", repoPath, "branch", "--show-current"], {
+      encoding: "utf8",
+    });
+    if (branch.status !== 0) {
+      return {
+        ok: false,
+        reason: `cannot verify runtime guardian source branch: ${
+          branch.stderr.trim() || branch.stdout.trim() || `exit ${branch.status ?? "unknown"}`
+        }`,
+      };
+    }
+    const currentBranch = branch.stdout.trim();
+    if (currentBranch !== opts.repairBranch) {
+      return {
+        ok: false,
+        reason: `runtime guardian source repair requires branch ${opts.repairBranch}; current branch is ${currentBranch || "<detached>"}`,
+      };
+    }
+  }
   return { ok: true };
 }
 
@@ -298,6 +330,7 @@ export async function dispatchRuntimeGuardianRepair(
   const result = await startActiveDelegatedTask(deps, {
     session,
     requirement: buildRuntimeGuardianRepairPrompt(request),
+    worktreeIsolation: runtimeGuardianRepairWorktreeIsolation(deps.config.runtimeGuardian),
   });
   if (result.status === "blocked") {
     return { status: "blocked", detail: result.reason };
@@ -306,6 +339,13 @@ export async function dispatchRuntimeGuardianRepair(
     status: "queued",
     detail: `runId=${result.runId} project=${result.projectId} supervisor=${result.supervisorSession}`,
   };
+}
+
+function runtimeGuardianRepairWorktreeIsolation(
+  config: AppConfig["runtimeGuardian"],
+): AppConfig["runtimeGuardian"]["worktreeIsolation"] {
+  if (config.worktreeIsolation !== "auto") return config.worktreeIsolation;
+  return config.mode === "fast-heal" ? "source" : "isolated";
 }
 
 export function startRuntimeGuardian(deps: HandlerDeps): () => void {

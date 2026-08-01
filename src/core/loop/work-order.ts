@@ -49,6 +49,9 @@ export type LoopSupervisorReviewGateDeterministicGate =
 type LoopExecutionIsolation = {
   mode: "supervised-worker";
   expectedWorktree: string;
+  sourceWorktree?: string;
+  worktreeIsolation: "isolated" | "source" | "auto";
+  preparedBy?: "system-git-worktree" | "source-worktree";
   contextReset: "compact" | "clear";
   cleanup: {
     success: "release-worker";
@@ -215,6 +218,8 @@ export type LoopWorkOrder = {
       id: string;
       name: string;
       path: string;
+      sourcePath?: string;
+      worktreeIsolation?: LoopWorktreeIsolationMode;
       role: string;
       agent: LoopProjectConfig["agent"];
       pullRequest: LoopProjectConfig["pullRequest"];
@@ -309,7 +314,10 @@ export function buildLoopWorkOrder(input: {
     projectId: input.project.id,
     projectName: input.project.name,
     projectPath: input.project.path,
-    executionIsolation: defaultExecutionIsolation(input.project.path),
+    executionIsolation: configuredExecutionIsolation(
+      input.project.path,
+      input.project.worktreeIsolation,
+    ),
     ...(input.projectSessionPrefix !== undefined
       ? {
           notificationSession: sessionNameFromPath(input.project.path, input.projectSessionPrefix),
@@ -366,7 +374,7 @@ export function buildRepositoryPullRequestReviewWorkOrder(input: {
     projectId: repository.id,
     projectName: repository.name,
     projectPath: repository.path,
-    executionIsolation: defaultExecutionIsolation(repository.path),
+    executionIsolation: configuredExecutionIsolation(repository.path, repository.worktreeIsolation),
     agent: repository.agent,
     goal: `Review and merge eligible pull requests for ${repository.repo}.`,
     maxRounds: 1,
@@ -459,7 +467,7 @@ export function buildLoopWorkspaceWorkOrder(input: {
     projectId: workspace.id,
     projectName: workspace.name,
     projectPath: workspace.root,
-    executionIsolation: defaultExecutionIsolation(workspace.root),
+    executionIsolation: configuredExecutionIsolation(workspace.root, workspace.worktreeIsolation),
     ...(input.projectSessionPrefix !== undefined
       ? {
           notificationSession: sessionNameFromPath(workspace.root, input.projectSessionPrefix),
@@ -490,6 +498,7 @@ export function buildLoopWorkspaceWorkOrder(input: {
         id: repository.id,
         name: repository.name,
         path: repository.path,
+        ...repositoryWorktreeIsolationPolicy(repository, workspace),
         role: repository.role,
         agent: repository.agent ?? workspace.agent,
         pullRequest: repository.pullRequest,
@@ -537,7 +546,10 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
     projectId: input.projectId,
     projectName: input.projectName,
     projectPath: input.projectPath,
-    executionIsolation: defaultExecutionIsolation(input.projectPath),
+    executionIsolation: configuredExecutionIsolation(
+      input.projectPath,
+      input.projectPolicy?.worktreeIsolation,
+    ),
     ...(input.opportunityIds !== undefined && input.opportunityIds.length > 0
       ? { relatedOpportunityIds: [...input.opportunityIds] }
       : {}),
@@ -583,6 +595,7 @@ function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsola
   return {
     mode: "supervised-worker",
     expectedWorktree,
+    worktreeIsolation: "auto",
     contextReset: "compact",
     cleanup: {
       success: "release-worker",
@@ -590,6 +603,88 @@ function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsola
       retainFailureForHours: 72,
     },
   };
+}
+
+export type LoopWorktreeIsolationMode = LoopExecutionIsolation["worktreeIsolation"];
+
+function configuredExecutionIsolation(
+  expectedWorktree: string,
+  worktreeIsolation?: LoopWorktreeIsolationMode,
+): LoopExecutionIsolation {
+  const isolation = defaultExecutionIsolation(expectedWorktree);
+  return worktreeIsolation === undefined ? isolation : { ...isolation, worktreeIsolation };
+}
+
+export function withLoopExecutionWorktree(
+  workOrder: LoopWorkOrder,
+  executionWorktree: string,
+): LoopWorkOrder {
+  const isolation =
+    workOrder.executionIsolation ?? defaultExecutionIsolation(workOrder.projectPath);
+  return {
+    ...workOrder,
+    projectPath: executionWorktree,
+    executionIsolation: {
+      ...isolation,
+      expectedWorktree: executionWorktree,
+      worktreeIsolation: "isolated",
+      sourceWorktree: isolation.sourceWorktree ?? workOrder.projectPath,
+      preparedBy: "system-git-worktree",
+    },
+  };
+}
+
+export function withLoopSourceWorktree(workOrder: LoopWorkOrder): LoopWorkOrder {
+  const isolation =
+    workOrder.executionIsolation ?? defaultExecutionIsolation(workOrder.projectPath);
+  return {
+    ...workOrder,
+    executionIsolation: {
+      ...isolation,
+      expectedWorktree: workOrder.projectPath,
+      worktreeIsolation: "source",
+      preparedBy: "source-worktree",
+    },
+  };
+}
+
+export function withLoopWorkspaceRepositoryExecutionWorktrees(
+  workOrder: LoopWorkOrder,
+  repositories: Array<{
+    id: string;
+    path: string;
+    sourcePath?: string;
+    worktreeIsolation?: LoopWorktreeIsolationMode;
+  }>,
+): LoopWorkOrder {
+  if (workOrder.workspace === undefined) return workOrder;
+  const replacements = new Map(repositories.map((repository) => [repository.id, repository]));
+  return {
+    ...workOrder,
+    workspace: {
+      ...workOrder.workspace,
+      repositories: workOrder.workspace.repositories.map((repository) => {
+        const replacement = replacements.get(repository.id);
+        if (replacement === undefined) return repository;
+        return {
+          ...repository,
+          path: replacement.path,
+          ...(replacement.sourcePath !== undefined ? { sourcePath: replacement.sourcePath } : {}),
+          ...(replacement.worktreeIsolation !== undefined
+            ? { worktreeIsolation: replacement.worktreeIsolation }
+            : {}),
+        };
+      }),
+    },
+  };
+}
+
+function repositoryWorktreeIsolationPolicy(
+  repository: LoopWorkspaceConfig["repositories"][number],
+  workspace: LoopWorkspaceConfig,
+): { worktreeIsolation?: LoopWorktreeIsolationMode } {
+  const worktreeIsolation = repository.worktreeIsolation ?? workspace.worktreeIsolation;
+  return worktreeIsolation === undefined ? {} : { worktreeIsolation };
 }
 
 function workspaceTaskGoal(
@@ -711,10 +806,34 @@ function finalSummaryValidationLines(): string[] {
 function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
   const isolation =
     workOrder.executionIsolation ?? defaultExecutionIsolation(workOrder.projectPath);
+  if (workOrder.workspace !== undefined) {
+    return [
+      "Execution isolation:",
+      `- This WorkOrder must lease dedicated supervised worker context(s) for run ${workOrder.id}; do not inject this WorkOrder into ordinary user chat or unrelated project sessions.`,
+      `- Workspace coordination root: ${workOrder.workspace.root}. Treat it as read-only orchestration context; repository work must happen in the repository-specific expected worktrees below.`,
+      ...workspaceWorktreeVerificationPolicy(workOrder),
+      `- Reset delegated worker context(s) with ${isolation.contextReset} before substantive task execution and between unrelated subtasks; preserve only the WorkOrder JSON and current verified evidence.`,
+      `- Record leased worker/session names, expected worktrees, actual git toplevels, reset actions, and cleanup decisions in actionsTaken or followUps so the run can be replayed from persisted artifacts.`,
+      `- On completion, release workers after successful system acceptance; retain workers for ${isolation.cleanup.retainFailureForHours} hour(s) on failure, timeout, cancellation, or invalid output so transcripts can be inspected, then allow cleanup.`,
+    ];
+  }
+  const sourceWorktreeLines =
+    isolation.preparedBy === "source-worktree"
+      ? [
+          "- Worktree mode: source. This is an explicitly configured live/source execution: the dedicated worker session operates in the source worktree so verified self-repair can take effect in the running dev profile. This does not allow using the ordinary human chat session.",
+          "- Before editing in source mode, verify the worktree is clean and still on the intended branch; if user changes appear, stop and report blocked.",
+        ]
+      : isolation.sourceWorktree === undefined
+        ? []
+        : [
+            `- Original project worktree: ${isolation.sourceWorktree}. Do not edit, switch branches, pull, merge, rebase, or commit in this original worktree while executing the WorkOrder; it is reserved for the user's normal session.`,
+            "- The worker must use the expected isolated worktree for all assessment, edits, commits, PR inspection, and verification unless a command is explicitly checking that the original worktree stayed clean and on its configured branch.",
+          ];
   return [
     "Execution isolation:",
     `- This WorkOrder must lease a dedicated supervised worker context for run ${workOrder.id}; do not inject this WorkOrder into ordinary user chat or an unrelated project session.`,
     `- Expected worktree: ${isolation.expectedWorktree}. Before any sync, assessment, edit, PR review, or shell command that mutates state, run git -C ${shellQuote(isolation.expectedWorktree)} rev-parse --show-toplevel and verify it must equal ${isolation.expectedWorktree}. If it does not match, stop and report blocked.`,
+    ...sourceWorktreeLines,
     ...workspaceWorktreeVerificationPolicy(workOrder),
     `- Reset the delegated worker context with ${isolation.contextReset} before substantive task execution and between unrelated subtasks; preserve only the WorkOrder JSON and current verified evidence.`,
     `- Record the leased worker/session name, expected worktree, actual git toplevel, reset action, and cleanup decision in actionsTaken or followUps so the run can be replayed from persisted artifacts.`,
@@ -724,10 +843,19 @@ function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
 
 function workspaceWorktreeVerificationPolicy(workOrder: LoopWorkOrder): string[] {
   if (workOrder.workspace === undefined) return [];
-  return workOrder.workspace.repositories.map(
-    (repository) =>
-      `- For workspace repository ${repository.id}, verify git toplevel is ${repository.path} before touching that repository.`,
-  );
+  return workOrder.workspace.repositories.flatMap((repository) => [
+    `- For workspace repository ${repository.id}, expected worktree is ${repository.path}. Verify git toplevel is ${repository.path} before touching that repository. Worktree mode: ${repository.worktreeIsolation ?? "auto"}.`,
+    ...(repository.worktreeIsolation === "source"
+      ? [
+          `- Workspace repository ${repository.id} is explicitly using source execution. Keep the dedicated worker context, verify the source worktree is clean before edits, and stop if unrelated user changes appear.`,
+        ]
+      : []),
+    ...(repository.sourcePath === undefined
+      ? []
+      : [
+          `- Original workspace repository ${repository.id}: ${repository.sourcePath}. Do not edit, switch branches, pull, merge, rebase, or commit in this original worktree while executing the WorkOrder; use it only for final clean/switch-back verification.`,
+        ]),
+  ]);
 }
 
 function taskSpecificPolicy(workOrder: LoopWorkOrder, baseBranch: string): string[] {
@@ -927,11 +1055,13 @@ function workOrderTask(workOrder: LoopWorkOrder): NonNullable<LoopWorkOrder["tas
 }
 
 function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
+  const isolation = workOrder.executionIsolation;
   if (workOrder.task?.kind === "active-delegated-task") {
     if (workOrder.commitPolicy.enabled && workOrder.pullRequestPolicy?.enabled) {
       return `- Before delegated work, sync the target base branch with target-pinned git commands: ${syncRepositoryCommands(
         workOrder.projectPath,
         baseBranch,
+        isolation,
       )}.`;
     }
     return [
@@ -948,6 +1078,7 @@ function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
           `  - ${repository.id}: ${syncRepositoryCommands(
             repository.path,
             repository.pullRequest.switchBack,
+            repository.sourcePath === undefined ? undefined : { preparedBy: "system-git-worktree" },
           )}.`,
       ),
     ].join("\n");
@@ -955,10 +1086,22 @@ function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
   return `- Before assessment or delegated work, sync the target base branch with target-pinned git commands: ${syncRepositoryCommands(
     workOrder.projectPath,
     baseBranch,
+    isolation,
   )}.`;
 }
 
-function syncRepositoryCommands(path: string, branch: string): string {
+function syncRepositoryCommands(
+  path: string,
+  branch: string,
+  isolation?: { preparedBy?: "system-git-worktree" | "source-worktree" },
+): string {
+  if (isolation?.preparedBy === "system-git-worktree") {
+    return [
+      `${gitInWorktree(path, "status --short")} must be clean`,
+      gitInWorktree(path, `fetch origin ${branch}`),
+      gitInWorktree(path, `switch --detach origin/${branch}`),
+    ].join(", then ");
+  }
   return [
     `${gitInWorktree(path, "status --short")} must be clean`,
     gitInWorktree(path, `fetch origin ${branch}`),
@@ -991,11 +1134,12 @@ function workspacePolicy(workOrder: LoopWorkOrder): string[] {
     "- Inspect contracts between repositories before editing affected areas: API routes, schemas, generated clients, shared DTOs, auth/session assumptions, build/deploy coupling, error handling, and data/state ownership.",
     "- If a change crosses repository boundaries, update all affected repositories in the same round and verify the contract from every affected side.",
     "- Each repository keeps its own git branch and pull request. Use one shared run id, link the related PRs in every PR body, and describe the cross-repository reason clearly.",
-    ...workOrder.workspace.repositories.map(
-      (repository) =>
-        `- For ${repository.id}, use branch loop/${repository.id}/${branchKind}/${workOrder.id}, open the PR against ${repository.pullRequest.base}, switch back to ${repository.pullRequest.switchBack}, and ${workspaceGithubPolicy(repository)}.`,
+    ...workOrder.workspace.repositories.map((repository) =>
+      repository.sourcePath === undefined
+        ? `- For ${repository.id}, use branch loop/${repository.id}/${branchKind}/${workOrder.id}, open the PR against ${repository.pullRequest.base}, switch back to ${repository.pullRequest.switchBack}, and ${workspaceGithubPolicy(repository)}.`
+        : `- For ${repository.id}, use isolated worktree ${repository.path}, create branch loop/${repository.id}/${branchKind}/${workOrder.id} from origin/${repository.pullRequest.base}, open the PR against ${repository.pullRequest.base}, keep original worktree ${repository.sourcePath} clean on ${repository.pullRequest.switchBack}, and ${workspaceGithubPolicy(repository)}.`,
     ),
-    "- Before finalizing, verify every changed repository is on its configured switch-back branch, clean, and has a human-readable PR body without generated review/release-note blocks.",
+    "- Before finalizing, verify every changed repository worktree is clean, every original repository worktree is clean and on its configured switch-back branch, and every PR body is human-readable without generated review/release-note blocks.",
   ];
 }
 
@@ -1361,6 +1505,11 @@ function activeDelegatedTaskPolicy(workOrder: LoopWorkOrder): string[] {
     "Active delegated task.",
     `- This is a user-confirmed interactive task handed off from session ${task.sourceSession}; it is not a cron maintenance run.`,
     `- Requirement: ${task.requirement}`,
+    ...(workOrder.executionIsolation?.sourceWorktree === undefined
+      ? []
+      : [
+          `- The original user/session worktree is ${workOrder.executionIsolation.sourceWorktree}; treat paths in the delegated requirement that point there as source context only. Perform edits, commits, PR checks, and verification in the isolated expected worktree ${workOrder.projectPath}.`,
+        ]),
     "- Treat the requirement as bounded. If the current session context is needed, inspect the target project with tcb peek/history or ask the target agent to summarize the agreed requirement before editing.",
     "- Drive the target project agent until the requested behavior is implemented or a real blocker is proven. Do not stop at a plan, partial implementation, or one failed check.",
     "- Work in explicit slices: confirm the intended behavior, implement the smallest coherent slice, run the relevant checks, review the diff, then continue to the next slice.",
@@ -1438,7 +1587,9 @@ function commitBranchPolicy(workOrder: LoopWorkOrder): string {
   }
   if (task.kind === "active-delegated-task") {
     if (workOrder.commitPolicy.enabled && workOrder.commitPolicy.branch !== undefined) {
-      return `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other delegated branch.`;
+      return workOrder.executionIsolation?.preparedBy === "system-git-worktree"
+        ? `- In the isolated worktree, create or reset the WorkOrder branch from the synced base with git -C ${shellQuote(workOrder.projectPath)} switch -C ${shellQuote(workOrder.commitPolicy.branch)} origin/${baseBranchForWorkOrder(workOrder)}, then use commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other delegated branch.`
+        : `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other delegated branch.`;
     }
     return "- This active delegated task must preserve the user's current branch by default; commit or PR only if the user requirement or later project policy explicitly asks for it.";
   }
@@ -1455,7 +1606,9 @@ function commitBranchPolicy(workOrder: LoopWorkOrder): string {
     return "- This review task must not create a new PR branch; bounded repair may commit only on an eligible PR's existing same-repository head branch.";
   }
   return workOrder.commitPolicy.branch
-    ? `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other loop branch.`
+    ? workOrder.executionIsolation?.preparedBy === "system-git-worktree"
+      ? `- In the isolated worktree, create or reset the WorkOrder branch from the synced base with git -C ${shellQuote(workOrder.projectPath)} switch -C ${shellQuote(workOrder.commitPolicy.branch)} origin/${baseBranchForWorkOrder(workOrder)}, then use commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other loop branch.`
+      : `- Use the WorkOrder commitPolicy.branch exactly: ${workOrder.commitPolicy.branch}. Do not reuse or merge any other loop branch.`
     : "- If commits are disabled or no commit branch is configured, do not create a PR branch.";
 }
 

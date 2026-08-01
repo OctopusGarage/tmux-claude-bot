@@ -81,7 +81,7 @@ export const UI_ICON_REGISTRY = {
     inputs: { icon: "🔁", meaning: "recent inputs / re-run" },
     dashboard: { icon: "📊", meaning: "dashboard" },
     adopt: { icon: "🧲", meaning: "take over unmanaged agent" },
-    autopilot: { icon: "✈️", meaning: "autopilot / hands-free agent loop" },
+    autopilot: { icon: "✈️", meaning: "supervisor-backed Autopilot delegation" },
     tag: { icon: "🏷", meaning: "prompt tag" },
   },
 } as const satisfies IconRegistry;

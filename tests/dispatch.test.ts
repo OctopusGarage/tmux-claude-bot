@@ -58,6 +58,7 @@ function deps(claudeOver: Record<string, unknown> = {}) {
 function writeTestWorkOrder(input: {
   id: string;
   projectPath: string;
+  sourceWorktree?: string;
   taskKind?: NonNullable<LoopWorkOrder["task"]>["kind"];
   supervisorSession?: string;
 }): void {
@@ -67,6 +68,22 @@ function writeTestWorkOrder(input: {
     projectId: "api",
     projectName: "api",
     projectPath: input.projectPath,
+    ...(input.sourceWorktree !== undefined
+      ? {
+          executionIsolation: {
+            mode: "supervised-worker",
+            expectedWorktree: input.projectPath,
+            sourceWorktree: input.sourceWorktree,
+            preparedBy: "system-git-worktree",
+            contextReset: "compact",
+            cleanup: {
+              success: "release-worker",
+              failure: "retain-for-ttl",
+              retainFailureForHours: 72,
+            },
+          },
+        }
+      : {}),
     task: { kind: input.taskKind ?? "architecture" },
     agent: "codex",
     goal: "test",
@@ -470,6 +487,38 @@ describe("executeMessage — control actions", () => {
     try {
       setPathForSession("proj-1", projectDir);
       writeTestWorkOrder({ id: "run-1", projectPath: projectDir, taskKind: "bug-fix" });
+      const d = deps();
+
+      const out = await executeMessage(msg("text", { text: "please continue", origin: "user" }), d);
+
+      expect(out).toContain("项目正在执行自动化任务");
+      expect(out).toContain("bug-fix");
+      expect(out).toContain("run-1");
+      expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = oldStateDir;
+    }
+  });
+
+  it("blocks ordinary text when active supervisor automation uses an isolated worktree", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-isolated-conflict-"));
+    const projectDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tcb-dispatch-isolated-conflict-project-"),
+    );
+    const isolatedDir = path.join(stateDir, "loop-worktrees", "api", "run-1");
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      setPathForSession("proj-1", projectDir);
+      writeTestWorkOrder({
+        id: "run-1",
+        projectPath: isolatedDir,
+        sourceWorktree: projectDir,
+        taskKind: "bug-fix",
+      });
       const d = deps();
 
       const out = await executeMessage(msg("text", { text: "please continue", origin: "user" }), d);

@@ -245,14 +245,14 @@ export async function handleCallbackQuery(
       return;
     }
     // Cancel a still-waiting queued message via the ❌ on its "queued" ack. The
-    // reject closure (see executor) posts the localized "已取消" confirmation, so
+    // reject closure (see executor) posts the localized cancellation confirmation, so
     // here we only toast + drop the now-stale button.
     if (parsed.kind === "qcancel") {
       const m = messages("telegram");
       const session = await resolveAliveSessionByShortId(deps, parsed.sid);
       const cancelled =
         session !== null && deps.queue.cancelQueued(session, parsed.msgId, m.queueItemCancelled);
-      // The reject closure already posts the "已取消" reply on success; on false the
+      // The reject closure already posts the cancellation reply on success; on false the
       // item is gone (dispatched / deduped phantom) — toast that, don't imply success.
       await safeAnswerCallback(ctx, cancelled ? m.queueItemCancelled : m.queueItemGone);
       try {

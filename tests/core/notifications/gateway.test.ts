@@ -145,8 +145,18 @@ describe("NotificationGateway", () => {
       "ℹ️ Radar ready",
       expect.objectContaining({ title: "Radar ready" }),
     );
-    expect(attach).toHaveBeenCalledWith("/tmp/report.md", "file", "Markdown report");
-    expect(attach).toHaveBeenCalledWith("/tmp/report.html", "file", undefined);
+    expect(attach).toHaveBeenCalledWith(
+      "/tmp/report.md",
+      "file",
+      "Markdown report",
+      expect.objectContaining({ title: "Radar ready" }),
+    );
+    expect(attach).toHaveBeenCalledWith(
+      "/tmp/report.html",
+      "file",
+      undefined,
+      expect.objectContaining({ title: "Radar ready" }),
+    );
   });
 
   it("sends attachments to both Telegram and Lark when channel is both", async () => {
@@ -184,8 +194,18 @@ describe("NotificationGateway", () => {
       "ℹ️ Radar ready",
       expect.objectContaining({ channel: "both", title: "Radar ready" }),
     );
-    expect(telegramAttach).toHaveBeenCalledWith("/tmp/report.html", "file", "HTML report");
-    expect(larkAttach).toHaveBeenCalledWith("/tmp/report.html", "file", "HTML report");
+    expect(telegramAttach).toHaveBeenCalledWith(
+      "/tmp/report.html",
+      "file",
+      "HTML report",
+      expect.objectContaining({ channel: "both", title: "Radar ready" }),
+    );
+    expect(larkAttach).toHaveBeenCalledWith(
+      "/tmp/report.html",
+      "file",
+      "HTML report",
+      expect.objectContaining({ channel: "both", title: "Radar ready" }),
+    );
   });
 
   it("reports a partial delivery when text succeeds but an attachment upload fails", async () => {

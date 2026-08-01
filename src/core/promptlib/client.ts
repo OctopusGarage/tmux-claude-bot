@@ -1,4 +1,4 @@
-/** forge-mcp-server 的 stdio MCP 客户端。懒连接 + 可重建缓存(不持久化)。 */
+/** Stdio MCP client for forge-mcp-server. Lazily connects with a rebuildable cache. */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -7,12 +7,12 @@ import { createLogger } from "../../shared/utils/logger.js";
 const log = createLogger("promptlib.client");
 
 export interface PromptMcpConfig {
-  command: string; // 空 = 禁用
+  command: string; // Empty means disabled.
   args: string[];
   cwd?: string;
 }
 
-/** 启用当且仅当配了启动命令。 */
+/** Enabled only when a start command is configured. */
 export function promptLibEnabled(cfg: PromptMcpConfig): boolean {
   return cfg.command.trim().length > 0;
 }
@@ -46,7 +46,7 @@ async function getClient(cfg: PromptMcpConfig): Promise<Client> {
   return connecting;
 }
 
-/** 调一个工具,返回拼接后的文本内容。出错则丢缓存(下次重连)并抛出。 */
+/** Call one tool and return joined text content. Drop the cache on failure. */
 export async function callPromptTool(
   cfg: PromptMcpConfig,
   name: string,

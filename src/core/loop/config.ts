@@ -7,6 +7,7 @@ import {
 } from "../skills/schema.js";
 
 const agentSchema = skillAgentSchema;
+const worktreeIsolationSchema = z.enum(["isolated", "source", "auto"]);
 const actionSchema = z.enum([
   "tests",
   "docs",
@@ -257,6 +258,7 @@ const repositoryPullRequestReviewSchema = z
       .strict()
       .default({ enabled: true, maxAttempts: 1 }),
     prompt: z.string().min(1).optional(),
+    worktreeIsolation: worktreeIsolationSchema.optional(),
     runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
   })
   .strict()
@@ -272,6 +274,7 @@ const workspaceRepositorySchema = z
     path: z.string().min(1),
     role: z.string().min(1),
     agent: agentSchema.optional(),
+    worktreeIsolation: worktreeIsolationSchema.optional(),
     pullRequest: z
       .object({
         enabled: z.boolean().default(false),
@@ -305,6 +308,7 @@ const workspaceSchema = z
     root: z.string().min(1),
     agent: agentSchema,
     runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
+    worktreeIsolation: worktreeIsolationSchema.optional(),
     repositories: z.array(workspaceRepositorySchema).min(2),
     architecture: workspaceArchitectureSchema,
     bugFix: bugFixSchema,
@@ -326,6 +330,7 @@ const projectSchema = z
     name: z.string().min(1),
     path: z.string().min(1),
     agent: agentSchema,
+    worktreeIsolation: worktreeIsolationSchema.optional(),
     schedule: z.string().min(1).optional(),
     scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
     goal: z.string().min(1),

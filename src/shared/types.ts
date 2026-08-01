@@ -8,6 +8,7 @@ export type LarkConfig = {
 };
 
 export type RuntimeGuardianMode = "observe" | "fast-heal";
+export type WorktreeIsolationMode = "isolated" | "source" | "auto";
 
 /** Which coding agent a start command launches. Absent => "claude" (back-compat). */
 export type AgentKind = "claude" | "codex";
@@ -81,6 +82,7 @@ export type AppConfig = {
   runtimeGuardian: {
     enabled: boolean;
     mode: RuntimeGuardianMode;
+    worktreeIsolation: WorktreeIsolationMode;
     tickMs: number;
     lookbackMs: number;
     cooldownMs: number;
@@ -95,6 +97,7 @@ export type AppConfig = {
     channel: "telegram" | "lark" | "both";
     autoRepair: boolean;
     repairBranch: string;
+    repairWorktreeIsolation: WorktreeIsolationMode;
   };
   loopEngineering: {
     configFile: string;
@@ -105,6 +108,7 @@ export type AppConfig = {
       agent: AgentKind;
       poolSize: number;
       resetBeforeWorkOrder: "none" | "compact" | "clear";
+      worktreeIsolation: WorktreeIsolationMode;
     };
   };
   homeOperator: { enabled: boolean; dir: string; agent: "claude" | "codex" };

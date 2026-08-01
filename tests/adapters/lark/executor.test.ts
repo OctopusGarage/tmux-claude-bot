@@ -165,7 +165,7 @@ describe("runImmediateLarkAction", () => {
     await runImmediateLarkAction(channel, deps, "chat-1", "msg-1", "status");
 
     expect(channel.cards()).toHaveLength(0);
-    // executeMessage("status") returns "🟢 Claude 运行中" plus the 📂 tag.
+    // executeMessage("status") returns a localized running status plus the project tag.
     expect(channel.texts().some((t) => t.includes("运行中"))).toBe(true);
     expect(channel.texts().some((t) => t.includes("📂"))).toBe(true);
   });
