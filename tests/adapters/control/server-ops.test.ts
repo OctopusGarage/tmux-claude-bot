@@ -10,7 +10,7 @@ import { performStart } from "../../../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { resolveProjectPath } from "../../../src/core/projects/project-ops.js";
-import { setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
+import { getPathBySession, setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
 import { runDailyTaskAuditServiceTick } from "../../../src/core/tasks/daily-audit-service.js";
 
 // Stub the core collaborators each op delegates to — we're covering the control
@@ -104,6 +104,7 @@ function fakeDeps(
     },
     config: {
       projectSessionPrefix: prefix,
+      cdAllowedDirs: [],
       claudeStartCommand: "claude",
       startCommands: [
         { label: "Claude", command: "claude", agent: "claude" },
@@ -159,6 +160,7 @@ describe("control server op dispatch (real unix socket)", () => {
       { pid: 222, agent: "codex", busy: true },
     ];
     h.adoptOutcome = { ok: true, body: "adopted proj", sessionName: "sAdopt" };
+    vi.mocked(getPathBySession).mockReturnValue(null);
   });
   afterEach(async () => {
     client?.close();
@@ -329,7 +331,7 @@ describe("control server op dispatch (real unix socket)", () => {
       resolvedPath: "/some/dir",
     });
 
-    expect(resolveProjectPath).toHaveBeenCalledWith("/some/dir", deps.config.cdAllowedDirs);
+    expect(resolveProjectPath).toHaveBeenCalledWith("/some/dir", [join(dir, "loop-worktrees")]);
     expect(deps.bridge.createSession).toHaveBeenCalledWith(
       "tmux_proj_loop-worker-api",
       "/some/dir",
@@ -342,6 +344,113 @@ describe("control server op dispatch (real unix socket)", () => {
     );
     expect(deps.configResolver.invalidate).toHaveBeenCalledWith("tmux_proj_loop-worker-api");
     expect(deps.currentProject.set).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: allows bot-owned loop worktrees outside user project roots", async () => {
+    const deps = fakeDeps();
+    (deps.config as { cdAllowedDirs: string[] }).cdAllowedDirs = ["/Users/me/projects"];
+    h.resolvedProjectPath = { resolvedPath: join(dir, "loop-worktrees", "api", "run") };
+    const c = await connected(deps);
+
+    await expect(
+      c.openWorker("tmux_proj_loop-worker-api", join(dir, "loop-worktrees", "api", "run"), {
+        agent: "codex",
+      }),
+    ).resolves.toMatchObject({
+      status: "created",
+      session: "tmux_proj_loop-worker-api",
+      resolvedPath: join(dir, "loop-worktrees", "api", "run"),
+    });
+
+    expect(resolveProjectPath).toHaveBeenCalledWith(join(dir, "loop-worktrees", "api", "run"), [
+      "/Users/me/projects",
+      join(dir, "loop-worktrees"),
+    ]);
+  });
+
+  it("openWorker: rejects a live worker mapped to another path", async () => {
+    const deps = fakeDeps();
+    (deps.bridge.hasSession as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    vi.mocked(getPathBySession).mockReturnValue("/other/dir");
+    const c = await connected(deps);
+
+    await expect(
+      c.openWorker("tmux_proj_loop-worker-api", "/some/dir", { agent: "codex" }),
+    ).resolves.toMatchObject({
+      status: "error",
+      message: "worker session tmux_proj_loop-worker-api is already mapped to /other/dir",
+    });
+
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).not.toHaveBeenCalled();
+    expect(performStart).not.toHaveBeenCalled();
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: switches a live worker already mapped to the requested path", async () => {
+    const deps = fakeDeps();
+    (deps.bridge.hasSession as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    vi.mocked(getPathBySession).mockReturnValue("/some/dir");
+    const c = await connected(deps);
+
+    await expect(c.openWorker("tmux_proj_loop-worker-api", "/some/dir")).resolves.toMatchObject({
+      status: "switched",
+      session: "tmux_proj_loop-worker-api",
+      started: "running",
+      resolvedPath: "/some/dir",
+    });
+
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).toHaveBeenCalledWith("tmux_proj_loop-worker-api", "/some/dir");
+    expect(performStart).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "tmux_proj_loop-worker-api",
+      undefined,
+    );
+    expect(deps.configResolver.invalidate).not.toHaveBeenCalled();
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: maps an unmapped live worker before switching it", async () => {
+    const deps = fakeDeps();
+    (deps.bridge.hasSession as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const c = await connected(deps);
+
+    await expect(
+      c.openWorker("tmux_proj_loop-worker-api", "/some/dir", { agent: "claude" }),
+    ).resolves.toMatchObject({
+      status: "switched",
+      session: "tmux_proj_loop-worker-api",
+      started: "running",
+      resolvedPath: "/some/dir",
+    });
+
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).toHaveBeenCalledWith("tmux_proj_loop-worker-api", "/some/dir");
+    expect(performStart).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "tmux_proj_loop-worker-api",
+      "claude",
+    );
+    expect(deps.configResolver.invalidate).toHaveBeenCalledWith("tmux_proj_loop-worker-api");
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: passes resolver rejections through without creating sessions", async () => {
+    const deps = fakeDeps();
+    h.resolvedProjectPath = { resolvedPath: "/denied", error: "not-allowed" };
+    const c = await connected(deps);
+
+    await expect(c.openWorker("tmux_proj_loop-worker-api", "/denied")).resolves.toEqual({
+      status: "invalid",
+      error: "not-allowed",
+      resolvedPath: "/denied",
+    });
+
+    expect(deps.bridge.hasSession).not.toHaveBeenCalled();
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).not.toHaveBeenCalled();
+    expect(performStart).not.toHaveBeenCalled();
   });
 
   it("openWorker: rejects non-worker session names before creating sessions", async () => {

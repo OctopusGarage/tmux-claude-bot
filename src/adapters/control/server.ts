@@ -1,5 +1,6 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
 import { setAgentKind } from "../../core/agents/agentKindMap.js";
 import { orphanBusyState, orphanLabel } from "../../core/agents/takeover.js";
 import {
@@ -55,6 +56,7 @@ import {
   dispatchDailyTaskRepair,
   runDailyTaskAuditServiceTick,
 } from "../../core/tasks/daily-audit-service.js";
+import { appStateDir } from "../../shared/state-dir.js";
 import type { AgentKind } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { appVersion } from "../../shared/version.js";
@@ -265,7 +267,11 @@ async function handleRequest(
           });
           return;
         }
-        const resolved = await resolveProjectPath(req.path, deps.config.cdAllowedDirs);
+        const workerAllowedDirs = [
+          ...deps.config.cdAllowedDirs,
+          join(appStateDir(), "loop-worktrees"),
+        ];
+        const resolved = await resolveProjectPath(req.path, workerAllowedDirs);
         if (resolved.error !== undefined) {
           ok({ status: "invalid", error: resolved.error, resolvedPath: resolved.resolvedPath });
           return;
