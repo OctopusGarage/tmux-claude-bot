@@ -82,11 +82,45 @@ describe("parseLoopConfigYaml", () => {
       agent: "codex",
       maxRounds: 3,
       targetScore: 90,
+      cleanupPolicy: "conservative",
       execution: { agent: false },
       assessment: { command: "npm run assess" },
       eval: { command: "npm run loop-eval", minScore: 95 },
       commit: { enabled: false, perRound: true },
     });
+  });
+
+  it("parses cleanup policy defaults and task overrides", () => {
+    const config = parseLoopConfigYaml(`
+projects:
+  - id: hub
+    name: Hub
+    path: /repo/hub
+    agent: codex
+    cleanupPolicy: balanced
+    schedule: "0 2 * * *"
+    runner:
+      kind: agent-supervised
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 3
+    targetScore: 90
+    assessment:
+      command: npm run assess
+    bugFix:
+      enabled: true
+      schedule: "10 2 * * *"
+      cleanupPolicy: conservative
+    harnessAuto:
+      enabled: true
+      schedule: "20 2 * * *"
+      cleanupPolicy: aggressive
+      tasks:
+        - kind: architecture
+`);
+
+    expect(config.projects[0]?.cleanupPolicy).toBe("balanced");
+    expect(config.projects[0]?.bugFix.cleanupPolicy).toBe("conservative");
+    expect(config.projects[0]?.harnessAuto.cleanupPolicy).toBe("aggressive");
   });
 
   it("parses scheduler jitter defaults and per-job overrides", () => {

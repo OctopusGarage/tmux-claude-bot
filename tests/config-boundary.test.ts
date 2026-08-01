@@ -29,6 +29,7 @@ describe("no env var crashes startup when left blank", () => {
       TASK_AUDIT_TICK_MS: "60000",
       TASK_AUDIT_CHANNEL: "both",
       TASK_AUDIT_AUTO_REPAIR: "true",
+      TASK_AUDIT_REPO_PATH: "/repo/tmux-claude-bot",
       TASK_AUDIT_REPAIR_BRANCH: "dev",
       TASK_AUDIT_REPAIR_WORKTREE_ISOLATION: "source",
     });
@@ -39,6 +40,7 @@ describe("no env var crashes startup when left blank", () => {
       tickMs: 60000,
       channel: "both",
       autoRepair: true,
+      repoPath: "/repo/tmux-claude-bot",
       repairBranch: "dev",
       repairWorktreeIsolation: "source",
     });

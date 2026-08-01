@@ -344,7 +344,7 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     expect(larkSessions).toEqual([sessionNameFromPath(projectDir, "tmux_proj_")]);
     expect(larkMessages.join("\n")).toContain("Opportunity suggestions: Hub");
     expect(larkMessages.join("\n")).toContain("Add guided setup verification");
-    expect(larkMessages.join("\n")).toContain("/opportunity delegate");
+    expect(larkMessages.join("\n")).toContain("Continue via supervisor");
   });
 
   it("dispatches supervised test-coverage work orders with the coverage branch", async () => {

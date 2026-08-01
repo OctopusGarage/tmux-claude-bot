@@ -47,6 +47,13 @@ Before sync, assessment, edits, PR review, or mutating shell commands, verify
 `git -C <path> rev-parse --show-toplevel` matches that configured path; block
 rather than guessing when it does not.
 
+Keep product logic and user configuration separate. Do not copy active user
+project lists, repository paths, GitHub accounts, schedules, cleanup policies,
+or live task settings into source, tests, or maintained docs unless they are
+clearly synthetic fixtures or generic examples. Live user configuration belongs
+under the state/config directory, external backups, or operator notes outside
+the source tree.
+
 ## AI Capability Boundary
 
 Do not implement bot-owned AI behavior by writing code or scripts that call

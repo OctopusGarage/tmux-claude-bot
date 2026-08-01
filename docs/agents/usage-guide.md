@@ -149,14 +149,19 @@ from architecture, bug-fix, test-coverage, and security-maintenance. It keeps
 one run id and one PR branch/PR for the whole run, stops when the configured
 health/issue condition is met, and must not run every subtask just because it is
 configured.
+For code-changing WorkOrders, `cleanupPolicy` controls cleanup risk:
+`conservative` is the default, `balanced` removes unsupported stale paths only
+with clear evidence, and `aggressive` is for explicit new-feature cleanup where
+obsolete compatibility paths, duplicate entry points, transition code, and stale
+docs should be removed after review and verification.
 To proactively surface new work for owner approval, add
 `opportunityDiscovery.enabled: true` with its own `schedule`, `maxSuggestions`,
 `minConfidence`, categories, and optional prompt. This job is intentionally
 read-only: the supervisor inspects the project, writes `opportunities.json`, and
 the bot sends Telegram/Feishu suggestions with `/opportunity` commands. Use
-`/opportunity discuss <number|id>` to get a decision prompt, `/opportunity
-delegate <number|id>` for compatibility, or `/opportunity dismiss <number|id>`
-when it is not worth doing. Feishu commands work in private chat and in the bound
+`/opportunity discuss <number|id>` to get a decision prompt, then use Autopilot /
+Continue via supervisor for confirmed work. Use `/opportunity dismiss
+<number|id>` when it is not worth doing. Feishu commands work in private chat and in the bound
 project group that received the suggestion. Feishu opportunity notifications are
 interactive cards: related suggestions in one notification are discussed as a
 single batch by default. The notification card keeps discussion and execution
@@ -187,9 +192,9 @@ review for touched risk paths, any justified existing agent-backed/deterministic
 AI eval, and the configured PR/merge/switch-back policy. The command returns a
 run id immediately; the final result is written under `loop-runs/...` and sent
 through Telegram/Feishu notifications.
-For scheduled suggestions, `/opportunity delegate <id>` uses the same active
-delegation pipeline with a requirement built from the stored evidence, scope,
-proposed plan, and acceptance checks.
+For scheduled suggestions, approved implementation uses the same active
+delegation pipeline as Autopilot, with a requirement built from the stored
+evidence, scope, proposed plan, and acceptance checks.
 
 **Audit yesterday's scheduled work** → enable `TASK_AUDIT_ENABLED=true` and set
 `TASK_AUDIT_SCHEDULE` (UTC cron, e.g. `0 2 * * *` for 10:00 Singapore time).

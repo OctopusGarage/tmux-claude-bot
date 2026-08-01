@@ -87,6 +87,8 @@ vi.mock("../../../src/core/tasks/daily-audit-service.js", () => ({
     fired: true,
     scheduledAt: 1785399600000,
     failures: 1,
+    repairDispatch: "queued",
+    notificationStatus: "sent",
   })),
   dispatchDailyTaskRepair: vi.fn(),
 }));
@@ -225,6 +227,8 @@ describe("control server op dispatch (real unix socket)", () => {
       fired: true,
       scheduledAt: 1785399600000,
       failures: 1,
+      repairDispatch: "queued",
+      notificationStatus: "sent",
     });
     expect(runDailyTaskAuditServiceTick).toHaveBeenCalledWith(
       expect.objectContaining({

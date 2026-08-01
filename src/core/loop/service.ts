@@ -459,10 +459,16 @@ export async function runLoopServiceTickAsync(input: {
                             ? "bug-fix"
                             : "architecture",
             });
+    const preparationFailures: string[] = [];
     workOrder = prepareLoopExecutionWorktrees({
       workOrder,
       ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
       defaultMode: input.supervisorWorktreeIsolation ?? "isolated",
+      onPreparationFailure: (failure) => {
+        preparationFailures.push(
+          `${failure.repositoryId}: ${failure.reason} (${failure.sourceWorktree})`,
+        );
+      },
     });
     if (workOrder.finalSummaryPath !== undefined) {
       mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
@@ -478,7 +484,14 @@ export async function runLoopServiceTickAsync(input: {
       now: Date.now(),
     });
     let result: LoopSupervisedRunResult;
-    if (supervisorSession === "unconfigured-loop-supervisor") {
+    if (preparationFailures.length > 0) {
+      const reason = `execution worktree isolation failed: ${preparationFailures.join("; ")}`;
+      result = {
+        status: "dispatch-failed",
+        reason,
+        output: reason,
+      };
+    } else if (supervisorSession === "unconfigured-loop-supervisor") {
       result = {
         status: "dispatch-failed",
         reason: "missing loop supervisor session name",

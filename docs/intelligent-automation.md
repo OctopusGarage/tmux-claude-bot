@@ -89,6 +89,13 @@ repair path:
   focused checks; narrow code edits need focused regression and affected local
   verification; full verification is required when the change touches shared
   contracts, CI gates, security boundaries, or release-critical behavior.
+- Treat cleanup aggressiveness as an explicit WorkOrder policy, not an implicit
+  agent mood. `cleanupPolicy: conservative` is the default; it fixes only the
+  confirmed issue and directly related dead code. `balanced` may remove
+  unsupported stale paths when docs, commands, tests, and integrations prove
+  they are not part of the supported contract. `aggressive` may actively remove
+  obsolete compatibility paths, duplicate entry points, transition code, and
+  stale docs after recording evidence and verification.
 - Record the selected verification profile and any skipped stronger gate in the
   final summary. A skipped full suite is acceptable only when the recorded
   evidence explains why it was not necessary or was blocked.
@@ -241,6 +248,8 @@ Loop Engineering supports these project and workspace task families:
 - `harnessAuto`: orchestrate multiple health subtasks as one run, one branch, and
   one PR. It should assess health first, select only justified enabled subtasks,
   and stop when configured health or no-confirmed-issue conditions are met.
+  Its `cleanupPolicy` acts as the default cleanup stance for selected subtasks
+  unless a subtask family has a more specific override.
 - `opportunityDiscovery`: inspect repository evidence and propose useful feature
   or optimization opportunities. It must not edit files, create branches, commit,
   push, or open PRs.
@@ -434,22 +443,10 @@ The live Loop Engineering config is stored outside the repository, typically at:
 ~/.tmux-claude-bot/state/loop-engineering.yml
 ```
 
-At the time this document was written, the active project set included:
-
-- `geo-backend`: bug-fix, test-coverage, security-maintenance, project PR review.
-- `geo-frontend`: bug-fix, test-coverage, security-maintenance, project PR review.
-- `knowledge-engine`: architecture, bug-fix, test-coverage, security-maintenance,
-  project PR review.
-- `alcove`: architecture, bug-fix, test-coverage, security-maintenance,
-  harness-auto, opportunity-discovery, project PR review.
-- `tmux-claude-bot`: architecture, bug-fix, security-maintenance, project PR
-  review.
-- `geo` workspace: coordinated backend/frontend architecture.
-- repository-wide PR review: geo-backend, geo-frontend, knowledge-engine,
-  alcove, tmux-claude-bot, mesh-talk, and net-auto-switch.
-
-Treat this list as an example snapshot, not the source of truth. Validate the
-live config with:
+Do not copy the active project list into repository documentation. Project names,
+repository paths, GitHub accounts, schedules, and cleanup policies are user
+configuration and belong in the live config file, backups of that file, or
+operator notes outside the source tree. Validate the live config with:
 
 ```bash
 tcb loop validate ~/.tmux-claude-bot/state/loop-engineering.yml --json

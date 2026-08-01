@@ -419,7 +419,7 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   cmdBatch:
     "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",
   cmdAutopilot: "Delegar el trabajo de la sesión actual al Loop Supervisor",
-  cmdOpportunity: "Revisar oportunidades propuestas y delegar el trabajo aprobado",
+  cmdOpportunity: "Revisar y discutir oportunidades propuestas",
   cmdSysload: "Ver carga, temperatura y procesos descontrolados",
   sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",

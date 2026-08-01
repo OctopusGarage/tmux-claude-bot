@@ -8,6 +8,7 @@ import {
 
 const agentSchema = skillAgentSchema;
 const worktreeIsolationSchema = z.enum(["isolated", "source", "auto"]);
+const cleanupPolicySchema = z.enum(["conservative", "balanced", "aggressive"]);
 const actionSchema = z.enum([
   "tests",
   "docs",
@@ -87,6 +88,7 @@ const bugFixSchema = z
     maxRounds: z.number().int().positive().default(3),
     maxBugsPerRound: z.number().int().positive().default(2),
     requireRegressionTest: z.boolean().default(true),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
   })
   .strict()
@@ -110,6 +112,7 @@ const testCoverageSchema = z
     allowSmokeTests: z.boolean().default(true),
     allowE2ETests: z.boolean().default(true),
     allowAiEvalTests: z.boolean().default(true),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
   })
   .strict()
@@ -134,6 +137,7 @@ const securityMaintenanceSchema = z
     allowDependencyUpdates: z.boolean().default(true),
     allowConfigHardening: z.boolean().default(true),
     allowStaticAnalysisFixes: z.boolean().default(true),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
   })
   .strict()
@@ -183,6 +187,7 @@ const harnessAutoSchema = z
       })
       .strict()
       .default({ healthScoreAtLeast: 95, noConfirmedIssues: true }),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
   })
   .strict()
@@ -296,6 +301,7 @@ const workspaceArchitectureSchema = z
     goal: z.string().min(1),
     maxRounds: z.number().int().positive().default(3),
     targetScore: z.number().int().min(0).max(100).default(95),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
     runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
   })
@@ -309,6 +315,7 @@ const workspaceSchema = z
     agent: agentSchema,
     runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
     worktreeIsolation: worktreeIsolationSchema.optional(),
+    cleanupPolicy: cleanupPolicySchema.default("conservative"),
     repositories: z.array(workspaceRepositorySchema).min(2),
     architecture: workspaceArchitectureSchema,
     bugFix: bugFixSchema,
@@ -331,6 +338,7 @@ const projectSchema = z
     path: z.string().min(1),
     agent: agentSchema,
     worktreeIsolation: worktreeIsolationSchema.optional(),
+    cleanupPolicy: cleanupPolicySchema.default("conservative"),
     schedule: z.string().min(1).optional(),
     scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
     goal: z.string().min(1),

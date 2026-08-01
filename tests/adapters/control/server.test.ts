@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import type { Server } from "node:net";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -177,4 +178,20 @@ describe("control server ↔ client (real unix socket)", () => {
     // The client transparently works again on the new connection.
     expect(await client.peek("after", 5)).toContain("PANE for after");
   }, 8000);
+
+  it("times out a request when the socket stays open but never replies", async () => {
+    const sockets: net.Socket[] = [];
+    server = net.createServer();
+    server.on("connection", (socket) => {
+      sockets.push(socket);
+    });
+    server.listen(join(dir, "control.sock"));
+    await new Promise((r) => server.once("listening", r));
+
+    client = new ControlClient({ requestTimeoutMs: 20 });
+    await client.connect();
+
+    await expect(client.peek("silent", 5)).rejects.toThrow("control request timed out after 20ms");
+    for (const socket of sockets) socket.destroy();
+  });
 });

@@ -14,13 +14,14 @@ import {
   type ServerMessage,
 } from "./protocol.js";
 
-type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout };
 
 /** Distributive Omit: `Omit<Union, K>` keeps only keys common to all variants
  * (losing `session`/`text`/…); this preserves each variant's own fields. */
 type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 
 const RECONNECT_MS = 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 function connectSocket(paths = controlSocketCandidatePaths()): Promise<net.Socket> {
   const [path, ...rest] = paths;
@@ -52,6 +53,12 @@ export class ControlClient extends EventEmitter {
   private readonly pending = new Map<number, Pending>();
   private decode = createLineDecoder<ServerMessage>();
   private closing = false;
+  private readonly requestTimeoutMs: number;
+
+  constructor(opts: { requestTimeoutMs?: number } = {}) {
+    super();
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  }
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -70,7 +77,10 @@ export class ControlClient extends EventEmitter {
     conn.on("error", () => {}); // a `close` always follows; handle teardown there
     conn.on("close", () => {
       this.conn = null;
-      for (const p of this.pending.values()) p.reject(new Error("disconnected"));
+      for (const p of this.pending.values()) {
+        clearTimeout(p.timer);
+        p.reject(new Error("disconnected"));
+      }
       this.pending.clear();
       this.emit("disconnected");
       if (!this.closing) this.scheduleReconnect();
@@ -97,6 +107,7 @@ export class ControlClient extends EventEmitter {
         const p = this.pending.get(msg.id);
         if (!p) continue;
         this.pending.delete(msg.id);
+        clearTimeout(p.timer);
         if (msg.ok) p.resolve(msg.data);
         else p.reject(new Error(msg.error));
       } else {
@@ -112,7 +123,12 @@ export class ControlClient extends EventEmitter {
         return;
       }
       const id = this.nextId++;
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new Error(`control request timed out after ${this.requestTimeoutMs}ms`));
+      }, this.requestTimeoutMs);
+      timer.unref();
+      this.pending.set(id, { resolve, reject, timer });
       this.conn.write(encodeLine({ id, ...payload } as ControlRequest));
     });
   }

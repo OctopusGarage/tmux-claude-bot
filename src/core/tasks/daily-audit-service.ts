@@ -29,7 +29,13 @@ const LAST_FIRED_KEY = "daily-task-audit";
 const FIRST_TICK_LOOKBACK_MS = 36 * 60 * 60_000;
 
 export type DailyTaskAuditServiceTickResult =
-  | { fired: true; scheduledAt: number; failures: number }
+  | {
+      fired: true;
+      scheduledAt: number;
+      failures: number;
+      repairDispatch: string;
+      notificationStatus: "sent" | "partial" | "failed";
+    }
   | { fired: false; reason: "disabled" | "not-due" | "invalid-schedule" };
 
 export type DailyTaskRepairDispatch = (input: {
@@ -79,6 +85,7 @@ export async function runDailyTaskAuditServiceTick(input: {
     window: previousSingaporeDayWindow(input.now),
     now: input.now,
   });
+  const repoPath = input.config.repoPath.trim() || process.cwd();
   ledger.expect({
     taskId,
     source: "daily-audit",
@@ -109,7 +116,7 @@ export async function runDailyTaskAuditServiceTick(input: {
     } else {
       try {
         const dispatchResult = await input.dispatchRepair({
-          repoPath: process.cwd(),
+          repoPath,
           repairBranch: input.config.repairBranch,
           items: result.repairCandidates,
         });
@@ -155,7 +162,7 @@ export async function runDailyTaskAuditServiceTick(input: {
       .map((delivery) => `${delivery.channel}: ${delivery.error ?? "unknown error"}`)
       .join("; ")}`;
     ledger.fail(taskId, {
-      endedAt: Date.now(),
+      endedAt: input.now,
       error,
       summary: auditRunSummary({
         failures: result.repairCandidates.length,
@@ -163,10 +170,16 @@ export async function runDailyTaskAuditServiceTick(input: {
         notificationStatus: notificationResult.status,
       }),
     });
-    return { fired: true, scheduledAt, failures: result.repairCandidates.length };
+    return {
+      fired: true,
+      scheduledAt,
+      failures: result.repairCandidates.length,
+      repairDispatch,
+      notificationStatus: notificationResult.status,
+    };
   }
   ledger.finish(taskId, {
-    endedAt: Date.now(),
+    endedAt: input.now,
     summary: auditRunSummary({
       failures: result.repairCandidates.length,
       repairDispatch,
@@ -174,7 +187,13 @@ export async function runDailyTaskAuditServiceTick(input: {
     }),
   });
   store.setLastFired(scheduledAt);
-  return { fired: true, scheduledAt, failures: result.repairCandidates.length };
+  return {
+    fired: true,
+    scheduledAt,
+    failures: result.repairCandidates.length,
+    repairDispatch,
+    notificationStatus: notificationResult.status,
+  };
 }
 
 function dueScheduledAt(

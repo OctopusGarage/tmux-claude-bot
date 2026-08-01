@@ -428,7 +428,7 @@ export const zh = {
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
   cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
   cmdAutopilot: "把当前会话工作托管给 Loop Supervisor 推进",
-  cmdOpportunity: "查看主动机会建议，并托管已确认的工作",
+  cmdOpportunity: "查看并讨论主动机会建议",
   cmdSysload: "查看本机负载/发热/跑飞进程",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",

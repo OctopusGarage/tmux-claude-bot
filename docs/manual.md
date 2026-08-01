@@ -353,14 +353,22 @@ Each scheduled project chooses a runner:
   stop condition. It must not run every configured subtask mechanically or keep
   optimizing after the configured health score / no-confirmed-issues condition
   is met.
+  Code-changing WorkOrders also support `cleanupPolicy`:
+  `conservative` (default) fixes only confirmed issues and directly related dead
+  code; `balanced` may remove unsupported stale paths that create real
+  maintenance confusion; `aggressive` may remove obsolete compatibility paths,
+  duplicate entry points, transition code, and stale docs after evidence and
+  verification. Set it at the project/workspace level or override it under
+  `bugFix`, `testCoverage`, `securityMaintenance`, `harnessAuto`, or workspace
+  `architecture`.
   `opportunityDiscovery` is a read-only proposal job. It asks the supervisor to
   inspect concrete project evidence, find a small number of high-value feature or
   optimization opportunities, and write `opportunities.json`; it must not edit
   files, create branches, commit, push, or open PRs. The bot stores and dedupes
   suggestions, then sends Telegram/Feishu messages with `/opportunity` commands.
-  Use `/opportunity discuss <id>` to prepare a decision conversation,
-  `/opportunity delegate <id>` to hand an approved suggestion to the Loop
-  Supervisor, or `/opportunity dismiss <id>` when it should not be pursued.
+  Use `/opportunity discuss <id>` to prepare a decision conversation, then use
+  Autopilot / Continue via supervisor to hand confirmed work to the Loop
+  Supervisor. Use `/opportunity dismiss <id>` when it should not be pursued.
 - `workspaces` define coordinated multi-repository jobs. Use this when
   repositories should be evaluated together, such as a frontend/backend pair in
   the same product directory. A workspace job is one scheduled WorkOrder with one
@@ -400,6 +408,7 @@ projects:
       timeoutMs: 7200000
       maxTurns: 20
       requireConfirmation: false
+    cleanupPolicy: conservative
     goal: Improve architecture in small verified slices and commit each round.
     maxRounds: 3
     targetScore: 90
@@ -420,6 +429,7 @@ projects:
       enabled: true
       schedule: "45 10 * * *"
       branch: loop/tmux-claude-bot/bug-fix
+      cleanupPolicy: conservative
       maxRounds: 3
       maxBugsPerRound: 2
       requireRegressionTest: true
@@ -459,6 +469,7 @@ projects:
       enabled: true
       schedule: "50 16 * * *"
       branch: loop/datavibe-backend/harness-auto
+      cleanupPolicy: balanced
       maxRounds: 4
       strategy: health-first
       tasks:
@@ -521,6 +532,7 @@ workspaces:
     agent: codex
     runner:
       kind: agent-supervised
+    cleanupPolicy: conservative
     repositories:
       - id: geo-backend
         name: Geo Backend
@@ -658,6 +670,7 @@ TASK_AUDIT_SCHEDULE=0 2 * * *     # UTC; 10:00 Singapore time
 TASK_AUDIT_TICK_MS=300000
 TASK_AUDIT_CHANNEL=both           # telegram | lark | both
 TASK_AUDIT_AUTO_REPAIR=true
+TASK_AUDIT_REPO_PATH=/path/to/tmux-claude-bot
 TASK_AUDIT_REPAIR_BRANCH=dev
 TASK_AUDIT_REPAIR_WORKTREE_ISOLATION=isolated
 ```

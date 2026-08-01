@@ -291,6 +291,7 @@ describe("loop supervisor work order", () => {
         maxRounds: 4,
         maxBugsPerRound: 1,
         requireRegressionTest: true,
+        cleanupPolicy: "balanced" as const,
         prompt: "Focus on scheduler, gate, and state consistency bugs.",
       },
       commit: {
@@ -321,7 +322,9 @@ describe("loop supervisor work order", () => {
       maxRounds: 4,
       maxBugsPerRound: 1,
       requireRegressionTest: true,
+      cleanupPolicy: "balanced",
     });
+    expect(workOrder.cleanupPolicy).toBe("balanced");
     expect(workOrder.maxRounds).toBe(4);
     expect(workOrder.commitPolicy.branch).toBe(
       "loop/datavibe/bug-fix/1752643800000-datavibe-bug-fix",
@@ -332,6 +335,7 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("money, quota, billing, permissions");
     expect(prompt).toContain("Do not nitpick");
     expect(prompt).toContain("Do not add product features");
+    expect(prompt).toContain("Cleanup policy is balanced");
     expect(prompt).toContain("Separate candidate bugs from confirmed bugs");
     expect(prompt).toContain("entry point or trigger, affected path, expected behavior");
     expect(prompt).toContain("Before editing, prove the issue is real");
@@ -567,6 +571,7 @@ describe("loop supervisor work order", () => {
         branch: "loop/datavibe/harness-auto",
         maxRounds: 4,
         strategy: "risk-first" as const,
+        cleanupPolicy: "aggressive" as const,
         tasks: [
           { kind: "bug-fix" as const, enabled: true, weight: 50 },
           { kind: "security-maintenance" as const, enabled: true, weight: 30 },
@@ -629,7 +634,18 @@ describe("loop supervisor work order", () => {
       maxRounds: 4,
       strategy: "risk-first",
       stopWhen: { healthScoreAtLeast: 96, noConfirmedIssues: true },
+      cleanupPolicy: "aggressive",
     });
+    expect(workOrder.cleanupPolicy).toBe("aggressive");
+    const harnessTask = workOrder.task;
+    expect(harnessTask?.kind).toBe("harness-auto");
+    if (harnessTask?.kind !== "harness-auto") throw new Error("expected harness-auto task");
+    expect(harnessTask.tasks.map((task) => task.cleanupPolicy)).toEqual([
+      "aggressive",
+      "aggressive",
+      "aggressive",
+      "aggressive",
+    ]);
     expect(workOrder.maxRounds).toBe(4);
     expect(workOrder.targetScore).toBe(96);
     expect(workOrder.allowedActions).toContain("dependency-upgrade");
@@ -643,6 +659,7 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("test-coverage(weight=15)");
     expect(prompt).toContain("architecture(weight=5)");
     expect(prompt).toContain("Do not run all subtasks mechanically");
+    expect(prompt).toContain("Cleanup policy is aggressive");
     expect(prompt).toContain("one run id and one PR branch/PR per repository");
     expect(prompt).toContain('send <project> "<long task>" --no-wait');
     expect(prompt).toContain('send <project> "<task>" --no-wait');

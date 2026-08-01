@@ -60,6 +60,8 @@ type LoopExecutionIsolation = {
   };
 };
 
+export type LoopCleanupPolicy = "conservative" | "balanced" | "aggressive";
+
 type HarnessAutoSubtaskKind = "architecture" | "bug-fix" | "test-coverage" | "security-maintenance";
 type HarnessAutoSubtask =
   | {
@@ -68,6 +70,7 @@ type HarnessAutoSubtask =
       weight: number;
       targetScore: number;
       maxRounds: number;
+      cleanupPolicy?: LoopCleanupPolicy;
       prompt?: string;
     }
   | {
@@ -77,6 +80,7 @@ type HarnessAutoSubtask =
       maxRounds: number;
       maxBugsPerRound: number;
       requireRegressionTest: boolean;
+      cleanupPolicy?: LoopCleanupPolicy;
       prompt?: string;
     }
   | {
@@ -90,6 +94,7 @@ type HarnessAutoSubtask =
       allowSmokeTests: boolean;
       allowE2ETests: boolean;
       allowAiEvalTests: boolean;
+      cleanupPolicy?: LoopCleanupPolicy;
       prompt?: string;
     }
   | {
@@ -100,6 +105,7 @@ type HarnessAutoSubtask =
       allowDependencyUpdates: boolean;
       allowConfigHardening: boolean;
       allowStaticAnalysisFixes: boolean;
+      cleanupPolicy?: LoopCleanupPolicy;
       prompt?: string;
     };
 
@@ -117,6 +123,7 @@ export type LoopWorkOrder = {
         maxRounds: number;
         maxBugsPerRound: number;
         requireRegressionTest: boolean;
+        cleanupPolicy?: LoopCleanupPolicy;
         prompt?: string;
       }
     | {
@@ -128,6 +135,7 @@ export type LoopWorkOrder = {
         allowSmokeTests: boolean;
         allowE2ETests: boolean;
         allowAiEvalTests: boolean;
+        cleanupPolicy?: LoopCleanupPolicy;
         prompt?: string;
       }
     | {
@@ -136,6 +144,7 @@ export type LoopWorkOrder = {
         allowDependencyUpdates: boolean;
         allowConfigHardening: boolean;
         allowStaticAnalysisFixes: boolean;
+        cleanupPolicy?: LoopCleanupPolicy;
         prompt?: string;
       }
     | {
@@ -147,6 +156,7 @@ export type LoopWorkOrder = {
           noConfirmedIssues: boolean;
         };
         tasks: HarnessAutoSubtask[];
+        cleanupPolicy?: LoopCleanupPolicy;
         prompt?: string;
       }
     | {
@@ -194,6 +204,7 @@ export type LoopWorkOrder = {
   projectName: string;
   projectPath: string;
   executionIsolation?: LoopExecutionIsolation;
+  cleanupPolicy?: LoopCleanupPolicy;
   relatedOpportunityIds?: string[];
   notificationSession?: string;
   workerSession?: string;
@@ -314,6 +325,7 @@ export function buildLoopWorkOrder(input: {
     projectId: input.project.id,
     projectName: input.project.name,
     projectPath: input.project.path,
+    cleanupPolicy: cleanupPolicyForProjectTask(input.project, task),
     executionIsolation: configuredExecutionIsolation(
       input.project.path,
       input.project.worktreeIsolation,
@@ -374,6 +386,7 @@ export function buildRepositoryPullRequestReviewWorkOrder(input: {
     projectId: repository.id,
     projectName: repository.name,
     projectPath: repository.path,
+    cleanupPolicy: "conservative",
     executionIsolation: configuredExecutionIsolation(repository.path, repository.worktreeIsolation),
     agent: repository.agent,
     goal: `Review and merge eligible pull requests for ${repository.repo}.`,
@@ -443,6 +456,7 @@ export function buildLoopWorkspaceWorkOrder(input: {
                   architecture: {
                     targetScore: workspace.architecture.targetScore,
                     maxRounds: workspace.architecture.maxRounds,
+                    cleanupPolicy: workspace.architecture.cleanupPolicy ?? workspace.cleanupPolicy,
                     ...(workspace.architecture.prompt !== undefined
                       ? { prompt: workspace.architecture.prompt }
                       : {}),
@@ -467,6 +481,7 @@ export function buildLoopWorkspaceWorkOrder(input: {
     projectId: workspace.id,
     projectName: workspace.name,
     projectPath: workspace.root,
+    cleanupPolicy: cleanupPolicyForWorkspaceTask(workspace, task),
     executionIsolation: configuredExecutionIsolation(workspace.root, workspace.worktreeIsolation),
     ...(input.projectSessionPrefix !== undefined
       ? {
@@ -546,6 +561,7 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
     projectId: input.projectId,
     projectName: input.projectName,
     projectPath: input.projectPath,
+    cleanupPolicy: projectPolicy?.cleanupPolicy ?? "conservative",
     executionIsolation: configuredExecutionIsolation(
       input.projectPath,
       input.projectPolicy?.worktreeIsolation,
@@ -878,6 +894,7 @@ function harnessAutoTask(input: {
   architecture: {
     targetScore: number;
     maxRounds: number;
+    cleanupPolicy?: LoopCleanupPolicy;
     prompt?: string;
   };
   bugFix: LoopProjectConfig["bugFix"];
@@ -896,6 +913,7 @@ function harnessAutoTask(input: {
   const bugFixConfig = taskConfig("bug-fix");
   const testCoverageConfig = taskConfig("test-coverage");
   const securityConfig = taskConfig("security-maintenance");
+  const harnessCleanupPolicy = input.policy.cleanupPolicy ?? "conservative";
   const bugFix = bugFixTask(input.bugFix);
   const testCoverage = testCoverageTask(input.testCoverage);
   const securityMaintenance = securityMaintenanceTask(input.securityMaintenance);
@@ -907,6 +925,7 @@ function harnessAutoTask(input: {
       maxRounds: bugFix.maxRounds,
       maxBugsPerRound: bugFix.maxBugsPerRound,
       requireRegressionTest: bugFix.requireRegressionTest,
+      cleanupPolicy: input.bugFix.cleanupPolicy ?? harnessCleanupPolicy,
       ...(bugFix.prompt !== undefined ? { prompt: bugFix.prompt } : {}),
     },
     {
@@ -917,6 +936,7 @@ function harnessAutoTask(input: {
       allowDependencyUpdates: securityMaintenance.allowDependencyUpdates,
       allowConfigHardening: securityMaintenance.allowConfigHardening,
       allowStaticAnalysisFixes: securityMaintenance.allowStaticAnalysisFixes,
+      cleanupPolicy: input.securityMaintenance.cleanupPolicy ?? harnessCleanupPolicy,
       ...(securityMaintenance.prompt !== undefined ? { prompt: securityMaintenance.prompt } : {}),
     },
     {
@@ -930,6 +950,7 @@ function harnessAutoTask(input: {
       allowSmokeTests: testCoverage.allowSmokeTests,
       allowE2ETests: testCoverage.allowE2ETests,
       allowAiEvalTests: testCoverage.allowAiEvalTests,
+      cleanupPolicy: input.testCoverage.cleanupPolicy ?? harnessCleanupPolicy,
       ...(testCoverage.prompt !== undefined ? { prompt: testCoverage.prompt } : {}),
     },
     {
@@ -938,6 +959,7 @@ function harnessAutoTask(input: {
       weight: architectureConfig.weight,
       targetScore: input.architecture.targetScore,
       maxRounds: input.architecture.maxRounds,
+      cleanupPolicy: input.architecture.cleanupPolicy ?? harnessCleanupPolicy,
       ...(input.architecture.prompt !== undefined ? { prompt: input.architecture.prompt } : {}),
     },
   ] satisfies HarnessAutoSubtask[];
@@ -952,6 +974,7 @@ function harnessAutoTask(input: {
     strategy: input.policy.strategy,
     stopWhen: input.policy.stopWhen,
     tasks: orderedTasks,
+    cleanupPolicy: harnessCleanupPolicy,
     ...(input.policy.prompt !== undefined ? { prompt: input.policy.prompt } : {}),
   };
 }
@@ -968,6 +991,7 @@ function bugFixTask(
     maxRounds: policy.maxRounds,
     maxBugsPerRound: policy.maxBugsPerRound,
     requireRegressionTest: policy.requireRegressionTest,
+    cleanupPolicy: policy.cleanupPolicy ?? "conservative",
     ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
   };
 }
@@ -984,6 +1008,7 @@ function testCoverageTask(
     allowSmokeTests: policy.allowSmokeTests,
     allowE2ETests: policy.allowE2ETests,
     allowAiEvalTests: policy.allowAiEvalTests,
+    cleanupPolicy: policy.cleanupPolicy ?? "conservative",
     ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
   };
 }
@@ -997,6 +1022,7 @@ function securityMaintenanceTask(
     allowDependencyUpdates: policy.allowDependencyUpdates,
     allowConfigHardening: policy.allowConfigHardening,
     allowStaticAnalysisFixes: policy.allowStaticAnalysisFixes,
+    cleanupPolicy: policy.cleanupPolicy ?? "conservative",
     ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
   };
 }
@@ -1052,6 +1078,36 @@ function repositoryPullRequestReviewTask(
 
 function workOrderTask(workOrder: LoopWorkOrder): NonNullable<LoopWorkOrder["task"]> {
   return workOrder.task ?? { kind: "architecture" };
+}
+
+function cleanupPolicyForProjectTask(
+  project: LoopProjectConfig,
+  task: NonNullable<LoopWorkOrder["task"]>,
+): LoopCleanupPolicy {
+  if (task.kind === "bug-fix") return project.bugFix.cleanupPolicy ?? project.cleanupPolicy;
+  if (task.kind === "test-coverage")
+    return project.testCoverage.cleanupPolicy ?? project.cleanupPolicy;
+  if (task.kind === "security-maintenance")
+    return project.securityMaintenance.cleanupPolicy ?? project.cleanupPolicy;
+  if (task.kind === "harness-auto")
+    return project.harnessAuto.cleanupPolicy ?? project.cleanupPolicy;
+  return project.cleanupPolicy;
+}
+
+function cleanupPolicyForWorkspaceTask(
+  workspace: LoopWorkspaceConfig,
+  task: NonNullable<LoopWorkOrder["task"]>,
+): LoopCleanupPolicy {
+  if (task.kind === "workspace-architecture")
+    return workspace.architecture.cleanupPolicy ?? workspace.cleanupPolicy;
+  if (task.kind === "bug-fix") return workspace.bugFix.cleanupPolicy ?? workspace.cleanupPolicy;
+  if (task.kind === "test-coverage")
+    return workspace.testCoverage.cleanupPolicy ?? workspace.cleanupPolicy;
+  if (task.kind === "security-maintenance")
+    return workspace.securityMaintenance.cleanupPolicy ?? workspace.cleanupPolicy;
+  if (task.kind === "harness-auto")
+    return workspace.harnessAuto.cleanupPolicy ?? workspace.cleanupPolicy;
+  return workspace.cleanupPolicy;
 }
 
 function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
@@ -1118,6 +1174,7 @@ function architecturePolicy(workOrder: LoopWorkOrder): string[] {
   return [
     "- Work in focused rounds and stop at the configured limits.",
     `- Architecture target score is ${workOrder.targetScore}; if evaluation reaches or exceeds it, stop instead of optimizing for its own sake.`,
+    ...cleanupPolicyLines(effectiveCleanupPolicy(workOrder.cleanupPolicy)),
   ];
 }
 
@@ -1150,8 +1207,32 @@ function workspaceArchitecturePolicy(workOrder: LoopWorkOrder): string[] {
     "Workspace architecture task.",
     `- Architecture target score is ${workOrder.targetScore}; if the cross-repository evaluation reaches or exceeds it, stop instead of optimizing for its own sake.`,
     "- Prefer the smallest set of repository changes that improves the whole workspace. Do not force every repository to change.",
+    ...cleanupPolicyLines(effectiveCleanupPolicy(workOrder.cleanupPolicy)),
     task.prompt !== undefined ? `- Additional workspace instruction: ${task.prompt}` : "",
   ].filter(Boolean);
+}
+
+function cleanupPolicyLines(policy: LoopCleanupPolicy): string[] {
+  if (policy === "aggressive") {
+    return [
+      "- Cleanup policy is aggressive: after confirming impact, actively remove obsolete compatibility paths, deprecated command aliases, duplicate entry points, stale transition code, and outdated documentation that conflict with the current feature boundary.",
+      "- Aggressive cleanup still requires evidence: list the removed surface, why it has no supported user contract or current usage, the affected tests/docs checked, and the verification run after removal.",
+    ];
+  }
+  if (policy === "balanced") {
+    return [
+      "- Cleanup policy is balanced: remove confirmed dead code, stale docs, and unsupported old paths when they create real confusion or maintenance risk; otherwise report them as cleanup candidates.",
+      "- Do not remove a compatibility surface in balanced mode unless docs, commands, tests, and configured integrations prove it is not part of the supported contract.",
+    ];
+  }
+  return [
+    "- Cleanup policy is conservative: fix only the confirmed issue and directly related dead code; do not remove compatibility entry points, aliases, or old configuration paths unless they are proven unreachable and harmful.",
+    "- In conservative mode, record broader cleanup ideas as deferred candidates instead of editing them.",
+  ];
+}
+
+function effectiveCleanupPolicy(policy: LoopCleanupPolicy | undefined): LoopCleanupPolicy {
+  return policy ?? "conservative";
 }
 
 function workspaceGithubPolicy(
@@ -1172,6 +1253,7 @@ function bugFixPolicy(workOrder: LoopWorkOrder): string[] {
     "- Audit through concrete risk lenses: money, quota, billing, permissions, privilege escalation, concurrency, transactions, data correctness, idempotency, scheduling/state machines, error-handling contracts, and cross-module or frontend/backend contracts.",
     "- Do not nitpick style, naming, wording, formatting, harmless refactors, architecture taste, or speculative concerns.",
     "- Do not add product features, new capabilities, new dependencies, broad rewrites, or unrelated cleanup.",
+    ...cleanupPolicyLines(effectiveCleanupPolicy(task.cleanupPolicy ?? workOrder.cleanupPolicy)),
     "- Separate candidate bugs from confirmed bugs: list candidates first, then fix only candidates with enough evidence to confirm real impact.",
     "- For every confirmed bug, record a concise evidence chain: entry point or trigger, affected path, expected behavior, actual behavior, impact, and any preconditions or limits.",
     "- Before editing, prove the issue is real by recording the trigger path, affected behavior, and why it is not merely a preference or theoretical concern.",
@@ -1217,6 +1299,7 @@ function testCoveragePolicy(workOrder: LoopWorkOrder): string[] {
     "- If you discover a real bug, vulnerability, flaky behavior, broken test harness, or incorrect existing test while adding coverage, independently confirm it, fix it narrowly, and add a regression test when practical.",
     "- After each round, run the relevant test/coverage command and inspect the diff to confirm it did not add features, broad rewrites, brittle tests, or meaningless coverage.",
     "- If the project has no reliable unified coverage command, report that clearly, add the highest-value tests for critical paths, and use the narrowest available verification instead of inventing a fake coverage number.",
+    ...cleanupPolicyLines(effectiveCleanupPolicy(task.cleanupPolicy ?? workOrder.cleanupPolicy)),
     task.prompt !== undefined ? `- Additional test-coverage instruction: ${task.prompt}` : "",
   ].filter(Boolean);
 }
@@ -1243,6 +1326,7 @@ function securityMaintenancePolicy(workOrder: LoopWorkOrder): string[] {
     "- For every fix, add or update a focused regression, smoke, or security test when practical. If a test is not practical, record the narrow verification command and manual reasoning.",
     "- After each fix, rerun the relevant security check plus the normal local verification required by the project, then inspect the diff for new security, compatibility, or operational risk.",
     "- PR content must clearly separate: finding source, severity/reachability judgment, fix, verification, and any accepted residual risk.",
+    ...cleanupPolicyLines(effectiveCleanupPolicy(task.cleanupPolicy ?? workOrder.cleanupPolicy)),
     task.prompt !== undefined
       ? `- Additional security-maintenance instruction: ${task.prompt}`
       : "",
@@ -1265,6 +1349,7 @@ function harnessAutoPolicy(workOrder: LoopWorkOrder): string[] {
     "- If multiple subtasks touch the same area, sequence them deliberately: fix confirmed bugs/security issues first, add or update regression/coverage tests next, then make architecture cleanup only when the behavior is protected.",
     "- Before each edit, prove the selected subtask has a real reason. After each edit, re-check the exact evidence chain and run the narrowest relevant verification plus the normal project verification when available.",
     "- PR content must clearly list the harness assessment, selected subtasks, skipped subtasks with reasons, changes made, verification, remaining risk, and stop condition result.",
+    ...cleanupPolicyLines(effectiveCleanupPolicy(task.cleanupPolicy ?? workOrder.cleanupPolicy)),
     `- Enabled subtasks: ${enabledTasks.map((subtask) => `${subtask.kind}(weight=${subtask.weight})`).join(", ") || "none"}.`,
     task.prompt !== undefined ? `- Additional harness-auto instruction: ${task.prompt}` : "",
     ...harnessSubtaskPolicies(workOrder, enabledTasks),
@@ -1342,6 +1427,7 @@ function workOrderForHarnessSubtask(
   if (subtask.kind === "architecture") {
     return {
       ...workOrder,
+      cleanupPolicy: effectiveCleanupPolicy(subtask.cleanupPolicy),
       task:
         workOrder.workspace === undefined
           ? { kind: "architecture" }
@@ -1355,6 +1441,7 @@ function workOrderForHarnessSubtask(
   }
   return {
     ...workOrder,
+    cleanupPolicy: effectiveCleanupPolicy(subtask.cleanupPolicy),
     task: harnessSubtaskAsWorkOrderTask(subtask),
     maxRounds: subtask.maxRounds,
   };
@@ -1369,6 +1456,7 @@ function harnessSubtaskAsWorkOrderTask(
       maxRounds: subtask.maxRounds,
       maxBugsPerRound: subtask.maxBugsPerRound,
       requireRegressionTest: subtask.requireRegressionTest,
+      cleanupPolicy: effectiveCleanupPolicy(subtask.cleanupPolicy),
       ...(subtask.prompt !== undefined ? { prompt: subtask.prompt } : {}),
     };
   }
@@ -1382,6 +1470,7 @@ function harnessSubtaskAsWorkOrderTask(
       allowSmokeTests: subtask.allowSmokeTests,
       allowE2ETests: subtask.allowE2ETests,
       allowAiEvalTests: subtask.allowAiEvalTests,
+      cleanupPolicy: effectiveCleanupPolicy(subtask.cleanupPolicy),
       ...(subtask.prompt !== undefined ? { prompt: subtask.prompt } : {}),
     };
   }
@@ -1391,6 +1480,7 @@ function harnessSubtaskAsWorkOrderTask(
     allowDependencyUpdates: subtask.allowDependencyUpdates,
     allowConfigHardening: subtask.allowConfigHardening,
     allowStaticAnalysisFixes: subtask.allowStaticAnalysisFixes,
+    cleanupPolicy: effectiveCleanupPolicy(subtask.cleanupPolicy),
     ...(subtask.prompt !== undefined ? { prompt: subtask.prompt } : {}),
   };
 }

@@ -88,6 +88,12 @@ acceptance. Keep PR lookup, mergeability, CI/check interpretation, auto-merge
 completion, switch-back branch, clean worktree, and system-gate validation in
 this repo rather than trusting only the supervisor self-report.
 
+Keep product logic and user configuration separate. Active project lists,
+repository paths, GitHub accounts, schedules, cleanup policies, and live task
+settings belong in the state/config directory, external backups, or operator
+notes outside the source tree. Do not copy them into source or maintained docs
+unless they are clearly synthetic fixtures or generic examples.
+
 ## Verification
 
 Before pushing or claiming CI readiness, run `npm run verify:local`. The

@@ -67,7 +67,7 @@ function workOrder(
 function gitStub(
   sourceRoot: string,
   calls: LoopGitInvocation[],
-  opts: { dirty?: boolean } = {},
+  opts: { dirty?: boolean; worktreeAddFails?: boolean } = {},
 ): (invocation: LoopGitInvocation) => LoopRunCommandResult {
   return (invocation) => {
     calls.push(invocation);
@@ -80,6 +80,8 @@ function gitStub(
       return { status: 0, stdout: opts.dirty === true ? "M src/index.ts\n" : "", stderr: "" };
     }
     if (invocation.args.slice(0, 3).join(" ") === "worktree add --detach") {
+      if (opts.worktreeAddFails === true)
+        return { status: 1, stdout: "", stderr: "worktree add failed" };
       return { status: 0, stdout: "", stderr: "" };
     }
     return { status: 0, stdout: "", stderr: "" };
@@ -134,6 +136,28 @@ describe("prepareLoopExecutionWorktrees", () => {
       preparedBy: "system-git-worktree",
     });
     expect(calls.map((call) => call.args.slice(0, 3).join(" "))).toContain("worktree add --detach");
+  });
+
+  it("reports an isolation preparation failure instead of silently using the source tree", () => {
+    const repo = makeRepo();
+    const calls: LoopGitInvocation[] = [];
+    const failures: unknown[] = [];
+
+    const prepared = prepareLoopExecutionWorktrees({
+      workOrder: workOrder(repo),
+      runGit: gitStub(repo, calls, { worktreeAddFails: true }),
+      defaultMode: "isolated",
+      onPreparationFailure: (failure) => failures.push(failure),
+    });
+
+    expect(prepared.projectPath).toBe(repo);
+    expect(failures).toEqual([
+      {
+        repositoryId: "repo",
+        sourceWorktree: repo,
+        reason: "isolated execution worktree could not be prepared",
+      },
+    ]);
   });
 
   it("falls back to isolated worktree when source mode finds a dirty source tree", () => {

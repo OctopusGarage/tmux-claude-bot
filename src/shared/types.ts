@@ -96,6 +96,7 @@ export type AppConfig = {
     tickMs: number;
     channel: "telegram" | "lark" | "both";
     autoRepair: boolean;
+    repoPath: string;
     repairBranch: string;
     repairWorktreeIsolation: WorktreeIsolationMode;
   };

@@ -20,12 +20,10 @@ import { performRestart, performStart } from "../../core/command/dispatch.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import type { ForeignAction } from "../../core/infra/status-install.js";
-import { runOpportunityCommand } from "../../core/opportunities/command.js";
 import { OpportunityStore } from "../../core/opportunities/store.js";
 import {
   formatOpportunityAgentDiscussionPrompt,
   formatOpportunityBatchAgentDiscussionPrompt,
-  formatOpportunityBatchDelegateRequirement,
 } from "../../core/opportunities/view.js";
 import {
   type BrowseAction,
@@ -734,22 +732,6 @@ async function handleOpportunityDismiss(ctx: CardCtx): Promise<void> {
   );
 }
 
-async function handleOpportunityDelegate(ctx: CardCtx): Promise<void> {
-  const id = opportunityId(ctx);
-  if (id === null) return;
-  const suggestion = new OpportunityStore().get(id);
-  if (suggestion === null) {
-    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${id}`);
-    return;
-  }
-  const result = await runOpportunityCommand(
-    ctx.deps,
-    chatScope("lark", ctx.evt.chatId),
-    `delegate ${id}`,
-  );
-  await sendText(ctx.channel, ctx.evt.chatId, result.body);
-}
-
 async function handleOpportunityDiscussAll(ctx: CardCtx): Promise<void> {
   const ids = opportunityIds(ctx);
   if (ids.length === 0) return;
@@ -832,61 +814,6 @@ async function handleOpportunityDismissAll(ctx: CardCtx): Promise<void> {
     missing.length > 0
       ? `Skipped ${skipped} opportunities. Missing: ${missing.join(", ")}`
       : `Skipped ${skipped} opportunities.`,
-  );
-}
-
-async function handleOpportunityDelegateAll(ctx: CardCtx): Promise<void> {
-  const ids = opportunityIds(ctx);
-  if (ids.length === 0) return;
-  const { suggestions, missing } = loadOpportunities(ids);
-  if (missing.length > 0 || suggestions.length === 0) {
-    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${missing.join(", ")}`);
-    return;
-  }
-  const first = suggestions[0];
-  if (first === undefined) return;
-  if (suggestions.some((suggestion) => suggestion.projectPath !== first.projectPath)) {
-    await sendText(
-      ctx.channel,
-      ctx.evt.chatId,
-      "Cannot delegate mixed-project opportunities together.",
-    );
-    return;
-  }
-  const opened = await createProjectFromPath(
-    ctx.deps,
-    chatScope("lark", ctx.evt.chatId),
-    first.projectPath,
-  );
-  if (opened.status !== "created" && opened.status !== "switched") {
-    const reason =
-      opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
-    await sendText(ctx.channel, ctx.evt.chatId, `Cannot open project for delegation: ${reason}`);
-    return;
-  }
-  const result = await startActiveDelegatedTask(ctx.deps, {
-    session: opened.sessionName,
-    requirement: formatOpportunityBatchDelegateRequirement(suggestions),
-    opportunityIds: suggestions.map((suggestion) => suggestion.id),
-  });
-  if (result.status !== "queued") {
-    await sendText(ctx.channel, ctx.evt.chatId, `Delegate blocked: ${result.reason}`);
-    return;
-  }
-  const store = new OpportunityStore();
-  for (const suggestion of suggestions) {
-    store.updateStatus(suggestion.id, "delegated", Date.now(), { delegatedRunId: result.runId });
-  }
-  await sendText(
-    ctx.channel,
-    ctx.evt.chatId,
-    [
-      `Delegated ${suggestions.length} opportunities as one batch.`,
-      `runId: ${result.runId}`,
-      `project: ${result.projectId}`,
-      `supervisor: ${result.supervisorSession}`,
-      ...(result.reportDir !== null ? [`report: ${result.reportDir}`] : []),
-    ].join("\n"),
   );
 }
 
@@ -989,10 +916,8 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   oppshow: handleOpportunityShow,
   oppdiscuss: handleOpportunityDiscuss,
   oppdismiss: handleOpportunityDismiss,
-  oppdelegate: handleOpportunityDelegate,
   oppdiscussall: handleOpportunityDiscussAll,
   oppdismissall: handleOpportunityDismissAll,
-  oppdelegateall: handleOpportunityDelegateAll,
   // --- Prompt library (mirrors Telegram pp/pf/pn callbacks) ---
   pget: async ({ channel, deps, evt, value, chatKind }) => {
     if (chatKind !== "p2p") return;

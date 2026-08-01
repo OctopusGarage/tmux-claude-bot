@@ -154,6 +154,7 @@ export const envSchema = z.object({
     z.enum(["telegram", "lark", "both"]).default("both"),
   ),
   TASK_AUDIT_AUTO_REPAIR: blankTolerantString("false"),
+  TASK_AUDIT_REPO_PATH: z.string().default(""),
   TASK_AUDIT_REPAIR_BRANCH: blankTolerantString("dev"),
   TASK_AUDIT_REPAIR_WORKTREE_ISOLATION: worktreeIsolationSchema("isolated"),
   // --- Loop Engineering. Blank config file or tick 0 disables the managed loop. ---
@@ -376,6 +377,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       channel: parsed.TASK_AUDIT_CHANNEL,
       autoRepair:
         parsed.TASK_AUDIT_AUTO_REPAIR !== "false" && parsed.TASK_AUDIT_AUTO_REPAIR !== "0",
+      repoPath: parsed.TASK_AUDIT_REPO_PATH.trim(),
       repairBranch: parsed.TASK_AUDIT_REPAIR_BRANCH,
       repairWorktreeIsolation: parsed.TASK_AUDIT_REPAIR_WORKTREE_ISOLATION,
     },

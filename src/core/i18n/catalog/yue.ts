@@ -399,7 +399,7 @@ export const yue: Messages = {
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
   cmdBatch: "批次排程器：查看狀態或控制批次運行（start/pause/resume/stop/report）",
   cmdAutopilot: "將目前工作階段交畀 Loop Supervisor 託管推進",
-  cmdOpportunity: "睇主動機會建議，並託管已確認嘅工作",
+  cmdOpportunity: "睇同討論主動機會建議",
   cmdSysload: "查看本機負載/發熱/失控進程",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",

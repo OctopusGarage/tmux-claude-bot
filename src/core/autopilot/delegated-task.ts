@@ -210,12 +210,24 @@ export async function startActiveDelegatedTask(
     projectSessionPrefix: deps.config.projectSessionPrefix,
     ...(projectPolicy !== null ? { projectPolicy } : {}),
   });
+  const preparationFailures: string[] = [];
   workOrder = prepareLoopExecutionWorktrees({
     workOrder,
     runGit: runGitCommand,
     defaultMode:
       input.worktreeIsolation ?? deps.config.loopEngineering.supervisor.worktreeIsolation,
+    onPreparationFailure: (failure) => {
+      preparationFailures.push(
+        `${failure.repositoryId}: ${failure.reason} (${failure.sourceWorktree})`,
+      );
+    },
   });
+  if (preparationFailures.length > 0) {
+    return {
+      status: "blocked",
+      reason: `execution worktree isolation failed: ${preparationFailures.join("; ")}`,
+    };
+  }
   const supervisorSession = await reserveFirstAvailableSupervisor(deps, candidates, workOrder, now);
   if (supervisorSession === null) {
     return {

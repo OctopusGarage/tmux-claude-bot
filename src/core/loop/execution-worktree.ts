@@ -17,10 +17,16 @@ export function prepareLoopExecutionWorktrees(input: {
   workOrder: LoopWorkOrder;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
   defaultMode?: LoopWorktreeIsolationMode;
+  onPreparationFailure?: (failure: LoopExecutionWorktreePreparationFailure) => void;
 }): LoopWorkOrder {
   if (input.runGit === undefined) return input.workOrder;
   if (input.workOrder.workspace !== undefined) {
-    return prepareWorkspaceExecutionWorktrees(input.workOrder, input.runGit, input.defaultMode);
+    return prepareWorkspaceExecutionWorktrees(
+      input.workOrder,
+      input.runGit,
+      input.defaultMode,
+      input.onPreparationFailure,
+    );
   }
   const mode = resolveWorktreeIsolationMode(input.workOrder, input.defaultMode);
   if (mode === "source") {
@@ -37,14 +43,27 @@ export function prepareLoopExecutionWorktrees(input: {
     workOrder: input.workOrder,
   });
   return prepared === null
-    ? input.workOrder
+    ? looksLikeGitWorktree(input.workOrder.projectPath)
+      ? failExecutionWorktreePreparation(input, {
+          repositoryId: input.workOrder.projectId,
+          sourceWorktree: input.workOrder.projectPath,
+          reason: "isolated execution worktree could not be prepared",
+        })
+      : input.workOrder
     : withLoopExecutionWorktree(input.workOrder, prepared.executionWorktree);
 }
+
+export type LoopExecutionWorktreePreparationFailure = {
+  repositoryId: string;
+  sourceWorktree: string;
+  reason: string;
+};
 
 function prepareWorkspaceExecutionWorktrees(
   workOrder: LoopWorkOrder,
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
   defaultMode?: LoopWorktreeIsolationMode,
+  onPreparationFailure?: (failure: LoopExecutionWorktreePreparationFailure) => void,
 ): LoopWorkOrder {
   const workspace = workOrder.workspace;
   if (workspace === undefined) return workOrder;
@@ -82,16 +101,35 @@ function prepareWorkspaceExecutionWorktrees(
       workOrder,
       repositoryId: repository.id,
     });
-    return prepared === null
-      ? { id: repository.id, path: repository.path }
-      : {
-          id: repository.id,
-          path: prepared.executionWorktree,
-          sourcePath: repository.path,
-          worktreeIsolation: "isolated" as const,
-        };
+    if (prepared === null) {
+      if (looksLikeGitWorktree(repository.path)) {
+        onPreparationFailure?.({
+          repositoryId: repository.id,
+          sourceWorktree: repository.path,
+          reason: "isolated execution worktree could not be prepared",
+        });
+      }
+      return { id: repository.id, path: repository.path };
+    }
+    return {
+      id: repository.id,
+      path: prepared.executionWorktree,
+      sourcePath: repository.path,
+      worktreeIsolation: "isolated" as const,
+    };
   });
   return withLoopWorkspaceRepositoryExecutionWorktrees(workOrder, replacements);
+}
+
+function failExecutionWorktreePreparation(
+  input: {
+    workOrder: LoopWorkOrder;
+    onPreparationFailure?: (failure: LoopExecutionWorktreePreparationFailure) => void;
+  },
+  failure: LoopExecutionWorktreePreparationFailure,
+): LoopWorkOrder {
+  input.onPreparationFailure?.(failure);
+  return input.workOrder;
 }
 
 function sourceRepositoryWorktreeIsolation(
