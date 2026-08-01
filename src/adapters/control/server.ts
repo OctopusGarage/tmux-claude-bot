@@ -1,4 +1,4 @@
-import { existsSync, statSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, statSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import { setAgentKind } from "../../core/agents/agentKindMap.js";
@@ -155,8 +155,22 @@ export function startControlServer(deps: HandlerDeps): net.Server {
   });
 
   server.on("error", (err) => log.error("control server error", { err }));
-  server.listen(sockPath, () => log.info(`control server listening`, { data: { sock: sockPath } }));
+  server.listen(sockPath, () => {
+    if (!hardenControlSocket(sockPath, server)) return;
+    log.info(`control server listening`, { data: { sock: sockPath } });
+  });
   return server;
+}
+
+export function hardenControlSocket(sockPath: string, server: Pick<net.Server, "close">): boolean {
+  try {
+    chmodSync(sockPath, 0o600);
+    return true;
+  } catch (err) {
+    log.error("control socket permission hardening failed", { err });
+    server.close();
+    return false;
+  }
 }
 
 export async function handleSendAttachment(

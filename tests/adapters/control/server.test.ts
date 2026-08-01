@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import type { Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlClient } from "../../../src/adapters/control/client.js";
-import { startControlServer } from "../../../src/adapters/control/server.js";
+import { controlSocketPath } from "../../../src/adapters/control/protocol.js";
+import { hardenControlSocket, startControlServer } from "../../../src/adapters/control/server.js";
 import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
@@ -78,6 +79,30 @@ describe("control server ↔ client (real unix socket)", () => {
       session: "sessB",
       output: "REPLY:text:hello world",
     });
+  });
+
+  it("binds the control socket owner-only even with a permissive umask", async () => {
+    const previousUmask = process.umask(0);
+    try {
+      const { deps } = fakeDeps();
+      server = startControlServer(deps);
+      await new Promise((r) => setTimeout(r, 60));
+
+      expect(statSync(controlSocketPath()).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
+  it("closes the control server when socket permission hardening fails", () => {
+    const close = vi.fn();
+
+    expect(
+      hardenControlSocket(join(dir, "missing.sock"), {
+        close,
+      } as unknown as Pick<Server, "close">),
+    ).toBe(false);
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to a nested state/control.sock when the client env points at the app home", async () => {
