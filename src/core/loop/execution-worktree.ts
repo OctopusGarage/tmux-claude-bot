@@ -28,14 +28,21 @@ export function prepareLoopExecutionWorktrees(input: {
       input.onPreparationFailure,
     );
   }
-  const mode = resolveWorktreeIsolationMode(input.workOrder, input.defaultMode);
-  if (mode === "source") {
+  const isolation = resolveWorktreeIsolationMode(input.workOrder, input.defaultMode);
+  if (isolation.mode === "source") {
     const source = prepareSourceExecutionWorktree({
       runGit: input.runGit,
       sourceWorktree: input.workOrder.projectPath,
       workOrder: input.workOrder,
     });
     if (source !== null) return source;
+    if (isolation.requested === "source") {
+      return failExecutionWorktreePreparation(input, {
+        repositoryId: input.workOrder.projectId,
+        sourceWorktree: input.workOrder.projectPath,
+        reason: "source execution worktree could not be prepared",
+      });
+    }
   }
   const prepared = prepareGitExecutionWorktree({
     runGit: input.runGit,
@@ -73,8 +80,8 @@ function prepareWorkspaceExecutionWorktrees(
     sourcePath?: string;
     worktreeIsolation?: LoopWorktreeIsolationMode;
   }> = workspace.repositories.map((repository) => {
-    const mode = resolveRepositoryWorktreeIsolationMode(workOrder, repository, defaultMode);
-    if (mode === "source") {
+    const isolation = resolveRepositoryWorktreeIsolationMode(workOrder, repository, defaultMode);
+    if (isolation.mode === "source") {
       const prepared = prepareSourceExecutionWorktree({
         runGit,
         sourceWorktree: repository.path,
@@ -89,6 +96,22 @@ function prepareWorkspaceExecutionWorktrees(
               ?.path ?? repository.path,
           ...sourceRepositoryWorktreeIsolation(
             prepared,
+            repository.id,
+            repository.worktreeIsolation,
+          ),
+        };
+      }
+      if (isolation.requested === "source") {
+        onPreparationFailure?.({
+          repositoryId: repository.id,
+          sourceWorktree: repository.path,
+          reason: "source execution worktree could not be prepared",
+        });
+        return {
+          id: repository.id,
+          path: repository.path,
+          ...sourceRepositoryWorktreeIsolation(
+            workOrder,
             repository.id,
             repository.worktreeIsolation,
           ),
@@ -275,28 +298,39 @@ function prepareGitExecutionWorktree(input: {
   return { executionWorktree };
 }
 
+type ResolvedWorktreeIsolationMode = {
+  mode: Exclude<LoopWorktreeIsolationMode, "auto">;
+  requested: LoopWorktreeIsolationMode;
+};
+
 function resolveWorktreeIsolationMode(
   workOrder: LoopWorkOrder,
   defaultMode: LoopWorktreeIsolationMode = "isolated",
-): Exclude<LoopWorktreeIsolationMode, "auto"> {
+): ResolvedWorktreeIsolationMode {
   const requested = workOrder.executionIsolation?.worktreeIsolation ?? "auto";
-  return resolveAutoWorktreeIsolationMode(
-    requested === "auto" ? defaultMode : requested,
-    workOrder,
-  );
+  return {
+    requested,
+    mode: resolveAutoWorktreeIsolationMode(
+      requested === "auto" ? defaultMode : requested,
+      workOrder,
+    ),
+  };
 }
 
 function resolveRepositoryWorktreeIsolationMode(
   workOrder: LoopWorkOrder,
   repository: NonNullable<LoopWorkOrder["workspace"]>["repositories"][number],
   defaultMode: LoopWorktreeIsolationMode = "isolated",
-): Exclude<LoopWorktreeIsolationMode, "auto"> {
+): ResolvedWorktreeIsolationMode {
   const requested =
     repository.worktreeIsolation ?? workOrder.executionIsolation?.worktreeIsolation ?? "auto";
-  return resolveAutoWorktreeIsolationMode(
-    requested === "auto" ? defaultMode : requested,
-    workOrder,
-  );
+  return {
+    requested,
+    mode: resolveAutoWorktreeIsolationMode(
+      requested === "auto" ? defaultMode : requested,
+      workOrder,
+    ),
+  };
 }
 
 function resolveAutoWorktreeIsolationMode(
