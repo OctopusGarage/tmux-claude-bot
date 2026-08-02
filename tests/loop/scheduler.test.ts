@@ -162,6 +162,43 @@ describe("runLoopSchedulerTick", () => {
     });
   });
 
+  it("schedules automation governance review jobs independently from architecture jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    automationGovernanceReview:",
+          "      enabled: true",
+          '      schedule: "35 2 * * *"',
+          "      branch: loop/due/automation-governance-review",
+          "      targetScore: 90",
+          "      allowRepairPr: true",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T02:40:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T02:40:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:automation-governance-review",
+      jobKind: "automation-governance-review",
+      scheduledAt: Date.parse("2026-07-16T02:35:00Z"),
+    });
+  });
+
   it("schedules bug-fix jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(

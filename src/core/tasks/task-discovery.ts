@@ -288,6 +288,23 @@ export function discoverLoopEngineeringScheduledTasks(input: {
         }),
       );
     }
+    if (project.automationGovernanceReview.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: project.id,
+          jobKey: `${project.id}:automation-governance-review`,
+          jobKind: "automation-governance-review",
+          schedule: project.automationGovernanceReview.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(project.automationGovernanceReview.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: project.automationGovernanceReview.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
     if (project.pullRequestReview.enabled) {
       records.push(
         ...loopScheduleRecords({

@@ -538,6 +538,12 @@ projects:
       schedule: "30 2 * * *"
       branch: loop/geo-backend/harness-auto
       maxRounds: 4
+    automationGovernanceReview:
+      enabled: true
+      schedule: "35 2 * * *"
+      branch: loop/geo-backend/automation-governance-review
+      targetScore: 90
+      allowRepairPr: true
     pullRequestReview:
       enabled: true
       schedule: "0 1 * * *"
@@ -586,6 +592,12 @@ projects:
           taskId: `loop:geo-backend:harness-auto:${Date.parse("2026-07-28T02:30:00Z")}`,
           source: "loop-engineering",
           name: "geo-backend harness-auto",
+          status: "expected",
+        }),
+        expect.objectContaining({
+          taskId: `loop:geo-backend:automation-governance-review:${Date.parse("2026-07-28T02:35:00Z")}`,
+          source: "loop-engineering",
+          name: "geo-backend automation-governance-review",
           status: "expected",
         }),
         expect.objectContaining({

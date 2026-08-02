@@ -56,6 +56,7 @@ import {
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
 } from "./supervisor-state.js";
+import type { LoopTaskSchedulerJobKind } from "./task-family.js";
 import type { LoopWorkOrder } from "./work-order.js";
 import {
   buildLoopWorkOrder,
@@ -451,13 +452,15 @@ export async function runLoopServiceTickAsync(input: {
                     ? "harness-auto"
                     : due.jobKind === "opportunity-discovery"
                       ? "opportunity-discovery"
-                      : due.jobKind === "test-coverage"
-                        ? "test-coverage"
-                        : due.jobKind === "security-maintenance"
-                          ? "security-maintenance"
-                          : due.jobKind === "bug-fix"
-                            ? "bug-fix"
-                            : "architecture",
+                      : due.jobKind === "automation-governance-review"
+                        ? "automation-governance-review"
+                        : due.jobKind === "test-coverage"
+                          ? "test-coverage"
+                          : due.jobKind === "security-maintenance"
+                            ? "security-maintenance"
+                            : due.jobKind === "bug-fix"
+                              ? "bug-fix"
+                              : "architecture",
             });
     const preparationFailures: string[] = [];
     workOrder = prepareLoopExecutionWorktrees({
@@ -1491,6 +1494,9 @@ function jobKeyForWorkOrder(workOrder: LoopWorkOrder): string {
       ? `${workOrder.projectId}:opportunity-discovery`
       : `workspace:${workOrder.projectId}:opportunity-discovery`;
   }
+  if (workOrder.task?.kind === "automation-governance-review") {
+    return `${workOrder.projectId}:automation-governance-review`;
+  }
   return workOrder.projectId;
 }
 
@@ -1805,16 +1811,7 @@ function isRecoverableSupervisorGateFailure(failure: string): boolean {
 function runIdForDueProject(
   scheduledAt: number,
   projectId: string,
-  jobKind:
-    | "architecture"
-    | "workspace-architecture"
-    | "bug-fix"
-    | "test-coverage"
-    | "security-maintenance"
-    | "harness-auto"
-    | "opportunity-discovery"
-    | "pull-request-review"
-    | "repository-pull-request-review",
+  jobKind: LoopTaskSchedulerJobKind,
   jobKey: string,
 ): string {
   const workspaceJob = jobKey.startsWith("workspace:");
@@ -1837,22 +1834,15 @@ function runIdForDueProject(
   if (jobKind === "harness-auto") return `${scheduledAt}-${projectId}-harness-auto`;
   if (jobKind === "opportunity-discovery")
     return `${scheduledAt}-${projectId}-opportunity-discovery`;
+  if (jobKind === "automation-governance-review")
+    return `${scheduledAt}-${projectId}-automation-governance-review`;
   if (jobKind === "repository-pull-request-review")
     return `${scheduledAt}-${projectId}-repo-pr-review`;
   return `${scheduledAt}-${projectId}-pr-review`;
 }
 
 function workspaceJobKind(
-  jobKind:
-    | "architecture"
-    | "workspace-architecture"
-    | "bug-fix"
-    | "test-coverage"
-    | "security-maintenance"
-    | "harness-auto"
-    | "opportunity-discovery"
-    | "pull-request-review"
-    | "repository-pull-request-review",
+  jobKind: LoopTaskSchedulerJobKind,
 ):
   | "workspace-architecture"
   | "bug-fix"

@@ -255,6 +255,12 @@ Loop Engineering supports these project and workspace task families:
 - `opportunityDiscovery`: inspect repository evidence and propose useful feature
   or optimization opportunities. It must not edit files, create branches, commit,
   push, or open PRs.
+- `automationGovernanceReview`: review tmux-claude-bot's own automation
+  governance, including task taxonomy, WorkOrder prompts, scheduler/ledger
+  evidence, notification visibility, Runtime Guardian and Daily Task Audit
+  boundaries, AI/eval policy, and merge discipline. It may create at most one
+  repair PR only for a concrete P0/P1 governance finding and must not auto-merge
+  that PR.
 - `pullRequestReview`: review loop-created PRs for one configured project or
   workspace, require configured clean review passes, and merge only after CI and
   mergeability are acceptable.

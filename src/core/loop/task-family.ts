@@ -5,6 +5,7 @@ export type LoopScheduledJobKind =
   | "security-maintenance"
   | "harness-auto"
   | "opportunity-discovery"
+  | "automation-governance-review"
   | "pull-request-review";
 
 export type LoopTaskSchedulerJobKind =
@@ -41,6 +42,7 @@ type LoopProjectLike = ScheduledEntity & {
   securityMaintenance: ProjectPolicy;
   harnessAuto: ProjectPolicy;
   opportunityDiscovery: ProjectPolicy;
+  automationGovernanceReview: ProjectPolicy;
   pullRequestReview: ProjectPolicy;
 };
 
@@ -122,6 +124,12 @@ const PROJECT_TASK_FAMILIES: readonly ProjectTaskFamily[] = [
     jobKind: "opportunity-discovery",
     policy: (project) => project.opportunityDiscovery,
     jobKey: (project) => `${project.id}:opportunity-discovery`,
+  },
+  {
+    summaryKind: "automation-governance-review",
+    jobKind: "automation-governance-review",
+    policy: (project) => project.automationGovernanceReview,
+    jobKey: (project) => `${project.id}:automation-governance-review`,
   },
   {
     summaryKind: "pull-request-review",
