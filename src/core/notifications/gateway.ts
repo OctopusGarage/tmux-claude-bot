@@ -26,6 +26,8 @@ export interface NotificationOpportunity {
   estimatedComplexity: string;
   status: string;
   value: string;
+  problem?: string;
+  recommendedApproach?: string;
 }
 
 export interface NotificationAttachment {

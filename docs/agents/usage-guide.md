@@ -166,11 +166,16 @@ the bot sends Telegram/Feishu suggestions with `/opportunity` commands. Use
 Continue via supervisor for confirmed work. Use `/opportunity dismiss
 <number|id>` when it is not worth doing. Feishu commands work in private chat and in the bound
 project group that received the suggestion. Feishu opportunity notifications are
-interactive cards: related suggestions in one notification are discussed as a
-single batch by default. The notification card keeps discussion and execution
-separate; after owner approval, use the project control panel's **Continue via
-supervisor** button or `/autopilot delegate` so all implementation
-work goes through the same Loop Supervisor active-delegation pipeline.
+interactive cards with readable per-suggestion summaries and view, discuss, and
+dismiss actions for each item; bulk discuss/dismiss remains available for a
+related batch. Telegram notifications expose per-suggestion discuss/dismiss
+buttons when each callback fits Telegram's 64-byte `callback_data` limit; if an
+imported or unusual id is too long, Telegram falls back to the typed
+`/opportunity` commands in the message. The notification card keeps discussion
+and execution separate; after owner approval, use the project control panel's
+**Continue via supervisor** button or `/autopilot delegate` so all
+implementation work goes through the same Loop Supervisor active-delegation
+pipeline.
 For coordinated frontend/backend or otherwise coupled repositories, add a
 `workspaces` entry. Workspace jobs create one scheduled multi-repository
 WorkOrder, ask the supervisor to inspect cross-repository contracts when

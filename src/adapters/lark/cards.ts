@@ -93,10 +93,20 @@ const shell = (title: string, elements: object[]): object => ({
   body: { elements },
 });
 
-function compactLine(value: string, max = 120): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= max) return normalized;
-  return `${normalized.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
+function opportunityDigestText(opportunity: NotificationOpportunity, index: number): string {
+  const sections = [
+    `**${index + 1}. ${opportunity.title}**`,
+    `_${opportunity.category} · ${opportunity.confidence} confidence · ${opportunity.estimatedComplexity}_`,
+    "",
+  ];
+  if (opportunity.problem?.trim()) {
+    sections.push("**Problem:**", opportunity.problem.trim(), "");
+  }
+  sections.push("**Value:**", opportunity.value.trim());
+  if (opportunity.recommendedApproach?.trim()) {
+    sections.push("", "**Approach:**", opportunity.recommendedApproach.trim());
+  }
+  return sections.join("\n");
 }
 
 /** Voice recognition-language picker — mirrors Telegram's button picker. The
@@ -516,7 +526,14 @@ export function opportunityDigestCard(input: {
   ];
   for (const [index, opportunity] of input.opportunities.entries()) {
     elements.push(HR);
-    elements.push(md(`**${index + 1}. ${opportunity.title}**\n${compactLine(opportunity.value)}`));
+    elements.push(md(opportunityDigestText(opportunity, index)));
+    elements.push(
+      gridRow([
+        { text: "查看详情", value: { cmd: "oppshow", id: opportunity.id } },
+        { text: "参与讨论", value: { cmd: "oppdiscuss", id: opportunity.id }, style: "primary" },
+        { text: "暂不处理", value: { cmd: "oppdismiss", id: opportunity.id } },
+      ]),
+    );
   }
   elements.push(
     HR,

@@ -613,6 +613,8 @@ function opportunityNotificationRows(
     estimatedComplexity: suggestion.estimatedComplexity,
     status: suggestion.status,
     value: suggestion.value,
+    problem: suggestion.problem,
+    recommendedApproach: suggestion.recommendedApproach,
   }));
 }
 

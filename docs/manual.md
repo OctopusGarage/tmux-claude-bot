@@ -372,6 +372,11 @@ Each scheduled project chooses a runner:
   Use `/opportunity discuss <id>` to prepare a decision conversation, then use
   Autopilot / Continue via supervisor to hand confirmed work to the Loop
   Supervisor. Use `/opportunity dismiss <id>` when it should not be pursued.
+  Feishu/Lark suggestion cards include readable per-item problem, value, and
+  approach summaries plus view, discuss, and dismiss actions for each
+  suggestion. Telegram uses per-suggestion discuss/dismiss buttons only while
+  each callback payload fits Telegram's 64-byte `callback_data` limit; otherwise
+  use the typed `/opportunity` commands shown in the message.
 - `workspaces` define coordinated multi-repository jobs. Use this when
   repositories should be evaluated together, such as a frontend/backend pair in
   the same product directory. A workspace job is one scheduled WorkOrder with one

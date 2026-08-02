@@ -24,6 +24,7 @@ import {
   buildControlKeyboard,
   buildExpandedControlKeyboard,
   buildLangKeyboard,
+  buildOpportunityNotificationKeyboard,
   buildProjectDeleteKeyboard,
   buildProjectKeyboard,
   buildPromptTranslateKeyboard,
@@ -279,6 +280,55 @@ describe("encodeControlAction <-> parseCallbackData round-trip", () => {
   it("keeps callback_data within Telegram's 64-byte limit", () => {
     const data = encodeControlAction("interrupt", "abcdef");
     expect(Buffer.byteLength(data, "utf-8")).toBeLessThanOrEqual(64);
+  });
+});
+
+describe("buildOpportunityNotificationKeyboard", () => {
+  it("renders safe per-suggestion telegram callbacks", () => {
+    const kb = buildOpportunityNotificationKeyboard([
+      {
+        id: "api-20260729-ad409ff3",
+        title: "Add explain command",
+        projectName: "api",
+        category: "developer-experience",
+        confidence: "high",
+        estimatedComplexity: "small",
+        status: "proposed",
+        value: "Faster support.",
+      },
+      {
+        id: "api-20260729-bc510aa4",
+        title: "Improve retry logs",
+        projectName: "api",
+        category: "reliability",
+        confidence: "medium",
+        estimatedComplexity: "small",
+        status: "proposed",
+        value: "Clearer incidents.",
+      },
+    ]) as unknown as { inline_keyboard: { text: string; callback_data?: string }[][] };
+
+    expect(callbackDatas(kb)).toEqual(["od:ad409ff3", "ox:ad409ff3", "od:bc510aa4", "ox:bc510aa4"]);
+    for (const data of callbackDatas(kb)) {
+      expect(Buffer.byteLength(data ?? "", "utf-8")).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it("falls back to no telegram callbacks when a per-suggestion token exceeds the limit", () => {
+    const keyboard = buildOpportunityNotificationKeyboard([
+      {
+        id: "x".repeat(80),
+        title: "Long imported opportunity id",
+        projectName: "api",
+        category: "developer-experience",
+        confidence: "high",
+        estimatedComplexity: "small",
+        status: "proposed",
+        value: "Use typed /opportunity commands instead.",
+      },
+    ]);
+
+    expect(keyboard).toBeUndefined();
   });
 });
 

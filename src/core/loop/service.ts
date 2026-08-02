@@ -919,6 +919,8 @@ async function notifyOpportunityDiscoveryResult(input: {
       estimatedComplexity: suggestion.estimatedComplexity,
       status: suggestion.status,
       value: suggestion.value,
+      problem: suggestion.problem,
+      recommendedApproach: suggestion.recommendedApproach,
     })),
   });
   log.info("loop opportunity discovery notification result", {
