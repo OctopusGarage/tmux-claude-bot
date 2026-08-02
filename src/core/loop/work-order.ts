@@ -171,6 +171,14 @@ export type LoopWorkOrder = {
         prompt?: string;
       }
     | {
+        kind: "automation-governance-review";
+        targetScore: number;
+        maxFindings: number;
+        allowRepairPr: boolean;
+        requireAiEval: boolean;
+        prompt?: string;
+      }
+    | {
         kind: "pull-request-review";
         lookbackHours: number;
         consecutivePasses: number;
@@ -225,6 +233,18 @@ export type LoopWorkOrder = {
   recovery: LoopProjectConfig["recovery"];
   commitPolicy: LoopProjectConfig["commit"];
   pullRequestPolicy?: LoopProjectConfig["pullRequest"];
+  governance?: {
+    scope: "bot-self-maintenance";
+    targetScore: number;
+    maxFindings: number;
+    requireAiEval: boolean;
+    repair: {
+      allowPullRequest: boolean;
+      autoMerge: false;
+      minimumSeverity: "P1";
+      maxPullRequests: 1;
+    };
+  };
   workspace?: {
     root: string;
     repositories: Array<{
@@ -295,6 +315,7 @@ export function buildLoopWorkOrder(input: {
     | "security-maintenance"
     | "harness-auto"
     | "opportunity-discovery"
+    | "automation-governance-review"
     | "pull-request-review";
 }): LoopWorkOrder {
   const task =
@@ -319,7 +340,9 @@ export function buildLoopWorkOrder(input: {
                 })
               : input.jobKind === "opportunity-discovery"
                 ? opportunityDiscoveryTask(input.project.opportunityDiscovery)
-                : { kind: "architecture" as const };
+                : input.jobKind === "automation-governance-review"
+                  ? automationGovernanceReviewTask(input.project.automationGovernanceReview)
+                  : { kind: "architecture" as const };
   const workOrder: LoopWorkOrder = {
     id: input.runId,
     scheduledAt: input.scheduledAt,
@@ -353,7 +376,11 @@ export function buildLoopWorkOrder(input: {
         ? task.maxRounds
         : input.project.maxRounds,
     targetScore:
-      task.kind === "harness-auto" ? task.stopWhen.healthScoreAtLeast : input.project.targetScore,
+      task.kind === "harness-auto"
+        ? task.stopWhen.healthScoreAtLeast
+        : task.kind === "automation-governance-review"
+          ? task.targetScore
+          : input.project.targetScore,
     runner: input.project.runner,
     ...actionPolicyForTask(input.project, task),
     skills: { approved: [...input.config.skills.approved] },
@@ -364,6 +391,9 @@ export function buildLoopWorkOrder(input: {
     recovery: input.project.recovery,
     commitPolicy: commitPolicyForWorkOrder(commitPolicyForTask(input.project, task), input.runId),
     pullRequestPolicy: pullRequestPolicyForTask(input.project, task),
+    ...(task.kind === "automation-governance-review"
+      ? { governance: automationGovernancePolicy(task) }
+      : {}),
     requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
     finalSummaryPath: finalSummaryPathForWorkOrder(input.project.id, input.runId),
     ...(task.kind === "opportunity-discovery"
@@ -912,6 +942,8 @@ function taskSpecificPolicy(workOrder: LoopWorkOrder, baseBranch: string): strin
   if (task.kind === "workspace-architecture") return workspaceArchitecturePolicy(workOrder);
   if (task.kind === "active-delegated-task") return activeDelegatedTaskPolicy(workOrder);
   if (task.kind === "opportunity-discovery") return opportunityDiscoveryPolicy(workOrder);
+  if (task.kind === "automation-governance-review")
+    return automationGovernanceReviewPolicy(workOrder);
   if (task.kind === "test-coverage") return testCoveragePolicy(workOrder);
   if (task.kind === "security-maintenance") return securityMaintenancePolicy(workOrder);
   if (task.kind === "bug-fix") return bugFixPolicy(workOrder);
@@ -1085,6 +1117,36 @@ function opportunityDiscoveryTask(
       ? { notificationChannel: policy.notificationChannel }
       : {}),
     ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
+  };
+}
+
+function automationGovernanceReviewTask(
+  policy: LoopProjectConfig["automationGovernanceReview"],
+): Extract<LoopWorkOrder["task"], { kind: "automation-governance-review" }> {
+  return {
+    kind: "automation-governance-review",
+    targetScore: policy.targetScore,
+    maxFindings: policy.maxFindings,
+    allowRepairPr: policy.allowRepairPr,
+    requireAiEval: policy.requireAiEval,
+    ...(policy.prompt !== undefined ? { prompt: policy.prompt } : {}),
+  };
+}
+
+function automationGovernancePolicy(
+  task: Extract<LoopWorkOrder["task"], { kind: "automation-governance-review" }>,
+): NonNullable<LoopWorkOrder["governance"]> {
+  return {
+    scope: "bot-self-maintenance",
+    targetScore: task.targetScore,
+    maxFindings: task.maxFindings,
+    requireAiEval: task.requireAiEval,
+    repair: {
+      allowPullRequest: task.allowRepairPr,
+      autoMerge: false,
+      minimumSeverity: "P1",
+      maxPullRequests: 1,
+    },
   };
 }
 
@@ -1417,6 +1479,35 @@ function opportunityDiscoveryPolicy(workOrder: LoopWorkOrder): string[] {
     "- delegateRequirement must be the clear implementation brief that will be handed to /autopilot delegate after owner approval.",
     task.prompt !== undefined
       ? `- Additional opportunity-discovery instruction: ${task.prompt}`
+      : "",
+  ].filter(Boolean);
+}
+
+function automationGovernanceReviewPolicy(workOrder: LoopWorkOrder): string[] {
+  const task = workOrderTask(workOrder);
+  if (task.kind !== "automation-governance-review") return [];
+  const governance = workOrder.governance;
+  return [
+    "Automation governance review task.",
+    "- Review tmux-claude-bot's own automation governance, not target-project product logic.",
+    "- Focus on task taxonomy, WorkOrder prompts, system gates, scheduler and ledger evidence, notification visibility, Runtime Guardian and Daily Task Audit boundaries, AI/eval policy, and merge discipline.",
+    `- Target governance score is at least ${task.targetScore}; stop when the evidence reaches that score instead of optimizing beyond the bounded task.`,
+    `- Report at most ${task.maxFindings} concrete governance finding(s), ordered by severity.`,
+    task.requireAiEval
+      ? "- Agent-backed AI eval may be used through the existing Claude Code / Codex control surface only; deterministic gates remain authoritative."
+      : "- AI eval is optional; deterministic gates remain authoritative.",
+    "- Do not call model-provider APIs, add model SDKs, or add model API keys.",
+    "- Before editing, prove the governance issue is real from scheduler config, ledger records, supervisor artifacts, notification artifacts, CI/system gates, or repository code.",
+    task.allowRepairPr
+      ? "- You may create or update one repair PR only for a concrete P0 or P1 governance finding; do not create repair PRs for P2/P3 findings."
+      : "- Do not create repair PRs; report findings only.",
+    "- Governance repair PRs must not be auto-merged.",
+    "- If a repair PR is created or updated, include pullRequestDecisions[] in the final summary with severity P0, P1, P2, or P3.",
+    governance === undefined
+      ? ""
+      : `- Structured governance policy: scope=${governance.scope}; allowPullRequest=${governance.repair.allowPullRequest}; autoMerge=${governance.repair.autoMerge}; minimumSeverity=${governance.repair.minimumSeverity}; maxPullRequests=${governance.repair.maxPullRequests}.`,
+    task.prompt !== undefined
+      ? `- Additional automation-governance-review instruction: ${task.prompt}`
       : "",
   ].filter(Boolean);
 }
@@ -1827,6 +1918,16 @@ function commitPolicyForTask(
       branch: project.harnessAuto.branch,
     };
   }
+  if (
+    task.kind === "automation-governance-review" &&
+    project.automationGovernanceReview.branch !== undefined
+  ) {
+    return {
+      ...project.commit,
+      perRound: false,
+      branch: project.automationGovernanceReview.branch,
+    };
+  }
   return project.commit;
 }
 
@@ -1838,6 +1939,12 @@ function pullRequestPolicyForTask(
     return {
       ...project.pullRequest,
       enabled: false,
+      autoMerge: false,
+    };
+  }
+  if (task.kind === "automation-governance-review") {
+    return {
+      ...project.pullRequest,
       autoMerge: false,
     };
   }

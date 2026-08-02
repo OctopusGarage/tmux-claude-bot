@@ -45,6 +45,10 @@ projects:
       enabled: true
       schedule: "50 2 * * *"
       scheduleJitterMinutes: 8
+    automationGovernanceReview:
+      enabled: true
+      schedule: "52 2 * * *"
+      scheduleJitterMinutes: 9
     pullRequest:
       enabled: true
       base: main
@@ -52,7 +56,7 @@ projects:
     pullRequestReview:
       enabled: true
       schedule: "55 2 * * *"
-      scheduleJitterMinutes: 9
+      scheduleJitterMinutes: 10
 workspaces:
   - id: geo
     name: Geo
@@ -123,6 +127,7 @@ describe("loop task family registry", () => {
       "security-maintenance",
       "harness-auto",
       "opportunity-discovery",
+      "automation-governance-review",
       "pull-request-review",
     ]);
     expect(projectScheduledJobs(project)).toEqual([
@@ -170,10 +175,17 @@ describe("loop task family registry", () => {
       },
       {
         project,
+        jobKey: "hub:automation-governance-review",
+        jobKind: "automation-governance-review",
+        schedule: "52 2 * * *",
+        scheduleJitterMinutes: 9,
+      },
+      {
+        project,
         jobKey: "hub:pull-request-review",
         jobKind: "pull-request-review",
         schedule: "55 2 * * *",
-        scheduleJitterMinutes: 9,
+        scheduleJitterMinutes: 10,
       },
     ]);
   });

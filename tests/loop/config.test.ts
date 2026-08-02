@@ -62,6 +62,7 @@ describe("parseLoopConfigYaml", () => {
       securityMaintenanceMaxDelayMinutes: 0,
       harnessAutoMaxDelayMinutes: 0,
       opportunityDiscoveryMaxDelayMinutes: 0,
+      automationGovernanceReviewMaxDelayMinutes: 0,
       pullRequestReviewMaxDelayMinutes: 0,
       repositoryPullRequestReviewMaxDelayMinutes: 0,
     });
@@ -161,6 +162,7 @@ prReview:
       securityMaintenanceMaxDelayMinutes: 28,
       harnessAutoMaxDelayMinutes: 26,
       opportunityDiscoveryMaxDelayMinutes: 18,
+      automationGovernanceReviewMaxDelayMinutes: 0,
       pullRequestReviewMaxDelayMinutes: 30,
       repositoryPullRequestReviewMaxDelayMinutes: 45,
     });

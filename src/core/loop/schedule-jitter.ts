@@ -39,6 +39,8 @@ function defaultJitterMinutes(jobKind: LoopJitterJobKind, config: LoopConfig): n
   if (jobKind === "security-maintenance") return jitter.securityMaintenanceMaxDelayMinutes;
   if (jobKind === "harness-auto") return jitter.harnessAutoMaxDelayMinutes;
   if (jobKind === "opportunity-discovery") return jitter.opportunityDiscoveryMaxDelayMinutes;
+  if (jobKind === "automation-governance-review")
+    return jitter.automationGovernanceReviewMaxDelayMinutes;
   if (jobKind === "bug-fix") return jitter.bugFixMaxDelayMinutes;
   if (jobKind === "pull-request-review") return jitter.pullRequestReviewMaxDelayMinutes;
   return jitter.repositoryPullRequestReviewMaxDelayMinutes;

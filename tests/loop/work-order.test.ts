@@ -54,6 +54,34 @@ function firstProject() {
   return project;
 }
 
+function automationGovernanceReviewProject(): LoopProjectConfig {
+  return {
+    ...firstProject(),
+    automationGovernanceReview: {
+      enabled: true,
+      schedule: "35 2 * * *",
+      branch: "loop/datavibe/automation-governance-review",
+      targetScore: 90,
+      maxFindings: 4,
+      allowRepairPr: true,
+      requireAiEval: true,
+      prompt: "Focus on Loop Supervisor and system gate logic.",
+    },
+    commit: {
+      enabled: true,
+      perRound: false,
+      branch: "loop/datavibe/architecture",
+    },
+    pullRequest: {
+      enabled: true,
+      base: "dev",
+      switchBack: "dev",
+      autoMerge: true,
+      mergeMethod: "squash" as const,
+    },
+  };
+}
+
 describe("loop supervisor work order", () => {
   it("builds a bounded work order from project config", () => {
     const project = firstProject();
@@ -504,6 +532,63 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("no reliable unified coverage command");
     expect(prompt).toContain("compact --yes before each delegated test-coverage round");
     expect(prompt).toContain("Prioritize billing, auth, and queue workflows.");
+  });
+
+  it("builds automation governance review work orders with self-maintenance policy", () => {
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project: automationGovernanceReviewProject(),
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe-automation-governance-review",
+      jobKind: "automation-governance-review",
+    });
+
+    expect(workOrder.task).toMatchObject({
+      kind: "automation-governance-review",
+      targetScore: 90,
+      maxFindings: 4,
+      allowRepairPr: true,
+      requireAiEval: true,
+    });
+    expect(workOrder.governance).toMatchObject({
+      scope: "bot-self-maintenance",
+      repair: {
+        allowPullRequest: true,
+        autoMerge: false,
+        minimumSeverity: "P1",
+        maxPullRequests: 1,
+      },
+    });
+    expect(workOrder.commitPolicy.branch).toBe(
+      "loop/datavibe/automation-governance-review/1752643800000-datavibe-automation-governance-review",
+    );
+    expect(workOrder.pullRequestPolicy).toMatchObject({
+      enabled: true,
+      base: "dev",
+      autoMerge: false,
+    });
+  });
+
+  it("renders automation governance instructions with severity-gated repair PRs", () => {
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project: automationGovernanceReviewProject(),
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe-automation-governance-review",
+      jobKind: "automation-governance-review",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(prompt).toContain("Automation governance review task.");
+    expect(prompt).toContain("scope=bot-self-maintenance");
+    expect(prompt).toContain("allowPullRequest=true");
+    expect(prompt).toContain("autoMerge=false");
+    expect(prompt).toContain("minimumSeverity=P1");
+    expect(prompt).toContain("P0 or P1");
+    expect(prompt).toContain("must not be auto-merged");
+    expect(prompt).toContain("pullRequestDecisions[]");
+    expect(prompt).toContain("Focus on Loop Supervisor and system gate logic.");
   });
 
   it("renders a security-maintenance prompt for verified security fixes", () => {

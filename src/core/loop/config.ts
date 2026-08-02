@@ -252,6 +252,27 @@ const opportunityDiscoverySchema = z
     requireEvidence: true,
   });
 
+const automationGovernanceReviewSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    branch: z.string().min(1).optional(),
+    targetScore: z.number().int().min(0).max(100).default(90),
+    maxFindings: z.number().int().min(1).max(10).default(5),
+    allowRepairPr: z.boolean().default(false),
+    requireAiEval: z.boolean().default(true),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({
+    enabled: false,
+    targetScore: 90,
+    maxFindings: 5,
+    allowRepairPr: false,
+    requireAiEval: true,
+  });
+
 const repositoryPullRequestReviewSchema = z
   .object({
     id: z.string().min(1),
@@ -410,6 +431,7 @@ const projectSchema = z
     securityMaintenance: securityMaintenanceSchema,
     harnessAuto: harnessAutoSchema,
     opportunityDiscovery: opportunityDiscoverySchema,
+    automationGovernanceReview: automationGovernanceReviewSchema,
     pullRequestReview: pullRequestReviewSchema,
     allowedActions: z.array(actionSchema).default([]),
     blockedActions: z.array(actionSchema).default([]),
@@ -437,6 +459,7 @@ const loopConfigSchema = z
             securityMaintenanceMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             harnessAutoMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             opportunityDiscoveryMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            automationGovernanceReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             pullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             repositoryPullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
           })
@@ -450,6 +473,7 @@ const loopConfigSchema = z
             securityMaintenanceMaxDelayMinutes: 0,
             harnessAutoMaxDelayMinutes: 0,
             opportunityDiscoveryMaxDelayMinutes: 0,
+            automationGovernanceReviewMaxDelayMinutes: 0,
             pullRequestReviewMaxDelayMinutes: 0,
             repositoryPullRequestReviewMaxDelayMinutes: 0,
           }),
@@ -465,6 +489,7 @@ const loopConfigSchema = z
           securityMaintenanceMaxDelayMinutes: 0,
           harnessAutoMaxDelayMinutes: 0,
           opportunityDiscoveryMaxDelayMinutes: 0,
+          automationGovernanceReviewMaxDelayMinutes: 0,
           pullRequestReviewMaxDelayMinutes: 0,
           repositoryPullRequestReviewMaxDelayMinutes: 0,
         },
@@ -642,6 +667,18 @@ function ensurePhaseOneBoundaries(config: LoopConfig): void {
       }
       if (project.runner.kind !== "agent-supervised") {
         errors.push(`projects.${index}.opportunityDiscovery requires runner.kind=agent-supervised`);
+      }
+    }
+    if (project.automationGovernanceReview.enabled) {
+      if (project.automationGovernanceReview.schedule === undefined) {
+        errors.push(
+          `projects.${index}.automationGovernanceReview.schedule is required when enabled`,
+        );
+      }
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(
+          `projects.${index}.automationGovernanceReview requires runner.kind=agent-supervised`,
+        );
       }
     }
     const minScore = project.eval?.minScore;
