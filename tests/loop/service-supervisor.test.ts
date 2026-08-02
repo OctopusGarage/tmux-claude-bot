@@ -576,9 +576,9 @@ workspaces:
           { id: "geo-frontend", path: frontendWorktree, sourcePath: frontend },
         ]);
         expect(request.prompt).toContain("Workspace architecture task.");
-        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-backend'");
+        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-backend-");
         expect(request.prompt).toContain(`'${backendWorktree}' --agent codex`);
-        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-frontend'");
+        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-frontend-");
         expect(request.prompt).toContain(`'${frontendWorktree}' --agent codex`);
         expect(request.prompt).toContain(`Original workspace repository geo-backend: ${backend}`);
         expect(request.prompt).toContain(`Original workspace repository geo-frontend: ${frontend}`);
@@ -3015,9 +3015,8 @@ prReview:
         });
         expect(request.prompt).toContain(`"projectPath": "${expectedWorktree}"`);
         expect(request.prompt).toContain(`Original project worktree: ${projectDir}`);
-        expect(request.prompt).toContain(
-          `open-worker 'tmux_proj_loop-worker-hub' '${expectedWorktree}'`,
-        );
+        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-hub-");
+        expect(request.prompt).toContain(`'${expectedWorktree}' --agent codex`);
         expect(request.prompt).toContain(`git -C '${expectedWorktree}' switch --detach origin/dev`);
         const marker = finalMarkerFromPrompt(request.prompt);
         return {

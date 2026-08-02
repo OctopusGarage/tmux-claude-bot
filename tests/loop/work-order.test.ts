@@ -127,14 +127,14 @@ describe("loop supervisor work order", () => {
     const prompt = buildLoopSupervisorPrompt(workOrder);
 
     expect(workOrder.notificationSession).toBe("tmux_proj_-repo-datavibe");
-    expect(workOrder.workerSession).toBe("tmux_proj_loop-worker-datavibe");
+    expect(workOrder.workerSession).toBe("tmux_proj_loop-worker-datavibe-1752643800000-datavibe");
     expect(prompt).toContain("You are the Loop Supervisor for tmux-claude-bot.");
     expect(prompt).toContain("Do not call model-provider APIs.");
     expect(prompt).toContain('send <project> "<task>"');
     expect(prompt).toContain("TCB_STATE_DIR=");
     expect(prompt).toContain("dashboard --json");
     expect(prompt).toContain(
-      "open-worker 'tmux_proj_loop-worker-datavibe' '/repo/datavibe' --agent codex",
+      "open-worker 'tmux_proj_loop-worker-datavibe-1752643800000-datavibe' '/repo/datavibe' --agent codex",
     );
     expect(prompt).not.toContain("open '/repo/datavibe' --agent codex");
     expect(prompt).toContain("Execution isolation:");
@@ -154,10 +154,10 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("supervisor-final-summary.json");
     expect(prompt).toContain("verify");
     expect(prompt).toContain(
-      "dashboard --json shows tmux_proj_loop-worker-datavibe running with the configured agent and path /repo/datavibe",
+      "dashboard --json shows tmux_proj_loop-worker-datavibe-1752643800000-datavibe running with the configured agent and path /repo/datavibe",
     );
     expect(prompt).toContain(
-      "control tmux_proj_loop-worker-datavibe compact --yes before each delegated optimization round.",
+      "control tmux_proj_loop-worker-datavibe-1752643800000-datavibe compact --yes before each delegated optimization round.",
     );
     expect(prompt).toContain(
       'status must be exactly one of: "completed", "blocked", "failed", "timeout", "cancelled"',
@@ -351,7 +351,7 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("partial coverage must not be presented as proof");
     expect(prompt).toContain("Stop when a round finds no confirmed real bugs");
     expect(prompt).toContain(
-      "control tmux_proj_loop-worker-datavibe compact --yes before each delegated bug-fix round.",
+      "control tmux_proj_loop-worker-datavibe-1752643800000-datavibe-bug-fix compact --yes before each delegated bug-fix round.",
     );
     expect(prompt).toContain("Focus on scheduler, gate, and state consistency bugs.");
     expect(prompt).toContain("loop/datavibe/bug-fix/1752643800000-datavibe-bug-fix");
@@ -926,14 +926,14 @@ workspaces:
         repositories: [
           {
             id: "geo-backend",
-            workerSession: "tmux_proj_loop-worker-geo-backend",
+            workerSession: "tmux_proj_loop-worker-geo-backend-1752643800000-geo-workspace",
             role: "backend",
             path: "/repo/realestate/geo-backend",
             agent: "codex",
           },
           {
             id: "geo-frontend",
-            workerSession: "tmux_proj_loop-worker-geo-frontend",
+            workerSession: "tmux_proj_loop-worker-geo-frontend-1752643800000-geo-workspace",
             role: "frontend",
             path: "/repo/realestate/geo-frontend",
             agent: "codex",
@@ -986,10 +986,10 @@ workspaces:
     expect(prompt).not.toContain("cd '/repo/realestate/geo-backend' && git status");
     expect(prompt).not.toContain("cd '/repo/realestate/geo-frontend' && git status");
     expect(prompt).toContain(
-      "open-worker 'tmux_proj_loop-worker-geo-backend' '/repo/realestate/geo-backend' --agent codex",
+      "open-worker 'tmux_proj_loop-worker-geo-backend-1752643800000-geo-workspace' '/repo/realestate/geo-backend' --agent codex",
     );
     expect(prompt).toContain(
-      "open-worker 'tmux_proj_loop-worker-geo-frontend' '/repo/realestate/geo-frontend' --agent codex",
+      "open-worker 'tmux_proj_loop-worker-geo-frontend-1752643800000-geo-workspace' '/repo/realestate/geo-frontend' --agent codex",
     );
     expect(prompt).toContain("Focus on API contracts and shared data semantics.");
   });
@@ -1069,10 +1069,10 @@ workspaces:
       "For geo-frontend, use branch loop/geo-frontend/bug-fix/1752643800000-geo-workspace-bug-fix",
     );
     expect(prompt).toContain(
-      "open-worker 'tmux_proj_loop-worker-geo-backend' '/repo/realestate/geo-backend' --agent codex",
+      "open-worker 'tmux_proj_loop-worker-geo-backend-1752643800000-geo-workspace-bug-fix' '/repo/realestate/geo-backend' --agent codex",
     );
     expect(prompt).toContain(
-      "open-worker 'tmux_proj_loop-worker-geo-frontend' '/repo/realestate/geo-frontend' --agent codex",
+      "open-worker 'tmux_proj_loop-worker-geo-frontend-1752643800000-geo-workspace-bug-fix' '/repo/realestate/geo-frontend' --agent codex",
     );
     expect(prompt).toContain(
       "control <worker-session> compact --yes before each delegated bug-fix round.",

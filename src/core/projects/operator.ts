@@ -18,6 +18,11 @@ export function loopWorkerSessionName(prefix: string, projectId: string): string
   return `${prefix}loop-worker-${sanitizeInfraSegment(projectId)}`;
 }
 
+/** Reserved loop worker session name scoped to one WorkOrder run. */
+export function loopWorkerRunSessionName(prefix: string, projectId: string, runId: string): string {
+  return `${loopWorkerSessionName(prefix, projectId)}-${sanitizeInfraSegment(runId)}`;
+}
+
 /** Reserved loop supervisor pool names. Pool size 1 keeps the legacy name. */
 export function loopSupervisorSessionNames(prefix: string, poolSize: number): string[] {
   const size = Number.isFinite(poolSize) ? Math.max(1, Math.floor(poolSize)) : 1;
