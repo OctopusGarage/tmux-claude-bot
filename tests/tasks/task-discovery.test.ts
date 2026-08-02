@@ -544,6 +544,10 @@ projects:
       branch: loop/geo-backend/automation-governance-review
       targetScore: 90
       allowRepairPr: true
+    opportunityDiscovery:
+      enabled: true
+      schedule: "40 2 * * *"
+      maxSuggestions: 2
     pullRequestReview:
       enabled: true
       schedule: "0 1 * * *"
@@ -598,6 +602,12 @@ projects:
           taskId: `loop:geo-backend:automation-governance-review:${Date.parse("2026-07-28T02:35:00Z")}`,
           source: "loop-engineering",
           name: "geo-backend automation-governance-review",
+          status: "expected",
+        }),
+        expect.objectContaining({
+          taskId: `loop:geo-backend:opportunity-discovery:${Date.parse("2026-07-28T02:40:00Z")}`,
+          source: "loop-engineering",
+          name: "geo-backend opportunity-discovery",
           status: "expected",
         }),
         expect.objectContaining({
