@@ -53,6 +53,22 @@ describe("lark autopilot cards", () => {
 });
 
 describe("lark opportunity cards", () => {
+  const richOpportunity = {
+    id: "api-20260729-abc123",
+    title: "Add explain command",
+    projectName: "api",
+    category: "developer-experience",
+    confidence: "high" as const,
+    estimatedComplexity: "small" as const,
+    status: "proposed" as const,
+    value:
+      "Faster support triage by letting maintainers ask the bot why a command failed, which files were checked, and what evidence was collected before proposing a fix.",
+    problem:
+      "Maintainers currently need to read raw logs and transcripts to understand a failed command before deciding whether the suggestion is worth discussing.",
+    recommendedApproach:
+      "Add a read-only explain flow that summarizes command evidence and links back to the stored report.",
+  };
+
   it("digest card keeps discussion and delegation decoupled", () => {
     const j = JSON.stringify(
       opportunityDigestCard({
@@ -80,11 +96,32 @@ describe("lark opportunity cards", () => {
     expect(j).toContain("Faster support.");
     expect(j.indexOf("oppdiscussall")).toBeGreaterThan(j.indexOf("Faster support."));
     expect(j).toContain("暂不处理");
-    expect(j).not.toContain("oppshow");
+    expect(j).toContain("oppshow");
     expect(j).not.toContain("oppdelegate");
     expect(j).not.toContain("Project:");
     expect(j).not.toContain("ID:");
     expect(j).not.toContain("Category:");
     expect(j).not.toContain("Commands:");
+  });
+
+  it("digest card shows readable per-suggestion detail and item actions", () => {
+    const card = opportunityDigestCard({
+      title: "Opportunity suggestions: api",
+      body: "Project: api\nSuggestions: 1",
+      opportunities: [richOpportunity],
+    });
+    const j = JSON.stringify(card);
+
+    expect(j).toContain("Problem:");
+    expect(j).toContain(richOpportunity.problem);
+    expect(j).toContain("Value:");
+    expect(j).toContain(richOpportunity.value);
+    expect(j).toContain("Approach:");
+    expect(j).toContain(richOpportunity.recommendedApproach);
+    expect(j).not.toContain("...");
+    expect(j).toContain('"cmd":"oppshow"');
+    expect(j).toContain('"cmd":"oppdiscuss"');
+    expect(j).toContain('"cmd":"oppdismiss"');
+    expect(j).toContain('"id":"api-20260729-abc123"');
   });
 });

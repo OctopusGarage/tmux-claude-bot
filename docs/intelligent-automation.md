@@ -315,6 +315,14 @@ Discussion and execution are intentionally decoupled. A suggestion message may
 offer discussion actions, but implementation should go through the same active
 delegation pipeline as any other user-confirmed task.
 
+Feishu/Lark suggestion cards should include enough per-item problem, value, and
+approach detail to decide whether to act, with view, discuss, and dismiss
+actions on each suggestion plus batch controls when suggestions are related.
+Telegram should align with per-suggestion discuss/dismiss buttons while each
+`callback_data` payload fits Telegram's 64-byte limit; when it cannot, the
+message falls back to typed `/opportunity` commands rather than sending unsafe
+callbacks.
+
 ## PR Review Modes
 
 There are two PR review surfaces:

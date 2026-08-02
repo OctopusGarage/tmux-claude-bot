@@ -650,9 +650,26 @@ export function buildOpportunityNotificationKeyboard(
 ): InlineKeyboard | undefined {
   const tokens = opportunities.map((opportunity) => opportunityCallbackToken(opportunity.id));
   if (tokens.length === 0) return undefined;
-  const encoded = tokens.join(",");
-  if (`od:${encoded}`.length > 64 || `ox:${encoded}`.length > 64) return undefined;
-  return new InlineKeyboard().text("讨论全部", `od:${encoded}`).text("暂不处理", `ox:${encoded}`);
+  const rows = tokens.map((token, index) => ({
+    discuss: `od:${token}`,
+    dismiss: `ox:${token}`,
+    index: index + 1,
+  }));
+  if (
+    rows.some(
+      (row) =>
+        Buffer.byteLength(row.discuss, "utf-8") > 64 ||
+        Buffer.byteLength(row.dismiss, "utf-8") > 64,
+    )
+  ) {
+    return undefined;
+  }
+  const kb = new InlineKeyboard();
+  for (const [index, row] of rows.entries()) {
+    kb.text(`讨论 ${row.index}`, row.discuss).text(`暂不处理 ${row.index}`, row.dismiss);
+    if (index < rows.length - 1) kb.row();
+  }
+  return kb;
 }
 
 export function opportunityCallbackToken(id: string): string {
