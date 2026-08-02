@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { NotificationChannelSelection } from "../notifications/gateway.js";
 import { opportunityReportPath } from "../opportunities/store.js";
-import { loopWorkerSessionName } from "../projects/operator.js";
+import { loopWorkerRunSessionName } from "../projects/operator.js";
 import { sessionNameFromPath } from "../projects/sessionPathMap.js";
 import type { ApprovedSkill } from "../skills/schema.js";
 import type {
@@ -335,7 +335,11 @@ export function buildLoopWorkOrder(input: {
     ...(input.projectSessionPrefix !== undefined
       ? {
           notificationSession: sessionNameFromPath(input.project.path, input.projectSessionPrefix),
-          workerSession: loopWorkerSessionName(input.projectSessionPrefix, input.project.id),
+          workerSession: loopWorkerRunSessionName(
+            input.projectSessionPrefix,
+            input.project.id,
+            input.runId,
+          ),
         }
       : {}),
     agent: input.project.agent,
@@ -489,7 +493,11 @@ export function buildLoopWorkspaceWorkOrder(input: {
     ...(input.projectSessionPrefix !== undefined
       ? {
           notificationSession: sessionNameFromPath(workspace.root, input.projectSessionPrefix),
-          workerSession: loopWorkerSessionName(input.projectSessionPrefix, workspace.id),
+          workerSession: loopWorkerRunSessionName(
+            input.projectSessionPrefix,
+            workspace.id,
+            input.runId,
+          ),
         }
       : {}),
     agent: workspace.agent,
@@ -527,7 +535,13 @@ export function buildLoopWorkspaceWorkOrder(input: {
         agent: repository.agent ?? workspace.agent,
         pullRequest: repository.pullRequest,
         ...(input.projectSessionPrefix !== undefined
-          ? { workerSession: loopWorkerSessionName(input.projectSessionPrefix, repository.id) }
+          ? {
+              workerSession: loopWorkerRunSessionName(
+                input.projectSessionPrefix,
+                repository.id,
+                input.runId,
+              ),
+            }
           : {}),
       })),
     },
@@ -580,7 +594,13 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
       : {}),
     notificationSession: input.session,
     ...(input.projectSessionPrefix !== undefined
-      ? { workerSession: loopWorkerSessionName(input.projectSessionPrefix, input.projectId) }
+      ? {
+          workerSession: loopWorkerRunSessionName(
+            input.projectSessionPrefix,
+            input.projectId,
+            input.runId,
+          ),
+        }
       : {}),
     agent: input.agent,
     goal: input.requirement,

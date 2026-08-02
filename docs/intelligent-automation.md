@@ -136,9 +136,11 @@ centralized.
   for every repository they touch.
 - A dedicated supervised worker context should be leased per WorkOrder or per
   bounded run slice. It must use the reserved session name shape
-  `<projectSessionPrefix>loop-worker-*`; `open-worker` must not create ordinary
-  project sessions. Reset the worker with the configured `compact` or `clear`
-  policy before substantive work and between unrelated subtasks.
+  `<projectSessionPrefix>loop-worker-*`; generated WorkOrders include the run
+  identity in that worker name so retained failure transcripts cannot block the
+  next run for the same project. `open-worker` must not create ordinary project
+  sessions. Reset the worker with the configured `compact` or `clear` policy
+  before substantive work and between unrelated subtasks.
 - The Loop Supervisor owns orchestration, revision prompts, final summary
   validation, and system-gate retry. Worker sessions perform the bounded target
   work; they are not the final acceptance authority.
