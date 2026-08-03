@@ -255,7 +255,7 @@ trigger
   -> switch back to configured base branch
   -> rebase local base branch onto origin
   -> release successful worker or retain failed worker transcript until TTL
-  -> write logs, ledger, reports, notifications
+  -> write logs, ledger, reports, handoff artifacts, notifications
 ```
 
 The supervisor must not be detached just because it printed something that looks
@@ -271,6 +271,13 @@ run, which checks justified acceptance, which failures blocked acceptance, and
 which failures were recoverable. Daily Task Audit and human debugging should
 prefer this artifact over a stale `supervisor-final-summary.json` when they
 disagree.
+
+Every supervised run must also write `handoff.json` and `handoff.md` beside the
+supervisor report. These are the resumable long-task artifacts: they summarize
+the WorkOrder goal, task kind, structured planning contract, acceptance criteria,
+stop conditions, actions taken, commits, verification status, next steps, and
+remaining risks. Future supervisors and human debuggers should use them before
+reopening retained worker transcripts or guessing from chat context.
 
 Loop run artifact names and paths are product contracts. Code that writes,
 reads, indexes, or links run reports must use the loop run artifact registry

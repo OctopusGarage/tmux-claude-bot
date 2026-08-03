@@ -357,7 +357,8 @@ Each scheduled project chooses a runner:
 - `runner.kind: agent-supervised` sends a bounded WorkOrder to a reserved Loop
   Supervisor agent. The supervisor can inspect failures, adapt the next action, and
   finish with a required marker + JSON summary. Reports are written as
-  `supervisor.md` / `supervisor-summary.json`. When commit or PR publishing is
+  `supervisor.md` / `supervisor-summary.json`, with `handoff.md` /
+  `handoff.json` for resumable next-round state. When commit or PR publishing is
   enabled, the managed loop still performs final system gates after the supervisor
   reports completion: clean worktree, expected switch-back branch, PR lookup,
   mergeability, and completed successful/neutral/skipped CI checks. If

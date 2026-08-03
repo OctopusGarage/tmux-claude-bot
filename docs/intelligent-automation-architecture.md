@@ -72,6 +72,7 @@ trigger
   -> write supervisor final summary
   -> run system gate
   -> retry recoverable failures through bounded revision prompts
+  -> write reports and handoff artifacts
   -> notify, write ledger, release or retain worker
 ```
 
@@ -143,6 +144,7 @@ A supervised task is not complete just because an agent says it is complete.
 Completion requires durable evidence:
 
 - strict supervisor final summary
+- `handoff.json` / `handoff.md` for resumable next-round state
 - `system-gate.json`
 - git clean/branch state
 - PR URL or report-only reason when applicable

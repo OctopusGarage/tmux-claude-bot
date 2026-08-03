@@ -33,6 +33,15 @@ const workOrder = {
   recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
   commitPolicy: { enabled: false, perRound: true },
   requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:wo-1]",
+  planning: {
+    required: true,
+    source: "active-delegation",
+    requireOwnerConfirmation: false,
+    rubric: ["Plan before editing", "Verify before completion"],
+    acceptanceCriteria: ["Focused tests pass", "A final handoff is auditable"],
+    stopConditions: ["Verification cannot run"],
+    nonGoals: ["No unrelated cleanup"],
+  },
 } satisfies LoopWorkOrder;
 
 describe("writeLoopSupervisorReport", () => {
@@ -75,6 +84,20 @@ describe("writeLoopSupervisorReport", () => {
         "wo-1",
         "supervisor-summary.json",
       ),
+      handoffJsonPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "datavibe",
+        "wo-1",
+        "handoff.json",
+      ),
+      handoffMarkdownPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "datavibe",
+        "wo-1",
+        "handoff.md",
+      ),
     });
 
     const markdown = await readFile(report.markdownPath, "utf8");
@@ -114,6 +137,39 @@ describe("writeLoopSupervisorReport", () => {
         },
       },
     });
+
+    expect(JSON.parse(await readFile(report.handoffJsonPath, "utf8"))).toMatchObject({
+      version: 1,
+      workOrderId: "wo-1",
+      status: "completed",
+      objective: {
+        goal: "Improve architecture.",
+        taskKind: "architecture",
+        targetScore: 90,
+        maxRounds: 3,
+      },
+      planning: {
+        acceptanceCriteria: ["Focused tests pass", "A final handoff is auditable"],
+        stopConditions: ["Verification cannot run"],
+      },
+      progress: {
+        actionsTaken: ["ran focused tests", "committed scoped changes"],
+        commits: ["abc123"],
+        finalVerification: "passed",
+      },
+      nextAgent: {
+        nextSteps: [
+          "No follow-up was reported. Inspect system-gate.json before starting related work.",
+        ],
+      },
+    });
+
+    const handoffMarkdown = await readFile(report.handoffMarkdownPath, "utf8");
+    expect(handoffMarkdown).toContain("# Loop WorkOrder Handoff");
+    expect(handoffMarkdown).toContain("## Acceptance Criteria");
+    expect(handoffMarkdown).toContain("- Focused tests pass");
+    expect(handoffMarkdown).toContain("## Stop Conditions");
+    expect(handoffMarkdown).toContain("- Verification cannot run");
   });
 
   it("writes dispatch failure reports when no final summary is available", async () => {
@@ -149,6 +205,20 @@ describe("writeLoopSupervisorReport", () => {
         status: "dispatch-failed",
         reason: "queue full",
         output: "partial output\nqueue full",
+      },
+    });
+
+    expect(JSON.parse(await readFile(report.handoffJsonPath, "utf8"))).toMatchObject({
+      status: "dispatch-failed",
+      progress: {
+        finalVerification: "not-available",
+      },
+      nextAgent: {
+        nextSteps: [
+          "Inspect supervisor output, system-gate.json, and work-order-state.json before retrying.",
+          "Retry only after the concrete blocker is resolved or the WorkOrder is narrowed.",
+        ],
+        risks: ["queue full"],
       },
     });
   });

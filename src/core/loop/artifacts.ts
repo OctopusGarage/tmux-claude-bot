@@ -9,6 +9,8 @@ export const LOOP_RUN_ARTIFACTS = {
   supervisorMarkdown: "supervisor.md",
   supervisorSummary: "supervisor-summary.json",
   supervisorFinalSummary: "supervisor-final-summary.json",
+  handoffJson: "handoff.json",
+  handoffMarkdown: "handoff.md",
   systemGate: "system-gate.json",
   workOrder: "work-order.json",
   workOrderState: "work-order-state.json",

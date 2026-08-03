@@ -127,6 +127,10 @@ describe("managed install and release script contracts", () => {
 
     expect(verifyScript).toContain("git-worktree-config-guard.sh");
     expect(verifyScript).toContain("install_git_worktree_config_guard");
+    expect(verifyScript).toContain('git_worktree_config_checkpoint "verify-local:before:$*"');
+    expect(verifyScript).toContain(
+      'git_worktree_config_checkpoint "verify-local:after:$*:status=$status"',
+    );
   });
 
   it("keeps root convenience scripts strict and repo-relative", () => {

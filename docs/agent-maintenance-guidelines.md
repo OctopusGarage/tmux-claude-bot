@@ -189,7 +189,24 @@ manual emergency escape hatch and should not be used for routine releases.
 Git hooks must be safe in linked automation worktrees. Keep the worktree config
 guard enabled in pre-commit and pre-push hooks so a hook failure cannot leave
 the shared common git config with `core.bare=true` and break the source
-worktree.
+worktree. Hook entrypoints must also clear Git's exported repository-local
+environment variables, such as `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, and
+the variables listed by `git rev-parse --local-env-vars`, before running Node
+tests, shell scripts, or nested temporary-repository checks. Restoring
+`core.bare=false` only at hook exit is a recovery fallback, not sufficient root
+cause prevention.
+
+When `core.bare=true`, an unexpected `core.worktree`, or suspected Git config
+mutation appears again, inspect the guard trace before guessing. By default the
+trace is written to `<git-common-dir>/tcb-git-config-guard.log`; tests and
+diagnostic runs may override it with `TCB_GIT_CONFIG_TRACE_FILE`. Each line
+records the stage, cwd, common git dir, config path, config checksum,
+`core.bare`, `core.worktree`, and inherited Git-local environment variables.
+`npm run verify:local` checkpoints before and after every command it runs, so
+the first adjacent before/after pair whose checksum or value changes is the
+command boundary to investigate. Treat inherited `GIT_DIR`/`GIT_WORK_TREE` as
+evidence of wrong-repository targeting risk; treat an observed value transition
+to `bare=true` as the proof needed to identify the writer.
 
 Agent tool hooks must block attempts to set `core.bare=true` before the shell
 command runs. Keep `scripts/agent-command-guard.sh` covered by tests and wired

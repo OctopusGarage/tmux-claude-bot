@@ -51,5 +51,11 @@ describe("listLoopReportRecords", () => {
     expect(loopRunArtifactPath("hub", "run-1", "supervisorFinalSummary", "/state")).toBe(
       join("/state", "loop-runs", "hub", "run-1", "supervisor-final-summary.json"),
     );
+    expect(loopRunArtifactPath("hub", "run-1", "handoffJson", "/state")).toBe(
+      join("/state", "loop-runs", "hub", "run-1", "handoff.json"),
+    );
+    expect(loopRunArtifactPath("hub", "run-1", "handoffMarkdown", "/state")).toBe(
+      join("/state", "loop-runs", "hub", "run-1", "handoff.md"),
+    );
   });
 });

@@ -109,7 +109,8 @@ deterministic system runner. For adaptive AI-managed scheduled work, enable the
 reserved supervisor with `LOOP_SUPERVISOR_ENABLED=true` and set a project
 `runner.kind: agent-supervised`; the bot queues a bounded WorkOrder to the
 `tmux_proj_loop-supervisor` session and writes `supervisor.md` /
-`supervisor-summary.json` under `loop-runs/<project>/<runId>/`. For projects with
+`supervisor-summary.json` plus resumable `handoff.md` / `handoff.json` under
+`loop-runs/<project>/<runId>/`. For projects with
 commit/PR settings, the bot also checks the final worktree, switch-back branch,
 PR mergeability, and CI rollup after the supervisor reports completion. When
 `pullRequest.autoMerge: true` is set, the bot merges the checked PR and rebases
