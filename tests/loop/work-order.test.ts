@@ -311,6 +311,42 @@ describe("loop supervisor work order", () => {
     expect(prompt).not.toContain("must preserve the user's current branch by default");
   });
 
+  it("keeps non-dependency preflight for explicit read-only smoke active delegations", () => {
+    const projectPolicy: LoopProjectConfig = {
+      ...firstProject(),
+      preflight: {
+        commands: [
+          "test -d node_modules",
+          "test -x node_modules/.bin/vitest",
+          "test -x node_modules/.bin/eslint",
+          "test -f .env.guard",
+        ],
+        repair: {
+          agent: true,
+          prompt: "Install project dependencies before continuing.",
+        },
+      },
+    };
+
+    const workOrder = buildActiveDelegatedTaskWorkOrder({
+      session: "tmux_proj_repo",
+      projectId: "repo",
+      projectName: "Repo",
+      projectPath: "/repo/app",
+      agent: "codex",
+      requirement:
+        "Read-only smoke validation of the active delegation contract. Do not modify files, do not commit, do not open a pull request. Inspect repository state and available verification hints only.",
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-repo-active-delegate",
+      projectPolicy,
+    });
+
+    expect(workOrder.preflight).toEqual({
+      commands: ["test -f .env.guard"],
+      repair: { agent: false },
+    });
+  });
+
   it("renders a bug-fix prompt that separates real bug repair from architecture work", () => {
     const project = {
       ...firstProject(),
@@ -1635,6 +1671,46 @@ prReview:
     if (result.ok) {
       expect(result.summary.delegatedTasks).toEqual([
         "Round 1: Inspect coverage gaps and add meaningful tests only. Result: Added focused adapter tests.",
+      ]);
+    }
+  });
+
+  it("normalizes structured actionsTaken entries from supervisor summaries", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "completed",
+          projectId: "datavibe",
+          actionsTaken: [
+            {
+              delegationBrief: {
+                objective: "Verify active delegation contract.",
+                currentAssessment: "Worktree is clean.",
+              },
+            },
+            {
+              planReview: {
+                checklistCompleted: true,
+                verificationCompleted: true,
+              },
+            },
+          ],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.actionsTaken).toEqual([
+        "delegationBrief: objective=Verify active delegation contract.; currentAssessment=Worktree is clean.",
+        "planReview: checklistCompleted=true; verificationCompleted=true",
       ]);
     }
   });

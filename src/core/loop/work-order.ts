@@ -650,7 +650,7 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
         ? [...projectPolicy.blockedActions]
         : ["direct-model-api", "dependency-upgrade", "broad-rewrite"],
     skills: input.skills ?? { approved: [] },
-    preflight: projectPolicy?.preflight ?? { commands: [], repair: { agent: false } },
+    preflight: activeDelegatedPreflight(input.requirement, projectPolicy),
     assessment: projectPolicy?.assessment ?? { command: "true" },
     execution: projectPolicy?.execution ?? { agent: true },
     recovery: projectPolicy?.recovery ?? { agent: true, dirtyWorktree: false, maxAttempts: 1 },
@@ -679,6 +679,40 @@ function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsola
       retainFailureForHours: 72,
     },
   };
+}
+
+function activeDelegatedPreflight(
+  requirement: string,
+  projectPolicy: LoopProjectConfig | undefined,
+): LoopProjectConfig["preflight"] {
+  const preflight = projectPolicy?.preflight ?? { commands: [], repair: { agent: false } };
+  if (!isReadOnlySmokeRequirement(requirement)) return preflight;
+
+  const commands = preflight.commands.filter((command) => !isDependencyPreflightCommand(command));
+  if (commands.length !== preflight.commands.length) {
+    return { commands, repair: { agent: false } };
+  }
+  return preflight;
+}
+
+function isReadOnlySmokeRequirement(requirement: string): boolean {
+  const normalized = requirement.toLowerCase();
+  return (
+    normalized.includes("read-only smoke") &&
+    normalized.includes("do not modify files") &&
+    normalized.includes("do not commit") &&
+    (normalized.includes("do not open a pr") || normalized.includes("do not open a pull request"))
+  );
+}
+
+function isDependencyPreflightCommand(command: string): boolean {
+  const normalized = command.toLowerCase();
+  return (
+    normalized.includes("node_modules") ||
+    normalized.includes(".venv/bin/") ||
+    normalized.includes("venv/bin/") ||
+    normalized.includes("vendor/bin/")
+  );
 }
 
 export type LoopWorktreeIsolationMode = LoopExecutionIsolation["worktreeIsolation"];
@@ -859,7 +893,7 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
 
 function finalSummaryContractLines(): string[] {
   return [
-    "- The JSON file must contain fields: status, projectId, actionsTaken, delegatedTasks, finalVerification, reviewGate, commits, followUps. delegatedTasks must be an array of strings, or objects with only projectId and status.",
+    "- The JSON file must contain fields: status, projectId, actionsTaken, delegatedTasks, finalVerification, reviewGate, commits, followUps. actionsTaken, commits, and followUps must be arrays of strings. delegatedTasks must be an array of strings, or objects with only projectId and status.",
     "- reviewGate must be an object with fields: preMutationReview, postMutationReview, aiReview, deterministicGates, decision, notes.",
     "- reviewGate.preMutationReview must list the evidence checked before editing, including why the issue or task is real, bounded, allowed, and verifiable; use [] only for read-only/no-op tasks and explain that in notes.",
     "- reviewGate.postMutationReview must list the diff/risk review performed after editing; include regression, security, data, scheduler/state, notification, PR/merge, and switch-back risks when relevant.",
@@ -2178,7 +2212,7 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
   if (!isRecord(value)) return null;
   const status = parseSupervisorFinalStatus(value.status);
   const projectId = typeof value.projectId === "string" ? value.projectId : null;
-  const actionsTaken = parseStringArray(value.actionsTaken);
+  const actionsTaken = parseActionStrings(value.actionsTaken);
   const delegatedTasks = parseDelegatedTasks(value.delegatedTasks);
   const finalVerification = parseFinalVerification(value.finalVerification, status);
   const reviewGate = value.reviewGate === undefined ? undefined : parseReviewGate(value.reviewGate);
@@ -2315,6 +2349,41 @@ function delegatedTaskRecordDescription(item: Record<string, unknown>): string |
 
 function parseStringArray(value: unknown): string[] | null {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : null;
+}
+
+function parseActionStrings(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const actions: string[] = [];
+  for (const item of value) {
+    const parsed = actionString(item);
+    if (parsed === null) return null;
+    actions.push(parsed);
+  }
+  return actions;
+}
+
+function actionString(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (!isRecord(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length === 0) return null;
+  if (entries.length === 1) {
+    const [key, nested] = entries[0] ?? [];
+    if (typeof key !== "string") return null;
+    return `${key}: ${describeActionValue(nested)}`;
+  }
+  return describeActionValue(value);
+}
+
+function describeActionValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value === null) return "null";
+  if (Array.isArray(value)) return value.map(describeActionValue).join(", ");
+  if (!isRecord(value)) return String(value);
+  return Object.entries(value)
+    .map(([key, nested]) => `${key}=${describeActionValue(nested)}`)
+    .join("; ");
 }
 
 function parseStringArrayOrSingleton(value: unknown): string[] | null {

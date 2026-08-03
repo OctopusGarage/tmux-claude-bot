@@ -199,7 +199,7 @@ trigger
   -> discover/validate due task
   -> conflict and queue checks
   -> sync latest base branch
-  -> preflight environment checks
+  -> risk-selected preflight checks (read-only smoke work may skip dependency preflight)
   -> materialize bounded WorkOrder
   -> assign Loop Supervisor
   -> lease isolated supervised worker context
