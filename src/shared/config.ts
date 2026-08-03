@@ -86,6 +86,10 @@ export const envSchema = z.object({
   SESSION_IDLE_REAPER_TICK_MS: blankTolerantNonNegativeInt(3_600_000),
   // Close agents unused for this long. Default 3 days. 0 disables.
   SESSION_IDLE_REAPER_MAX_IDLE_MS: blankTolerantNonNegativeInt(259_200_000),
+  // Loop workers are automation infrastructure, not user chat context. Keep the
+  // ordinary project-agent threshold conservative, but reclaim idle workers much
+  // sooner so scheduled automation cannot accumulate dozens of tmux sessions.
+  SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS: blankTolerantNonNegativeInt(21_600_000),
   // Automatically run reboot recovery on boot (no /recover needed). Idempotent —
   // a no-op when tmux survived a mere bot restart (everything's already alive),
   // does real work only after a machine reboot. Set to false/0 to disable.
@@ -349,6 +353,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
     sessionIdleReaper: {
       tickMs: parsed.SESSION_IDLE_REAPER_TICK_MS,
       maxIdleMs: parsed.SESSION_IDLE_REAPER_MAX_IDLE_MS,
+      loopWorkerMaxIdleMs: parsed.SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS,
     },
     autoRecover: parsed.AUTO_RECOVER !== "false" && parsed.AUTO_RECOVER !== "0",
     keepAwake: parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true",

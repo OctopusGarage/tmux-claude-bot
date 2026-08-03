@@ -188,9 +188,13 @@ centralized.
 - Expired retained leases are consumed before a supervisor worker is ensured:
   the old tmux session is killed best-effort, the lease is removed, and the
   normal supervisor startup path recreates the worker when it is still needed.
-- Long-idle loop worker sessions are reclaimed by the session idle reaper. Unlike
-  ordinary project sessions, a reclaimed loop worker has its whole tmux session
-  killed because it is automation infrastructure, not a human chat context.
+- Accepted completed WorkOrders clean up their loop worker tmux session
+  immediately. Long-idle loop worker sessions without accepted completion
+  evidence are reclaimed by the session idle reaper using
+  `SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS` (default 6 hours), separate from
+  the ordinary project-agent threshold. Unlike ordinary project sessions, a
+  reclaimed loop worker has its whole tmux session killed because it is
+  automation infrastructure, not a human chat context.
 - Persist enough artifact data to replay the run without reopening the worker:
   leased worker/session name, expected path, actual git toplevel, reset action,
   cleanup decision, PR/check state, verification commands, and final summary.

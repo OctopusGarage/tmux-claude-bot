@@ -102,6 +102,45 @@ describe("runSessionIdleReaper", () => {
     });
   });
 
+  it("uses the shorter loop-worker idle threshold without changing user project retention", async () => {
+    setPathForSession("tmux_proj_loop-worker-api", "/repo/api");
+    setPathForSession("tmux_proj_regular", "/repo/regular");
+    markSessionUsed("tmux_proj_loop-worker-api", now - 5_000);
+    markSessionUsed("tmux_proj_regular", now - 5_000);
+
+    const exit = vi.fn(async () => {});
+    const killSession = vi.fn(async () => {});
+    const deps = fakeDeps({
+      session: null,
+      bridge: {
+        listProjectSessions: vi.fn(async () => ["tmux_proj_loop-worker-api", "tmux_proj_regular"]),
+        paneCurrentPath: vi.fn(async (session?: string) =>
+          session === "tmux_proj_loop-worker-api" ? "/repo/api" : "/repo/regular",
+        ),
+        killSession,
+      },
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        exit,
+      },
+    });
+
+    const summary = await runSessionIdleReaper(deps, {
+      now,
+      maxIdleMs: 10_000,
+      loopWorkerMaxIdleMs: 3_000,
+    });
+
+    expect(killSession).toHaveBeenCalledWith("tmux_proj_loop-worker-api");
+    expect(exit).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      checked: 2,
+      closed: 1,
+      skipped: { "not-idle-long-enough": 1 },
+      failures: 0,
+    });
+  });
+
   it("kills stale stopped loop worker tmux sessions after the idle threshold", async () => {
     setPathForSession("tmux_proj_loop-worker-api", "/repo/api");
     markSessionUsed("tmux_proj_loop-worker-api", now - 10_000);

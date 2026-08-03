@@ -374,9 +374,11 @@ Each scheduled project chooses a runner:
   run `tcb control <worker-session> compact --yes` before each delegated
   optimization round. These loop worker sessions are reserved automation
   infrastructure and do not replace or receive prompts from the ordinary human
-  project chat session. Long-idle loop workers are reclaimed by the session idle
-  reaper, which kills the worker tmux session after the configured idle threshold
-  instead of routing cleanup through the ordinary project chat lifecycle.
+  project chat session. When the WorkOrder reaches accepted `completed` state,
+  the worker tmux session is killed immediately because it is no longer reusable.
+  Workers without accepted completion evidence are reclaimed by the session idle
+  reaper after `SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS` (default 6 hours)
+  instead of the ordinary project-agent threshold.
   When the supervisor reports completion but the bot's system gate finds a
   recoverable validation failure, such as a dirty worktree, wrong switch-back
   branch, missing PR cleanup, pending/failing PR checks, or PR hygiene issue, the

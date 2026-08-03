@@ -10,6 +10,7 @@ import type { NotificationGateway } from "../notifications/gateway.js";
 import { OpportunityStore, parseOpportunityDiscoveryReportFile } from "../opportunities/store.js";
 import { formatOpportunityDigest } from "../opportunities/view.js";
 import { sessionNameFromPath } from "../projects/sessionPathMap.js";
+import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import {
   createLoopQueueAgentEvalRunner,
@@ -317,6 +318,7 @@ export async function runLoopServiceTickAsync(input: {
   isSupervisorSessionAvailable?: (sessionName: string) => Promise<boolean>;
   defaultSupervisorTimeoutMs?: number;
   supervisorRevisionMaxAttempts?: number;
+  cleanupCompletedWorkerSession?: (sessionName: string) => Promise<void>;
 }): Promise<LoopServiceTickSummary> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const previousLastFired = input.schedulerStore.getLastFired();
@@ -645,6 +647,9 @@ export async function runLoopServiceTickAsync(input: {
       resultStatus: result.status,
     });
     settleLoopSupervisorWorkerLease(workOrder, result, endedAt);
+    if (result.status === "completed") {
+      await cleanupCompletedWorkerSession(workOrder, input.cleanupCompletedWorkerSession);
+    }
     if (completion.retrySchedule || result.status === "invalid-output") {
       restoreLastFired(input.schedulerStore, previousLastFired, due.jobKey, due.scheduledAt);
     } else {
@@ -698,6 +703,32 @@ export async function runLoopServiceTickAsync(input: {
     });
     ran++;
     if (result.status !== "completed") failed++;
+  };
+
+  const cleanupCompletedWorkerSession = async (
+    workOrder: LoopWorkOrder,
+    cleanup: ((sessionName: string) => Promise<void>) | undefined,
+  ): Promise<void> => {
+    if (workOrder.workerSession === undefined || cleanup === undefined) return;
+    try {
+      await cleanup(workOrder.workerSession);
+      log.info("loop engineering completed worker session cleaned up", {
+        data: {
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          workerSession: workOrder.workerSession,
+        },
+      });
+    } catch (err) {
+      log.warn("failed to clean up completed loop worker session", {
+        err,
+        data: {
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          workerSession: workOrder.workerSession,
+        },
+      });
+    }
   };
 
   const runSystemDue = async (target: ResolvedDue): Promise<void> => {
@@ -1260,6 +1291,10 @@ export function startLoopEngineering(
         runAgentEval: createLoopQueueAgentEvalRunner(deps),
         runGit: runGitCommand,
         runSupervisorTask: createLoopSupervisorTaskRunner(deps),
+        cleanupCompletedWorkerSession: async (sessionName) => {
+          await deps.bridge.killSession(sessionName);
+          cleanupWorkerSessionRecords(sessionName);
+        },
         supervisorSessionNames: loopSupervisorSessionNames(
           deps.config.projectSessionPrefix,
           deps.config.loopEngineering.supervisor.poolSize,

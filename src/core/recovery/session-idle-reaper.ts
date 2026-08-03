@@ -1,13 +1,10 @@
 import { createLogger } from "../../shared/utils/logger.js";
 import { readAgentActivitySnapshot } from "../agents/activity-snapshot.js";
-import {
-  markSessionStopped,
-  markSessionUsed,
-  sessionLastUsedAt,
-} from "../agents/runningSessions.js";
+import { markSessionUsed, sessionLastUsedAt } from "../agents/runningSessions.js";
 import type { HandlerDeps } from "../deps.js";
 import { isLoopWorkerSessionName, isReservedInfrastructureSession } from "../projects/operator.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
+import { cleanupWorkerSessionRecords } from "./worker-session-cleanup.js";
 
 const log = createLogger("recovery.idle-reaper");
 
@@ -20,7 +17,7 @@ export type SessionIdleReaperSummary = {
 
 export async function runSessionIdleReaper(
   deps: HandlerDeps,
-  input: { now?: number; maxIdleMs: number },
+  input: { now?: number; maxIdleMs: number; loopWorkerMaxIdleMs?: number },
 ): Promise<SessionIdleReaperSummary> {
   const now = input.now ?? Date.now();
   const currentSessions = new Set(await deps.currentProject.allCurrent().catch(() => []));
@@ -41,6 +38,10 @@ export async function runSessionIdleReaper(
 
   for (const candidate of sessions) {
     const { session } = candidate;
+    const isLoopWorker = candidate.kind === "loop-worker";
+    const maxIdleMs = isLoopWorker
+      ? (input.loopWorkerMaxIdleMs ?? input.maxIdleMs)
+      : input.maxIdleMs;
     summary.checked++;
     try {
       const decision = await idleReaperDecision(
@@ -48,16 +49,16 @@ export async function runSessionIdleReaper(
         session,
         currentSessions,
         now,
-        input.maxIdleMs,
-        candidate.kind === "loop-worker",
+        maxIdleMs,
+        isLoopWorker,
       );
       if (decision.kind === "skip") {
         increment(summary.skipped, decision.reason);
         continue;
       }
-      if (candidate.kind === "loop-worker") {
+      if (isLoopWorker) {
         await deps.bridge.killSession(session);
-        markSessionStopped(session);
+        cleanupWorkerSessionRecords(session);
       } else {
         await deps.agent.exit(session);
       }
@@ -157,17 +158,20 @@ async function idleReaperDecision(
 
 export function startSessionIdleReaper(
   deps: HandlerDeps,
-  config: { tickMs: number; maxIdleMs: number },
+  config: { tickMs: number; maxIdleMs: number; loopWorkerMaxIdleMs?: number },
 ): () => void {
-  if (config.tickMs <= 0 || config.maxIdleMs <= 0) {
+  if (config.tickMs <= 0 || (config.maxIdleMs <= 0 && (config.loopWorkerMaxIdleMs ?? 0) <= 0)) {
     log.info("idle reaper disabled", { data: config });
     return () => {};
   }
   log.info("idle reaper enabled", { data: config });
   const run = (): void => {
-    void runSessionIdleReaper(deps, { maxIdleMs: config.maxIdleMs }).catch((err) =>
-      log.warn("idle reaper sweep failed", { err }),
-    );
+    void runSessionIdleReaper(deps, {
+      maxIdleMs: config.maxIdleMs,
+      ...(config.loopWorkerMaxIdleMs !== undefined
+        ? { loopWorkerMaxIdleMs: config.loopWorkerMaxIdleMs }
+        : {}),
+    }).catch((err) => log.warn("idle reaper sweep failed", { err }));
   };
   const initial = setTimeout(run, Math.min(config.tickMs, 60_000));
   const timer = setInterval(run, config.tickMs);

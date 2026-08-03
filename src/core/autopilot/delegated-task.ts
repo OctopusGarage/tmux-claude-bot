@@ -46,6 +46,7 @@ import {
 } from "../loop/work-order.js";
 import { markImplementedOpportunitiesForCompletedDelegation } from "../opportunities/delegation-completion.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
+import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
 
 const log = createLogger("autopilot.delegated-task");
 const DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS = 7_200_000;
@@ -507,16 +508,16 @@ async function runActiveDelegatedTaskInBackground(
     revisionFailures = supervisorRevisionFailures(gate.failures);
   }
 
-  finishActiveDelegatedTask(deps, workOrder, supervisorSession, startedAt, gate);
+  await finishActiveDelegatedTask(deps, workOrder, supervisorSession, startedAt, gate);
 }
 
-function finishActiveDelegatedTask(
+async function finishActiveDelegatedTask(
   deps: HandlerDeps,
   workOrder: LoopWorkOrder,
   supervisorSession: string,
   startedAt: number,
   gate: SupervisedSystemGateOutcome,
-): void {
+): Promise<void> {
   const endedAt = Date.now();
   const result = gate.result;
   const completion = completeLoopSupervisorRun({
@@ -541,6 +542,20 @@ function finishActiveDelegatedTask(
     resultStatus: result.status,
   });
   settleActiveDelegatedSupervisorLease(workOrder, result, endedAt);
+  if (result.status === "completed" && workOrder.workerSession !== undefined) {
+    try {
+      await deps.bridge.killSession(workOrder.workerSession);
+      cleanupWorkerSessionRecords(workOrder.workerSession);
+      log.info("active delegated task completed worker session cleaned up", {
+        data: { runId: workOrder.id, workerSession: workOrder.workerSession },
+      });
+    } catch (err) {
+      log.warn("failed to clean up completed active delegated worker session", {
+        err,
+        data: { runId: workOrder.id, workerSession: workOrder.workerSession },
+      });
+    }
+  }
   const implementedOpportunityIds = markImplementedOpportunitiesForCompletedDelegation({
     runId: workOrder.id,
     resultStatus: result.status,

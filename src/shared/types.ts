@@ -71,7 +71,7 @@ export type AppConfig = {
    * against live tmux; default 5 min, 0 disables. */
   runningSweepMs: number;
   /** Close idle project agents after this long without meaningful use; 0 disables. */
-  sessionIdleReaper: { tickMs: number; maxIdleMs: number };
+  sessionIdleReaper: { tickMs: number; maxIdleMs: number; loopWorkerMaxIdleMs: number };
   /** Run reboot recovery automatically on boot (idempotent); default true. */
   autoRecover: boolean;
   /** macOS: keep the Mac awake on AC power while the bot runs. Opt-in; works

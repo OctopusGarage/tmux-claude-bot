@@ -386,6 +386,7 @@ describe("runLoopServiceTickAsync supervised routing", () => {
       ].join("\n"),
     });
     const dispatched: Array<{ projectId: string; branch: string | undefined; prompt: string }> = [];
+    const cleanupCompletedWorkerSession = vi.fn(async () => {});
 
     const result = await runLoopServiceTickAsync({
       configFile,
@@ -448,6 +449,7 @@ describe("runLoopServiceTickAsync supervised routing", () => {
       supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
       resetSupervisorBeforeWorkOrder: "compact",
       projectSessionPrefix: "tmux_proj_",
+      cleanupCompletedWorkerSession,
     });
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
@@ -460,6 +462,9 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     expect(dispatched[0]?.prompt).toContain("Target effective test coverage is at least 80%");
     expect(dispatched[0]?.prompt).toContain(
       "compact --yes before each delegated test-coverage round",
+    );
+    expect(cleanupCompletedWorkerSession).toHaveBeenCalledWith(
+      "tmux_proj_loop-worker-hub-1784211600000-hub-test-coverage",
     );
     expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
   });
