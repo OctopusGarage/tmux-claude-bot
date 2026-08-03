@@ -77,6 +77,140 @@ materialize a WorkOrder; the supervisor executes it; the system gate accepts or
 rejects it; ledger/log/notification artifacts explain the result. Avoid adding
 feature-specific completion rules outside this path.
 
+## Native Agent Capability Boundary
+
+tmux-claude-bot should not implement its own heavy multi-agent orchestration
+layer inside the service. The service owns task boundaries, execution isolation,
+prompt policy, durable artifacts, and system acceptance. The active Claude Code
+or Codex worker owns the actual reasoning strategy, including any native
+subagent, parallel exploration, planning, or evaluation capability that the
+agent surface supports.
+
+Do not model researcher, evaluator, planner, or implementation subagents as
+bot-managed task types, queues, leases, or lifecycle state unless there is a
+separate product requirement and an enforced system contract. Prefer governed
+prompt guidance that tells the worker when broad exploration, independent review,
+or evidence synthesis is useful, then require the worker to summarize the result
+in the WorkOrder final summary and handoff artifacts.
+
+The intended split is:
+
+```text
+tmux-claude-bot = task boundary + isolation + prompt policy + artifacts + system gate
+worker agent = reasoning strategy + optional native subagents + implementation + self-review
+```
+
+This keeps the platform thin enough to benefit from improvements in the
+underlying agent products. The bot should not duplicate native agent capability
+with a second scheduler unless the work needs service-level state, cross-run
+recovery, authorization, or deterministic acceptance that prompt guidance cannot
+provide.
+
+## Task Family Agent Methodology
+
+When adding or revising a WorkOrder task family, design the task as a bounded
+system contract plus a professional worker prompt. Do not start by asking how
+many bot-managed agents, sessions, or queues the platform should create. Start
+by deciding what the active worker should investigate, what evidence it must
+return, what it may change, and what deterministic gates will accept the result.
+
+Use this formula as prompt-design guidance:
+
+```text
+Task family = service-owned boundary + worker-owned exploration + final evidence synthesis
+```
+
+The multi-agent value described in agent literature maps to tmux-claude-bot as
+worker-internal capability unless a product requirement proves otherwise:
+
+- Parallel exploration: useful for open research, large codebase investigation,
+  comparing candidate fixes, workspace contracts, security surfaces, coverage
+  gaps, and opportunity discovery. Encode it as "use native exploration when
+  useful", then require compressed conclusions.
+- Context isolation: useful when each direction has enough detail to pollute the
+  main prompt. Let the active worker use native subagents or equivalent context
+  tools when available, but require the WorkOrder final summary and handoff
+  artifacts to carry only synthesized evidence.
+- Role separation: useful for planner, researcher, implementer, and evaluator
+  perspectives. Express those as prompt roles or review passes inside the
+  worker, not as tmux-claude-bot service roles.
+- External feedback: useful for UI/product experience, PR review, security,
+  migrations, and long task implementation. Encode it as a required review pass,
+  rubric, deterministic gate, real-environment check, or `reviewGate` evidence.
+
+A task family is a good candidate for native multi-perspective worker guidance
+only when all of these are true:
+
+- Independent directions can be explored without editing the same state.
+- The result can be verified through tests, static checks, PR/CI state, logs,
+  reports, user paths, or other durable evidence.
+- The worker can synthesize conflicting findings into a small decision set.
+- The cost of exploration is justified by risk, ambiguity, codebase size, or
+  expected value.
+
+Keep the task simple and mostly serial when the work is small, strictly
+sequential, has shared mutable state, lacks objective success criteria, or would
+spend more effort coordinating than solving. In those cases, the prompt should
+tell the worker to do one focused pass, verify it, and stop.
+
+Every task-family prompt that encourages broad exploration or role separation
+should also require structured synthesis. The worker may use any native child
+agent format internally, but the persisted result should answer:
+
+```text
+Question investigated:
+Conclusion:
+Evidence:
+- ...
+Uncertainty:
+Recommended next step:
+```
+
+This evidence format is a reporting discipline, not a new WorkOrder schema by
+default. Add schema fields only when downstream code, Daily Task Audit, Runtime
+Guardian, reports, or system gates need to consume the structure mechanically.
+The supervisor's critical skill is synthesis and acceptance, not reading every
+raw transcript from worker-internal exploration.
+
+## Agentic Coding Work Loop
+
+Claude Code and Codex are agentic coding environments, not chat boxes. A good
+WorkOrder gives the active worker a verifiable, correctable, and replayable
+environment. Every code-changing task family should inherit this loop:
+
+```text
+Explore -> Plan -> Code -> Verify -> Review -> Record
+```
+
+- Explore: inspect relevant source, tests, error output, logs, run reports,
+  ledger records, prior handoff artifacts, `system-gate.json`, and project
+  constraints before editing.
+- Plan: define the smallest coherent slice, expected behavior, risk, validation
+  commands, and stop conditions. Complex or owner-delegated tasks should record
+  this in the delegation brief, planning contract, `actionsTaken`, or
+  `reviewGate.notes`.
+- Code: make the minimum bounded change needed for the verified goal. Avoid
+  broad rewrites, unrelated cleanup, dependency churn, and speculative product
+  scope.
+- Verify: run deterministic checks appropriate to risk, such as reproduction
+  commands, tests, typecheck, lint, coverage, browser/E2E, PR/CI, mergeability,
+  or the narrowest available local verification.
+- Review: inspect the resulting behavior, diff, boundaries, regressions,
+  over-engineering, security, data, migration, deployment, and user-visible
+  risks before finalizing.
+- Record: preserve what happened in durable artifacts. A failure should say
+  whether it should become a regression test, eval, monitor, trace, checklist,
+  documentation update, Daily Task Audit signal, or Runtime Guardian finding.
+
+When users report that an agent or model "got worse", treat it as a system
+diagnosis until evidence says otherwise. Check routing, session identity,
+context history, prompt/policy changes, reasoning effort defaults, cache or
+history handling, tool output processing, infrastructure failures, provider
+transients, and deterministic gate evidence before blaming the model. A useful
+postmortem changes the system: add a regression test or eval, improve a monitor
+or trace, tighten a prompt or gate, or update the checklist that would have
+caught the issue earlier.
+
 ## Transient Agent Failures
 
 Agent-provider capacity, rate limiting, readiness, queue pressure, and network
@@ -108,6 +242,11 @@ repair path:
 
 - Prefer a new WorkOrder task kind or WorkOrder policy over a side-channel prompt
   into a project chat.
+- Prefer prompt-level worker guidance over service-level subagent orchestration.
+  If a task benefits from parallel investigation, role-played review, or
+  generator/evaluator separation, describe that expectation in the governed
+  prompt and final-summary evidence contract instead of adding bot-managed
+  researcher/evaluator/worker task queues.
 - Register governed system prompts and task-family policy changes according to
   `docs/prompt-governance.md`; do not add code-changing, PR-changing, merge, or
   self-repair prompt behavior without metadata and deterministic contract tests.
@@ -306,7 +445,9 @@ Loop Engineering supports these project and workspace task families:
   one PR. It should assess health first, select only justified enabled subtasks,
   and stop when configured health or no-confirmed-issue conditions are met.
   Its `cleanupPolicy` acts as the default cleanup stance for selected subtasks
-  unless a subtask family has a more specific override.
+  unless a subtask family has a more specific override. It is a prompt-guided
+  worker strategy, not permission for tmux-claude-bot to start several
+  bot-managed subagents or competing mutation workers for the same resource.
 - `opportunityDiscovery`: inspect repository evidence and propose useful feature
   or optimization opportunities. It must not edit files, create branches, commit,
   push, or open PRs.

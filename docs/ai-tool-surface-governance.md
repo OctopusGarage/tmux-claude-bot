@@ -74,6 +74,11 @@ Practical consequence:
 - `supervisor`, `worker`, `guardian`, and `audit` tools should remain
   WorkOrder/finding-bound. They should not be exposed as generic shell-command
   or arbitrary-file tools.
+- Do not expose service-managed `researcher`, `planner`, `evaluator`, or
+  subagent tools only to mirror native Claude Code or Codex agent capabilities.
+  Those roles belong in governed worker prompts unless the bot must own
+  authorization, persisted state, recovery, or deterministic acceptance for the
+  role.
 - Namespaces such as `tcb.worker.*` improve discovery and model behavior, but
   they are not security. Unknown or untrusted profiles must expose only
   read-only observer tools.
@@ -242,6 +247,10 @@ Rules:
   process and not in ordinary user chat.
 - Supervisor orchestration belongs in reserved Supervisor sessions, not in the
   Home Operator process.
+- Native subagent, parallel exploration, planner, and evaluator behaviors belong
+  inside the active worker agent when that agent supports it. AI-facing tools and
+  skills may describe how to use those capabilities, but should not turn them
+  into independent tmux-claude-bot service roles.
 - MCP tools that need a directory must take or derive it from trusted service
   state: project catalog, WorkOrder, finding, or explicit owner-selected target.
   Do not use the MCP server process cwd as target truth.

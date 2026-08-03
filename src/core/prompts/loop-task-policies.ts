@@ -63,6 +63,7 @@ function workspaceArchitecturePolicy(workOrder: LoopWorkOrder): string[] {
   return [
     "Workspace architecture task.",
     `- Architecture target score is ${workOrder.targetScore}; if the cross-repository evaluation reaches or exceeds it, stop instead of optimizing for its own sake.`,
+    "- Use native exploration to compare repository roles and contracts when useful, then synthesize one workspace-level decision with evidence and uncertainty.",
     "- Prefer the smallest set of repository changes that improves the whole workspace. Do not force every repository to change.",
     ...cleanupPolicyLines(effectiveCleanupPolicy(workOrder.cleanupPolicy)),
     task.prompt !== undefined ? `- Additional workspace instruction: ${task.prompt}` : "",
@@ -81,6 +82,7 @@ function bugFixPolicy(workOrder: LoopWorkOrder): string[] {
     "- Do not add product features, new capabilities, new dependencies, broad rewrites, or unrelated cleanup.",
     ...cleanupPolicyLines(effectiveCleanupPolicy(task.cleanupPolicy ?? workOrder.cleanupPolicy)),
     "- Separate candidate bugs from confirmed bugs: list candidates first, then fix only candidates with enough evidence to confirm real impact.",
+    "- Native parallel exploration may collect candidate bugs, but confirmation and repair must be evidence-chain driven and sequenced through the bounded WorkOrder.",
     "- For every confirmed bug, record a concise evidence chain: entry point or trigger, affected path, expected behavior, actual behavior, impact, and any preconditions or limits.",
     "- Before editing, prove the issue is real by recording the trigger path, affected behavior, and why it is not merely a preference or theoretical concern.",
     "- If the impact depends on another boundary layer, such as a caller, callee, API, worker, scheduler, database constraint, or frontend/backend pair, inspect that boundary before confirming the bug.",
@@ -104,6 +106,7 @@ function testCoveragePolicy(workOrder: LoopWorkOrder): string[] {
     "Test coverage improvement task.",
     `- Target effective test coverage is at least ${task.targetCoverage}%. Stop when the project reaches that threshold and the important risk paths have meaningful tests.`,
     `- Run at most ${task.maxRounds} focused test-improvement round(s). Each round must start by inspecting the current test stack, coverage command/report, uncovered behavior, and highest-risk production paths.`,
+    "- Use native exploration to compare coverage gaps and risk paths when useful, then choose the highest-value behavior tests rather than padding metrics.",
     "- Add tests only when they assert real behavior or guard a plausible regression. Do not add import-only tests, empty assertions, mock implementation tests, snapshot padding, fixture churn, or tests whose only value is increasing a metric.",
     "- Do not add padding tests.",
     "- Tests must be professional, elegant, reliable, and clear: prefer stable assertions at meaningful boundaries, avoid brittle timing, avoid over-mocking implementation details, and keep fixtures readable.",
@@ -139,6 +142,7 @@ function securityMaintenancePolicy(workOrder: LoopWorkOrder): string[] {
     "Security maintenance task.",
     `- Run at most ${task.maxRounds} focused security round(s). Stop when no confirmed actionable security issue remains within this task's allowed scope.`,
     "- Check broadly for security risk, not only dependency advisories: dependency vulnerabilities, GitHub security findings, static analysis findings, secret or token exposure, unsafe auth/permission checks, webhook verification, CORS, file/path handling, uploads, deserialization/parsing, SSRF, command execution, logging of sensitive data, CI secret handling, and supply-chain risk.",
+    "- Use native exploration to inspect independent security surfaces when useful, but repair only confirmed or plausibly reachable findings.",
     "- Start with the project's own security signals when available: npm/pnpm/yarn/bun audit, GitHub Dependabot/security alerts, CodeQL, Semgrep, ESLint security rules, existing CI/security scripts, and repository documentation.",
     "- Before editing, prove the issue is real or plausibly reachable in this project. Record the evidence, affected path, severity, reachability, and why it is not merely a scanner false positive.",
     "- Do not add product features, broad rewrites, cosmetic cleanup, speculative hardening, unrelated test coverage, or dependency churn just to quiet a report.",
@@ -171,6 +175,8 @@ function harnessAutoPolicy(workOrder: LoopWorkOrder): string[] {
     `- Strategy is ${task.strategy}. health-first means maximize overall project health; risk-first means prioritize confirmed production/security/reliability risk; configured-order means preserve the configured task order unless current evidence clearly proves a blocker.`,
     `- Stop when health score is at least ${task.stopWhen.healthScoreAtLeast}${task.stopWhen.noConfirmedIssues ? " and no confirmed actionable issue remains in the enabled task scope" : ""}.`,
     "- Do not run all subtasks mechanically. Choose only subtasks justified by evidence from the current codebase and verification signals.",
+    "- Use assessment-first worker reasoning: native subagents or parallel exploration may inform selection, but tmux-claude-bot must still produce one bounded WorkOrder result.",
+    "- Do not start multiple bot-managed mutation workers for child subtasks.",
     "- Start each round by recording: current branch state, recent failures or stale PR context, available test/security/coverage/architecture signals, candidate issues, enabled subtasks considered, selected subtask(s), and why lower-priority subtasks were skipped.",
     "- A no-op is valid when the stop condition is met or no enabled subtask has a confirmed actionable improvement. Report the checked signals and stop cleanly instead of optimizing for its own sake.",
     "- Keep the whole harness run on one run id and one PR branch/PR per repository. Do not split bug-fix, security, coverage, and architecture work into separate PRs for the same harness run.",
@@ -199,6 +205,7 @@ function opportunityDiscoveryPolicy(workOrder: LoopWorkOrder): string[] {
     task.requireEvidence
       ? "- Every suggestion must cite concrete evidence from the repository, docs, logs, recent failures, TODOs, repeated manual workflows, tests, scripts, or existing UX. Do not invent product direction."
       : "- Prefer concrete evidence; clearly label any suggestion whose evidence is incomplete.",
+    "- Use broad native exploration when useful, then synthesize each suggestion with evidence, uncertainty, confidence, and the recommended next step.",
     "- A suggestion is reportable only when it has a clear user or engineering value, bounded implementation scope, acceptance criteria, non-goals, and a realistic verification path.",
     "- Avoid vague ideas, vanity features, broad rewrites, large product pivots, purely stylistic cleanup, speculative architecture preferences, or suggestions whose only value is making code look different.",
     "- Prefer small or medium opportunities that can be implemented by a later active delegated task in one coherent PR.",
@@ -232,6 +239,7 @@ function automationGovernanceReviewPolicy(workOrder: LoopWorkOrder): string[] {
       : "- AI eval is optional; deterministic gates remain authoritative.",
     "- Do not call model-provider APIs, add model SDKs, or add model API keys.",
     "- Before editing, prove the governance issue is real from scheduler config, ledger records, supervisor artifacts, notification artifacts, CI/system gates, or repository code.",
+    "- You may review governance surfaces as separate perspectives inside the active worker, but do not create bot-managed evaluator or researcher roles.",
     task.allowRepairPr
       ? "- You may create a repair PR or update one repair PR only for a concrete P0/P1 (P0 or P1) governance finding; do not create repair PRs for P2/P3 findings."
       : "- Do not create repair PRs; report findings only.",
@@ -362,6 +370,7 @@ function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): 
       "- Do not nitpick style, naming, wording, formatting, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
       "- Inspect each repository's PR diff, files changed, commits, review comments, mergeability, and CI/status checks before deciding.",
       "- If checks are pending, inconclusive, failing, required reviews are missing, the PR is a draft, mergeability is unknown/conflicting, or the branch is behind in a way GitHub cannot update safely, do not merge; record the exact blocker.",
+      "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
       task.autoMerge
         ? "- If both review passes pass and CI/status checks are successful, merge the PR according to that repository's pullRequest policy, including its configured mergeMethod, then sync the repository's local switch-back branch."
         : "- Do not merge automatically; report the review decision only.",
@@ -377,6 +386,7 @@ function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): 
     "- Do not nitpick style, naming, wording, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
     "- Inspect the PR diff, files changed, commits, mergeability, and CI/status checks before deciding.",
     "- If checks are pending, inconclusive, failing, or mergeability is unknown/conflicting, do not merge; record the exact blocker.",
+    "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
     task.autoMerge
       ? `- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI using ${mergeMethodFlag(task.mergeMethod)}, then sync the local switch-back branch.`
       : "- Do not merge automatically; report the review decision only.",
@@ -402,6 +412,7 @@ function repositoryPullRequestReviewPolicy(workOrder: LoopWorkOrder): string[] {
     "- Do not nitpick style, naming, wording, formatting, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
     "- Inspect each PR diff, files changed, commits, review comments, mergeability, and CI/status checks before deciding.",
     "- If checks are pending, inconclusive, failing, required reviews are missing, the PR is a draft, mergeability is unknown/conflicting, or the branch is behind in a way GitHub cannot update safely, do not merge; record the exact blocker.",
+    "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
     "- When polling after a repair push or merge attempt, always request PR state and mergedAt in addition to mergeability and checks. If GitHub reports state=MERGED, stop waiting on mergeability, verify checks and local switch-back state, then write the final summary.",
     ...repositoryPullRequestRepairPolicy(task),
     task.autoMerge
@@ -467,6 +478,7 @@ function activeDelegatedTaskPolicy(workOrder: LoopWorkOrder): string[] {
     "- If the active agent surface supports a durable goal command, create or update that goal from the delegationBrief before execution. The WorkOrder remains the authoritative system contract; do not depend on a goal command as the only source of truth.",
     "- If the requirement is broad, ambiguous, high-risk, or the delegationBrief cannot define clear acceptance criteria and stopConditions, stop and report blocked or ask for owner clarification instead of guessing.",
     "- If the requirement is clear and bounded, use the delegationBrief as the execution checklist and proceed without adding a second confirmation gate.",
+    "- Do not split this delegated task into parallel work unless the delegationBrief proves independent acceptance boundaries.",
     "- Treat the requirement as bounded. If the current session context is needed, inspect the target project with tcb peek/history or ask the target agent to summarize the agreed requirement before editing.",
     "- Drive the target project agent until the requested behavior is implemented or a real blocker is proven. Do not stop at a plan, partial implementation, or one failed check.",
     "- Work in explicit slices: confirm the intended behavior, implement the smallest coherent slice, run the relevant checks, review the diff, then continue to the next slice.",

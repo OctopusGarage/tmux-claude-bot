@@ -102,6 +102,115 @@ machine-checkable facts for scheduling, action scope, owner confirmation,
 planning, AI/eval expectations, default isolation, and stop rules; prompt prose
 must elaborate those facts rather than redefine them.
 
+## Native Agent Guidance
+
+Governed prompts may instruct the active worker to use the reasoning features
+provided by its agent surface, including planning, native subagents, parallel
+exploration, or a self-review pass. That is prompt-level execution strategy, not
+a tmux-claude-bot service architecture.
+
+Do not add repo-owned prompt changes that assume tmux-claude-bot will manage
+researcher, evaluator, planner, or implementation subagents as separate service
+entities. The bot should send one bounded WorkOrder to the supervisor/worker
+path, then require structured final evidence from the worker. If the worker used
+native subagents internally, the final summary should synthesize their findings
+into conclusions, evidence, uncertainty, verification, and recommended next
+steps rather than exposing raw child-session transcripts as platform state.
+
+When a task benefits from generator/evaluator separation, encode it as a prompt
+requirement for an explicit review pass and durable `reviewGate` evidence. Add
+service-level orchestration only when the system must own authorization,
+cross-run state, recovery, or deterministic acceptance for that role.
+
+## Task-Family Prompt Methodology
+
+Task-family prompts should make native agent capability useful without turning
+tmux-claude-bot into a second agent runtime. For each new or changed task kind,
+write the policy fragment by answering these questions:
+
+1. What directions should the worker inspect before choosing action?
+2. Which directions are independent enough for native parallel exploration or
+   subagents, and which must stay serial because they share state?
+3. What evidence proves a candidate is real, valuable, allowed, and verifiable?
+4. What uncertainty or skipped scope must be reported instead of hidden?
+5. What review pass, rubric, deterministic command, or real user path checks the
+   worker's own output?
+6. What exact stop condition prevents over-optimization or mechanical busywork?
+
+Use native multi-perspective guidance only when the task is parallelizable,
+verifiable, and synthesizable. Good examples include opportunity discovery,
+architecture investigation, security surface review, coverage gap comparison,
+workspace contract analysis, and PR review passes. Poor examples include tiny
+single-file fixes, strictly ordered migrations, unclear product decisions, or
+high-conflict edits where multiple workers would overwrite each other.
+
+Prefer prompt language like:
+
+```text
+Use native exploration when useful, then synthesize the findings into the final
+summary with conclusions, evidence, uncertainty, verification, and recommended
+next steps.
+```
+
+Avoid prompt language that implies tmux-claude-bot owns internal subagent state:
+
+```text
+Start researcher agents, evaluator agents, or child worker queues managed by the
+bot service.
+```
+
+When a prompt asks for broad exploration, require a compact evidence record for
+each material direction:
+
+```text
+Question investigated:
+Conclusion:
+Evidence:
+- ...
+Uncertainty:
+Recommended next step:
+```
+
+For code-changing tasks, this record should be summarized in `actionsTaken`,
+`reviewGate.preMutationReview`, `reviewGate.postMutationReview`,
+`reviewGate.deterministicGates`, or `followUps` as appropriate. For read-only
+tasks such as opportunity discovery, it should also appear in the generated
+report artifact. Do not persist raw native subagent transcripts as platform
+truth unless a separate artifact contract and retention policy are defined.
+
+## Agentic Coding Prompt Loop
+
+Governed code-changing prompts should guide the active worker through a complete
+feedback loop:
+
+```text
+Explore -> Plan -> Code -> Verify -> Review -> Record
+```
+
+Use this loop as prompt structure, not as a new service state machine:
+
+- Explore before editing. Point the worker at relevant files, tests, logs,
+  errors, reports, prior handoff, and system-gate evidence when known.
+- Plan the smallest verifiable slice. For complex work, require risk, acceptance
+  criteria, stop conditions, and verification commands before mutation.
+- Code narrowly. Keep edits inside the WorkOrder boundary and preserve unrelated
+  user work.
+- Verify with deterministic evidence. Name required commands when they are known;
+  otherwise require the narrowest reliable check and a reason when stronger
+  verification is unavailable.
+- Review the result. Require `reviewGate` evidence for behavior, regression,
+  boundary, security, migration, deployment, and over-engineering risk.
+- Record the learning. When a run fails or exposes a gap, require the final
+  summary to say whether the follow-up belongs in a regression test, eval,
+  monitor, trace, checklist, or documentation update.
+
+Do not treat "the model got worse" as a root cause. Prompt revisions and repair
+prompts should ask whether the failure came from routing, session identity,
+context loss, prompt/policy drift, reasoning defaults, cache/history behavior,
+tool output processing, infrastructure, or missing deterministic gates. If the
+failure can recur, the prompt should ask the worker to convert it into a
+regression guard or operational signal instead of leaving only a prose lesson.
+
 ## Eval And Verification
 
 Prompt eval in this project is active-agent-only. Do not add OpenAI, Anthropic,
@@ -166,8 +275,15 @@ When adding or changing a governed prompt:
 2. Confirm whether the prompt can read, edit, commit, create PRs, or merge.
 3. Confirm the stop condition and anti-over-optimization rule.
 4. Confirm active-agent-only AI boundaries remain explicit.
-5. Add or update deterministic contract tests for the changed behavior.
-6. Update `docs/automation-alignment.md` if the change affects task families,
+5. Confirm the change uses prompt-level worker guidance rather than adding
+   bot-managed subagent orchestration unless service-owned state is required.
+6. Confirm the prompt states how exploration findings are synthesized into
+   evidence, uncertainty, verification, and next steps.
+7. Confirm code-changing prompts cover Explore, Plan, Code, Verify, Review, and
+   Record, including how failures become regression tests, evals, monitors,
+   traces, checklists, or docs when applicable.
+8. Add or update deterministic contract tests for the changed behavior.
+9. Update `docs/automation-alignment.md` if the change affects task families,
    WorkOrder behavior, PR review, self-repair, or AI/eval behavior.
-7. Update user-facing docs only when the prompt changes visible behavior.
-8. Run focused tests and `npm run verify:local` before claiming completion.
+10. Update user-facing docs only when the prompt changes visible behavior.
+11. Run focused tests and `npm run verify:local` before claiming completion.

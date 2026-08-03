@@ -177,6 +177,27 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("git -C '/repo/datavibe' rev-parse --show-toplevel");
     expect(prompt).toContain("must equal /repo/datavibe");
     expect(prompt).toContain("do not inject this WorkOrder into ordinary user chat");
+    expect(prompt).toContain("Use native agent capabilities inside the worker when useful");
+    expect(prompt).toContain(
+      "Do not create tmux-claude-bot service roles, queues, leases, or lifecycle state for researcher, planner, evaluator, or subagent work",
+    );
+    expect(prompt).toContain(
+      "Agentic coding loop: Explore -> Plan -> Code -> Verify -> Review -> Record.",
+    );
+    expect(prompt).toContain(
+      "Explore before editing: inspect relevant code, tests, errors, logs, reports, prior handoff, and system-gate evidence",
+    );
+    expect(prompt).toContain("Plan the smallest verifiable slice");
+    expect(prompt).toContain("Code in minimal bounded changes");
+    expect(prompt).toContain(
+      "Verify with deterministic tests, typecheck, lint, CI, browser/E2E, reproduction commands, or the narrowest available check",
+    );
+    expect(prompt).toContain(
+      "Review behavior, boundaries, regressions, over-engineering, and security risk before finalizing",
+    );
+    expect(prompt).toContain(
+      "Record what failed or was skipped, and say whether it should become a regression test, eval, monitor, trace, checklist, or doc update",
+    );
     expect(prompt).toContain("release the worker after successful system acceptance");
     expect(prompt).toContain("retain the worker for 72 hour(s) on failure");
     expect(prompt).toContain("git -C '/repo/datavibe' status --short must be clean");
@@ -262,6 +283,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("not a cron maintenance run");
     expect(prompt).toContain("Requirement: Implement the agreed settings flow.");
     expect(prompt).toContain("Drive the target project agent until the requested behavior");
+    expect(prompt).toContain(
+      "Do not split this delegated task into parallel work unless the delegationBrief proves independent acceptance boundaries",
+    );
     expect(prompt).toContain("perform an independent review pass");
     expect(prompt).toContain("Run the target project's relevant tests");
     expect(prompt).toContain("Review test coverage for the touched behavior");
@@ -485,6 +509,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("Do not add product features");
     expect(prompt).toContain("Cleanup policy is balanced");
     expect(prompt).toContain("Separate candidate bugs from confirmed bugs");
+    expect(prompt).toContain(
+      "Native parallel exploration may collect candidate bugs, but confirmation and repair must be evidence-chain driven and sequenced through the bounded WorkOrder",
+    );
     expect(prompt).toContain("entry point or trigger, affected path, expected behavior");
     expect(prompt).toContain("Before editing, prove the issue is real");
     expect(prompt).toContain("inspect that boundary before confirming the bug");
@@ -575,6 +602,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("Minimum confidence is medium");
     expect(prompt).toContain("Allowed categories: product-feature, developer-experience");
     expect(prompt).toContain("Every suggestion must cite concrete evidence");
+    expect(prompt).toContain(
+      "Use broad native exploration when useful, then synthesize each suggestion with evidence, uncertainty, confidence, and the recommended next step",
+    );
     expect(prompt).toContain("Write the opportunity report JSON");
     expect(prompt).toContain("delegateRequirement");
     expect(prompt).toContain("must not create a branch, commit, PR, or code change");
@@ -636,6 +666,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("Test coverage improvement task.");
     expect(prompt).toContain("Target effective test coverage is at least 80%");
     expect(prompt).toContain("current test stack, coverage command/report");
+    expect(prompt).toContain(
+      "Use native exploration to compare coverage gaps and risk paths when useful, then choose the highest-value behavior tests rather than padding metrics",
+    );
     expect(prompt).toContain("Add tests only when they assert real behavior");
     expect(prompt).toContain("Do not add import-only tests");
     expect(prompt).toContain("snapshot padding");
@@ -703,6 +736,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("autoMerge=false");
     expect(prompt).toContain("minimumSeverity=P1");
     expect(prompt).toContain("P0 or P1");
+    expect(prompt).toContain(
+      "You may review governance surfaces as separate perspectives inside the active worker, but do not create bot-managed evaluator or researcher roles",
+    );
     expect(prompt).toContain("must not be auto-merged");
     expect(prompt).toContain("pullRequestDecisions[]");
     expect(prompt).toContain("Focus on Loop Supervisor and system gate logic.");
@@ -761,6 +797,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("Security maintenance task.");
     expect(prompt).toContain("not only dependency advisories");
     expect(prompt).toContain("GitHub security findings");
+    expect(prompt).toContain(
+      "Use native exploration to inspect independent security surfaces when useful, but repair only confirmed or plausibly reachable findings",
+    );
     expect(prompt).toContain("secret or token exposure");
     expect(prompt).toContain("prove the issue is real or plausibly reachable");
     expect(prompt).toContain("Dependency updates are allowed only when");
@@ -869,6 +908,12 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("test-coverage(weight=15)");
     expect(prompt).toContain("architecture(weight=5)");
     expect(prompt).toContain("Do not run all subtasks mechanically");
+    expect(prompt).toContain(
+      "Use assessment-first worker reasoning: native subagents or parallel exploration may inform selection, but tmux-claude-bot must still produce one bounded WorkOrder result",
+    );
+    expect(prompt).toContain(
+      "Do not start multiple bot-managed mutation workers for child subtasks",
+    );
     expect(prompt).toContain("Cleanup policy is aggressive");
     expect(prompt).toContain("one run id and one PR branch/PR per repository");
     expect(prompt).toContain('send <project> "<long task>" --no-wait');
@@ -920,6 +965,9 @@ describe("loop supervisor work order", () => {
     expect(workOrder.task).toMatchObject({ kind: "pull-request-review" });
     expect(prompt).toContain("Pull request review and merge task.");
     expect(prompt).toContain("Run two independent review passes");
+    expect(prompt).toContain(
+      "The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence",
+    );
     expect(prompt).toContain("Do not nitpick");
     expect(prompt).toContain("mergeability");
     expect(prompt).toContain("CI/status checks");
@@ -1033,6 +1081,9 @@ prReview:
     expect(prompt).toContain('final status must be "blocked" or "failed", not "completed"');
     expect(prompt).toContain("do not ignore older open PRs");
     expect(prompt).toContain("Run two independent review passes");
+    expect(prompt).toContain(
+      "The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence",
+    );
     expect(prompt).toContain("merge the PR with GitHub CLI using --rebase");
     expect(prompt).toContain("required reviews are missing");
     expect(prompt).toContain("state=MERGED");
@@ -1163,6 +1214,9 @@ workspaces:
       "verify the affected repository's git toplevel equals that repository path",
     );
     expect(prompt).toContain("cross-repository evaluation reaches or exceeds it");
+    expect(prompt).toContain(
+      "Use native exploration to compare repository roles and contracts when useful, then synthesize one workspace-level decision with evidence and uncertainty",
+    );
     expect(prompt).toContain("contracts between repositories");
     expect(prompt).toContain("API routes, schemas, generated clients, shared DTOs");
     expect(prompt).toContain("Do not force every repository to change.");
