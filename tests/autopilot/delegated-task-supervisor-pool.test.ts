@@ -273,7 +273,7 @@ describe("active delegated task supervisor pool", () => {
     expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
   });
 
-  it("recovers active delegation when a valid final summary file lands after invalid output", async () => {
+  it("recovers active delegation when a valid final summary file lands after output capture settles", async () => {
     const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));
     setPathForSession("tmux_proj_project", projectDir);
@@ -326,7 +326,7 @@ describe("active delegated task supervisor pool", () => {
                 followUps: [],
               })}\n`,
             );
-          }, 25);
+          }, 1200);
         });
         return "queued";
       }),
@@ -342,7 +342,7 @@ describe("active delegated task supervisor pool", () => {
       supervisorSession: "tmux_proj_loop-supervisor",
     });
     if (result.status !== "queued" || result.reportDir === null) throw new Error("expected queued");
-    await waitForFile(join(result.reportDir, "system-gate.json"));
+    await waitForFile(join(result.reportDir, "system-gate.json"), 3000);
 
     expect(JSON.parse(readFileSync(join(result.reportDir, "system-gate.json"), "utf8"))).toEqual(
       expect.objectContaining({
@@ -351,6 +351,12 @@ describe("active delegated task supervisor pool", () => {
         resultStatus: "completed",
         accepted: true,
         failures: [],
+      }),
+    );
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "info",
+        title: "Delegated task completed",
       }),
     );
     expect(
@@ -555,8 +561,8 @@ describe("active delegated task supervisor pool", () => {
   });
 });
 
-async function waitForFile(path: string): Promise<void> {
-  const deadline = Date.now() + 1000;
+async function waitForFile(path: string, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (existsSync(path)) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
