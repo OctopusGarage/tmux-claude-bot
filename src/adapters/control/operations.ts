@@ -32,6 +32,7 @@ import {
   isLoopWorkerSessionName,
   isOperator,
 } from "../../core/projects/operator.js";
+import { isOperatorHomePath } from "../../core/projects/operator-home.js";
 import {
   createProjectFromPath,
   openRecentProjectBySid,
@@ -58,7 +59,7 @@ import {
 import { appStateDir } from "../../shared/state-dir.js";
 import type { AgentKind } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import type { ControlRequest, ServerMessage } from "./protocol.js";
+import type { ControlCallerProvenance, ControlRequest, ServerMessage } from "./protocol.js";
 
 const log = createLogger("control.operations");
 
@@ -93,6 +94,8 @@ export type ControlOperationContext = {
   send: (msg: ServerMessage) => void;
   ok: (data: unknown) => void;
   fail: (error: string) => void;
+  caller?: ControlCallerProvenance;
+  isOperatorHomeCaller: boolean;
 };
 
 export type ControlOperationHandler<Request extends ControlRequest = ControlRequest> = (
@@ -337,7 +340,13 @@ export async function handleControlRequest(
       fail(`unknown op: ${(req as { op: string }).op}`);
       return;
     }
-    await handler(req, { send, ok, fail });
+    await handler(req, {
+      send,
+      ok,
+      fail,
+      ...(req.caller !== undefined ? { caller: req.caller } : {}),
+      isOperatorHomeCaller: isOperatorHomePath(deps.config, req.caller?.cwd),
+    });
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   }

@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { appStateFile } from "../../shared/state-dir.js";
 import {
+  defaultOperatorHomeAiToolFiles,
+  homeOperatorSkillFiles,
+} from "../ai-tools/install-contract.js";
+import { MCP_PROFILES, mcpProfilePath } from "../mcp/profiles.js";
+import {
   managedRestartCommand,
   managedServiceLoadedProbe,
   managedServiceName,
@@ -84,13 +89,10 @@ export function defaultProbes(root: string = process.cwd()): DoctorProbes {
     },
     botProcessCount: async () => {
       try {
-        const { stdout } = await run("pgrep", [
-          "-f",
-          "tmux-claude-bot.*(src/index.ts|dist/cli.js)",
-        ]);
-        return stdout.split("\n").filter((l) => l.trim()).length;
+        const { stdout } = await run("ps", ["-axo", "pid=,ppid=,command="]);
+        return countBotProcessRoots(stdout);
       } catch {
-        return 0; // pgrep exits 1 when there are no matches
+        return 0;
       }
     },
     caffeinateActive: async () => {
@@ -120,6 +122,21 @@ export function defaultProbes(root: string = process.cwd()): DoctorProbes {
     },
     fileExists: (p) => existsSync(p),
   };
+}
+
+export function countBotProcessRoots(psOutput: string): number {
+  const rows = psOutput
+    .split("\n")
+    .flatMap((line) => {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+      if (match === null) return [];
+      const [, pid, ppid, command] = match;
+      if (pid === undefined || ppid === undefined || command === undefined) return [];
+      return [{ pid, ppid, command }];
+    })
+    .filter((row) => /tmux-claude-bot.*(src\/index\.ts|dist\/cli\.js)/.test(row.command));
+  const matchedPids = new Set(rows.map((row) => row.pid));
+  return rows.filter((row) => !matchedPids.has(row.ppid)).length;
 }
 
 export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorReport> {
@@ -159,6 +176,57 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
   else bad("tmux not found", tmuxInstallHint());
   if (await probes.onPath("node")) ok("node is on PATH");
   else bad("node not found", "install Node via nvm: https://github.com/nvm-sh/nvm");
+
+  // 2b. Default AI tool surface installation. Managed installs should keep the
+  // Home Operator skill and MCP descriptors in the operator workspace only. The
+  // file list comes from the central role-surface contract so new role profiles
+  // must be added to health checks in the same slice.
+  const operatorHome = envMap?.get("HOME_OPERATOR_DIR") || appStateFile("home");
+  const installedOperatorSkillFiles = homeOperatorSkillFiles(operatorHome).filter((file) =>
+    probes.fileExists(file.path),
+  );
+  if (installedOperatorSkillFiles.length === homeOperatorSkillFiles(operatorHome).length) {
+    ok("Home Operator skill installed in operator workspace");
+  } else if (installedOperatorSkillFiles.length === 0) {
+    bad(
+      "Home Operator skill missing from operator workspace",
+      "run: tcb skill install --scope operator-home",
+    );
+  } else {
+    bad(
+      `Home Operator skill partially installed (${installedOperatorSkillFiles
+        .map((file) => file.client)
+        .join(", ")})`,
+      "run: tcb skill install --scope operator-home",
+    );
+  }
+
+  const installedMcpProfiles = MCP_PROFILES.filter((profile) =>
+    probes.fileExists(mcpProfilePath(operatorHome, profile)),
+  );
+  if (installedMcpProfiles.length === MCP_PROFILES.length) {
+    ok(`MCP profiles installed (${installedMcpProfiles.join(", ")})`);
+  } else if (installedMcpProfiles.length === 0) {
+    info("MCP profiles not installed (run: tcb mcp install)");
+  } else {
+    bad(
+      `MCP profiles partially installed (${installedMcpProfiles.join(", ")})`,
+      "run: tcb mcp install",
+    );
+  }
+  const expectedDefaultAiToolFiles = defaultOperatorHomeAiToolFiles(operatorHome);
+  const installedDefaultAiToolFiles = expectedDefaultAiToolFiles.filter((file) =>
+    probes.fileExists(file.path),
+  );
+  if (installedDefaultAiToolFiles.length === expectedDefaultAiToolFiles.length) {
+    ok(
+      `AI tool role surfaces complete (${installedDefaultAiToolFiles
+        .map((file) =>
+          file.surface === "mcp" ? `mcp:${file.profile ?? "unknown"}` : `skill:${file.client}`,
+        )
+        .join(", ")})`,
+    );
+  }
 
   // 3. managed service (launchd on macOS, systemd on Linux). Identity + restart
   // hint come from the single-source service-hints module.

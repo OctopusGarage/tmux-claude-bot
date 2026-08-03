@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 
 export type LoopReportRecord = {
   runId: string;
@@ -49,7 +50,7 @@ function readReportRecord(dir: string): LoopReportRecord | null {
 }
 
 function readCommandReportRecord(dir: string): LoopReportRecord | null {
-  const summaryPath = join(dir, "summary.json");
+  const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.commandSummary);
   if (!existsSync(summaryPath)) return null;
   const parsed = JSON.parse(readFileSync(summaryPath, "utf8")) as {
     record?: LoopReportRecord;
@@ -58,7 +59,7 @@ function readCommandReportRecord(dir: string): LoopReportRecord | null {
 }
 
 function readSupervisorReportRecord(dir: string): LoopReportRecord | null {
-  const summaryPath = join(dir, "supervisor-summary.json");
+  const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.supervisorSummary);
   if (!existsSync(summaryPath)) return null;
   const supervisor = JSON.parse(readFileSync(summaryPath, "utf8")) as LoopSupervisorReportSummary;
   return {
@@ -68,7 +69,7 @@ function readSupervisorReportRecord(dir: string): LoopReportRecord | null {
     status: supervisor.status === "completed" ? "passed" : "failed",
     startedAt: supervisor.timestamps.startedAt,
     endedAt: supervisor.timestamps.endedAt,
-    markdownPath: join(dir, "supervisor.md"),
+    markdownPath: join(dir, LOOP_RUN_ARTIFACTS.supervisorMarkdown),
     summaryPath,
   };
 }

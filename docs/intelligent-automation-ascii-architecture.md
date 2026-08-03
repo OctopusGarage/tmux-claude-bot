@@ -1,25 +1,39 @@
 # Intelligent Automation ASCII Architecture
 
-This diagram is a compact visual map of tmux-claude-bot's user surfaces,
-ordinary project sessions, supervised automation pipeline, self-healing loops,
-state artifacts, and documentation governance.
+This diagram is a compact visual map of tmux-claude-bot's operator surfaces,
+control path, ordinary project sessions, supervised automation pipeline,
+self-healing loops, localization/copy governance, state artifacts, deployment
+lifecycle, and release gates.
 
 ```text
 tmux-claude-bot
 local long-running agent orchestration service
 ================================================================================
 
-USER / OPERATOR SURFACES
+OPERATOR SURFACES
 --------------------------------------------------------------------------------
- Telegram              Feishu/Lark              Local CLI              TUI
- owner chat            owner chat + groups      tcb ...                tcb tui
- commands/buttons      cards/buttons            scripts/admin          keyboard UI
-      |                      |                      |                      |
-      +----------------------+----------------------+----------------------+
+ Human UI
+ - Telegram owner chat, commands, buttons
+ - Feishu/Lark owner chat, project groups, cards
+ - Local CLI: tcb ...
+ - TUI: tcb tui
+
+ AI operator UI
+ - Home Operator session: <projectSessionPrefix>home
+ - operator-home scoped tcb-home-operator skill / Codex prompt
+ - optional global tcb-home-operator skill / Codex prompt
+ - .claude commands and workflows
+
+ System triggers
+ - scheduler tick
+ - Daily Task Audit
+ - Runtime Guardian
+ - PR review schedules
+ - GitHub hooks and workflows
                                      |
                                      v
 ================================================================================
-BOT SERVICE
+CONTROL + BOT SERVICE
 --------------------------------------------------------------------------------
  src/index.ts / tcb run
  - loads config
@@ -27,6 +41,7 @@ BOT SERVICE
  - starts control socket
  - starts schedulers
  - manages project/session state
+ - resolves localized UI copy
  - writes logs, ledger, reports
                                      |
        +-----------------------------+-----------------------------+
@@ -43,7 +58,55 @@ CONTROL / ROUTING                 NOTIFICATIONS                 DIAGNOSTICS
        |                             |                             |
        v                             v                             v
 
-ORDINARY PROJECT WORK
+INPUT ENHANCEMENT
+--------------------------------------------------------------------------------
+ Voice transcription
+ - Telegram voice messages
+ - Feishu/Lark audio resources
+ - mlx_whisper optional installer: voice_install
+ - per-channel recognition language: voice_lang
+ - readiness and smoke checks before claiming usable voice
+
+ Prompt translation
+ - text and voice prompts before enqueue
+ - Argos Translate optional installer: translate_install
+ - per-source mode and source language: prompt_translate
+ - sources: Telegram, Feishu/Lark, control socket
+ - translation failure blocks prompt delivery instead of silently changing intent
+
+ Recent input / rerun
+ - keeps original owner input visible
+ - records translated vs original text
+ - avoids mixing internal compact context into rerun drafts
+                                     |
+                                     v
+
+LOCALIZATION + COPY GOVERNANCE
+--------------------------------------------------------------------------------
+ core/i18n
+ - Messages catalog: chat, card, button, notification copy
+ - SetupMessages catalog: setup and onboarding copy
+ - UI_LANGS: supported languages and picker labels
+ - per-channel language: TELEGRAM_UI_LANG / LARK_UI_LANG
+ - shared fallback: UI_LANG -> DEFAULT_UI_LANG
+ - tests: catalog key completeness and non-empty renders
+                                     |
+                                     v
+
+ORCHESTRATION
+--------------------------------------------------------------------------------
+ The control path classifies each request into one of three work lanes:
+
+  1. Ordinary interactive work
+  2. Supervised automation work
+  3. Bot-owned self-work
+
+ All lanes share the same session, queue, runtime, localization, notification,
+ evidence, and governance primitives. New automation should deepen this shared
+ pipeline rather than inventing a side path.
+
+
+ORDINARY INTERACTIVE WORK
 --------------------------------------------------------------------------------
  ordinary project session
  <projectSessionPrefix><project>
@@ -67,7 +130,7 @@ ORDINARY PROJECT WORK
 
 
 ================================================================================
-INTELLIGENT AUTOMATION PLATFORM
+SUPERVISED AUTOMATION PLATFORM
 --------------------------------------------------------------------------------
 
 TRIGGERS
@@ -179,7 +242,7 @@ SYSTEM GATE
  - CI checks
  - mergeability
  - auto-merge result
- - local base branch fast-forward
+ - local base branch rebase onto origin
  - verification commands
  - notification delivery evidence
 
@@ -261,6 +324,77 @@ Runtime Guardian
 
 
 ================================================================================
+CONFIGURATION, STATE, AND LOCAL TRUTH
+--------------------------------------------------------------------------------
+
+ ~/.tmux-claude-bot/state
+--------------------------------------------------------------------------------
+ - .env and environment-derived runtime settings
+ - loop configuration and schedule state
+ - project/session mappings and current-project pointers
+ - Telegram / Feishu / Lark binding state
+ - voice transcription and prompt translation settings
+ - operator home directory when not explicitly configured
+
+ Rules:
+ - source code and docs carry product behavior
+ - local state carries active user configuration
+ - deploys must not overwrite live state
+ - migrations move state forward before config is loaded
+
+
+================================================================================
+DEPLOYMENT AND LIFECYCLE
+--------------------------------------------------------------------------------
+
+ install / setup
+--------------------------------------------------------------------------------
+ - install.sh / tmux-claude-bot install
+ - tcb setup / tcb setup:lark
+ - tcb skill install
+ - optional feature installers: whisper, Argos Translate
+
+ managed service
+--------------------------------------------------------------------------------
+ - macOS launchd
+ - Linux systemd --user
+ - service status / logs
+ - pause / resume / restart
+ - dev mode: hot reload from the repository
+ - prod mode: bundled dist from the managed install directory
+
+ lifecycle concerns
+--------------------------------------------------------------------------------
+ - single-instance protection
+ - keep-awake behavior
+ - state-safe deploy layout
+ - doctor and smoke checks
+ - clean handoff between dev and prod service modes
+
+
+================================================================================
+QUALITY AND RELEASE GATES
+--------------------------------------------------------------------------------
+
+ local gates
+--------------------------------------------------------------------------------
+ - npm run verify:local
+ - pre-push hook
+ - typecheck, tests, coverage, knip, dependency graph, lint, smoke, audit
+
+ remote gates
+--------------------------------------------------------------------------------
+ - GitHub Actions CI on Linux and macOS
+ - security scans
+ - Dependabot workflow
+ - release and npm publish workflows
+
+ Principle:
+ - unattended automation may create or update code only when it can leave
+   durable evidence and pass the configured gates for that work type.
+
+
+================================================================================
 DOCUMENTATION / GOVERNANCE
 --------------------------------------------------------------------------------
 
@@ -284,6 +418,12 @@ DOCUMENTATION / GOVERNANCE
  - CLI docs match source
  - Autopilot semantics stay current
  - maintained docs stay English
+
+ tests/core/i18n.test.ts
+ - UI language list stays complete
+ - chat catalogs keep the same key set
+ - setup catalogs keep the same key set
+ - localized copy renders non-empty
 
  AGENTS.md / CLAUDE.md
  - always-loaded rules

@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { appStateDir } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
+import { LOOP_RUN_ARTIFACTS, loopRunDir } from "./artifacts.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import type { LoopSupervisorFinalSummary, LoopWorkOrder } from "./work-order.js";
 
@@ -45,12 +45,8 @@ type LoopSupervisorReportSummary = {
   };
 };
 
-function reportsRoot(): string {
-  return join(appStateDir(), "loop-runs");
-}
-
 function reportDir(projectId: string, runId: string): string {
-  return join(reportsRoot(), projectId, runId);
+  return loopRunDir(projectId, runId);
 }
 
 function resultSummary(result: LoopSupervisedRunResult): LoopSupervisorFinalSummary | undefined {
@@ -131,8 +127,8 @@ export function writeLoopSupervisorReport(
   const dir = reportDir(input.workOrder.projectId, runId);
   mkdirSync(dir, { recursive: true });
 
-  const markdownPath = join(dir, "supervisor.md");
-  const summaryPath = join(dir, "supervisor-summary.json");
+  const markdownPath = join(dir, LOOP_RUN_ARTIFACTS.supervisorMarkdown);
+  const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.supervisorSummary);
 
   writeFileAtomicSync(summaryPath, `${JSON.stringify(buildSummary(input), null, 2)}\n`);
   writeFileAtomicSync(markdownPath, renderMarkdown(input));

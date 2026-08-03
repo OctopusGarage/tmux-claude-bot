@@ -1,18 +1,24 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type LoopProjectConfig, parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import {
   buildActiveDelegatedTaskWorkOrder,
-  buildLoopSupervisorFinalizationPrompt,
-  buildLoopSupervisorPrompt,
-  buildLoopSupervisorRevisionPrompt,
   buildLoopWorkOrder,
   buildLoopWorkspaceWorkOrder,
   buildRepositoryPullRequestReviewWorkOrder,
   buildWorkspaceArchitectureWorkOrder,
   finalMarkerForWorkOrder,
   parseSupervisorFinalSummary,
+  parseSupervisorFinalSummaryFile,
 } from "../../src/core/loop/work-order.js";
 import type { OpportunityCategory } from "../../src/core/opportunities/types.js";
+import {
+  buildLoopSupervisorFinalizationPrompt,
+  buildLoopSupervisorPrompt,
+  buildLoopSupervisorRevisionPrompt,
+} from "../../src/core/prompts/loop-supervisor.js";
 
 const config = parseLoopConfigYaml(`
 skills:
@@ -176,7 +182,7 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("git -C '/repo/datavibe' status --short must be clean");
     expect(prompt).toContain("git -C '/repo/datavibe' fetch origin main");
     expect(prompt).toContain("git -C '/repo/datavibe' switch main");
-    expect(prompt).toContain("git -C '/repo/datavibe' pull --ff-only origin main");
+    expect(prompt).toContain("git -C '/repo/datavibe' pull --rebase origin main");
     expect(prompt).not.toContain("cd '/repo/datavibe' && git status");
     expect(prompt).toContain("do not optimize stale code");
     expect(prompt).toContain("supervisor-final-summary.json");
@@ -198,6 +204,11 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("Deterministic gates remain authoritative");
     expect(prompt).toContain("long or potentially unbounded verification commands");
     expect(prompt).toContain("explicit timeout");
+    expect(prompt).toContain("portable timeout wrapper");
+    expect(prompt).toContain("Do not assume GNU timeout is installed");
+    expect(prompt).toContain("gh pr diff <number> --name-only");
+    expect(prompt).toContain("gh pr diff <number> --patch");
+    expect(prompt).not.toContain("gh pr diff --stat");
     expect(prompt).not.toContain("tcb status");
     expect(prompt).toContain(finalMarkerForWorkOrder("1752643800000-datavibe"));
   });
@@ -225,6 +236,26 @@ describe("loop supervisor work order", () => {
       requireCoverageReview: true,
       allowAiEval: true,
     });
+    expect(workOrder.planning).toMatchObject({
+      required: true,
+      source: "active-delegation",
+      requireOwnerConfirmation: false,
+    });
+    expect(workOrder.planning?.rubric).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("delegationBrief states the objective"),
+        expect.stringContaining("implementation stays inside the confirmed requirement"),
+      ]),
+    );
+    expect(workOrder.planning?.acceptanceCriteria).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("requested behavior is implemented"),
+        expect.stringContaining("final report is sufficient to audit"),
+      ]),
+    );
+    expect(workOrder.planning?.stopConditions).toEqual(
+      expect.arrayContaining([expect.stringContaining("too broad, ambiguous, high-risk")]),
+    );
     expect(workOrder.commitPolicy.enabled).toBe(false);
     expect(workOrder.pullRequestPolicy?.enabled).toBe(false);
     expect(prompt).toContain("Active delegated task.");
@@ -237,7 +268,57 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("agent-backed or deterministic AI eval surface");
     expect(prompt).toContain("preserve the user's active branch context");
     expect(prompt).toContain("must preserve the user's current branch by default");
+    expect(prompt).toContain("WorkOrder planning contract:");
+    expect(prompt).toContain('"source": "active-delegation"');
     expect(prompt).not.toContain("git fetch origin main");
+  });
+
+  it("rejects planned final summaries without a top-level planReview", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tcb-work-order-"));
+    try {
+      const finalSummaryPath = join(tempDir, "supervisor-final-summary.json");
+      const workOrder = {
+        ...buildActiveDelegatedTaskWorkOrder({
+          session: "tmux_proj_repo",
+          projectId: "repo",
+          projectName: "Repo",
+          projectPath: "/repo/app",
+          agent: "codex",
+          requirement: "Implement the agreed settings flow.",
+          scheduledAt: 1752643800000,
+          runId: "1752643800000-repo-active-delegate",
+        }),
+        finalSummaryPath,
+      };
+
+      writeFileSync(
+        finalSummaryPath,
+        JSON.stringify({
+          status: "completed",
+          projectId: "repo",
+          actionsTaken: ["Completed the bounded task."],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "not-applicable",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+          commits: [],
+          followUps: [],
+        }),
+      );
+
+      expect(parseSupervisorFinalSummaryFile(workOrder)).toEqual({
+        ok: false,
+        reason: "invalid-summary",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("inherits project PR policy for active delegated tasks when a loop project matches", () => {
@@ -254,7 +335,7 @@ describe("loop supervisor work order", () => {
         switchBack: "dev",
         autoMerge: true,
         mergeMethod: "squash" as const,
-        githubAccount: "Kingson4Wu",
+        githubAccount: "example-owner",
       },
       recovery: {
         agent: true,
@@ -289,7 +370,7 @@ describe("loop supervisor work order", () => {
       switchBack: "dev",
       autoMerge: true,
       mergeMethod: "squash" as const,
-      githubAccount: "Kingson4Wu",
+      githubAccount: "example-owner",
     });
     expect(workOrder.recovery).toMatchObject({
       agent: true,
@@ -299,7 +380,7 @@ describe("loop supervisor work order", () => {
     expect(workOrder.allowedActions).toContain("dependency-upgrade");
     expect(prompt).toContain("git -C '/repo/datavibe' fetch origin dev");
     expect(prompt).toContain("git -C '/repo/datavibe' switch dev");
-    expect(prompt).toContain("git -C '/repo/datavibe' pull --ff-only origin dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' pull --rebase origin dev");
     expect(prompt).toContain("inherits the target project's PR policy");
     expect(prompt).toContain(
       "loop/datavibe/active-delegate/1752643800000-datavibe-active-delegate",
@@ -307,7 +388,7 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("open or update one PR against dev");
     expect(prompt).toContain("allow auto-merge with --squash only after all gates pass");
     expect(prompt).toContain("switch the local worktree back to dev");
-    expect(prompt).toContain("GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\"");
+    expect(prompt).toContain("GH_TOKEN=\"$(gh auth token --user 'example-owner')\"");
     expect(prompt).not.toContain("must preserve the user's current branch by default");
   });
 
@@ -814,7 +895,7 @@ describe("loop supervisor work order", () => {
         switchBack: "dev",
         autoMerge: true,
         mergeMethod: "squash" as const,
-        githubAccount: "miao2016",
+        githubAccount: "example-maintainer",
       },
       pullRequestReview: {
         enabled: true,
@@ -842,9 +923,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("Do not nitpick");
     expect(prompt).toContain("mergeability");
     expect(prompt).toContain("CI/status checks");
-    expect(prompt).toContain("gh auth token --user 'miao2016'");
+    expect(prompt).toContain("gh auth token --user 'example-maintainer'");
     expect(prompt).toContain("git -C '/repo/datavibe' switch dev");
-    expect(prompt).toContain("git -C '/repo/datavibe' pull --ff-only origin dev");
+    expect(prompt).toContain("git -C '/repo/datavibe' pull --rebase origin dev");
   });
 
   it("renders security-maintenance GitHub checks with the configured project account", () => {
@@ -864,7 +945,7 @@ describe("loop supervisor work order", () => {
         switchBack: "dev",
         autoMerge: false,
         mergeMethod: "squash" as const,
-        githubAccount: "miao2016",
+        githubAccount: "example-maintainer",
       },
     };
     const workOrder = buildLoopWorkOrder({
@@ -877,9 +958,9 @@ describe("loop supervisor work order", () => {
 
     const prompt = buildLoopSupervisorPrompt(workOrder);
 
-    expect(workOrder.pullRequestPolicy).toMatchObject({ githubAccount: "miao2016" });
+    expect(workOrder.pullRequestPolicy).toMatchObject({ githubAccount: "example-maintainer" });
     expect(prompt).toContain("Security maintenance task.");
-    expect(prompt).toContain("gh auth token --user 'miao2016'");
+    expect(prompt).toContain("gh auth token --user 'example-maintainer'");
     expect(prompt).toContain("For every GitHub CLI command");
     expect(prompt).toContain("gh api");
     expect(prompt).toContain("do not rely on the global gh active account");
@@ -906,7 +987,7 @@ prReview:
       agent: codex
       schedule: "0 2 * * *"
       switchBack: dev
-      githubAccount: Kingson4Wu
+      githubAccount: example-owner
       lookbackHours: 72
       consecutivePasses: 2
       autoMerge: true
@@ -968,7 +1049,7 @@ prReview:
     expect(prompt).toContain("push to the PR head branch");
     expect(prompt).toContain("review passes are repeated on the updated PR");
     expect(prompt).toContain("Only repair small deterministic check failures.");
-    expect(prompt).toContain("gh auth token --user 'Kingson4Wu'");
+    expect(prompt).toContain("gh auth token --user 'example-owner'");
     expect(prompt).toContain("git -C '/repo/tmux-claude-bot' switch dev");
     expect(prompt).toContain("do not call tcb open for the synthetic *-all-prs id");
     expect(prompt).not.toContain("open tmux-claude-bot --agent codex");
@@ -1003,7 +1084,7 @@ workspaces:
           enabled: true
           base: main
           switchBack: main
-          githubAccount: miao2016
+          githubAccount: example-maintainer
       - id: geo-frontend
         name: Geo Frontend
         path: /repo/realestate/geo-frontend
@@ -1096,7 +1177,7 @@ workspaces:
       "For geo-backend, use branch loop/geo-backend/architecture/1752643800000-geo-workspace",
     );
     expect(prompt).toContain("open the PR against main");
-    expect(prompt).toContain("gh auth token --user 'miao2016'");
+    expect(prompt).toContain("gh auth token --user 'example-maintainer'");
     expect(prompt).toContain("do not rely on the global gh active account");
     expect(prompt).toContain(
       "For geo-frontend, use branch loop/geo-frontend/architecture/1752643800000-geo-workspace",
@@ -1402,7 +1483,7 @@ prReview:
     );
     expect(prompt).toContain("gh pr list --repo OctopusGarage/app --state open --base main");
     expect(prompt).toContain("git -C '/repo/app' switch dev");
-    expect(prompt).toContain("git -C '/repo/app' pull --ff-only origin dev");
+    expect(prompt).toContain("git -C '/repo/app' pull --rebase origin dev");
   });
 
   it("syncs the configured switchBack branch when a PR policy defines one", () => {
@@ -1414,7 +1495,7 @@ prReview:
         switchBack: "release",
         autoMerge: true,
         mergeMethod: "squash" as const,
-        githubAccount: "Kingson4Wu",
+        githubAccount: "example-owner",
       },
     };
     const workOrder = buildLoopWorkOrder({
@@ -1428,8 +1509,8 @@ prReview:
 
     expect(prompt).toContain("git -C '/repo/datavibe' fetch origin release");
     expect(prompt).toContain("git -C '/repo/datavibe' switch release");
-    expect(prompt).toContain("git -C '/repo/datavibe' pull --ff-only origin release");
-    expect(prompt).toContain("gh auth token --user 'Kingson4Wu'");
+    expect(prompt).toContain("git -C '/repo/datavibe' pull --rebase origin release");
+    expect(prompt).toContain("gh auth token --user 'example-owner'");
     expect(prompt).toContain("do not rely on the global gh active account");
   });
 
@@ -1499,6 +1580,60 @@ prReview:
           evidence: "clean",
         },
       ]);
+    }
+  });
+
+  it("parses structured plan review from supervisor summaries", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "completed",
+          projectId: "datavibe",
+          actionsTaken: ["verified"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["delegation brief recorded"],
+            postMutationReview: ["diff reviewed"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "verify",
+                command: "npm run verify:local",
+                result: "passed",
+                evidence: "ok",
+              },
+            ],
+            decision: "pass",
+            notes: [],
+          },
+          planReview: {
+            checklistCompleted: true,
+            targetScoreMet: "not-applicable",
+            stopConditionReached: false,
+            overOptimizationAvoided: true,
+            verificationCompleted: true,
+            remainingRisks: ["CI not run locally"],
+          },
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.planReview).toEqual({
+        checklistCompleted: true,
+        targetScoreMet: "not-applicable",
+        stopConditionReached: false,
+        overOptimizationAvoided: true,
+        verificationCompleted: true,
+        remainingRisks: ["CI not run locally"],
+      });
     }
   });
 

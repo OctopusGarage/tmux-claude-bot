@@ -1,3 +1,4 @@
+import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { LoopBacklogStore } from "./backlog.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import { writeLoopSupervisorReport } from "./supervisor-report.js";
@@ -19,6 +20,7 @@ export type LoopSupervisorCompletion = {
 
 export type LoopSupervisorScheduleRetryKind =
   | "supervisor-dispatch-unavailable"
+  | "agent-transient-failure"
   | "supervisor-output-contract"
   | "not-retryable";
 
@@ -71,6 +73,9 @@ export function classifyLoopSupervisorScheduleRetry(
   ].some((reason) => result.reason.includes(reason));
   if (retryDispatch) {
     return { retrySchedule: true, kind: "supervisor-dispatch-unavailable" };
+  }
+  if (classifyAgentTransientFailure(`${result.reason}\n${result.output}`) !== null) {
+    return { retrySchedule: true, kind: "agent-transient-failure" };
   }
   return { retrySchedule: false, kind: "not-retryable" };
 }

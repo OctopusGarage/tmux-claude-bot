@@ -1,5 +1,16 @@
 import { InlineKeyboard } from "grammy";
 import {
+  AUTOPILOT_ACTIONS,
+  AUTOPILOT_ACTIVE_PANEL_ROWS,
+  AUTOPILOT_BACK_ACTION,
+  AUTOPILOT_PANEL_ROWS,
+  AUTOPILOT_PLAN_ROWS,
+  autopilotActionFromTelegramPrefix,
+  autopilotBackTelegramCallback,
+  autopilotTelegramCallback,
+  type TelegramAutopilotCallbackKind,
+} from "../../core/autopilot/action-registry.js";
+import {
   actionButtonRows,
   actionConfirmationText,
   actionConfirmButtonText,
@@ -31,6 +42,10 @@ import { sessionShortId } from "../../shared/utils/hash.js";
 export type ProjectButton = ProjectPickerLikeRow;
 export type RecentButton = ProjectButton;
 export type { SessionEntry } from "../../core/read/transcript.js";
+
+type TelegramAutopilotCallbackAction = {
+  [K in TelegramAutopilotCallbackKind]: { kind: K; sid: string };
+}[TelegramAutopilotCallbackKind];
 
 /**
  * Parsed inline-button callback. Telegram limits callback_data to 64 bytes, so
@@ -81,9 +96,8 @@ export type CallbackAction =
   | { kind: "browseselect" }
   | { kind: "browsenewfolder" }
   | { kind: "browsecancel" }
-  | { kind: "apBack"; sid: string }
-  | { kind: "apDelegate"; sid: string }
-  | { kind: "apCancelDelegate"; sid: string }
+  | TelegramAutopilotCallbackAction
+  | { kind: "apQueue"; sid: string }
   | { kind: "opportunityDiscussAll"; tokens: string[] }
   | { kind: "opportunityDismissAll"; tokens: string[] }
   | { kind: "promptget"; sid: string }
@@ -230,11 +244,19 @@ export function parseCallbackData(data: string): CallbackAction | null {
       return null;
     return { kind: "statusinstall", action: a as StatusInstallAction };
   }
-  if (tag === "apl" || tag === "apd" || tag === "apz") {
+  if (tag === "apq") {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
-    const kind = tag === "apd" ? "apDelegate" : tag === "apz" ? "apCancelDelegate" : "apBack";
-    return { kind, sid } as CallbackAction;
+    return { kind: "apQueue", sid };
+  }
+  if (tag === "apl" || tag === "apd" || tag === "app" || tag === "apc" || tag === "apz") {
+    const sid = parts[1];
+    if (parts.length !== 2 || !sid) return null;
+    if (tag === AUTOPILOT_BACK_ACTION.telegramPrefix) {
+      return { kind: AUTOPILOT_BACK_ACTION.telegramKind, sid };
+    }
+    const action = autopilotActionFromTelegramPrefix(tag);
+    return action === null ? null : { kind: action.telegramKind, sid };
   }
   if (tag === "od" || tag === "ox") {
     const tokens = parseOpportunityTokens(parts[1]);
@@ -329,13 +351,15 @@ export function buildBrowseKeyboard(view: BrowseView): InlineKeyboard {
  * inert. Tapping sends `vl:<code>`, handled in handleCallbackQuery.
  */
 export function buildVoiceLangKeyboard(current: string): InlineKeyboard {
+  const m = messages("telegram");
   const kb = new InlineKeyboard();
   if (!checkVoiceSupport().ready) {
     return buildVoiceInstallKeyboard();
   }
   VOICE_LANGS.forEach((l, i) => {
-    if (l.code === current) kb.text(`${UI_ICONS.tone.ok} ${l.label}`, "noop");
-    else kb.text(l.label, `vl:${l.code}`);
+    const label = l.code === "auto" ? m.autoDetect : l.label;
+    if (l.code === current) kb.text(`${UI_ICONS.tone.ok} ${label}`, "noop");
+    else kb.text(label, `vl:${l.code}`);
     if (i < VOICE_LANGS.length - 1) kb.row();
   });
   return kb;
@@ -490,7 +514,8 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
     .text(m.btnQueue, "qs")
     .text(m.btnRecover, "rcv")
     .row()
-    .text(m.btnApDelegate, `apd:${sid}`)
+    .text(m.btnApDelegateNow, `apd:${sid}`)
+    .text(m.btnApReviewPlan, `app:${sid}`)
     .row()
     .text(voiceButtonLabel, voiceButtonData)
     .text(m.btnPromptTranslate, "ptm")
@@ -636,13 +661,37 @@ export function buildRecentKeyboard(projects: RecentButton[]): InlineKeyboard {
 /** Autopilot now means supervisor-backed delegation only. */
 export function buildAutopilotPanelKeyboard(sid: string, delegateActive = false): InlineKeyboard {
   const m = messages("telegram");
+  const kb = new InlineKeyboard();
+  const rows = delegateActive ? AUTOPILOT_ACTIVE_PANEL_ROWS : AUTOPILOT_PANEL_ROWS;
+  for (const row of rows) {
+    for (const actionId of row) {
+      const action = AUTOPILOT_ACTIONS[actionId];
+      kb.text(m[action.labelKey] as string, autopilotTelegramCallback(actionId, sid));
+    }
+    kb.row();
+  }
+  kb.text(m.btnApQueue, `apq:${sid}`).row();
+  return kb.text(m[AUTOPILOT_BACK_ACTION.labelKey] as string, autopilotBackTelegramCallback(sid));
+}
+
+export function buildAutopilotPlanKeyboard(sid: string): InlineKeyboard {
+  const m = messages("telegram");
+  const kb = new InlineKeyboard();
+  for (const row of AUTOPILOT_PLAN_ROWS) {
+    for (const actionId of row) {
+      const action = AUTOPILOT_ACTIONS[actionId];
+      kb.text(m[action.labelKey] as string, autopilotTelegramCallback(actionId, sid));
+    }
+    kb.row();
+  }
+  return kb.text(m[AUTOPILOT_BACK_ACTION.labelKey] as string, autopilotBackTelegramCallback(sid));
+}
+
+export function buildAutopilotQueueKeyboard(sid: string): InlineKeyboard {
+  const m = messages("telegram");
   return new InlineKeyboard()
-    .text(
-      delegateActive ? m.btnApCancelDelegate : m.btnApDelegate,
-      `${delegateActive ? "apz" : "apd"}:${sid}`,
-    )
-    .row()
-    .text(m.btnApBack, `apl:${sid}`);
+    .text(m.btnApQueue, `apq:${sid}`)
+    .text(m.btnApCancelDelegate, autopilotTelegramCallback("cancel-delegate", sid));
 }
 
 export function buildOpportunityNotificationKeyboard(
@@ -664,9 +713,13 @@ export function buildOpportunityNotificationKeyboard(
   ) {
     return undefined;
   }
+  const m = messages("telegram");
   const kb = new InlineKeyboard();
   for (const [index, row] of rows.entries()) {
-    kb.text(`讨论 ${row.index}`, row.discuss).text(`暂不处理 ${row.index}`, row.dismiss);
+    kb.text(`${m.btnOpportunityDiscuss} ${row.index}`, row.discuss).text(
+      `${m.btnOpportunityDismiss} ${row.index}`,
+      row.dismiss,
+    );
     if (index < rows.length - 1) kb.row();
   }
   return kb;

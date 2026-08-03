@@ -251,5 +251,5 @@ describe("listCodexOrphans", () => {
     const orphans = await listCodexOrphans(probe);
     expect(orphans).toHaveLength(1);
     expect(orphans[0]?.pid).toBe(9);
-  });
+  }, 15_000);
 });

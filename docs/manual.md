@@ -42,7 +42,14 @@ systemd `--user` on Linux), and runs the **guided setup wizard**:
   (macOS) whether to keep the Mac awake.
 
 Re-run setup any time with `tcb setup --reconfigure`. Verify the install with
-`tcb doctor`.
+`tcb doctor`. The installer provisions the isolated Home Operator workspace and
+installs the default AI tool surfaces there by default: the Home Operator skill
+for Claude/Codex plus MCP profile descriptors. It also removes stale global
+skill copies; use `TCB_SKIP_MCP=1` only when you intentionally manage these
+surfaces yourself. `TCB_SKIP_AI_TOOLS=1` is the clearer install-time opt-out.
+Global Claude/Codex skill installation is explicit: run
+`tcb skill install --scope global` only when you want that convenience outside
+the operator workspace.
 
 ---
 
@@ -93,6 +100,23 @@ Browse and copy prompts saved in a configured MCP prompt server.
 
 Requires `PROMPT_MCP_COMMAND` (and optionally `PROMPT_MCP_ARGS`, `PROMPT_MCP_CWD`) in `.env`. Works with any MCP server that implements `search_prompts`, `get_prompt`, and `list_prompt_tags`. Owner-only (private chat only).
 
+### Governed System Prompts (`tcb prompts governed`)
+
+Inspect and evaluate repo-owned automation prompts separately from the external
+prompt library:
+
+- `tcb prompts governed list [--json]` — list governed prompt metadata.
+- `tcb prompts governed show <promptId> [--json]` — show owner, action scope,
+  risk, eval expectation, and task-kind mapping for one governed prompt.
+- `tcb prompts governed render <promptId> [--fixture default] [--json]` —
+  render a supported governed prompt with a built-in fixture so prompt prose can
+  be reviewed without hand-writing a full WorkOrder JSON.
+- `tcb prompts governed check [--json]` — run deterministic prompt-governance
+  metadata checks.
+- `tcb prompts governed eval (--all|<promptId>) [--output <file>]` — generate an
+  active-agent AI eval task prompt. This command does not call model-provider
+  APIs; send the generated task to the current Claude Code / Codex agent surface.
+
 ---
 
 ## 4. Terminal UI — `tcb tui`
@@ -133,7 +157,8 @@ The installer drops global launchers in `~/.local/bin`, so `tcb …` (and the fu
 install dir.)
 
 For the complete maintained CLI command and option surface, see
-[docs/cli-reference.md](cli-reference.md).
+[docs/cli-reference.md](cli-reference.md). For MCP profile setup, see
+[docs/mcp.md](mcp.md).
 
 | Command | What it does |
 |---------|--------------|
@@ -147,7 +172,7 @@ For the complete maintained CLI command and option surface, see
 | `tcb sysload` | machine load, thermal state, top CPU, runaway shells |
 | `tcb tui` | the terminal control panel (needs the bot running) |
 | `tcb recover` | relaunch agents that were running before a reboot |
-| `tcb logs` | query the structured logs |
+| `tcb logs` | query structured logs; use `--since 30m`, `--component <prefix>`, `--run-id <id>`, `--grep <text>`, and `-n <count>` to keep current-run diagnostics quiet |
 | `tcb install` | provision the managed service into the stable dir |
 | `tcb service <install\|uninstall\|status\|pause\|resume\|restart\|logs>` | manage the auto-restarting service |
 
@@ -167,7 +192,10 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 | `tcb adopt [pid]` | list unmanaged claude/codex processes, or adopt one by PID (stops it, resumes under management) |
 | `tcb control <project> <esc\|enter\|resume\|restart\|…>` | send a control action; `restart` / `clear` / `compact` / `exit` prompt for confirmation (`--yes` for scripts) |
 | `tcb attach <file...>` | send an image/file to the session's chat; defaults to the current session (`--to <project>`, `--caption <text>`) |
-| `tcb skill install` | install the AI operating skill into Claude Code / Codex (`--tool` for one) |
+| `tcb ai-tools install\|status` | install or inspect default role-scoped AI tool surfaces in the Home Operator workspace; install also removes stale global skill copies |
+| `tcb skill install\|status\|uninstall` | manage Home Operator skill scopes: default `operator-home`, optional `--scope global`, `--scope all`, and `--tool` for one agent |
+| `tcb mcp <observer\|home>` | run a role-scoped MCP server over stdio |
+| `tcb mcp install [--profile observer\|home]` | generate MCP profile descriptors in the Home Operator workspace |
 
 `tcb notify` is for other local projects that need outbound alerts but do not need
 to receive chat messages. It talks to the already-running bot over the local control
@@ -203,14 +231,53 @@ tcb task report --id "radar:daily:2026-07-27" --source radar-monitor \
   --summary "fixed and verified on dev"
 ```
 
-This is what the **AI skill** (`skills/tmux-claude-bot/SKILL.md`, the AI-facing
-companion to [docs/agents/usage-guide.md](agents/usage-guide.md)) drives — so an agent
-in Claude Code / Codex can operate the system in natural language. The installer runs
-`tcb skill install` by default (opt out with `TCB_SKIP_SKILL=1`); re-run it any time to
-refresh the skill. It lands at `~/.claude/skills/tmux-claude-bot/SKILL.md` and
-`~/.codex/prompts/tmux-claude-bot.md`.
+This is what the **Home Operator skill** drives, so an agent in Claude Code /
+Codex can operate the system in natural language. The bundled source lives at
+`skills/tcb-home-operator/SKILL.md`. Managed install does not publish it into
+global Claude/Codex discovery by default; the default operator context is the
+isolated Home Operator workspace. Run `tcb ai-tools install` to refresh the
+default operator-home skill and MCP descriptors together, or
+`tcb skill install --scope global` only when you
+explicitly want the global convenience copy at
+`~/.claude/skills/tcb-home-operator/SKILL.md` and
+`~/.codex/prompts/tcb-home-operator.md`. Use `tcb skill status` to inspect the
+operator-home and global copies, and `tcb skill uninstall --scope global` to
+remove both current and legacy global skill names.
 
 `npm run <dev\|tui\|doctor\|service:*>` are the dev-profile equivalents.
+
+**Observer MCP server.** `tcb mcp observer` exposes read-only tools for AI clients
+that support local stdio MCP servers:
+
+- `tcb.observer.status`
+- `tcb.observer.projects`
+- `tcb.observer.sessions`
+- `tcb.observer.queue`
+- `tcb.observer.logs_query`
+- `tcb.observer.loop_reports_list`
+- `tcb.observer.daily_task_audit`
+- `tcb.observer.runtime_guardian_findings`
+
+These tools do not send prompts, delegate work, repair code, merge PRs, or
+modify state. They read through the local control socket or persisted Loop report
+state and return structured `ok`, `role`, `capability`, `data`, `evidence`, and
+`blockedReason` fields.
+
+**Home MCP server.** `tcb mcp home` exposes the Observer tools plus controlled
+Home Operator tools:
+
+- `tcb.home.send_prompt`
+- `tcb.home.delegate_autopilot`
+
+These Home tools require an explicit target session and call the existing
+control socket operations. They do not expose arbitrary shell execution, direct
+file edits, PR merge operations, or WorkOrder internals.
+
+Run `tcb ai-tools install` to refresh both default skill and MCP files, or
+`tcb mcp install` to generate only profile descriptor files under the Home
+Operator workspace. The installer does not edit private global client
+configuration files; point Claude Code, Codex, or another MCP client at the
+generated descriptor explicitly.
 
 ---
 
@@ -219,16 +286,22 @@ refresh the skill. It lands at `~/.claude/skills/tmux-claude-bot/SKILL.md` and
 Autopilot means **supervisor-backed delegation**. After a task has been clarified
 in a project session, use `/autopilot [requirement]`,
 `/autopilot delegate [requirement]`, `tcb autopilot <project> [requirement]`, or
-the **Continue via supervisor** button to hand the work to the
-reserved Loop Supervisor.
+the Autopilot buttons to hand the work to the reserved Loop Supervisor.
 
 If the requirement is omitted, the supervisor treats the current session context
 and repository state as the source of truth: live pane, git status, recent
-commits, existing PRs, and prior verification output. It then drives the target
-project agent until the implementation is complete or a real blocker is proven.
-Before finalizing, it must review the diff, run relevant verification, assess
-coverage for touched risk paths, use existing deterministic or agent-backed evals
-when justified, and follow the configured PR/merge/switch-back policy.
+commits, existing PRs, and prior verification output. Before substantive
+execution, the supervisor records a delegation brief with the objective,
+checklist, acceptance criteria, stop conditions, non-goals, risks, and
+verification plan. Clear bounded work proceeds from that brief; broad,
+ambiguous, or high-risk work blocks or asks for clarification instead of
+guessing.
+
+It then drives the target project agent until the implementation is complete or
+a real blocker is proven. Before finalizing, it must review the diff, run
+relevant verification, assess coverage for touched risk paths, use existing
+deterministic or agent-backed evals when justified, record a final plan review,
+and follow the configured PR/merge/switch-back policy.
 
 The old Autopilot keep-alive and goal-cycle implementation has been removed.
 The bot does not expose enable/disable, goal picker, global keep-alive, or
@@ -236,9 +309,16 @@ human-gate controls.
 
 ### Telegram button controls
 
-Open the inline control panel and tap **Continue via supervisor**. The command
-returns a run id immediately; final status is written under `loop-runs/...` and
-sent through the configured Telegram/Feishu notification route.
+Open the inline control panel and use one of the Autopilot buttons:
+**Delegate now** starts the supervisor WorkOrder immediately, while
+**Review plan first** shows the objective, checklist, acceptance criteria, stop
+conditions, non-goals, risks, and verification plan with a **Confirm
+delegation** button. Once confirmed, the command returns a run id immediately;
+final status is written under `loop-runs/...` and sent through the configured
+Telegram/Feishu notification route. If no supervisor session is available, the
+blocked reply includes a supervisor queue view so the owner can see active
+WorkOrders; Lark queue cards can cancel active-delegated tasks, but do not expose
+cancellation for scheduled system WorkOrders.
 
 ### Terminal TUI controls
 
@@ -247,9 +327,10 @@ control socket as the chat adapters and queues the same supervisor WorkOrder.
 
 ### Lark/Feishu button controls
 
-In a project-bound group or private chat, tap **Continue via supervisor** or send
-`/autopilot [requirement]`. Feishu notifications are routed to the bound project
-group when one exists, otherwise to the owner fallback configured for the bot.
+In a project-bound group or private chat, tap **Delegate now**, tap **Review
+plan first** and then **Confirm delegation**, or send `/autopilot [requirement]`.
+Feishu notifications are routed to the bound project group when one exists,
+otherwise to the owner fallback configured for the bot.
 
 ---
 
@@ -282,7 +363,7 @@ Each scheduled project chooses a runner:
   `pullRequest.autoMerge: true` is configured, the system gate merges the PR after
   those checks pass, using `pullRequest.mergeMethod` (`squash`, `merge`, or
   `rebase`; default `squash`), switches to `pullRequest.switchBack`, and
-  fast-forwards it from `origin`. Set `pullRequest.githubAccount` when the repository needs a
+  rebases it onto `origin`. Set `pullRequest.githubAccount` when the repository needs a
   specific GitHub CLI identity; every GitHub CLI command for that WorkOrder,
   including `gh api` security-alert checks and PR create/view/merge commands,
   uses a command-local `GH_TOKEN` from `gh auth token --user <account>` instead
@@ -369,9 +450,11 @@ Each scheduled project chooses a runner:
   optimization opportunities, and write `opportunities.json`; it must not edit
   files, create branches, commit, push, or open PRs. The bot stores and dedupes
   suggestions, then sends Telegram/Feishu messages with `/opportunity` commands.
-  Use `/opportunity discuss <id>` to prepare a decision conversation, then use
-  Autopilot / Continue via supervisor to hand confirmed work to the Loop
-  Supervisor. Use `/opportunity dismiss <id>` when it should not be pursued.
+  Use `/opportunity discuss <id>` to prepare a decision conversation and a
+  delegation brief draft with acceptance criteria, non-goals, risks, stop
+  conditions, and verification plan. Then use Autopilot / Continue via
+  supervisor to hand confirmed work to the Loop Supervisor. Use `/opportunity
+  dismiss <id>` when it should not be pursued.
   Feishu/Lark suggestion cards include readable per-item problem, value, and
   approach summaries plus view, discuss, and dismiss actions for each
   suggestion. Telegram uses per-suggestion discuss/dismiss buttons only while
@@ -432,7 +515,7 @@ projects:
       base: main
       switchBack: main
       autoMerge: false
-      githubAccount: Kingson4Wu
+      githubAccount: example-user
     bugFix:
       enabled: true
       schedule: "45 10 * * *"
@@ -605,7 +688,7 @@ Useful commands:
 - `tcb loop validate <file> [--json]`
 - `tcb loop tick <file> [--now <iso>] [--json]`
 - `tcb loop run <file> <projectId> [--json]` for command-backed/manual runs
-- `tcb loop reports list [--json]`
+- `tcb loop reports list [--json]` for command-backed reports and supervisor reports
 - `tcb loop backlog list [--all] [--json]`
 - `tcb loop skills refresh <file> [--write] [--json]`
 
@@ -741,7 +824,10 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
 - **TUI says "can't reach the control socket"** → the bot isn't running; start the
   service.
 - **Machine warm / slow** → `/sysload` or `tcb sysload` to spot a runaway process.
-- **Logs** → `tcb logs` (CLI) or `/logs` (chat, owner-only).
+- **Logs** → `tcb logs --since 1h --run-id <id>` (CLI) or `/logs` (chat,
+  owner-only). Chat `/logs` defaults to current-session WARN/ERROR records from
+  the last hour; use `/logs N` for the last N current-session records or
+  `/logs t_<trace>` for one trace.
 - **After `tcb adopt`, typing prints raw escape sequences** (e.g. `d0;1:3u`, `s5;1:3u`)
   → the orphaned claude/codex process was killed by signal before it could reset the
   terminal's enhanced keyboard mode. Run one of these in the affected terminal:

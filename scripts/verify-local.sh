@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+. "$(dirname "$0")/git-worktree-config-guard.sh"
+install_git_worktree_config_guard
+
 run() {
   printf '\n==> %s\n' "$*"
   "$@"

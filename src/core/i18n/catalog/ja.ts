@@ -30,6 +30,13 @@ export const ja: Messages = {
     "🌐 プロンプト翻訳の依存関係が準備できました · 翻訳モードを有効化できます",
   promptTranslateInstallFailed: (e) =>
     `🌐 インストール失敗 · ${e} · ホストで npm run translate:install を実行して詳細を確認してください`,
+  promptTranslateCommandUsage: (usage) => `使い方: /prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `プロンプト翻訳を利用できません: ${error}`,
+  promptTranslateDisabledFor: (source) => `${source} のプロンプト翻訳を無効化しました`,
+  promptTranslateStatusOff: (source) => `${source} のプロンプト翻訳: off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `${source} のプロンプト翻訳: argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `有効化しました。${line}`,
   voiceEmpty: "聞き取れませんでした · もう一度話すかテキストを送信してください",
   voiceUnsupported: "音声の文字起こしは Apple Silicon のみ対応",
   voiceNotInstalled: "音声未インストール（リポジトリで npm run whisper:install を実行）",
@@ -423,7 +430,7 @@ export const ja: Messages = {
   dashboardTitle: "📊 ダッシュボード",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "現在のセッション文脈を Loop Supervisor に委任し、実装、レビュー、検証、PR 処理、最終通知まで進めます。",
+    "現在のセッション文脈を Loop Supervisor に委任します。範囲が明確ならすぐ委任し、先にチェックリストと停止条件を確認したい場合は計画を確認してから進めます。",
   batchRunStarted: (planId, tasks) =>
     `🚀 バッチ実行を開始しました：プラン ${planId}、${tasks} 件のタスク`,
   batchPoolPaused: (agent, resumeAt) =>
@@ -431,9 +438,43 @@ export const ja: Messages = {
   batchRunComplete: (summary) => `✅ バッチ実行完了\n${summary}`,
   autopilotUsage: (raw) =>
     `不明なサブコマンド「${raw}」。使い方：/autopilot [requirement] または /autopilot delegate [requirement]`,
+  autopilotPlanPreviewBody:
+    "委任前の計画プレビュー\n\nObjective: continue the current user-confirmed task from the live session and repository state until it is genuinely complete.\n\nChecklist: inspect live context, git status, recent commits, existing PRs, and prior verification; identify what remains; make only necessary changes; review the diff; run relevant verification and existing evals when justified.\n\nAcceptance: final summary records changes, verification, PR/merge result when applicable, final branch, clean worktree, and any real blocker with evidence.\n\nStop conditions: stop when complete, blocked by evidence, or the next step would exceed scope.\n\nNon-goals: do not expand scope, redo satisfactory work, install target dependencies for bot policy, or merge unless policy allows it.",
+  langUsage: "使い方: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "`/sessions <id-prefix>` で再開",
+  opportunityProjectFallback: "プロジェクト",
+  opportunityProjectCount: (n) => `${n} 件のプロジェクト`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} 件の提案\n議論を続けられます。実行する準備ができたら Autopilot に委任してください。`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} 件の提案\nまず議論し、範囲が明確になってから委任してください。`,
+  btnOpportunityContinueDiscuss: "議論を続ける",
+  btnOpportunityDiscussAll: "すべて議論",
+  btnOpportunityShow: "詳細",
+  btnOpportunityDiscuss: "議論する",
+  btnOpportunityDismiss: "スキップ",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `${n} 件の提案をスキップしました。`,
+  opportunitySkippedMissing: (n, ids) => `${n} 件の提案をスキップしました。見つからない ID: ${ids}`,
+  opportunityMixedProjects: "異なるプロジェクトの提案をまとめて議論することはできません。",
+  opportunityCannotOpenProject: (reason) => `議論用にプロジェクトを開けません: ${reason}`,
+  opportunityDiscussionStarted: (n) => `${n} 件の提案を議論中です。`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `このプロジェクトでは自動化タスクが実行中のため、議論を一時的に開始できません。現在のタスク完了後に再試行してください。\n\nTask: ${taskKind}\nRun: ${runId}\nSupervisor: ${supervisorSession}`,
+  opportunityQueueBusy:
+    "プロジェクト agent が処理中、またはキュー済みメッセージがあります。現在のタスク完了後に再試行してください。",
+  opportunityGitStatusUnknown: (reason) =>
+    `プロジェクトの git 状態を確認できないため、議論を一時的に開始できません。\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `プロジェクトの worktree がクリーンではないため、議論を一時的に開始できません。既存の変更を先に処理してください。\n\n${preview}`,
   btnApDelegate: "🚀 Supervisorで継続",
+  btnApDelegateNow: "🚀 すぐ委任",
+  btnApReviewPlan: "📋 計画を確認",
+  btnApConfirmDelegate: "✅ 委任を確認",
   btnApCancelDelegate: "⛔ 委任をキャンセル",
+  btnApQueue: `${UI_ICONS.tone.queue} キューを表示`,
   btnApBack: "↩︎ 戻る",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Supervisor キュー`,
   noLogsContext:
     "現在のセッションがありません。プロジェクトを選択するか trace を指定してください（/logs <traceId>）。",
 

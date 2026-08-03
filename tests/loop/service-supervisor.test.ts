@@ -18,7 +18,10 @@ import {
   writeLoopSupervisorWorkerLeaseState,
 } from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
-import { buildRepositoryPullRequestReviewWorkOrder } from "../../src/core/loop/work-order.js";
+import {
+  buildRepositoryPullRequestReviewWorkOrder,
+  type LoopWorkOrder,
+} from "../../src/core/loop/work-order.js";
 import { NotificationGateway } from "../../src/core/notifications/gateway.js";
 import { sessionNameFromPath } from "../../src/core/projects/sessionPathMap.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
@@ -392,11 +395,19 @@ describe("runLoopServiceTickAsync supervised routing", () => {
         throw new Error("no PR lookup is needed when no commits are reported");
       },
       runGit: (invocation) => {
-        if (invocation.args.join(" ") === "status --porcelain") {
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") {
           return { status: 0, stdout: "", stderr: "" };
         }
-        if (invocation.args.join(" ") === "branch --show-current") {
+        if (command === "branch --show-current") {
           return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        if (
+          command === "fetch origin main" ||
+          command === "switch main" ||
+          command === "pull --rebase origin main"
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
         }
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
       },
@@ -566,6 +577,13 @@ workspaces:
         }
         if (invocation.args.join(" ") === "branch --show-current") {
           return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        if (
+          command === "fetch origin main" ||
+          command === "switch main" ||
+          command === "pull --rebase origin main"
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
         }
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
       },
@@ -1273,6 +1291,95 @@ prReview:
 
     expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
     expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+  });
+
+  it("reconciles active worker leases left behind by abandoned invalid-output work orders", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+`,
+    );
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const workOrder = {
+      id: `${scheduledAt}-hub-active-delegate`,
+      scheduledAt,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: projectDir,
+      agent: "codex",
+      goal: "Keep the placeholder project valid.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", timeoutMs: 1000, requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+      requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${scheduledAt}-hub-active-delegate]`,
+      finalSummaryPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "hub",
+        `${scheduledAt}-hub-active-delegate`,
+        "supervisor-final-summary.json",
+      ),
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: scheduledAt,
+    });
+    writeFileSync(workOrder.finalSummaryPath, '{"status":"completed"}\n');
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          projectPath: workOrder.projectPath,
+          status: "active",
+          leasedAt: scheduledAt,
+          updatedAt: scheduledAt,
+        },
+      ],
+    });
+
+    const result = reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 10 * 60 * 1000,
+      runCommand: () => {
+        throw new Error("abandoned lease reconciliation should not run shell gates");
+      },
+    });
+
+    expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workOrderId: workOrder.id,
+        status: "retained",
+      }),
+    ]);
   });
 
   it("does not require a loop commit branch for completed repository PR review merges", async () => {
@@ -2344,7 +2451,7 @@ prReview:
         "      enabled: true",
         "      base: main",
         "      switchBack: main",
-        "      githubAccount: miao2016",
+        "      githubAccount: example-maintainer",
       ].join("\n"),
     });
     const prCommands: string[] = [];
@@ -2379,10 +2486,10 @@ prReview:
 
     expect(result).toMatchObject({ ran: 1, failed: 1 });
     expect(prCommands).toEqual([
-      "GH_TOKEN=\"$(gh auth token --user 'miao2016')\" gh repo view --json viewerPermission",
+      "GH_TOKEN=\"$(gh auth token --user 'example-maintainer')\" gh repo view --json viewerPermission",
     ]);
     expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
-      "GitHub account miao2016 has READ permission",
+      "GitHub account example-maintainer has READ permission",
     );
   });
 
@@ -2876,7 +2983,7 @@ prReview:
         "      switchBack: dev",
         "      autoMerge: true",
         "      mergeMethod: merge",
-        "      githubAccount: Kingson4Wu",
+        "      githubAccount: example-owner",
       ].join("\n"),
     });
     const prCommands: string[] = [];
@@ -2927,8 +3034,8 @@ prReview:
         expect(request.prompt).toContain('"switchBack": "dev"');
         expect(request.prompt).toContain('"autoMerge": true');
         expect(request.prompt).toContain('"mergeMethod": "merge"');
-        expect(request.prompt).toContain('"githubAccount": "Kingson4Wu"');
-        expect(request.prompt).toContain("gh auth token --user 'Kingson4Wu'");
+        expect(request.prompt).toContain('"githubAccount": "example-owner"');
+        expect(request.prompt).toContain("gh auth token --user 'example-owner'");
         expect(request.prompt).toContain('"branch": "loop/hub/architecture/1784196600000-hub"');
         const marker = finalMarkerFromPrompt(request.prompt);
         return {
@@ -2942,9 +3049,9 @@ prReview:
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
     expect(prCommands).toEqual([
-      "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh repo view --json viewerPermission",
-      "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh pr view 'loop/hub/architecture/1784196600000-hub' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
-      "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh pr merge 'loop/hub/architecture/1784196600000-hub' --merge --delete-branch",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh repo view --json viewerPermission",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr view 'loop/hub/architecture/1784196600000-hub' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge 'loop/hub/architecture/1784196600000-hub' --merge --delete-branch",
     ]);
     expect(gitCommands).toEqual([
       ["status", "--porcelain"],

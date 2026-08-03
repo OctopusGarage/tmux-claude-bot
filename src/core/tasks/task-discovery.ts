@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { appStateDir } from "../../shared/state-dir.js";
+import { LOOP_RUN_ARTIFACTS, loopRunsRoot } from "../loop/artifacts.js";
 import type { LoopConfig } from "../loop/config.js";
 import { parseLoopConfigYaml } from "../loop/config.js";
 import {
@@ -111,12 +111,12 @@ function finalSummaryPathForLedgerRecord(record: ScheduledTaskRecord): string | 
   const projectId =
     projectIdFromLoopTaskId(record.taskId) ?? projectIdFromLoopTaskName(record.name);
   if (projectId === "unknown") return null;
-  const runRoot = join(appStateDir(), "loop-runs", projectId);
+  const runRoot = join(loopRunsRoot(), projectId);
   if (!existsSync(runRoot)) return null;
   const prefix = `${record.scheduledAt}-`;
   for (const name of readdirSync(runRoot)) {
     if (!name.startsWith(prefix)) continue;
-    const candidate = join(runRoot, name, "supervisor-final-summary.json");
+    const candidate = join(runRoot, name, LOOP_RUN_ARTIFACTS.supervisorFinalSummary);
     if (existsSync(candidate)) return candidate;
   }
   return null;
@@ -124,8 +124,8 @@ function finalSummaryPathForLedgerRecord(record: ScheduledTaskRecord): string | 
 
 function finalSummaryPathNearReport(reportPath: string): string | null {
   const candidates = [
-    join(dirname(reportPath), "supervisor-final-summary.json"),
-    reportPath.replace(/supervisor(?:-summary)?\.json$/, "supervisor-final-summary.json"),
+    join(dirname(reportPath), LOOP_RUN_ARTIFACTS.supervisorFinalSummary),
+    reportPath.replace(/supervisor(?:-summary)?\.json$/, LOOP_RUN_ARTIFACTS.supervisorFinalSummary),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
@@ -545,11 +545,7 @@ function recordForLoopRunArtifact(input: {
   loopRunsDir?: string;
 }): ScheduledTaskRecord | null {
   const runId = loopRunId(input.scheduledAt, input.projectId, input.jobKind, input.jobKey);
-  const runDir = join(
-    input.loopRunsDir ?? join(appStateDir(), "loop-runs"),
-    input.projectId,
-    runId,
-  );
+  const runDir = join(input.loopRunsDir ?? loopRunsRoot(), input.projectId, runId);
   const latestSuccess = latestSuccessfulLoopRunAfter({
     projectId: input.projectId,
     jobKey: input.jobKey,
@@ -577,7 +573,7 @@ function recordForSupervisorArtifacts(input: {
   now: number;
   runDir: string;
 }): ScheduledTaskRecord | null {
-  const systemGatePath = join(input.runDir, "system-gate.json");
+  const systemGatePath = join(input.runDir, LOOP_RUN_ARTIFACTS.systemGate);
   const systemGate = readJsonRecord(systemGatePath);
   if (systemGate?.accepted === false) {
     return recordForSystemGateFailure({
@@ -586,9 +582,9 @@ function recordForSupervisorArtifacts(input: {
       gate: systemGate,
     });
   }
-  const finalSummaryPath = join(input.runDir, "supervisor-final-summary.json");
+  const finalSummaryPath = join(input.runDir, LOOP_RUN_ARTIFACTS.supervisorFinalSummary);
   const finalSummary = readJsonRecord(finalSummaryPath);
-  const supervisorSummaryPath = join(input.runDir, "supervisor-summary.json");
+  const supervisorSummaryPath = join(input.runDir, LOOP_RUN_ARTIFACTS.supervisorSummary);
   const supervisorSummary = readJsonRecord(supervisorSummaryPath);
   if (
     finalSummary !== null &&
@@ -660,7 +656,7 @@ function latestSuccessfulLoopRunAfter(input: {
   now: number;
   loopRunsDir?: string;
 }): { scheduledAt: number; path: string } | null {
-  const root = join(input.loopRunsDir ?? join(appStateDir(), "loop-runs"), input.projectId);
+  const root = join(input.loopRunsDir ?? loopRunsRoot(), input.projectId);
   if (!existsSync(root)) return null;
   let latest: { scheduledAt: number; path: string } | null = null;
   for (const name of readdirSync(root)) {
@@ -668,7 +664,7 @@ function latestSuccessfulLoopRunAfter(input: {
     if (match === null || match.scheduledAt <= input.scheduledAt || match.scheduledAt > input.now) {
       continue;
     }
-    const finalSummaryPath = join(root, name, "supervisor-final-summary.json");
+    const finalSummaryPath = join(root, name, LOOP_RUN_ARTIFACTS.supervisorFinalSummary);
     const finalSummary = readJsonRecord(finalSummaryPath);
     if (finalSummary?.status !== "completed") continue;
     if (latest === null || match.scheduledAt > latest.scheduledAt) {
@@ -834,8 +830,8 @@ function recordForSupervisorSummary(input: {
   const reason = typeof result?.reason === "string" ? result.reason : undefined;
   const timestamps = isRecord(input.summary.timestamps) ? input.summary.timestamps : null;
   const endedAt = typeof timestamps?.endedAt === "number" ? timestamps.endedAt : undefined;
-  const reportPath = existsSync(join(input.runDir, "supervisor.md"))
-    ? join(input.runDir, "supervisor.md")
+  const reportPath = existsSync(join(input.runDir, LOOP_RUN_ARTIFACTS.supervisorMarkdown))
+    ? join(input.runDir, LOOP_RUN_ARTIFACTS.supervisorMarkdown)
     : input.path;
   const detail = reason === undefined ? status : `${status}: ${reason}`;
   if (status === "completed") {

@@ -10,7 +10,7 @@ import type { HandlerDeps } from "../deps.js";
 import { createLoopSupervisorTaskRunner } from "../loop/agent-queue.js";
 import { type LoopProjectConfig, parseLoopConfigYaml } from "../loop/config.js";
 import { prepareLoopExecutionWorktrees } from "../loop/execution-worktree.js";
-import { recoverInvalidOutputFromFinalSummary } from "../loop/final-summary-recovery.js";
+import { recoverInvalidOutputFromFinalSummaryAsync } from "../loop/final-summary-recovery.js";
 import {
   runGitCommand,
   runShellCommand,
@@ -55,7 +55,7 @@ export const DEFAULT_CONTEXT_DELEGATE_REQUIREMENT = [
   "First inspect the live session, git status, recent commits, existing PRs, and any prior verification output to determine what remains.",
   "Do not expand scope or add unrelated features. If existing local changes or commits already satisfy part of the work, review them instead of redoing them.",
   "Before changing code, verify any suspected issue is real and actionable. After changing code, review the diff for regressions and run the relevant local verification, tests, coverage review for touched risk paths, and existing deterministic or agent-backed evals when justified.",
-  "If the matched project policy enables PRs, create or update one coherent PR against the configured base, write a clear PR body, wait for required CI and mergeability gates, auto-merge only when configured and all gates pass, then switch the local worktree back to the configured branch and fast-forward it.",
+  "If the matched project policy enables PRs, create or update one coherent PR against the configured base, write a clear PR body, wait for required CI and mergeability gates, auto-merge only when configured and all gates pass, then switch the local worktree back to the configured branch and rebase it onto origin.",
   "Keep logs and final summary precise: what was inspected, what changed, what was verified, PR or merge result, final branch, final worktree cleanliness, and any real blocker with evidence.",
 ].join(" ");
 
@@ -77,6 +77,17 @@ export type ActiveDelegatedTaskCancelResult =
       supervisorSession: string;
     }
   | { status: "not-found"; reason: string };
+
+export type ActiveDelegateQueueItem = {
+  runId: string;
+  projectId: string;
+  taskKind: string;
+  status: string;
+  supervisorSession: string;
+  updatedAt: number;
+  runDir: string;
+  cancellable: boolean;
+};
 
 type ActiveDelegatedTaskController = {
   workOrder: LoopWorkOrder;
@@ -114,6 +125,43 @@ export function formatActiveDelegateCancel(result: ActiveDelegatedTaskCancelResu
   ].join("\n");
 }
 
+export function listActiveDelegateQueue(): ActiveDelegateQueueItem[] {
+  return listReservedLoopSupervisorWorkOrders()
+    .map((record) => {
+      const taskKind = record.workOrder.task?.kind ?? "loop-engineering";
+      return {
+        runId: record.state.runId,
+        projectId: record.state.projectId,
+        taskKind,
+        status: record.state.status,
+        supervisorSession: record.state.supervisorSession,
+        updatedAt: record.state.updatedAt,
+        runDir: record.runDir,
+        cancellable: taskKind === "active-delegated-task",
+      };
+    })
+    .sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+export function formatActiveDelegateQueue(items = listActiveDelegateQueue()): string {
+  if (items.length === 0) return "No active loop supervisor work.";
+  return [
+    `Loop supervisor queue: ${items.length} active work item${items.length === 1 ? "" : "s"}`,
+    "",
+    ...items.flatMap((item, index) => [
+      `${index + 1}. ${item.projectId} · ${item.taskKind} · ${item.status}`,
+      `runId: ${item.runId}`,
+      `supervisor: ${item.supervisorSession}`,
+      `updated: ${new Date(item.updatedAt).toISOString()}`,
+      `cancellable: ${item.cancellable ? "yes" : "no"}`,
+      `report: ${item.runDir}`,
+      "",
+    ]),
+  ]
+    .join("\n")
+    .trimEnd();
+}
+
 export async function cancelActiveDelegatedTask(
   deps: HandlerDeps,
   input: { session: string },
@@ -134,6 +182,44 @@ export async function cancelActiveDelegatedTask(
   }
 
   const controller = activeDelegatedTasks.get(projectPath);
+  controller?.controller.abort("cancelled by user");
+  writeLoopSupervisorWorkOrderState({
+    workOrder: active.workOrder,
+    supervisorSession: active.state.supervisorSession,
+    status: "cancelled",
+    now: Date.now(),
+    resultStatus: "cancelled",
+    revisionReasons: ["cancelled by user"],
+  });
+  await interruptSupervisor(deps, active.state.supervisorSession);
+  return {
+    status: "cancelled",
+    runId: active.workOrder.id,
+    projectId: active.workOrder.projectId,
+    supervisorSession: active.state.supervisorSession,
+  };
+}
+
+export async function cancelActiveDelegatedTaskByRunId(
+  deps: HandlerDeps,
+  input: { runId: string },
+): Promise<ActiveDelegatedTaskCancelResult> {
+  const active =
+    listUnfinishedLoopSupervisorWorkOrders().find(
+      (record) =>
+        record.state.runId === input.runId &&
+        record.workOrder.task?.kind === "active-delegated-task",
+    ) ?? null;
+  if (active === null) {
+    return {
+      status: "not-found",
+      reason: `no cancellable active delegated work for run "${input.runId}"`,
+    };
+  }
+
+  const controller =
+    activeDelegatedTasks.get(active.workOrder.projectPath) ??
+    activeDelegatedTasks.get(resolve(active.workOrder.projectPath));
   controller?.controller.abort("cancelled by user");
   writeLoopSupervisorWorkOrderState({
     workOrder: active.workOrder,
@@ -374,7 +460,7 @@ async function runActiveDelegatedTaskInBackground(
     dispatch,
   });
 
-  result = recoverInvalidOutputFromFinalSummary(workOrder, result);
+  result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
   let gate = runSupervisedSystemGateOutcome({
     project: systemGateProjectFromWorkOrder(workOrder),
     workOrder,
@@ -410,7 +496,7 @@ async function runActiveDelegatedTaskInBackground(
       previousOutput: gate.result.output,
       cancelSignal,
     });
-    result = recoverInvalidOutputFromFinalSummary(workOrder, result);
+    result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
     gate = runSupervisedSystemGateOutcome({
       project: systemGateProjectFromWorkOrder(workOrder),
       workOrder,

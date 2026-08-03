@@ -24,6 +24,14 @@ Supported modes:
   it on exit.
 - `npm run tui`: control-socket client, not a bot instance.
 
+Managed install owns the full onboarding surface: runtime build, global
+launchers, guided setup, launchd/systemd registration, isolated Home Operator
+workspace provisioning, operator-home skill installation, and MCP profile
+descriptor installation. It must not install global Claude/Codex skills by
+default; `tcb skill install --scope global` is an explicit convenience command.
+If one of those surfaces changes, update `install.sh`, `INSTALL.md`,
+`docs/manual.md`, doctor coverage, and a script contract test in the same slice.
+
 Use the service manager, not legacy process scripts, for persistent services:
 
 - macOS launchd: `launchctl kickstart -k "gui/$(id -u)/com.octopusgarage.tmux-claude-bot"`.
@@ -108,6 +116,17 @@ wrong, let the supervisor repair the target project through the configured
 agent session. If a completed run is misclassified because system-gate logic is
 wrong, fix this repository instead of weakening the gate.
 
+For owner-confirmed delegated work, keep the task advancement contract
+structured. The WorkOrder should carry planning expectations when the task is
+broad or agent-driven. Before substantive execution, the supervisor must form a
+`delegationBrief` with the objective, current assessment, score or
+not-applicable score, checklist, acceptance criteria, stop conditions,
+non-goals, risks, and verification plan. Before completion, the final summary
+must record `planReview` so the system can see whether the checklist was
+completed, the score target was met or not applicable, a stop condition was
+hit, over-optimization was avoided, verification completed, and residual risks
+remain.
+
 ## Conflict And Isolation Rules
 
 Default scheduled or delegated code-changing work to isolated worktrees and
@@ -162,6 +181,26 @@ active `gh` account for configured projects.
 Before pushing or claiming CI readiness, run `npm run verify:local`. If remote
 CI finds a class of issue not covered locally, update the local verification
 script, hook, or instructions.
+
+Release tags must not bypass the local gate. Keep `scripts/release.sh` running
+`npm run verify:local` before `npm version`; `TCB_RELEASE_SKIP_VERIFY=1` is a
+manual emergency escape hatch and should not be used for routine releases.
+
+Git hooks must be safe in linked automation worktrees. Keep the worktree config
+guard enabled in pre-commit and pre-push hooks so a hook failure cannot leave
+the shared common git config with `core.bare=true` and break the source
+worktree.
+
+Agent tool hooks must block attempts to set `core.bare=true` before the shell
+command runs. Keep `scripts/agent-command-guard.sh` covered by tests and wired
+into Claude/Codex `PreToolUse` hooks so agents cannot corrupt the source or
+linked worktree configuration while trying to repair git state.
+
+AI capacity, rate-limit, readiness, queue, and network transients must be
+classified before they are reported as project failures. Keep the shared
+transient classifier covered by tests, wire provider transients into bounded
+supervisor dispatch retry, preserve retryable schedules after terminal dispatch
+failure, and expose leaked terminal transients through Runtime Guardian.
 
 Coverage work should improve meaningful behavior coverage. Do not add low-value
 tests just to move a percentage. If a project cannot reasonably reach the

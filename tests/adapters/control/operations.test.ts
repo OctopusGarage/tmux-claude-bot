@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   controlOperationNames,
@@ -47,5 +50,41 @@ describe("control operation registry", () => {
     });
 
     expect(send).toHaveBeenCalledWith({ id: 99, ok: false, error: "boom" });
+  });
+
+  it("passes caller provenance and Home Operator workspace classification to handlers", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-home-caller-"));
+    const send = vi.fn();
+    const deps = {
+      config: { homeOperator: { dir } },
+    } as HandlerDeps;
+    const req = {
+      id: 100,
+      op: "snapshot",
+      caller: { source: "control-client", cwd: dir, pid: 123 },
+    } satisfies ControlRequest;
+
+    try {
+      await handleControlRequest(deps, req, send, {
+        ...createControlOperationHandlers(deps, send),
+        snapshot: async (_req, ctx) => {
+          ctx.ok({
+            caller: ctx.caller,
+            isOperatorHomeCaller: ctx.isOperatorHomeCaller,
+          });
+        },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    expect(send).toHaveBeenCalledWith({
+      id: 100,
+      ok: true,
+      data: {
+        caller: { source: "control-client", cwd: dir, pid: 123 },
+        isOperatorHomeCaller: true,
+      },
+    });
   });
 });

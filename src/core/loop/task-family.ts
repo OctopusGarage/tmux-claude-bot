@@ -1,17 +1,201 @@
-export type LoopScheduledJobKind =
-  | "architecture"
-  | "bug-fix"
-  | "test-coverage"
-  | "security-maintenance"
-  | "harness-auto"
-  | "opportunity-discovery"
-  | "automation-governance-review"
-  | "pull-request-review";
+export const LOOP_SCHEDULED_JOB_KINDS = [
+  "architecture",
+  "bug-fix",
+  "test-coverage",
+  "security-maintenance",
+  "harness-auto",
+  "opportunity-discovery",
+  "automation-governance-review",
+  "pull-request-review",
+] as const;
 
-export type LoopTaskSchedulerJobKind =
-  | LoopScheduledJobKind
-  | "workspace-architecture"
-  | "repository-pull-request-review";
+export type LoopScheduledJobKind = (typeof LOOP_SCHEDULED_JOB_KINDS)[number];
+
+export const LOOP_TASK_SCHEDULER_JOB_KINDS = [
+  ...LOOP_SCHEDULED_JOB_KINDS,
+  "workspace-architecture",
+  "repository-pull-request-review",
+] as const;
+
+export type LoopTaskSchedulerJobKind = (typeof LOOP_TASK_SCHEDULER_JOB_KINDS)[number];
+
+export const LOOP_WORK_ORDER_TASK_KINDS = [
+  "architecture",
+  "workspace-architecture",
+  "bug-fix",
+  "test-coverage",
+  "security-maintenance",
+  "harness-auto",
+  "opportunity-discovery",
+  "automation-governance-review",
+  "pull-request-review",
+  "repository-pull-request-review",
+  "active-delegated-task",
+] as const;
+
+export type LoopWorkOrderTaskKind = (typeof LOOP_WORK_ORDER_TASK_KINDS)[number];
+
+export type LoopTaskFamilyGovernance = {
+  kind: LoopWorkOrderTaskKind;
+  promptId?: string;
+  scheduled: boolean;
+  workspaceSupported: boolean;
+  actionScope: "read-only" | "code-change" | "commit" | "pr-creation" | "auto-merge";
+  ownerConfirmation: "not-applicable" | "optional" | "required-before-dispatch";
+  requiresPlanning: boolean;
+  requiresAiEval: boolean;
+  defaultWorktreeIsolation: "source-allowed-read-only" | "isolated" | "policy-controlled";
+  stopRule: string;
+};
+
+export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTaskFamilyGovernance> =
+  {
+    architecture: {
+      kind: "architecture",
+      promptId: "loop.policy.architecture",
+      scheduled: true,
+      workspaceSupported: false,
+      actionScope: "auto-merge",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "isolated",
+      stopRule:
+        "Stop when the configured architecture target score is reached or no bounded improvement remains.",
+    },
+    "workspace-architecture": {
+      kind: "workspace-architecture",
+      promptId: "loop.policy.workspace-architecture",
+      scheduled: true,
+      workspaceSupported: true,
+      actionScope: "auto-merge",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "isolated",
+      stopRule:
+        "Stop when the workspace architecture target score is reached or further changes would force unrelated repositories to change.",
+    },
+    "bug-fix": {
+      kind: "bug-fix",
+      promptId: "loop.policy.bug-fix",
+      scheduled: true,
+      workspaceSupported: true,
+      actionScope: "auto-merge",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "isolated",
+      stopRule: "Fix only confirmed bugs and stop when a round finds no confirmed real bug.",
+    },
+    "test-coverage": {
+      kind: "test-coverage",
+      promptId: "loop.policy.test-coverage",
+      scheduled: true,
+      workspaceSupported: true,
+      actionScope: "auto-merge",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "isolated",
+      stopRule:
+        "Stop when meaningful coverage reaches the configured target or only brittle/padding tests remain.",
+    },
+    "security-maintenance": {
+      kind: "security-maintenance",
+      promptId: "loop.policy.security-maintenance",
+      scheduled: true,
+      workspaceSupported: true,
+      actionScope: "auto-merge",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "isolated",
+      stopRule:
+        "Fix only verified security risks and stop when no bounded, verifiable risk remains.",
+    },
+    "harness-auto": {
+      kind: "harness-auto",
+      promptId: "loop.policy.harness-auto",
+      scheduled: true,
+      workspaceSupported: true,
+      actionScope: "auto-merge",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "isolated",
+      stopRule:
+        "Run only enabled subtasks and stop when the configured health score and no-confirmed-issues condition are met.",
+    },
+    "opportunity-discovery": {
+      kind: "opportunity-discovery",
+      promptId: "loop.policy.opportunity-discovery",
+      scheduled: true,
+      workspaceSupported: true,
+      actionScope: "read-only",
+      ownerConfirmation: "required-before-dispatch",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "source-allowed-read-only",
+      stopRule: "Stop after recording bounded proposals; never implement from discovery.",
+    },
+    "automation-governance-review": {
+      kind: "automation-governance-review",
+      promptId: "loop.policy.automation-governance-review",
+      scheduled: true,
+      workspaceSupported: false,
+      actionScope: "pr-creation",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: true,
+      requiresAiEval: true,
+      defaultWorktreeIsolation: "policy-controlled",
+      stopRule:
+        "Stop at the target governance score; create at most one repair PR for confirmed P0/P1 issues and never auto-merge it.",
+    },
+    "pull-request-review": {
+      kind: "pull-request-review",
+      promptId: "loop.policy.pull-request-review",
+      scheduled: true,
+      workspaceSupported: true,
+      actionScope: "auto-merge",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "isolated",
+      stopRule:
+        "Merge only objectively eligible PRs after the configured consecutive review passes.",
+    },
+    "repository-pull-request-review": {
+      kind: "repository-pull-request-review",
+      promptId: "loop.policy.repository-pull-request-review",
+      scheduled: true,
+      workspaceSupported: false,
+      actionScope: "auto-merge",
+      ownerConfirmation: "not-applicable",
+      requiresPlanning: false,
+      requiresAiEval: false,
+      defaultWorktreeIsolation: "isolated",
+      stopRule:
+        "Close or merge only after objective review determines the PR is unnecessary or eligible.",
+    },
+    "active-delegated-task": {
+      kind: "active-delegated-task",
+      promptId: "loop.policy.active-delegated-task",
+      scheduled: false,
+      workspaceSupported: false,
+      actionScope: "auto-merge",
+      ownerConfirmation: "optional",
+      requiresPlanning: true,
+      requiresAiEval: true,
+      defaultWorktreeIsolation: "policy-controlled",
+      stopRule:
+        "Stop when the confirmed delegated requirement is implemented and verified, or a concrete blocker is proven.",
+    },
+  };
+
+export function loopTaskFamilyGovernance(kind: LoopWorkOrderTaskKind): LoopTaskFamilyGovernance {
+  return LOOP_TASK_FAMILY_GOVERNANCE[kind];
+}
 
 type ScheduledEntity = {
   id: string;

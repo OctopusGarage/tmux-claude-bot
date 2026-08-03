@@ -147,6 +147,12 @@ describe("DailyTaskLedger", () => {
     expect(classifyTaskFailure("notification failed", "TLS handshake timeout")).toBe(
       "external-service",
     );
+    expect(
+      classifyTaskFailure(
+        "dispatch-failed",
+        "Selected model is at capacity. Please try a different model.",
+      ),
+    ).toBe("agent-capacity");
   });
 
   it("marks earlier unresolved same-job failures as superseded by later success", () => {

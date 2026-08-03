@@ -6,12 +6,26 @@ export type NotificationChannel = "telegram" | "lark";
 export type NotificationChannelSelection = NotificationChannel | "both";
 export type NotificationLevel = "info" | "success" | "warning" | "error";
 
+export const NOTIFICATION_SOURCE_CATALOG = [
+  "autopilot-delegate",
+  "batch-scheduler",
+  "daily-audit",
+  "daily-task-audit",
+  "long-task-monitor",
+  "loop-engineering",
+  "opportunity-discovery",
+  "runtime-guardian",
+  "tmux-claude-bot",
+] as const;
+
+export type NotificationSource = (typeof NOTIFICATION_SOURCE_CATALOG)[number];
+
 export interface NotificationRequest {
   channel?: NotificationChannelSelection;
   level?: NotificationLevel;
   title: string;
   body?: string;
-  source?: string;
+  source?: NotificationSource | (string & {});
   session?: string;
   attachments?: NotificationAttachment[];
   opportunities?: NotificationOpportunity[];

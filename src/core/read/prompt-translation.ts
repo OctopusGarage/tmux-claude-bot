@@ -4,6 +4,7 @@ import * as nodePath from "node:path";
 import { promisify } from "node:util";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import type { Messages } from "../i18n/catalog/zh.js";
 import { persistEnvVar } from "../infra/env-store.js";
 import type { Channel } from "../projects/project-manager.js";
 import { promptTranslationReadiness } from "./capability-readiness.js";
@@ -396,19 +397,42 @@ export async function applyPromptTranslateCommand(
   return { ok: true, kind: "enabled", source, mode: "argos", from, to, timeoutMs };
 }
 
-export function formatPromptTranslateCommandResult(result: PromptTranslateCommandResult): string {
+type PromptTranslateMessages = Pick<
+  Messages,
+  | "promptTranslateCommandUsage"
+  | "promptTranslateUnavailable"
+  | "promptTranslateDisabledFor"
+  | "promptTranslateStatusOff"
+  | "promptTranslateStatusLine"
+  | "promptTranslateEnabledLine"
+>;
+
+const DEFAULT_PROMPT_TRANSLATE_MESSAGES: PromptTranslateMessages = {
+  promptTranslateCommandUsage: (usage) => `Usage: /prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `Prompt translation unavailable: ${error}`,
+  promptTranslateDisabledFor: (source) => `Prompt translation disabled for ${source}`,
+  promptTranslateStatusOff: (source) => `Prompt translation for ${source}: off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `Prompt translation for ${source}: argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `Enabled. ${line}`,
+};
+
+export function formatPromptTranslateCommandResult(
+  result: PromptTranslateCommandResult,
+  m: PromptTranslateMessages = DEFAULT_PROMPT_TRANSLATE_MESSAGES,
+): string {
   if (!result.ok) {
-    if (result.kind === "usage") return `用法: /prompt_translate ${result.usage}`;
-    return `Prompt translation unavailable: ${result.error}`;
+    if (result.kind === "usage") return m.promptTranslateCommandUsage(result.usage);
+    return m.promptTranslateUnavailable(result.error);
   }
   const source = result.source;
   if (result.mode === "off") {
     return result.kind === "disabled"
-      ? `Prompt translation disabled for ${source}`
-      : `Prompt translation for ${source}: off`;
+      ? m.promptTranslateDisabledFor(source)
+      : m.promptTranslateStatusOff(source);
   }
-  const line = `Prompt translation for ${source}: argos ${result.from}->${result.to}`;
-  return result.kind === "enabled" ? `Enabled. ${line}` : line;
+  const line = m.promptTranslateStatusLine(source, result.from, result.to);
+  return result.kind === "enabled" ? m.promptTranslateEnabledLine(line) : line;
 }
 
 export function promptTranslateStatus(source: PromptTransformSource): PromptTranslateCommandResult {

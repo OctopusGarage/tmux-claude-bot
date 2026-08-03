@@ -306,6 +306,119 @@ describe("runtime guardian", () => {
     ]);
   });
 
+  it("discovers terminal supervisor dispatch failures caused by transient agent capacity", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-agent-capacity",
+    );
+    mkdirSync(runDir, { recursive: true });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-agent-capacity", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "dispatch-failed",
+      revisionReasons: ["Selected model is at capacity. Please try a different model."],
+    });
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      `${JSON.stringify({
+        result: {
+          status: "dispatch-failed",
+          reason: "Selected model is at capacity. Please try a different model.",
+          output: "Selected model is at capacity. Please try a different model.",
+        },
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-agent-transient-failure",
+        severity: "medium",
+        runId: "run-agent-capacity",
+        evidence: expect.arrayContaining([
+          expect.stringContaining("model-capacity"),
+          expect.stringContaining("Selected model is at capacity"),
+        ]),
+      }),
+    ]);
+  });
+
+  it("discovers read-only smoke tasks blocked by isolated dependency preflight", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "geo-frontend",
+      "run-read-only-smoke",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-read-only-smoke", projectDir, summaryPath),
+      projectId: "geo-frontend",
+      projectName: "geo-frontend",
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_geo-frontend",
+        requirement:
+          "Read-only smoke validation of the active delegation contract. Do not modify files.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "blocked",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "geo-frontend",
+        actionsTaken: ["inspected isolated worktree"],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "local dependency preflight",
+              result: "failed",
+              evidence: "node_modules was absent and vite/vitest/eslint/prettier were missing",
+            },
+          ],
+          decision: "block",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "read-only-smoke-preflight-blocked",
+        severity: "medium",
+        runId: "run-read-only-smoke",
+        projectId: "geo-frontend",
+        evidence: expect.arrayContaining([
+          expect.stringContaining("verification-profile/worktree-policy"),
+        ]),
+      }),
+    ]);
+  });
+
   it("builds a repair prompt that prevents target-repo edits and PR handling", () => {
     const prompt = buildRuntimeGuardianRepairPrompt({
       repoPath: "/repo/tmux-claude-bot",
@@ -316,6 +429,7 @@ describe("runtime guardian", () => {
 
     expect(prompt).toContain("Runtime Guardian (fast-heal)");
     expect(prompt).toContain("Do not edit target project repositories");
+    expect(prompt).toContain("fix the bot WorkOrder verification profile or worktree policy");
     expect(prompt).toContain("Do not open a PR");
     expect(prompt).toContain("Use CodeGraph before grep/find");
     expect(prompt).toContain("pre-mutation review");

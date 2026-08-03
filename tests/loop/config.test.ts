@@ -829,7 +829,7 @@ workspaces:
           "      base: dev",
           "      switchBack: dev",
           "      autoMerge: true",
-          "      githubAccount: Kingson4Wu",
+          "      githubAccount: example-owner",
           "    allowedActions:",
         ].join("\n"),
       ),
@@ -840,7 +840,7 @@ workspaces:
       base: "dev",
       switchBack: "dev",
       autoMerge: true,
-      githubAccount: "Kingson4Wu",
+      githubAccount: "example-owner",
     });
   });
 
@@ -977,7 +977,7 @@ prReview:
       agent: codex
       schedule: "0 2 * * *"
       base: dev
-      githubAccount: Kingson4Wu
+      githubAccount: example-owner
       lookbackHours: 72
       consecutivePasses: 2
       autoMerge: true
@@ -994,7 +994,7 @@ prReview:
       repo: "OctopusGarage/tmux-claude-bot",
       base: "dev",
       switchBack: "dev",
-      githubAccount: "Kingson4Wu",
+      githubAccount: "example-owner",
       autoMerge: true,
       mergeMethod: "rebase",
       repair: {
@@ -1017,7 +1017,7 @@ prReview:
       agent: codex
       schedule: "0 2 * * *"
       switchBack: dev
-      githubAccount: Kingson4Wu
+      githubAccount: example-owner
       autoMerge: true
 `);
 
@@ -1025,7 +1025,7 @@ prReview:
       id: "mesh-talk-all-prs",
       repo: "OctopusGarage/mesh-talk",
       switchBack: "dev",
-      githubAccount: "Kingson4Wu",
+      githubAccount: "example-owner",
       autoMerge: true,
     });
     expect(config.prReview.repositories[0]?.base).toBeUndefined();

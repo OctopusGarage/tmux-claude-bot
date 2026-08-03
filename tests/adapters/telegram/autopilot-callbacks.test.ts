@@ -13,6 +13,8 @@ beforeAll(() => {
 describe("autopilot telegram callbacks", () => {
   it("parses the panel prefixes", () => {
     expect(parseCallbackData("apd:abc123")).toEqual({ kind: "apDelegate", sid: "abc123" });
+    expect(parseCallbackData("app:abc123")).toEqual({ kind: "apPlan", sid: "abc123" });
+    expect(parseCallbackData("apc:abc123")).toEqual({ kind: "apConfirmDelegate", sid: "abc123" });
     expect(parseCallbackData("apz:abc123")).toEqual({
       kind: "apCancelDelegate",
       sid: "abc123",
@@ -27,10 +29,16 @@ describe("autopilot telegram callbacks", () => {
     expect(parseCallbackData("apstop:abc123")).toBeNull();
   });
 
-  it("panel view only exposes supervisor delegation", () => {
+  it("panel view exposes direct delegation and plan preview", () => {
     const kb = buildAutopilotPanelKeyboard("abc123");
     const labels = kb.inline_keyboard.flat().map((b) => b.text);
-    expect(labels).toContain("🚀 Continue via supervisor");
+    const data = kb.inline_keyboard
+      .flat()
+      .map((b) => (b as { callback_data?: string }).callback_data);
+    expect(labels).toContain("🚀 Delegate now");
+    expect(labels).toContain("📋 Review plan first");
+    expect(data).toContain("apd:abc123");
+    expect(data).toContain("app:abc123");
     expect(labels).not.toContain("🎯 Pick goals");
     expect(labels).not.toContain("Enable keep-alive/goals");
   });
@@ -42,7 +50,8 @@ describe("autopilot telegram callbacks", () => {
       .flat()
       .map((b) => (b as { callback_data?: string }).callback_data);
     expect(labels).toContain("⛔ Cancel delegate");
-    expect(labels).not.toContain("🚀 Continue via supervisor");
+    expect(labels).not.toContain("🚀 Delegate now");
+    expect(labels).not.toContain("📋 Review plan first");
     expect(data).toContain("apz:abc123");
   });
 
@@ -51,13 +60,12 @@ describe("autopilot telegram callbacks", () => {
     const data = kb.inline_keyboard
       .flat()
       .map((b) => (b as { callback_data?: string }).callback_data);
-    expect(data).not.toContain("apc:abc123");
     expect(data).not.toContain("apx:abc123");
     expect(data).toContain("apd:abc123");
   });
 
-  it("does not parse old gate prefixes", () => {
-    expect(parseCallbackData("apc:abc123")).toBeNull();
+  it("parses plan-confirmation callback and rejects old reject prefix", () => {
+    expect(parseCallbackData("apc:abc123")).toEqual({ kind: "apConfirmDelegate", sid: "abc123" });
     expect(parseCallbackData("apx:abc123")).toBeNull();
   });
 

@@ -28,6 +28,13 @@ export const zhTW: Messages = {
   promptTranslateInstallOk: "🌐 prompt 翻譯相依套件已就緒 · 現在可以開啟翻譯模式",
   promptTranslateInstallFailed: (e) =>
     `🌐 安裝失敗 · ${e} · 可在主機執行 npm run translate:install 查看詳情`,
+  promptTranslateCommandUsage: (usage) => `用法：/prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `Prompt translation 不可用：${error}`,
+  promptTranslateDisabledFor: (source) => `已關閉 ${source} 的 prompt translation`,
+  promptTranslateStatusOff: (source) => `${source} 的 prompt translation：off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `${source} 的 prompt translation：argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `已開啟。${line}`,
   voiceEmpty: "沒聽清楚 · 請再說一遍或改傳文字",
   voiceUnsupported: "語音轉錄僅支援 Apple Silicon",
   voiceNotInstalled: "語音轉錄尚未安裝（在儲存庫執行 npm run whisper:install）",
@@ -403,16 +410,49 @@ export const zhTW: Messages = {
   dashboardTitle: "📊 儀表板",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "把目前工作階段上下文交給 Loop Supervisor，繼續完成實作、複核、驗證、PR 處理和最終通知。",
+    "把目前工作階段上下文交給 Loop Supervisor。範圍已清楚時可直接託管；需要先看清任務清單、驗收標準和停止條件時，先看計劃再確認推進。",
   batchRunStarted: (planId, tasks) => `🚀 批次執行已啟動：計劃 ${planId}，共 ${tasks} 個任務`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ 批次池已暫停 [${agent}]：額度已達上限，預計恢復 ${resumeAt}`,
   batchRunComplete: (summary) => `✅ 批次執行完成\n${summary}`,
   autopilotUsage: (raw) =>
     `未知子指令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
+  autopilotPlanPreviewBody:
+    "託管前計劃預覽\n\n目標：基於目前工作階段和倉庫狀態，繼續推進使用者已確認的任務，直到真正完成。\n\n任務清單：檢查現場上下文、git 狀態、近期提交、現有 PR 和之前的驗證結果；判斷還剩什麼；只做必要改動；複核 diff；執行相關本地驗證、觸及風險路徑的覆蓋率複核，以及有必要時使用既有 eval。\n\n驗收標準：最終 summary 記錄檢查了什麼、改了什麼、驗證了什麼、PR/合併結果、最終分支、乾淨 worktree，以及任何真實 blocker 和證據。\n\n停止條件：任務已完成、確認存在真實 blocker、或繼續推進會越過目前範圍時停止；避免為了最佳化而最佳化。\n\n非目標：不擴大範圍，不重做已經滿足要求的工作，不為了 bot 策略去安裝目標專案依賴，不在專案策略未允許時合併。\n\n確認這份計劃符合你的意圖後，再繼續託管推進。",
+  langUsage: "用法 / Usage: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "用 `/sessions <id前綴>` 恢復",
+  opportunityProjectFallback: "專案",
+  opportunityProjectCount: (n) => `${n} 個專案`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} 個建議\n可以繼續討論；確認要執行時，請使用 Autopilot 託管。`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} 個建議\n先參與討論，確認清楚後再託管執行。`,
+  btnOpportunityContinueDiscuss: "繼續討論",
+  btnOpportunityDiscussAll: "討論全部",
+  btnOpportunityShow: "查看詳情",
+  btnOpportunityDiscuss: "參與討論",
+  btnOpportunityDismiss: "暫不處理",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `已略過 ${n} 個建議。`,
+  opportunitySkippedMissing: (n, ids) => `已略過 ${n} 個建議。缺失：${ids}`,
+  opportunityMixedProjects: "不能一起討論來自不同專案的建議。",
+  opportunityCannotOpenProject: (reason) => `無法開啟專案進行討論：${reason}`,
+  opportunityDiscussionStarted: (n) => `正在討論 ${n} 個建議。`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `專案正在執行自動化任務，暫時不能參與討論。請等目前任務完成後再試。\n\n任務：${taskKind}\nRun：${runId}\nSupervisor：${supervisorSession}`,
+  opportunityQueueBusy:
+    "專案 agent 目前正在處理任務或已有排隊訊息，暫時不能參與討論。請等目前任務完成後再試。",
+  opportunityGitStatusUnknown: (reason) => `無法確認專案 git 狀態，暫時不能參與討論。\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `專案工作區不乾淨，暫時不能參與討論。請先處理現有改動後再試。\n\n${preview}`,
   btnApDelegate: "🚀 繼續託管推進",
+  btnApDelegateNow: "🚀 直接託管",
+  btnApReviewPlan: "📋 先看計劃",
+  btnApConfirmDelegate: "✅ 確認託管",
   btnApCancelDelegate: "⛔ 取消託管",
+  btnApQueue: `${UI_ICONS.tone.queue} 查看隊列`,
   btnApBack: "↩︎ 返回",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Supervisor 隊列`,
   noLogsContext: "無目前工作階段，請先選擇專案或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──

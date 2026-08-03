@@ -29,6 +29,8 @@ tmux-claude-bot service
         +-- WorkOrders
         +-- system gates
         +-- ledger, reports, logs, notifications
+        +-- localization and copy catalogs
+        +-- input enhancement for voice and prompt translation
         +-- Daily Task Audit and Runtime Guardian
 ```
 
@@ -41,6 +43,11 @@ There are three important session classes:
 | Ordinary project session | Interactive owner prompts, project switching, status, history, and ad hoc work. | Yes |
 | Loop Supervisor session | Orchestrates bounded WorkOrders, checks progress, issues revision prompts, and produces final summaries. | No |
 | Loop worker session | Executes target-project work in an isolated automation context. | No |
+
+Home/operator skills, MCP servers, CLI commands, and the TUI are control
+surfaces over the service. They are not additional code-execution session
+classes. Code-changing automation still belongs in WorkOrder-bound Loop worker
+sessions, and orchestration still belongs in reserved Loop Supervisor sessions.
 
 Scheduled jobs, Autopilot delegation, PR review, harness-auto, Daily Task Audit
 repair, and Runtime Guardian repair must not be injected into ordinary project
@@ -79,6 +86,8 @@ system gate.
 | --- | --- | --- |
 | Chat adapters | Telegram and Feishu/Lark commands, callbacks, cards, and message delivery. | Task-family business rules. |
 | CLI and TUI | Local operator controls and diagnostics. | Independent automation semantics. |
+| Input enhancement | Voice transcription, prompt translation, recent inputs, and rerun drafts before prompts enter the queue. | Task intent changes, hidden prompt rewriting, or adapter-local translation semantics. |
+| Localization and copy governance | Supported UI languages, chat/card/button copy, setup/onboarding copy, per-channel language selection, and catalog completeness tests. | Business logic, prompt semantics, or adapter-specific routing. |
 | Loop Engineering | Scheduled project and workspace health WorkOrders. | One-off user conversation routing. |
 | Autopilot | Owner-confirmed active delegation into the supervisor pipeline. | Cron, keep-alive, goal-cycle, or status across all sessions. |
 | Opportunity Discovery | Read-only proposal generation and owner discussion entry points. | Implementation, branches, commits, PRs, or merge decisions. |
@@ -158,6 +167,47 @@ Telegram and Feishu/Lark must maintain functional parity. Cards, buttons, and
 inline keyboards may differ, but the user should be able to accomplish the same
 workflows on both channels unless the difference is explicitly documented.
 
+## Input Enhancement Model
+
+Voice transcription and prompt translation are input preparation features, not
+automation task families. They run before an owner prompt enters the per-session
+queue and must preserve provenance so the operator can see whether delivered
+text came from typed text, voice, or translated input.
+
+- Voice transcription accepts Telegram voice messages and Feishu/Lark audio
+  resources. The optional `mlx_whisper` installer is surfaced through
+  `voice_install`; recognition language is selected through `voice_lang`.
+- Prompt translation can transform text or transcribed voice before enqueue. It
+  uses the optional Argos Translate installer surfaced through
+  `translate_install`; per-source mode and source language are controlled by
+  `prompt_translate`.
+- Telegram, Feishu/Lark, and the control socket share the same preparation path
+  so translation and provenance do not drift by adapter.
+- Readiness checks and install commands must prove the local binary/Python
+  environment is usable before claiming the feature is ready. A translation
+  failure blocks prompt delivery rather than silently sending changed intent.
+
+## Localization And Copy Governance
+
+User-facing copy is a product contract. Chat messages, cards, shared buttons,
+language pickers, and setup/onboarding prompts should route through the
+localization layer instead of being duplicated inside adapters.
+
+- Use `messages(channel)` and the `Messages` catalog for chat, card, button, and
+  notification copy that appears in Telegram or Feishu/Lark.
+- Use `setupMessages(lang)` and `SetupMessages` for setup, onboarding, and
+  reconfiguration prompts.
+- Add new UI languages through `Lang`, `CATALOGS`, `UI_LANGS`, setup-language
+  parsing labels, docs, and i18n tests in one slice.
+- Keep CLI/TUI/help text intentionally nonlocalized only when that is the
+  documented product decision; otherwise align it with the same copy terms.
+- Raw adapter literals are acceptable for protocol payloads, command examples,
+  machine-readable diagnostics, or clearly local debug output.
+
+`tests/core/i18n.test.ts` is the mechanical guardrail: every `UI_LANGS` language
+must have the same chat catalog keys and setup catalog keys, and every rendered
+entry must be non-empty.
+
 ## GitHub Identity
 
 GitHub automation must use the configured project or repository account. Shell
@@ -189,6 +239,7 @@ detect, or recover from them.
 | --- | --- | --- | --- |
 | Telegram and Feishu/Lark drift apart | Update both adapters or document an intentional channel difference in `docs/automation-capability-matrix.md`. | Channel parity tests and docs-contract checks. | Add the missing command/card/callback and backfill a regression test. |
 | CLI, TUI, docs, and skills disagree | Keep CLI detail in `docs/cli-reference.md`; keep user workflows in `docs/manual.md`; keep skills pointer-heavy. | `tests/docs-contract.test.ts` derives CLI commands/options from `src/cli.ts`. | Fix docs and add a contract assertion for the drift pattern. |
+| New user-facing copy ships in only one language or channel | Route shared copy through `Messages` or `SetupMessages`; document explicit nonlocalized exceptions. | `tests/core/i18n.test.ts` checks catalog key parity and non-empty renders for every `UI_LANGS` language. | Move literals into the right catalog, update all languages, and add focused adapter or i18n regression coverage. |
 | A new task family bypasses WorkOrder/system gates | Require new automation to materialize a WorkOrder and reuse supervisor, worker, ledger, and notification paths. | Config, work-order, scheduler, and service tests. | Move side-channel prompts into a WorkOrder policy and add gate tests. |
 | Runtime repair edits the wrong repository | Store authoritative `projectPath`, validate git toplevel, and use source mode only for explicit self-repair. | Worktree/session isolation tests and runtime-guardian tests. | Block the run, retain artifacts, and dispatch tmux-claude-bot self-repair only when evidence is confirmed. |
 | PR review overreaches into broad changes | Limit repair to narrow, deterministic, same-repository issues and require CI/mergeability evidence. | Per-PR review gate output and PR review tests. | Mark blocked with evidence instead of editing or merging. |

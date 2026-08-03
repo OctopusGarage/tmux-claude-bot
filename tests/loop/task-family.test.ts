@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import {
+  LOOP_TASK_FAMILY_GOVERNANCE,
+  LOOP_WORK_ORDER_TASK_KINDS,
+  loopTaskFamilyGovernance,
   projectScheduledJobKinds,
   projectScheduledJobs,
   workspaceScheduledJobKinds,
@@ -116,6 +119,27 @@ workspaces:
 `;
 
 describe("loop task family registry", () => {
+  it("defines governance metadata for every WorkOrder task kind", () => {
+    expect(Object.keys(LOOP_TASK_FAMILY_GOVERNANCE).sort()).toEqual(
+      [...LOOP_WORK_ORDER_TASK_KINDS].sort(),
+    );
+    expect(loopTaskFamilyGovernance("opportunity-discovery")).toMatchObject({
+      actionScope: "read-only",
+      ownerConfirmation: "required-before-dispatch",
+      defaultWorktreeIsolation: "source-allowed-read-only",
+    });
+    expect(loopTaskFamilyGovernance("automation-governance-review")).toMatchObject({
+      actionScope: "pr-creation",
+      requiresPlanning: true,
+      requiresAiEval: true,
+    });
+    expect(loopTaskFamilyGovernance("active-delegated-task")).toMatchObject({
+      scheduled: false,
+      ownerConfirmation: "optional",
+      requiresPlanning: true,
+    });
+  });
+
   it("derives project scheduled job summaries and scheduler jobs from one ordered registry", () => {
     const project = parseLoopConfigYaml(allScheduledConfig).projects[0];
     if (!project) throw new Error("expected project fixture");

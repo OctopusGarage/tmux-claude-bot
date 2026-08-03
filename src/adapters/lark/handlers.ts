@@ -308,7 +308,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
                 break;
               }
               const result = await applyPromptTranslateCommand("lark", parsed.arg ?? "");
-              await sendText(channel, msg.chatId, formatPromptTranslateCommandResult(result));
+              await sendText(
+                channel,
+                msg.chatId,
+                formatPromptTranslateCommandResult(result, messages("lark")),
+              );
               break;
             }
             case "translateinstall": {

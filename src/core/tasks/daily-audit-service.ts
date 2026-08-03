@@ -5,6 +5,7 @@ import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 import type { NotificationGateway } from "../notifications/gateway.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
+import { buildDailyAuditRepairPrompt } from "../prompts/repair-prompts.js";
 import { nextFire } from "../scheduler/scheduling.js";
 import {
   buildDailyTaskAuditNotification,
@@ -22,7 +23,6 @@ import {
   type TaskAuditItem,
   type TaskWindow,
 } from "./task-ledger.js";
-import { buildDailyAuditRepairPrompt } from "./task-repair.js";
 
 const log = createLogger("tasks.daily-audit-service");
 const LAST_FIRED_KEY = "daily-task-audit";

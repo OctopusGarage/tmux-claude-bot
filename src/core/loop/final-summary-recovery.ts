@@ -49,3 +49,19 @@ export function recoverInvalidOutputFromFinalSummary(
       .join("\n"),
   };
 }
+
+export async function recoverInvalidOutputFromFinalSummaryAsync(
+  workOrder: LoopWorkOrder,
+  result: SupervisorRunResult,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<SupervisorRunResult> {
+  if (result.status !== "invalid-output") return result;
+  const deadline = Date.now() + (options.timeoutMs ?? 1000);
+  const intervalMs = options.intervalMs ?? 50;
+  let recovered = recoverInvalidOutputFromFinalSummary(workOrder, result);
+  while (recovered.status === "invalid-output" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    recovered = recoverInvalidOutputFromFinalSummary(workOrder, result);
+  }
+  return recovered;
+}

@@ -657,7 +657,7 @@ export async function sendSessionsList(
     m.sessionsTitle(sessions.length),
     ...sessions.map((s, i) => `${i + 1}. \`${s.sessionId.slice(0, 8)}\` (${formatAgo(s.mtime)})`),
     "",
-    "用 `/sessions <id前缀>` 恢复",
+    m.sessionsRestoreHint,
   ];
   await sendText(channel, chatId, lines.join("\n"));
 }

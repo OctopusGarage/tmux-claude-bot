@@ -21,6 +21,7 @@ silently from `src/cli.ts`.
 - `tcb send`
 - `tcb notify`
 - `tcb prompt-translate`
+- `tcb prompts`
 - `tcb peek`
 - `tcb open`
 - `tcb open-worker`
@@ -28,6 +29,7 @@ silently from `src/cli.ts`.
 - `tcb control`
 - `tcb attach`
 - `tcb skill`
+- `tcb mcp`
 - `tcb recover`
 - `tcb logs`
 - `tcb batch`
@@ -62,6 +64,19 @@ silently from `src/cli.ts`.
 - `tcb loop skills list`
 - `tcb loop skills sync <file>`
 - `tcb loop skills refresh <file>`
+- `tcb prompts governed list`
+- `tcb prompts governed show <promptId>`
+- `tcb prompts governed render <promptId>`
+- `tcb prompts governed check`
+- `tcb prompts governed eval [promptId]`
+- `tcb ai-tools install`
+- `tcb ai-tools status`
+- `tcb skill install`
+- `tcb skill status`
+- `tcb skill uninstall`
+- `tcb mcp observer`
+- `tcb mcp home`
+- `tcb mcp install`
 
 ## Options
 
@@ -72,12 +87,15 @@ silently from `src/cli.ts`.
 - `--caption`
 - `--channel`
 - `--chat`
+- `--command`
 - `--component`
 - `--days`
+- `--dir`
 - `--dry-run`
 - `--ended-at`
 - `--error`
 - `--force`
+- `--fixture`
 - `--grep`
 - `--id`
 - `--json`
@@ -87,12 +105,17 @@ silently from `src/cli.ts`.
 - `--n`
 - `--no-wait`
 - `--now`
+- `--output`
+- `--profile`
 - `--reconfigure`
 - `--repair-status`
 - `--report`
+- `--run-id`
 - `--scheduled-at`
 - `--session`
+- `--since`
 - `--source`
+- `--scope`
 - `--started-at`
 - `--status`
 - `--stdin`
@@ -113,3 +136,6 @@ silently from `src/cli.ts`.
 - `tcb notify` is a send-only owner/project notification path through the running
   bot.
 - `tcb attach` sends files back to the chat-bound project session.
+- `tcb prompts governed ...` is for repo-owned system prompts and prompt
+  governance. It is separate from chat `/prompts`, which browses an external MCP
+  prompt library.

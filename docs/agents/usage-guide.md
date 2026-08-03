@@ -83,7 +83,8 @@ re-run input, `a` attach to the real session pane, `q` quit, `?` for all keys. D
 
 **Check status / "is something wrong?"** → `/dashboard` or `tcb dashboard` (every
 session, busy/idle, queue, version); `/sysload` or `tcb sysload` (machine load, heat,
-runaway processes); `/logs` or `tcb logs`; `tcb doctor` (install health).
+runaway processes); `/logs` or `tcb logs --since 1h --run-id <id>`; `tcb doctor`
+(install health).
 
 **Let another local project send notifications** → call `tcb notify` from that
 project. It uses the running bot's local control socket and configured Telegram /
@@ -111,8 +112,8 @@ reserved supervisor with `LOOP_SUPERVISOR_ENABLED=true` and set a project
 `supervisor-summary.json` under `loop-runs/<project>/<runId>/`. For projects with
 commit/PR settings, the bot also checks the final worktree, switch-back branch,
 PR mergeability, and CI rollup after the supervisor reports completion. When
-`pullRequest.autoMerge: true` is set, the bot merges the checked PR and
-fast-forwards the local switch-back branch afterward. Set
+`pullRequest.autoMerge: true` is set, the bot merges the checked PR and rebases
+the local switch-back branch onto origin afterward. Set
 `pullRequest.mergeMethod` to `squash`, `merge`, or `rebase` to choose the GitHub
 CLI merge mode; the default is `squash`. Use
 `pullRequest.githubAccount` when a project must run GitHub CLI commands under a
@@ -164,18 +165,21 @@ read-only: the supervisor inspects the project, writes `opportunities.json`, and
 the bot sends Telegram/Feishu suggestions with `/opportunity` commands. Use
 `/opportunity discuss <number|id>` to get a decision prompt, then use Autopilot /
 Continue via supervisor for confirmed work. Use `/opportunity dismiss
-<number|id>` when it is not worth doing. Feishu commands work in private chat and in the bound
-project group that received the suggestion. Feishu opportunity notifications are
-interactive cards with readable per-suggestion summaries and view, discuss, and
-dismiss actions for each item; bulk discuss/dismiss remains available for a
-related batch. Telegram notifications expose per-suggestion discuss/dismiss
-buttons when each callback fits Telegram's 64-byte `callback_data` limit; if an
-imported or unusual id is too long, Telegram falls back to the typed
-`/opportunity` commands in the message. The notification card keeps discussion
-and execution separate; after owner approval, use the project control panel's
-**Continue via supervisor** button or `/autopilot delegate` so all
-implementation work goes through the same Loop Supervisor active-delegation
-pipeline.
+<number|id>` when it is not worth doing. Feishu commands work in private chat and
+in the bound project group that received the suggestion. Feishu opportunity
+notifications are interactive cards with readable per-suggestion summaries and
+view, discuss, and dismiss actions for each item; bulk discuss/dismiss remains
+available for a related batch. Telegram notifications expose per-suggestion
+discuss/dismiss buttons when each callback fits Telegram's 64-byte
+`callback_data` limit; if an imported or unusual id is too long, Telegram falls
+back to the typed `/opportunity` commands in the message. The notification card
+keeps discussion and execution separate; after owner approval, use the project
+control panel's **Delegate now** button, or **Review plan first** followed by
+**Confirm delegation**, or `/autopilot delegate` so all implementation work goes
+through the same Loop Supervisor active-delegation pipeline. If all supervisor
+sessions are busy, the blocked Autopilot reply exposes a queue view; Lark can
+cancel queued/running active-delegated tasks from that queue card, while
+scheduled system WorkOrders remain non-cancellable there.
 For coordinated frontend/backend or otherwise coupled repositories, add a
 `workspaces` entry. Workspace jobs create one scheduled multi-repository
 WorkOrder, ask the supervisor to inspect cross-repository contracts when
@@ -193,16 +197,24 @@ it creates a bounded active WorkOrder from the current project session and sends
 it to the reserved Loop Supervisor. If the requirement text is omitted, the
 supervisor uses the current session context plus repository state as the source
 of truth: live pane, git status, recent commits, existing PRs, and prior
-verification output. Telegram/Feishu expose the same one-click action as
-**Continue via supervisor**. It then drives
-the target project agent through implementation, review, relevant tests, coverage
-review for touched risk paths, any justified existing agent-backed/deterministic
-AI eval, and the configured PR/merge/switch-back policy. The command returns a
-run id immediately; the final result is written under `loop-runs/...` and sent
-through Telegram/Feishu notifications.
+verification output. Telegram/Feishu expose **Delegate now** for immediate
+handoff and **Review plan first** for a pre-delegation preview with a
+confirmation button. Before substantive execution, the supervisor records a
+delegation brief with objective, checklist, acceptance criteria, stop
+conditions, non-goals, risks, and verification plan; ambiguous or high-risk work
+blocks for clarification instead of guessing. It then drives the target project
+agent through implementation, review, relevant tests, coverage review for
+touched risk paths, any justified existing agent-backed/deterministic AI eval,
+and the configured PR/merge/switch-back policy. The final summary records a plan
+review before completion. The command returns a run id immediately; the final
+result is written under `loop-runs/...` and sent through Telegram/Feishu
+notifications.
 For scheduled suggestions, approved implementation uses the same active
-delegation pipeline as Autopilot, with a requirement built from the stored
-evidence, scope, proposed plan, and acceptance checks.
+delegation pipeline as Autopilot. The opportunity discussion prompt prepares a
+delegation brief draft from stored evidence, scope, proposed plan, acceptance
+checks, non-goals, risks, and verification expectations; execution begins only
+after the owner confirms that scope and invokes Autopilot / Delegate now or the
+plan-first confirmation flow.
 
 **Audit yesterday's scheduled work** → enable `TASK_AUDIT_ENABLED=true` and set
 `TASK_AUDIT_SCHEDULE` (UTC cron, e.g. `0 2 * * *` for 10:00 Singapore time).
@@ -219,6 +231,16 @@ For an immediate manual check, run `tcb task audit --force` (add `--json` for
 machine-readable output). The command goes through the running bot's control
 socket, so it uses the same config, notification gateway, and auto-repair path as
 the scheduled service.
+
+**Evaluate system prompts** → use `tcb prompts governed list --json` to see every
+repo-owned governed prompt, `tcb prompts governed show <promptId>` to inspect
+owner and safety metadata, `tcb prompts governed render <promptId>` to inspect
+the rendered prompt when a built-in fixture exists, `tcb prompts governed check
+--json` for deterministic governance checks, and `tcb prompts governed eval
+--all --output /tmp/tcb-prompt-eval.md` to generate an active-agent AI eval
+task. The eval command only prints or writes the assessment prompt; it must be
+handed to the current Claude Code / Codex surface and must not use direct
+model-provider APIs.
 
 **Restart the bot / deploy code changes** → it's a managed service, so restart via the
 manager: `tcb service restart` (or `launchctl kickstart -k …` / `systemctl --user

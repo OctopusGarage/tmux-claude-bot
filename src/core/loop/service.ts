@@ -17,11 +17,12 @@ import {
   createLoopSupervisorTaskRunner,
   restoreLoopControlQueue,
 } from "./agent-queue.js";
+import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 import { LoopBacklogStore } from "./backlog.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
 import { prepareLoopExecutionWorktrees } from "./execution-worktree.js";
 import {
-  recoverInvalidOutputFromFinalSummary,
+  recoverInvalidOutputFromFinalSummaryAsync,
   supervisorFinalStatusToRunStatus,
 } from "./final-summary-recovery.js";
 import { writeLoopRunReport } from "./report.js";
@@ -50,7 +51,9 @@ import {
 import { loopSupervisorSessionNames, startLoopSupervisor } from "./supervisor-session.js";
 import {
   type LoopSupervisorWorkOrderStateStatus,
+  listAbandonedLoopSupervisorWorkOrders,
   listRecoverableFailedLoopSupervisorWorkOrders,
+  listRecoverableFinalSummaryLoopSupervisorWorkOrders,
   listTerminalLoopSupervisorWorkOrders,
   listUnfinishedLoopSupervisorWorkOrders,
   workOrderStateForResult,
@@ -132,7 +135,11 @@ function clearLoopRunTerminalArtifacts(workOrder: {
 }): void {
   if (workOrder.finalSummaryPath === undefined) return;
   const runDir = dirname(workOrder.finalSummaryPath);
-  for (const artifact of ["supervisor-final-summary.json", "supervisor.md", "system-gate.json"]) {
+  for (const artifact of [
+    LOOP_RUN_ARTIFACTS.supervisorFinalSummary,
+    LOOP_RUN_ARTIFACTS.supervisorMarkdown,
+    LOOP_RUN_ARTIFACTS.systemGate,
+  ]) {
     rmSync(join(runDir, artifact), { force: true });
   }
   if (workOrder.opportunityReportPath !== undefined) {
@@ -553,7 +560,7 @@ export async function runLoopServiceTickAsync(input: {
         }
       }
     }
-    result = recoverInvalidOutputFromFinalSummary(workOrder, result);
+    result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
     let gate = runSupervisedSystemGateOutcome({
       project: systemGateProjectFromWorkOrder(workOrder),
       workOrder,
@@ -603,7 +610,7 @@ export async function runLoopServiceTickAsync(input: {
         maxAttempts: maxSupervisorRevisionAttempts,
         previousOutput: gate.result.output,
       });
-      result = recoverInvalidOutputFromFinalSummary(workOrder, result);
+      result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
       gate = runSupervisedSystemGateOutcome({
         project: systemGateProjectFromWorkOrder(workOrder),
         workOrder,
@@ -1302,6 +1309,7 @@ export function reconcileLoopSupervisorWorkOrders(input: {
 }): { checked: number; recovered: number; failed: number } {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const unfinished = [
+    ...listRecoverableFinalSummaryLoopSupervisorWorkOrders(),
     ...listUnfinishedLoopSupervisorWorkOrders(),
     ...listRecoverableFailedLoopSupervisorWorkOrders(),
   ];
@@ -1391,6 +1399,12 @@ export function reconcileLoopSupervisorWorkOrders(input: {
       data: { settled: settledTerminalLeases },
     });
   }
+  const settledAbandonedLeases = reconcileAbandonedLoopSupervisorWorkerLeases(input.now);
+  if (settledAbandonedLeases > 0) {
+    log.info("loop engineering abandoned supervisor worker leases reconciled", {
+      data: { settled: settledAbandonedLeases },
+    });
+  }
 
   return { checked, recovered, failed };
 }
@@ -1417,6 +1431,29 @@ function reconcileTerminalLoopSupervisorWorkerLeases(now: number): number {
       record.state.resultStatus ?? terminalStateToResultStatus(record.state.status),
       now,
     );
+    settled++;
+  }
+  return settled;
+}
+
+function reconcileAbandonedLoopSupervisorWorkerLeases(now: number): number {
+  const activeLeasedWorkOrders = new Set(
+    readLoopSupervisorWorkerLeaseState()
+      .leases.filter((lease) => lease.status === "active")
+      .map((lease) => lease.workOrderId),
+  );
+  let settled = 0;
+  for (const record of listAbandonedLoopSupervisorWorkOrders()) {
+    if (!activeLeasedWorkOrders.has(record.workOrder.id)) continue;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: record.workOrder,
+      supervisorSession: record.state.supervisorSession,
+      status: "failed",
+      now,
+      resultStatus: "invalid-output",
+      revisionReasons: ["supervisor work order can no longer progress"],
+    });
+    settleLoopSupervisorWorkerLeaseForStatus(record.workOrder, "invalid-output", now);
     settled++;
   }
   return settled;
@@ -1515,7 +1552,7 @@ export function writeSupervisedSystemGateArtifact(input: {
   result: LoopSupervisedRunResult;
   writtenAt: number;
 }): void {
-  const path = join(dirname(input.report.summaryPath), "system-gate.json");
+  const path = join(dirname(input.report.summaryPath), LOOP_RUN_ARTIFACTS.systemGate);
   writeFileSync(
     path,
     `${JSON.stringify(

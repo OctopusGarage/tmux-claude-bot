@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 
@@ -45,10 +46,40 @@ const DEFAULT_STATE_DIR = nodePath.join(DEFAULT_APP_HOME, "state");
  *    overshot to `$HOME` once tsup flattened `src/core/x.ts` to `dist/x.js`.
  */
 export function appStateDir(): string {
-  return stateDir(DEFAULT_STATE_DIR);
+  return normalizeAppStateDir(stateDir(DEFAULT_STATE_DIR));
 }
 
 /** Absolute path of a state file under {@link appStateDir}. */
 export function appStateFile(name: string): string {
   return nodePath.join(appStateDir(), name);
+}
+
+function normalizeAppStateDir(dir: string): string {
+  const nested = nodePath.join(dir, "state");
+  if (!existsSync(nested)) return dir;
+  if (hasPrimaryStateMarker(dir)) return dir;
+  if (!looksLikeStateDir(nested)) return dir;
+  return nested;
+}
+
+function looksLikeStateDir(dir: string): boolean {
+  return [
+    "loop-runs",
+    "logs",
+    "group_bindings.json",
+    "recent_projects.txt",
+    "session_path_map.json",
+    ".current_project",
+    ".env",
+  ].some((name) => existsSync(nodePath.join(dir, name)));
+}
+
+function hasPrimaryStateMarker(dir: string): boolean {
+  return [
+    "loop-runs",
+    "group_bindings.json",
+    "recent_projects.txt",
+    "session_path_map.json",
+    ".current_project",
+  ].some((name) => existsSync(nodePath.join(dir, name)));
 }

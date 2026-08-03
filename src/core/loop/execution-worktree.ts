@@ -198,6 +198,7 @@ function prepareSourceExecutionWorktree(input: {
     });
     return null;
   }
+  if (!syncSourceExecutionBranch(input, "source execution")) return null;
   const status = input.runGit({
     cwd: input.sourceWorktree,
     args: ["status", "--porcelain"],
@@ -260,6 +261,7 @@ function prepareGitExecutionWorktree(input: {
     });
     return null;
   }
+  if (!syncSourceExecutionBranch(input, "isolated execution")) return null;
 
   const executionWorktree = loopExecutionWorktreePath(input.workOrder, input.repositoryId);
   mkdirSync(dirname(executionWorktree), { recursive: true });
@@ -296,6 +298,86 @@ function prepareGitExecutionWorktree(input: {
     data: { ...loggableInput(input), executionWorktree },
   });
   return { executionWorktree };
+}
+
+function syncSourceExecutionBranch(
+  input: {
+    workOrder: LoopWorkOrder;
+    sourceWorktree: string;
+    runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+    repositoryId?: string;
+  },
+  purpose: string,
+): boolean {
+  const branch = executionBaseBranch(input.workOrder, input.repositoryId);
+  if (branch === undefined) return true;
+  const cleanBefore = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["status", "--porcelain"],
+  });
+  if (cleanBefore.status !== 0 || cleanBefore.stdout.trim().length > 0) {
+    log.warn(`loop ${purpose} blocked before branch sync`, {
+      data: {
+        ...loggableInput(input),
+        branch,
+        reason:
+          cleanBefore.status !== 0
+            ? cleanBefore.stderr || cleanBefore.stdout || "git status failed"
+            : `source worktree is dirty: ${cleanBefore.stdout.trim()}`,
+      },
+    });
+    return false;
+  }
+  const commands: Array<{ label: string; args: string[] }> = [
+    { label: "fetch", args: ["fetch", "origin", branch] },
+    { label: "switch", args: ["switch", branch] },
+    { label: "pull-rebase", args: ["pull", "--rebase", "origin", branch] },
+  ];
+  for (const command of commands) {
+    const result = input.runGit({ cwd: input.sourceWorktree, args: command.args });
+    if (result.status !== 0) {
+      log.warn(`loop ${purpose} branch sync failed`, {
+        data: {
+          ...loggableInput(input),
+          branch,
+          step: command.label,
+          reason: result.stderr || result.stdout || `git ${command.args.join(" ")} failed`,
+        },
+      });
+      return false;
+    }
+  }
+  const cleanAfter = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["status", "--porcelain"],
+  });
+  if (cleanAfter.status !== 0 || cleanAfter.stdout.trim().length > 0) {
+    log.warn(`loop ${purpose} blocked after branch sync`, {
+      data: {
+        ...loggableInput(input),
+        branch,
+        reason:
+          cleanAfter.status !== 0
+            ? cleanAfter.stderr || cleanAfter.stdout || "git status failed"
+            : `source worktree is dirty after pull --rebase: ${cleanAfter.stdout.trim()}`,
+      },
+    });
+    return false;
+  }
+  log.info(`loop ${purpose} source branch synced`, {
+    data: { ...loggableInput(input), branch },
+  });
+  return true;
+}
+
+function executionBaseBranch(workOrder: LoopWorkOrder, repositoryId?: string): string | undefined {
+  if (workOrder.workspace !== undefined && repositoryId !== undefined) {
+    const repository = workOrder.workspace.repositories.find(
+      (candidate) => candidate.id === repositoryId,
+    );
+    return repository?.pullRequest.switchBack ?? repository?.pullRequest.base;
+  }
+  return workOrder.pullRequestPolicy?.switchBack ?? workOrder.pullRequestPolicy?.base;
 }
 
 type ResolvedWorktreeIsolationMode = {

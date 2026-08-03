@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HandlerDeps } from "../../src/core/deps.js";
 import {
@@ -217,6 +217,27 @@ describe("active delegated task supervisor pool", () => {
                 actionsTaken: ["checked and completed"],
                 delegatedTasks: [],
                 finalVerification: "passed",
+                reviewGate: {
+                  preMutationReview: ["reviewed bounded requirement before work"],
+                  postMutationReview: ["verified no unintended changes"],
+                  aiReview: "not-applicable",
+                  deterministicGates: [
+                    {
+                      name: "no mutating git or PR gate required",
+                      result: "skipped",
+                    },
+                  ],
+                  decision: "pass",
+                  notes: [],
+                },
+                planReview: {
+                  checklistCompleted: true,
+                  targetScoreMet: "not-applicable",
+                  stopConditionReached: false,
+                  overOptimizationAvoided: true,
+                  verificationCompleted: true,
+                  remainingRisks: [],
+                },
                 commits: [],
                 followUps: [],
               }),
@@ -250,6 +271,96 @@ describe("active delegated task supervisor pool", () => {
       }),
     );
     expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+  });
+
+  it("recovers active delegation when a valid final summary file lands after invalid output", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));
+    setPathForSession("tmux_proj_project", projectDir);
+    startLoopSupervisor.mockResolvedValueOnce(true);
+    const notify = vi.fn(async () => ({ status: "sent", deliveries: [] }));
+    const d = deps(1);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.notifications = { notify } as unknown as HandlerDeps["notifications"];
+    d.queue = {
+      cancelQueued: vi.fn(),
+      enqueue: vi.fn((message: any) => {
+        if (message.action !== "text") {
+          message.resolve("compacted");
+          return "queued";
+        }
+        const summaryPathMatch = message.text.match(
+          /Write the strict JSON final summary to '([^']+)'/,
+        );
+        if (summaryPathMatch?.[1] === undefined) throw new Error("missing summary path");
+        message.started?.();
+        queueMicrotask(() => {
+          message.resolve("supervisor output ended before final marker was captured");
+          setTimeout(() => {
+            mkdirSync(dirname(summaryPathMatch[1]), { recursive: true });
+            writeFileSync(
+              summaryPathMatch[1],
+              `${JSON.stringify({
+                status: "completed",
+                projectId: "project",
+                actionsTaken: ["late final summary recovered"],
+                delegatedTasks: [],
+                finalVerification: "passed",
+                reviewGate: {
+                  preMutationReview: ["bounded no-op task"],
+                  postMutationReview: ["no diff"],
+                  aiReview: "not-applicable",
+                  deterministicGates: [],
+                  decision: "pass",
+                  notes: [],
+                },
+                planReview: {
+                  checklistCompleted: true,
+                  targetScoreMet: "not-applicable",
+                  stopConditionReached: false,
+                  overOptimizationAvoided: true,
+                  verificationCompleted: true,
+                  remainingRisks: [],
+                },
+                commits: [],
+                followUps: [],
+              })}\n`,
+            );
+          }, 25);
+        });
+        return "queued";
+      }),
+    } as unknown as HandlerDeps["queue"];
+
+    const result = await startActiveDelegatedTask(d, {
+      session: "tmux_proj_project",
+      requirement: "finish the confirmed task",
+    });
+
+    expect(result).toMatchObject({
+      status: "queued",
+      supervisorSession: "tmux_proj_loop-supervisor",
+    });
+    if (result.status !== "queued" || result.reportDir === null) throw new Error("expected queued");
+    await waitForFile(join(result.reportDir, "system-gate.json"));
+
+    expect(JSON.parse(readFileSync(join(result.reportDir, "system-gate.json"), "utf8"))).toEqual(
+      expect.objectContaining({
+        workOrderId: result.runId,
+        projectId: result.projectId,
+        resultStatus: "completed",
+        accepted: true,
+        failures: [],
+      }),
+    );
+    expect(
+      JSON.parse(readFileSync(join(result.reportDir, "work-order-state.json"), "utf8")),
+    ).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        resultStatus: "completed",
+      }),
+    );
   });
 
   it("keeps recoverable failed supervisor work orders reserved during allocation", async () => {
@@ -378,6 +489,42 @@ describe("active delegated task supervisor pool", () => {
       status: "dispatching",
       now: Date.now() - 13 * 60 * 60 * 1000,
     });
+
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+  });
+
+  it("does not keep unfinished work orders reserved after a valid final summary arrives", () => {
+    const staleProjectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-finished-summary-"));
+    const summaryDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "finished-summary",
+      "finished-summary",
+    );
+    const finalSummaryPath = join(summaryDir, "supervisor-final-summary.json");
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder({
+        id: "finished-summary",
+        projectPath: staleProjectDir,
+        finalSummaryPath,
+      }),
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    mkdirSync(summaryDir, { recursive: true });
+    writeFileSync(
+      finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "finished-summary",
+        actionsTaken: ["late summary arrived"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
 
     expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
   });

@@ -51,6 +51,19 @@ describe("completeLoopSupervisorRun", () => {
     });
   });
 
+  it("classifies model-capacity dispatch failures as retryable agent transient failures", () => {
+    const retry = classifyLoopSupervisorScheduleRetry({
+      status: "dispatch-failed",
+      reason: "Selected model is at capacity. Please try a different model.",
+      output: "Selected model is at capacity. Please try a different model.",
+    });
+
+    expect(retry).toEqual({
+      retrySchedule: true,
+      kind: "agent-transient-failure",
+    });
+  });
+
   it("classifies invalid final output as an output-contract retry", () => {
     const retry = classifyLoopSupervisorScheduleRetry({
       status: "invalid-output",

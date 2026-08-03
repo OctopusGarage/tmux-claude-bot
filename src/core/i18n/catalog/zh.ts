@@ -5,7 +5,9 @@ import { UI_ICONS } from "../../../shared/ui/icons.js";
  * `Messages = typeof zh` — so every other language must implement exactly these
  * keys (a missing key fails the build). Entries are either static strings or
  * functions for interpolation. Keep keys protocol-agnostic; both adapters use
- * them. New copy goes here first, then en.ts / yue.ts.
+ * them. New chat/card/button/notification copy goes here first, then every
+ * catalog listed by `UI_LANGS`. `tests/core/i18n.test.ts` verifies catalog key
+ * parity and non-empty renders.
  */
 export const zh = {
   // ── acks / queue (executor) ──
@@ -34,6 +36,13 @@ export const zh = {
   promptTranslateInstallOk: "🌐 prompt 翻译依赖已就绪 · 现在可以开启翻译模式",
   promptTranslateInstallFailed: (e: string) =>
     `🌐 安装失败 · ${e} · 可在主机运行 npm run translate:install 查看详情`,
+  promptTranslateCommandUsage: (usage: string) => `用法：/prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error: string) => `Prompt translation 不可用：${error}`,
+  promptTranslateDisabledFor: (source: string) => `已关闭 ${source} 的 prompt translation`,
+  promptTranslateStatusOff: (source: string) => `${source} 的 prompt translation：off`,
+  promptTranslateStatusLine: (source: string, from: string, to: string) =>
+    `${source} 的 prompt translation：argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line: string) => `已开启。${line}`,
   voiceEmpty: "没听清 · 请再说一遍或改发文字",
   voiceUnsupported: "语音转写仅支持 Apple Silicon",
   voiceNotInstalled: "语音转写未安装（在仓库运行 npm run whisper:install）",
@@ -434,7 +443,7 @@ export const zh = {
   dashboardTitle: "📊 仪表盘",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "把当前会话上下文托管给 Loop Supervisor，继续完成实现、复核、验证、PR 处理和最终通知。",
+    "把当前会话上下文托管给 Loop Supervisor。范围已经清楚时可以直接托管；需要先看清任务清单、验收标准和停止条件时，先看计划再确认推进。",
   batchRunStarted: (planId: string, tasks: number) =>
     `🚀 批次运行已启动：计划 ${planId}，共 ${tasks} 个任务`,
   batchPoolPaused: (agent: string, resumeAt: string) =>
@@ -442,9 +451,43 @@ export const zh = {
   batchRunComplete: (summary: string) => `✅ 批次运行完成\n${summary}`,
   autopilotUsage: (raw: string) =>
     `未知子命令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
+  autopilotPlanPreviewBody:
+    "托管前计划预览\n\n目标：基于当前会话和仓库状态，继续推进用户已确认的任务，直到真正完成。\n\n任务清单：检查现场上下文、git 状态、近期提交、现有 PR 和之前的验证结果；判断还剩什么；只做必要改动；复核 diff；运行相关本地验证、触达风险路径的覆盖率复核，以及有必要时使用已有 eval。\n\n验收标准：最终 summary 记录检查了什么、改了什么、验证了什么、PR/合并结果、最终分支、干净 worktree，以及任何真实 blocker 和证据。\n\n停止条件：任务已完成、确认存在真实 blocker、或继续推进会越过当前范围时停止；避免为了优化而优化。\n\n非目标：不扩大范围，不重做已经满足要求的工作，不为了 bot 策略去安装目标项目依赖，不在项目策略未允许时合并。\n\n确认这份计划符合你的意图后，再继续托管推进。",
+  langUsage: "用法 / Usage: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "用 `/sessions <id前缀>` 恢复",
+  opportunityProjectFallback: "项目",
+  opportunityProjectCount: (n: number) => `${n} 个项目`,
+  opportunityDigestDelegable: (project: string, n: number) =>
+    `${project} · ${n} 个建议\n可以继续讨论；确认要执行时，请使用 Autopilot 托管。`,
+  opportunityDigestDiscussFirst: (project: string, n: number) =>
+    `${project} · ${n} 个建议\n先参与讨论，确认清楚后再托管执行。`,
+  btnOpportunityContinueDiscuss: "继续讨论",
+  btnOpportunityDiscussAll: "讨论全部",
+  btnOpportunityShow: "查看详情",
+  btnOpportunityDiscuss: "参与讨论",
+  btnOpportunityDismiss: "暂不处理",
+  opportunityNotFound: (ids: string) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n: number) => `已跳过 ${n} 个建议。`,
+  opportunitySkippedMissing: (n: number, ids: string) => `已跳过 ${n} 个建议。缺失：${ids}`,
+  opportunityMixedProjects: "不能一起讨论来自不同项目的建议。",
+  opportunityCannotOpenProject: (reason: string) => `无法打开项目进行讨论：${reason}`,
+  opportunityDiscussionStarted: (n: number) => `正在讨论 ${n} 个建议。`,
+  opportunityAutomationConflict: (taskKind: string, runId: string, supervisorSession: string) =>
+    `项目正在执行自动化任务，暂时不能参与讨论。请等当前任务完成后再试。\n\n任务：${taskKind}\nRun：${runId}\nSupervisor：${supervisorSession}`,
+  opportunityQueueBusy:
+    "项目 agent 当前正在处理任务或已有排队消息，暂时不能参与讨论。请等当前任务完成后再试。",
+  opportunityGitStatusUnknown: (reason: string) =>
+    `无法确认项目 git 状态，暂时不能参与讨论。\n${reason}`,
+  opportunityDirtyWorktree: (preview: string) =>
+    `项目工作区不干净，暂时不能参与讨论。请先处理现有改动后再试。\n\n${preview}`,
   btnApDelegate: "🚀 继续托管推进",
+  btnApDelegateNow: "🚀 直接托管",
+  btnApReviewPlan: "📋 先看计划",
+  btnApConfirmDelegate: "✅ 确认托管",
   btnApCancelDelegate: "⛔ 取消托管",
+  btnApQueue: `${UI_ICONS.tone.queue} 查看队列`,
   btnApBack: "↩︎ 返回",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Supervisor 队列`,
   noLogsContext: "无当前会话，请先选择项目或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──

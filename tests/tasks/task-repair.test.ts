@@ -21,10 +21,10 @@ describe("buildDailyAuditRepairPrompt", () => {
 
     expect(prompt).toContain("Daily scheduled task audit repair.");
     expect(prompt).toContain("git switch dev");
-    expect(prompt).toContain("git pull --ff-only origin dev");
+    expect(prompt).toContain("git pull --rebase origin dev");
     expect(prompt).toContain("Do not assume every failure is a code bug");
     expect(prompt.indexOf("Review the evidence")).toBeLessThan(
-      prompt.indexOf("git pull --ff-only origin dev"),
+      prompt.indexOf("git pull --rebase origin dev"),
     );
     expect(prompt).toContain("continue the evidence review and classification");
     expect(prompt).toContain("report the branch sync blocker separately");

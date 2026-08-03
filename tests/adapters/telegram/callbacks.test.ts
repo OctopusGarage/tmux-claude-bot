@@ -23,6 +23,21 @@ vi.mock("../../../src/core/platform/clipboard.js", () => ({
   copyToClipboard: vi.fn(async () => true),
 }));
 
+vi.mock("../../../src/core/autopilot/delegated-task.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../src/core/autopilot/delegated-task.js")>();
+  return {
+    ...actual,
+    startActiveDelegatedTask: vi.fn(async () => ({
+      status: "queued",
+      runId: "run-ap-confirm",
+      projectId: "cbtest",
+      supervisorSession: "tmux_proj_loop-supervisor",
+      reportDir: "/tmp/run-ap-confirm",
+    })),
+  };
+});
+
 // The recover branch sweeps the live roster — stub the planner/executor.
 vi.mock("../../../src/core/recovery/recover.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../src/core/recovery/recover.js")>()),
@@ -46,6 +61,7 @@ import { handleCallbackQuery } from "../../../src/adapters/telegram/callbacks.js
 import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-target.js";
 import { sendStatusInstall } from "../../../src/adapters/telegram/views.js";
 import { adoptOrphan, findAdoptableOrphans } from "../../../src/core/agents/takeover-service.js";
+import { startActiveDelegatedTask } from "../../../src/core/autopilot/delegated-task.js";
 import { copyToClipboard } from "../../../src/core/platform/clipboard.js";
 import { storeInputList } from "../../../src/core/read/recent-inputs.js";
 import { recoverProjects } from "../../../src/core/recovery/recover.js";
@@ -56,6 +72,7 @@ const adoptOrphanMock = vi.mocked(adoptOrphan);
 const findAdoptableOrphansMock = vi.mocked(findAdoptableOrphans);
 const recoverProjectsMock = vi.mocked(recoverProjects);
 const sendStatusInstallMock = vi.mocked(sendStatusInstall);
+const startActiveDelegatedTaskMock = vi.mocked(startActiveDelegatedTask);
 
 const SESSION = "tmux_proj_cbtest";
 const SID = sessionShortId(SESSION);
@@ -147,6 +164,30 @@ describe("handleCallbackQuery", () => {
     expect(deps.queue.enqueued).toHaveLength(1);
     expect(deps.queue.enqueued[0]).toMatchObject({ sessionName: SESSION, action: "exit" });
     expect(ctx.texts().some((t) => t.includes("已接收"))).toBe(true);
+  });
+
+  it("ap_plan previews the delegation plan without starting supervisor work", async () => {
+    const ctx = fakeCtx({ callbackData: `app:${SID}` });
+    const deps = aliveDeps();
+
+    await handleCallbackQuery(ctx, deps, replyTarget);
+
+    expect(startActiveDelegatedTaskMock).not.toHaveBeenCalled();
+    expect(ctx.texts().some((t) => t.includes("托管前计划预览"))).toBe(true);
+    expect(JSON.stringify(ctx.replies)).toContain(`apc:${SID}`);
+  });
+
+  it("ap_confirm_delegate starts the same supervisor delegation path", async () => {
+    const ctx = fakeCtx({ callbackData: `apc:${SID}` });
+    const deps = aliveDeps();
+
+    await handleCallbackQuery(ctx, deps, replyTarget);
+
+    expect(startActiveDelegatedTaskMock).toHaveBeenCalledWith(
+      deps,
+      expect.objectContaining({ session: SESSION }),
+    );
+    expect(ctx.texts().some((t) => t.includes("Autopilot delegate queued"))).toBe(true);
   });
 
   it("voicelang (vl:) sets the env var and refreshes the picker", async () => {

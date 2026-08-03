@@ -1,4 +1,14 @@
 import {
+  AUTOPILOT_ACTIONS,
+  AUTOPILOT_ACTIVE_PANEL_ROWS,
+  AUTOPILOT_PANEL_ROWS,
+  AUTOPILOT_PLAN_ROWS,
+} from "../../core/autopilot/action-registry.js";
+import {
+  type ActiveDelegateQueueItem,
+  formatActiveDelegateQueue,
+} from "../../core/autopilot/delegated-task.js";
+import {
   actionButtonRows,
   actionConfirmationText,
   actionConfirmButtonText,
@@ -120,11 +130,12 @@ export function voiceLangCard(current: string): object {
   return shell(mv.voiceLangTitle, [
     md(mv.voiceLangCardPrompt(current === "auto" ? mv.autoDetect : current)),
     ...gridRows(
-      VOICE_LANGS.map((l) =>
-        l.code === current
-          ? { text: `${UI_ICONS.tone.ok} ${l.label}`, value: { cmd: "noop" } }
-          : { text: l.label, value: { cmd: "voicelang", lang: l.code } },
-      ),
+      VOICE_LANGS.map((l) => {
+        const label = l.code === "auto" ? mv.autoDetect : l.label;
+        return l.code === current
+          ? { text: `${UI_ICONS.tone.ok} ${label}`, value: { cmd: "noop" } }
+          : { text: label, value: { cmd: "voicelang", lang: l.code } };
+      }),
     ),
   ]);
 }
@@ -511,17 +522,18 @@ export function opportunityDigestCard(input: {
   const projectNames = [
     ...new Set(input.opportunities.map((opportunity) => opportunity.projectName)),
   ];
+  const m = messages("lark");
   const projectLabel =
     projectNames.length === 0
-      ? "项目"
+      ? m.opportunityProjectFallback
       : projectNames.length === 1
-        ? projectNames[0]
-        : `${projectNames.length} 个项目`;
+        ? (projectNames[0] ?? m.opportunityProjectFallback)
+        : m.opportunityProjectCount(projectNames.length);
   const elements: object[] = [
     md(
       input.allowDelegate === true
-        ? `${projectLabel} · ${input.opportunities.length} 个建议\n可以继续讨论；确认要执行时，请使用 Autopilot 托管。`
-        : `${projectLabel} · ${input.opportunities.length} 个建议\n先参与讨论，确认清楚后再托管执行。`,
+        ? m.opportunityDigestDelegable(projectLabel, input.opportunities.length)
+        : m.opportunityDigestDiscussFirst(projectLabel, input.opportunities.length),
     ),
   ];
   for (const [index, opportunity] of input.opportunities.entries()) {
@@ -529,9 +541,13 @@ export function opportunityDigestCard(input: {
     elements.push(md(opportunityDigestText(opportunity, index)));
     elements.push(
       gridRow([
-        { text: "查看详情", value: { cmd: "oppshow", id: opportunity.id } },
-        { text: "参与讨论", value: { cmd: "oppdiscuss", id: opportunity.id }, style: "primary" },
-        { text: "暂不处理", value: { cmd: "oppdismiss", id: opportunity.id } },
+        { text: m.btnOpportunityShow, value: { cmd: "oppshow", id: opportunity.id } },
+        {
+          text: m.btnOpportunityDiscuss,
+          value: { cmd: "oppdiscuss", id: opportunity.id },
+          style: "primary",
+        },
+        { text: m.btnOpportunityDismiss, value: { cmd: "oppdismiss", id: opportunity.id } },
       ]),
     );
   }
@@ -540,12 +556,20 @@ export function opportunityDigestCard(input: {
     gridRow(
       input.allowDelegate === true
         ? [
-            { text: "继续讨论", value: { cmd: "oppdiscussall", ids }, style: "primary" },
-            { text: "暂不处理", value: { cmd: "oppdismissall", ids } },
+            {
+              text: m.btnOpportunityContinueDiscuss,
+              value: { cmd: "oppdiscussall", ids },
+              style: "primary",
+            },
+            { text: m.btnOpportunityDismiss, value: { cmd: "oppdismissall", ids } },
           ]
         : [
-            { text: "讨论全部", value: { cmd: "oppdiscussall", ids }, style: "primary" },
-            { text: "暂不处理", value: { cmd: "oppdismissall", ids } },
+            {
+              text: m.btnOpportunityDiscussAll,
+              value: { cmd: "oppdiscussall", ids },
+              style: "primary",
+            },
+            { text: m.btnOpportunityDismiss, value: { cmd: "oppdismissall", ids } },
           ],
     ),
   );
@@ -556,9 +580,14 @@ export function opportunityDetailCard(
   suggestion: OpportunitySuggestion,
   opts: { allowDelegate?: boolean; title?: string } = {},
 ): object {
+  const m = messages("lark");
   const buttons: ButtonSpec[] = [
-    { text: "参与讨论", value: { cmd: "oppdiscuss", id: suggestion.id }, style: "primary" },
-    { text: "暂不处理", value: { cmd: "oppdismiss", id: suggestion.id } },
+    {
+      text: m.btnOpportunityDiscuss,
+      value: { cmd: "oppdiscuss", id: suggestion.id },
+      style: "primary",
+    },
+    { text: m.btnOpportunityDismiss, value: { cmd: "oppdismiss", id: suggestion.id } },
   ];
   return shell(opts.title ?? suggestion.title, [
     md(
@@ -838,19 +867,57 @@ export function autopilotPanelCard(
   delegateActive = false,
 ): object {
   const m = messages("lark");
-  const rows: ButtonSpec[][] = [];
-  rows.push([
-    {
-      text: delegateActive ? m.btnApCancelDelegate : m.btnApDelegate,
-      value: { cmd: delegateActive ? "ap_cancel_delegate" : "ap_delegate", s: session },
-      ...(delegateActive ? { style: "danger" } : {}),
-    },
-  ]);
+  const sourceRows = delegateActive ? AUTOPILOT_ACTIVE_PANEL_ROWS : AUTOPILOT_PANEL_ROWS;
+  const rows: ButtonSpec[][] = sourceRows.map((row) =>
+    row.map((actionId) => {
+      const action = AUTOPILOT_ACTIONS[actionId];
+      return {
+        text: m[action.labelKey] as string,
+        value: { cmd: action.larkCmd, s: session },
+        ...(action.style ? { style: action.style } : {}),
+      };
+    }),
+  );
   return shell(m.autopilotTitle, [
     md(m.autopilotDelegatePanelBody),
     HR,
     ...rows.flatMap((row) => gridRows(row)),
+    gridRow([{ text: m.btnApQueue, value: { cmd: "ap_queue", s: session } }]),
   ]);
+}
+
+export function autopilotPlanCard(session: string): object {
+  const m = messages("lark");
+  const buttons = AUTOPILOT_PLAN_ROWS.flatMap((row) =>
+    row.map((actionId) => {
+      const action = AUTOPILOT_ACTIONS[actionId];
+      return {
+        text: m[action.labelKey] as string,
+        value: { cmd: action.larkCmd, s: session },
+        ...(action.style ? { style: action.style } : {}),
+      };
+    }),
+  );
+  return shell(m.autopilotTitle, [md(m.autopilotPlanPreviewBody), HR, ...gridRows(buttons)]);
+}
+
+export function autopilotQueueCard(items: ActiveDelegateQueueItem[]): object {
+  const m = messages("lark");
+  const elements: object[] = [md(formatActiveDelegateQueue(items))];
+  for (const item of items) {
+    if (!item.cancellable) continue;
+    elements.push(
+      gridRow([
+        {
+          text: m.btnApCancelDelegate,
+          value: { cmd: "ap_cancel_run", runId: item.runId },
+          style: "danger",
+        },
+      ]),
+    );
+  }
+  elements.push(HR, gridRow([{ text: m.btnApQueue, value: { cmd: "ap_queue" } }]));
+  return shell(m.autopilotQueueTitle, elements);
 }
 
 export type { PromptsView } from "../../core/promptlib/view.js";

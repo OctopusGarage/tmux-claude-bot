@@ -1,5 +1,5 @@
 ---
-name: tmux-claude-bot
+name: tcb-home-operator
 description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Operated through the `tcb` CLI.
 ---
 

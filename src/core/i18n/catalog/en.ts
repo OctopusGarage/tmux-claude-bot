@@ -30,6 +30,13 @@ export const en: Messages = {
     "🌐 Prompt translation dependencies are ready · you can enable translation mode now",
   promptTranslateInstallFailed: (e) =>
     `🌐 Install failed · ${e} · run npm run translate:install on the host for details`,
+  promptTranslateCommandUsage: (usage) => `Usage: /prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `Prompt translation unavailable: ${error}`,
+  promptTranslateDisabledFor: (source) => `Prompt translation disabled for ${source}`,
+  promptTranslateStatusOff: (source) => `Prompt translation for ${source}: off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `Prompt translation for ${source}: argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `Enabled. ${line}`,
   voiceEmpty: "Didn’t catch that · say it again or send text",
   voiceUnsupported: "Voice transcription needs Apple Silicon",
   voiceNotInstalled: "Voice not installed (run `npm run whisper:install` in the repo)",
@@ -412,16 +419,51 @@ Send any text → forwarded to the agent → reply`,
   dashboardTitle: "📊 Dashboard",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "Delegate the current session context to the Loop Supervisor for implementation, review, verification, PR handling, and final notification.",
+    "Delegate the current session context to the Loop Supervisor. Start immediately when the scope is already clear, or review the plan first when you want an explicit checklist and stop conditions before execution.",
   batchRunStarted: (planId, tasks) => `🚀 Batch run started: plan ${planId}, ${tasks} task(s)`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ Batch pool paused [${agent}]: quota reached, resuming at ${resumeAt}`,
   batchRunComplete: (summary) => `✅ Batch run complete\n${summary}`,
   autopilotUsage: (raw) =>
     `Unknown subcommand "${raw}". Usage: /autopilot [requirement] or /autopilot delegate [requirement]`,
+  autopilotPlanPreviewBody:
+    "Plan before delegation\n\nObjective: continue the current user-confirmed task from the live session and repository state until it is genuinely complete.\n\nChecklist: inspect live context, git status, recent commits, existing PRs, and prior verification; identify what remains; make only necessary changes; review the diff; run relevant local verification, coverage review for touched risk paths, and existing evals when justified.\n\nAcceptance: the final summary records what changed, what was verified, PR/merge result when applicable, final branch, clean worktree, and any real blocker with evidence.\n\nStop conditions: stop when the task is complete, a real blocker is proven, or the planned scope would require unrelated work. Avoid optimizing beyond the bounded task.\n\nNon-goals: do not expand scope, redo already-satisfactory work, install target-project dependencies just to satisfy bot policy, or merge unless the configured project policy allows it.\n\nConfirm only if this plan matches your intent.",
+  langUsage: "Usage: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "Use `/sessions <id-prefix>` to resume",
+  opportunityProjectFallback: "Project",
+  opportunityProjectCount: (n) => `${n} projects`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} suggestion${n === 1 ? "" : "s"}\nContinue the discussion; when you are ready to execute, delegate with Autopilot.`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} suggestion${n === 1 ? "" : "s"}\nDiscuss first, then delegate once the scope is clear.`,
+  btnOpportunityContinueDiscuss: "Continue discussion",
+  btnOpportunityDiscussAll: "Discuss all",
+  btnOpportunityShow: "Details",
+  btnOpportunityDiscuss: "Discuss",
+  btnOpportunityDismiss: "Skip",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `Skipped ${n} opportunit${n === 1 ? "y" : "ies"}.`,
+  opportunitySkippedMissing: (n, ids) =>
+    `Skipped ${n} opportunit${n === 1 ? "y" : "ies"}. Missing: ${ids}`,
+  opportunityMixedProjects: "Cannot discuss mixed-project opportunities together.",
+  opportunityCannotOpenProject: (reason) => `Cannot open project for discussion: ${reason}`,
+  opportunityDiscussionStarted: (n) => `Discussing ${n} opportunit${n === 1 ? "y" : "ies"}.`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `This project is running an automation task, so discussion is temporarily blocked. Try again after the task finishes.\n\nTask: ${taskKind}\nRun: ${runId}\nSupervisor: ${supervisorSession}`,
+  opportunityQueueBusy:
+    "The project agent is processing work or has queued messages, so discussion is temporarily blocked. Try again after the current task finishes.",
+  opportunityGitStatusUnknown: (reason) =>
+    `Cannot confirm project git status, so discussion is temporarily blocked.\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `The project worktree is dirty, so discussion is temporarily blocked. Resolve the existing changes first.\n\n${preview}`,
   btnApDelegate: "🚀 Continue via supervisor",
+  btnApDelegateNow: "🚀 Delegate now",
+  btnApReviewPlan: "📋 Review plan first",
+  btnApConfirmDelegate: "✅ Confirm delegation",
   btnApCancelDelegate: "⛔ Cancel delegate",
+  btnApQueue: `${UI_ICONS.tone.queue} View queue`,
   btnApBack: "↩︎ Back",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Supervisor queue`,
   noLogsContext: "No current session. Select a project or specify a trace (/logs <traceId>).",
 
   // ── group binding (Feishu) ──

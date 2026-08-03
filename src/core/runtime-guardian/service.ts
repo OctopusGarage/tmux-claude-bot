@@ -1,22 +1,31 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { AppConfig } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
 import { listTerminalLoopSupervisorWorkOrders } from "../loop/supervisor-state.js";
+import {
+  type LoopSupervisorReviewGateDeterministicGate,
+  parseSupervisorFinalSummaryFile,
+} from "../loop/work-order.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
+import { buildRuntimeGuardianRepairPrompt } from "../prompts/repair-prompts.js";
 
 const log = createLogger("runtime-guardian");
-const DEFAULT_REPAIR_REQUIREMENT_SOURCE = "runtime-guardian";
+
+export { buildRuntimeGuardianRepairPrompt };
 
 export type RuntimeGuardianFindingKind =
   | "missing-system-gate"
   | "terminal-invalid-output"
-  | "terminal-work-order-active-lease";
+  | "terminal-agent-transient-failure"
+  | "terminal-work-order-active-lease"
+  | "read-only-smoke-preflight-blocked";
 
 export type RuntimeGuardianFinding = {
   kind: RuntimeGuardianFindingKind;
@@ -248,6 +257,15 @@ export function discoverRuntimeGuardianFindings(
         ],
       });
     }
+    const agentTransientFailure = terminalAgentTransientFailureFinding(record);
+    if (agentTransientFailure !== null) findings.push(agentTransientFailure);
+    const readOnlySmokePreflightBlocked = readOnlySmokePreflightBlockedFinding(
+      record,
+      finalSummaryPath,
+    );
+    if (readOnlySmokePreflightBlocked !== null) {
+      findings.push(readOnlySmokePreflightBlocked);
+    }
   }
 
   const terminalIds = new Set(terminal.map((record) => record.workOrder.id));
@@ -267,6 +285,110 @@ export function discoverRuntimeGuardianFindings(
   }
 
   return findings;
+}
+
+function terminalAgentTransientFailureFinding(
+  record: ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number],
+): RuntimeGuardianFinding | null {
+  if (record.state.status !== "failed" || record.state.resultStatus !== "dispatch-failed") {
+    return null;
+  }
+  const evidenceText = [
+    ...(record.state.revisionReasons ?? []),
+    readSupervisorSummaryEvidence(record.runDir),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const transient = classifyAgentTransientFailure(evidenceText);
+  if (transient === null) return null;
+  return {
+    kind: "terminal-agent-transient-failure",
+    severity: "medium",
+    runId: record.workOrder.id,
+    projectId: record.workOrder.projectId,
+    projectPath: record.workOrder.projectPath,
+    runDir: record.runDir,
+    evidence: [
+      `terminal failed work-order has retryable agent transient failure: ${record.workOrder.id}`,
+      `transient-kind: ${transient.kind}`,
+      evidenceText,
+    ],
+  };
+}
+
+function readSupervisorSummaryEvidence(runDir: string): string {
+  try {
+    const parsed = JSON.parse(readFileSync(join(runDir, "supervisor-summary.json"), "utf8")) as {
+      result?: { reason?: unknown; output?: unknown };
+    };
+    return [parsed.result?.reason, parsed.result?.output]
+      .filter((value): value is string => typeof value === "string")
+      .join("\n");
+  } catch {
+    return "";
+  }
+}
+
+function readOnlySmokePreflightBlockedFinding(
+  record: ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number],
+  finalSummaryPath: string,
+): RuntimeGuardianFinding | null {
+  if (record.state.status !== "failed" || record.state.resultStatus !== "blocked") return null;
+  if (record.workOrder.task?.kind !== "active-delegated-task") return null;
+  if (!isReadOnlySmokeRequirement(record.workOrder.task.requirement)) return null;
+
+  const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
+  if (!parsed.ok || parsed.summary.status !== "blocked") return null;
+  const failedPreflight = parsed.summary.reviewGate?.deterministicGates.find(
+    isFailedDependencyPreflightGate,
+  );
+  if (failedPreflight === undefined) return null;
+
+  return {
+    kind: "read-only-smoke-preflight-blocked",
+    severity: "medium",
+    runId: record.workOrder.id,
+    projectId: record.workOrder.projectId,
+    projectPath: record.workOrder.projectPath,
+    runDir: record.runDir,
+    evidence: [
+      `read-only smoke active delegation blocked by target dependency preflight: ${record.workOrder.id}`,
+      `supervisor final summary exists: ${finalSummaryPath}`,
+      `failed gate: ${describeDeterministicGate(failedPreflight)}`,
+      "This points to tmux-claude-bot verification-profile/worktree-policy behavior, not a target-project repair.",
+    ],
+  };
+}
+
+function isReadOnlySmokeRequirement(requirement: string): boolean {
+  const normalized = requirement.toLowerCase();
+  return normalized.includes("read-only") && normalized.includes("smoke");
+}
+
+function isFailedDependencyPreflightGate(gate: LoopSupervisorReviewGateDeterministicGate): boolean {
+  if (typeof gate === "string") {
+    const normalized = gate.toLowerCase();
+    return (
+      normalized.includes("failed") &&
+      normalized.includes("preflight") &&
+      dependencyEvidencePattern().test(normalized)
+    );
+  }
+  if (gate.result !== "failed") return false;
+  const normalized = [gate.name, gate.command, gate.evidence]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  return normalized.includes("preflight") && dependencyEvidencePattern().test(normalized);
+}
+
+function dependencyEvidencePattern(): RegExp {
+  return /node_modules|\.venv|npm|pnpm|yarn|vite|vitest|eslint|prettier|pytest|ruff|pyright/;
+}
+
+function describeDeterministicGate(gate: LoopSupervisorReviewGateDeterministicGate): string {
+  if (typeof gate === "string") return gate;
+  return [gate.name, gate.result, gate.evidence].filter(Boolean).join(" | ");
 }
 
 export function checkRuntimeGuardianRepairReadiness(
@@ -375,36 +497,6 @@ export function startRuntimeGuardian(deps: HandlerDeps): () => void {
     },
   });
   return () => clearInterval(timer);
-}
-
-export function buildRuntimeGuardianRepairPrompt(input: {
-  repoPath: string;
-  repairBranch: string;
-  mode: AppConfig["runtimeGuardian"]["mode"];
-  findings: RuntimeGuardianFinding[];
-}): string {
-  return [
-    `Runtime Guardian (${input.mode}) found confirmed tmux-claude-bot runtime issue(s).`,
-    `Repository: ${input.repoPath}`,
-    `Base branch: ${input.repairBranch}`,
-    "",
-    "Scope:",
-    "- Fix tmux-claude-bot system-layer/runtime orchestration issues only.",
-    "- Do not edit target project repositories mentioned in findings.",
-    "- Prioritize scheduler correctness, supervisor/worker state, system gates, notifications, launchd/dev-service behavior, and task-audit reporting.",
-    "- Before editing, re-check the evidence and prove the issue is real; if not real, make no changes.",
-    "- Before editing, write a pre-mutation review in the supervisor final summary reviewGate: confirmed finding, affected system path, reachability, scope boundary, and why a tmux-claude-bot code/config change is justified.",
-    "- Fix narrowly, add or update a focused regression test when practical, run relevant verification, inspect the diff, and commit only verified fixes.",
-    "- After editing, write a post-mutation review in reviewGate: diff reviewed, original runtime failure path addressed, regression/security/scheduler/state/notification/PR-gate risks checked, and deterministic gates run.",
-    "- AI review/eval may be used only through the existing Claude Code / Codex control surface. It is advisory; deterministic gates and system acceptance remain authoritative.",
-    "- Use CodeGraph before grep/find when .codegraph exists. Read AGENTS.md and CLAUDE.md before code changes.",
-    "- Do not open a PR; the supervisor/system layer handles PR and merge gates.",
-    "",
-    "Findings:",
-    JSON.stringify(input.findings, null, 2),
-    "",
-    `source=${DEFAULT_REPAIR_REQUIREMENT_SOURCE}`,
-  ].join("\n");
 }
 
 function runtimeGuardianRepoPath(config: AppConfig["runtimeGuardian"]): string {

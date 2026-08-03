@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { DoctorProbes } from "../src/core/infra/doctor.js";
-import { renderDoctorReport, runDoctorChecks } from "../src/core/infra/doctor.js";
+import {
+  countBotProcessRoots,
+  renderDoctorReport,
+  runDoctorChecks,
+} from "../src/core/infra/doctor.js";
 
 const VALID_TOKEN = `123456789:${"a".repeat(35)}`;
 
@@ -26,6 +30,63 @@ describe("runDoctorChecks", () => {
     expect(report.checks.some((c) => c.status === "bad")).toBe(false);
     expect(report.checks.some((c) => c.text.includes("Telegram configured"))).toBe(true);
     expect(report.checks.some((c) => c.text.includes("exactly one bot process"))).toBe(true);
+    expect(report.checks.some((c) => c.text.includes("Home Operator skill installed"))).toBe(true);
+    expect(report.checks.some((c) => c.text.includes("MCP profiles installed"))).toBe(true);
+    expect(report.checks.some((c) => c.text.includes("AI tool role surfaces complete"))).toBe(true);
+  });
+
+  it("reports MCP profiles as optional when none are installed", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        fileExists: (path) => path.includes("/.claude/") || path.includes("/.codex/"),
+      }),
+    );
+    expect(report.failures).toBe(0);
+    expect(
+      report.checks.some(
+        (c) => c.status === "info" && c.text.includes("MCP profiles not installed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags missing Home Operator skill files", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({ fileExists: (path) => path.includes("/mcp/") }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "bad" && c.text.includes("Home Operator skill missing"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags partially installed Home Operator skill files", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        fileExists: (path) => path.includes("/mcp/") || path.includes("/.claude/"),
+      }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "bad" && c.text.includes("Home Operator skill partially installed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags partially installed MCP profiles", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        fileExists: (path) =>
+          path.includes("/.claude/") ||
+          path.includes("/.codex/") ||
+          path.endsWith("mcp/observer.json"),
+      }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "bad" && c.text.includes("MCP profiles partially installed"),
+      ),
+    ).toBe(true);
   });
 
   it("fails with a setup hint when .env is missing", async () => {
@@ -203,6 +264,27 @@ describe("runDoctorChecks", () => {
           c.text.includes("prompt translation: lark argos ja->en python is missing"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("countBotProcessRoots", () => {
+  it("counts a tsx parent/child dev process pair as one bot instance", () => {
+    expect(
+      countBotProcessRoots(`
+        15005 32940 node /repo/tmux-claude-bot/node_modules/.bin/tsx src/index.ts
+        15006 15005 node --import /repo/tmux-claude-bot/node_modules/tsx/dist/loader.mjs src/index.ts
+      `),
+    ).toBe(1);
+  });
+
+  it("counts independent managed and dev roots separately", () => {
+    expect(
+      countBotProcessRoots(`
+        15005 32940 node /repo/tmux-claude-bot/node_modules/.bin/tsx src/index.ts
+        15006 15005 node --import /repo/tmux-claude-bot/node_modules/tsx/dist/loader.mjs src/index.ts
+        21000 1 node /Users/me/.tmux-claude-bot/dist/cli.js run
+      `),
+    ).toBe(2);
   });
 });
 

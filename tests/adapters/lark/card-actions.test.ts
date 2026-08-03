@@ -123,6 +123,19 @@ describe("makeCardActionHandler", () => {
     expect(channel.texts().some((t) => t.includes("已取消"))).toBe(false);
   });
 
+  it("ap_plan sends a confirmation card without queueing delegation", async () => {
+    const enqueue = vi.fn(() => "queued" as const);
+    const channel = fakeChannel();
+    const deps = fakeDeps({ queue: { enqueue } });
+
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "ap_plan", s: "tmux_proj_api" }));
+
+    const cards = JSON.stringify(channel.cards());
+    expect(cards).toContain("托管前计划预览");
+    expect(cards).toContain("ap_confirm_delegate");
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it("dangerous control button asks for confirmation before enqueueing", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();

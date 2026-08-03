@@ -5,7 +5,8 @@ import { buildDashboard } from "../dashboard/dashboard.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { ConversationRound } from "../read/transcript.js";
-import type { NotificationGateway, NotificationRequest } from "./gateway.js";
+import { notificationRequestForEvent } from "./events.js";
+import type { NotificationGateway } from "./gateway.js";
 import type { OwnerActivityTracker } from "./owner-activity.js";
 import { resolveNotificationTargetPlan } from "./target-resolver.js";
 
@@ -124,7 +125,14 @@ export class LongTaskMonitor {
         err,
       });
     }
-    const request = completionRequest(task, reason, latestHistory);
+    const request = notificationRequestForEvent({
+      kind: "long-task.finished",
+      session: task.session,
+      label: task.label,
+      status: reason,
+      durationMs: task.lastTaskMs,
+      latestHistory,
+    });
     const plan = resolveNotificationTargetPlan({
       registeredChannels: channels,
       session: task.session,
@@ -145,43 +153,6 @@ export class LongTaskMonitor {
       await this.notifications.notify({ ...request, channel: plan.fallback });
     }
   }
-}
-
-function completionRequest(
-  task: WatchedTask,
-  reason: string,
-  latestHistory: string | null,
-): Omit<NotificationRequest, "channel"> {
-  const body = [
-    `session: ${task.session}`,
-    `status: ${reason}`,
-    `duration: ${formatDuration(task.lastTaskMs)}`,
-  ];
-  const history = formatHistorySnippet(latestHistory);
-  if (history) body.push("", "latest history:", history);
-  return {
-    level: "success",
-    source: "long-task-monitor",
-    session: task.session,
-    title: `Long task finished: ${task.label}`,
-    body: body.join("\n"),
-  };
-}
-
-const HISTORY_SNIPPET_LIMIT = 1800;
-
-function formatHistorySnippet(text: string | null): string | null {
-  const trimmed = text?.trim();
-  if (!trimmed) return null;
-  if (trimmed.length <= HISTORY_SNIPPET_LIMIT) return trimmed;
-  return `${trimmed.slice(0, HISTORY_SNIPPET_LIMIT)}\n\n[truncated]`;
-}
-
-function formatDuration(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
 }
 
 export function startLongTaskMonitor(

@@ -5,6 +5,7 @@ import type { NotificationRequest } from "../../core/notifications/gateway.js";
 import type { DailyTaskAuditServiceTickResult } from "../../core/tasks/daily-audit-service.js";
 import type { AgentKind } from "../../shared/types.js";
 import {
+  type ControlCallerProvenance,
   type ControlRequest,
   controlSocketCandidatePaths,
   createLineDecoder,
@@ -116,6 +117,20 @@ export class ControlClient extends EventEmitter {
     }
   }
 
+  private callerProvenance(): ControlCallerProvenance {
+    let cwd: string | undefined;
+    try {
+      cwd = process.cwd();
+    } catch {
+      cwd = undefined;
+    }
+    return {
+      source: "control-client",
+      pid: process.pid,
+      ...(cwd !== undefined ? { cwd } : {}),
+    };
+  }
+
   private req(payload: WithoutId<ControlRequest>): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!this.conn) {
@@ -129,7 +144,9 @@ export class ControlClient extends EventEmitter {
       }, this.requestTimeoutMs);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
-      this.conn.write(encodeLine({ id, ...payload } as ControlRequest));
+      this.conn.write(
+        encodeLine({ id, caller: this.callerProvenance(), ...payload } as ControlRequest),
+      );
     });
   }
 

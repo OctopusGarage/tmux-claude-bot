@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlClient } from "../../../src/adapters/control/client.js";
-import { controlSocketPath } from "../../../src/adapters/control/protocol.js";
+import {
+  type ControlRequest,
+  controlSocketPath,
+  createLineDecoder,
+} from "../../../src/adapters/control/protocol.js";
 import { hardenControlSocket, startControlServer } from "../../../src/adapters/control/server.js";
 import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
@@ -93,6 +97,36 @@ describe("control server ↔ client (real unix socket)", () => {
     } finally {
       process.umask(previousUmask);
     }
+  });
+
+  it("sends caller provenance on control client requests", async () => {
+    const received = new Promise<ControlRequest>((resolve) => {
+      server = net.createServer((socket) => {
+        socket.setEncoding("utf8");
+        const decode = createLineDecoder<ControlRequest>();
+        socket.on("data", (chunk: string) => {
+          const [msg] = decode(chunk);
+          if (msg === undefined) return;
+          resolve(msg);
+          socket.write(`${JSON.stringify({ id: msg.id, ok: true, data: {} })}\n`);
+        });
+      });
+    });
+    server.listen(controlSocketPath());
+    await new Promise((r) => setTimeout(r, 20));
+
+    client = new ControlClient();
+    await client.connect();
+    await client.snapshot();
+
+    expect(await received).toMatchObject({
+      op: "snapshot",
+      caller: {
+        source: "control-client",
+        cwd: process.cwd(),
+        pid: process.pid,
+      },
+    });
   });
 
   it("closes the control server when socket permission hardening fails", () => {

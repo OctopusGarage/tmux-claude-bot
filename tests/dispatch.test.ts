@@ -59,6 +59,7 @@ function writeTestWorkOrder(input: {
   id: string;
   projectPath: string;
   sourceWorktree?: string;
+  worktreeIsolation?: "isolated" | "source";
   taskKind?: NonNullable<LoopWorkOrder["task"]>["kind"];
   supervisorSession?: string;
 }): void {
@@ -74,6 +75,7 @@ function writeTestWorkOrder(input: {
             mode: "supervised-worker",
             expectedWorktree: input.projectPath,
             sourceWorktree: input.sourceWorktree,
+            worktreeIsolation: input.worktreeIsolation ?? "isolated",
             preparedBy: "system-git-worktree",
             contextReset: "compact",
             cleanup: {
@@ -503,7 +505,7 @@ describe("executeMessage — control actions", () => {
     }
   });
 
-  it("blocks ordinary text when active supervisor automation uses an isolated worktree", async () => {
+  it("allows ordinary text when active supervisor automation uses an isolated worktree", async () => {
     const oldStateDir = process.env.TCB_STATE_DIR;
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-isolated-conflict-"));
     const projectDir = fs.mkdtempSync(
@@ -517,16 +519,15 @@ describe("executeMessage — control actions", () => {
         id: "run-1",
         projectPath: isolatedDir,
         sourceWorktree: projectDir,
+        worktreeIsolation: "isolated",
         taskKind: "bug-fix",
       });
       const d = deps();
 
       const out = await executeMessage(msg("text", { text: "please continue", origin: "user" }), d);
 
-      expect(out).toContain("项目正在执行自动化任务");
-      expect(out).toContain("bug-fix");
-      expect(out).toContain("run-1");
-      expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+      expect(out).toBe("PANE");
+      expect(d.bridge.sendKeys).toHaveBeenCalled();
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
       fs.rmSync(projectDir, { recursive: true, force: true });

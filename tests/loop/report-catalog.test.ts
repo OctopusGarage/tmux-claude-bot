@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath } from "../../src/core/loop/artifacts.js";
 import { listLoopReportRecords } from "../../src/core/loop/report-catalog.js";
 
 describe("listLoopReportRecords", () => {
@@ -13,7 +14,7 @@ describe("listLoopReportRecords", () => {
     mkdirSync(commandDir, { recursive: true });
     mkdirSync(supervisorDir, { recursive: true });
     writeFileSync(
-      join(commandDir, "summary.json"),
+      join(commandDir, LOOP_RUN_ARTIFACTS.commandSummary),
       `${JSON.stringify({
         record: {
           runId: "run-command",
@@ -23,12 +24,12 @@ describe("listLoopReportRecords", () => {
           startedAt: 1_000,
           endedAt: 2_000,
           markdownPath: join(commandDir, "report.md"),
-          summaryPath: join(commandDir, "summary.json"),
+          summaryPath: join(commandDir, LOOP_RUN_ARTIFACTS.commandSummary),
         },
       })}\n`,
     );
     writeFileSync(
-      join(supervisorDir, "supervisor-summary.json"),
+      join(supervisorDir, LOOP_RUN_ARTIFACTS.supervisorSummary),
       `${JSON.stringify({
         runId: "run-supervisor",
         project: { id: "hub", name: "Hub" },
@@ -41,5 +42,14 @@ describe("listLoopReportRecords", () => {
       ["run-supervisor", "passed"],
       ["run-command", "passed"],
     ]);
+  });
+
+  it("builds canonical loop run artifact paths", () => {
+    expect(loopRunArtifactPath("hub", "run-1", "systemGate", "/state")).toBe(
+      join("/state", "loop-runs", "hub", "run-1", "system-gate.json"),
+    );
+    expect(loopRunArtifactPath("hub", "run-1", "supervisorFinalSummary", "/state")).toBe(
+      join("/state", "loop-runs", "hub", "run-1", "supervisor-final-summary.json"),
+    );
   });
 });

@@ -77,3 +77,64 @@ describe("install scripts preserve an existing shared venv", () => {
     }
   });
 });
+
+describe("managed install and release script contracts", () => {
+  it("keeps managed install isolated while refreshing MCP profile descriptors", () => {
+    const installScript = readFileSync(nodePath.join(ROOT, "install.sh"), "utf8");
+
+    expect(installScript).toContain("node dist/cli.js ai-tools install");
+    expect(installScript).not.toContain("node dist/cli.js skill install --scope operator-home");
+    expect(installScript).not.toContain("node dist/cli.js skill install --scope global");
+    expect(installScript).not.toContain("TCB_SKIP_SKILL");
+    expect(installScript).not.toContain("node dist/cli.js mcp install");
+    expect(installScript).toContain("TCB_SKIP_AI_TOOLS");
+    expect(installScript).toContain("TCB_SKIP_MCP");
+    expect(installScript).toContain("optional global copy: tcb skill install --scope global");
+  });
+
+  it("documents global skill installation as explicit operator opt-in", () => {
+    const installGuide = readFileSync(nodePath.join(ROOT, "INSTALL.md"), "utf8");
+    const manual = readFileSync(nodePath.join(ROOT, "docs", "manual.md"), "utf8");
+    const governance = readFileSync(
+      nodePath.join(ROOT, "docs", "ai-tool-surface-governance.md"),
+      "utf8",
+    );
+
+    for (const text of [installGuide, manual, governance]) {
+      expect(text).toContain("tcb skill install");
+    }
+    expect(manual).toMatch(/Global Claude\/Codex\s+skill installation is explicit/);
+    expect(manual).not.toContain("The installer runs `tcb skill install` by default");
+    expect(manual).not.toContain("TCB_SKIP_SKILL");
+    expect(governance).toContain(
+      "Managed install must publish it only into the operator workspace",
+    );
+    expect(governance).toContain("Global publication requires `tcb skill install --scope global`");
+  });
+
+  it("keeps release tagging behind local verification", () => {
+    const releaseScript = readFileSync(nodePath.join(ROOT, "scripts", "release.sh"), "utf8");
+
+    expect(releaseScript).toContain("npm run verify:local");
+    expect(releaseScript).toContain("TCB_RELEASE_SKIP_VERIFY");
+    expect(releaseScript.indexOf("npm run verify:local")).toBeLessThan(
+      releaseScript.indexOf("npm version"),
+    );
+  });
+
+  it("keeps local verification guarded against git worktree config corruption", () => {
+    const verifyScript = readFileSync(nodePath.join(ROOT, "scripts", "verify-local.sh"), "utf8");
+
+    expect(verifyScript).toContain("git-worktree-config-guard.sh");
+    expect(verifyScript).toContain("install_git_worktree_config_guard");
+  });
+
+  it("keeps root convenience scripts strict and repo-relative", () => {
+    for (const scriptName of ["rebuild.sh", "start.sh"]) {
+      const script = readFileSync(nodePath.join(ROOT, scriptName), "utf8");
+
+      expect(script).toContain("set -euo pipefail");
+      expect(script).toContain('cd "$(dirname "$0")"');
+    }
+  });
+});

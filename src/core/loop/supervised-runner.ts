@@ -1,12 +1,16 @@
-import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
+import { isProviderTransientFailure } from "../agents/transient-failure.js";
 import {
   buildLoopSupervisorFinalizationPrompt,
   buildLoopSupervisorPrompt,
   buildLoopSupervisorRevisionPrompt,
+} from "../prompts/loop-supervisor.js";
+import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
+import {
   type LoopSupervisorFinalSummary,
   type LoopWorkOrder,
   parseSupervisorFinalSummary,
   parseSupervisorFinalSummaryFile,
+  validateSupervisorFinalSummaryForWorkOrder,
 } from "./work-order.js";
 
 export type SupervisorDispatchRequest = {
@@ -52,6 +56,7 @@ export type LoopSupervisedRunnerInput = {
   timeoutMs: number;
   resetBeforeWorkOrder?: "none" | "compact" | "clear";
   cancelSignal?: AbortSignal;
+  transientDispatchMaxAttempts?: number;
   dispatch: (request: SupervisorDispatchRequest) => Promise<SupervisorDispatchResult>;
 };
 
@@ -174,12 +179,8 @@ async function runSupervisorPromptSequence(
   input: SupervisorPromptSequenceInput,
   signal: AbortSignal,
 ): Promise<LoopSupervisedRunResult> {
-  const first = await input.dispatch({
-    session: input.supervisorSession,
+  const first = await dispatchWithProviderTransientRetry(input, signal, {
     prompt: input.prompt,
-    signal,
-    workOrder: input.workOrder,
-    timeoutMs: input.timeoutMs,
     ...(input.resetBeforeWorkOrder !== undefined
       ? { contextReset: input.resetBeforeWorkOrder }
       : {}),
@@ -189,12 +190,8 @@ async function runSupervisorPromptSequence(
     return firstParsed;
   }
 
-  const finalization = await input.dispatch({
-    session: input.supervisorSession,
+  const finalization = await dispatchWithProviderTransientRetry(input, signal, {
     prompt: buildLoopSupervisorFinalizationPrompt(input.workOrder, firstParsed.output),
-    signal,
-    workOrder: input.workOrder,
-    timeoutMs: input.timeoutMs,
   });
   const secondParsed = parseDispatchOutput(finalization, input.workOrder);
   if (secondParsed.status !== "invalid-output") return secondParsed;
@@ -202,6 +199,35 @@ async function runSupervisorPromptSequence(
     ...secondParsed,
     output: [firstParsed.output, secondParsed.output].filter(Boolean).join("\n"),
   };
+}
+
+async function dispatchWithProviderTransientRetry(
+  input: SupervisorPromptSequenceInput,
+  signal: AbortSignal,
+  request: { prompt: string; contextReset?: SupervisorDispatchRequest["contextReset"] },
+): Promise<SupervisorDispatchResult> {
+  const maxAttempts = Math.max(1, input.transientDispatchMaxAttempts ?? 2);
+  let last: SupervisorDispatchResult | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await input.dispatch({
+        session: input.supervisorSession,
+        prompt: request.prompt,
+        signal,
+        workOrder: input.workOrder,
+        timeoutMs: input.timeoutMs,
+        ...(request.contextReset !== undefined ? { contextReset: request.contextReset } : {}),
+      });
+      last = result;
+      if (result.status === 0 || !isProviderTransientFailure(joinOutput(result))) return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      last = { status: 1, stdout: "", stderr: message };
+      if (!isProviderTransientFailure(message)) throw err;
+    }
+    if (signal.aborted) return last;
+  }
+  return last ?? { status: 1, stdout: "", stderr: "dispatch failed" };
 }
 
 function parseDispatchOutput(
@@ -216,6 +242,9 @@ function parseDispatchOutput(
   const parsed = fileParsed.ok ? fileParsed : parseSupervisorFinalSummary(output, workOrder.id);
   if (!parsed.ok) {
     return { status: "invalid-output", reason: parsed.reason, output };
+  }
+  if (!validateSupervisorFinalSummaryForWorkOrder(workOrder, parsed.summary)) {
+    return { status: "invalid-output", reason: "invalid-summary", output };
   }
 
   return {

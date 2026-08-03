@@ -1,3 +1,4 @@
+import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 
 export type ScheduledTaskSource =
@@ -19,6 +20,7 @@ export type ScheduledTaskStatus =
   | "skipped";
 
 export type ScheduledTaskFailureKind =
+  | "agent-capacity"
   | "dirty-worktree"
   | "external-ci"
   | "github-permission"
@@ -252,6 +254,9 @@ export function classifyTaskFailure(
   summary: string | undefined,
 ): ScheduledTaskFailureKind {
   const text = `${error ?? ""}\n${summary ?? ""}`.toLowerCase();
+  const transient = classifyAgentTransientFailure(text);
+  if (transient?.kind === "model-capacity" || transient?.kind === "rate-limit")
+    return "agent-capacity";
   if (text.includes("dirty") || text.includes("worktree is dirty")) return "dirty-worktree";
   if (text.includes("github account") || text.includes("must be a collaborator"))
     return "github-permission";

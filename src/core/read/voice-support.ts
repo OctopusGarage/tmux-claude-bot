@@ -73,7 +73,7 @@ export const VOICE_LANGS: ReadonlyArray<{ code: string; label: string }> = [
   { code: "yue", label: "粵語" },
   { code: "ja", label: "日本語" },
   { code: "es", label: "Español" },
-  { code: "auto", label: "🌐 自动检测" },
+  { code: "auto", label: "Auto" },
 ];
 
 function whisperLangEnvKey(channel: Channel): string {

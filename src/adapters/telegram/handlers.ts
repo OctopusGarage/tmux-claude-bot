@@ -60,6 +60,7 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
 import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
 import {
+  buildAutopilotQueueKeyboard,
   buildIdleKeyboard,
   buildLangKeyboard,
   buildOrphanKeyboard,
@@ -128,7 +129,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     // Match case-insensitively so a typed `/lang zh-TW` resolves despite the hyphen/case.
     const code = UI_LANGS.find((x) => x.code.toLowerCase() === arg.toLowerCase())?.code;
     if (!code) {
-      await reply(ctx, "err", "用法 / Usage: /lang <en|zh|zh-TW|yue|ja|es>", { replyTarget });
+      await reply(ctx, "err", messages("telegram").langUsage, { replyTarget });
       return;
     }
     setUiLang("telegram", code);
@@ -143,7 +144,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       await reply(
         ctx,
         "info",
-        formatPromptTranslateCommandResult(promptTranslateStatus("telegram")),
+        formatPromptTranslateCommandResult(promptTranslateStatus("telegram"), messages("telegram")),
         {
           replyTarget,
           replyMarkup: buildPromptTranslateKeyboard(),
@@ -152,9 +153,14 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
     const result = await applyPromptTranslateCommand("telegram", arg);
-    await reply(ctx, result.ok ? "info" : "err", formatPromptTranslateCommandResult(result), {
-      replyTarget,
-    });
+    await reply(
+      ctx,
+      result.ok ? "info" : "err",
+      formatPromptTranslateCommandResult(result, messages("telegram")),
+      {
+        replyTarget,
+      },
+    );
   });
 
   bot.command("translate_install", async (ctx) => {
@@ -486,6 +492,9 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
         session,
         body: formatActiveDelegateStart(result),
         replyTarget,
+        ...(result.status === "blocked"
+          ? { replyMarkup: buildAutopilotQueueKeyboard(sessionShortId(session)) }
+          : {}),
       },
     );
   });

@@ -16,6 +16,7 @@ behavior.
 | `manual.md` | Human user manual for install, setup, chat workflows, CLI usage, automation, and troubleshooting. |
 | `commands.md` | Telegram and Feishu/Lark chat command reference. |
 | `cli-reference.md` | Maintained `tcb` command, subcommand, and option surface. |
+| `mcp.md` | Role-scoped MCP profile usage, installation descriptors, diagnostics, and boundaries. |
 | `tui.md` | Terminal UI guide. |
 | `TESTING.md` | Testing strategy and local verification rules. |
 | `agents/usage-guide.md` | AI operator recipes for helping users operate the bot. |
@@ -29,6 +30,8 @@ behavior.
 | `intelligent-automation-ascii-architecture.md` | ASCII architecture diagram for the automation platform and self-healing loops. |
 | `automation-alignment.md` | Rule placement, cross-surface alignment checklist, and drift governance. |
 | `automation-capability-matrix.md` | CLI/TUI/Telegram/Feishu/Home-operator feature parity matrix. |
+| `ai-tool-surface-governance.md` | Role-based governance for AI-facing CLI, MCP, and skill surfaces. |
+| `agent-role-workspaces.md` | Agent role workspace, session, skill, and MCP scope rules for Home Operator, Loop Supervisor, Loop Worker, project agents, and timer services. |
 | `agent-maintenance-guidelines.md` | Runtime, logging, notification, GitHub, service, and verification maintenance guidance. |
 
 ## Architecture And Domain

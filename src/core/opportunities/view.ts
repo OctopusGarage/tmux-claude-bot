@@ -126,6 +126,31 @@ export function formatOpportunityAgentDiscussionPrompt(suggestion: OpportunitySu
     "- Discuss scope, expected behavior, non-goals, risks, and verification with the owner.",
     "- Ask concise clarifying questions if needed.",
     "- When the owner confirms the scope, they can use Autopilot / Continue via supervisor to hand implementation to the Loop Supervisor.",
+    "",
+    "Delegation brief draft:",
+    `objective: ${suggestion.delegateRequirement}`,
+    "currentAssessment: proposed opportunity; confirm owner intent and inspect repository evidence before editing",
+    "currentScore: not-applicable",
+    "targetScore: not-applicable",
+    "taskChecklist:",
+    `- Confirm the accepted scope for ${suggestion.id}: ${suggestion.title}`,
+    `- Implement the smallest coherent change: ${suggestion.recommendedApproach}`,
+    "- Review the diff for regressions and scope creep",
+    "acceptanceCriteria:",
+    ...asBullets(suggestion.acceptanceCriteria),
+    "stopConditions:",
+    "- Owner does not confirm the scope or materially changes the objective",
+    "- Repository evidence shows the opportunity is already solved or no longer relevant",
+    "- Verification cannot be completed with reliable local or CI gates",
+    "nonGoals:",
+    ...asBullets(suggestion.nonGoals),
+    "riskReview:",
+    ...asBullets(suggestion.risks),
+    "verificationPlan:",
+    "- Run the relevant project tests, type/lint checks, smoke checks, or CI gates for the touched behavior",
+    "- Record planReview before final completion",
+    "",
+    "Use this draft to form the Autopilot / Continue via supervisor delegationBrief; tighten it during discussion instead of expanding scope during execution.",
   ].join("\n");
 }
 
@@ -161,6 +186,31 @@ export function formatOpportunityBatchAgentDiscussionPrompt(
     "- Recommend whether to implement all together, drop any item, or split only if there is a real engineering reason.",
     "- Ask concise clarifying questions if needed.",
     "- When the owner confirms the combined scope, they can use the Feishu card button to hand the combined implementation to the Loop Supervisor.",
+    "",
+    "Combined delegation brief draft:",
+    `objective: Resolve the owner-confirmed subset of ${suggestions.length} proposed opportunit${suggestions.length === 1 ? "y" : "ies"} for ${projectName}.`,
+    "currentAssessment: proposed opportunity batch; confirm overlap, sequencing, and repository evidence before editing",
+    "currentScore: not-applicable",
+    "targetScore: not-applicable",
+    "taskChecklist:",
+    ...suggestions.map(
+      (suggestion) => `- Confirm and sequence ${suggestion.id}: ${suggestion.title}`,
+    ),
+    "- Implement only the accepted combined scope",
+    "- Review the diff for regressions, duplicated work, and scope creep",
+    "acceptanceCriteria:",
+    ...asBullets(uniqueFlatMap(suggestions, (suggestion) => suggestion.acceptanceCriteria)),
+    "stopConditions:",
+    "- The opportunities do not share a coherent implementation path; split the work before delegation",
+    "- Owner confirmation leaves material ambiguity about scope, sequencing, or verification",
+    "- Verification cannot be completed with reliable local or CI gates",
+    "nonGoals:",
+    ...asBullets(uniqueFlatMap(suggestions, (suggestion) => suggestion.nonGoals)),
+    "riskReview:",
+    ...asBullets(uniqueFlatMap(suggestions, (suggestion) => suggestion.risks)),
+    "verificationPlan:",
+    "- Run the relevant project tests, type/lint checks, smoke checks, or CI gates for the touched behavior",
+    "- Record planReview before final completion",
   ].join("\n");
 }
 
@@ -176,4 +226,18 @@ function formatOpportunitySummary(suggestion: OpportunitySuggestion, ordinal?: n
 
 function asBullets(values: string[]): string[] {
   return values.length > 0 ? values.map((value) => `- ${value}`) : ["- none"];
+}
+
+function uniqueFlatMap(
+  suggestions: OpportunitySuggestion[],
+  select: (suggestion: OpportunitySuggestion) => string[],
+): string[] {
+  return [
+    ...new Set(
+      suggestions
+        .flatMap(select)
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ];
 }

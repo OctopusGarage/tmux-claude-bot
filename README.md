@@ -29,6 +29,9 @@ interactive agents you already use.
   the terminal UI.
 - Keeps one ordinary chat context per project while isolating scheduled and
   delegated automation in Loop Supervisor and Loop worker sessions.
+- Keeps infrastructure agents in dedicated state workspaces while Loop workers
+  run in the target project path or isolated execution worktree, so project-local
+  instructions, skills, and MCP descriptors stay visible.
 - Supports local voice transcription, optional local prompt translation, recent
   input replay, session history, logs, dashboards, and recovery after reboot.
 - Lets local projects send notifications through the running bot without owning

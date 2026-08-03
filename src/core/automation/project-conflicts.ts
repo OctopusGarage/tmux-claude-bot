@@ -53,18 +53,10 @@ function workOrderResourcePaths(workOrder: UnfinishedLoopSupervisorWorkOrder["wo
   if (workOrder.workspace !== undefined) {
     return [
       workOrder.workspace.root,
-      ...workOrder.workspace.repositories.flatMap((repository) => [
-        repository.path,
-        ...(repository.sourcePath === undefined ? [] : [repository.sourcePath]),
-      ]),
+      ...workOrder.workspace.repositories.map((repository) => repository.path),
     ];
   }
-  return [
-    workOrder.projectPath,
-    ...(workOrder.executionIsolation?.sourceWorktree === undefined
-      ? []
-      : [workOrder.executionIsolation.sourceWorktree]),
-  ];
+  return [workOrder.projectPath];
 }
 
 export function findProjectAutomationConflictForSession(

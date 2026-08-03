@@ -60,6 +60,13 @@ function workOrder(
     execution: { agent: true },
     recovery: { agent: true, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: false },
+    pullRequestPolicy: {
+      enabled: true,
+      base: "main",
+      switchBack: "main",
+      autoMerge: false,
+      mergeMethod: "squash",
+    },
     requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:run-1]",
   };
 }
@@ -67,7 +74,7 @@ function workOrder(
 function gitStub(
   sourceRoot: string,
   calls: LoopGitInvocation[],
-  opts: { dirty?: boolean; worktreeAddFails?: boolean } = {},
+  opts: { dirty?: boolean; syncFails?: boolean; worktreeAddFails?: boolean } = {},
 ): (invocation: LoopGitInvocation) => LoopRunCommandResult {
   return (invocation) => {
     calls.push(invocation);
@@ -78,6 +85,17 @@ function gitStub(
     }
     if (invocation.args.join(" ") === "status --porcelain") {
       return { status: 0, stdout: opts.dirty === true ? "M src/index.ts\n" : "", stderr: "" };
+    }
+    if (invocation.args.join(" ") === "pull --rebase origin main") {
+      if (opts.syncFails === true)
+        return { status: 1, stdout: "", stderr: "cannot rebase: local divergence" };
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (
+      invocation.args.join(" ") === "fetch origin main" ||
+      invocation.args.join(" ") === "switch main"
+    ) {
+      return { status: 0, stdout: "", stderr: "" };
     }
     if (invocation.args.slice(0, 3).join(" ") === "worktree add --detach") {
       if (opts.worktreeAddFails === true)
@@ -116,6 +134,14 @@ describe("prepareLoopExecutionWorktrees", () => {
       worktreeIsolation: "source",
       preparedBy: "source-worktree",
     });
+    expect(calls.map((call) => call.args.join(" "))).toEqual(
+      expect.arrayContaining([
+        "status --porcelain",
+        "fetch origin main",
+        "switch main",
+        "pull --rebase origin main",
+      ]),
+    );
     expect(calls.map((call) => call.args.join(" "))).not.toContain("worktree add --detach");
   });
 
@@ -135,6 +161,14 @@ describe("prepareLoopExecutionWorktrees", () => {
       worktreeIsolation: "isolated",
       preparedBy: "system-git-worktree",
     });
+    expect(calls.map((call) => call.args.join(" "))).toEqual(
+      expect.arrayContaining([
+        "status --porcelain",
+        "fetch origin main",
+        "switch main",
+        "pull --rebase origin main",
+      ]),
+    );
     expect(calls.map((call) => call.args.slice(0, 3).join(" "))).toContain("worktree add --detach");
   });
 
@@ -160,22 +194,51 @@ describe("prepareLoopExecutionWorktrees", () => {
     ]);
   });
 
-  it("falls back to isolated worktree when source mode finds a dirty source tree", () => {
+  it("blocks execution worktree preparation when source branch sync finds a dirty tree", () => {
     const repo = makeRepo();
     const calls: LoopGitInvocation[] = [];
+    const failures: unknown[] = [];
 
     const prepared = prepareLoopExecutionWorktrees({
       workOrder: workOrder(repo),
       runGit: gitStub(repo, calls, { dirty: true }),
       defaultMode: "source",
+      onPreparationFailure: (failure) => failures.push(failure),
     });
 
-    expect(prepared.projectPath).toContain("loop-worktrees/repo/run-1");
-    expect(prepared.executionIsolation).toMatchObject({
-      sourceWorktree: repo,
-      worktreeIsolation: "isolated",
-      preparedBy: "system-git-worktree",
+    expect(prepared.projectPath).toBe(repo);
+    expect(calls.map((call) => call.args.join(" "))).not.toContain("worktree add --detach");
+    expect(failures).toEqual([
+      {
+        repositoryId: "repo",
+        sourceWorktree: repo,
+        reason: "isolated execution worktree could not be prepared",
+      },
+    ]);
+  });
+
+  it("blocks isolated worktree preparation when pull --rebase fails", () => {
+    const repo = makeRepo();
+    const calls: LoopGitInvocation[] = [];
+    const failures: unknown[] = [];
+
+    const prepared = prepareLoopExecutionWorktrees({
+      workOrder: workOrder(repo),
+      runGit: gitStub(repo, calls, { syncFails: true }),
+      defaultMode: "isolated",
+      onPreparationFailure: (failure) => failures.push(failure),
     });
+
+    expect(prepared.projectPath).toBe(repo);
+    expect(calls.map((call) => call.args.join(" "))).toContain("pull --rebase origin main");
+    expect(calls.map((call) => call.args.join(" "))).not.toContain("worktree add --detach");
+    expect(failures).toEqual([
+      {
+        repositoryId: "repo",
+        sourceWorktree: repo,
+        reason: "isolated execution worktree could not be prepared",
+      },
+    ]);
   });
 
   it("does not switch an explicitly source-isolated work order to an isolated worktree", () => {

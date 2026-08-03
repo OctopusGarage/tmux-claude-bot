@@ -8,7 +8,10 @@ or Runtime Guardian.
 
 For the end-to-end architecture view, see
 `docs/intelligent-automation-architecture.md`. For command-level usage, see
-`docs/manual.md`, `docs/commands.md`, and `docs/agents/usage-guide.md`.
+`docs/manual.md`, `docs/commands.md`, and `docs/agents/usage-guide.md`. For
+the governed system prompt inventory, allowed-action scope, and prompt eval
+rules, see `docs/prompt-governance.md`. For role-based AI-facing CLI, MCP, and
+skill exposure, see `docs/ai-tool-surface-governance.md`.
 
 ## System Model
 
@@ -74,6 +77,30 @@ materialize a WorkOrder; the supervisor executes it; the system gate accepts or
 rejects it; ledger/log/notification artifacts explain the result. Avoid adding
 feature-specific completion rules outside this path.
 
+## Transient Agent Failures
+
+Agent-provider capacity, rate limiting, readiness, queue pressure, and network
+transients are platform failures, not target-project code failures. Treat errors
+such as `Selected model is at capacity. Please try a different model.` as
+retryable agent transient evidence unless later system-gate evidence proves a
+project problem.
+
+Responsibility is layered:
+
+- Loop Supervisor runner owns short, bounded retries for provider transients
+  while executing a supervisor prompt. It must not loop forever or edit project
+  code to "fix" provider capacity.
+- Loop Service and supervisor completion own schedule recovery. If a supervisor
+  dispatch ultimately fails for a retryable agent transient, the due schedule
+  must remain retryable instead of being silently consumed.
+- Daily Task Audit owns retrospective visibility. The ledger should classify
+  model capacity/rate-limit failures explicitly so repair candidates are not
+  reported as unknown project failures.
+- Runtime Guardian owns near-real-time artifact gaps. A terminal supervised
+  WorkOrder with dispatch-failed agent transient evidence is a bot-runtime
+  finding and may delegate tmux-claude-bot repair; it must not edit the target
+  project repository mentioned by the failed WorkOrder.
+
 ## Design Rules For New Automation
 
 Use these rules when adding a task family, button, command, scheduled flow, or
@@ -81,6 +108,13 @@ repair path:
 
 - Prefer a new WorkOrder task kind or WorkOrder policy over a side-channel prompt
   into a project chat.
+- Register governed system prompts and task-family policy changes according to
+  `docs/prompt-governance.md`; do not add code-changing, PR-changing, merge, or
+  self-repair prompt behavior without metadata and deterministic contract tests.
+- Register task-family behavior in the task-family governance registry before
+  relying on prompt prose. The registry owns scheduling, action scope, owner
+  confirmation, planning, AI/eval expectations, default isolation, and stop-rule
+  facts for WorkOrder task kinds.
 - Reuse the existing supervisor pool, worker isolation, conflict planner,
   system-gate artifact, task ledger, and notification gateway.
 - Keep AI judgment agent-backed through the managed Claude/Codex sessions. Do
@@ -101,7 +135,8 @@ repair path:
   evidence explains why it was not necessary or was blocked.
 - Treat notification delivery as part of the result, not cosmetic output. A task
   whose owner-facing result could not be delivered must leave auditable delivery
-  evidence for Daily Task Audit.
+  evidence for Daily Task Audit. New recurring notification shapes should be
+  represented as notification events before adapter-specific formatting.
 - Keep project/workspace paths authoritative. Validate git toplevel before
   mutating commands, and never infer the target repository from the current shell.
 - Add conflict tests when a task can edit a worktree, branch, PR, or shared
@@ -201,16 +236,20 @@ trigger
   -> sync latest base branch
   -> risk-selected preflight checks (read-only smoke work may skip dependency preflight)
   -> materialize bounded WorkOrder
+  -> record planning contract when the work is agent-driven or owner-delegated
   -> assign Loop Supervisor
   -> lease isolated supervised worker context
+  -> classify retryable agent/provider transients before blaming project code
   -> verify configured projectPath / workspace repository paths
+  -> supervisor writes delegationBrief before substantive execution when planning is required
   -> supervisor analyzes, verifies, edits, and reports through the worker
   -> write strict final summary JSON
+  -> include planReview when the WorkOrder carried planning
   -> system gate validates marker, summary, git state, PR, CI, mergeability
   -> recoverable failures are sent back to the same supervisor
   -> final PR merge or report-only completion
   -> switch back to configured base branch
-  -> fast-forward local base branch
+  -> rebase local base branch onto origin
   -> release successful worker or retain failed worker transcript until TTL
   -> write logs, ledger, reports, notifications
 ```
@@ -228,6 +267,11 @@ run, which checks justified acceptance, which failures blocked acceptance, and
 which failures were recoverable. Daily Task Audit and human debugging should
 prefer this artifact over a stale `supervisor-final-summary.json` when they
 disagree.
+
+Loop run artifact names and paths are product contracts. Code that writes,
+reads, indexes, or links run reports must use the loop run artifact registry
+rather than hardcoded filenames so diagnostics such as report listing, task
+audit discovery, Runtime Guardian, and notifications stay aligned.
 
 ## Task Families
 
@@ -296,6 +340,40 @@ existing PRs, reports, and prior verification output.
 Autopilot is not cron. It should reuse the Loop Supervisor WorkOrder path and the
 same system gates as scheduled jobs.
 
+Before substantive execution, active delegation must form a task advancement
+contract from the user requirement, current session context, and repository
+evidence. The contract is recorded as a concise `delegationBrief` in the
+supervisor final-summary evidence, not as a private chat-only plan. It should
+include objective, current assessment, optional current and target scores when a
+real scoring rubric exists, task checklist, acceptance criteria, stop
+conditions, non-goals, risk review, and verification plan.
+
+If the active agent surface supports a durable goal command, the supervisor may
+create or update a goal from the `delegationBrief`, but the WorkOrder remains the
+authoritative system contract. A goal command is an execution aid, not a second
+source of truth.
+
+Interactive chat surfaces expose two Autopilot handoff buttons. **Delegate now**
+starts the active WorkOrder immediately for already-clear scope. **Review plan
+first** shows the pre-delegation objective, checklist, acceptance criteria, stop
+conditions, non-goals, risks, and verification plan, then starts the same
+WorkOrder only after **Confirm delegation**. CLI and typed `/autopilot` commands
+remain direct handoff paths because their requirement text is already explicit.
+
+The delegation brief is a planning gate, not a bureaucracy gate. If the
+requirement is clear and bounded, the supervisor records the brief and proceeds.
+If the requirement is broad, ambiguous, high-risk, or cannot produce clear
+acceptance criteria and stop conditions, the supervisor should block or ask for
+owner clarification instead of guessing. The final summary must record a
+`planReview` in actionsTaken or reviewGate notes: checklist completion, score
+target result when applicable, stop condition result, over-optimization check,
+verification result, and remaining risks.
+
+The WorkOrder may carry a structured `planning` contract so this rule is visible
+in prompt renders, logs, tests, and final-summary validation. Prompt text should
+not be the only place where delegated planning, acceptance criteria, stop
+conditions, and non-goals are defined.
+
 ## Opportunity Discovery
 
 Opportunity Discovery is proposal generation, not execution.
@@ -322,6 +400,12 @@ Telegram should align with per-suggestion discuss/dismiss buttons while each
 `callback_data` payload fits Telegram's 64-byte limit; when it cannot, the
 message falls back to typed `/opportunity` commands rather than sending unsafe
 callbacks.
+
+Opportunity discussion prompts should prepare a delegation brief draft from the
+stored suggestion: objective, checklist, acceptance criteria, stop conditions,
+non-goals, risks, and verification plan. The draft is not permission to edit; it
+exists so the owner can tighten scope before handing the confirmed work to
+Autopilot.
 
 ## PR Review Modes
 
@@ -393,8 +477,10 @@ or task-audit evidence are active. It complements Daily Task Audit:
 `RUNTIME_GUARDIAN_MODE=fast-heal` delegates a bounded self-repair WorkOrder
 through the existing Loop Supervisor when it finds confirmed system evidence,
 such as a terminal WorkOrder missing `system-gate.json`, a terminal
-`invalid-output` state, or an active worker lease still attached to a terminal
-WorkOrder. `observe` records the finding without repair delegation.
+`invalid-output` state, an active worker lease still attached to a terminal
+WorkOrder, or a read-only smoke active delegation blocked by target dependency
+preflight because isolated worktrees do not carry ignored dependency directories.
+`observe` records the finding without repair delegation.
 By default it only considers terminal artifacts updated within
 `RUNTIME_GUARDIAN_LOOKBACK_MS` so enabling it does not replay historical
 pre-guardian backlog as fresh runtime incidents.
@@ -406,6 +492,9 @@ Runtime Guardian must keep these boundaries:
 
 - It repairs tmux-claude-bot orchestration/runtime code only.
 - It must not edit target project repositories mentioned by failing WorkOrders.
+- If a target project dependency preflight blocks a read-only smoke validation,
+  it should repair tmux-claude-bot's verification profile or WorkOrder policy,
+  not install dependencies in the target project.
 - It must re-check evidence before editing, fix narrowly, add focused regression
   coverage when practical, run verification, inspect the diff, and commit only a
   verified fix.

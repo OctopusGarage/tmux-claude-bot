@@ -30,6 +30,13 @@ export const es: Messages = {
     "🌐 Las dependencias de traducción de prompts están listas · ya puedes activar el modo",
   promptTranslateInstallFailed: (e) =>
     `🌐 Falló la instalación · ${e} · ejecuta npm run translate:install en el host para más detalle`,
+  promptTranslateCommandUsage: (usage) => `Uso: /prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `Traducción de prompts no disponible: ${error}`,
+  promptTranslateDisabledFor: (source) => `Traducción de prompts desactivada para ${source}`,
+  promptTranslateStatusOff: (source) => `Traducción de prompts para ${source}: off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `Traducción de prompts para ${source}: argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `Activada. ${line}`,
   voiceEmpty: "No te entendí · repítelo o envía texto",
   voiceUnsupported: "La transcripción de voz requiere Apple Silicon",
   voiceNotInstalled: "Voz no instalada (ejecuta `npm run whisper:install` en el repo)",
@@ -425,7 +432,7 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   dashboardTitle: "📊 Panel",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "Delega el contexto de la sesión actual al Loop Supervisor para implementar, revisar, verificar, gestionar PRs y notificar el resultado final.",
+    "Delega el contexto de la sesión actual al Loop Supervisor. Empieza directamente cuando el alcance esté claro, o revisa primero el plan si quieres ver la lista, criterios y condiciones de parada.",
   batchRunStarted: (planId, tasks) =>
     `🚀 Ejecución de lote iniciada: plan ${planId}, ${tasks} tarea(s)`,
   batchPoolPaused: (agent, resumeAt) =>
@@ -433,9 +440,43 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   batchRunComplete: (summary) => `✅ Ejecución de lote completada\n${summary}`,
   autopilotUsage: (raw) =>
     `Subcomando desconocido «${raw}». Uso: /autopilot [requisito] o /autopilot delegate [requisito]`,
+  autopilotPlanPreviewBody:
+    "Vista previa del plan de delegación\n\nObjetivo: continuar la tarea confirmada por el usuario desde la sesión y el repositorio actuales hasta completarla de verdad.\n\nLista: revisar contexto vivo, estado de git, commits recientes, PRs existentes y verificación previa; identificar lo pendiente; cambiar solo lo necesario; revisar el diff; ejecutar verificación relevante y evals existentes cuando proceda.\n\nAceptación: el resumen final registra cambios, verificación, PR/merge si aplica, rama final, worktree limpio y cualquier bloqueo real con evidencia.\n\nParada: terminar cuando la tarea esté completa, haya un bloqueo probado, o seguir exceda el alcance.\n\nNo objetivos: no ampliar alcance, rehacer trabajo ya satisfactorio, instalar dependencias del proyecto solo por política del bot, ni fusionar salvo que la política lo permita.",
+  langUsage: "Uso: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "Usa `/sessions <prefijo-id>` para reanudar",
+  opportunityProjectFallback: "Proyecto",
+  opportunityProjectCount: (n) => `${n} proyectos`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} sugerencia(s)\nPuedes seguir discutiendo; cuando quieras ejecutar, delega con Autopilot.`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} sugerencia(s)\nDiscute primero y delega cuando el alcance esté claro.`,
+  btnOpportunityContinueDiscuss: "Seguir discutiendo",
+  btnOpportunityDiscussAll: "Discutir todo",
+  btnOpportunityShow: "Detalles",
+  btnOpportunityDiscuss: "Discutir",
+  btnOpportunityDismiss: "Omitir",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `${n} sugerencia(s) omitida(s).`,
+  opportunitySkippedMissing: (n, ids) => `${n} sugerencia(s) omitida(s). Faltan: ${ids}`,
+  opportunityMixedProjects: "No se pueden discutir juntas oportunidades de proyectos distintos.",
+  opportunityCannotOpenProject: (reason) => `No se pudo abrir el proyecto para discutir: ${reason}`,
+  opportunityDiscussionStarted: (n) => `Discutiendo ${n} sugerencia(s).`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `Este proyecto está ejecutando una tarea de automatización, así que la discusión está bloqueada temporalmente. Inténtalo cuando termine.\n\nTarea: ${taskKind}\nRun: ${runId}\nSupervisor: ${supervisorSession}`,
+  opportunityQueueBusy:
+    "El agent del proyecto está procesando trabajo o tiene mensajes en cola, así que la discusión está bloqueada temporalmente. Inténtalo cuando termine la tarea actual.",
+  opportunityGitStatusUnknown: (reason) =>
+    `No se pudo confirmar el estado git del proyecto, así que la discusión está bloqueada temporalmente.\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `El worktree del proyecto tiene cambios sin resolver, así que la discusión está bloqueada temporalmente. Resuelve esos cambios primero.\n\n${preview}`,
   btnApDelegate: "🚀 Continuar con supervisor",
+  btnApDelegateNow: "🚀 Delegar ahora",
+  btnApReviewPlan: "📋 Revisar plan",
+  btnApConfirmDelegate: "✅ Confirmar delegación",
   btnApCancelDelegate: "⛔ Cancelar delegación",
+  btnApQueue: `${UI_ICONS.tone.queue} Ver cola`,
   btnApBack: "↩︎ Volver",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Cola del supervisor`,
   noLogsContext:
     "No hay sesión actual. Selecciona un proyecto o especifica un trace (/logs <traceId>).",
 
