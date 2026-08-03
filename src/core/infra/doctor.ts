@@ -7,6 +7,8 @@ import {
   defaultOperatorHomeAiToolFiles,
   homeOperatorSkillFiles,
 } from "../ai-tools/install-contract.js";
+import { capabilityStatusForTaskFamily } from "../capabilities/catalog.js";
+import { LOOP_WORK_ORDER_TASK_KINDS } from "../loop/task-family.js";
 import { MCP_PROFILES, mcpProfilePath } from "../mcp/profiles.js";
 import {
   managedRestartCommand,
@@ -20,6 +22,7 @@ import {
 } from "../read/capability-readiness.js";
 import { ARGOS_VENV_PYTHON, resolvePromptTranslateConfig } from "../read/prompt-translation.js";
 import { WHISPER_VENV_BIN } from "../read/voice-support.js";
+import { type InstalledAgentSkill, listAgentSkills } from "../skills/registry.js";
 import { parseEnv, validateTokenShape } from "./onboarding.js";
 
 /**
@@ -58,6 +61,7 @@ export interface DoctorProbes {
   /** macOS: whether `pmset disablesleep` is engaged (covers a closed lid). */
   sleepDisabled(): Promise<boolean>;
   fileExists(path: string): boolean;
+  agentSkills?(): InstalledAgentSkill[];
 }
 
 const run = promisify(execFile);
@@ -226,6 +230,31 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
         )
         .join(", ")})`,
     );
+  }
+
+  const installedAgentSkills = probes.agentSkills?.() ?? listAgentSkills();
+  const capabilityStatuses = LOOP_WORK_ORDER_TASK_KINDS.flatMap((kind) =>
+    capabilityStatusForTaskFamily(kind, installedAgentSkills).map((status) => ({ kind, status })),
+  );
+  const missingRequiredCapabilities = capabilityStatuses.filter(({ status }) => status.blocking);
+  const missingRecommendedCapabilities = capabilityStatuses.filter(
+    ({ status }) => !status.installed && !status.blocking && status.level === "recommended",
+  );
+  if (missingRequiredCapabilities.length > 0) {
+    bad(
+      `required task capabilities missing (${missingRequiredCapabilities
+        .map(({ kind, status }) => `${kind}:${status.capabilityId}`)
+        .join(", ")})`,
+      "run: tcb capabilities install --default, then tcb loop skills sync <file>",
+    );
+  } else if (missingRecommendedCapabilities.length > 0) {
+    info(
+      `recommended task capabilities missing (${missingRecommendedCapabilities
+        .map(({ kind, status }) => `${kind}:${status.capabilityId}`)
+        .join(", ")}) — run: tcb capabilities status --task <kind>`,
+    );
+  } else {
+    ok("task capability dependencies installed or not required");
   }
 
   // 3. managed service (launchd on macOS, systemd on Linux). Identity + restart

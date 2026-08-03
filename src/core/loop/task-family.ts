@@ -1,3 +1,5 @@
+import type { TaskCapabilityDependency } from "../capabilities/types.js";
+
 export const LOOP_SCHEDULED_JOB_KINDS = [
   "architecture",
   "bug-fix",
@@ -45,6 +47,7 @@ export type LoopTaskFamilyGovernance = {
   requiresPlanning: boolean;
   requiresAiEval: boolean;
   defaultWorktreeIsolation: "source-allowed-read-only" | "isolated" | "policy-controlled";
+  capabilities: TaskCapabilityDependency[];
   stopRule: string;
 };
 
@@ -60,6 +63,22 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "isolated",
+      capabilities: [
+        {
+          capabilityId: "skill:mattpocock:improve-codebase-architecture",
+          level: "recommended",
+          phase: "assessment",
+          reason:
+            "Strengthens architecture discovery and scoring when the active agent has the skill installed.",
+        },
+        {
+          capabilityId: "skill:mattpocock:code-review",
+          level: "optional",
+          phase: "review",
+          reason:
+            "Adds review discipline for architecture PRs, but the governed prompt must still work without it.",
+        },
+      ],
       stopRule:
         "Stop when the configured architecture target score is reached or no bounded improvement remains.",
     },
@@ -73,6 +92,15 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "isolated",
+      capabilities: [
+        {
+          capabilityId: "skill:mattpocock:improve-codebase-architecture",
+          level: "recommended",
+          phase: "assessment",
+          reason:
+            "Strengthens cross-repository architecture discovery when the active agent has the skill installed.",
+        },
+      ],
       stopRule:
         "Stop when the workspace architecture target score is reached or further changes would force unrelated repositories to change.",
     },
@@ -86,6 +114,7 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "isolated",
+      capabilities: [],
       stopRule: "Fix only confirmed bugs and stop when a round finds no confirmed real bug.",
     },
     "test-coverage": {
@@ -98,6 +127,15 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "isolated",
+      capabilities: [
+        {
+          capabilityId: "skill:mattpocock:tdd",
+          level: "recommended",
+          phase: "execution",
+          reason:
+            "Keeps test-coverage work test-first and discourages brittle coverage padding when available.",
+        },
+      ],
       stopRule:
         "Stop when meaningful coverage reaches the configured target or only brittle/padding tests remain.",
     },
@@ -111,6 +149,7 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "isolated",
+      capabilities: [],
       stopRule:
         "Fix only verified security risks and stop when no bounded, verifiable risk remains.",
     },
@@ -124,6 +163,7 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "isolated",
+      capabilities: [],
       stopRule:
         "Run only enabled subtasks and stop when the configured health score and no-confirmed-issues condition are met.",
     },
@@ -137,6 +177,15 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "source-allowed-read-only",
+      capabilities: [
+        {
+          capabilityId: "skill:mattpocock:code-review",
+          level: "optional",
+          phase: "assessment",
+          reason:
+            "Can improve opportunity triage quality, but discovery remains read-only and bounded without it.",
+        },
+      ],
       stopRule: "Stop after recording bounded proposals; never implement from discovery.",
     },
     "automation-governance-review": {
@@ -149,6 +198,7 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: true,
       requiresAiEval: true,
       defaultWorktreeIsolation: "policy-controlled",
+      capabilities: [],
       stopRule:
         "Stop at the target governance score; create at most one repair PR for confirmed P0/P1 issues and never auto-merge it.",
     },
@@ -162,6 +212,14 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "isolated",
+      capabilities: [
+        {
+          capabilityId: "skill:mattpocock:code-review",
+          level: "recommended",
+          phase: "review",
+          reason: "Strengthens objective PR review before deciding to close, repair, or merge.",
+        },
+      ],
       stopRule:
         "Merge only objectively eligible PRs after the configured consecutive review passes.",
     },
@@ -175,6 +233,15 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: false,
       requiresAiEval: false,
       defaultWorktreeIsolation: "isolated",
+      capabilities: [
+        {
+          capabilityId: "skill:mattpocock:code-review",
+          level: "recommended",
+          phase: "review",
+          reason:
+            "Strengthens repository-wide PR review before deciding to close, repair, or merge.",
+        },
+      ],
       stopRule:
         "Close or merge only after objective review determines the PR is unnecessary or eligible.",
     },
@@ -188,6 +255,7 @@ export const LOOP_TASK_FAMILY_GOVERNANCE: Record<LoopWorkOrderTaskKind, LoopTask
       requiresPlanning: true,
       requiresAiEval: true,
       defaultWorktreeIsolation: "policy-controlled",
+      capabilities: [],
       stopRule:
         "Stop when the confirmed delegated requirement is implemented and verified, or a concrete blocker is proven.",
     },

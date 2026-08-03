@@ -93,6 +93,82 @@ program
     await import("./scripts/doctor.js");
   });
 
+const capabilities = program
+  .command("capabilities")
+  .description("inspect curated external skills and task capability dependencies");
+
+capabilities
+  .command("list")
+  .description("list the curated default capability catalog")
+  .option("--json", "output capability catalog as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
+    const result = runCapabilitiesCommand(["list", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+capabilities
+  .command("status")
+  .description("show task-specific capability readiness")
+  .requiredOption("--task <taskKind>", "Loop WorkOrder task kind")
+  .option("--json", "output capability status as JSON")
+  .action(async (o: { task: string; json?: boolean }) => {
+    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
+    const result = runCapabilitiesCommand([
+      "status",
+      "--task",
+      o.task,
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+capabilities
+  .command("install")
+  .description("print the default approved-skill install plan for curated capabilities")
+  .option("--default", "use the repo-maintained default capability catalog")
+  .option("--json", "output capability install plan as JSON")
+  .action(async (o: { default?: boolean; json?: boolean }) => {
+    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
+    const result = runCapabilitiesCommand([
+      "install",
+      ...(o.default ? ["--default"] : []),
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+capabilities
+  .command("update")
+  .description("print the default approved-skill refresh path for curated capabilities")
+  .option("--default", "use the repo-maintained default capability catalog")
+  .option("--json", "output capability update plan as JSON")
+  .action(async (o: { default?: boolean; json?: boolean }) => {
+    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
+    const result = runCapabilitiesCommand([
+      "update",
+      ...(o.default ? ["--default"] : []),
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
 program
   .command("install")
   .description(`provision the managed service (launchd/systemd) into ${MANAGED_DIR}`)

@@ -75,6 +75,7 @@ describe("alignment governance contract", () => {
       "Intent modules",
       "WorkOrder and system gate",
       "Prompt governance",
+      "Capability dependency registry",
       "Input enhancement",
       "Evidence and observability",
       "Authorization and security policy",

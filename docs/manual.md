@@ -193,6 +193,7 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 | `tcb control <project> <esc\|enter\|resume\|restart\|…>` | send a control action; `restart` / `clear` / `compact` / `exit` prompt for confirmation (`--yes` for scripts) |
 | `tcb attach <file...>` | send an image/file to the session's chat; defaults to the current session (`--to <project>`, `--caption <text>`) |
 | `tcb ai-tools install\|status` | install or inspect default role-scoped AI tool surfaces in the Home Operator workspace; install also removes stale global skill copies |
+| `tcb capabilities list\|status\|install\|update` | inspect curated external skill/tool dependencies used by task families; `install --default` prints the approved skill plan and `update --default` prints the refresh/sync path |
 | `tcb skill install\|status\|uninstall` | manage Home Operator skill scopes: default `operator-home`, optional `--scope global`, `--scope all`, and `--tool` for one agent |
 | `tcb mcp <observer\|home>` | run a role-scoped MCP server over stdio |
 | `tcb mcp install [--profile observer\|home]` | generate MCP profile descriptors in the Home Operator workspace |
@@ -693,6 +694,12 @@ Useful commands:
 - `tcb loop reports list [--json]` for command-backed reports and supervisor reports
 - `tcb loop backlog list [--all] [--json]`
 - `tcb loop skills refresh <file> [--write] [--json]`
+- `tcb capabilities status --task architecture [--json]` to see the external
+  skills/tools a task family expects
+- `tcb capabilities install --default [--json]` to print the curated approved
+  skill plan before running `tcb loop skills sync <file>`
+- `tcb capabilities update --default [--json]` to print the refresh path before
+  running `tcb loop skills refresh <file> --write`
 
 ## 9. Home operator
 

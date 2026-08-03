@@ -33,6 +33,65 @@ describe("runDoctorChecks", () => {
     expect(report.checks.some((c) => c.text.includes("Home Operator skill installed"))).toBe(true);
     expect(report.checks.some((c) => c.text.includes("MCP profiles installed"))).toBe(true);
     expect(report.checks.some((c) => c.text.includes("AI tool role surfaces complete"))).toBe(true);
+    expect(
+      report.checks.some((c) => c.text.includes("recommended task capabilities missing")),
+    ).toBe(true);
+  });
+
+  it("reports task capability dependencies as installed when approved skills are recorded", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        agentSkills: () => [
+          {
+            skillId: "code-review",
+            sourceUrl: "https://github.com/mattpocock/skills",
+            sourcePath: "skills/engineering/code-review",
+            ref: "0000000000000000000000000000000000000002",
+            checksum: "sha256:code-review",
+            platforms: ["claude", "codex"],
+            tags: ["review", "quality"],
+            trustLevel: "approved",
+            risk: "low",
+            updatePolicy: "notify",
+            status: "installed",
+            installedAt: 1,
+          },
+          {
+            skillId: "improve-codebase-architecture",
+            sourceUrl: "https://github.com/mattpocock/skills",
+            sourcePath: "skills/engineering/improve-codebase-architecture",
+            ref: "0000000000000000000000000000000000000001",
+            checksum: "sha256:architecture",
+            platforms: ["claude", "codex"],
+            tags: ["architecture", "refactor"],
+            trustLevel: "approved",
+            risk: "medium",
+            updatePolicy: "notify",
+            status: "installed",
+            installedAt: 1,
+          },
+          {
+            skillId: "tdd",
+            sourceUrl: "https://github.com/mattpocock/skills",
+            sourcePath: "skills/engineering/tdd",
+            ref: "0000000000000000000000000000000000000003",
+            checksum: "sha256:tdd",
+            platforms: ["claude", "codex"],
+            tags: ["tests", "quality"],
+            trustLevel: "approved",
+            risk: "low",
+            updatePolicy: "notify",
+            status: "installed",
+            installedAt: 1,
+          },
+        ],
+      }),
+    );
+
+    expect(report.failures).toBe(0);
+    expect(
+      report.checks.some((c) => c.text.includes("task capability dependencies installed")),
+    ).toBe(true);
   });
 
   it("reports MCP profiles as optional when none are installed", async () => {

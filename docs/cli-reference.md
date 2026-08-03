@@ -64,6 +64,10 @@ silently from `src/cli.ts`.
 - `tcb loop skills list`
 - `tcb loop skills sync <file>`
 - `tcb loop skills refresh <file>`
+- `tcb capabilities list`
+- `tcb capabilities status --task <taskKind>`
+- `tcb capabilities install --default`
+- `tcb capabilities update --default`
 - `tcb prompts governed list`
 - `tcb prompts governed show <promptId>`
 - `tcb prompts governed render <promptId>`

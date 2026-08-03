@@ -5,8 +5,10 @@ Loop Engineering tasks drive the coding agent by asking it to run a **skill** �
 **agent's** environment (Claude Code / Codex running in the project session),
 **not** in this repo, so it is not installed by `npm install` / the deploy.
 
-The shared capability registry lives under `src/core/skills`. Loop Engineering
-consumes it for scheduled maintenance tasks and `tcb loop skills ...` commands.
+The task-family capability dependency registry lives under
+`src/core/capabilities`. It says which curated external skills/tools a task
+family can use. The skill install/record registry lives under `src/core/skills`
+and backs `tcb loop skills ...` commands.
 
 The task prompts are written to **degrade gracefully**: *"use your X skill if one
 is available"* — if the skill is missing, the agent follows the prose steps in
@@ -17,9 +19,38 @@ better; not installing it is not fatal.
 
 | Skill | Used by (goal / phase) | Source | Install / update |
 |-------|------------------------|--------|------------------|
-| `code-review` | `code-review` → review; `improve-architecture` (review discipline) | Bundled with Claude Code | Built in — no install. Codex has no equivalent and falls back to the goal prompt's prose. |
-| `simplify` | `code-review` → simplify | Bundled with Claude Code | Built in — no install. Codex falls back to prose. |
+| `code-review` | PR review and architecture review discipline | [github.com/mattpocock/skills](https://github.com/mattpocock/skills) (`skills/engineering/code-review/`) | Not bundled — install through an explicit reviewed `skills.applyCommand`. |
+| `simplify` | Optional simplification discipline when already available in the active agent | Agent-provided environment | No registry install; prompts must fall back to prose when absent. |
 | `improve-codebase-architecture` | `improve-architecture` → audit | [github.com/mattpocock/skills](https://github.com/mattpocock/skills) (`skills/engineering/improve-codebase-architecture/`) | Not bundled — install per below. |
+| `tdd` | `test-coverage` → execution | [github.com/mattpocock/skills](https://github.com/mattpocock/skills) (`skills/engineering/tdd/`) | Not bundled — install through an explicit reviewed `skills.applyCommand`. |
+
+## Capability dependency commands
+
+Use `tcb capabilities ...` to inspect the repo-maintained curated dependency
+layer before running scheduled task families:
+
+```bash
+tcb capabilities list
+tcb capabilities status --task architecture
+tcb capabilities install --default
+```
+
+`capabilities status` compares a task family's declared dependencies against the
+local Loop skill registry. Recommended skills are not hard failures because
+governed prompts must degrade gracefully. Required capabilities, if added later,
+must block in doctor/status until installed.
+
+`capabilities install --default` prints the approved skill metadata and next
+commands. It does not silently clone or copy third-party code into Claude/Codex
+directories. To apply the plan, write the approved entries into a Loop config,
+set `skills.applyCommand` to a reviewed local installer, then run:
+
+```bash
+tcb loop skills sync /path/to/loop-engineering.yml
+```
+
+Restart affected Claude Code / Codex sessions after installing external skills;
+agent skill discovery is session-environment dependent.
 
 ## Loop Engineering skill catalog
 
@@ -132,7 +163,8 @@ if exposed as a command).
 ## Adding a new skill-backed goal
 
 When a new goal's prompt references a skill (`use your <name> skill if one is
-available`), add a row to the Registry above with its source and install/update
-steps in the same change — same discipline as the docs-contract. Keep the
-"degrade gracefully" phrasing in the prompt so the goal still works when the
-skill is absent.
+available`), add a capability in `src/core/capabilities/catalog.ts`, add the
+task-family dependency in `LOOP_TASK_FAMILY_GOVERNANCE`, add or update a row in
+the Registry above, and keep the capability contract tests green in the same
+change. Keep the "degrade gracefully" phrasing in the prompt so the goal still
+works when the skill is absent.
