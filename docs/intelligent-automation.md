@@ -144,6 +144,9 @@ centralized.
 - The Loop Supervisor owns orchestration, revision prompts, final summary
   validation, and system-gate retry. Worker sessions perform the bounded target
   work; they are not the final acceptance authority.
+- Read-only active delegated smoke tasks do not inherit target dependency
+  preflight commands, because their purpose is to inspect orchestration evidence
+  without mutating or repairing the target repository.
 - On successful system acceptance, release the worker. On failure, timeout,
   cancellation, or invalid output, retain the worker transcript for the
   configured TTL so the run can be inspected, then allow cleanup.
@@ -395,6 +398,11 @@ through the existing Loop Supervisor when it finds confirmed system evidence,
 such as a terminal WorkOrder missing `system-gate.json`, a terminal
 `invalid-output` state, or an active worker lease still attached to a terminal
 WorkOrder. `observe` records the finding without repair delegation.
+When a terminal `invalid-output` state has a valid late
+`supervisor-final-summary.json`, Runtime Guardian treats that final summary as
+authoritative: completed summaries still require `system-gate.json`, while
+blocked/failed/timeout/cancelled summaries are not re-dispatched only because the
+terminal pane marker was missed.
 By default it only considers terminal artifacts updated within
 `RUNTIME_GUARDIAN_LOOKBACK_MS` so enabling it does not replay historical
 pre-guardian backlog as fresh runtime incidents.

@@ -650,7 +650,7 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
         ? [...projectPolicy.blockedActions]
         : ["direct-model-api", "dependency-upgrade", "broad-rewrite"],
     skills: input.skills ?? { approved: [] },
-    preflight: projectPolicy?.preflight ?? { commands: [], repair: { agent: false } },
+    preflight: activeDelegatedPreflight(projectPolicy, input.requirement),
     assessment: projectPolicy?.assessment ?? { command: "true" },
     execution: projectPolicy?.execution ?? { agent: true },
     recovery: projectPolicy?.recovery ?? { agent: true, dirtyWorktree: false, maxAttempts: 1 },
@@ -665,6 +665,27 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
     requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
     finalSummaryPath: finalSummaryPathForWorkOrder(input.projectId, input.runId),
   };
+}
+
+function activeDelegatedPreflight(
+  projectPolicy: LoopProjectConfig | undefined,
+  requirement: string,
+): LoopProjectConfig["preflight"] {
+  if (isReadOnlyDelegatedSmokeRequirement(requirement)) {
+    return { commands: [], repair: { agent: false } };
+  }
+  return projectPolicy?.preflight ?? { commands: [], repair: { agent: false } };
+}
+
+function isReadOnlyDelegatedSmokeRequirement(requirement: string): boolean {
+  const normalized = requirement.toLowerCase();
+  return (
+    /\bread[-\s]?only\b/.test(normalized) &&
+    /\bsmoke\b/.test(normalized) &&
+    (normalized.includes("do not modify files") ||
+      normalized.includes("do not edit files") ||
+      normalized.includes("no file edits"))
+  );
 }
 
 function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsolation {

@@ -8,6 +8,7 @@ import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
 import { listTerminalLoopSupervisorWorkOrders } from "../loop/supervisor-state.js";
+import { parseSupervisorFinalSummaryFile } from "../loop/work-order.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 
 const log = createLogger("runtime-guardian");
@@ -215,11 +216,15 @@ export function discoverRuntimeGuardianFindings(
     const gatePath = join(record.runDir, "system-gate.json");
     const finalSummaryPath =
       record.workOrder.finalSummaryPath ?? join(record.runDir, "supervisor-final-summary.json");
-    if (
-      record.state.status === "completed" &&
-      existsSync(finalSummaryPath) &&
-      !existsSync(gatePath)
-    ) {
+    const recoveredFinalStatus =
+      record.state.status === "failed" && record.state.resultStatus === "invalid-output"
+        ? parseSupervisorFinalSummaryFile(record.workOrder)
+        : null;
+    const effectiveStatus =
+      recoveredFinalStatus?.ok === true
+        ? supervisorFinalSummaryStatusToTerminalStatus(recoveredFinalStatus.summary.status)
+        : record.state.status;
+    if (effectiveStatus === "completed" && existsSync(finalSummaryPath) && !existsSync(gatePath)) {
       findings.push({
         kind: "missing-system-gate",
         severity: "high",
@@ -234,7 +239,11 @@ export function discoverRuntimeGuardianFindings(
         ],
       });
     }
-    if (record.state.status === "failed" && record.state.resultStatus === "invalid-output") {
+    if (
+      record.state.status === "failed" &&
+      record.state.resultStatus === "invalid-output" &&
+      recoveredFinalStatus?.ok !== true
+    ) {
       findings.push({
         kind: "terminal-invalid-output",
         severity: "medium",
@@ -267,6 +276,14 @@ export function discoverRuntimeGuardianFindings(
   }
 
   return findings;
+}
+
+function supervisorFinalSummaryStatusToTerminalStatus(
+  status: "completed" | "blocked" | "failed" | "timeout" | "cancelled",
+): "completed" | "failed" | "cancelled" {
+  if (status === "completed") return "completed";
+  if (status === "cancelled") return "cancelled";
+  return "failed";
 }
 
 export function checkRuntimeGuardianRepairReadiness(

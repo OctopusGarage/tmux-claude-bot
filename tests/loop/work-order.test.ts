@@ -311,6 +311,38 @@ describe("loop supervisor work order", () => {
     expect(prompt).not.toContain("must preserve the user's current branch by default");
   });
 
+  it("does not inherit target dependency preflight for read-only active delegated smoke tasks", () => {
+    const projectPolicy: LoopProjectConfig = {
+      ...firstProject(),
+      preflight: {
+        commands: [
+          "test -d node_modules",
+          "test -x node_modules/.bin/vite",
+          "test -x node_modules/.bin/vitest",
+        ],
+        repair: {
+          agent: true,
+          prompt: "Install target project dependencies.",
+        },
+      },
+    };
+
+    const workOrder = buildActiveDelegatedTaskWorkOrder({
+      session: "tmux_proj_geo-frontend",
+      projectId: "geo-frontend",
+      projectName: "Geo Frontend",
+      projectPath: "/repo/geo-frontend",
+      agent: "codex",
+      requirement:
+        "Read-only smoke validation of the active delegation contract. Do not modify files, do not commit, do not open a PR.",
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-geo-frontend-active-delegate",
+      projectPolicy,
+    });
+
+    expect(workOrder.preflight).toEqual({ commands: [], repair: { agent: false } });
+  });
+
   it("renders a bug-fix prompt that separates real bug repair from architecture work", () => {
     const project = {
       ...firstProject(),
