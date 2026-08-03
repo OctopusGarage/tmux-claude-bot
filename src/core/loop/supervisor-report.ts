@@ -70,6 +70,8 @@ type LoopSupervisorHandoff = {
     commits: string[];
     finalVerification: LoopSupervisorFinalSummary["finalVerification"] | "not-available";
     planReview?: LoopSupervisorFinalSummary["planReview"];
+    reviewEvidence?: NonNullable<LoopSupervisorFinalSummary["reviewGate"]>["evidence"];
+    learning?: LoopSupervisorFinalSummary["learning"];
   };
   nextAgent: {
     resumeFrom: string[];
@@ -209,6 +211,10 @@ function buildHandoff(
       commits: summary?.commits ?? [],
       finalVerification: summary?.finalVerification ?? "not-available",
       ...(summary?.planReview !== undefined ? { planReview: summary.planReview } : {}),
+      ...(summary?.reviewGate?.evidence !== undefined
+        ? { reviewEvidence: summary.reviewGate.evidence }
+        : {}),
+      ...(summary?.learning !== undefined ? { learning: summary.learning } : {}),
     },
     nextAgent: {
       resumeFrom: [
@@ -228,6 +234,29 @@ function buildHandoff(
 function renderList(items: readonly string[], empty: string): string[] {
   if (items.length === 0) return [`- ${empty}`];
   return items.map((item) => `- ${item}`);
+}
+
+function renderReviewEvidence(handoff: LoopSupervisorHandoff): string[] {
+  const evidence = handoff.progress.reviewEvidence ?? [];
+  if (evidence.length === 0) return ["- No structured review evidence was reported."];
+  return evidence.flatMap((item) => [
+    `- ${item.questionInvestigated}`,
+    `  - Conclusion: ${item.conclusion}`,
+    `  - Evidence: ${item.evidence.length > 0 ? item.evidence.join("; ") : "none reported"}`,
+    `  - Uncertainty: ${item.uncertainty}`,
+    `  - Recommended next step: ${item.recommendedNextStep}`,
+  ]);
+}
+
+function renderLearning(handoff: LoopSupervisorHandoff): string[] {
+  const learning = handoff.progress.learning;
+  if (learning === undefined) return ["- No structured learning candidates were reported."];
+  return [
+    ...learning.regressionCandidates.map((item) => `- Regression: ${item}`),
+    ...learning.capabilityEvalCandidates.map((item) => `- Capability eval: ${item}`),
+    ...learning.monitorOrTraceCandidates.map((item) => `- Monitor/trace: ${item}`),
+    ...learning.documentationCandidates.map((item) => `- Documentation: ${item}`),
+  ];
 }
 
 function renderHandoffMarkdown(handoff: LoopSupervisorHandoff): string {
@@ -259,6 +288,14 @@ function renderHandoffMarkdown(handoff: LoopSupervisorHandoff): string {
     "## Commits",
     "",
     ...renderList(handoff.progress.commits, "No commits were reported."),
+    "",
+    "## Review Evidence",
+    "",
+    ...renderReviewEvidence(handoff),
+    "",
+    "## Learning",
+    "",
+    ...renderLearning(handoff),
     "",
     "## Next Steps",
     "",

@@ -13,6 +13,7 @@ export type LoopSupervisorFinalSummary = {
   finalVerification: "passed" | "failed" | "not-run" | "unknown";
   reviewGate?: LoopSupervisorReviewGate;
   planReview?: LoopSupervisorPlanReview;
+  learning?: LoopSupervisorLearning;
   commits: string[];
   followUps: string[];
 };
@@ -24,6 +25,22 @@ export type LoopSupervisorReviewGate = {
   deterministicGates: LoopSupervisorReviewGateDeterministicGate[];
   decision: "pass" | "block" | "fail";
   notes: string[];
+  evidence?: LoopSupervisorReviewEvidence[];
+};
+
+export type LoopSupervisorReviewEvidence = {
+  questionInvestigated: string;
+  conclusion: string;
+  evidence: string[];
+  uncertainty: string;
+  recommendedNextStep: string;
+};
+
+export type LoopSupervisorLearning = {
+  regressionCandidates: string[];
+  capabilityEvalCandidates: string[];
+  monitorOrTraceCandidates: string[];
+  documentationCandidates: string[];
 };
 
 export type LoopSupervisorReviewGateDeterministicGateObject = {

@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import type { LoopSupervisorPlanReview } from "./planning.js";
 import type {
   LoopSupervisorFinalSummary,
+  LoopSupervisorLearning,
+  LoopSupervisorReviewEvidence,
   LoopSupervisorReviewGate,
   LoopSupervisorReviewGateDeterministicGateObject,
   LoopWorkOrder,
@@ -144,6 +146,7 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
   const finalVerification = parseFinalVerification(value.finalVerification, status);
   const reviewGate = value.reviewGate === undefined ? undefined : parseReviewGate(value.reviewGate);
   const planReview = value.planReview === undefined ? undefined : parsePlanReview(value.planReview);
+  const learning = value.learning === undefined ? undefined : parseLearning(value.learning);
   const commits = parseStringArray(value.commits);
   const followUps = parseStringArray(value.followUps);
 
@@ -155,6 +158,7 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
     finalVerification === null ||
     reviewGate === null ||
     planReview === null ||
+    learning === null ||
     commits === null ||
     followUps === null
   ) {
@@ -169,8 +173,31 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
     finalVerification,
     ...(reviewGate !== undefined ? { reviewGate } : {}),
     ...(planReview !== undefined ? { planReview } : {}),
+    ...(learning !== undefined ? { learning } : {}),
     commits,
     followUps,
+  };
+}
+
+function parseLearning(value: unknown): LoopSupervisorLearning | null {
+  if (!isRecord(value)) return null;
+  const regressionCandidates = parseStringArray(value.regressionCandidates);
+  const capabilityEvalCandidates = parseStringArray(value.capabilityEvalCandidates);
+  const monitorOrTraceCandidates = parseStringArray(value.monitorOrTraceCandidates);
+  const documentationCandidates = parseStringArray(value.documentationCandidates);
+  if (
+    regressionCandidates === null ||
+    capabilityEvalCandidates === null ||
+    monitorOrTraceCandidates === null ||
+    documentationCandidates === null
+  ) {
+    return null;
+  }
+  return {
+    regressionCandidates,
+    capabilityEvalCandidates,
+    monitorOrTraceCandidates,
+    documentationCandidates,
   };
 }
 
@@ -228,13 +255,16 @@ function parseReviewGate(value: unknown): LoopSupervisorReviewGate | null {
       ? (value.decision as LoopSupervisorReviewGate["decision"])
       : null;
   const notes = parseStringArrayOrSingleton(value.notes);
+  const evidence =
+    value.evidence === undefined ? undefined : parseReviewEvidenceList(value.evidence);
   if (
     preMutationReview === null ||
     postMutationReview === null ||
     aiReview === null ||
     deterministicGates === null ||
     decision === null ||
-    notes === null
+    notes === null ||
+    evidence === null
   ) {
     return null;
   }
@@ -245,6 +275,45 @@ function parseReviewGate(value: unknown): LoopSupervisorReviewGate | null {
     deterministicGates,
     decision,
     notes,
+    ...(evidence !== undefined ? { evidence } : {}),
+  };
+}
+
+function parseReviewEvidenceList(value: unknown): LoopSupervisorReviewEvidence[] | null {
+  if (!Array.isArray(value)) return null;
+  const evidence: LoopSupervisorReviewEvidence[] = [];
+  for (const item of value) {
+    const parsed = parseReviewEvidence(item);
+    if (parsed === null) return null;
+    evidence.push(parsed);
+  }
+  return evidence;
+}
+
+function parseReviewEvidence(value: unknown): LoopSupervisorReviewEvidence | null {
+  if (!isRecord(value)) return null;
+  const questionInvestigated =
+    typeof value.questionInvestigated === "string" ? value.questionInvestigated : null;
+  const conclusion = typeof value.conclusion === "string" ? value.conclusion : null;
+  const evidence = parseStringArray(value.evidence);
+  const uncertainty = typeof value.uncertainty === "string" ? value.uncertainty : null;
+  const recommendedNextStep =
+    typeof value.recommendedNextStep === "string" ? value.recommendedNextStep : null;
+  if (
+    questionInvestigated === null ||
+    conclusion === null ||
+    evidence === null ||
+    uncertainty === null ||
+    recommendedNextStep === null
+  ) {
+    return null;
+  }
+  return {
+    questionInvestigated,
+    conclusion,
+    evidence,
+    uncertainty,
+    recommendedNextStep,
   };
 }
 

@@ -137,6 +137,10 @@ worker-internal capability unless a product requirement proves otherwise:
 - External feedback: useful for UI/product experience, PR review, security,
   migrations, and long task implementation. Encode it as a required review pass,
   rubric, deterministic gate, real-environment check, or `reviewGate` evidence.
+  For complex, UI/product-experience, PR-review, security, workspace,
+  harness-auto, or long delegated tasks, the final summary should use
+  `reviewGate.evidence` for synthesized evaluator-style findings instead of
+  creating a bot-managed Evaluator role.
 
 A task family is a good candidate for native multi-perspective worker guidance
 only when all of these are true:
@@ -201,6 +205,9 @@ Explore -> Plan -> Code -> Verify -> Review -> Record
 - Record: preserve what happened in durable artifacts. A failure should say
   whether it should become a regression test, eval, monitor, trace, checklist,
   documentation update, Daily Task Audit signal, or Runtime Guardian finding.
+  Preserve acceptance targets from the WorkOrder, task policy, and planning
+  contract by marking them passed, blocked, or deferred in final summary
+  evidence; do not silently narrow the target list to claim completion.
 
 When users report that an agent or model "got worse", treat it as a system
 diagnosis until evidence says otherwise. Check routing, session identity,
@@ -414,9 +421,13 @@ disagree.
 Every supervised run must also write `handoff.json` and `handoff.md` beside the
 supervisor report. These are the resumable long-task artifacts: they summarize
 the WorkOrder goal, task kind, structured planning contract, acceptance criteria,
-stop conditions, actions taken, commits, verification status, next steps, and
-remaining risks. Future supervisors and human debuggers should use them before
-reopening retained worker transcripts or guessing from chat context.
+stop conditions, actions taken, commits, verification status, structured review
+evidence, learning candidates, next steps, and remaining risks. Capability eval
+candidates are non-blocking learning signals until stabilized; regression
+candidates protect behavior already accepted as working and should become
+blocking only when the evidence is deterministic or stable enough. Future
+supervisors and human debuggers should use these artifacts before reopening
+retained worker transcripts or guessing from chat context.
 
 Loop run artifact names and paths are product contracts. Code that writes,
 reads, indexes, or links run reports must use the loop run artifact registry

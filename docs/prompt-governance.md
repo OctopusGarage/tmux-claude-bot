@@ -121,6 +121,12 @@ When a task benefits from generator/evaluator separation, encode it as a prompt
 requirement for an explicit review pass and durable `reviewGate` evidence. Add
 service-level orchestration only when the system must own authorization,
 cross-run state, recovery, or deterministic acceptance for that role.
+Complex, UI/product-experience, PR-review, security, workspace, harness-auto,
+and long delegated tasks should record synthesized evaluator-style findings in
+`reviewGate.evidence` using `questionInvestigated`, `conclusion`, `evidence`,
+`uncertainty`, and `recommendedNextStep`. Small serial tasks may omit this field
+when normal `preMutationReview`, `postMutationReview`, and deterministic gates
+are enough.
 
 ## Task-Family Prompt Methodology
 
@@ -173,10 +179,11 @@ Recommended next step:
 
 For code-changing tasks, this record should be summarized in `actionsTaken`,
 `reviewGate.preMutationReview`, `reviewGate.postMutationReview`,
-`reviewGate.deterministicGates`, or `followUps` as appropriate. For read-only
-tasks such as opportunity discovery, it should also appear in the generated
-report artifact. Do not persist raw native subagent transcripts as platform
-truth unless a separate artifact contract and retention policy are defined.
+`reviewGate.deterministicGates`, `reviewGate.evidence`, or `followUps` as
+appropriate. For read-only tasks such as opportunity discovery, it should also
+appear in the generated report artifact. Do not persist raw native subagent
+transcripts as platform truth unless a separate artifact contract and retention
+policy are defined.
 
 ## Agentic Coding Prompt Loop
 
@@ -203,6 +210,16 @@ Use this loop as prompt structure, not as a new service state machine:
 - Record the learning. When a run fails or exposes a gap, require the final
   summary to say whether the follow-up belongs in a regression test, eval,
   monitor, trace, checklist, or documentation update.
+  The optional `learning` summary field classifies candidates as
+  `regressionCandidates`, `capabilityEvalCandidates`,
+  `monitorOrTraceCandidates`, and `documentationCandidates`.
+  Capability evals are non-blocking learning signals for behavior still being
+  explored; regression evals should block only after they protect behavior
+  already accepted as working with deterministic or stable agent-backed
+  evidence.
+  Acceptance targets from planning, task policy, and the WorkOrder JSON must be
+  preserved as passed, blocked, or deferred evidence rather than deleted or
+  silently narrowed.
 
 Do not treat "the model got worse" as a root cause. Prompt revisions and repair
 prompts should ask whether the failure came from routing, session identity,

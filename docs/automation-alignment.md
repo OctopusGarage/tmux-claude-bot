@@ -153,11 +153,13 @@ complete:
 9. For task-family prompts that mention native subagents, parallel exploration,
    planner, or evaluator behavior, confirm that behavior stays worker-internal
    and that the final artifact records synthesized evidence, uncertainty, and
-   verification rather than raw child-session state.
+   verification in `reviewGate.evidence` rather than raw child-session state.
 10. For code-changing automation prompts, confirm they guide the worker through
     Explore, Plan, Code, Verify, Review, and Record, including how failures
     become regression tests, evals, monitors, traces, checklists, or docs when
-    applicable.
+    applicable. Preserve WorkOrder acceptance targets as passed, blocked, or
+    deferred evidence, and keep capability evals non-blocking until they
+    graduate into stable regression gates.
 11. For code-changing automation, prove conflict handling, worktree/session
     isolation, GitHub account binding, verification gates, final notification,
     and audit visibility.

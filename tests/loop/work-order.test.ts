@@ -1637,6 +1637,68 @@ prReview:
     }
   });
 
+  it("parses structured evaluator evidence and learning candidates from supervisor summaries", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "completed",
+          projectId: "datavibe",
+          actionsTaken: ["verified"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["confirmed task was bounded"],
+            postMutationReview: ["reviewed final behavior"],
+            aiReview: "passed",
+            deterministicGates: ["npm test"],
+            decision: "pass",
+            notes: [],
+            evidence: [
+              {
+                questionInvestigated: "Does the UI flow match the accepted task?",
+                conclusion: "The flow completed without console errors.",
+                evidence: ["Playwright trace t_123", "screenshot checkout.png"],
+                uncertainty: "Mobile viewport was not covered in this run.",
+                recommendedNextStep: "Add mobile regression coverage if this flow changes again.",
+                ignoredExtra: "not persisted",
+              },
+            ],
+          },
+          learning: {
+            regressionCandidates: ["Checkout completion should stay covered by E2E."],
+            capabilityEvalCandidates: ["Mobile checkout rubric needs a capability eval."],
+            monitorOrTraceCandidates: ["Keep Playwright trace for checkout failures."],
+            documentationCandidates: ["Document checkout verification command."],
+          },
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.reviewGate?.evidence).toEqual([
+        {
+          questionInvestigated: "Does the UI flow match the accepted task?",
+          conclusion: "The flow completed without console errors.",
+          evidence: ["Playwright trace t_123", "screenshot checkout.png"],
+          uncertainty: "Mobile viewport was not covered in this run.",
+          recommendedNextStep: "Add mobile regression coverage if this flow changes again.",
+        },
+      ]);
+      expect(result.summary.learning).toEqual({
+        regressionCandidates: ["Checkout completion should stay covered by E2E."],
+        capabilityEvalCandidates: ["Mobile checkout rubric needs a capability eval."],
+        monitorOrTraceCandidates: ["Keep Playwright trace for checkout failures."],
+        documentationCandidates: ["Document checkout verification command."],
+      });
+    }
+  });
+
   it("parses structured plan review from supervisor summaries", () => {
     const result = parseSupervisorFinalSummary(
       [

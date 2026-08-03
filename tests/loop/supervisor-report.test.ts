@@ -62,6 +62,36 @@ describe("writeLoopSupervisorReport", () => {
           actionsTaken: ["ran focused tests", "committed scoped changes"],
           delegatedTasks: [{ projectId: "datavibe-docs", status: "completed" }],
           finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["confirmed the requested handoff behavior was bounded"],
+            postMutationReview: ["reviewed generated handoff artifacts"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "focused tests",
+                command: "npm test tests/loop/supervisor-report.test.ts",
+                result: "passed",
+                evidence: "handoff artifact assertions passed",
+              },
+            ],
+            decision: "pass",
+            notes: [],
+            evidence: [
+              {
+                questionInvestigated: "Can the next supervisor resume without chat context?",
+                conclusion: "The handoff lists the relevant artifacts and next step.",
+                evidence: ["handoff.json", "handoff.md"],
+                uncertainty: "System gate output is written later by the service.",
+                recommendedNextStep: "Inspect system-gate.json before related work.",
+              },
+            ],
+          },
+          learning: {
+            regressionCandidates: ["Handoff artifacts should preserve review evidence."],
+            capabilityEvalCandidates: ["No capability eval needed for this artifact-only run."],
+            monitorOrTraceCandidates: ["No monitor needed."],
+            documentationCandidates: ["Keep docs aligned with handoff fields."],
+          },
           commits: ["abc123"],
           followUps: [],
         },
@@ -156,6 +186,21 @@ describe("writeLoopSupervisorReport", () => {
         actionsTaken: ["ran focused tests", "committed scoped changes"],
         commits: ["abc123"],
         finalVerification: "passed",
+        reviewEvidence: [
+          {
+            questionInvestigated: "Can the next supervisor resume without chat context?",
+            conclusion: "The handoff lists the relevant artifacts and next step.",
+            evidence: ["handoff.json", "handoff.md"],
+            uncertainty: "System gate output is written later by the service.",
+            recommendedNextStep: "Inspect system-gate.json before related work.",
+          },
+        ],
+        learning: {
+          regressionCandidates: ["Handoff artifacts should preserve review evidence."],
+          capabilityEvalCandidates: ["No capability eval needed for this artifact-only run."],
+          monitorOrTraceCandidates: ["No monitor needed."],
+          documentationCandidates: ["Keep docs aligned with handoff fields."],
+        },
       },
       nextAgent: {
         nextSteps: [
@@ -170,6 +215,12 @@ describe("writeLoopSupervisorReport", () => {
     expect(handoffMarkdown).toContain("- Focused tests pass");
     expect(handoffMarkdown).toContain("## Stop Conditions");
     expect(handoffMarkdown).toContain("- Verification cannot run");
+    expect(handoffMarkdown).toContain("## Review Evidence");
+    expect(handoffMarkdown).toContain("- Can the next supervisor resume without chat context?");
+    expect(handoffMarkdown).toContain("## Learning");
+    expect(handoffMarkdown).toContain(
+      "- Regression: Handoff artifacts should preserve review evidence.",
+    );
   });
 
   it("writes dispatch failure reports when no final summary is available", async () => {

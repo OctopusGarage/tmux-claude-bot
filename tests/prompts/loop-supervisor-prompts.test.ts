@@ -53,6 +53,14 @@ describe("loop supervisor prompts", () => {
     expect(prompt).toContain("Do not call model-provider APIs.");
     expect(prompt).toContain("Do not add model SDKs");
     expect(prompt).toContain("reviewGate must be an object");
+    expect(prompt).toContain("reviewGate.evidence");
+    expect(prompt).toContain("questionInvestigated");
+    expect(prompt).toContain("learning must classify");
+    expect(prompt).toContain("Capability evals are non-blocking learning signals");
+    expect(prompt).toContain(
+      "Regression evals are blocking only when they protect behavior already accepted as working",
+    );
+    expect(prompt).toContain("preserve acceptance targets");
     expect(prompt).toContain("Deterministic gates remain authoritative");
     expect(prompt).toContain("long or potentially unbounded verification commands");
     expect(prompt).toContain("portable timeout wrapper");
@@ -204,9 +212,13 @@ prReview:
 
     expect(finalization).toContain("did not include a parseable final summary");
     expect(finalization).toContain("Do not narrate progress");
+    expect(finalization).toContain("Do not call model-provider APIs");
+    expect(finalization).toContain("Do not add model SDKs");
     expect(finalization).toContain(workOrder.requiredFinalMarker);
     expect(revision).toContain("repair only the listed issues");
     expect(revision).toContain("do not start a new task, branch, or PR");
+    expect(revision).toContain("Do not call model-provider APIs");
+    expect(revision).toContain("Do not add model SDKs");
     expect(revision).toContain("reviewGate.decision is missing");
     expect(revision).toContain(workOrder.requiredFinalMarker);
   });

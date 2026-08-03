@@ -59,6 +59,15 @@ describe("CLI governed prompts command", () => {
     expect(result.stdout).toContain("[LOOP_SUPERVISOR_DONE:");
   });
 
+  it("renders the main supervisor fixture without undefined identifiers", () => {
+    const result = runCli(["prompts", "governed", "render", "loop.supervisor.main"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("1752643800000-supervisor-main");
+    expect(result.stdout).not.toContain("undefined");
+  });
+
   it("returns rendered prompt JSON", () => {
     const result = runCli(["prompts", "governed", "render", "repair.runtime-guardian", "--json"]);
 

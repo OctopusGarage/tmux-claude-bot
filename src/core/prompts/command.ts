@@ -430,11 +430,12 @@ function sampleWorkOrderForPrompt(id: GovernedPromptId) {
     });
   }
   const jobKind = loopPolicyJobKind(id);
+  const runLabel = jobKind ?? "supervisor-main";
   return buildLoopWorkOrder({
     config,
     project,
     scheduledAt: 1752643800000,
-    runId: `1752643800000-${jobKind}`,
+    runId: `1752643800000-${runLabel}`,
     projectSessionPrefix: "tmux_proj_",
     ...(jobKind !== undefined ? { jobKind } : {}),
   });
