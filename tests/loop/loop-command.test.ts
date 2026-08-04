@@ -78,6 +78,49 @@ projects:
       command: "printf assessment-ok"
 `;
 
+const configWithTargetsText = `
+projects:
+  - id: hub
+    name: Hub
+    path: __PROJECT_DIR__
+    agent: codex
+    enabled: true
+    schedule: "0 2 * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "printf assessment-ok"
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/geo
+    agent: codex
+    enabled: true
+    repositories:
+      - id: backend
+        name: Backend
+        path: /repo/geo/backend
+        role: backend
+      - id: frontend
+        name: Frontend
+        path: /repo/geo/frontend
+        role: frontend
+    architecture:
+      enabled: true
+      schedule: "30 3 * * *"
+      goal: Improve workspace boundaries.
+prReview:
+  repositories:
+    - id: hub-all-prs
+      name: Hub all PRs
+      path: __PROJECT_DIR__
+      repo: OctopusGarage/hub
+      agent: codex
+      enabled: true
+      schedule: "0 4 * * *"
+`;
+
 function tempFile(text: string): { file: string; projectDir: string; stateDir: string } {
   const dir = mkdtempSync(join(tmpdir(), "tcb-loop-command-"));
   const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
@@ -223,6 +266,61 @@ describe("runLoopCommand", () => {
       changed: 1,
     });
     expect(readFileSync(file, "utf8")).toContain(`ref: ${ref}`);
+  });
+
+  it("lists and toggles loop targets without deleting schedules", () => {
+    const { file } = tempFile(configWithTargetsText);
+
+    expect(runLoopCommand(["targets"]).stderr).toContain("Usage: loop targets list");
+    expect(runLoopCommand(["targets", "list"]).stderr).toContain("Usage: loop targets list");
+    expect(runLoopCommand(["targets", "list", file, "--bad"]).stderr).toContain(
+      "unknown loop targets list option",
+    );
+
+    const listed = JSON.parse(
+      runLoopCommand(["targets", "list", file, "--json"]).stdout ?? "[]",
+    ) as Array<{ kind: string; id: string; enabled: boolean; scheduled: boolean }>;
+    expect(listed).toEqual([
+      expect.objectContaining({ kind: "project", id: "hub", enabled: true, scheduled: true }),
+      expect.objectContaining({ kind: "workspace", id: "geo", enabled: true, scheduled: true }),
+      expect.objectContaining({ kind: "repo", id: "hub-all-prs", enabled: true, scheduled: true }),
+    ]);
+
+    expect(runLoopCommand(["targets", "disable"]).stderr).toBe(
+      "Usage: loop targets <enable|disable> <file> <project|workspace|repo> <id> [--json]",
+    );
+    expect(runLoopCommand(["targets", "disable", file, "unknown", "hub"]).stderr).toContain(
+      'unknown loop target kind "unknown"',
+    );
+    expect(runLoopCommand(["targets", "disable", file, "project", "missing"]).stderr).toContain(
+      'loop target not found: project "missing"',
+    );
+
+    const disabled = runLoopCommand(["targets", "disable", file, "repo", "hub-all-prs", "--json"]);
+    expect(JSON.parse(disabled.stdout ?? "{}")).toMatchObject({
+      kind: "repo",
+      id: "hub-all-prs",
+      enabled: false,
+      changed: true,
+    });
+    expect(readFileSync(file, "utf8")).toContain("enabled: false");
+    expect(readFileSync(file, "utf8")).toContain("schedule: 0 4 * * *");
+
+    const afterDisable = JSON.parse(
+      runLoopCommand(["targets", "list", file, "--json"]).stdout ?? "[]",
+    ) as Array<{ kind: string; id: string; enabled: boolean; scheduled: boolean }>;
+    expect(afterDisable.find((target) => target.id === "hub-all-prs")).toMatchObject({
+      enabled: false,
+      scheduled: false,
+    });
+
+    const enabled = runLoopCommand(["targets", "enable", file, "repo", "hub-all-prs", "--json"]);
+    expect(JSON.parse(enabled.stdout ?? "{}")).toMatchObject({
+      kind: "repo",
+      id: "hub-all-prs",
+      enabled: true,
+      changed: true,
+    });
   });
 
   it("handles unknown commands and parse errors", () => {

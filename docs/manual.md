@@ -168,7 +168,7 @@ For the complete maintained CLI command and option surface, see
 | `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
 | `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
 | `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
-| `tcb loop validate\|tick\|run <file>` / `tcb loop reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |
+| `tcb loop validate\|tick\|run <file>` / `tcb loop targets\|reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, pause/resume configured targets, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |
 | `tcb sysload` | machine load, thermal state, top CPU, runaway shells |
 | `tcb tui` | the terminal control panel (needs the bot running) |
 | `tcb recover` | relaunch agents that were running before a reboot |
@@ -347,6 +347,10 @@ default; enable it by setting:
 LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml
 LOOP_ENGINEERING_TICK_MS=300000   # 0 disables the managed loop
 ```
+
+Set `enabled: false` on a project, workspace, or `prReview.repositories` entry
+to pause all schedules for that configured target while preserving its schedule,
+GitHub account, branch, prompt, and repair policy for later re-enable.
 
 Each scheduled project chooses a runner:
 
@@ -691,6 +695,9 @@ Useful commands:
 
 - `tcb loop validate <file> [--json]`
 - `tcb loop tick <file> [--now <iso>] [--json]`
+- `tcb loop targets list <file> [--json]`
+- `tcb loop targets disable <file> <project|workspace|repo> <id> [--json]`
+- `tcb loop targets enable <file> <project|workspace|repo> <id> [--json]`
 - `tcb loop run <file> <projectId> [--json]` for command-backed/manual runs
 - `tcb loop reports list [--json]` for command-backed reports and supervisor reports
 - `tcb loop backlog list [--all] [--json]`

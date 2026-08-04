@@ -177,15 +177,17 @@ export function runLoopSchedulerTick(input: LoopTickInput): LoopTickSummary {
 function scheduledJobs(config: LoopConfig): LoopScheduledJob[] {
   return [
     ...config.projects.flatMap(projectScheduledJobs),
-    ...config.prReview.repositories.map((repository) => ({
-      project: repository,
-      jobKey: `pr-review:${repository.id}`,
-      jobKind: "repository-pull-request-review" as const,
-      schedule: repository.schedule,
-      ...(repository.scheduleJitterMinutes !== undefined
-        ? { scheduleJitterMinutes: repository.scheduleJitterMinutes }
-        : {}),
-    })),
+    ...config.prReview.repositories
+      .filter((repository) => repository.enabled)
+      .map((repository) => ({
+        project: repository,
+        jobKey: `pr-review:${repository.id}`,
+        jobKind: "repository-pull-request-review" as const,
+        schedule: repository.schedule,
+        ...(repository.scheduleJitterMinutes !== undefined
+          ? { scheduleJitterMinutes: repository.scheduleJitterMinutes }
+          : {}),
+      })),
     ...config.workspaces.flatMap(workspaceScheduledJobs),
   ];
 }

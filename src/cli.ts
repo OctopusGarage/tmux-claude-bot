@@ -1081,6 +1081,49 @@ loopReports
     }
   });
 
+const loopTargets = loop
+  .command("targets")
+  .description("inspect and toggle Loop Engineering targets");
+
+loopTargets
+  .command("list <file>")
+  .description("list Loop Engineering projects, workspaces, and PR review repositories")
+  .option("--json", "output targets as JSON")
+  .action(async (file: string, o: { json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand(["targets", "list", file, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+for (const action of ["enable", "disable"] as const) {
+  loopTargets
+    .command(`${action} <file> <kind> <id>`)
+    .description(`${action} a Loop Engineering project, workspace, or PR review repository`)
+    .option("--json", "output toggle result as JSON")
+    .action(async (file: string, kind: string, id: string, o: { json?: boolean }) => {
+      const { runLoopCommand } = await import("./core/loop/loop-command.js");
+      const result = runLoopCommand([
+        "targets",
+        action,
+        file,
+        kind,
+        id,
+        ...(o.json ? ["--json"] : []),
+      ]);
+      if (result.exitCode === 0) {
+        console.log(result.stdout);
+      } else {
+        console.error(result.stderr);
+        process.exit(1);
+      }
+    });
+}
+
 const loopBacklog = loop.command("backlog").description("manage Loop Engineering backlog items");
 
 loopBacklog

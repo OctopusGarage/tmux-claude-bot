@@ -126,6 +126,30 @@ projects:
       command: "printf assessment-ok"
 `;
 
+const targetsConfigText = `
+projects:
+  - id: hub
+    name: Hub
+    path: /repo/hub
+    agent: codex
+    enabled: true
+    schedule: "0 2 * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run assess
+prReview:
+  repositories:
+    - id: hub-all-prs
+      name: Hub all PRs
+      path: /repo/hub
+      repo: OctopusGarage/hub
+      agent: codex
+      enabled: true
+      schedule: "0 4 * * *"
+`;
+
 function runCli(
   args: string[],
   stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-state-")),
@@ -228,6 +252,43 @@ describe("CLI loop command", () => {
     expect(summary.due).toBe(1);
     expect(summary.executed).toBe(0);
     expect(summary.dueProjects[0]).toMatchObject({ projectId: "hub", action: "would-run" });
+  });
+
+  it("lists and toggles loop targets through the real CLI entrypoint", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-cli-"));
+    const file = join(dir, "loop.yml");
+    writeFileSync(file, targetsConfigText);
+
+    const list = runCli(["loop", "targets", "list", file, "--json"]);
+    expect(list.status).toBe(0);
+    const targets = JSON.parse(list.stdout) as Array<{
+      kind: string;
+      id: string;
+      enabled: boolean;
+      scheduled: boolean;
+    }>;
+    expect(targets).toEqual([
+      expect.objectContaining({ kind: "project", id: "hub", enabled: true, scheduled: true }),
+      expect.objectContaining({ kind: "repo", id: "hub-all-prs", enabled: true, scheduled: true }),
+    ]);
+
+    const disable = runCli(["loop", "targets", "disable", file, "project", "hub", "--json"]);
+    expect(disable.status).toBe(0);
+    expect(JSON.parse(disable.stdout)).toMatchObject({
+      kind: "project",
+      id: "hub",
+      enabled: false,
+      changed: true,
+    });
+
+    const enable = runCli(["loop", "targets", "enable", file, "project", "hub", "--json"]);
+    expect(enable.status).toBe(0);
+    expect(JSON.parse(enable.stdout)).toMatchObject({
+      kind: "project",
+      id: "hub",
+      enabled: true,
+      changed: true,
+    });
   });
 
   it("syncs approved skills and lists recorded skill state through the real CLI entrypoint", () => {

@@ -581,6 +581,12 @@ There are two PR review surfaces:
   answers: "Which open PRs in this repository can be reviewed, repaired narrowly
   if needed, and merged?"
 
+Loop Engineering targets support a consistent top-level pause switch:
+`projects[]`, `workspaces[]`, and `prReview.repositories[]` all accept
+`enabled`. The default is `true`; set it to `false` to pause that configured
+target without deleting schedules, prompts, GitHub account bindings, or repair
+policy.
+
 Both should focus on introduced bugs, failing checks, mergeability, security,
 data loss, migrations, and user-visible regressions. They should not block on
 style nits. When auto-merge is enabled, both use the configured `mergeMethod`

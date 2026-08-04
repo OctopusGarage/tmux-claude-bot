@@ -59,6 +59,9 @@ silently from `src/cli.ts`.
 - `tcb loop tick <file>`
 - `tcb loop run <file> <projectId>`
 - `tcb loop reports list`
+- `tcb loop targets list <file>`
+- `tcb loop targets enable <file> <project|workspace|repo> <id>`
+- `tcb loop targets disable <file> <project|workspace|repo> <id>`
 - `tcb loop backlog list`
 - `tcb loop backlog close <id>`
 - `tcb loop skills list`
@@ -137,6 +140,9 @@ silently from `src/cli.ts`.
 - `tcb autopilot <project>` means supervisor-backed delegation only.
 - `tcb loop run` is for deterministic command-backed/manual runs; managed
   agent-supervised WorkOrders are driven by the scheduler and Loop Supervisor.
+- `tcb loop targets ...` is the supported way to inspect, pause, and resume
+  Loop Engineering projects, workspaces, and repository-wide PR review entries
+  without hand-editing YAML.
 - `tcb notify` is a send-only owner/project notification path through the running
   bot.
 - `tcb attach` sends files back to the chat-bound project session.

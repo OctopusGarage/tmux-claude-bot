@@ -287,6 +287,7 @@ type ProjectPolicy = {
 type WorkspacePolicy = ProjectPolicy;
 
 type LoopProjectLike = ScheduledEntity & {
+  enabled: boolean;
   schedule?: string | undefined;
   scheduleJitterMinutes?: number | undefined;
   bugFix: ProjectPolicy;
@@ -299,6 +300,7 @@ type LoopProjectLike = ScheduledEntity & {
 };
 
 type LoopWorkspaceLike = ScheduledEntity & {
+  enabled: boolean;
   architecture: ProjectPolicy;
   bugFix: ProjectPolicy;
   testCoverage: ProjectPolicy;
@@ -437,6 +439,7 @@ const WORKSPACE_TASK_FAMILIES: readonly WorkspaceTaskFamily[] = [
 ];
 
 export function projectScheduledJobKinds(project: LoopProjectLike): LoopScheduledJobKind[] {
+  if (!project.enabled) return [];
   return PROJECT_TASK_FAMILIES.filter((family) => {
     const policy = family.policy(project);
     return policy.enabled && policy.schedule !== undefined;
@@ -444,6 +447,7 @@ export function projectScheduledJobKinds(project: LoopProjectLike): LoopSchedule
 }
 
 export function workspaceScheduledJobKinds(workspace: LoopWorkspaceLike): LoopScheduledJobKind[] {
+  if (!workspace.enabled) return [];
   return WORKSPACE_TASK_FAMILIES.filter((family) => {
     const policy = family.policy(workspace);
     return policy.enabled && policy.schedule !== undefined;
@@ -453,6 +457,7 @@ export function workspaceScheduledJobKinds(workspace: LoopWorkspaceLike): LoopSc
 export function projectScheduledJobs<Project extends LoopProjectLike>(
   project: Project,
 ): Array<LoopScheduledJob<Project>> {
+  if (!project.enabled) return [];
   return PROJECT_TASK_FAMILIES.flatMap((family) => {
     const policy = family.policy(project);
     if (!policy.enabled) return [];
@@ -463,6 +468,7 @@ export function projectScheduledJobs<Project extends LoopProjectLike>(
 export function workspaceScheduledJobs<Workspace extends LoopWorkspaceLike>(
   workspace: Workspace,
 ): Array<LoopScheduledJob<Workspace>> {
+  if (!workspace.enabled) return [];
   return WORKSPACE_TASK_FAMILIES.flatMap((family) => {
     const policy = family.policy(workspace);
     if (!policy.enabled) return [];

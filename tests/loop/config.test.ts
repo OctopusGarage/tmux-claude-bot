@@ -148,6 +148,7 @@ prReview:
       path: /repo/mesh-talk
       repo: OctopusGarage/mesh-talk
       agent: codex
+      enabled: false
       schedule: "45 3 * * *"
       scheduleJitterMinutes: 12
       switchBack: dev
@@ -167,6 +168,7 @@ prReview:
       repositoryPullRequestReviewMaxDelayMinutes: 45,
     });
     expect(config.projects[0]?.scheduleJitterMinutes).toBe(7);
+    expect(config.prReview.repositories[0]?.enabled).toBe(false);
     expect(config.prReview.repositories[0]?.scheduleJitterMinutes).toBe(12);
   });
 
