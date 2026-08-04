@@ -1,30 +1,10 @@
-import { createHash } from "node:crypto";
 import { LOOP_TASK_FAMILY_GOVERNANCE, type LoopWorkOrderTaskKind } from "../loop/task-family.js";
+import { skillChecksum } from "../skills/checksum.js";
 import type { InstalledAgentSkill } from "../skills/registry.js";
 import type { ApprovedSkill } from "../skills/schema.js";
 import type { CapabilityDefinition, TaskCapabilityDependency } from "./types.js";
 
 const MATTPOCOCK_SKILLS_MAIN_REF = "2ab958093e83e0ec752e6c1c5932da465bf23e0c";
-
-function skillChecksum(input: {
-  id: string;
-  sourceUrl: string;
-  sourcePath: string;
-  ref: string;
-}): string {
-  const hash = createHash("sha256")
-    .update("loop-skill-v1")
-    .update("\n")
-    .update(input.id)
-    .update("\n")
-    .update(input.sourceUrl)
-    .update("\n")
-    .update(input.sourcePath)
-    .update("\n")
-    .update(input.ref)
-    .digest("hex");
-  return `sha256:${hash}`;
-}
 
 function approvedSkill(input: Omit<ApprovedSkill, "checksum">): ApprovedSkill {
   return {
