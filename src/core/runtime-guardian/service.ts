@@ -243,7 +243,11 @@ export function discoverRuntimeGuardianFindings(
         ],
       });
     }
-    if (record.state.status === "failed" && record.state.resultStatus === "invalid-output") {
+    if (
+      record.state.status === "failed" &&
+      record.state.resultStatus === "invalid-output" &&
+      !parseSupervisorFinalSummaryFile(record.workOrder).ok
+    ) {
       findings.push({
         kind: "terminal-invalid-output",
         severity: "medium",
@@ -336,6 +340,7 @@ function readOnlySmokePreflightBlockedFinding(
   if (record.state.status !== "failed" || record.state.resultStatus !== "blocked") return null;
   if (record.workOrder.task?.kind !== "active-delegated-task") return null;
   if (!isReadOnlySmokeRequirement(record.workOrder.task.requirement)) return null;
+  if (hasDependencyOnlyPreflight(record.workOrder)) return null;
 
   const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
   if (!parsed.ok || parsed.summary.status !== "blocked") return null;
@@ -365,6 +370,13 @@ function isReadOnlySmokeRequirement(requirement: string): boolean {
   return normalized.includes("read-only") && normalized.includes("smoke");
 }
 
+function hasDependencyOnlyPreflight(
+  workOrder: ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number]["workOrder"],
+): boolean {
+  const commands = workOrder.preflight.commands;
+  return commands.length > 0 && commands.every((command) => dependencyPreflightCommand(command));
+}
+
 function isFailedDependencyPreflightGate(gate: LoopSupervisorReviewGateDeterministicGate): boolean {
   if (typeof gate === "string") {
     const normalized = gate.toLowerCase();
@@ -380,6 +392,16 @@ function isFailedDependencyPreflightGate(gate: LoopSupervisorReviewGateDetermini
     .join("\n")
     .toLowerCase();
   return normalized.includes("preflight") && dependencyEvidencePattern().test(normalized);
+}
+
+function dependencyPreflightCommand(command: string): boolean {
+  const normalized = command.toLowerCase();
+  return (
+    normalized.includes("node_modules") ||
+    normalized.includes(".venv/bin/") ||
+    normalized.includes("venv/bin/") ||
+    normalized.includes("vendor/bin/")
+  );
 }
 
 function dependencyEvidencePattern(): RegExp {
