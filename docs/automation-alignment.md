@@ -78,6 +78,7 @@ feature, review this matrix in the same slice:
 | Chat command | `BOT_COMMANDS`, Telegram handler, Lark command/card action, help text, `docs/commands.md`, i18n catalogs, command tests. |
 | Control button/card action | Shared action registry when available, Telegram keyboard/callback parser, Lark card/action parser, TUI when applicable, dangerous-action confirmation, parity tests. |
 | CLI command | `src/cli.ts`, control protocol/client/server if socket-backed, `docs/manual.md`, `docs/agents/usage-guide.md`, CLI tests. |
+| User personal configuration | Safe operator command surface such as `tcb config ...`, `tcb automation ...`, setup/dedicated commands for credentials, redacted reads, allowlisted non-secret writes, `.env.example`, `docs/manual.md`, `docs/agents/usage-guide.md`, and config/CLI tests. |
 | MCP tool or AI tool surface | Role namespace, capability class, typed response contract, control/CLI backing path, actual enforcement layer for role/scope/permission, `docs/ai-tool-surface-governance.md`, docs/tests. |
 | External skill/tool dependency | Curated capability catalog, task-family dependency metadata, approved skill registry, install/update/status CLI, doctor check, prompt fallback wording, `docs/agents/skills.md`, docs/tests. |
 | Home/operator workspace | `<state-dir>/home` provisioning, `CLAUDE.md`, `AGENTS.md`, README/manifest, skill/MCP role names, control-service provenance checks, docs/tests. |
@@ -122,7 +123,7 @@ surfaces, state, logs, and tests that actually enforce the system.
 | Batch scheduler | Batch plans, pools, due schedules, pause/resume/stop/report, and task admission are the generic batch system, not Autopilot or Loop Engineering. | Batch scheduler config/env, plan YAML schema, scheduler store/loop/report, control operations, CLI commands, docs/examples, capability matrix, and scheduler tests. | Do not reuse Autopilot or Loop task terminology for batch plans unless the control path and docs explicitly bridge them. |
 | Evidence and observability | Logs, reports, ledgers, runtime artifacts, notification evidence, and debug commands explain what happened without reopening a worker. | Structured log fields, `tcb logs` filters, `tcb loop reports list`, loop run artifact registry, notification event catalog, task audit discovery, runtime guardian evidence, dashboard/task-report views, docs, and regression tests. | Do not write new automation state that cannot be discovered by current diagnostics or separated from unrelated historical noise. |
 | Authorization and security policy | Owner allowlists, Feishu/Lark chat policy, group action policy, card signing, control socket permissions, GitHub identity, secret handling, agent tool hooks, and local command boundaries determine who may do what. | Telegram auth, Lark auth/chat-policy/card-signing, control socket hardening, GitHub account/token handling, Claude/Codex `PreToolUse` command guards, setup/doctor checks, security docs, and auth/security tests. | Do not add an action path that bypasses owner authorization, group policy, callback/card verification, configured GitHub identity, or agent-level command interception. |
-| State and configuration | Source/docs define product behavior; state/config directories hold live user configuration and runtime truth. | `TCB_STATE_DIR`, `.env` loading, state migrations, app-home/state layout, config examples, project/session bindings, install/dev scripts, docs, and state/config tests. | Do not hardcode live project lists, user paths, schedules, GitHub accounts, or local cleanup policy in source, tests, or maintained docs. |
+| State and configuration | Source/docs define product behavior; state/config directories hold live user configuration and runtime truth. | `TCB_STATE_DIR`, `.env` loading, state migrations, app-home/state layout, config examples, project/session bindings, install/dev scripts, `tcb config ...`, `tcb automation ...`, docs, and state/config tests. | Do not hardcode live project lists, user paths, schedules, GitHub accounts, or local cleanup policy in source, tests, or maintained docs. Do not make operators hand-edit state/config files for routine inspection or day-to-day enable/disable flows when a safe command can own the behavior. |
 | Deployment and lifecycle | Managed prod, managed dev, foreground dev, setup/install, service controls, single-instance protection, doctor, and smoke checks keep one coherent runtime. | `install.sh`, service scripts, dev helpers, setup flows, managed `dist/` entrypoint, launchd/systemd docs, doctor/smoke checks, and lifecycle tests. | Do not add a process manager, state layout, or dev/prod mode that can run against the same state without instance and migration rules. |
 | Setup, install, and onboarding | First-run setup, reconfigure, Lark onboarding, managed install, service materialization, optional dependency install, and doctor are one onboarding lifecycle. | `.env.example`, setup scripts, Lark setup/onboarding wizard, install/service scripts, optional install commands, doctor checks, install docs, and setup/install tests. | Do not introduce a required runtime option without updating setup, `.env.example`, doctor, docs, and managed-install behavior. |
 | Localization and copy governance | Chat UI copy, card/button labels, setup/onboarding copy, language pickers, per-channel language settings, supported language list, fallback behavior, and catalog completeness are one product surface. | `src/core/i18n/index.ts`, `src/core/i18n/catalog/*`, `src/core/i18n/setup.ts`, `UI_LANGS`, Telegram/Lark adapters, setup scripts, CLI/TUI/help output when user-facing, `docs/domain/iconography.md`, `tests/core/i18n.test.ts`, and `tests/i18n-hardcoded-copy-contract.test.ts`. | Do not add user-visible copy in adapters, CLI/TUI, setup, cards, notifications, or docs examples without either routing through `Messages`/`SetupMessages` or documenting why it is intentionally nonlocalized. |
@@ -141,31 +142,35 @@ complete:
 3. State any intentional surface difference and the user-facing fallback.
 4. Confirm docs mention the feature in the right layer and do not duplicate a
    stale older design.
-5. Confirm new or changed user-facing copy is routed through the right
+5. If the feature changes user personal configuration, confirm routine
+   inspection and mutation have a command-backed path, secrets are redacted on
+   read, generic writes are allowlisted and non-secret, and any unsupported
+   config change has a clear setup/dedicated-command fallback.
+6. Confirm new or changed user-facing copy is routed through the right
    localization surface: `Messages` for chat/cards/buttons, `SetupMessages` for
    setup/onboarding, docs for prose, or an explicit nonlocalized exception.
-6. Confirm generated or installed skills point to the current docs instead of
+7. Confirm generated or installed skills point to the current docs instead of
    copying outdated behavior.
-7. Add or update a contract test for every mechanical alignment rule that can
+8. Add or update a contract test for every mechanical alignment rule that can
    drift.
-8. For governed system prompts, update `docs/prompt-governance.md`, prompt
+9. For governed system prompts, update `docs/prompt-governance.md`, prompt
    metadata, and deterministic prompt contract tests in the same slice.
-9. For task-family prompts that mention native subagents, parallel exploration,
+10. For task-family prompts that mention native subagents, parallel exploration,
    planner, or evaluator behavior, confirm that behavior stays worker-internal
    and that the final artifact records synthesized evidence, uncertainty, and
    verification in `reviewGate.evidence` rather than raw child-session state.
-10. For code-changing automation prompts, confirm they guide the worker through
+11. For code-changing automation prompts, confirm they guide the worker through
     Explore, Plan, Code, Verify, Review, and Record, including how failures
     become regression tests, evals, monitors, traces, checklists, or docs when
     applicable. Preserve WorkOrder acceptance targets as passed, blocked, or
     deferred evidence, and keep capability evals non-blocking until they
     graduate into stable regression gates.
-11. For code-changing automation, prove conflict handling, worktree/session
+12. For code-changing automation, prove conflict handling, worktree/session
     isolation, GitHub account binding, verification gates, final notification,
     and audit visibility.
-12. For notification features, prove Telegram and Feishu/Lark capability parity,
+13. For notification features, prove Telegram and Feishu/Lark capability parity,
     and prove Lark project-bound group routing when a session is known.
-13. Mark historical documents as historical when they no longer describe current
+14. Mark historical documents as historical when they no longer describe current
     behavior.
 
 If an item cannot be aligned in the same slice, document the gap with an owner,

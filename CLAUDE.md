@@ -35,6 +35,12 @@ notification routing, worktree/session isolation, or GitHub automation, read
 `docs/automation-alignment.md` and update the relevant alignment surface in the
 same slice.
 
+For user personal configuration, prefer command-backed inspection and mutation
+over ad hoc file edits. If a new config value affects day-to-day operation,
+consider whether `tcb config ...`, `tcb automation ...`, or a dedicated command
+should expose safe status/change behavior. Secret-bearing values must be
+redacted on read and excluded from generic writes.
+
 ## Local Tooling Rules
 
 If `.codegraph/` exists at the repository root, use CodeGraph before grep/find

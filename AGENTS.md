@@ -19,6 +19,12 @@ notification routing, worktree/session isolation, or GitHub automation, read
 `docs/automation-alignment.md` and update the relevant alignment surface in the
 same slice.
 
+When a change introduces, removes, or changes user personal configuration that
+operators may need to inspect or modify, prefer a safe `tcb ...` command surface
+over instructions to edit state files by hand. Reads must redact secrets by
+default; generic writes must be allowlisted and non-secret, with credentials and
+owner identifiers staying behind setup or dedicated commands.
+
 Keep durable business truth out of always-loaded memory when possible:
 `docs/intelligent-automation.md` owns automation terminology and relationships,
 `docs/automation-alignment.md` owns cross-surface drift checks, and
