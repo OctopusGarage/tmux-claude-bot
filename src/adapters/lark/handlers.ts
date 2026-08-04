@@ -68,6 +68,10 @@ import { handleLarkVoice } from "./voice.js";
 
 const log = createLogger("lark.handlers");
 
+function isTextLikeContentType(contentType: string): boolean {
+  return contentType === "text" || contentType === "post";
+}
+
 /**
  * Build the channel `message` handler. p2p text messages are parsed for
  * slash commands; unknown senders are dropped silently.
@@ -91,7 +95,8 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         // run binding-recovery commands (/bind, /rebind, /restore, /newgroup…, /help)
         // in place. Everything else (plain prompts, views) is still ignored: there is
         // no project to talk to until the group is re-bound.
-        const recoverable = msg.rawContentType === "text" && isRecoveryCommand(msg.content);
+        const recoverable =
+          isTextLikeContentType(msg.rawContentType) && isRecoveryCommand(msg.content);
         if (!recoverable) {
           log.info(`ignore unbound chat_type=${msg.chatType} chat=${msg.chatId}`);
           return;
@@ -100,7 +105,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       }
 
       if (!isP2p) {
-        const mgmt = msg.rawContentType === "text" && isGroupMgmtCommand(msg.content);
+        const mgmt = isTextLikeContentType(msg.rawContentType) && isGroupMgmtCommand(msg.content);
         if (!mgmt) {
           const r = await reconcileGroupBinding(deps, "lark", msg.chatId);
           if (r.status === "missing-path") {
@@ -116,7 +121,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       // Reply to a localized queued ack with new text: rewrite that still-waiting message.
       // in place. TERMINAL unless it wasn't one of our acks (mirrors Telegram): a
       // rewrite blocked by dedup is reported, never silently re-enqueued.
-      if (msg.replyToMessageId && msg.rawContentType === "text") {
+      if (msg.replyToMessageId && isTextLikeContentType(msg.rawContentType)) {
         const newText = msg.content.trim();
         const rw = await rewriteUserPromptByAck(deps.queue, {
           source: "lark",
@@ -142,7 +147,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         ? resolveReplyTarget(msg.replyToMessageId)
         : undefined;
 
-      if (msg.rawContentType !== "text") {
+      if (!isTextLikeContentType(msg.rawContentType)) {
         // Voice/audio → transcribe and process as text (like Telegram); other
         // media isn't supported yet.
         const audio = msg.resources.find((r) => r.type === "audio");
