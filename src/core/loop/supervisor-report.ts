@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
+import { buildEvalReportFromSupervisorSummary } from "../eval/report.js";
 import { LOOP_RUN_ARTIFACTS, loopRunDir } from "./artifacts.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import type { LoopSupervisorFinalSummary, LoopWorkOrder } from "./work-order.js";
@@ -19,6 +20,7 @@ type LoopSupervisorReportRecord = {
   summaryPath: string;
   handoffJsonPath: string;
   handoffMarkdownPath: string;
+  evalReportPath?: string;
 };
 
 type LoopSupervisorReportSummary = {
@@ -45,6 +47,7 @@ type LoopSupervisorReportSummary = {
     reason?: string;
     summary?: LoopSupervisorFinalSummary;
   };
+  evalReportPath?: string;
 };
 
 type LoopSupervisorHandoff = {
@@ -131,6 +134,13 @@ function renderMarkdown(input: LoopSupervisorReportInput): string {
 function buildSummary(input: LoopSupervisorReportInput): LoopSupervisorReportSummary {
   const reason = resultReason(input.result);
   const summary = resultSummary(input.result);
+  const evalReportPath =
+    summary !== undefined
+      ? join(
+          reportDir(input.workOrder.projectId, input.workOrder.id),
+          LOOP_RUN_ARTIFACTS.evalReport,
+        )
+      : undefined;
   const result: LoopSupervisorReportSummary["result"] = {
     status: input.result.status,
     output: input.result.output,
@@ -157,12 +167,13 @@ function buildSummary(input: LoopSupervisorReportInput): LoopSupervisorReportSum
       endedAt: input.endedAt,
     },
     result,
+    ...(evalReportPath !== undefined ? { evalReportPath } : {}),
   };
 }
 
 function buildHandoff(
   input: LoopSupervisorReportInput,
-  paths: { markdownPath: string; summaryPath: string },
+  paths: { markdownPath: string; summaryPath: string; evalReportPath?: string },
 ): LoopSupervisorHandoff {
   const summary = resultSummary(input.result);
   const reason = resultReason(input.result);
@@ -220,6 +231,7 @@ function buildHandoff(
       resumeFrom: [
         paths.summaryPath,
         paths.markdownPath,
+        ...(paths.evalReportPath !== undefined ? [paths.evalReportPath] : []),
         input.workOrder.finalSummaryPath ?? "supervisor-final-summary.json was not configured",
         "system-gate.json",
         "work-order-state.json",
@@ -327,12 +339,40 @@ export function writeLoopSupervisorReport(
   const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.supervisorSummary);
   const handoffJsonPath = join(dir, LOOP_RUN_ARTIFACTS.handoffJson);
   const handoffMarkdownPath = join(dir, LOOP_RUN_ARTIFACTS.handoffMarkdown);
-  const handoff = buildHandoff(input, { markdownPath, summaryPath });
+  const summary = resultSummary(input.result);
+  const evalReportPath =
+    summary !== undefined ? join(dir, LOOP_RUN_ARTIFACTS.evalReport) : undefined;
+  const handoff = buildHandoff(input, {
+    markdownPath,
+    summaryPath,
+    ...(evalReportPath !== undefined ? { evalReportPath } : {}),
+  });
 
   writeFileAtomicSync(summaryPath, `${JSON.stringify(buildSummary(input), null, 2)}\n`);
+  if (summary !== undefined && evalReportPath !== undefined) {
+    writeFileAtomicSync(
+      evalReportPath,
+      `${JSON.stringify(
+        buildEvalReportFromSupervisorSummary({
+          workOrderId: input.workOrder.id,
+          taskId: taskKind(input.workOrder),
+          summary,
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+  }
   writeFileAtomicSync(markdownPath, renderMarkdown(input));
   writeFileAtomicSync(handoffJsonPath, `${JSON.stringify(handoff, null, 2)}\n`);
   writeFileAtomicSync(handoffMarkdownPath, renderHandoffMarkdown(handoff));
 
-  return { runId, markdownPath, summaryPath, handoffJsonPath, handoffMarkdownPath };
+  return {
+    runId,
+    markdownPath,
+    summaryPath,
+    handoffJsonPath,
+    handoffMarkdownPath,
+    ...(evalReportPath !== undefined ? { evalReportPath } : {}),
+  };
 }

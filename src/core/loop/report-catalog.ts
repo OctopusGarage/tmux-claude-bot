@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readEvalReportFile } from "../eval/report.js";
+import type { EvalOutcome } from "../eval/types.js";
 import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 
 export type LoopReportRecord = {
@@ -11,6 +13,8 @@ export type LoopReportRecord = {
   endedAt: number;
   markdownPath: string;
   summaryPath: string;
+  evalReportPath?: string;
+  evalOutcome?: Pick<EvalOutcome, "status" | "finalVerification" | "reviewDecision" | "reason">;
 };
 
 type LoopSupervisorReportSummary = {
@@ -24,6 +28,7 @@ type LoopSupervisorReportSummary = {
     startedAt: number;
     endedAt: number;
   };
+  evalReportPath?: string;
 };
 
 export function listLoopReportRecords(root: string): LoopReportRecord[] {
@@ -62,6 +67,12 @@ function readSupervisorReportRecord(dir: string): LoopReportRecord | null {
   const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.supervisorSummary);
   if (!existsSync(summaryPath)) return null;
   const supervisor = JSON.parse(readFileSync(summaryPath, "utf8")) as LoopSupervisorReportSummary;
+  const defaultEvalReportPath = join(dir, LOOP_RUN_ARTIFACTS.evalReport);
+  const evalReportPath =
+    supervisor.evalReportPath ??
+    (existsSync(defaultEvalReportPath) ? defaultEvalReportPath : undefined);
+  const evalReport = readEvalReportFile(evalReportPath);
+  const evalOutcome = evalReport.ok ? evalReport.report.outcome : undefined;
   return {
     runId: supervisor.runId,
     projectId: supervisor.project.id,
@@ -71,5 +82,7 @@ function readSupervisorReportRecord(dir: string): LoopReportRecord | null {
     endedAt: supervisor.timestamps.endedAt,
     markdownPath: join(dir, LOOP_RUN_ARTIFACTS.supervisorMarkdown),
     summaryPath,
+    ...(evalReportPath !== undefined ? { evalReportPath } : {}),
+    ...(evalOutcome !== undefined ? { evalOutcome } : {}),
   };
 }

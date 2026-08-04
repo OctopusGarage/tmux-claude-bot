@@ -373,8 +373,8 @@ Each scheduled project chooses a runner:
 - `runner.kind: agent-supervised` sends a bounded WorkOrder to a reserved Loop
   Supervisor agent. The supervisor can inspect failures, adapt the next action, and
   finish with a required marker + JSON summary. Reports are written as
-  `supervisor.md` / `supervisor-summary.json`, with `handoff.md` /
-  `handoff.json` for resumable next-round state. When commit or PR publishing is
+  `supervisor.md` / `supervisor-summary.json`, worker-internal `eval-report.json`,
+  with `handoff.md` / `handoff.json` for resumable next-round state. When commit or PR publishing is
   enabled, the managed loop still performs final system gates after the supervisor
   reports completion: clean worktree, expected switch-back branch, PR lookup,
   mergeability, and completed successful/neutral/skipped CI checks. If
@@ -405,6 +405,10 @@ Each scheduled project chooses a runner:
   supervisor responds. Non-recoverable platform failures, such as missing GitHub
   write permission or missing system adapters, fail directly with the concrete
   blocker instead of looping.
+  `tcb loop reports list --json` includes the parsed eval outcome when the report
+  artifact exists, and the text report list shows `eval=<status>`. Rejected eval
+  outcomes are also visible to Daily Task Audit and Runtime Guardian through the
+  persisted `system-gate.json` evidence.
   A project can also define `bugFix` with its own cron schedule. That job is
   separate from architecture improvement: it asks the supervisor to find and fix
   only proven functional or reliability bugs, to skip style nits and speculative

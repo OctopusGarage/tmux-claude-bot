@@ -121,6 +121,9 @@ When a task benefits from generator/evaluator separation, encode it as a prompt
 requirement for an explicit review pass and durable `reviewGate` evidence. Add
 service-level orchestration only when the system must own authorization,
 cross-run state, recovery, or deterministic acceptance for that role.
+Repo-owned eval contracts, artifact writers, and deterministic graders are
+allowed when they make evidence consistent and auditable; they must not create or
+require a separate evaluator session, worker queue, or bot-managed service role.
 Complex, UI/product-experience, PR-review, security, workspace, harness-auto,
 and long delegated tasks should record synthesized evaluator-style findings in
 `reviewGate.evidence` using `questionInvestigated`, `conclusion`, `evidence`,

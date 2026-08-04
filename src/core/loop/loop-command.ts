@@ -429,7 +429,12 @@ export function runLoopCommand(args: string[]): LoopCommandResult {
             ? JSON.stringify(reports)
             : [
                 `loop reports: ${reports.length}`,
-                ...reports.map((r) => `- ${r.projectId}: ${r.status} ${r.runId}`),
+                ...reports.map(
+                  (r) =>
+                    `- ${r.projectId}: ${r.status} ${r.runId}${
+                      r.evalOutcome === undefined ? "" : ` eval=${r.evalOutcome.status}`
+                    }`,
+                ),
               ].join("\n"),
       };
     }

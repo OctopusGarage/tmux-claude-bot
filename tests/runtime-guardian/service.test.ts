@@ -252,6 +252,53 @@ describe("runtime guardian", () => {
     ]);
   });
 
+  it("discovers completed supervisor work orders with failed eval outcome evidence", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-failed-eval-outcome",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(summaryPath, "{}\n");
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+        evalReport: {
+          outcome: {
+            status: "failed",
+            reason: "deterministic-gate-failed",
+          },
+        },
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-failed-eval-outcome", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: 2,
+      resultStatus: "completed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: "failed-eval-outcome",
+        severity: "high",
+        runId: "run-failed-eval-outcome",
+        evidence: expect.arrayContaining([
+          "system gate eval outcome is failed: deterministic-gate-failed",
+          expect.stringContaining("system gate evidence exists:"),
+        ]),
+      }),
+    ]);
+  });
+
   it("ignores historical completed runs outside the runtime lookback", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(

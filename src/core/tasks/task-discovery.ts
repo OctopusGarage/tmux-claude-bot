@@ -643,6 +643,7 @@ function recordForSystemGateFailure(input: {
   const failures = Array.isArray(input.gate.failures)
     ? input.gate.failures.filter((failure): failure is string => typeof failure === "string")
     : [];
+  const evalSummary = systemGateEvalOutcomeSummary(input.gate);
   return {
     taskId: input.taskId,
     source: "loop-engineering",
@@ -653,11 +654,24 @@ function recordForSystemGateFailure(input: {
       failures.length === 0
         ? "supervised system gate rejected the run"
         : `supervised system gate failed: ${failures.join("; ")}`,
-    summary: "System gate rejected a completed supervisor run.",
+    summary: ["System gate rejected a completed supervisor run.", evalSummary]
+      .filter((part): part is string => typeof part === "string")
+      .join(" "),
     reportPath: input.path,
     repairStatus: "pending",
     updatedAt: input.now,
   };
+}
+
+function systemGateEvalOutcomeSummary(gate: Record<string, unknown>): string | null {
+  const evalReport = gate.evalReport;
+  if (!isRecord(evalReport)) return null;
+  const outcome = evalReport.outcome;
+  if (!isRecord(outcome)) return null;
+  const status = typeof outcome.status === "string" ? outcome.status : null;
+  if (status === null) return null;
+  const reason = typeof outcome.reason === "string" ? ` reason=${outcome.reason}` : "";
+  return `eval=${status}${reason}`;
 }
 
 function shouldPreferSupervisorSummaryOverFinalSummary(summary: Record<string, unknown>): boolean {

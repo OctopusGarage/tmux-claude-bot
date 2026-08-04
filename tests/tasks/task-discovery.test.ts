@@ -385,7 +385,15 @@ describe("mergeDiscoveredTaskRecords", () => {
       join(runDir, "system-gate.json"),
       JSON.stringify({
         accepted: false,
-        failures: ["PR body contains generated review noise"],
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+        evalReport: {
+          outcome: {
+            status: "failed",
+            finalVerification: "passed",
+            reviewDecision: "pass",
+            reason: "deterministic-gate-failed",
+          },
+        },
       }),
       "utf8",
     );
@@ -404,7 +412,9 @@ describe("mergeDiscoveredTaskRecords", () => {
       expect.objectContaining({
         taskId: ledgerRecord.taskId,
         status: "failed",
-        error: "supervised system gate failed: PR body contains generated review noise",
+        error: "supervised system gate failed: eval outcome is failed: deterministic-gate-failed",
+        summary:
+          "System gate rejected a completed supervisor run. eval=failed reason=deterministic-gate-failed",
         repairStatus: "pending",
         reportPath: join(runDir, "system-gate.json"),
       }),

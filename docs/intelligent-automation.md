@@ -93,6 +93,13 @@ prompt guidance that tells the worker when broad exploration, independent review
 or evidence synthesis is useful, then require the worker to summarize the result
 in the WorkOrder final summary and handoff artifacts.
 
+This boundary does not forbid repo-owned evaluation contracts, schemas, reports,
+or deterministic gates. An eval module may standardize task outcomes, grader
+results, trace references, and `reviewGate` evidence, but it must not imply a
+separate evaluator runtime, session, task queue, or service role. Evaluation
+execution stays worker-internal unless the service must own authorization,
+cross-run state, recovery, or deterministic acceptance.
+
 The intended split is:
 
 ```text
@@ -428,6 +435,17 @@ candidates protect behavior already accepted as working and should become
 blocking only when the evidence is deterministic or stable enough. Future
 supervisors and human debuggers should use these artifacts before reopening
 retained worker transcripts or guessing from chat context.
+
+Completed supervised runs also write `eval-report.json` as a normalized view of
+the final summary's worker-internal review evidence, deterministic gates,
+outcome, and learning candidates. This artifact is an eval contract/report, not
+an independent evaluator runtime or service role. The system gate embeds the
+normalized eval report in `system-gate.json` and must reject completed runs whose
+eval outcome is not `passed`. Diagnostic surfaces should preserve that chain of
+evidence: `loop reports list --json` exposes the parsed eval outcome, text report
+lists show the eval status, Daily Task Audit includes rejected eval outcome
+details in discovered task records, and Runtime Guardian raises a finding when a
+terminal completed run has persisted non-passing eval outcome evidence.
 
 Loop run artifact names and paths are product contracts. Code that writes,
 reads, indexes, or links run reports must use the loop run artifact registry

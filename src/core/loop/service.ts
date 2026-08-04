@@ -6,6 +6,7 @@ import type { WorktreeIsolationMode } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { agentIsIdle } from "../command/agent-ready.js";
 import type { HandlerDeps } from "../deps.js";
+import { buildEvalReportFromSupervisorSummary } from "../eval/report.js";
 import type { NotificationGateway } from "../notifications/gateway.js";
 import { OpportunityStore, parseOpportunityDiscoveryReportFile } from "../opportunities/store.js";
 import { formatOpportunityDigest } from "../opportunities/view.js";
@@ -1588,6 +1589,14 @@ export function writeSupervisedSystemGateArtifact(input: {
   writtenAt: number;
 }): void {
   const path = join(dirname(input.report.summaryPath), LOOP_RUN_ARTIFACTS.systemGate);
+  const evalReport =
+    "summary" in input.result
+      ? buildEvalReportFromSupervisorSummary({
+          workOrderId: input.workOrder.id,
+          taskId: input.workOrder.task?.kind ?? "architecture",
+          summary: input.result.summary,
+        })
+      : null;
   writeFileSync(
     path,
     `${JSON.stringify(
@@ -1598,6 +1607,7 @@ export function writeSupervisedSystemGateArtifact(input: {
         accepted: input.result.status === "completed" && input.gate.failures.length === 0,
         supervisorReviewGate:
           "summary" in input.result ? (input.result.summary.reviewGate ?? null) : null,
+        evalReport,
         evidence: input.gate.evidence,
         failures: input.gate.failures,
         recoverableFailures: supervisorRevisionFailures(input.gate.failures),
@@ -1626,6 +1636,19 @@ export function runSupervisedSystemGateOutcome(input: {
 
   const failures: string[] = [];
   const evidence: string[] = [];
+  const evalReport = buildEvalReportFromSupervisorSummary({
+    workOrderId: input.workOrder.id,
+    taskId: input.workOrder.task?.kind ?? "architecture",
+    summary: input.result.summary,
+  });
+  evidence.push(`eval outcome=${evalReport.outcome.status}`);
+  if (evalReport.outcome.status !== "passed") {
+    failures.push(
+      `eval outcome is ${evalReport.outcome.status}${
+        evalReport.outcome.reason === undefined ? "" : `: ${evalReport.outcome.reason}`
+      }`,
+    );
+  }
   const reviewGate = input.result.summary.reviewGate;
   if (reviewGate === undefined) {
     evidence.push("supervisor reviewGate not reported; deterministic system gates still enforced");

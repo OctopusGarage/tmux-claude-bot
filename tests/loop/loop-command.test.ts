@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -217,6 +217,56 @@ describe("runLoopCommand", () => {
     process.env.TCB_STATE_DIR = stateDir;
     expect(runLoopCommand(["reports", "bad"]).stderr).toContain("Usage: loop reports list");
     expect(runLoopCommand(["backlog", "wat"]).stderr).toContain("Usage: loop backlog list");
+  });
+
+  it("shows eval outcome in loop report listings", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-command-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const runDir = join(stateDir, "loop-runs", "hub", "run-supervisor");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      `${JSON.stringify({
+        runId: "run-supervisor",
+        project: { id: "hub", name: "Hub" },
+        status: "completed",
+        timestamps: { startedAt: 1_000, endedAt: 2_000 },
+        evalReportPath: join(runDir, "eval-report.json"),
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "eval-report.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        source: {
+          kind: "work-order-final-summary",
+          workOrderId: "run-supervisor",
+          projectId: "hub",
+        },
+        executionBoundary: "worker-internal",
+        outcome: { status: "passed", finalVerification: "passed" },
+        evidence: [],
+        deterministicGates: [],
+        notes: [],
+        learningCandidates: {
+          regression: [],
+          capability: [],
+          monitorOrTrace: [],
+          documentation: [],
+        },
+      })}\n`,
+    );
+
+    const jsonReports = JSON.parse(runLoopCommand(["reports", "list", "--json"]).stdout ?? "[]");
+    expect(jsonReports).toEqual([
+      expect.objectContaining({
+        runId: "run-supervisor",
+        evalOutcome: { status: "passed", finalVerification: "passed" },
+      }),
+    ]);
+    expect(runLoopCommand(["reports", "list"]).stdout).toContain(
+      "- hub: passed run-supervisor eval=passed",
+    );
   });
 
   it("rejects manual agent-supervised runs", () => {

@@ -22,6 +22,7 @@ export { buildRuntimeGuardianRepairPrompt };
 
 export type RuntimeGuardianFindingKind =
   | "missing-system-gate"
+  | "failed-eval-outcome"
   | "terminal-invalid-output"
   | "terminal-agent-transient-failure"
   | "terminal-work-order-active-lease"
@@ -224,6 +225,8 @@ export function discoverRuntimeGuardianFindings(
     const gatePath = join(record.runDir, "system-gate.json");
     const finalSummaryPath =
       record.workOrder.finalSummaryPath ?? join(record.runDir, "supervisor-final-summary.json");
+    const failedEvalOutcome = failedEvalOutcomeFinding(record, gatePath);
+    if (failedEvalOutcome !== null) findings.push(failedEvalOutcome);
     if (
       record.state.status === "completed" &&
       existsSync(finalSummaryPath) &&
@@ -289,6 +292,47 @@ export function discoverRuntimeGuardianFindings(
   }
 
   return findings;
+}
+
+function failedEvalOutcomeFinding(
+  record: ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number],
+  gatePath: string,
+): RuntimeGuardianFinding | null {
+  if (record.state.status !== "completed" || !existsSync(gatePath)) return null;
+  const parsed = readJsonRecord(gatePath);
+  const evalReport = parsed?.evalReport;
+  if (!isRecord(evalReport)) return null;
+  const outcome = evalReport.outcome;
+  if (!isRecord(outcome)) return null;
+  const status = typeof outcome.status === "string" ? outcome.status : null;
+  if (status === null || status === "passed") return null;
+  const reason = typeof outcome.reason === "string" ? outcome.reason : "no reason recorded";
+
+  return {
+    kind: "failed-eval-outcome",
+    severity: "high",
+    runId: record.workOrder.id,
+    projectId: record.workOrder.projectId,
+    projectPath: record.workOrder.projectPath,
+    runDir: record.runDir,
+    evidence: [
+      `system gate eval outcome is ${status}: ${reason}`,
+      `system gate evidence exists: ${gatePath}`,
+    ],
+  };
+}
+
+function readJsonRecord(path: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function terminalAgentTransientFailureFinding(

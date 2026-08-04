@@ -238,6 +238,76 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
+  it("rejects completed supervisor results when eval outcome fails", () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        task: { kind: "architecture" },
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "passed",
+            deterministicGates: [
+              {
+                name: "local verify",
+                result: "failed",
+                evidence: "lint failed",
+              },
+            ],
+            decision: "pass",
+            notes: [],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: () => ({
+        kind: "system",
+        command: "",
+        cwd: "/tmp/hub",
+        status: 0,
+        stdout: "",
+        stderr: "",
+      }),
+    });
+
+    expect(outcome.failures).toContain("eval outcome is failed: deterministic-gate-failed");
+    expect(outcome.evidence).toContain("eval outcome=failed");
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
   it("marks system gate artifacts unaccepted when the supervisor result is not completed", () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
     const result = {
@@ -265,6 +335,61 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
       resultStatus: "dispatch-failed",
       accepted: false,
+    });
+  });
+
+  it("writes eval outcome into system gate artifacts when final summary exists", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "completed" as const,
+      output: "",
+      summary: {
+        status: "completed" as const,
+        projectId: "hub",
+        actionsTaken: [],
+        delegatedTasks: [],
+        finalVerification: "passed" as const,
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed" as const,
+          deterministicGates: ["smoke passed"],
+          decision: "pass" as const,
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        task: { kind: "architecture" },
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [],
+        evidence: ["eval outcome=passed"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "completed",
+      accepted: true,
+      evalReport: {
+        outcome: {
+          status: "passed",
+          finalVerification: "passed",
+          reviewDecision: "pass",
+        },
+        deterministicGates: [{ name: "smoke passed", result: "passed" }],
+      },
     });
   });
 

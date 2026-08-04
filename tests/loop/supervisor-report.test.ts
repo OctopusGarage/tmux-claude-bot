@@ -128,6 +128,13 @@ describe("writeLoopSupervisorReport", () => {
         "wo-1",
         "handoff.md",
       ),
+      evalReportPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "datavibe",
+        "wo-1",
+        "eval-report.json",
+      ),
     });
 
     const markdown = await readFile(report.markdownPath, "utf8");
@@ -165,6 +172,45 @@ describe("writeLoopSupervisorReport", () => {
           finalVerification: "passed",
           commits: ["abc123"],
         },
+      },
+      evalReportPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "datavibe",
+        "wo-1",
+        "eval-report.json",
+      ),
+    });
+
+    expect(JSON.parse(await readFile(report.evalReportPath ?? "", "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      taskId: "architecture",
+      source: {
+        kind: "work-order-final-summary",
+        workOrderId: "wo-1",
+        projectId: "datavibe",
+      },
+      executionBoundary: "worker-internal",
+      outcome: {
+        status: "passed",
+        finalVerification: "passed",
+        reviewDecision: "pass",
+      },
+      evidence: [
+        {
+          questionInvestigated: "Can the next supervisor resume without chat context?",
+          conclusion: "The handoff lists the relevant artifacts and next step.",
+        },
+      ],
+      deterministicGates: [
+        {
+          name: "focused tests",
+          result: "passed",
+          command: "npm test tests/loop/supervisor-report.test.ts",
+        },
+      ],
+      learningCandidates: {
+        regression: ["Handoff artifacts should preserve review evidence."],
       },
     });
 
@@ -205,6 +251,14 @@ describe("writeLoopSupervisorReport", () => {
       nextAgent: {
         nextSteps: [
           "No follow-up was reported. Inspect system-gate.json before starting related work.",
+        ],
+        resumeFrom: [
+          report.summaryPath,
+          report.markdownPath,
+          report.evalReportPath,
+          "supervisor-final-summary.json was not configured",
+          "system-gate.json",
+          "work-order-state.json",
         ],
       },
     });
@@ -258,6 +312,7 @@ describe("writeLoopSupervisorReport", () => {
         output: "partial output\nqueue full",
       },
     });
+    expect(report.evalReportPath).toBeUndefined();
 
     expect(JSON.parse(await readFile(report.handoffJsonPath, "utf8"))).toMatchObject({
       status: "dispatch-failed",
