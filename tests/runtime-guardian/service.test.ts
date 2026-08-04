@@ -347,7 +347,7 @@ describe("runtime guardian", () => {
     ]);
   });
 
-  it("discovers read-only smoke tasks blocked by isolated dependency preflight", () => {
+  it("discovers read-only smoke tasks blocked by mixed dependency and non-dependency preflight", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(
       process.env.TCB_STATE_DIR ?? "",
@@ -370,6 +370,14 @@ describe("runtime guardian", () => {
         requireTests: true,
         requireCoverageReview: true,
         allowAiEval: true,
+      },
+      preflight: {
+        commands: [
+          "test -d node_modules",
+          "test -x node_modules/.bin/vitest",
+          "test -f .env.guard",
+        ],
+        repair: { agent: true },
       },
     } satisfies LoopWorkOrder;
     writeLoopSupervisorWorkOrderState({
@@ -395,7 +403,8 @@ describe("runtime guardian", () => {
             {
               name: "local dependency preflight",
               result: "failed",
-              evidence: "node_modules was absent and vite/vitest/eslint/prettier were missing",
+              evidence:
+                "node_modules was absent and vite/vitest/eslint/prettier were missing while .env.guard was also checked",
             },
           ],
           decision: "block",
@@ -417,6 +426,110 @@ describe("runtime guardian", () => {
         ]),
       }),
     ]);
+  });
+
+  it("ignores historical read-only smoke tasks whose dependency-only preflight is already neutralized by current policy", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "geo-backend",
+      "run-read-only-smoke-dependency-only",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-read-only-smoke-dependency-only", projectDir, summaryPath),
+      projectId: "geo-backend",
+      projectName: "geo-backend",
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_geo-backend",
+        requirement:
+          "Read-only smoke validation of the active delegation contract. Do not modify files, do not commit, do not open a PR.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      preflight: {
+        commands: [
+          "test -x .venv/bin/ruff",
+          "test -x .venv/bin/pyright",
+          "test -x .venv/bin/pytest",
+        ],
+        repair: { agent: true },
+      },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "blocked",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "geo-backend",
+        actionsTaken: ["checked preflight"],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "preflight ruff executable",
+              result: "failed",
+              evidence: "exit code 1",
+            },
+          ],
+          decision: "block",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("ignores terminal invalid-output states when a valid final summary can be recovered", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-invalid-output-recoverable",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = workOrder("run-invalid-output-recoverable", projectDir, summaryPath);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["wrote final summary before terminal marker was captured"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
   });
 
   it("builds a repair prompt that prevents target-repo edits and PR handling", () => {
