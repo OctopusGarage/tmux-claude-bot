@@ -305,6 +305,23 @@ export function discoverLoopEngineeringScheduledTasks(input: {
         }),
       );
     }
+    if (project.opportunityDiscovery.enabled) {
+      records.push(
+        ...loopScheduleRecords({
+          projectId: project.id,
+          jobKey: `${project.id}:opportunity-discovery`,
+          jobKind: "opportunity-discovery",
+          schedule: project.opportunityDiscovery.schedule,
+          config,
+          window: input.window,
+          now: input.now,
+          ...(project.opportunityDiscovery.scheduleJitterMinutes !== undefined
+            ? { scheduleJitterMinutes: project.opportunityDiscovery.scheduleJitterMinutes }
+            : {}),
+          ...(input.loopRunsDir !== undefined ? { loopRunsDir: input.loopRunsDir } : {}),
+        }),
+      );
+    }
     if (project.pullRequestReview.enabled) {
       records.push(
         ...loopScheduleRecords({
