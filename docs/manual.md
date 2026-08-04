@@ -165,6 +165,8 @@ For the complete maintained CLI command and option surface, see
 | `tcb run` | run the bot in the foreground (what the service runs) |
 | `tcb setup` / `tcb setup:lark` | guided setup wizard / add Feishu via QR |
 | `tcb doctor` | health checks against the install |
+| `tcb config list\|get\|set` | inspect personal `.env` configuration with secrets redacted, and edit allowlisted non-secret keys |
+| `tcb automation status\|pause\|resume` | inspect or toggle high-cost background automation: Loop Engineering, Daily Task Audit, Runtime Guardian, and Batch Scheduler |
 | `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
 | `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
 | `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
@@ -208,6 +210,16 @@ uploaded by the active Telegram/Feishu adapter, for example:
 tcb notify --channel lark --title "Radar ready" --body "Daily report attached" \
   --attach report.md --attach report.html
 ```
+
+Use `tcb config list --json` before editing `.env` by hand. It redacts tokens
+and app secrets, and `tcb config set <key> <value>` only accepts allowlisted
+non-secret keys. Use `tcb setup --reconfigure` or `tcb setup:lark` for Telegram
+tokens, Feishu/Lark app credentials, and owner identifiers.
+
+Use `tcb automation status` to see the expensive background loops at a glance.
+`tcb automation pause loop` sets `LOOP_ENGINEERING_TICK_MS=0` and records the
+previous cadence in state; `tcb automation resume loop` restores it. The same
+pattern works for `task-audit`, `runtime-guardian`, and `batch`.
 
 Use `tcb notify --attach` for owner/background notifications. Use `tcb attach`
 when a chat-originated project session should receive a file reply in that same

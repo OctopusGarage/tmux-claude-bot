@@ -10,6 +10,8 @@ silently from `src/cli.ts`.
 - `tcb setup`
 - `tcb setup:lark`
 - `tcb doctor`
+- `tcb config`
+- `tcb automation`
 - `tcb install`
 - `tcb service`
 - `tcb dashboard`
@@ -45,6 +47,12 @@ silently from `src/cli.ts`.
 - `tcb service resume`
 - `tcb service restart`
 - `tcb service logs`
+- `tcb config list`
+- `tcb config get <key>`
+- `tcb config set <key> <value>`
+- `tcb automation status`
+- `tcb automation pause <loop|task-audit|runtime-guardian|batch>`
+- `tcb automation resume <loop|task-audit|runtime-guardian|batch>`
 - `tcb batch load <file>`
 - `tcb batch export <id> [file]`
 - `tcb batch start [id]`
@@ -138,6 +146,13 @@ silently from `src/cli.ts`.
 ## Notes
 
 - `tcb autopilot <project>` means supervisor-backed delegation only.
+- `tcb config list` and `tcb config get` redact secrets by default. Generic
+  `config set` accepts only allowlisted non-secret keys; use `tcb setup
+  --reconfigure`, `tcb setup:lark`, or a dedicated command for tokens, app
+  secrets, and owner ids.
+- `tcb automation ...` is the supported top-level control for high-cost
+  background loops. `pause` records the previous tick/enabled values in state so
+  `resume` can restore the prior cadence instead of guessing a default.
 - `tcb loop run` is for deterministic command-backed/manual runs; managed
   agent-supervised WorkOrders are driven by the scheduler and Loop Supervisor.
 - `tcb loop targets ...` is the supported way to inspect, pause, and resume

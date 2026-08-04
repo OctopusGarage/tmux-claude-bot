@@ -113,6 +113,13 @@ reserved supervisor with `LOOP_SUPERVISOR_ENABLED=true` and set a project
 `loop-runs/<project>/<runId>/`. For projects with
 commit/PR settings, the bot also checks the final worktree, switch-back branch,
 PR mergeability, and CI rollup after the supervisor reports completion. When
+operating an existing install, inspect and pause the top-level loop with
+`tcb automation status`, `tcb automation pause loop`, and
+`tcb automation resume loop`. Inspect or pause individual configured projects,
+workspaces, or repository-wide PR-review entries with
+`tcb loop targets list <file>` and `tcb loop targets disable <file> <kind> <id>`
+instead of hand-editing YAML.
+
 `pullRequest.autoMerge: true` is set, the bot merges the checked PR and rebases
 the local switch-back branch onto origin afterward. Set
 `pullRequest.mergeMethod` to `squash`, `merge`, or `rebase` to choose the GitHub
@@ -228,6 +235,8 @@ project-health loop. After the repair dispatch decision, it sends the final
 Telegram/Feishu summary with the repair dispatch result. External scheduled
 systems should report through `tcb task report` rather than being inspected
 through project-specific adapters.
+Use `tcb automation status`, `tcb automation pause task-audit`, and
+`tcb automation resume task-audit` for day-to-day operator control.
 For an immediate manual check, run `tcb task audit --force` (add `--json` for
 machine-readable output). The command goes through the running bot's control
 socket, so it uses the same config, notification gateway, and auto-repair path as

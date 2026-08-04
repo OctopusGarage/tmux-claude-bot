@@ -93,6 +93,86 @@ program
     await import("./scripts/doctor.js");
   });
 
+const configCommand = program
+  .command("config")
+  .description("inspect and safely edit non-secret personal configuration");
+
+configCommand
+  .command("list")
+  .description("list .env configuration with secrets redacted")
+  .option("--json", "output config entries as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runConfigCommand } = await import("./core/config/command.js");
+    const result = runConfigCommand(["list", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+configCommand
+  .command("get <key>")
+  .description("show one .env configuration value with secrets redacted")
+  .option("--json", "output config entry as JSON")
+  .action(async (key: string, o: { json?: boolean }) => {
+    const { runConfigCommand } = await import("./core/config/command.js");
+    const result = runConfigCommand(["get", key, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+configCommand
+  .command("set <key> <value>")
+  .description("set an allowlisted non-secret .env configuration value")
+  .option("--json", "output set result as JSON")
+  .action(async (key: string, value: string, o: { json?: boolean }) => {
+    const { runConfigCommand } = await import("./core/config/command.js");
+    const result = runConfigCommand(["set", key, value, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+const automation = program
+  .command("automation")
+  .description("inspect and pause or resume high-cost background automation");
+
+automation
+  .command("status")
+  .description("show Loop Engineering, task audit, runtime guardian, and batch scheduler state")
+  .option("--json", "output automation status as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runAutomationCommand } = await import("./core/config/command.js");
+    const result = runAutomationCommand(["status", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+for (const action of ["pause", "resume"] as const) {
+  automation
+    .command(`${action} <target>`)
+    .description(`${action} loop, task-audit, runtime-guardian, or batch automation`)
+    .option("--json", "output toggle result as JSON")
+    .action(async (target: string, o: { json?: boolean }) => {
+      const { runAutomationCommand } = await import("./core/config/command.js");
+      const result = runAutomationCommand([action, target, ...(o.json ? ["--json"] : [])]);
+      if (result.exitCode === 0) console.log(result.stdout);
+      else {
+        console.error(result.stderr);
+        process.exit(1);
+      }
+    });
+}
+
 const capabilities = program
   .command("capabilities")
   .description("inspect curated external skills and task capability dependencies");
