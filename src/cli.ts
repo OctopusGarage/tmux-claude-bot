@@ -823,7 +823,7 @@ task
   .requiredOption("--id <id>", "stable task id")
   .requiredOption(
     "--source <source>",
-    "task source: article-monitor, radar-monitor, external-monitor, launchd, loop-engineering, batch-scheduler, daily-audit",
+    "task source: autopilot-delegate, article-monitor, radar-monitor, external-monitor, launchd, loop-engineering, batch-scheduler, daily-audit",
   )
   .requiredOption("--name <name>", "human readable task name")
   .requiredOption("--scheduled-at <time>", "scheduled time, epoch ms or ISO")
@@ -841,6 +841,7 @@ task
   .action(async (o) => {
     const { recordExternalTaskReport } = await import("./core/tasks/task-report.js");
     const sources = new Set([
+      "autopilot-delegate",
       "loop-engineering",
       "batch-scheduler",
       "article-monitor",

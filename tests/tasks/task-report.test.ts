@@ -66,6 +66,26 @@ describe("recordExternalTaskReport", () => {
     });
   });
 
+  it("records bot-owned autopilot delegation reports in the shared task ledger", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-autopilot-"));
+
+    recordExternalTaskReport({
+      taskId: "autopilot:1785952192073",
+      source: "autopilot-delegate",
+      name: "autopilot delegated task",
+      scheduledAt: Date.parse("2026-08-06T02:00:00Z"),
+      status: "failed",
+      repairStatus: "fixed",
+      summary: "final-summary parser defect was fixed in PR #104",
+    });
+
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-08-06"))[0]).toMatchObject({
+      taskId: "autopilot:1785952192073",
+      source: "autopilot-delegate",
+      repairStatus: "fixed",
+    });
+  });
+
   it("rejects invalid task timestamps before writing corrupt ledger records", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-invalid-"));
 

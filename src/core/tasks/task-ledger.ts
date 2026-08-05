@@ -2,6 +2,7 @@ import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 
 export type ScheduledTaskSource =
+  | "autopilot-delegate"
   | "loop-engineering"
   | "batch-scheduler"
   | "article-monitor"

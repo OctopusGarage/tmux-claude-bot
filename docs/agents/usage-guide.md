@@ -94,7 +94,7 @@ Use `--stdin` for multi-line bodies. Use repeatable `--attach <file>` for owner
 notification files, for example:
 `tcb notify --source radar --title "Radar ready" --body "Daily report attached" --attach report.md --attach report.html`.
 For scheduled monitors that should appear in the daily audit, also call
-`tcb task report --id <id> --source radar-monitor|article-monitor|external-monitor|launchd
+`tcb task report --id <id> --source autopilot-delegate|radar-monitor|article-monitor|external-monitor|launchd
 --name <name> --scheduled-at <iso> --status running|success|failed|skipped`.
 After repair review, update the same task id with `--repair-status fixed`,
 `--repair-status superseded`, `--repair-status not-reproducible`, or
