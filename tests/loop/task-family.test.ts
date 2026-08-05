@@ -140,6 +140,16 @@ describe("loop task family registry", () => {
     });
   });
 
+  it("keeps non-scheduled WorkOrder kinds out of scheduled registries", () => {
+    const config = parseLoopConfigYaml(allScheduledConfig);
+    const project = config.projects[0];
+    const workspace = config.workspaces[0];
+    if (!project || !workspace) throw new Error("expected scheduled fixtures");
+
+    expect(projectScheduledJobKinds(project)).not.toContain("active-delegated-task");
+    expect(workspaceScheduledJobKinds(workspace)).not.toContain("repository-pull-request-review");
+  });
+
   it("derives project scheduled job summaries and scheduler jobs from one ordered registry", () => {
     const project = parseLoopConfigYaml(allScheduledConfig).projects[0];
     if (!project) throw new Error("expected project fixture");
