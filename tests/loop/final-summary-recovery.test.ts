@@ -64,4 +64,50 @@ describe("final summary recovery", () => {
       recoverInvalidOutputFromFinalSummary(workOrder("/tmp/missing-summary.json"), original),
     ).toBe(original);
   });
+
+  it("recovers a planned completion when checklistCompleted is an itemized checklist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    const plannedWorkOrder = {
+      ...workOrder(summaryPath),
+      planning: { required: true },
+    } as LoopWorkOrder;
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["completed the bounded recovery"],
+        delegatedTasks: ["worker completed without a product change"],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+        planReview: {
+          checklistCompleted: ["Validated isolation", "Ran deterministic gates"],
+          targetScoreMet: "not-applicable: no meaningful product score was produced",
+          stopConditionReached: false,
+          overOptimizationAvoided: true,
+          verificationCompleted: true,
+          remainingRisks: "No material remaining risk identified",
+        },
+      })}\n`,
+    );
+
+    expect(
+      recoverInvalidOutputFromFinalSummary(plannedWorkOrder, {
+        status: "invalid-output",
+        reason: "invalid-summary",
+        output: "terminal marker was not captured",
+      }),
+    ).toMatchObject({
+      status: "completed",
+      summary: {
+        planReview: {
+          checklistCompleted: true,
+          targetScoreMet: "not-applicable",
+          remainingRisks: ["No material remaining risk identified"],
+        },
+      },
+    });
+  });
 });

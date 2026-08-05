@@ -176,12 +176,12 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
 
 function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
   if (!isRecord(value)) return null;
-  const checklistCompleted = parseBoolean(value.checklistCompleted);
+  const checklistCompleted = parseChecklistCompleted(value.checklistCompleted);
   const targetScoreMet = parseTargetScoreMet(value.targetScoreMet);
   const stopConditionReached = parseBoolean(value.stopConditionReached);
   const overOptimizationAvoided = parseBoolean(value.overOptimizationAvoided);
   const verificationCompleted = parseBoolean(value.verificationCompleted);
-  const remainingRisks = parseStringArray(value.remainingRisks);
+  const remainingRisks = parseStringArrayOrSingleton(value.remainingRisks);
   if (
     checklistCompleted === null ||
     targetScoreMet === null ||
@@ -206,9 +206,20 @@ function parseBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function parseChecklistCompleted(value: unknown): boolean | null {
+  const booleanValue = parseBoolean(value);
+  if (booleanValue !== null) return booleanValue;
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null;
+  return value.length > 0;
+}
+
 function parseTargetScoreMet(value: unknown): LoopSupervisorPlanReview["targetScoreMet"] | null {
   if (typeof value === "boolean") return value;
-  return value === "not-applicable" ? value : null;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized === "not-applicable" || normalized.startsWith("not-applicable:")
+    ? "not-applicable"
+    : null;
 }
 
 function parseReviewGate(value: unknown): LoopSupervisorReviewGate | null {
