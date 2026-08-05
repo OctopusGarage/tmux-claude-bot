@@ -2442,6 +2442,64 @@ prReview:
     );
   });
 
+  it("fails a completed supervised run when GitHub has not resolved PR mergeability", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: main",
+        "      switchBack: main",
+      ].join("\n"),
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          url: "https://github.com/acme/hub/pull/1",
+          state: "OPEN",
+          mergeable: "UNKNOWN",
+          statusCheckRollup: [],
+          commits: [{ oid: "abc123" }],
+        }),
+        stderr: "",
+      }),
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
+      "PR mergeability is UNKNOWN",
+    );
+  });
+
   it("fails before PR lookup when the configured GitHub account lacks write access", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
