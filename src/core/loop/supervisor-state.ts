@@ -91,7 +91,6 @@ export function writeLoopSupervisorWorkOrderState(input: {
 export function workOrderStateForResult(
   result: LoopSupervisedRunResult,
 ): LoopSupervisorWorkOrderStateStatus {
-  if (result.status === "invalid-output") return "in-flight";
   if (result.status === "cancelled") return "cancelled";
   return result.status === "completed" ? "completed" : "failed";
 }

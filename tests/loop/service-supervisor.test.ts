@@ -1980,7 +1980,7 @@ prReview:
     expect(schedulerStore.getLastFired()).not.toHaveProperty("hub");
     const runDir = join(process.env.TCB_STATE_DIR, "loop-runs", "hub", "1784196600000-hub");
     expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
-      '"status": "in-flight"',
+      '"status": "failed"',
     );
   });
 
