@@ -1691,6 +1691,46 @@ prReview:
     }
   });
 
+  it("accepts explanatory not-applicable target scores in structured plan reviews", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "completed",
+          projectId: "datavibe",
+          actionsTaken: ["verified"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "not-applicable",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+          planReview: {
+            checklistCompleted: true,
+            targetScoreMet: "not-applicable: no meaningful implementation score existed",
+            stopConditionReached: false,
+            overOptimizationAvoided: true,
+            verificationCompleted: true,
+            remainingRisks: [],
+          },
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.planReview?.targetScoreMet).toBe("not-applicable");
+    }
+  });
+
   it("accepts a singleton reviewGate notes string from supervisor summaries", () => {
     const result = parseSupervisorFinalSummary(
       [

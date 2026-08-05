@@ -208,7 +208,8 @@ function parseBoolean(value: unknown): boolean | null {
 
 function parseTargetScoreMet(value: unknown): LoopSupervisorPlanReview["targetScoreMet"] | null {
   if (typeof value === "boolean") return value;
-  return value === "not-applicable" ? value : null;
+  if (value === "not-applicable") return value;
+  return typeof value === "string" && /^not-applicable:\s*\S/.test(value) ? "not-applicable" : null;
 }
 
 function parseReviewGate(value: unknown): LoopSupervisorReviewGate | null {
