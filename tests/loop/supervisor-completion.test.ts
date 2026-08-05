@@ -6,6 +6,7 @@ import {
   classifyLoopSupervisorScheduleRetry,
   completeLoopSupervisorRun,
 } from "../../src/core/loop/supervisor-completion.js";
+import { workOrderStateForResult } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -38,6 +39,16 @@ const workOrder = {
 } satisfies LoopWorkOrder;
 
 describe("completeLoopSupervisorRun", () => {
+  it("persists invalid supervisor output as a terminal failed state", () => {
+    expect(
+      workOrderStateForResult({
+        status: "invalid-output",
+        reason: "missing-final-marker",
+        output: "",
+      }),
+    ).toBe("failed");
+  });
+
   it("classifies retryable supervisor dispatch delivery failures by retry kind", () => {
     const retry = classifyLoopSupervisorScheduleRetry({
       status: "dispatch-failed",
