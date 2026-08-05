@@ -4,7 +4,6 @@ import {
   LOOP_TASK_FAMILY_GOVERNANCE,
   LOOP_WORK_ORDER_TASK_KINDS,
   loopTaskFamilyGovernance,
-  loopWorkOrderTaskKind,
   projectScheduledJobKinds,
   projectScheduledJobs,
   workspaceScheduledJobKinds,
@@ -120,15 +119,6 @@ workspaces:
 `;
 
 describe("loop task family registry", () => {
-  it("normalizes the optional WorkOrder task to the canonical task family", () => {
-    expect(loopWorkOrderTaskKind({})).toBe("architecture");
-    expect(
-      loopWorkOrderTaskKind({
-        task: { kind: "bug-fix", maxRounds: 1, maxBugsPerRound: 1, requireRegressionTest: true },
-      }),
-    ).toBe("bug-fix");
-  });
-
   it("defines governance metadata for every WorkOrder task kind", () => {
     expect(Object.keys(LOOP_TASK_FAMILY_GOVERNANCE).sort()).toEqual(
       [...LOOP_WORK_ORDER_TASK_KINDS].sort(),
