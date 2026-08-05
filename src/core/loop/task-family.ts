@@ -1,4 +1,5 @@
 import type { TaskCapabilityDependency } from "../capabilities/types.js";
+import type { LoopWorkOrder } from "./work-order.js";
 
 export const LOOP_SCHEDULED_JOB_KINDS = [
   "architecture",
@@ -36,6 +37,12 @@ export const LOOP_WORK_ORDER_TASK_KINDS = [
 ] as const;
 
 export type LoopWorkOrderTaskKind = (typeof LOOP_WORK_ORDER_TASK_KINDS)[number];
+
+export function loopWorkOrderTaskKind(workOrder: {
+  task?: LoopWorkOrder["task"];
+}): LoopWorkOrderTaskKind {
+  return workOrder.task?.kind ?? "architecture";
+}
 
 export type LoopTaskFamilyGovernance = {
   kind: LoopWorkOrderTaskKind;

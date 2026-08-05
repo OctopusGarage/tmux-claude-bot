@@ -60,7 +60,7 @@ import {
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
 } from "./supervisor-state.js";
-import type { LoopTaskSchedulerJobKind } from "./task-family.js";
+import { type LoopTaskSchedulerJobKind, loopWorkOrderTaskKind } from "./task-family.js";
 import type { LoopWorkOrder } from "./work-order.js";
 import {
   buildLoopWorkOrder,
@@ -1405,7 +1405,7 @@ export function reconcileLoopSupervisorWorkOrders(input: {
     taskLedger.expect({
       taskId: ledgerTaskId,
       source: "loop-engineering",
-      name: `${record.workOrder.projectId} ${record.workOrder.task?.kind ?? "architecture"}`,
+      name: `${record.workOrder.projectId} ${loopWorkOrderTaskKind(record.workOrder)}`,
       scheduledAt: record.workOrder.scheduledAt,
     });
     taskLedger.start(ledgerTaskId, record.state.updatedAt);

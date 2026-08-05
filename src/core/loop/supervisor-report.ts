@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS, loopRunDir } from "./artifacts.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
+import { loopWorkOrderTaskKind } from "./task-family.js";
 import type { LoopSupervisorFinalSummary, LoopWorkOrder } from "./work-order.js";
 
 type LoopSupervisorReportInput = {
@@ -89,10 +90,6 @@ function resultSummary(result: LoopSupervisedRunResult): LoopSupervisorFinalSumm
 
 function resultReason(result: LoopSupervisedRunResult): string | undefined {
   return "reason" in result ? result.reason : undefined;
-}
-
-function taskKind(workOrder: LoopWorkOrder): string {
-  return workOrder.task?.kind ?? "architecture";
 }
 
 function renderActions(summary: LoopSupervisorFinalSummary | undefined): string[] {
@@ -199,7 +196,7 @@ function buildHandoff(
     status,
     objective: {
       goal: input.workOrder.goal,
-      taskKind: taskKind(input.workOrder),
+      taskKind: loopWorkOrderTaskKind(input.workOrder),
       targetScore: input.workOrder.targetScore,
       maxRounds: input.workOrder.maxRounds,
     },
