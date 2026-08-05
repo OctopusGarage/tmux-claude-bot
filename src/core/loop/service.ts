@@ -2112,8 +2112,12 @@ function supervisedPullRequestGate(input: {
   if (state !== "OPEN" && state !== "MERGED") {
     failures.push(`PR state is ${String(pr.state)}`);
   }
-  if (pr.mergeable === "CONFLICTING") {
-    failures.push("PR is not mergeable: CONFLICTING");
+  if (state !== "MERGED" && pr.mergeable !== "MERGEABLE") {
+    failures.push(
+      pr.mergeable === "CONFLICTING"
+        ? "PR is not mergeable: CONFLICTING"
+        : `PR mergeability is ${String(pr.mergeable)}`,
+    );
   }
   if (state !== "MERGED" && Array.isArray(pr.statusCheckRollup)) {
     for (const check of pr.statusCheckRollup) {
