@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "name": "tcb-observer",
+  "role": "observer",
+  "capabilityClasses": [
+    "read-only observation"
+  ],
+  "mutationBoundary": "No mutation, prompt delivery, delegation, repair, or repository operations."
+}

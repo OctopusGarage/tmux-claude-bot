@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "role": "home-operator",
+  "canonicalSkill": "tcb-home-operator",
+  "observerSkill": "tcb-observer",
+  "workspaceKind": "operator",
+  "authority": "operator-provenance-only",
+  "enforcement": "The control service must validate target identity, conflict state, role, and capability before mutation.",
+  "generatedBy": "tmux-claude-bot"
+}

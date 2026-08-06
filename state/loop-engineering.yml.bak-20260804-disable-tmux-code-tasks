@@ -1,0 +1,907 @@
+scheduler:
+  jitter:
+    enabled: true
+    seed: local-stable
+    architectureMaxDelayMinutes: 10
+    bugFixMaxDelayMinutes: 20
+    testCoverageMaxDelayMinutes: 20
+    securityMaintenanceMaxDelayMinutes: 20
+    harnessAutoMaxDelayMinutes: 20
+    opportunityDiscoveryMaxDelayMinutes: 20
+    pullRequestReviewMaxDelayMinutes: 30
+    repositoryPullRequestReviewMaxDelayMinutes: 30
+skills:
+  applyCommand: sh /Users/kingsonwu/.tmux-claude-bot/state/loop-skill-apply-local.sh
+  approved:
+    - id: improve-codebase-architecture
+      sourceUrl: https://github.com/mattpocock/skills/blob/main/skills/engineering/improve-codebase-architecture/SKILL.md
+      ref: pinned-local-20260716
+      checksum: local-installed
+      platforms:
+        - claude
+        - codex
+      tags:
+        - architecture
+        - refactor
+      trustLevel: approved
+      risk: medium
+      updatePolicy: manual
+projects:
+  - id: geo-backend
+    name: geo-backend
+    path: /Users/kingsonwu/programming/miao2016/realestate/geo-backend
+    agent: codex
+    worktreeIsolation: isolated
+    runner:
+      kind: agent-supervised
+      timeoutMs: 7200000
+      maxTurns: 20
+      requireConfirmation: false
+    goal: >
+      Use improve-codebase-architecture to keep the Geo backend architecture
+      improving in small, verified, reviewable slices.
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: node /Users/kingsonwu/.tmux-claude-bot/state/loop-geo-backend-assess.mjs
+    preflight:
+      commands:
+        - test -x .venv/bin/ruff
+        - test -x .venv/bin/pyright
+        - test -x .venv/bin/pytest
+      repair:
+        agent: true
+        prompt: >
+          Repair the Geo backend local Python environment using this
+          repository's own setup docs and scripts. Read CLAUDE.md and README.md
+          first. Prefer the project-owned setup path and do not continue
+          architecture work until preflight passes.
+    execution:
+      agent: true
+    recovery:
+      agent: true
+      dirtyWorktree: true
+      maxAttempts: 1
+    eval:
+      agent: true
+      minScore: 95
+    commit:
+      enabled: true
+      perRound: true
+      branch: loop/geo-backend/architecture
+    pullRequest:
+      enabled: true
+      base: main
+      switchBack: main
+      githubAccount: miao2016
+    bugFix:
+      enabled: true
+      schedule: 10 12 * * *
+      branch: loop/geo-backend/bug-fix
+      maxRounds: 5
+      maxBugsPerRound: 2
+      requireRegressionTest: true
+      prompt: >
+        Find and fix only confirmed production-risk bugs. Prioritize API
+        contracts, persistence consistency, authorization, concurrency,
+        scheduling/state handling, and error-handling bugs. Do not add features
+        or perform architecture cleanup.
+    testCoverage:
+      enabled: true
+      schedule: 0 15 * * *
+      branch: loop/geo-backend/test-coverage
+      targetCoverage: 80
+      maxRounds: 5
+      requireMeaningfulTests: true
+      allowIntegrationTests: true
+      allowSmokeTests: true
+      allowE2ETests: true
+      allowAiEvalTests: false
+      prompt: >
+        Raise meaningful test coverage to at least 80%. First inspect the
+        existing Python test stack, coverage command/report, uncovered API
+        contracts, persistence consistency, authorization, concurrency,
+        scheduling/state handling, and error-handling paths. Add tests only for
+        real behavior and plausible regressions; do not add weak tests purely to
+        move the metric. If coverage work exposes a real bug, confirm it, fix it
+        narrowly, and add regression coverage when practical.
+    securityMaintenance:
+      enabled: true
+      schedule: 0 16 * * *
+      branch: loop/geo-backend/security-maintenance
+      maxRounds: 3
+      allowDependencyUpdates: true
+      allowConfigHardening: true
+      allowStaticAnalysisFixes: true
+      prompt: >
+        Automatically check and fix confirmed security risks. Include dependency
+        advisories, GitHub security findings, static analysis, secrets, auth and
+        permission boundaries, webhooks, CORS, file/path handling, uploads,
+        command execution, sensitive logging, CI secrets, and supply-chain
+        issues. First judge reachability and severity; do not blindly upgrade
+        dependencies or harden config unless the risk is real or plausibly
+        reachable.
+    pullRequestReview:
+      enabled: true
+      schedule: 0 1 * * *
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+      prompt: >
+        Carefully review loop-created PRs from the previous day. Run two
+        independent passes. Do not nitpick; focus on introduced bugs, broken
+        tests, CI failures, mergeability, data loss, security, migrations, and
+        user-visible regressions. If both passes find no real issue and CI is
+        green, merge the PR, switch back to the configured base branch, and
+        fast-forward the local branch.
+    allowedActions:
+      - tests
+      - docs
+      - small-refactor
+      - dependency-upgrade
+    blockedActions:
+      - direct-model-api
+      - broad-rewrite
+    selfImprovement:
+      enabled: true
+      maxItemsPerRun: 3
+  - id: geo-frontend
+    name: geo-frontend
+    path: /Users/kingsonwu/programming/miao2016/realestate/geo-frontend
+    agent: codex
+    worktreeIsolation: isolated
+    runner:
+      kind: agent-supervised
+      timeoutMs: 7200000
+      maxTurns: 20
+      requireConfirmation: false
+    goal: >
+      Use improve-codebase-architecture to keep the Geo frontend architecture
+      improving in small, verified, reviewable slices.
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: node /Users/kingsonwu/.tmux-claude-bot/state/loop-geo-frontend-assess.mjs
+    preflight:
+      commands:
+        - test -d node_modules
+        - test -x node_modules/.bin/vite
+        - test -x node_modules/.bin/vitest
+        - test -x node_modules/.bin/eslint
+        - test -x node_modules/.bin/prettier
+      repair:
+        agent: true
+        prompt: >
+          Repair the Geo frontend local Node environment using this repository's
+          own package manager and setup docs. Read AGENTS.md, CLAUDE.md, and
+          README.md first, install dependencies if node_modules or required tool
+          binaries are missing, and do not continue architecture work until
+          preflight passes.
+    execution:
+      agent: true
+    recovery:
+      agent: true
+      dirtyWorktree: true
+      maxAttempts: 1
+    eval:
+      agent: true
+      minScore: 95
+    commit:
+      enabled: true
+      perRound: true
+      branch: loop/geo-frontend/architecture
+    pullRequest:
+      enabled: true
+      base: main
+      switchBack: main
+      githubAccount: miao2016
+    bugFix:
+      enabled: true
+      schedule: 30 12 * * *
+      branch: loop/geo-frontend/bug-fix
+      maxRounds: 5
+      maxBugsPerRound: 2
+      requireRegressionTest: true
+      prompt: >
+        Find and fix only confirmed production-risk bugs. Prioritize routing,
+        API contract handling, state consistency, user-visible regressions,
+        duplicate actions, and error states. Do not add features or perform
+        architecture cleanup.
+    testCoverage:
+      enabled: true
+      schedule: 20 15 * * *
+      branch: loop/geo-frontend/test-coverage
+      targetCoverage: 80
+      maxRounds: 5
+      requireMeaningfulTests: true
+      allowIntegrationTests: true
+      allowSmokeTests: true
+      allowE2ETests: true
+      allowAiEvalTests: false
+      prompt: >
+        Raise meaningful test coverage to at least 80%. First inspect the
+        existing frontend test stack, coverage command/report, uncovered
+        routing, API contract handling, state consistency, user-visible
+        regressions, duplicate actions, and error states. Add tests only for
+        real behavior and plausible regressions; do not add weak tests purely to
+        move the metric. If coverage work exposes a real bug, confirm it, fix it
+        narrowly, and add regression coverage when practical.
+    securityMaintenance:
+      enabled: true
+      schedule: 20 16 * * *
+      branch: loop/geo-frontend/security-maintenance
+      maxRounds: 3
+      allowDependencyUpdates: true
+      allowConfigHardening: true
+      allowStaticAnalysisFixes: true
+      prompt: >
+        Automatically check and fix confirmed security risks. Include dependency
+        advisories, GitHub security findings, static analysis, secrets, auth and
+        permission boundaries, webhooks, CORS, file/path handling, uploads,
+        command execution, sensitive logging, CI secrets, and supply-chain
+        issues. First judge reachability and severity; do not blindly upgrade
+        dependencies or harden config unless the risk is real or plausibly
+        reachable.
+    pullRequestReview:
+      enabled: true
+      schedule: 10 1 * * *
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+      prompt: >
+        Carefully review loop-created PRs from the previous day. Run two
+        independent passes. Do not nitpick; focus on introduced bugs, broken
+        tests, CI failures, mergeability, data loss, security, migrations, and
+        user-visible regressions. If both passes find no real issue and CI is
+        green, merge the PR, switch back to the configured base branch, and
+        fast-forward the local branch.
+    allowedActions:
+      - tests
+      - docs
+      - small-refactor
+      - dependency-upgrade
+    blockedActions:
+      - direct-model-api
+      - broad-rewrite
+    selfImprovement:
+      enabled: true
+      maxItemsPerRun: 3
+  - id: knowledge-engine
+    name: knowledge-engine
+    path: /Users/kingsonwu/programming/miao2016/knowledge-engine
+    agent: codex
+    worktreeIsolation: isolated
+    schedule: 0 10 * * *
+    runner:
+      kind: agent-supervised
+      timeoutMs: 7200000
+      maxTurns: 20
+      requireConfirmation: false
+    goal: >
+      Use improve-codebase-architecture to keep the Knowledge Engine
+      architecture improving in small, verified, reviewable slices.
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: node
+        /Users/kingsonwu/.tmux-claude-bot/state/loop-knowledge-engine-assess.mjs
+    preflight:
+      commands:
+        - test -x .venv/bin/ruff
+        - test -x .venv/bin/pyright
+        - test -x .venv/bin/pytest
+      repair:
+        agent: true
+        prompt: >
+          Repair the Knowledge Engine local Python environment using this
+          repository's own setup docs and scripts. Read CLAUDE.md and README.md
+          first. Prefer the project-owned setup path and do not continue
+          architecture work until preflight passes.
+    execution:
+      agent: true
+    recovery:
+      agent: true
+      dirtyWorktree: true
+      maxAttempts: 1
+    eval:
+      agent: true
+      minScore: 95
+    commit:
+      enabled: true
+      perRound: true
+      branch: loop/knowledge-engine/architecture
+    pullRequest:
+      enabled: true
+      base: main
+      switchBack: main
+      githubAccount: miao2016
+    bugFix:
+      enabled: true
+      schedule: 50 12 * * *
+      branch: loop/knowledge-engine/bug-fix
+      maxRounds: 5
+      maxBugsPerRound: 2
+      requireRegressionTest: true
+      prompt: >
+        Find and fix only confirmed production-risk bugs. Prioritize knowledge
+        ingestion, retrieval correctness, data consistency, authorization,
+        concurrency, and error-handling contracts. Do not add features or
+        perform architecture cleanup.
+    testCoverage:
+      enabled: true
+      schedule: 20 14 * * *
+      branch: loop/knowledge-engine/test-coverage
+      targetCoverage: 80
+      maxRounds: 5
+      requireMeaningfulTests: true
+      allowIntegrationTests: true
+      allowSmokeTests: true
+      allowE2ETests: true
+      allowAiEvalTests: false
+      prompt: >
+        Raise meaningful test coverage to at least 80%. First inspect the
+        existing Python test stack, coverage command/report, uncovered
+        ingestion/retrieval behavior, persistence consistency, authorization,
+        concurrency, and error-handling paths. Add tests only for real behavior
+        and plausible regressions; do not add weak tests purely to move the
+        metric. If coverage work exposes a real bug, confirm it, fix it
+        narrowly, and add regression coverage when practical.
+    securityMaintenance:
+      enabled: true
+      schedule: 40 15 * * *
+      branch: loop/knowledge-engine/security-maintenance
+      maxRounds: 3
+      allowDependencyUpdates: true
+      allowConfigHardening: true
+      allowStaticAnalysisFixes: true
+      prompt: >
+        Automatically check and fix confirmed security risks. Include dependency
+        advisories, GitHub security findings, static analysis, secrets, auth and
+        permission boundaries, webhooks, CORS, file/path handling, uploads,
+        command execution, sensitive logging, CI secrets, and supply-chain
+        issues. First judge reachability and severity; do not blindly upgrade
+        dependencies or harden config unless the risk is real or plausibly
+        reachable.
+    pullRequestReview:
+      enabled: true
+      schedule: 20 1 * * *
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+      prompt: >
+        Carefully review loop-created PRs from the previous day. Run two
+        independent passes. Do not nitpick; focus on introduced bugs, broken
+        tests, CI failures, mergeability, data loss, security, migrations, and
+        user-visible regressions. If both passes find no real issue and CI is
+        green, merge the PR, switch back to the configured base branch, and
+        fast-forward the local branch.
+    allowedActions:
+      - tests
+      - docs
+      - small-refactor
+      - dependency-upgrade
+    blockedActions:
+      - direct-model-api
+      - broad-rewrite
+    selfImprovement:
+      enabled: true
+      maxItemsPerRun: 3
+  - id: alcove
+    name: alcove
+    path: /Users/kingsonwu/programming/OctopusGarage/alcove
+    agent: codex
+    worktreeIsolation: isolated
+    cleanupPolicy: aggressive
+    schedule: 0 9 * * *
+    runner:
+      kind: agent-supervised
+      timeoutMs: 7200000
+      maxTurns: 20
+      requireConfirmation: false
+    goal: >
+      Use improve-codebase-architecture to keep the Alcove architecture
+      improving in small, verified, reviewable slices. Open the PR against dev;
+      after CI and mergeability checks pass, let the system gate merge it into
+      dev, switch back to dev, and fast-forward the local dev branch.
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: node /Users/kingsonwu/.tmux-claude-bot/state/loop-alcove-assess.mjs
+    preflight:
+      commands:
+        - test -x .venv/bin/ruff
+        - test -x .venv/bin/mypy
+        - test -x .venv/bin/pytest
+      repair:
+        agent: true
+        prompt: >
+          Repair the Alcove local Python environment using this repository's own
+          setup docs and scripts. Read AGENTS.md, CLAUDE.md, README.md, and
+          pyproject.toml first. Prefer the project-owned uv setup path and do
+          not continue architecture work until preflight passes.
+    execution:
+      agent: true
+    recovery:
+      agent: true
+      dirtyWorktree: true
+      maxAttempts: 1
+    eval:
+      agent: true
+      minScore: 95
+    commit:
+      enabled: true
+      perRound: true
+      branch: loop/alcove/architecture
+    pullRequest:
+      enabled: true
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      githubAccount: Kingson4Wu
+    bugFix:
+      enabled: true
+      schedule: 10 13 * * *
+      branch: loop/alcove/bug-fix
+      maxRounds: 5
+      maxBugsPerRound: 2
+      requireRegressionTest: true
+      prompt: >
+        Find and fix only confirmed production-risk bugs. Prioritize CLI/server
+        behavior, persistence/state consistency, permissions, scheduling,
+        automation, and user-visible failures. Do not add features or perform
+        architecture cleanup.
+    testCoverage:
+      enabled: true
+      schedule: 40 14 * * *
+      branch: loop/alcove/test-coverage
+      targetCoverage: 80
+      maxRounds: 5
+      requireMeaningfulTests: true
+      allowIntegrationTests: true
+      allowSmokeTests: true
+      allowE2ETests: true
+      allowAiEvalTests: false
+      prompt: >
+        Raise meaningful test coverage to at least 80%. First inspect the
+        existing Python test stack, coverage command/report, uncovered
+        CLI/server behavior, persistence/state consistency, permissions,
+        scheduling, automation, and user-visible failure paths. Add tests only
+        for real behavior and plausible regressions; do not add weak tests
+        purely to move the metric. If coverage work exposes a real bug, confirm
+        it, fix it narrowly, and add regression coverage when practical.
+    securityMaintenance:
+      enabled: true
+      schedule: 0 15 * * *
+      branch: loop/alcove/security-maintenance
+      maxRounds: 3
+      allowDependencyUpdates: true
+      allowConfigHardening: true
+      allowStaticAnalysisFixes: true
+      prompt: >
+        Automatically check and fix confirmed security risks. Include dependency
+        advisories, GitHub security findings, static analysis, secrets, auth and
+        permission boundaries, webhooks, CORS, file/path handling, uploads,
+        command execution, sensitive logging, CI secrets, and supply-chain
+        issues. First judge reachability and severity; do not blindly upgrade
+        dependencies or harden config unless the risk is real or plausibly
+        reachable.
+    harnessAuto:
+      enabled: true
+      schedule: 30 16 * * *
+      scheduleJitterMinutes: 20
+      branch: loop/alcove/harness-auto
+      maxRounds: 4
+      strategy: health-first
+      tasks:
+        - kind: bug-fix
+          enabled: true
+          weight: 40
+        - kind: security-maintenance
+          enabled: true
+          weight: 30
+        - kind: test-coverage
+          enabled: true
+          weight: 20
+        - kind: architecture
+          enabled: true
+          weight: 10
+      stopWhen:
+        healthScoreAtLeast: 95
+        noConfirmedIssues: true
+      prompt: >
+        Orchestrate Alcove project health as one cohesive run. Start with a
+        current health assessment, then choose only the enabled subtasks that
+        address confirmed risk or meaningful quality gaps. Keep fixes narrow,
+        avoid feature work, verify before and after changes, create one PR
+        against dev for the whole harness run, allow auto-merge only after CI
+        and mergeability pass, then switch the local worktree back to dev and
+        fast-forward it.
+    opportunityDiscovery:
+      enabled: true
+      schedule: 20 10 * * *
+      scheduleJitterMinutes: 20
+      notificationChannel: both
+      maxSuggestions: 3
+      minConfidence: medium
+      categories:
+        - product-feature
+        - workflow-automation
+        - developer-experience
+        - reliability
+        - architecture
+      cooldownDays: 14
+      requireEvidence: true
+      prompt: >
+        Proactively discover grounded Alcove feature or optimization
+        opportunities that are worth owner discussion before implementation.
+        Focus on user-visible workflow value, automation leverage, developer
+        experience, reliability, and architecture opportunities backed by
+        concrete repository evidence. Do not edit files, create branches,
+        commit, push, or open PRs during discovery. For any suggestion likely to
+        be delegated later, write a delegateRequirement that explicitly requires
+        branching from dev, opening a PR against dev, waiting for CI and
+        mergeability, allowing auto-merge only when the project policy permits
+        it, then switching the local worktree back to dev and fast-forwarding
+        it.
+    pullRequestReview:
+      enabled: true
+      schedule: 30 1 * * *
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+      prompt: >
+        Carefully review loop-created PRs from the previous day. Run two
+        independent passes. Do not nitpick; focus on introduced bugs, broken
+        tests, CI failures, mergeability, data loss, security, migrations, and
+        user-visible regressions. If both passes find no real issue and CI is
+        green, merge the PR, switch back to dev, and fast-forward the local dev
+        branch.
+    allowedActions:
+      - tests
+      - docs
+      - small-refactor
+      - dependency-upgrade
+    blockedActions:
+      - direct-model-api
+      - broad-rewrite
+    selfImprovement:
+      enabled: true
+      maxItemsPerRun: 3
+  - id: tmux-claude-bot
+    name: tmux-claude-bot
+    path: /Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot
+    agent: codex
+    worktreeIsolation: isolated
+    cleanupPolicy: aggressive
+    schedule: 0 11 * * *
+    runner:
+      kind: agent-supervised
+      timeoutMs: 7200000
+      maxTurns: 20
+      requireConfirmation: false
+    goal: >
+      Use improve-codebase-architecture to keep the tmux-claude-bot architecture
+      improving in small, verified, reviewable slices. Open the PR against dev;
+      after CI and mergeability checks pass, let the system gate merge it into
+      dev, switch back to dev, and fast-forward the local dev branch.
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: node
+        /Users/kingsonwu/.tmux-claude-bot/state/loop-tmux-claude-bot-assess.mjs
+    preflight:
+      commands:
+        - test -d node_modules
+        - test -x node_modules/.bin/tsc
+        - test -x node_modules/.bin/vitest
+        - test -x node_modules/.bin/biome
+        - test -x node_modules/.bin/eslint
+      repair:
+        agent: true
+        prompt: >
+          Repair the tmux-claude-bot local Node environment using this
+          repository's own package manager and setup docs. Read AGENTS.md,
+          CLAUDE.md, README.md, and llms.txt first, install dependencies if
+          node_modules or required tool binaries are missing, and do not
+          continue architecture work until preflight passes.
+    execution:
+      agent: true
+    recovery:
+      agent: true
+      dirtyWorktree: true
+      maxAttempts: 1
+    eval:
+      agent: true
+      minScore: 95
+    commit:
+      enabled: true
+      perRound: true
+      branch: loop/tmux-claude-bot/architecture
+    pullRequest:
+      enabled: true
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      githubAccount: Kingson4Wu
+    bugFix:
+      enabled: true
+      schedule: 30 13 * * *
+      branch: loop/tmux-claude-bot/bug-fix
+      maxRounds: 5
+      maxBugsPerRound: 2
+      requireRegressionTest: true
+      prompt: >
+        Find and fix only confirmed production-risk bugs. Prioritize scheduler
+        correctness, supervisor state, PR/merge gates, notification delivery,
+        launchd/dev-service behavior, and task-audit reporting. Do not add
+        features or perform architecture cleanup.
+    securityMaintenance:
+      enabled: true
+      schedule: 20 14 * * *
+      branch: loop/tmux-claude-bot/security-maintenance
+      maxRounds: 3
+      allowDependencyUpdates: true
+      allowConfigHardening: true
+      allowStaticAnalysisFixes: true
+      prompt: >
+        Automatically check and fix confirmed security risks. Include dependency
+        advisories, GitHub security findings, static analysis, secrets, auth and
+        permission boundaries, webhooks, CORS, file/path handling, uploads,
+        command execution, sensitive logging, CI secrets, and supply-chain
+        issues. First judge reachability and severity; do not blindly upgrade
+        dependencies or harden config unless the risk is real or plausibly
+        reachable.
+    automationGovernanceReview:
+      enabled: true
+      schedule: 35 2 * * *
+      branch: loop/tmux-claude-bot/automation-governance-review
+      targetScore: 90
+      maxFindings: 5
+      allowRepairPr: true
+      requireAiEval: true
+      prompt: >
+        Review tmux-claude-bot's own automation governance, not target-project
+        product logic. Focus on task taxonomy, WorkOrder prompts, system gates,
+        scheduler and ledger evidence, notification visibility, Runtime
+        Guardian and Daily Task Audit boundaries, AI/eval policy, and merge
+        discipline. Create at most one repair PR only for a concrete P0/P1
+        governance finding, and never auto-merge it.
+    pullRequestReview:
+      enabled: true
+      schedule: 40 1 * * *
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+      prompt: >
+        Carefully review loop-created PRs from the previous day. Run two
+        independent passes. Do not nitpick; focus on introduced bugs, broken
+        tests, CI failures, mergeability, data loss, security, launchd/systemd
+        behavior, scheduler state, notification delivery, and user-visible
+        regressions. If both passes find no real issue and CI is green, merge
+        the PR, switch back to dev, and fast-forward the local dev branch.
+    allowedActions:
+      - tests
+      - docs
+      - small-refactor
+      - dependency-upgrade
+    blockedActions:
+      - direct-model-api
+      - broad-rewrite
+    selfImprovement:
+      enabled: true
+      maxItemsPerRun: 3
+workspaces:
+  - id: geo
+    name: Geo Real Estate
+    root: /Users/kingsonwu/programming/miao2016/realestate
+    agent: codex
+    worktreeIsolation: isolated
+    repositories:
+      - id: geo-backend
+        name: geo-backend
+        path: /Users/kingsonwu/programming/miao2016/realestate/geo-backend
+        worktreeIsolation: isolated
+        role: backend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+          githubAccount: miao2016
+      - id: geo-frontend
+        name: geo-frontend
+        path: /Users/kingsonwu/programming/miao2016/realestate/geo-frontend
+        worktreeIsolation: isolated
+        role: frontend
+        pullRequest:
+          enabled: true
+          base: main
+          switchBack: main
+          githubAccount: miao2016
+    architecture:
+      enabled: true
+      schedule: 0 7 * * *
+      goal: >
+        Use improve-codebase-architecture to optimize the Geo backend and
+        frontend together as one product workspace. Focus on cross-repository
+        API contracts, schemas, shared data semantics, auth/session assumptions,
+        error handling, and build/deploy coupling. Work in small verified
+        slices, stop when the workspace reaches the target score, and open
+        linked PRs only for repositories that actually changed.
+      maxRounds: 3
+      targetScore: 95
+      runner:
+        kind: agent-supervised
+        timeoutMs: 7200000
+        maxTurns: 20
+        requireConfirmation: false
+    allowedActions:
+      - tests
+      - docs
+      - small-refactor
+      - dependency-upgrade
+    blockedActions:
+      - direct-model-api
+      - broad-rewrite
+prReview:
+  repositories:
+    - id: geo-backend-all-prs
+      name: geo-backend all PRs
+      path: /Users/kingsonwu/programming/miao2016/realestate/geo-backend
+      repo: YS-Insight/geo-backend
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 20 3 * * *
+      switchBack: main
+      githubAccount: miao2016
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.
+    - id: geo-frontend-all-prs
+      name: geo-frontend all PRs
+      path: /Users/kingsonwu/programming/miao2016/realestate/geo-frontend
+      repo: YS-Insight/geo-frontend
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 30 3 * * *
+      switchBack: main
+      githubAccount: miao2016
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.
+    - id: knowledge-engine-all-prs
+      name: knowledge-engine all PRs
+      path: /Users/kingsonwu/programming/miao2016/knowledge-engine
+      repo: YS-Insight/knowledge-engine
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 40 3 * * *
+      switchBack: main
+      githubAccount: miao2016
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.
+    - id: alcove-all-prs
+      name: alcove all PRs
+      path: /Users/kingsonwu/programming/OctopusGarage/alcove
+      repo: OctopusGarage/alcove
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 50 3 * * *
+      switchBack: dev
+      githubAccount: Kingson4Wu
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.
+    - id: tmux-claude-bot-all-prs
+      name: tmux-claude-bot all PRs
+      path: /Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot
+      repo: OctopusGarage/tmux-claude-bot
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 0 4 * * *
+      switchBack: dev
+      githubAccount: Kingson4Wu
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.
+    - id: mesh-talk-all-prs
+      name: mesh-talk all PRs
+      path: /Users/kingsonwu/programming/OctopusGarage/mesh-talk
+      repo: OctopusGarage/mesh-talk
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 10 4 * * *
+      switchBack: dev
+      githubAccount: Kingson4Wu
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.
+    - id: net-auto-switch-all-prs
+      name: net-auto-switch all PRs
+      path: /Users/kingsonwu/programming/OctopusGarage/net-auto-switch
+      repo: OctopusGarage/net-auto-switch
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 20 4 * * *
+      switchBack: dev
+      githubAccount: Kingson4Wu
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.

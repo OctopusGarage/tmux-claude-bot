@@ -1,0 +1,719 @@
+{
+  "alcove-20260729-ad409ff3": {
+    "title": "Add a read-only radar explain command for missing or excluded items",
+    "category": "product-feature",
+    "confidence": "high",
+    "problem": "When a radar report misses an expected story, Alcove already has the raw cache, scored cache, score reasons, run payload, and source failure data, but users only get list/init/run/status commands. The current radar module interface makes support/debugging require manual file spelunking across cache, run, and report artifacts.",
+    "whyNow": "Configurable radars are a first-class user workflow in README.md:86-88 and docs/radars.md:59-68. Recent work expanded report quality and notifications, which increases the need to explain why an item was fetched, filtered, stale, duplicated, or never fetched.",
+    "value": "Gives owners and agents a fast, user-visible diagnostic path for radar trust: why did this item appear, why was it filtered out, or which source failed before it could be considered.",
+    "evidence": [
+      "docs/radars.md:11-22 documents per-radar cache/raw.json, scored.json, run.json, reports, OKF index, and events as durable run artifacts.",
+      "docs/radars.md:66-68 says radar run fetches enabled sources, deduplicates by URL/title, scores with the profile, writes cache/reports, writes OKF index, and appends a run event.",
+      "src/alcove/radars/pipeline.py:52-64 writes raw.json and scored.json during each run; src/alcove/radars/pipeline.py:174-188 records status, fetched/deduped/scored/included counts, failed_sources, source results, and reports in run_payload.",
+      "src/alcove/radars/scoring.py:20-44 records stale, blocked keyword, score, score_reason, and included=false/true decisions.",
+      "src/alcove/cli.py:270-300 exposes radar list, init, run, status, and preset list, but no explain/diagnose command over the existing run artifacts.",
+      "tests/test_radar_pipeline.py:69-88 already asserts raw/scored cache and score_reason values, giving a low-risk test seam for the new diagnostic read path."
+    ],
+    "recommendedApproach": "Recommended: add a read-only `RadarModule.explain(...)` module interface and `alcove radar explain <radar-id> --query <text|url> [--date YYYY-MM-DD] --json`. It should read existing raw.json, scored.json, and run.json, classify the likely pipeline stage, and return matched raw/scored rows with source_id, score, score_reason, included, report presence, failed source context, and cache paths compacted for display.",
+    "alternatives": [
+      "Expose a broader `alcove radar inspect <radar-id>` command that prints the latest run artifact paths and counts only. Smaller, but less useful when diagnosing one missing item.",
+      "Add the diagnostic only to the dashboard radar page. More visual, but CLI-first is easier to verify and better for agents."
+    ],
+    "acceptanceCriteria": [
+      "A read-only radar diagnostic module interface can explain latest-run and selected-date runs without fetching sources or invoking AI.",
+      "`alcove radar explain <radar-id> --query <needle> --json` reports whether matching items were not in raw cache, fetched but excluded, included but report-limited/deduped, or blocked by source/run failure evidence.",
+      "Fixture tests cover not-fetched, fetched-but-blocked, stale, below-threshold, and included cases using existing raw/scored/run artifacts.",
+      "Docs add the command to docs/radars.md with a manual support example.",
+      "Verification passes with focused radar tests, `scripts/smoke.sh`, and `scripts/check.sh`."
+    ],
+    "risks": [
+      "Heuristics for 'not fetched' can only infer absence from cache and source failures; the output should label that as diagnostic evidence, not certainty.",
+      "The query interface could become too complex if it tries to implement full search. Keep matching simple: URL/title/summary substring or exact URL."
+    ],
+    "nonGoals": [
+      "No live web fetches in tests.",
+      "No scoring, ranking, preset, notification, or AI summary behavior changes.",
+      "No sports/news/stock domain-specific ranking changes.",
+      "No mutation of radar definitions or cache artifacts."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev, implement a read-only radar explain diagnostic module interface and CLI command against current run/cache artifacts, open a PR against dev, wait for CI and mergeability checks, allow auto-merge only when the project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260729-ad409ff3",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785322320000-alcove-opportunity-discovery",
+    "discoveredAt": 1785323109613,
+    "updatedAt": 1785389339890,
+    "fingerprint": "eccba2838eaf23f3",
+    "status": "implemented",
+    "delegatedRunId": "1785385722136-alcove-active-delegate"
+  },
+  "alcove-20260729-e3600248": {
+    "title": "Add regression coverage for every publisher dirty-source write path",
+    "category": "reliability",
+    "confidence": "high",
+    "problem": "The governed-write module marks Apple Notes publisher sources dirty for pins, prompts, projects, and tasks, but the regression test currently proves only the pin path wakes a not-yet-due publisher. A future change could break prompt/project/task re-export freshness without failing tests.",
+    "whyNow": "README.md:264-269 presents dirty-triggered background publishing as expected behavior after Alcove writes. The implementation already supports multiple sources, so this is a small reliability hardening slice rather than new architecture.",
+    "value": "Protects a user-visible automation promise: after governed memory writes, the next scheduler tick can re-export changed Apple Notes mirrors before the normal TTL.",
+    "evidence": [
+      "README.md:264-269 says Alcove writes to mirrored sources mark the publisher dirty so the next scheduler tick can re-export before the normal 24-hour TTL.",
+      "src/alcove/application_base.py:12-17 maps governed write areas pin, prompt, project, and task to publisher dirty sources pins, prompts, projects, and tasks.",
+      "src/alcove/application_base.py:47-80 marks publisher dirty during governed writes unless confirmation is still required.",
+      "src/alcove/publishers.py:369-381 runs a publisher before TTL when dirty_sources exist, reports due_reason=dirty, and clears dirty sources after an error-free run.",
+      "tests/test_publishers.py:126-150 covers only `app.global_home.pin_add_payload(...)` producing dirty_sources=[\"pins\"].",
+      "tests/test_publishers.py:8-24 imports AlcoveApplication plus prompt, project, and task request classes already, so the test file has the local fixtures needed for broader coverage."
+    ],
+    "recommendedApproach": "Recommended: add focused parametrized tests in tests/test_publishers.py that exercise representative governed writes for pin, prompt, project, and task through AlcoveApplication, then assert run_due before TTL reports due_reason=dirty and the expected dirty_sources value for each source. Fix implementation only if a covered path fails.",
+    "alternatives": [
+      "Add lower-level unit tests around mark_publisher_source_dirty. Smaller, but it would miss whether the application module interface actually calls it from governed writes.",
+      "Add an integration smoke. Higher confidence but more expensive than needed for this bounded regression gap."
+    ],
+    "acceptanceCriteria": [
+      "Publisher tests prove pin, prompt, project, and task governed writes each mark the expected dirty source.",
+      "Each covered source causes `PublisherModule.run_due(...)` to run before TTL with `due_reason` equal to `dirty`.",
+      "Dirty sources are cleared after successful run and the following run_due skips as not_due.",
+      "No production behavior changes are made unless the new tests expose a real regression.",
+      "Verification passes with `uv run pytest tests/test_publishers.py --no-cov`, `scripts/smoke.sh`, and `scripts/check.sh`."
+    ],
+    "risks": [
+      "Parametrized tests may need careful fixture reset so one dirty source does not mask another.",
+      "Task/routine writes may render through shared planner digest targets, so assertions should check dirty source and due behavior rather than overfitting rendered body text."
+    ],
+    "nonGoals": [
+      "No publisher scheduling redesign.",
+      "No Apple Notes integration behavior change.",
+      "No changes to dirty.yml storage schema.",
+      "No real Notes.app or network integration in this PR."
+    ],
+    "estimatedComplexity": "small",
+    "delegateRequirement": "After owner approval, branch from dev, add focused publisher dirty-source regression coverage for all existing governed write areas and fix only regressions exposed by those tests, open a PR against dev, wait for CI and mergeability checks, allow auto-merge only when the project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260729-e3600248",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785322320000-alcove-opportunity-discovery",
+    "discoveredAt": 1785323109613,
+    "updatedAt": 1785382967718,
+    "fingerprint": "a1f39c2bfdff42fb",
+    "status": "discussing"
+  },
+  "alcove-20260729-030ba946": {
+    "title": "Extract MCP mount request construction into the existing request-helper module pattern",
+    "category": "architecture",
+    "confidence": "medium",
+    "problem": "Most MCP write wrappers now use small request-helper modules, but mount add/update still inline-build AddMountRequest and MountIndexPolicy inside the MCP adapter. This leaves a shallow module interface in the adapter: callers must reason about MCP defaults and mount policy defaults in the same place, reducing locality for future mount changes.",
+    "whyNow": "Recent dev history includes multiple landed MCP request-locality refactors, including search, knowledge, link, pin, planner, project, and prompt helpers. Mounts are the visible remaining gap in the same adapter seam.",
+    "value": "Improves developer experience and architecture consistency by concentrating mount request construction behind a small helper module interface. That creates leverage for MCP tests and preserves ADR-0002/ADR-0006 adapter locality without changing user behavior.",
+    "evidence": [
+      "docs/adr/0002-cli-and-mcp-adapters-use-application.md:13-20 says CLI and MCP should act as adapters and shared behavior should cross the AlcoveApplication interface.",
+      "docs/adr/0006-mcp-adapter-invocation-context.md:15-30 says MCP tools should stay thin schema/docstring wrappers and centralize repeated scope behavior for locality.",
+      "src/alcove/mcp_direct_tools.py:9-15 imports centralized request helpers for knowledge, link, pin, planner, project, prompt, and search.",
+      "src/alcove/mcp_external_tools.py:51-99 still constructs AddMountRequest and MountIndexPolicy inline in `alcove_mount_add` and `alcove_mount_update_policy`.",
+      "src/alcove/mounts.py:183-190 defines AddMountRequest and MountIndexPolicy; src/alcove/mounts.py:256-270 owns update_policy merge behavior.",
+      "tests/test_mcp_server.py:344-348 confirms MCP mount tools are registered, while tests/test_mounts.py:220-235 and 280+ cover CLI/module mount policy behavior rather than MCP request default construction."
+    ],
+    "recommendedApproach": "Recommended: add `src/alcove/mcp_mount_requests.py` with `mount_add_request(...)` and `mount_update_policy(...)` helper functions, update `mcp_external_tools.py` to call them, and add focused helper tests for supplied values plus None-to-empty-list defaults. Keep the seam at request construction only; do not layer another module over MountsModule.",
+    "alternatives": [
+      "Leave inline construction as-is until another mount MCP change occurs. Lowest churn, but preserves the only remaining drift from the established helper pattern.",
+      "Broaden extraction to all connector request objects in mcp_external_tools.py. Larger and less justified because connector request construction has different provider-specific shapes."
+    ],
+    "acceptanceCriteria": [
+      "`mcp_mount_requests.py` builds AddMountRequest and MountIndexPolicy with the same defaults as current MCP tools.",
+      "`mcp_external_tools.py` mount add/update wrappers delegate request construction to the new helper without changing MCP tool names, parameters, payloads, or MountsModule behavior.",
+      "Focused tests pin helper defaults, include/exclude/tags handling, and max_file_size_kb pass-through.",
+      "Existing MCP registration and mount policy tests continue to pass.",
+      "Verification passes with focused MCP/mount tests, `scripts/smoke.sh`, and `scripts/check.sh`."
+    ],
+    "risks": [
+      "This is an architecture cleanup, so keep the PR small enough that the deletion test still shows real locality instead of abstraction churn.",
+      "Avoid widening scope into CLI or connector request construction unless tests reveal an actual drift."
+    ],
+    "nonGoals": [
+      "No CLI refactor.",
+      "No mount storage, scan, indexing, or policy merge behavior changes.",
+      "No MCP schema/tool-name changes.",
+      "No external integration behavior changes."
+    ],
+    "estimatedComplexity": "small",
+    "delegateRequirement": "After owner approval, branch from dev, extract only MCP mount request construction into the existing request-helper module pattern with focused tests and no behavior change, open a PR against dev, wait for CI and mergeability checks, allow auto-merge only when the project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260729-030ba946",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785322320000-alcove-opportunity-discovery",
+    "discoveredAt": 1785323109613,
+    "updatedAt": 1785382967718,
+    "fingerprint": "8f294621bf6262ac",
+    "status": "discussing"
+  },
+  "alcove-20260730-4493364a": {
+    "title": "Make service tick resilient with per-module step isolation",
+    "category": "reliability",
+    "confidence": "high",
+    "problem": "The scheduled service tick is the local maintenance backbone, but its implementation calls connectors, watchers, blogs, radars, automations, publishers, mounts, OKF build, health, usage, pruning, and dashboard build in one linear method. Several tests prove individual malformed inputs are tolerated, but a raised exception from an unchecked step can still prevent later maintenance, task-health reporting, usage recording, and dashboard refresh.",
+    "whyNow": "The docs describe `alcove service tick` as the deterministic scheduler path, and README/docs list it as the maintenance command. The code already has a task-health summary interface, so preserving partial progress and reporting the failed step would directly improve an existing user-visible operational surface.",
+    "value": "A single bad blog, radar, publisher, mount, or connector run would degrade one module instead of making the whole scheduled tick brittle. Users get fresher dashboard and health data, and maintainers get better locality for diagnosing which module failed.",
+    "evidence": [
+      "src/alcove/service.py:126 defines ServiceModule.tick as the scheduler entry point.",
+      "src/alcove/service.py:151-190 performs every maintenance module sequentially before usage recording and dashboard build.",
+      "src/alcove/service.py:240-330 already converts module payloads into task-health status, which could represent caught per-step failures.",
+      "tests/test_service.py:111-237 covers malformed radar, connector, publisher, mount, and project data tolerance, showing reliability is already an expected service-tick contract.",
+      "docs/usage.md:487-497 documents `alcove service tick --home ~/.alcove --json` and skip flags as the scheduler/manual maintenance path."
+    ],
+    "recommendedApproach": "Introduce a small internal service tick step runner module behind the ServiceModule.tick interface. Each step should return a normalized payload with status, metrics, and error text; unexpected exceptions should be caught per step, marked failed, and allow remaining independent steps plus dashboard/usage/task-health finalization to continue. Keep existing JSON keys stable.",
+    "alternatives": [
+      "Only wrap the highest-risk external IO steps first: connectors, watchers, blogs, radars, automations, publishers, and mounts.",
+      "Add fail-fast mode as an opt-in debug flag, but keep scheduler default resilient."
+    ],
+    "acceptanceCriteria": [
+      "A forced exception in one independent tick step is represented under that module's payload and task_health.checks without aborting later independent steps.",
+      "Dashboard snapshot, usage rollups, and task_health are still written when one independent module fails.",
+      "Existing service tick JSON keys remain compatible for successful runs.",
+      "Tests cover at least one failing step and one later step still running.",
+      "Verification runs focused service tests plus scripts/smoke.sh and scripts/check.sh."
+    ],
+    "risks": [
+      "Catching too broadly could hide programming errors unless failure payloads and logs are explicit.",
+      "Some steps may have real ordering dependencies; the slice should preserve current ordering and only isolate independent failures."
+    ],
+    "nonGoals": [
+      "Do not redesign launchd installation.",
+      "Do not change scheduler cadence or add background model calls.",
+      "Do not rewrite all maintenance modules."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev for a focused reliability PR. Implement per-module failure isolation for ServiceModule.tick without changing successful JSON contracts. Open a PR against dev, wait for CI and mergeability checks, allow auto-merge only when project policy permits it, then switch the local worktree back to dev and fast-forward it. Verification must include focused service tests, scripts/smoke.sh, and scripts/check.sh.",
+    "id": "alcove-20260730-4493364a",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785406800000-alcove-opportunity-discovery",
+    "discoveredAt": 1785408214354,
+    "updatedAt": 1785421884330,
+    "fingerprint": "1f7bf64c4686b71a",
+    "status": "discussing"
+  },
+  "alcove-20260730-53938534": {
+    "title": "Deepen Profile Installation Pack by loading skills from template files",
+    "category": "architecture",
+    "confidence": "medium",
+    "problem": "ProfileInstallationPack is a useful module, but its implementation currently mixes generated entry-doc sections, long embedded skill prose, and artifact path assembly in one large source file. Tests already assert that source template files match generated skill content, which means the template files are intended to be the source of truth but the Python module still duplicates large bodies of agent-facing text.",
+    "whyNow": "Agent entry behavior is high-leverage and explicitly guarded by AGENTS.md, CLAUDE.md, docs/evals/agent-quality-gates.md, and tests. Recent ADRs favor deeper modules and adapter locality; reducing duplicated prompt text inside Python would make profile changes easier to review and less likely to drift across Hub, managed-KB, and workspace entries.",
+    "value": "Maintainers would edit skill text in the files agents actually consume, while ProfileInstallationPack keeps the smaller interface of assembling artifacts and substituting runtime values. Tests become more about installed artifact behavior than long string snapshots.",
+    "evidence": [
+      "src/alcove/profile_packs.py:17-39 defines ProfileInstallationPack as the module interface for generated profile artifacts.",
+      "src/alcove/profile_packs.py:246-516 embeds long Hub, workspace, and managed-KB skill bodies directly in Python.",
+      "src/alcove/profile_packs.py:886-897 maps profiles to `profile_templates/.../SKILL.md` paths.",
+      "tests/test_entry_profiles.py:76-110 asserts template source files equal generated skill content and artifact content.",
+      "docs/evals/agent-quality-gates.md:120-145 describes entry-mode impact as a first-class guardrail."
+    ],
+    "recommendedApproach": "Make the template files the primary implementation for skill content. Keep ProfileInstallationPack as the deep module whose interface returns entry sections and artifacts, but move skill prose loading/substitution behind small helpers that read packaged templates. Preserve link-mode behavior and source_path reporting.",
+    "alternatives": [
+      "Start with Hub skill only, because it is the longest and highest-churn template.",
+      "Keep Python strings but split generated prose into smaller private modules; this improves navigation less than template ownership."
+    ],
+    "acceptanceCriteria": [
+      "Hub, workspace, and managed-KB installed skill files are generated from template files, not duplicated long Python string literals.",
+      "Existing install/status/link-mode behavior and paths remain unchanged.",
+      "Tests assert generated artifacts match template source and cover runtime substitutions such as home/default KB where applicable.",
+      "Docs/site review notes are included if owner-facing entry behavior changes; otherwise the PR states no docs change was needed.",
+      "Verification runs tests/test_entry_profiles.py, scripts/smoke-agent-clients.sh if entry behavior is touched, scripts/smoke.sh, and scripts/check.sh."
+    ],
+    "risks": [
+      "Packaging template reads must work after uv tool install, not only from the source checkout.",
+      "Over-generalizing substitution could make templates harder for agents to read."
+    ],
+    "nonGoals": [
+      "Do not change the wording or policy of generated skills in the same PR unless required to preserve behavior.",
+      "Do not redesign agent target resolution.",
+      "Do not remove existing tests without replacing equivalent behavior coverage."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev for a focused architecture PR. Deepen ProfileInstallationPack so installed skills are loaded from packaged template files while preserving current generated output. Open a PR against dev, wait for CI and mergeability checks, allow auto-merge only when project policy permits it, then switch the local worktree back to dev and fast-forward it. Verification must include tests/test_entry_profiles.py, relevant agent-client smoke if behavior surfaces change, scripts/smoke.sh, and scripts/check.sh.",
+    "id": "alcove-20260730-53938534",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785406800000-alcove-opportunity-discovery",
+    "discoveredAt": 1785408214354,
+    "updatedAt": 1785421884331,
+    "fingerprint": "fe0c51cf5212c782",
+    "status": "discussing"
+  },
+  "alcove-20260730-80a7b11e": {
+    "title": "Add a positive selector for manual service tick modules",
+    "category": "workflow-automation",
+    "confidence": "medium",
+    "problem": "Manual maintenance runs currently require many negative skip flags when an operator wants to run only one or two service tick modules. The CLI and tests show repeated combinations of `--skip-*` flags, which makes manual diagnostics and support commands harder to type and easier to get wrong.",
+    "whyNow": "Alcove has accumulated several scheduled maintenance modules: connectors, watchers, blogs, radars, automations, publishers, mounts, health, task notifications, usage, pruning, OKF, and dashboard refresh. The docs already teach individual skip flags, so a positive selector is a small ergonomic improvement rather than a product pivot.",
+    "value": "Operators and agents can run targeted local maintenance such as only radars plus dashboard, or only publishers, without constructing a long inverse flag list. This improves support workflows and reduces accidental external IO during diagnostics.",
+    "evidence": [
+      "src/alcove/cli.py:157-171 defines service tick with seven `--skip-*` module flags plus related maintenance options.",
+      "src/alcove/cli_service.py:47-60 maps those negative flags into ServiceModule.tick booleans.",
+      "tests/test_service.py:130-138, 153-161, 176-184, and 199-207 repeatedly call ServiceModule.tick with many disabled modules to isolate one scenario.",
+      "docs/usage.md:493-497 documents manual examples using `--skip-radars`, `--skip-automations`, and related flags."
+    ],
+    "recommendedApproach": "Add an additive manual selector such as `alcove service tick --only radars,publishers --json` or repeated `--run-module radar --run-module publishers`. Keep existing skip flags for compatibility. Define accepted module ids centrally so CLI parsing, docs, and tests share one vocabulary.",
+    "alternatives": [
+      "Add a `service tick plan --json` dry-run first to preview selected modules.",
+      "Add module-specific wrapper commands only for the most common paths, such as `radar check-stale`; this is narrower but does not solve general tick diagnostics."
+    ],
+    "acceptanceCriteria": [
+      "`alcove service tick --only <modules> --json` runs selected modules and marks unselected independent modules skipped in the existing payload shape.",
+      "Existing `--skip-*` flags continue to work; conflicting `--only` plus skip combinations produce a clear argparse error or documented precedence.",
+      "Docs/usage.md includes one targeted maintenance example.",
+      "Tests cover parser behavior and at least one `--only` run that avoids an external-IO module.",
+      "Verification runs service/CLI focused tests, scripts/smoke.sh, and scripts/check.sh."
+    ],
+    "risks": [
+      "Too many module names could create another shallow interface; keep the selector limited to existing tick payload keys.",
+      "Operators may confuse active user commands like `blog check` with stale scheduled maintenance; docs should preserve that distinction."
+    ],
+    "nonGoals": [
+      "Do not remove existing skip flags.",
+      "Do not change service tick defaults.",
+      "Do not add new scheduled modules."
+    ],
+    "estimatedComplexity": "small",
+    "delegateRequirement": "After owner approval, branch from dev for a focused workflow-automation PR. Add a backward-compatible positive selector for manual service tick modules, update docs and tests, and avoid changing default scheduled behavior. Open a PR against dev, wait for CI and mergeability checks, allow auto-merge only when project policy permits it, then switch the local worktree back to dev and fast-forward it. Verification must include focused service/CLI tests, scripts/smoke.sh, and scripts/check.sh.",
+    "id": "alcove-20260730-80a7b11e",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785406800000-alcove-opportunity-discovery",
+    "discoveredAt": 1785408214354,
+    "updatedAt": 1785421884331,
+    "fingerprint": "d15ef3a01d7b1470",
+    "status": "discussing"
+  },
+  "alcove-20260731-18cf0fa9": {
+    "title": "Expose first-class Alcove and guarded agent automation creation commands",
+    "category": "workflow-automation",
+    "confidence": "high",
+    "problem": "The Automations module supports four job kinds, but users can only create shell and git-sync jobs through the CLI. That makes documented Alcove CLI jobs and guarded agent jobs require hand-written YAML, increasing setup friction and the chance of invalid job definitions.",
+    "whyNow": "Automations are now part of the scheduled service tick and documented as a user-owned repeatable workflow. The runtime already has the deeper implementation; the missing interface is small and user-visible.",
+    "value": "Users get a governed CLI path for repeatable Alcove maintenance jobs and opt-in agent jobs, with the existing audit records, TTL, timeout, and notification behavior. Maintainers get better locality because job validation and YAML shape stay behind AutomationsModule instead of spreading into manual edits.",
+    "evidence": [
+      "docs/automations.md:3-18 says automations are user-owned jobs and lists shell, git-sync, Alcove CLI, and guarded agent job types.",
+      "src/alcove/automations.py:25-27 declares SUPPORTED_KINDS = {shell, alcove, git-sync, agent}.",
+      "src/alcove/automations.py:191-201 dispatches shell, alcove, git-sync, and agent implementations.",
+      "src/alcove/automations.py:168-173 guards agent jobs unless --allow-agent or allow_service is set.",
+      "src/alcove/cli.py:175-208 registers automation list/run/run-due/add-shell/add-git-sync only.",
+      "src/alcove/cli_operations.py:28-53 handles only add-shell and add-git-sync creation paths.",
+      "tests/test_automations.py:52-75 covers guarded agent run skipping from persisted YAML, but there is no CLI add-agent or add-alcove test."
+    ],
+    "recommendedApproach": "Add narrow AutomationsModule.add_alcove and AutomationsModule.add_agent creation methods plus CLI subcommands automation add-alcove and automation add-agent. Keep agent jobs conservative: require an explicit prompt, provider choice limited to existing providers, default allow_service false, and expose --allow-service only as an explicit opt-in. Update docs and tests for CLI creation, run-due guard behavior, persisted YAML, notifications, and service tick.",
+    "alternatives": [
+      "Only add add-alcove first and leave add-agent as YAML-only until owner decides the safety language.",
+      "Add a generic automation add --kind command. This is less recommended because each kind has different required fields and safety defaults."
+    ],
+    "acceptanceCriteria": [
+      "alcove automation add-alcove can create a job with args, cwd, ttl, timeout, notify, and JSON output.",
+      "alcove automation add-agent can create a guarded job with provider, prompt, ttl, timeout, notify, and optional --allow-service.",
+      "Existing run and run-due semantics remain unchanged, including agent skip without --allow-agent or allow_service.",
+      "docs/automations.md and usage-facing docs show the new commands and safety defaults.",
+      "Focused unit/CLI tests cover add-alcove, add-agent, persisted job fields, and run-due safety behavior."
+    ],
+    "risks": [
+      "Agent jobs can start expensive or unexpected AI work if defaults are too permissive.",
+      "Shell-like argument parsing for Alcove jobs could be ambiguous if implemented as a single string instead of repeatable args.",
+      "Docs and agent entry guidance could drift if the CLI grows but command hints remain stale."
+    ],
+    "nonGoals": [
+      "Do not introduce new model-provider integrations or API keys.",
+      "Do not change run scheduling semantics, launchd behavior, or notification sinks.",
+      "Do not build a dashboard UI for automation management in this slice."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev in /Users/kingsonwu/programming/OctopusGarage/alcove. Implement first-class CLI creation for alcove and guarded agent automation jobs using the existing AutomationsModule runtime, preserving current safety defaults. Open a PR against dev. Run focused tests for automations plus scripts/smoke.sh and scripts/check.sh, and include docs alignment checks if source behavior changes docs-sensitive surfaces. Wait for CI and mergeability. Allow auto-merge only when the project policy permits it. After merge, switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260731-18cf0fa9",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785493200000-alcove-opportunity-discovery",
+    "discoveredAt": 1785495243624,
+    "updatedAt": 1785495243624,
+    "fingerprint": "6937e8d842657089",
+    "status": "proposed"
+  },
+  "alcove-20260731-f5ae3e4a": {
+    "title": "Extract connector refresh orchestration into a deep external-index module",
+    "category": "architecture",
+    "confidence": "medium",
+    "problem": "Connector refresh orchestration currently repeats connector selection and aggregate count logic in separate modules. The application adapter path and health repair path both need to know the concrete connector list and report aggregation shape, so adding or changing a connector can drift across seams.",
+    "whyNow": "ADR-0007 makes connector refresh/fetch a durable external-index seam, and MCP exposes connector refresh/status/fetch in the external-index toolset. A small deepening now would reduce the cost and risk of the next connector.",
+    "value": "A single connector refresh module would give CLI/MCP, service, and health repair callers more leverage through a smaller interface: refresh all, refresh one connector, stale-only, source-id. Locality improves because connector lists, supported ids, and aggregate metrics are maintained in one implementation.",
+    "evidence": [
+      "docs/adr/0007-external-index-refresh-and-fetch.md defines connector lazy-fetch and refresh as the external-index contract.",
+      "src/alcove/application_external.py:39-77 manually branches over apple-notes, github-stars, and chrome-bookmarks, then aggregates refreshed/skipped/reused/errors and sources.",
+      "src/alcove/health_repairs.py:138-158 repeats the same three connector classes and aggregate refreshed/skipped/reused/errors logic for health repair.",
+      "src/alcove/mcp_toolsets.py:65-77 exposes connector status, refresh, fetch, and connector-specific import tools in the external_indexes inventory.",
+      "tests/test_health.py covers health repair and connector/mount health, while tests/test_mcp_connector_requests.py covers request builders, leaving orchestration locality mostly implicit."
+    ],
+    "recommendedApproach": "Introduce a ConnectorRefreshModule or equivalent deep module at the external index seam. Its interface should accept connector, stale_only, source_id, runtime workspace/home, and return a normalized aggregate report. Replace the duplicated orchestration in _ExternalCapabilities.connector_refresh_payload and HealthRepairModule._refresh_connectors. Add tests that one fake or monkeypatched connector manifest drives both application and health paths.",
+    "alternatives": [
+      "Create a connector registry that returns connector adapters and keep aggregation at each caller. This helps construction but leaves report aggregation duplicated.",
+      "Leave duplication until a fourth connector is added. This is acceptable if connector work is unlikely soon, but the existing external-index contract suggests it will keep growing."
+    ],
+    "acceptanceCriteria": [
+      "Application connector refresh and health repair both call the shared connector refresh module.",
+      "Supported connector ids and all-connector iteration live in one place.",
+      "Aggregated refreshed, skipped, reused, errors, and sources fields remain backward compatible for CLI/MCP consumers.",
+      "Tests cover refresh all, refresh one connector, stale-only vs all, source_id forwarding, and error/count aggregation.",
+      "No behavior change to connector import, fetch, mount scan, or link source flows."
+    ],
+    "risks": [
+      "Changing payload shape could break MCP or health callers.",
+      "Over-generalizing connector adapters could create a shallow registry instead of a deeper module.",
+      "Real connector smoke may require credentials/local apps and should be scoped carefully."
+    ],
+    "nonGoals": [
+      "Do not add a new connector.",
+      "Do not change ADR-0007 fetch_ref/read_ref semantics.",
+      "Do not perform dependency upgrades or broad external-index rewrites."
+    ],
+    "estimatedComplexity": "small",
+    "delegateRequirement": "After owner approval, branch from dev in /Users/kingsonwu/programming/OctopusGarage/alcove. Extract connector refresh orchestration into a focused external-index module without changing public payloads. Open a PR against dev. Run targeted connector/health/application tests, scripts/smoke.sh, scripts/check.sh, and the quality gate-selected connector checks; use real integration smoke only if the changed surface requires it under project rules. Wait for CI and mergeability. Allow auto-merge only when the project policy permits it. After merge, switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260731-f5ae3e4a",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785493200000-alcove-opportunity-discovery",
+    "discoveredAt": 1785495243624,
+    "updatedAt": 1785495243624,
+    "fingerprint": "277042372e94ff89",
+    "status": "proposed"
+  },
+  "alcove-20260731-c1da0d06": {
+    "title": "Deepen inbox review projection for messy capture bundles",
+    "category": "architecture",
+    "confidence": "medium",
+    "problem": "InboxModule handles item lookup, lifecycle actions, content-file selection, duplicate merging, review excerpts, section detection, summaries, and read hints in one large module. The review projection logic is valuable and heavily user-visible, but it is not isolated behind a small interface that tests and future capture adapters can use directly.",
+    "whyNow": "Alcove already treats messy capture and OCR review quality as a first-class verification area, and the inbox read payload is an agent-facing surface. The current implementation works, but future capture formats will keep adding review heuristics unless the projection module becomes deeper.",
+    "value": "A dedicated InboxReviewProjection module would let capture adapters and tests exercise review_content, content_outline, duplicate handling, truncation metadata, and read hints through one small interface. That improves locality for bugs where agents miss evidence or users see confusing inbox summaries.",
+    "evidence": [
+      "src/alcove/inbox.py is 937 lines and combines public lifecycle actions with review projection internals.",
+      "src/alcove/inbox.py:157-191 builds the InboxPost read payload including content rows, outlines, review summary, truncation flags, full content command, and read hint.",
+      "src/alcove/inbox.py:194-292 selects metadata/fallback content files, deduplicates duplicate content, merges same-lead rows, and constructs row read hints.",
+      "src/alcove/inbox.py:430-760 contains summary selection, OCR summary merging, section parsing, excerpt compaction, and truncation handling.",
+      "scripts/verify/smoke-messy-inbox.sh exercises messy inbox, OCR duplicate, truncation, and read payload quality.",
+      "docs/evals/local-smoke.md describes messy bundle verification for truncated content, warnings, duplicated OCR, missing summaries, and readable review payloads."
+    ],
+    "recommendedApproach": "Extract the read/review projection internals behind a small InboxReviewProjection interface that accepts an inbox item root, platform, identifier, and capture metadata, and returns content, content file rows, outline, summary, truncation flags, and read hints. Keep InboxModule as the lifecycle module and delegate projection from _read_path. Move or add focused tests around duplicate file handling, OCR summary inclusion, truncation metadata, section outlines, and metadata content_files preference.",
+    "alternatives": [
+      "Extract only pure helper functions for excerpting and duplicate detection. This is smaller but leaves callers aware of too much row assembly detail.",
+      "Wait until a new capture adapter lands. This reduces immediate work but makes the next adapter more likely to copy inbox heuristics."
+    ],
+    "acceptanceCriteria": [
+      "InboxModule public behavior and JSON payloads remain backward compatible.",
+      "Review projection has a small documented interface and owns content file selection, dedupe, outline, summary, and truncation metadata.",
+      "Focused tests cover metadata content_files ordering, fallback file choice, duplicate_of/merged_into rows, OCR summary inclusion, and full_content_command/read_hint preservation.",
+      "scripts/smoke-messy-inbox.sh still passes and remains the high-level regression gate.",
+      "No change to archive/note/todo/delete write semantics."
+    ],
+    "risks": [
+      "Refactoring a user-visible read payload can accidentally change JSON keys or summary wording.",
+      "Moving helper methods without preserving tests could hide evidence from agent summaries.",
+      "The module could become shallow if it only re-exports helpers instead of owning the projection interface."
+    ],
+    "nonGoals": [
+      "Do not redesign the inbox workflow or OKF promotion behavior.",
+      "Do not change Clipsmith bundle contracts.",
+      "Do not introduce AI summarization into deterministic inbox reads."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev in /Users/kingsonwu/programming/OctopusGarage/alcove. Extract a deep InboxReviewProjection module for deterministic inbox read/review payload assembly, preserving existing CLI/MCP JSON behavior. Open a PR against dev. Run targeted inbox tests, scripts/smoke-messy-inbox.sh, scripts/smoke.sh, scripts/check.sh, and any quality-gate AI eval packet/review selected for inbox/capture changes. Wait for CI and mergeability. Allow auto-merge only when the project policy permits it. After merge, switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260731-c1da0d06",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785493200000-alcove-opportunity-discovery",
+    "discoveredAt": 1785495243624,
+    "updatedAt": 1785495243624,
+    "fingerprint": "d540a980a299ae92",
+    "status": "proposed"
+  },
+  "alcove-20260802-73e591e1": {
+    "title": "Add safer policy controls to git-sync automations",
+    "category": "reliability",
+    "confidence": "medium",
+    "problem": "The git-sync automation module has a shallow interface for a high-impact operation: users can configure repo path, commit message, TTL, timeout, and notification, but the implementation stages every change and pushes from the current repository state without branch, remote, detached-HEAD, dry-run, or dirty-scope policy controls.",
+    "whyNow": "Automations are documented as scheduler-capable local maintenance jobs. Once a user adds a git-sync job, launchd service ticks can run it unattended, so accidental staging or pushing is a reliability concern worth discussing before it becomes normal workflow.",
+    "value": "Makes scheduled backup/sync jobs safer and more inspectable while preserving the automation leverage that Alcove already provides.",
+    "evidence": [
+      "docs/automations.md:3-5 documents user-owned repeatable shell, git-sync, Alcove CLI, and guarded agent jobs.",
+      "docs/usage.md:596-604 shows `alcove automation add-git-sync notes ~/notes ...` and states shell, git-sync, and alcove jobs can run from the local service when due.",
+      "src/alcove/cli.py:200-208 exposes add-git-sync arguments for name, repo_path, commit-message, TTL, timeout, notify, and json, with no policy flags.",
+      "src/alcove/automations.py:99-124 stores only repo_path, commit_message, TTL, timeout, and notification for git-sync jobs.",
+      "src/alcove/automations.py:319-331 checks `git status --porcelain`, then runs `git add -A`, `git commit -m ...`, and `git push`.",
+      "tests/test_automations.py:167-190 covers the no-change success path; tests/test_automations.py:192-203 covers missing repo failure, but there is no branch/remote/detached-head/preview policy coverage."
+    ],
+    "recommendedApproach": "Add a small GitSyncPolicy behind the automation module interface: default to backward-compatible behavior, but support opt-in `allowed_branch`, `remote`, `refuse_detached_head`, and `dry_run`/`preview` controls. Return JSON details for branch, remote, changed files count, and skipped/refused reasons. Keep the seam inside AutomationsModule rather than introducing a broad git workflow engine.",
+    "alternatives": [
+      "Documentation-only warning for git-sync risks; smallest change, but leaves unattended behavior unchanged.",
+      "Require explicit branch policy for all new git-sync jobs; safer, but likely a compatibility break for existing users.",
+      "Split backup/export sync into a separate Alcove command; more explicit, but larger than a coherent PR."
+    ],
+    "acceptanceCriteria": [
+      "Users can configure a git-sync job to refuse detached HEAD and non-matching branches.",
+      "Users can preview/dry-run what git-sync would commit and push without mutating the repo.",
+      "The run result explains changed status, branch, remote, and refusal reason in JSON.",
+      "Existing default git-sync behavior remains compatible unless the owner chooses a breaking policy.",
+      "Focused tests cover no-op, missing repo, detached HEAD refusal, branch mismatch, dry-run, and successful policy match."
+    ],
+    "risks": [
+      "Tightening defaults could surprise existing users who rely on permissive sync.",
+      "Git state handling can become over-scoped if it tries to solve merge/conflict workflows.",
+      "Automation notification text may need small updates so refusals are understandable."
+    ],
+    "nonGoals": [
+      "No broad automation rewrite.",
+      "No conflict resolution, rebase, merge, or multi-remote sync strategy.",
+      "No direct model-provider calls or AI automation changes."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev in an isolated Alcove worktree, implement safer git-sync automation policy controls in one focused PR against dev, update CLI/docs/tests, run focused tests plus scripts/smoke.sh and scripts/check.sh, wait for CI and PR mergeability, allow auto-merge only when the project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260802-73e591e1",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785666000000-alcove-opportunity-discovery",
+    "discoveredAt": 1785667252616,
+    "updatedAt": 1785667252616,
+    "fingerprint": "1072314b2e8ee9c4",
+    "status": "proposed"
+  },
+  "alcove-20260802-2b20d0f0": {
+    "title": "Make global install side effects explicit and selectable",
+    "category": "product-feature",
+    "confidence": "medium",
+    "problem": "`alcove global install` is positioned as lightweight MCP access, but a normal install also initializes the default Apple Notes publisher and installs the scheduler LaunchAgent. That is useful for an opinionated setup, but it is a surprising side effect for users who only wanted a lightweight MCP config.",
+    "whyNow": "Alcove now has multiple entry modes and a quiet global MCP design principle. Install trust matters because global access is meant for unrelated projects and should expose only the narrowest useful behavior.",
+    "value": "Improves onboarding clarity and gives users a safe MCP-only path while preserving the current batteries-included install path.",
+    "evidence": [
+      "docs/entry-modes.md:3-6 distinguishes Hub, global lightweight MCP, managed KB, and local service entry modes.",
+      "docs/entry-modes.md:33-34 says global access should be quiet and unrelated coding projects should not inherit the full admin surface.",
+      "docs/usage.md:81-86 says `alcove global install` writes a lite MCP toolset by default and also initializes Apple Notes publishing plus the scheduler LaunchAgent.",
+      "src/alcove/cli.py:99-107 exposes global install flags for home, target, toolset, default-kb, print, status, uninstall, and json, but no explicit publisher/scheduler opt-out.",
+      "src/alcove/application_system.py:58-67 unconditionally initializes Apple Notes publisher and installs the scheduler for non-status, non-uninstall, non-dry-run global installs.",
+      "tests/test_entry_profiles.py:643-655 starts a test that asserts background Apple Notes publishing is enabled by default."
+    ],
+    "recommendedApproach": "Keep the current default if the owner wants compatibility, but add an explicit `--mcp-only` or `--skip-publisher` plus `--skip-scheduler` path. Include planned side effects in `--print`/status JSON so agents and users can see what will be changed before install. Update docs and profile guidance to recommend the narrow path for unrelated coding projects.",
+    "alternatives": [
+      "Change the default to MCP-only and require an opt-in flag for publisher/scheduler setup; cleaner long term but potentially breaking.",
+      "Leave behavior unchanged and expand docs; lower risk, but does not help command-line discoverability.",
+      "Split into `global install` and `global bootstrap`; clearer naming but larger migration burden."
+    ],
+    "acceptanceCriteria": [
+      "A user can install global-lite MCP without initializing Apple Notes publisher or scheduler.",
+      "`--print`, `--status`, or JSON output clearly reports whether publisher and scheduler actions are planned, installed, skipped, or absent.",
+      "Existing default behavior is either preserved or changed only with explicit owner-approved migration notes.",
+      "Docs and entry-mode guidance explain which install mode to use for lightweight global access versus full background publishing.",
+      "Tests cover default install, MCP-only/skip mode, status output, and generated MCP config."
+    ],
+    "risks": [
+      "Changing install defaults can break user expectations or existing tests.",
+      "Too many flags could make onboarding harder unless the recommended path is named clearly.",
+      "Scheduler/publisher state reporting must avoid touching real user state in tests."
+    ],
+    "nonGoals": [
+      "No redesign of publisher definitions.",
+      "No launchd service rewrite.",
+      "No MCP toolset redesign."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev in an isolated Alcove worktree, implement explicit global install side-effect controls in one focused PR against dev, update CLI, docs, and entry profile tests, run focused entry-profile tests plus scripts/smoke.sh and scripts/check.sh, wait for CI and PR mergeability, allow auto-merge only when the project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260802-2b20d0f0",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785666000000-alcove-opportunity-discovery",
+    "discoveredAt": 1785667252616,
+    "updatedAt": 1785667252616,
+    "fingerprint": "43da792e9d45b9e8",
+    "status": "proposed"
+  },
+  "alcove-20260802-e87aae79": {
+    "title": "Make dashboard search results deep-link to exact items",
+    "category": "product-feature",
+    "confidence": "medium",
+    "problem": "Dashboard search currently indexes item-level content but links results to broad section routes such as pins, planner, library, and knowledge. Users can find a specific pin, prompt, task, or knowledge item in search, then still have to manually locate it inside a larger page.",
+    "whyNow": "The dashboard is a core local workbench and search already aggregates rich item text. Adding item-level navigation is a small user-visible improvement that increases leverage from the existing search index without changing storage or ranking.",
+    "value": "Turns dashboard search from discovery-only into a faster inspection workflow: users can jump directly to the found item.",
+    "evidence": [
+      "src/alcove/dashboard_search_index.py:11-25 builds pin search rows from item content but sets `href` to `/pins`.",
+      "src/alcove/dashboard_search_index.py:46-67 builds task rows and sets `href` to `/planner`.",
+      "src/alcove/dashboard_search_index.py:214-222 builds knowledge-item rows and sets `href` to `/knowledge`.",
+      "frontend/dashboard/src/main.ts:68-75 renders search results as anchors using `href=\"#${row.href}\"`, so the backend href is the navigation target.",
+      "tests/test_dashboard_search_index.py:85-99 verifies item text inclusion but not item-level hrefs or navigation targets."
+    ],
+    "recommendedApproach": "Add stable, privacy-preserving item anchors in the dashboard renderers and emit corresponding item-level hrefs from the dashboard search index when records already have ids, aliases, or relative paths. Keep the search module interface small: search rows should expose a route/hash target, while each view owns rendering the matching anchor.",
+    "alternatives": [
+      "Only highlight the matched section after navigation; simpler, but still requires manual item search.",
+      "Add a modal search preview with item details instead of deep links; useful, but more frontend scope.",
+      "Wait for a full dashboard routing overhaul; likely too broad for the near term."
+    ],
+    "acceptanceCriteria": [
+      "Search results for pins, prompts, tasks, projects, and knowledge items navigate to stable item-level anchors when an identifier is available.",
+      "Anchor ids do not expose absolute local filesystem paths or private raw content.",
+      "Section-level fallback links remain for records without safe identifiers.",
+      "Python search-index tests assert item-level hrefs for representative row types.",
+      "Frontend tests or dashboard smoke verify clicking a search result reaches the intended item without breaking existing routes."
+    ],
+    "risks": [
+      "Hash routing could conflict with the current dashboard navigation model.",
+      "Naive anchor generation could leak private path details or create duplicate ids.",
+      "Frontend and backend route conventions need to stay in sync."
+    ],
+    "nonGoals": [
+      "No search ranking overhaul.",
+      "No live backend query API.",
+      "No dashboard redesign beyond item anchors and link targets."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev in an isolated Alcove worktree, implement dashboard search deep links in one focused PR against dev, update backend index tests and frontend/dashboard verification, run relevant dashboard/search tests plus scripts/smoke.sh and scripts/check.sh, wait for CI and PR mergeability, allow auto-merge only when the project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260802-e87aae79",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785666000000-alcove-opportunity-discovery",
+    "discoveredAt": 1785667252616,
+    "updatedAt": 1785667252616,
+    "fingerprint": "b3765b8e0f675601",
+    "status": "proposed"
+  },
+  "alcove-20260804-89f18f9e": {
+    "title": "Turn radar reports into governed action proposals",
+    "category": "workflow-automation",
+    "confidence": "high",
+    "problem": "Radars fetch, score, report, summarize, notify, and write OKF indexes, but do not turn actionable findings into durable tasks, ideas, prompts, or confirmed knowledge actions.",
+    "whyNow": "Radar, planner, notification, and OKF foundations are already mature and recently received scheduler-safety work.",
+    "value": "Closes the loop from information discovery to execution while preserving provenance and user control.",
+    "evidence": [
+      "docs/radars.md:67-69, 129-156 describes report generation, AI summaries, and notifications.",
+      "src/alcove/radars/pipeline.py:64-98 writes reports, AI output, notifications, run artifacts, and OKF indexes.",
+      "src/alcove/tasks.py and docs/automations.md provide separate durable action primitives."
+    ],
+    "recommendedApproach": "Add an optional proposal stage that extracts typed actions with source/run provenance, deduplicates against existing tasks and prompts, presents a reviewable CLI/dashboard/MCP payload, and writes only after confirmation.",
+    "alternatives": [
+      "Keep reports read-only and provide stable deep links into manual task creation.",
+      "Use user-authored automations to parse selected radar outputs externally."
+    ],
+    "acceptanceCriteria": [
+      "A radar run can emit zero or more typed, provenance-linked proposals without mutating durable planner state.",
+      "Users can accept, reject, or defer proposals; accepted items are idempotent.",
+      "Dashboard, CLI, and MCP expose proposal status and source evidence.",
+      "Deterministic tests cover duplicate, partial-failure, and confirmation flows."
+    ],
+    "risks": [
+      "AI extraction may create noisy or overconfident actions.",
+      "Incorrect deduplication could suppress legitimate follow-up work."
+    ],
+    "nonGoals": [
+      "Automatic durable writes without confirmation.",
+      "Replacing the existing deterministic radar scoring pipeline."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "Branch from dev, open a PR against dev, wait for CI and mergeability, allow auto-merge only when repository policy permits it, then switch the local worktree back to dev and fast-forward it. Implement only the optional, confirmation-gated radar proposal slice with provenance, idempotency, focused tests, and aligned CLI/dashboard/MCP exposure.",
+    "id": "alcove-20260804-89f18f9e",
+    "projectId": "alcove",
+    "projectName": "Alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785838800000-alcove-opportunity-discovery",
+    "discoveredAt": 1785879673929,
+    "updatedAt": 1785901955516,
+    "fingerprint": "43a22acbc680473c",
+    "status": "discussing"
+  },
+  "alcove-20260804-207b1fb4": {
+    "title": "Create a durable service-tick execution ledger",
+    "category": "reliability",
+    "confidence": "high",
+    "problem": "The scheduler orchestrates connectors, watchers, blogs, radars, automations, publishers, mounts, cataloging, and health sequentially, but there is no common per-step attempt, duration, retry, timeout, or idempotency contract.",
+    "whyNow": "Scheduler safety bugs were fixed recently, and the system now has enough scheduled subsystems that aggregate success/health summaries are insufficient for diagnosis.",
+    "value": "Makes missed refreshes and partial failures observable, retryable, and supportable without inspecting many module-specific artifacts.",
+    "evidence": [
+      "src/alcove/service.py:64-157 invokes scheduled subsystems sequentially and aggregates their payloads.",
+      "src/alcove/service_task_health.py:9-63 reduces module results to coarse success/failed/skipped summaries.",
+      "src/alcove/automations.py:190-219 and 265-363 implement separate result and subprocess failure semantics.",
+      "Coverage shows lower exercised paths in automations at 72%, service_launchd at 74%, and notifications at 68%."
+    ],
+    "recommendedApproach": "Introduce a versioned tick execution record with step start/end, status, error class, attempt, retry eligibility, and artifact references; expose it through health/status and add bounded retry/backoff only for explicitly idempotent steps.",
+    "alternatives": [
+      "Keep the current aggregate payload and add only structured log files.",
+      "Split every subsystem into independent launchd jobs with external orchestration."
+    ],
+    "acceptanceCriteria": [
+      "Every tick records a unique execution ID and one result per enabled or skipped step.",
+      "A failing step does not erase already completed step results.",
+      "Retry policy is explicit, bounded, and idempotency-aware.",
+      "CLI and dashboard show the last failure, next retry, and linked artifact.",
+      "Tests cover timeout, partial failure, retry exhaustion, and rerun safety."
+    ],
+    "risks": [
+      "Persisted execution state increases schema and retention complexity.",
+      "Retries could duplicate external notifications or writes if contracts are incomplete."
+    ],
+    "nonGoals": [
+      "Replacing launchd.",
+      "Making every external integration automatically retryable."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "Branch from dev, open a PR against dev, wait for CI and mergeability, allow auto-merge only when repository policy permits it, then switch the local worktree back to dev and fast-forward it. Implement a bounded, versioned service-tick ledger with explicit idempotency-aware retry policy, status exposure, and deterministic failure-path tests; do not replace launchd or add broad automatic retries.",
+    "id": "alcove-20260804-207b1fb4",
+    "projectId": "alcove",
+    "projectName": "Alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785838800000-alcove-opportunity-discovery",
+    "discoveredAt": 1785879673929,
+    "updatedAt": 1785901955517,
+    "fingerprint": "b2bc59dba4802e3c",
+    "status": "discussing"
+  },
+  "alcove-20260804-79409ea0": {
+    "title": "Generate and enforce an agent-entry contract matrix",
+    "category": "developer-experience",
+    "confidence": "high",
+    "problem": "Hub, global-lite, managed-KB, workspace, Codex, Claude, and MCP entry surfaces are maintained across installers, templates, policies, and smoke scripts; focused agent-client checks are available but not part of normal CI.",
+    "whyNow": "Recent commits changed MCP context defaults and architecture registration, increasing drift risk across multiple entry surfaces.",
+    "value": "Prevents users from receiving stale commands, mismatched tool scopes, or broken installation wiring after routine entry changes.",
+    "evidence": [
+      "src/alcove/profile_installer.py and src/alcove/profile_skill_templates.py maintain generated entry content and command transformations.",
+      "src/alcove/agent_quality_gate.py:58-134 defines separate smoke suites for agent clients, MCP matrix, dashboard, and other surfaces.",
+      "docs/evals/local-smoke.md:205-217 documents agent-client coverage, while :262-267 makes real client probes opt-in.",
+      ".github/workflows/ci.yml:30-61 runs lint, type checks, audit, tests, compile, and build but not agent-client or MCP matrix smoke."
+    ],
+    "recommendedApproach": "Define one machine-readable entry contract inventory, generate or validate profile/tool/template expectations from it, and make targeted agent-client/MCP smoke mandatory on PRs touching entry, MCP, profile, or command-template files.",
+    "alternatives": [
+      "Run the focused smokes nightly only.",
+      "Add snapshot tests for generated files without contract-driven routing checks."
+    ],
+    "acceptanceCriteria": [
+      "The inventory covers every supported profile, target client, toolset, install/status path, and home-scope transformation.",
+      "Drift produces a deterministic CI failure naming the affected entry and contract.",
+      "Relevant file changes automatically select agent-client and MCP smoke suites.",
+      "Generated output remains stable for both Codex and Claude targets.",
+      "A clean checkout can validate the matrix without external model calls."
+    ],
+    "risks": [
+      "The inventory may become a second source of truth if generation boundaries are unclear.",
+      "Adding focused smoke to PRs may increase CI duration."
+    ],
+    "nonGoals": [
+      "Automating interactive model-client behavior.",
+      "Changing the existing entry-mode product model."
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "Branch from dev, open a PR against dev, wait for CI and mergeability, allow auto-merge only when repository policy permits it, then switch the local worktree back to dev and fast-forward it. Implement a machine-readable entry contract matrix and targeted, non-interactive drift checks for affected profile/MCP/template changes without changing the entry-mode model.",
+    "id": "alcove-20260804-79409ea0",
+    "projectId": "alcove",
+    "projectName": "Alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1785838800000-alcove-opportunity-discovery",
+    "discoveredAt": 1785879673929,
+    "updatedAt": 1785901955518,
+    "fingerprint": "6c7381701ecddaca",
+    "status": "discussing"
+  }
+}

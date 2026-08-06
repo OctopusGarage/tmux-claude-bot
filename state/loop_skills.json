@@ -1,0 +1,21 @@
+{
+  "improve-codebase-architecture": {
+    "skillId": "improve-codebase-architecture",
+    "sourceUrl": "https://github.com/mattpocock/skills/blob/main/skills/engineering/improve-codebase-architecture/SKILL.md",
+    "ref": "pinned-local-20260716",
+    "checksum": "local-installed",
+    "platforms": [
+      "claude",
+      "codex"
+    ],
+    "tags": [
+      "architecture",
+      "refactor"
+    ],
+    "trustLevel": "approved",
+    "risk": "medium",
+    "updatePolicy": "manual",
+    "status": "installed",
+    "installedAt": 1784175566213
+  }
+}

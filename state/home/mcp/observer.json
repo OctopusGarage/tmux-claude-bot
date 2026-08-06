@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "profile": "observer",
+  "role": "observer",
+  "exposure": "read-only",
+  "server": {
+    "transport": "stdio",
+    "command": "tmux-claude-bot",
+    "args": [
+      "mcp",
+      "observer"
+    ]
+  },
+  "tools": [
+    "tcb.observer.status",
+    "tcb.observer.projects",
+    "tcb.observer.sessions",
+    "tcb.observer.queue",
+    "tcb.observer.logs_query",
+    "tcb.observer.loop_reports_list",
+    "tcb.observer.daily_task_audit",
+    "tcb.observer.runtime_guardian_findings"
+  ],
+  "boundaries": [
+    "No mutation, prompt delivery, delegation, repair, repository writes, or PR operations."
+  ]
+}

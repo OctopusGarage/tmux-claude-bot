@@ -1,0 +1,1 @@
+bash ~/.claude/statusline.sh

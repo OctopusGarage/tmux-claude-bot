@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "profile": "home",
+  "role": "home-operator",
+  "exposure": "controlled-operation",
+  "server": {
+    "transport": "stdio",
+    "command": "tmux-claude-bot",
+    "args": [
+      "mcp",
+      "home"
+    ]
+  },
+  "tools": [
+    "tcb.observer.status",
+    "tcb.observer.projects",
+    "tcb.observer.sessions",
+    "tcb.observer.queue",
+    "tcb.observer.logs_query",
+    "tcb.observer.loop_reports_list",
+    "tcb.observer.daily_task_audit",
+    "tcb.observer.runtime_guardian_findings",
+    "tcb.home.send_prompt",
+    "tcb.home.delegate_autopilot"
+  ],
+  "boundaries": [
+    "Requires explicit target session.",
+    "Uses existing control-service queue, conflict, and WorkOrder gates.",
+    "No arbitrary shell execution, direct file edits, PR merge operations, or WorkOrder internals."
+  ]
+}

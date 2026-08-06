@@ -1,0 +1,12 @@
+{
+  "loop": {
+    "LOOP_ENGINEERING_TICK_MS": "300000"
+  },
+  "task-audit": {
+    "TASK_AUDIT_TICK_MS": "300000",
+    "TASK_AUDIT_ENABLED": "true"
+  },
+  "batch": {
+    "BATCH_SCHEDULER_TICK_MS": "8000"
+  }
+}

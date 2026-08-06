@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "tcb-home-operator",
+  "role": "home-operator",
+  "capabilityClasses": [
+    "read-only observation",
+    "low-risk control",
+    "delegation"
+  ],
+  "mutationBoundary": "Use explicit target identity and bot control-service checks; do not edit target project files directly from the operator workspace."
+}
