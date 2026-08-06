@@ -141,9 +141,11 @@ Conflict rules:
 - PR review should not repair a branch while its originating WorkOrder still owns it.
 - Opportunity discussion or delegation should block on active automation or dirty
   worktrees.
-- Repository-wide PR review must not repair fork PRs, drafts, merge-conflict
-  branches, broad refactors, migrations needing product judgment, or unclear
-  security changes.
+- Repository-wide PR review must not repair fork PRs without permission, but
+  Draft and merge-conflict states are not exclusions. Every open PR receives a
+  decision: bounded same-repository repair followed by ready/merge, evidence-
+  backed close when obsolete or non-actionable, or a specific human blocker for
+  permission, product, migration, broad-refactor, or security-design judgment.
 
 ## Evidence And Acceptance
 

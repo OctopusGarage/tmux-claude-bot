@@ -32,6 +32,30 @@ describe("docs contract", () => {
     }
   });
 
+  it("keeps automation examples aligned with executable contracts", () => {
+    const commands = read("docs/commands.md");
+    expect(commands).toContain("src/core/command/action-registry.ts");
+    expect(commands).not.toContain("src/core/action-registry.ts");
+
+    const manual = read("docs/manual.md");
+    const projectExample = manual.split("Example workspace:")[0] ?? manual;
+    expect(projectExample).toContain("targetScore: 95");
+    expect(projectExample).toContain("branch: loop/datavibe-backend/bug-fix");
+    expect(projectExample).not.toContain("branch: loop/tmux-claude-bot/bug-fix");
+    expect(projectExample).toContain("riskAssessment:");
+    expect(projectExample).toContain("actionThreshold: 70");
+    expect(projectExample).toContain("criticalThreshold: 90");
+
+    const automation = read("docs/intelligent-automation.md");
+    expect(automation).toContain("riskScore");
+    expect(automation).toContain("suggestedBotImprovements");
+    expect(automation).toContain("retry-wait");
+    expect(automation).toContain("dead-letter");
+    expect(automation).toContain("Terminal repair outcomes");
+
+    expect(read("docs/examples/loop-skills-catalog.example.yml")).toContain("targetScore: 95");
+  });
+
   it(".env.example documents every supported config key", () => {
     // Legacy aliases are read as fallbacks but intentionally undocumented.
     const LEGACY = new Set([
@@ -301,6 +325,20 @@ describe("docs contract", () => {
       "docs/automation-capability-matrix.md",
     ]) {
       expect(alignment, `missing alignment guidance: ${phrase}`).toContain(phrase);
+    }
+
+    const automation = read("docs/intelligent-automation.md");
+    for (const phrase of [
+      "Draft is a review state, not an exclusion",
+      "gh pr ready",
+      "gh pr close",
+      "Same-repository conflicting PRs",
+      "Every open PR must be inspected",
+      "durable queue",
+      "retry-wait",
+      "expired leases",
+    ]) {
+      expect(automation, `missing PR decision guidance: ${phrase}`).toContain(phrase);
     }
 
     for (const phrase of [

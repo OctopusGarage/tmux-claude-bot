@@ -158,7 +158,14 @@ on a later schedule, add `pullRequestReview.enabled: true`
 with its own `schedule`, `lookbackHours`, `consecutivePasses`, `autoMerge`, and
 optional `mergeMethod`;
 the supervisor performs repeat review passes focused on bugs, CI, and
-mergeability rather than nits.
+mergeability rather than nits. Drafts and same-repository conflicts are not
+excluded: inspect each one, repair and mark it ready when safe, close obsolete
+or non-actionable work with evidence, or leave a specific human blocker. Every
+open PR needs one of those decisions before the run is considered complete.
+Repository-wide reviews are placed in a durable queue when discovered. Cron is
+only the fallback discovery cadence; a queued review waits for an available
+supervisor, retries transient failures with bounded backoff, and is recovered
+after a service restart.
 To run one orchestrated project-health loop instead of several mechanical
 maintenance jobs, add `harnessAuto.enabled: true` with its own `schedule`,
 `branch`, `maxRounds`, `strategy`, `tasks`, and `stopWhen`. A harness run first

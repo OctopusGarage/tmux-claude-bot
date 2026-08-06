@@ -76,6 +76,35 @@ the isolated worktree and releases the lease. Source worktrees are never removed
 the cleanup helper verifies both the state-owned path boundary and Git toplevel
 before issuing `git worktree remove --force`.
 
+## State And Outcome Vocabulary
+
+The task ledger and Repair Coordinator use different layers of state. A task
+with `status=failed`, `missing`, or `running-timeout` is an observed execution
+problem; its `repairStatus` describes whether recovery is still open. A queue
+record with `pending`, `leased`, `running`, or `retry-wait` is still in progress
+and must not be reported as resolved. `retry-wait` means the bounded backoff has
+not expired yet; once `nextAttemptAt` is due, the record is immediately eligible
+for the next available repair worker.
+
+Terminal repair outcomes are `fixed`, `blocked`, `not-reproducible`,
+`superseded`, and `dead-letter` for queue records. Ledger repair outcomes also
+include `not-needed` and `failed`: `not-needed` is a successful no-op, while
+`failed` remains open for classification or retry. `blocked` is reserved for a
+proven safety, ownership, configuration, or external dependency boundary; it is
+not a synonym for queue capacity or a temporary worker shortage. `superseded`
+means a newer or higher-priority linked repair owns the same task, and
+`not-reproducible` means the original evidence could not be reproduced after
+the prescribed verification. Daily Audit and Runtime Guardian must reconcile
+these outcomes with the linked ledger task ids before declaring a repair clean.
+
+Security Maintenance assessments use the same deterministic contract everywhere:
+the configured command must emit a JSON object with numeric `riskScore` from
+0–100. Optional `critical: true` or `severity: "critical"` forces dispatch;
+optional string arrays `findings` and `suggestedBotImprovements` are retained as
+assessment notes. Non-zero exit status, invalid JSON, or a missing numeric
+`riskScore` blocks dispatch without repository mutation. The default action and
+critical thresholds are 70 and 90, respectively.
+
 This document is the maintenance map for tmux-claude-bot's intelligent
 automation features. It defines the names, ownership boundaries, execution flow,
 and configuration relationships so future changes do not blur Loop Engineering,
@@ -722,11 +751,32 @@ style nits. When auto-merge is enabled, both use the configured `mergeMethod`
 (`squash`, `merge`, or `rebase`; default `squash`) rather than assuming one
 GitHub merge mode.
 
-Repository-wide PR review may repair only small, deterministic failures on
-same-repository PR branches. It should not edit fork PRs, drafts, merge-conflict
-branches, broad refactors, migrations requiring product judgment, or security
-changes whose severity/reachability is unclear. Those should remain blocked with
-evidence.
+Draft is a review state, not an exclusion. Every open PR must be inspected before
+the review run is finalized. For a same-repository Draft, the supervisor reviews
+the diff, checks, ownership, and mergeability, then either performs bounded repair
+and runs `gh pr ready <number>` before merging, closes obsolete/duplicate/non-
+actionable work with `gh pr close <number> --comment <reason>`, or records a
+specific human decision blocker. A new loop-created PR is ready by default; it
+may remain Draft only when a concrete incomplete-work or human-decision blocker
+is recorded.
+
+Same-repository conflicting PRs are also active work: take over the existing head
+branch, sync the base, resolve bounded and reviewable conflicts, push, and repeat
+the checks and review passes. Close obsolete conflicts with evidence. Fork PRs or
+changes requiring owner permissions, product judgment, migrations, or broad
+security decisions remain explicit human blockers, but they must still receive a
+per-PR decision. No Draft or conflict may be silently skipped.
+
+Repository-wide PR review uses a durable queue separate from the general Loop
+tick. Cron is a discovery and reconciliation fallback: it creates one
+idempotent queue item per repository review occurrence and releases the
+scheduler immediately. Independent consumers lease pending items when a
+supervisor is available, enforce the existing per-project conflict rule, and
+reuse the normal WorkOrder, system gate, final-summary, merge, and cleanup path.
+Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`, and
+`blocked`; expired leases return to `pending`, transient supervisor failures use
+bounded backoff, and a service restart does not lose an uncompleted review.
+This prevents an unrelated long WorkOrder from starving repository PR review.
 
 ## Daily Task Audit And Auto Repair
 
@@ -862,9 +912,11 @@ Automation should remain serialized where work can collide:
 - Opportunity Discovery is read-only, but discussion or delegation should block
   when the target project has active automation, queued/in-flight user work, or a
   dirty worktree.
-- Repository-wide PR review may repair only small deterministic same-repository
-  PR branch failures. It must not repair fork PRs, drafts, conflicts, broad
-  refactors, or changes needing product/security design judgment.
+ - Repository-wide PR review may repair bounded, reviewable failures on
+   same-repository PR branches. Drafts and conflicts are active review states:
+   each must be made ready, merged, closed with evidence, or left with a
+   specific human blocker. Fork PRs and changes needing product/security design
+   judgment remain human-owned, but must not be silently skipped.
 
 ## Notification Rules
 

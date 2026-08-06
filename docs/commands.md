@@ -1,6 +1,6 @@
 # tmux-claude-bot Bot Command Reference
 
-The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts`
+The authoritative command list is `BOT_COMMANDS` in `src/core/command/action-registry.ts`
 (registered to the Telegram menu at startup; the Lark help card mirrors it).
 `tests/docs-contract.test.ts` asserts every command below stays documented.
 

@@ -369,11 +369,13 @@ function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): 
       "Workspace pull request review and merge task.",
       `- Review open loop-created PRs across this workspace's PR-enabled repositories: ${repositories || "none"}.`,
       "- Treat loop-created PRs as PRs whose head branch starts with loop/ or whose title/body clearly identifies Loop Engineering.",
-      `- Prioritize PRs created or updated within the last ${task.lookbackHours} hours.`,
+      `- Prioritize PRs created or updated within the last ${task.lookbackHours} hours, but inspect every open PR before finalizing; age, Draft state, or conflict state is not a reason to omit a decision.`,
       `- Run two independent review passes for each candidate PR. Merge only when ${task.consecutivePasses} consecutive passes find no bug, CI, mergeability, data loss, security, migration, dependency, deployment, or user-visible regression risk.`,
       "- Do not nitpick style, naming, wording, formatting, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
       "- Inspect each repository's PR diff, files changed, commits, review comments, mergeability, and CI/status checks before deciding.",
-      "- If checks are pending, inconclusive, failing, required reviews are missing, the PR is a draft, mergeability is unknown/conflicting, or the branch is behind in a way GitHub cannot update safely, do not merge; record the exact blocker.",
+      "- Draft is a review state, not an exclusion: inspect same-repository draft PRs, then either make the bounded repair and run `gh pr ready <number>` before re-reviewing, or run `gh pr close <number> --comment <reason>` for obsolete/duplicate/non-actionable work; leave it open only with a concrete human decision blocker.",
+      "- For a same-repository conflicting PR, take over the existing head branch, sync the configured base, resolve the conflict when it is safe and bounded, push, and repeat the review/check gates; if it is obsolete or non-actionable, close it with evidence, otherwise record the exact human blocker. Do not silently skip it.",
+      "- If checks are pending, inconclusive, failing, required reviews are missing, mergeability is unknown, or the branch is behind in a way GitHub cannot update safely, record the exact blocker and decide whether to repair, close, or request human action.",
       "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
       task.autoMerge
         ? "- If both review passes pass and CI/status checks are successful, merge the PR according to that repository's pullRequest policy, including its configured mergeMethod, then sync the repository's local switch-back branch."
@@ -384,12 +386,14 @@ function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): 
   }
   return [
     "Pull request review and merge task.",
-    `- Review open loop-created PRs for this repository targeting ${baseBranch}, prioritizing PRs created or updated within the last ${task.lookbackHours} hours.`,
+    `- Review open loop-created PRs for this repository targeting ${baseBranch}, prioritizing PRs created or updated within the last ${task.lookbackHours} hours while still inspecting every open PR before finalizing.`,
     "- Treat loop-created PRs as PRs whose head branch starts with loop/ or whose title/body clearly identifies Loop Engineering.",
     `- Run two independent review passes for each candidate PR. Merge only when ${task.consecutivePasses} consecutive passes find no bug, CI, mergeability, data loss, security, migration, or user-visible regression risk.`,
     "- Do not nitpick style, naming, wording, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
     "- Inspect the PR diff, files changed, commits, mergeability, and CI/status checks before deciding.",
-    "- If checks are pending, inconclusive, failing, or mergeability is unknown/conflicting, do not merge; record the exact blocker.",
+    "- Draft is a review state, not an exclusion: inspect same-repository draft PRs, then either make the bounded repair and run `gh pr ready <number>` before re-reviewing, or run `gh pr close <number> --comment <reason>` for obsolete/duplicate/non-actionable work; leave it open only with a concrete human decision blocker.",
+    "- For a same-repository conflicting PR, take over the existing head branch, sync the configured base, resolve the conflict when it is safe and bounded, push, and repeat the review/check gates; if it is obsolete or non-actionable, close it with evidence, otherwise record the exact human blocker. Do not silently skip it.",
+    "- If checks are pending, inconclusive, failing, or mergeability is unknown, record the exact blocker and decide whether to repair, close, or request human action.",
     "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
     task.autoMerge
       ? `- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI using ${mergeMethodFlag(task.mergeMethod)}, then sync the local switch-back branch.`
@@ -411,11 +415,13 @@ function repositoryPullRequestReviewPolicy(workOrder: LoopWorkOrder): string[] {
     `- Review every open pull request in ${task.repo} for ${scope}.`,
     `- At the start and immediately before final summary, list open PRs with: ${listCommand}.`,
     "- In actionsTaken, record the open PR count and each in-scope PR number/base/head/decision. If any PR is out of scope, record the explicit reason.",
-    `- Prioritize PRs created or updated within the last ${task.lookbackHours} hours, but do not ignore older open PRs unless they are drafts, blocked, or explicitly marked do-not-merge.`,
+    `- Prioritize PRs created or updated within the last ${task.lookbackHours} hours, but inspect every open PR before finalizing; age, Draft state, or conflict state is not a reason to omit a decision.`,
     `- Run two independent review passes for each candidate PR. Merge only when ${task.consecutivePasses} consecutive passes find no bug, CI, mergeability, data loss, security, migration, dependency, deployment, or user-visible regression risk.`,
     "- Do not nitpick style, naming, wording, formatting, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
     "- Inspect each PR diff, files changed, commits, review comments, mergeability, and CI/status checks before deciding.",
-    "- If checks are pending, inconclusive, failing, required reviews are missing, the PR is a draft, mergeability is unknown/conflicting, or the branch is behind in a way GitHub cannot update safely, do not merge; record the exact blocker.",
+    "- Draft is a review state, not an exclusion: for a same-repository draft PR, inspect it and either make the bounded repair and run `gh pr ready <number>` before re-reviewing, or run `gh pr close <number> --comment <reason>` for obsolete/duplicate/non-actionable work; leave it open only with a concrete human decision blocker.",
+    "- For a same-repository conflicting PR, take over the existing head branch, sync the configured base, resolve the conflict when it is safe and bounded, push, and repeat the review/check gates; if it is obsolete or non-actionable, close it with evidence, otherwise record the exact human blocker. Do not silently skip it.",
+    "- If checks are pending, inconclusive, failing, required reviews are missing, mergeability is unknown, or the branch is behind in a way GitHub cannot update safely, record the exact blocker and decide whether to repair, close, or request human action.",
     "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
     "- When polling after a repair push or merge attempt, always request PR state and mergedAt in addition to mergeability and checks. If GitHub reports state=MERGED, stop waiting on mergeability, verify checks and local switch-back state, then write the final summary.",
     ...repositoryPullRequestRepairPolicy(task),
@@ -423,7 +429,7 @@ function repositoryPullRequestReviewPolicy(workOrder: LoopWorkOrder): string[] {
       ? `- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI using ${mergeMethodFlag(task.mergeMethod)}, then sync the local switch-back branch.`
       : "- Do not merge automatically; report the review decision only.",
     task.autoMerge
-      ? '- Final status must be "completed" only when every in-scope open PR was merged or explicitly skipped for a non-actionable reason such as draft, do-not-merge, external fork without permission, or required review. If any in-scope PR remains open because of a fixable blocker, conflict, failed/pending check, or unattempted repair, final status must be "blocked" or "failed", not "completed".'
+      ? '- Final status must be "completed" only when every in-scope PR was merged or explicitly closed with an evidence-backed reason. If any in-scope PR remains open because of a fixable blocker, conflict, draft, failed/pending check, or unattempted repair, final status must be "blocked" or "failed", not "completed".'
       : '- Final status may be "completed" only after every in-scope open PR has a recorded review decision.',
     task.prompt !== undefined ? `- Additional review instruction: ${task.prompt}` : "",
   ].filter(Boolean);
@@ -438,13 +444,13 @@ function repositoryPullRequestRepairPolicy(
   return [
     `- If a PR has only small, low-risk, clearly fixable issues, you may make at most ${task.repair.maxAttempts} repair attempt(s) on the PR's original head branch, then push that same branch and re-check the PR before considering merge.`,
     "- Repair is allowed only for same-repository branches that this GitHub account can push to. Do not modify external fork PRs.",
-    "- Before repairing, inspect the PR head ref and confirm the branch is not protected, not a draft, not marked do-not-merge, and safe to push.",
-    "- If a same-repository PR is conflicting, repair only when the conflict is small and deterministic, such as dependency manifest/lockfile drift that can be regenerated with the repository's normal package manager. Otherwise record the conflict as a blocker.",
+    "- Before repairing, inspect the PR head ref and confirm the branch is not protected, not marked do-not-merge, and safe to push. Draft status is not a repair exclusion.",
+    "- A same-repository conflicting PR is repairable when the base sync and resolution are bounded and reviewable, including ordinary source, test, dependency, or lockfile conflicts. If resolution needs product, migration, security, or broad design judgment, decide whether the PR is obsolete and should be closed; otherwise leave a concrete human blocker.",
     "- If the only blocker is that a same-repository PR branch is behind the base branch, first prefer GitHub's safe branch update/rebase mechanism (for example gh pr update-branch when available); otherwise update the existing PR head branch with the base branch without creating a new PR branch, then rerun checks and both review passes.",
     "- Keep repairs limited to the introduced issue: formatting, type/lint/test failures, obvious missing import/export, straightforward dependency lock update, small test expectation correction, or a similarly bounded bug fix.",
     "- Do not repair issues that need product judgment, schema/data migration judgment, security design judgment, broad refactoring, public API redesign, or large dependency upgrades; record them as blockers.",
     "- To repair: fetch the PR head branch, switch to it, pull with rebase, apply the minimal fix, run the relevant failing checks plus the repository's normal local verification when available, review the diff, commit with a clear message, push to the PR head branch, then re-read PR status/checks/mergeability.",
-    "- After a repair push, do not merge until CI/status checks have completed successfully and the review passes are repeated on the updated PR.",
+    "- After a repair push, do not merge until CI/status checks have completed successfully and the review passes are repeated on the updated PR. If a reviewed draft is acceptable, explicitly run `gh pr ready <number>` before the final merge decision.",
     task.repair.prompt !== undefined
       ? `- Additional repair instruction: ${task.repair.prompt}`
       : "",

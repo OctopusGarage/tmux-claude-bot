@@ -458,13 +458,21 @@ Each scheduled project chooses a runner:
   session and supervisor, reviews loop-created PRs for that project from the
   configured lookback window, requires the configured number of clean review
   passes, and only auto-merges when CI/status checks and mergeability are
-  acceptable. Set `mergeMethod` to `squash`, `merge`, or `rebase` to choose the
-  GitHub CLI merge mode; the default is `squash`. It is intended to catch
-  introduced bugs and operational risks, not to block on style nits.
+  acceptable. Drafts and same-repository conflicts are not excluded: inspect
+  each one, repair and mark it ready when safe, close obsolete or non-actionable
+  work with evidence, or record a specific human blocker. Set `mergeMethod` to
+  `squash`, `merge`, or `rebase` to choose the GitHub CLI merge mode; the default
+  is `squash`. It is intended to catch introduced bugs and operational risks,
+  not to block on style nits.
+  Repository-wide review discovery is cron-backed but execution is durable: a
+  pending PR review is stored and consumed independently from unrelated long
+  Loop WorkOrders. Supervisor capacity, project conflicts, retries, and reboot
+  recovery are represented by the queue rather than by a missed cron minute.
   `prReview.repositories` is the repository-scoped all-open-PR processor. It is
   configured outside `projects` and can review every open PR in a GitHub
-  repository, optionally repair small same-repository PR branch issues, then
-  merge eligible PRs using its configured `mergeMethod` (`squash`, `merge`, or
+  repository, inspect every open PR, optionally repair small same-repository PR
+  branch issues, decide whether each PR should be made ready, merged, or closed,
+  then merge eligible PRs using its configured `mergeMethod` (`squash`, `merge`, or
   `rebase`; default `squash`). Use `pullRequestReview` for loop-created PRs
   belonging to a configured project or workspace; use `prReview.repositories`
   when the desired target is a repository's complete open PR queue.
@@ -542,7 +550,7 @@ projects:
     cleanupPolicy: conservative
     goal: Improve architecture in small verified slices and commit each round.
     maxRounds: 3
-    targetScore: 90
+    targetScore: 95
     assessment:
       command: npm run assess
     execution:
@@ -559,7 +567,7 @@ projects:
     bugFix:
       enabled: true
       schedule: "45 10 * * *"
-      branch: loop/tmux-claude-bot/bug-fix
+      branch: loop/datavibe-backend/bug-fix
       cleanupPolicy: conservative
       maxRounds: 3
       maxBugsPerRound: 2
@@ -587,6 +595,12 @@ projects:
       schedule: "10 16 * * *"
       branch: loop/datavibe-backend/security-maintenance
       maxRounds: 3
+      riskAssessment:
+        # Replace with a project-owned deterministic command that emits the
+        # documented risk-assessment JSON contract.
+        command: npm run security:assess
+        actionThreshold: 70
+        criticalThreshold: 90
       allowDependencyUpdates: true
       allowConfigHardening: true
       allowStaticAnalysisFixes: true
@@ -653,6 +667,14 @@ projects:
     allowedActions: [tests, docs, small-refactor]
     blockedActions: [direct-model-api, broad-rewrite]
 ```
+
+The configured security assessment command must print a JSON object containing
+numeric `riskScore` (0–100). It may also include boolean `critical` or
+`severity: critical`, plus string arrays `findings` and
+`suggestedBotImprovements`. A score at or above `actionThreshold` dispatches a
+security WorkOrder; a critical finding always dispatches, even when the score is
+lower. A lower score is recorded as `not-needed`, while a non-zero exit, invalid
+JSON, or missing numeric score blocks dispatch without modifying the repository.
 
 Example workspace:
 

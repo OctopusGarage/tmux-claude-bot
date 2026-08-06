@@ -1117,7 +1117,7 @@ prReview:
     expect(prompt).not.toContain("--base dev --limit 100");
     expect(prompt).toContain("open PR count and each in-scope PR number/base/head/decision");
     expect(prompt).toContain('final status must be "blocked" or "failed", not "completed"');
-    expect(prompt).toContain("do not ignore older open PRs");
+    expect(prompt).toContain("inspect every open PR before finalizing");
     expect(prompt).toContain("Run two independent review passes");
     expect(prompt).toContain(
       "The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence",
@@ -1126,10 +1126,15 @@ prReview:
     expect(prompt).toContain("required reviews are missing");
     expect(prompt).toContain("state=MERGED");
     expect(prompt).toContain("stop waiting on mergeability");
+    expect(prompt).toContain("Draft is a review state, not an exclusion");
+    expect(prompt).toContain("gh pr ready");
+    expect(prompt).toContain("gh pr close");
+    expect(prompt).toContain("same-repository conflicting PR");
+    expect(prompt).toContain("resolve the conflict");
+    expect(prompt).toContain("Do not silently skip it");
     expect(prompt).toContain("PR's original head branch");
     expect(prompt).toContain("same-repository branches");
     expect(prompt).toContain("Do not modify external fork PRs");
-    expect(prompt).toContain("same-repository PR is conflicting");
     expect(prompt).toContain("same-repository PR branch is behind the base branch");
     expect(prompt).toContain("gh pr update-branch");
     expect(prompt).toContain(

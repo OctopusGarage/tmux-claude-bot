@@ -1345,7 +1345,7 @@ export function buildLoopSupervisorFinalizationPrompt(
     "Required action now:",
     "- Inspect the target project/session state as needed.",
     "- If the delegated target is still working, wait or poll until it reaches a safe handoff.",
-    "- If work is complete, verify the final project state, commit/push/open PR as required by the WorkOrder.",
+    "- If work is complete, verify the final project state, commit/push/open PR as required by the WorkOrder. New PRs should be ready for review by default; create a Draft only when a concrete incomplete-work or human-decision blocker is recorded, and never leave that Draft without a follow-up decision.",
     "- If you cannot safely complete, report blocked with a concrete reason.",
     "- Do not call model-provider APIs.",
     "- Do not add model SDKs, model API keys, or direct model HTTP integrations.",

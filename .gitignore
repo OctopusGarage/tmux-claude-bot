@@ -25,6 +25,10 @@ logs/
 docs/superpowers/
 .running
 
+# Live Loop Engineering configuration belongs to the user state directory,
+# never in the repository.
+/state/loop-engineering.yml
+
 # Stryker mutation testing artifacts
 reports/
 .stryker-tmp/

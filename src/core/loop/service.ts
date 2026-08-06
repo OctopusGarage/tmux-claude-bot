@@ -32,6 +32,7 @@ import {
   supervisorFinalStatusToRunStatus,
 } from "./final-summary-recovery.js";
 import { writeLoopRunReport } from "./report.js";
+import { RepositoryReviewQueue } from "./repository-review-queue.js";
 import {
   type LoopGitInvocation,
   type LoopRunCommandInvocation,
@@ -86,6 +87,9 @@ const DEFAULT_SUPERVISED_PR_CHECK_POLL_ATTEMPTS = 30;
 const DEFAULT_SUPERVISED_PR_CHECK_POLL_INTERVAL_SECONDS = 30;
 const DEFAULT_SUPERVISOR_REVISION_MAX_ATTEMPTS = 3;
 const DEFAULT_GITHUB_PERMISSION_CHECK_ATTEMPTS = 3;
+const REPOSITORY_REVIEW_QUEUE_LEASE_MS = 24 * 60 * 60 * 1000;
+const REPOSITORY_REVIEW_RETRY_BASE_MS = 15 * 60 * 1000;
+const REPOSITORY_REVIEW_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
 const LOG_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export type SupervisedSystemGateProject = Pick<LoopProjectConfig, "id" | "name" | "path"> & {
@@ -331,6 +335,10 @@ export async function runLoopServiceTickAsync(input: {
   defaultSupervisorTimeoutMs?: number;
   supervisorRevisionMaxAttempts?: number;
   cleanupCompletedWorkerSession?: (sessionName: string) => Promise<void>;
+  /** Run only the independent repository-review discovery/consumer. */
+  repositoryReviewOnly?: boolean;
+  /** Keep repository review out of the main Loop tick; production uses the independent consumer. */
+  skipRepositoryReview?: boolean;
 }): Promise<LoopServiceTickSummary> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const previousLastFired = input.schedulerStore.getLastFired();
@@ -344,6 +352,7 @@ export async function runLoopServiceTickAsync(input: {
   let failed = 0;
   const backlog = new LoopBacklogStore();
   const taskLedger = new DailyTaskLedger();
+  const repositoryReviewQueue = new RepositoryReviewQueue();
   const supervisorSessions =
     input.supervisorSessionNames ??
     (input.supervisorSessionName !== undefined ? [input.supervisorSessionName] : []);
@@ -418,7 +427,8 @@ export async function runLoopServiceTickAsync(input: {
   const runSupervisedDue = async (
     target: ResolvedDue,
     supervisorSession: string,
-  ): Promise<void> => {
+    checkpointScheduler = true,
+  ): Promise<LoopSupervisedRunResult["status"]> => {
     const { due, project, repository, workspace } = target;
     const runner =
       project?.runner ??
@@ -447,7 +457,7 @@ export async function runLoopServiceTickAsync(input: {
           `workspace Architecture score ${assessment.score} reached target ${assessment.targetScore}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
           "not-needed",
         );
-        return;
+        return "completed";
       }
       if (assessment.decision === "block" || assessment.score === null) {
         recordDueTargetWithoutDispatch(
@@ -455,7 +465,7 @@ export async function runLoopServiceTickAsync(input: {
           `workspace Architecture pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
           "blocked",
         );
-        return;
+        return "blocked";
       }
       preDispatchAssessment = {
         score: assessment.score,
@@ -509,7 +519,7 @@ export async function runLoopServiceTickAsync(input: {
           `workspace Security Maintenance risk score ${assessment.riskScore} was below action threshold ${assessment.actionThreshold}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
           "not-needed",
         );
-        return;
+        return "completed";
       }
       if (assessment.decision === "block" || assessment.riskScore === null) {
         recordDueTargetWithoutDispatch(
@@ -517,7 +527,7 @@ export async function runLoopServiceTickAsync(input: {
           `workspace Security Maintenance pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
           "blocked",
         );
-        return;
+        return "blocked";
       }
       preDispatchAssessment = {
         score: assessment.riskScore,
@@ -568,7 +578,7 @@ export async function runLoopServiceTickAsync(input: {
           `project Architecture score ${assessment.score} reached target ${assessment.targetScore}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
           "not-needed",
         );
-        return;
+        return "completed";
       }
       if (assessment.decision === "block" || assessment.score === null) {
         recordDueTargetWithoutDispatch(
@@ -576,7 +586,7 @@ export async function runLoopServiceTickAsync(input: {
           `project Architecture pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
           "blocked",
         );
-        return;
+        return "blocked";
       }
       preDispatchAssessment = {
         score: assessment.score,
@@ -628,7 +638,7 @@ export async function runLoopServiceTickAsync(input: {
           `project Security Maintenance risk score ${assessment.riskScore} was below action threshold ${assessment.actionThreshold}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
           "not-needed",
         );
-        return;
+        return "completed";
       }
       if (assessment.decision === "block" || assessment.riskScore === null) {
         recordDueTargetWithoutDispatch(
@@ -636,7 +646,7 @@ export async function runLoopServiceTickAsync(input: {
           `project Security Maintenance pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
           "blocked",
         );
-        return;
+        return "blocked";
       }
       preDispatchAssessment = {
         score: assessment.riskScore,
@@ -890,10 +900,12 @@ export async function runLoopServiceTickAsync(input: {
     if (result.status === "completed") {
       await cleanupCompletedWorkerSession(workOrder, input.cleanupCompletedWorkerSession);
     }
-    if (completion.retrySchedule || result.status === "invalid-output") {
-      restoreLastFired(input.schedulerStore, previousLastFired, due.jobKey, due.scheduledAt);
-    } else {
-      input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
+    if (checkpointScheduler) {
+      if (completion.retrySchedule || result.status === "invalid-output") {
+        restoreLastFired(input.schedulerStore, previousLastFired, due.jobKey, due.scheduledAt);
+      } else {
+        input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
+      }
     }
     if (result.status === "completed") {
       taskLedger.finish(ledgerTaskId, {
@@ -943,6 +955,7 @@ export async function runLoopServiceTickAsync(input: {
     });
     ran++;
     if (result.status !== "completed") failed++;
+    return result.status;
   };
 
   const cleanupCompletedWorkerSession = async (
@@ -1068,6 +1081,100 @@ export async function runLoopServiceTickAsync(input: {
     }
   };
 
+  const drainRepositoryReviewQueue = async (): Promise<void> => {
+    const active = activeLoopSupervisorWork(input.configFile);
+    const availableSupervisorSessions = supervisorSessions.filter(
+      (session) => !active.supervisorSessions.has(session),
+    );
+    const idleSupervisorSessions =
+      input.isSupervisorSessionAvailable === undefined
+        ? availableSupervisorSessions
+        : await asyncFilter(availableSupervisorSessions, input.isSupervisorSessionAvailable);
+    if (idleSupervisorSessions.length === 0) return;
+
+    const now = Date.now();
+    const queueItems = repositoryReviewQueue.listReady(now, idleSupervisorSessions.length);
+    const targets = queueItems.flatMap((item) => {
+      const repository = config.prReview.repositories.find(
+        (candidate) => candidate.id === item.repositoryId,
+      );
+      if (repository === undefined) return [];
+      return [
+        {
+          item,
+          target: resolveDue({
+            projectId: repository.id,
+            name: repository.name,
+            jobKey: `pr-review:${repository.id}`,
+            jobKind: "repository-pull-request-review",
+            scheduledAt: item.scheduledAt,
+            effectiveAt: item.scheduledAt,
+            jitterMs: 0,
+            action: "would-run",
+          }),
+        },
+      ];
+    });
+    const plan = planSupervisedDispatch(
+      targets.map(({ target }) => target),
+      active,
+    );
+    if (plan.ready.length === 0) return;
+    const targetByKey = new Map(
+      targets.map(({ item, target }) => [`${target.due.projectId}:${item.scheduledAt}`, item]),
+    );
+    const batches = allocateLoopSupervisorBatches(plan.ready, idleSupervisorSessions);
+    for (const batch of batches) {
+      await Promise.all(
+        batch.map(async ({ item: target, supervisorSession }) => {
+          const queueItem = targetByKey.get(`${target.due.projectId}:${target.due.scheduledAt}`);
+          if (queueItem === undefined) return;
+          const owner = `${process.pid}:${supervisorSession}`;
+          const leased = repositoryReviewQueue.lease(
+            queueItem.id,
+            owner,
+            now,
+            REPOSITORY_REVIEW_QUEUE_LEASE_MS,
+          );
+          if (leased === null) return;
+          repositoryReviewQueue.markRunning(leased.id, owner, Date.now());
+          try {
+            const result = await runSupervisedDue(target, supervisorSession, false);
+            if (result === "completed") {
+              repositoryReviewQueue.complete(leased.id, owner, Date.now(), "completed");
+            } else if (result === "blocked") {
+              repositoryReviewQueue.complete(leased.id, owner, Date.now(), "blocked");
+            } else {
+              const retryDelay = Math.min(
+                REPOSITORY_REVIEW_RETRY_MAX_MS,
+                REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
+              );
+              repositoryReviewQueue.fail(
+                leased.id,
+                owner,
+                Date.now(),
+                `repository review supervisor result: ${result}`,
+                Date.now() + retryDelay,
+              );
+            }
+          } catch (err) {
+            const retryDelay = Math.min(
+              REPOSITORY_REVIEW_RETRY_MAX_MS,
+              REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
+            );
+            repositoryReviewQueue.fail(
+              leased.id,
+              owner,
+              Date.now(),
+              err instanceof Error ? err.message : String(err),
+              Date.now() + retryDelay,
+            );
+          }
+        }),
+      );
+    }
+  };
+
   const recordDueTargetWithoutDispatch = (
     target: ResolvedDue,
     summary: string,
@@ -1104,6 +1211,9 @@ export async function runLoopServiceTickAsync(input: {
     recordDueTargetWithoutDispatch(target, summary, "not-needed");
 
   for (const due of scheduler.dueProjects) {
+    const isRepositoryReview = due.jobKind === "repository-pull-request-review";
+    if (input.repositoryReviewOnly && !isRepositoryReview) continue;
+    if (!input.repositoryReviewOnly && input.skipRepositoryReview && isRepositoryReview) continue;
     const target = resolveDue(due);
     const runner = target.project?.runner ?? target.repository?.runner ?? target.workspace?.runner;
     if (runner?.kind === "agent-supervised") {
@@ -1113,7 +1223,21 @@ export async function runLoopServiceTickAsync(input: {
     await flushSupervisedBuffer();
     await runSystemDue(target);
   }
-  await flushSupervisedBuffer();
+  if (!input.repositoryReviewOnly) {
+    await flushSupervisedBuffer();
+  } else {
+    for (const due of scheduler.dueProjects) {
+      if (due.jobKind !== "repository-pull-request-review") continue;
+      repositoryReviewQueue.enqueue({
+        repositoryId: due.projectId,
+        scheduledAt: due.scheduledAt,
+        priority: 1000,
+        now: Date.now(),
+      });
+      input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
+    }
+    await drainRepositoryReviewQueue();
+  }
 
   return {
     checked: scheduler.checked,
@@ -1519,6 +1643,7 @@ export function startLoopEngineering(
   }
   const schedulerStore = new LoopSchedulerStore();
   let tickInFlight = false;
+  let repositoryReviewTickInFlight = false;
   const tick = async (): Promise<void> => {
     if (tickInFlight) {
       log.warn("loop engineering tick skipped because previous tick is still running");
@@ -1565,6 +1690,7 @@ export function startLoopEngineering(
         defaultSupervisorTimeoutMs: deps.config.maxWaitDoneTotalMs,
         notifications: deps.notifications,
         projectSessionPrefix: deps.config.projectSessionPrefix,
+        skipRepositoryReview: true,
       });
       log.info("loop engineering tick complete", { data: result });
     } catch (err) {
@@ -1573,10 +1699,56 @@ export function startLoopEngineering(
       tickInFlight = false;
     }
   };
+  const repositoryReviewTick = async (): Promise<void> => {
+    if (repositoryReviewTickInFlight) return;
+    repositoryReviewTickInFlight = true;
+    try {
+      await runLoopServiceTickAsync({
+        configFile: config.configFile,
+        now: Date.now(),
+        schedulerStore,
+        runCommand: runShellCommand,
+        runGit: runGitCommand,
+        runSupervisorTask: createLoopSupervisorTaskRunner(deps),
+        cleanupCompletedWorkerSession: async (sessionName) => {
+          await deps.bridge.killSession(sessionName);
+          cleanupWorkerSessionRecords(sessionName);
+        },
+        supervisorSessionNames: loopSupervisorSessionNames(
+          deps.config.projectSessionPrefix,
+          deps.config.loopEngineering.supervisor.poolSize,
+        ),
+        resetSupervisorBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
+        supervisorWorktreeIsolation: deps.config.loopEngineering.supervisor.worktreeIsolation,
+        ...(deps.config.loopEngineering.supervisor.enabled
+          ? {
+              ensureSupervisorSession: async (sessionName) =>
+                startLoopSupervisor(deps, undefined, sessionName),
+              isSupervisorSessionAvailable: async (sessionName) =>
+                supervisorSessionIsAvailable(deps, sessionName),
+            }
+          : {}),
+        defaultSupervisorTimeoutMs: deps.config.maxWaitDoneTotalMs,
+        notifications: deps.notifications,
+        projectSessionPrefix: deps.config.projectSessionPrefix,
+        repositoryReviewOnly: true,
+      });
+    } catch (err) {
+      log.error("repository PR review queue tick failed", { err });
+    } finally {
+      repositoryReviewTickInFlight = false;
+    }
+  };
   const timer = setInterval(() => void tick(), config.tickMs);
+  const repositoryReviewTimer = setInterval(() => void repositoryReviewTick(), config.tickMs);
   timer.unref();
+  repositoryReviewTimer.unref();
   void tick();
-  return () => clearInterval(timer);
+  void repositoryReviewTick();
+  return () => {
+    clearInterval(timer);
+    clearInterval(repositoryReviewTimer);
+  };
 }
 
 async function supervisorSessionIsAvailable(
