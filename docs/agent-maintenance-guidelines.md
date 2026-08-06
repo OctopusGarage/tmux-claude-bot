@@ -58,8 +58,10 @@ paths from source, tests, docs, or generated examples.
 The search pattern itself should not be copied into a committed command if that
 would make the documentation match its own warning.
 
-User-facing paths should use `~` for home-relative display where possible. Keep
-internal logic on canonical absolute paths.
+Every user-facing message, notification, card, and CLI display must collapse
+the current home directory to `~` using the shared `tildeifyHome` or
+`tildeifyHomeDeep` boundary. Never expose personal absolute paths. Keep
+canonical absolute paths only in internal logic, state, logs, and artifacts.
 
 ## Logging And Artifacts
 

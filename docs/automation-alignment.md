@@ -70,6 +70,105 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Recovery alignment invariant: Daily Task Audit and Runtime Guardian must treat
+worker-consumption timeout as retryable delivery, deduplicate project recovery
+by project identity while an active recovery exists, and reconcile ledger plus
+repair-queue state only from an authoritative passing supervisor final summary.
+The coordinator must also collapse duplicate non-terminal repairs linked to the
+same task before dispatch; project recovery wins over an accidental bot-owned
+import for the same task.
+Architecture alignment invariant: every project and workspace Architecture
+schedule must run its deterministic score assessment before creating a
+WorkOrder. The configured target is normally 95; a score at or above target is
+a terminal no-op, while an invalid assessment or unsafe repository state blocks
+dispatch without repository mutation. The score, target, notes, and decision
+must remain visible in the WorkOrder or task ledger evidence.
+Security alignment invariant: every project Security Maintenance schedule must
+run its configured deterministic risk assessment before creating a WorkOrder.
+The default action threshold is 70 and the default critical threshold is 90;
+critical findings always run, actionable findings at or above the action
+threshold run, lower-risk findings are recorded as not-needed, and missing or
+invalid evidence blocks dispatch without repository mutation. The risk score,
+thresholds, notes, and decision must remain visible in the WorkOrder or task
+ledger evidence.
+Dispatching reservations without an active worker lease must be reconciled after
+the short dispatch grace period; active leases must prevent that recovery, and
+the recovery must not run target-project commands.
+Safe project-recovery dispatch deferrals remain immediately claimable in the
+Repair Coordinator queue; they must not be delayed until the original cron
+schedule fires again.
+When a project already has any live WorkOrder, an open recovery remains pending
+and is deferred without claiming or incrementing its retry attempt; admission
+resumes after the live WorkOrder reaches a terminal state.
+Daily Audit ticks, forced audits, and startup-triggered audits share a process
+mutex; an overlapping tick exits as `in-progress` before it can mutate ledger or
+repair-queue state.
+When an abandoned WorkOrder is closed, its scheduler `lastFired` checkpoint is
+advanced for that occurrence so a concurrent scheduler pass cannot immediately
+dispatch the same run again. Delegated-task reconciliation also accepts a valid
+final summary while the WorkOrder state file is still `in-flight`.
+Queued or dispatching active-delegate WorkOrders must be resumed during service
+startup when their worker lease is no longer active. An active lease must also
+be validated against the WorkOrder's actual isolated worker session and agent;
+if that worker disappeared during restart, the WorkOrder is recorded as a
+bounded invalid-output failure, the lease is released, and project recovery
+requeues it. Reboot recovery must not leave a durable delegation orphaned in an
+intermediate state or treat the supervisor pool session itself as the worker.
+Failed Autopilot delegations for configured projects must enter the same
+project-scoped recovery path as Loop Engineering failures. Invalid or missing
+supervisor summaries are retryable orchestration evidence; capacity and active
+automation deferrals must remain pending rather than terminal blocked records.
+Project recovery must link each delegated Autopilot WorkOrder back to the
+original task and close both records only from passing authoritative evidence.
+Daily Task Audit repair dispatch must use the same link and return failed
+delegations to the queue immediately.
+The generic Daily Task Audit repair dispatcher must exclude
+`project-recovery` records because that queue family is owned by the dedicated
+project-recovery admission path; one historical failure must not be dispatched
+through both paths.
+If an open project-recovery record links only to terminal WorkOrders and no live
+WorkOrder remains for that project, its stale lease must be released before the
+next recovery admission pass; unknown active recoveries remain deferred.
+Audit reconciliation must normalize successful and skipped ledger records to
+the `not-needed` repair terminal before evaluating active failures.
+Stale `repairStatus=running` records must be reopened per linked WorkOrder;
+one unrelated active delegation must not suppress recovery of every other stale
+record. Ledger/queue reconciliation must run before project-recovery admission
+so an already terminal WorkOrder cannot keep a project recovery lease occupied;
+an autopilot record linked to a terminal WorkOrder is eligible immediately,
+without waiting for the general stale-status timeout.
+On service restart, dedicated supervisor panes with no queued, dispatching,
+in-flight, running, or needs-revision WorkOrder must receive an interrupt before
+new work is accepted. A released lease alone is not proof that the interactive
+supervisor turn is idle; startup must clear this stale pane state while
+preserving sessions that still own a live WorkOrder.
+Queued, dispatching, and in-flight WorkOrders with an existing worker pane
+receive a bounded two-minute grace period for agent startup before orphan
+reconciliation; a transient startup probe must not fail a valid WorkOrder, and
+the grace period waits for the worker session to appear rather than treating a
+currently absent session as immediate proof of orphaning.
+Ledger reconciliation must include pending queue records: when every linked
+task has reached a terminal repair outcome, a pending duplicate is closed before
+it can be claimed again. If a linked historical ledger task is missing while all
+remaining linked outcomes are terminal, the queue is closed as blocked rather
+than retried forever, preserving the missing-evidence review state.
+A queue record with no resolvable ledger evidence is also closed as blocked
+because dispatching it cannot construct an auditable repair request.
+When a linked delegated recovery reaches a terminal failure, reconciliation must
+release its project-recovery lease and return the original and delegated records
+to pending in the same audit pass; lease expiry is not a recovery mechanism.
+Daily Task Audit's historical import must use an exact bot-owned task-family
+boundary; a configured project whose name merely shares the bot identifier
+prefix must remain under project recovery ownership.
+Runtime Guardian must also classify target-project and external blockers as
+terminal blocked findings, and reconcile stale invalid-output queue records from
+later gate artifacts. Terminal WorkOrders must release their worker session and
+remove bot-owned isolated execution worktrees: successful runs clean them up
+immediately, while failed/timeout/cancelled runs clean them up automatically when
+the configured retention TTL expires. Source worktrees are never removed. The
+invariant is enforced by coordinator/runtime/worktree tests rather than
+notification wording alone.
+
 When adding, renaming, removing, or changing a user-visible or automation-visible
 feature, review this matrix in the same slice:
 
@@ -90,8 +189,9 @@ feature, review this matrix in the same slice:
 | Repository-wide PR review | `prReview.repositories` config, GitHub account binding, per-PR review gate, repair policy, mergeability/CI checks, switch-back, docs/tests. |
 | Autopilot delegation | Chat command, control socket, Autopilot action registry, Telegram/Lark/TUI button, supervisor queue visibility, active-delegate cancellation boundaries, WorkOrder creation, conflict blocking, notification, opportunity completion when related, docs/tests. |
 | Opportunity Discovery | Read-only WorkOrder, dedupe/store, readable Telegram/Lark suggestions, per-item show/discuss/dismiss actions, batch actions, Autopilot handoff, project conflict blocking, docs/tests. |
-| Daily Task Audit | Active discovery, ledger merge, self-audit recursion, auto-repair dispatch, final Telegram/Feishu notification, repair-status closure, docs/tests. |
-| Runtime Guardian | Runtime artifact detection, evidence threshold, source/isolated worktree policy, self-repair dispatch, clean-worktree gate, cooldown, docs/tests. |
+| Daily Task Audit | Active discovery, shared ledger merge including Autopilot delegation lifecycles, self-audit recursion, Repair Coordinator enqueue/consumption, final Telegram/Feishu notification, repair-status closure, docs/tests. |
+| Runtime Guardian | Runtime artifact detection, including terminal `system-gate.json` rejection, evidence threshold, source/isolated worktree policy, Repair Coordinator enqueue/consumption, clean-worktree gate, cooldown, docs/tests. |
+| Repair Coordinator | Durable pending-repair migration, deterministic classification, configured-project recovery dispatch, project conflict gating, leases, bounded retry backoff, per-item terminal reconciliation, queue visibility, docs/tests. |
 | GitHub operations | Configured `githubAccount`, command-local `GH_TOKEN` from `gh auth token --user`, all `gh api/pr/run/repo` commands, security alert reads, tests. |
 | Worktree/session isolation | Source path validation, isolated/source/auto policy, supervisor session, worker session, lease cleanup, ordinary chat blocking, logs/artifacts, tests. |
 | AI/eval behavior | Agent-backed/control-surface path only, no direct model-provider SDK/API calls, deterministic fallback, transient agent failure classification/retry boundaries, review/eval evidence, prompt governance metadata, docs/tests. |
@@ -108,7 +208,7 @@ surfaces, state, logs, and tests that actually enforce the system.
 | Module | Interface To Preserve | Must Align | Do Not Bypass |
 | --- | --- | --- | --- |
 | Operator surfaces | Telegram, Feishu/Lark, CLI, TUI, home/operator skill, `.claude` commands, and scheduler triggers are entry points into the same bot behavior. | Command/action handlers, shared action registries, control client/server paths, `BOT_COMMANDS`, i18n/help text, Home Operator workspace provisioning, `docs/manual.md`, `docs/commands.md`, `docs/tui.md`, `docs/agents/usage-guide.md`, `docs/automation-capability-matrix.md`, `docs/ai-tool-surface-governance.md`, and surface tests. | Do not create a feature that works only by injecting a private prompt or one-off script when an existing control path should own it. |
-| Control and routing | Requests enter command dispatch, the per-session queue, current-project resolution, confirmation gates, or the local control socket before reaching an agent. | `src/core/command/**`, adapter handlers, control protocol/client/server, TUI callers, dangerous-action confirmation, reply-target handling, and queue/control tests. | Do not let chat, CLI, TUI, or skills invent independent routing semantics for the same action. |
+| Control and routing | Requests enter command dispatch, the per-session queue, current-project resolution, confirmation gates, or the local control socket before reaching an agent. | `src/core/command/**`, adapter handlers, control protocol/client/server, TUI callers, dangerous-action confirmation, reply-target handling, and queue/control tests. | Do not let chat, CLI, TUI, or skills invent independent routing semantics for the same action. Do not replay Telegram/Feishu chat prompts after restart; only control/WorkOrder recovery may use persisted queue restore. |
 | Session runtime | Ordinary project sessions, Loop Supervisor sessions, Loop worker sessions, and Home Operator sessions have distinct responsibilities, visibility, and workspace rules. | Session naming, project/session catalog, role workspaces in `docs/agent-role-workspaces.md`, open/open-worker behavior, worker leases, idle cleanup, dashboard visibility, conflict blocking, docs, and lifecycle tests. | Do not run WorkOrders in ordinary user chat, expose reserved automation sessions as normal project choices, or start target-project workers from a generic bot-owned home that hides project-local instructions. |
 | Project, session, and group model | Projects, workspaces, regular sessions, independent sessions, current-project pointers, recent projects, and Feishu/Lark project groups are one domain model. | `docs/domain/project-session-model.md`, project/session catalog, summary view, recent-project logic, group bindings, current-project state, Telegram/Lark project lists, CLI/TUI project views, i18n copy, and project/session tests. | Do not invent adapter-local vocabulary or action availability rules for project/session/group behavior. |
 | Project intake and adoption | New project creation, directory browsing, recent project reopening, independent session creation, unmanaged-agent adoption, and worker opening all create or target sessions. | Path validation, directory browser, recent-project store, open/openPath/openWorker control operations, adopt service, session-path map, allowed-directory policy, docs, and adapter/CLI tests. | Do not trust callback payload paths, create sessions outside the project/session catalog, or bypass configured path and git-toplevel validation for worker/intake flows. |
@@ -123,7 +223,7 @@ surfaces, state, logs, and tests that actually enforce the system.
 | Batch scheduler | Batch plans, pools, due schedules, pause/resume/stop/report, and task admission are the generic batch system, not Autopilot or Loop Engineering. | Batch scheduler config/env, plan YAML schema, scheduler store/loop/report, control operations, CLI commands, docs/examples, capability matrix, and scheduler tests. | Do not reuse Autopilot or Loop task terminology for batch plans unless the control path and docs explicitly bridge them. |
 | Evidence and observability | Logs, reports, ledgers, runtime artifacts, notification evidence, and debug commands explain what happened without reopening a worker. | Structured log fields, `tcb logs` filters, `tcb loop reports list`, loop run artifact registry, notification event catalog, task audit discovery, runtime guardian evidence, dashboard/task-report views, docs, and regression tests. | Do not write new automation state that cannot be discovered by current diagnostics or separated from unrelated historical noise. |
 | Authorization and security policy | Owner allowlists, Feishu/Lark chat policy, group action policy, card signing, control socket permissions, GitHub identity, secret handling, agent tool hooks, and local command boundaries determine who may do what. | Telegram auth, Lark auth/chat-policy/card-signing, control socket hardening, GitHub account/token handling, Claude/Codex `PreToolUse` command guards, setup/doctor checks, security docs, and auth/security tests. | Do not add an action path that bypasses owner authorization, group policy, callback/card verification, configured GitHub identity, or agent-level command interception. |
-| State and configuration | Source/docs define product behavior; state/config directories hold live user configuration and runtime truth. | `TCB_STATE_DIR`, `.env` loading, state migrations, app-home/state layout, config examples, project/session bindings, install/dev scripts, `tcb config ...`, `tcb automation ...`, docs, and state/config tests. | Do not hardcode live project lists, user paths, schedules, GitHub accounts, or local cleanup policy in source, tests, or maintained docs. Do not make operators hand-edit state/config files for routine inspection or day-to-day enable/disable flows when a safe command can own the behavior. |
+| State and configuration | Source/docs define product behavior; state/config directories hold live user configuration and runtime truth. | `TCB_STATE_DIR`, `.env` loading, state migrations, app-home/state layout, config examples, project/session bindings, install/dev scripts, `tcb config ...`, `tcb automation ...`, docs, and state/config tests. The `LOOP_SUPERVISOR_ENABLED` dependency is command-settable and surfaced by `tcb automation status`. | Do not hardcode live project lists, user paths, schedules, GitHub accounts, or local cleanup policy in source, tests, or maintained docs. Do not make operators hand-edit state/config files for routine inspection or day-to-day enable/disable flows when a safe command can own the behavior. |
 | Deployment and lifecycle | Managed prod, managed dev, foreground dev, setup/install, service controls, single-instance protection, doctor, and smoke checks keep one coherent runtime. | `install.sh`, service scripts, dev helpers, setup flows, managed `dist/` entrypoint, launchd/systemd docs, doctor/smoke checks, and lifecycle tests. | Do not add a process manager, state layout, or dev/prod mode that can run against the same state without instance and migration rules. |
 | Setup, install, and onboarding | First-run setup, reconfigure, Lark onboarding, managed install, service materialization, optional dependency install, and doctor are one onboarding lifecycle. | `.env.example`, setup scripts, Lark setup/onboarding wizard, install/service scripts, optional install commands, doctor checks, install docs, and setup/install tests. | Do not introduce a required runtime option without updating setup, `.env.example`, doctor, docs, and managed-install behavior. |
 | Localization and copy governance | Chat UI copy, card/button labels, setup/onboarding copy, language pickers, per-channel language settings, supported language list, fallback behavior, and catalog completeness are one product surface. | `src/core/i18n/index.ts`, `src/core/i18n/catalog/*`, `src/core/i18n/setup.ts`, `UI_LANGS`, Telegram/Lark adapters, setup scripts, CLI/TUI/help output when user-facing, `docs/domain/iconography.md`, `tests/core/i18n.test.ts`, and `tests/i18n-hardcoded-copy-contract.test.ts`. | Do not add user-visible copy in adapters, CLI/TUI, setup, cards, notifications, or docs examples without either routing through `Messages`/`SetupMessages` or documenting why it is intentionally nonlocalized. |
@@ -208,6 +308,11 @@ Bot-owned notification sources:
 - `opportunity-discovery`
 - `runtime-guardian`
 - `tmux-claude-bot`
+
+Autopilot completion notifications must distinguish a supervisor execution
+failure from a completed supervisor run rejected by a system acceptance gate.
+The latter must identify the acceptance failure and must not claim that the
+delegated work itself did not complete.
 
 Live operator configuration examples must stay synthetic. Maintained docs and
 source must not contain real operator home paths, GitHub accounts, active

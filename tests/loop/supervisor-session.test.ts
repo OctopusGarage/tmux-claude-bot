@@ -13,6 +13,7 @@ import {
   loopSupervisorDir,
   loopSupervisorSessionName,
   provisionLoopSupervisorHome,
+  staleLoopSupervisorSessions,
   startLoopSupervisor,
 } from "../../src/core/loop/supervisor-session.js";
 import { getPathBySession } from "../../src/core/projects/sessionPathMap.js";
@@ -25,6 +26,18 @@ afterEach(() => {
 });
 
 describe("loop supervisor session", () => {
+  it("identifies only supervisors without live work orders as stale", () => {
+    expect(
+      staleLoopSupervisorSessions(
+        ["supervisor-1", "supervisor-2", "supervisor-3"],
+        [
+          { supervisorSession: "supervisor-1", status: "completed" },
+          { supervisorSession: "supervisor-2", status: "in-flight" },
+        ],
+      ),
+    ).toEqual(["supervisor-1", "supervisor-3"]);
+  });
+
   it("uses a reserved project-family session name", () => {
     expect(loopSupervisorSessionName("tmux_proj_")).toBe("tmux_proj_loop-supervisor");
     expect(isLoopSupervisorSession("tmux_proj_loop-supervisor", "tmux_proj_")).toBe(true);

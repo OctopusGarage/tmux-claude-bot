@@ -138,7 +138,11 @@ export function countBotProcessRoots(psOutput: string): number {
       if (pid === undefined || ppid === undefined || command === undefined) return [];
       return [{ pid, ppid, command }];
     })
-    .filter((row) => /tmux-claude-bot.*(src\/index\.ts|dist\/cli\.js)/.test(row.command));
+    .filter(
+      (row) =>
+        /tmux-claude-bot.*(src\/index\.ts|dist\/cli\.js)/.test(row.command) &&
+        !/dist\/cli\.js\s+doctor(?:\s|$)/.test(row.command),
+    );
   const matchedPids = new Set(rows.map((row) => row.pid));
   return rows.filter((row) => !matchedPids.has(row.ppid)).length;
 }

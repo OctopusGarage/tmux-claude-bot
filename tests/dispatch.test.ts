@@ -526,7 +526,7 @@ describe("executeMessage — control actions", () => {
 
       const out = await executeMessage(msg("text", { text: "please continue", origin: "user" }), d);
 
-      expect(out).toBe("PANE");
+      expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
       expect(d.bridge.sendKeys).toHaveBeenCalled();
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -729,9 +729,8 @@ describe("executeMessage — text action with history", () => {
     expect(out).toBe("fallback keyed reply");
   });
 
-  it("handles a text action with undefined text (length defaults to 0, no history match)", async () => {
-    // msg.text undefined exercises `msg.text?.length ?? 0` in the entry log and a
-    // null sent-text lookup; falls back to the pane snapshot.
+  it("handles a text action with undefined text without returning raw pane output", async () => {
+    // msg.text undefined exercises the entry log and a null sent-text lookup.
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
@@ -742,32 +741,39 @@ describe("executeMessage — text action with history", () => {
     const noText = msg("text");
     delete (noText as { text?: string }).text;
     const out = await executeMessage(noText, d);
-    expect(out).toBe("PANE_FOR_UNDEF");
+    expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
   });
 
-  it("falls back to the processed tmux pane when no history reply matches", async () => {
-    // No history file → getLatestAssistantReply returns null → pane output is used.
+  it("does not return raw pane output to chat when no history reply matches", async () => {
+    // No history file -> getLatestAssistantReply returns null; ordinary chat should not
+    // receive a raw pane snapshot because it may contain Codex UI or stale transcript text.
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
-        waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE_SNAPSHOT" })),
+        waitUntilDone: vi.fn(async () => ({
+          done: true,
+          output: "MCP / CLI\n-> runtime\n› Use /skills to list available skills",
+        })),
       } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "no matching prompt here xyz" }), d);
-    expect(out).toBe("PANE_SNAPSHOT"); // output.process is identity in the fake
+    expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
   });
 
-  it("reports empty output when the pane processes to nothing", async () => {
+  it("allows system-owned text to use pane output when no history reply matches", async () => {
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
-        waitUntilDone: vi.fn(async () => ({ done: true, output: "   " })),
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "SYSTEM_PANE_RESULT" })),
       } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
-    const out = await executeMessage(msg("text", { text: "another unmatched prompt abc" }), d);
-    expect(out).toBe("返回空内容 · 用 /peek 查看画面");
+    const out = await executeMessage(
+      msg("text", { text: "supervisor unmatched prompt abc", origin: "system" }),
+      d,
+    );
+    expect(out).toBe("SYSTEM_PANE_RESULT");
   });
 
   it("waits for the agent input surface before sending text", async () => {
@@ -874,7 +880,7 @@ describe("executeMessage — text action with history", () => {
 
     const notices: string[] = [];
     const out = await executeMessage(
-      msg("text", { text: "long task xyz", notify: (t) => notices.push(t) }),
+      msg("text", { text: "long task xyz", origin: "system", notify: (t) => notices.push(t) }),
       d,
     );
 
@@ -935,11 +941,14 @@ describe("executeMessage — text action with history", () => {
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
 
-    const out = await executeMessage(msg("text", { text: "quiet long task xyz" }), d);
+    const out = await executeMessage(
+      msg("text", { text: "quiet long task xyz", origin: "system" }),
+      d,
+    );
     expect(out).toBe("DONE_LATE");
   });
 
-  it("falls back to capturePane when waitUntilDone throws", async () => {
+  it("does not return capturePane fallback to chat when waitUntilDone throws", async () => {
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
@@ -960,10 +969,10 @@ describe("executeMessage — text action with history", () => {
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "fallback pane test xyz" }), d);
-    expect(out).toBe("PANE_FALLBACK");
+    expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
   });
 
-  it("falls back to capturePane when waitUntilDone throws a non-Error value", async () => {
+  it("does not return capturePane fallback to chat when waitUntilDone throws a non-Error value", async () => {
     // Throwing a string (not an Error) exercises the `: err` branch of the
     // error-logging ternary; capturePane still salvages the pane.
     const d = liveFakeDeps({
@@ -986,7 +995,7 @@ describe("executeMessage — text action with history", () => {
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "non error throw xyz" }), d);
-    expect(out).toBe("PANE_AFTER_STRING_THROW");
+    expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
   });
 
   it("rethrows a normalized error when both waitUntilDone and capturePane throw non-Errors", async () => {

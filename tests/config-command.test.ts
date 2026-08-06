@@ -98,6 +98,7 @@ describe("config and automation commands", () => {
       [
         "LOOP_ENGINEERING_CONFIG_FILE=/tmp/loop.yml",
         "LOOP_ENGINEERING_TICK_MS=12345",
+        "LOOP_SUPERVISOR_ENABLED=false",
         "TASK_AUDIT_ENABLED=true",
         "TASK_AUDIT_TICK_MS=23456",
         "RUNTIME_GUARDIAN_ENABLED=false",
@@ -110,7 +111,12 @@ describe("config and automation commands", () => {
     const status = runAutomationCommand(["status", "--json"]);
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(stdoutOf(status))).toEqual([
-      expect.objectContaining({ id: "loop", enabled: true, tickMs: 12345 }),
+      expect.objectContaining({
+        id: "loop",
+        enabled: true,
+        tickMs: 12345,
+        dependencies: { LOOP_SUPERVISOR_ENABLED: false },
+      }),
       expect.objectContaining({ id: "task-audit", enabled: true, tickMs: 23456 }),
       expect.objectContaining({ id: "runtime-guardian", enabled: false, tickMs: 34567 }),
       expect.objectContaining({ id: "batch", enabled: true, tickMs: 45678 }),
@@ -133,6 +139,22 @@ describe("config and automation commands", () => {
       changed: true,
     });
     expect(readFileSync(join(dir, ".env"), "utf8")).toContain("LOOP_ENGINEERING_TICK_MS=12345");
+  });
+
+  it("allows the Loop supervisor dependency to be changed through config commands", async () => {
+    const dir = join(tmpdir(), `tcb-supervisor-config-test-${Date.now()}`);
+    process.env.TCB_STATE_DIR = dir;
+    writeEnv(dir, "LOOP_SUPERVISOR_ENABLED=false\n");
+    const { runConfigCommand } = await import("../src/core/config/command.js");
+
+    const supervisor = runConfigCommand(["set", "LOOP_SUPERVISOR_ENABLED", "true", "--json"]);
+    expect(supervisor.exitCode).toBe(0);
+    expect(JSON.parse(stdoutOf(supervisor))).toMatchObject({
+      key: "LOOP_SUPERVISOR_ENABLED",
+      value: "true",
+      changed: true,
+    });
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("LOOP_SUPERVISOR_ENABLED=true");
   });
 
   it("handles automation text output, disabled targets, unknown targets, and enable flags", async () => {

@@ -2,12 +2,7 @@ import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { MessageAction } from "../../core/command/actions.js";
 import { executeMessage } from "../../core/command/dispatch.js";
 import { enqueueMessage, planQueuedAck } from "../../core/command/enqueue.js";
-import {
-  type PersistedMessage,
-  QueueCancelledError,
-  type QueuedMessage,
-} from "../../core/command/queue.js";
-import { restoreMessage } from "../../core/command/restore.js";
+import { QueueCancelledError, type QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
@@ -34,44 +29,6 @@ const log = createLogger("lark.executor");
  * project session received it — mirrors the Telegram adapter's project line. */
 function projectTag(session: string): string {
   return messages("lark").projectTag(labelForSession(session));
-}
-
-/**
- * Rehydrate a persisted Lark-channel message into a live QueuedMessage on boot,
- * so a bot restart resumes the backlog instead of dropping it (parity with
- * Telegram's createRestoredMessage). resolve/reject deliver the result through
- * the freshly-connected Lark channel, the same way enqueueLarkAction does.
- */
-export function createLarkRestoredMessage(
-  p: PersistedMessage,
-  channel: LarkChannel,
-): QueuedMessage {
-  const chatId = String(p.chatId);
-  const session = p.sessionName ?? "";
-  return restoreMessage(
-    p,
-    "lark",
-    (output) => {
-      void (async () => {
-        const mid = await sendCard(
-          channel,
-          chatId,
-          resultCard(output, projectTag(session), isProjectGroup(chatId)),
-        );
-        if (mid) recordReplyTarget(mid, session);
-      })();
-    },
-    (err) => {
-      void sendCard(
-        channel,
-        chatId,
-        recoveryCard(
-          `${messages("lark").errorPrefix(err.message)}\n${projectTag(session)}`,
-          isProjectGroup(chatId),
-        ),
-      );
-    },
-  );
 }
 
 export async function resolveSession(

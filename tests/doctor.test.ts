@@ -345,6 +345,16 @@ describe("countBotProcessRoots", () => {
       `),
     ).toBe(2);
   });
+
+  it("ignores the installed doctor CLI process itself", () => {
+    expect(
+      countBotProcessRoots(`
+        15005 32940 node /repo/tmux-claude-bot/node_modules/.bin/tsx src/index.ts
+        15006 15005 node --import /repo/tmux-claude-bot/node_modules/tsx/dist/loader.mjs src/index.ts
+        21000 1 node /Users/me/.tmux-claude-bot/dist/cli.js doctor
+      `),
+    ).toBe(1);
+  });
 });
 
 describe("renderDoctorReport", () => {

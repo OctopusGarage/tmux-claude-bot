@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_CONTEXT_DELEGATE_REQUIREMENT } from "../../src/core/autopilot/delegated-task.js";
 import { type LoopProjectConfig, parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import {
   buildActiveDelegatedTaskWorkOrder,
@@ -12,6 +13,7 @@ import {
   finalMarkerForWorkOrder,
   parseSupervisorFinalSummary,
   parseSupervisorFinalSummaryFile,
+  withLoopExecutionWorktree,
 } from "../../src/core/loop/work-order.js";
 import type { OpportunityCategory } from "../../src/core/opportunities/types.js";
 import {
@@ -375,7 +377,7 @@ describe("loop supervisor work order", () => {
       projectName: "Datavibe",
       projectPath: "/repo/datavibe",
       agent: "codex",
-      requirement: "Implement the accepted opportunity.",
+      requirement: DEFAULT_CONTEXT_DELEGATE_REQUIREMENT,
       scheduledAt: 1752643800000,
       runId: "1752643800000-datavibe-active-delegate",
       projectPolicy,
@@ -411,9 +413,45 @@ describe("loop supervisor work order", () => {
     );
     expect(prompt).toContain("open or update one PR against dev");
     expect(prompt).toContain("allow auto-merge with --squash only after all gates pass");
-    expect(prompt).toContain("switch the local worktree back to dev");
+    expect(prompt).toContain(
+      "In isolated execution, leave the worker on the WorkOrder branch: never checkout or rebase the shared base/switch-back branch",
+    );
+    expect(prompt).not.toContain("then switch the local worktree back to the configured branch");
     expect(prompt).toContain("GH_TOKEN=\"$(gh auth token --user 'example-owner')\"");
     expect(prompt).not.toContain("must preserve the user's current branch by default");
+  });
+
+  it("keeps isolated workers off the shared switch-back branch", () => {
+    const workOrder = buildActiveDelegatedTaskWorkOrder({
+      session: "tmux_proj_datavibe",
+      projectId: "datavibe",
+      projectName: "Datavibe",
+      projectPath: "/repo/datavibe",
+      agent: "codex",
+      requirement: "Implement the accepted opportunity.",
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe-active-delegate",
+      projectPolicy: {
+        ...firstProject(),
+        commit: { enabled: true, perRound: false, branch: "loop/datavibe/active-delegate" },
+        pullRequest: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+      },
+    });
+
+    const prompt = buildLoopSupervisorPrompt(
+      withLoopExecutionWorktree(workOrder, "/state/loop-worktree/datavibe/run"),
+    );
+
+    expect(prompt).toContain(
+      "Never checkout, rebase, or merge the configured base or switch-back branch from this isolated worktree",
+    );
+    expect(prompt).toContain("the bot system owns source branch switch-back after acceptance");
   });
 
   it("keeps non-dependency preflight for explicit read-only smoke active delegations", () => {
@@ -1697,6 +1735,49 @@ prReview:
         documentationCandidates: ["Document checkout verification command."],
       });
     }
+  });
+
+  it("normalizes a single review evidence string from older supervisor summaries", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "completed",
+          projectId: "datavibe",
+          actionsTaken: ["verified"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["confirmed bounded task"],
+            postMutationReview: ["reviewed final state"],
+            aiReview: "passed",
+            deterministicGates: ["npm test"],
+            decision: "pass",
+            notes: [],
+            evidence: [
+              {
+                questionInvestigated: "Was the historical failure reproducible?",
+                conclusion: "The failure was environment-only.",
+                evidence: "npm ci restored the missing local toolchain.",
+                uncertainty: "The original lease failure was not reproducible.",
+                recommendedNextStep: "Monitor the next worker lease.",
+              },
+            ],
+          },
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: {
+        reviewGate: { evidence: [{ evidence: ["npm ci restored the missing local toolchain."] }] },
+      },
+    });
   });
 
   it("parses structured plan review from supervisor summaries", () => {

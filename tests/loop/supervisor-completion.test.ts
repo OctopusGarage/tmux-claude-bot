@@ -62,6 +62,19 @@ describe("completeLoopSupervisorRun", () => {
     });
   });
 
+  it("classifies a worker that never consumes a queued prompt as retryable delivery", () => {
+    expect(
+      classifyLoopSupervisorScheduleRetry({
+        status: "dispatch-failed",
+        reason: "loop supervisor worker did not consume queued task before deadline",
+        output: "loop supervisor worker did not consume queued task before deadline",
+      }),
+    ).toEqual({
+      retrySchedule: true,
+      kind: "supervisor-dispatch-unavailable",
+    });
+  });
+
   it("classifies model-capacity dispatch failures as retryable agent transient failures", () => {
     const retry = classifyLoopSupervisorScheduleRetry({
       status: "dispatch-failed",

@@ -365,6 +365,12 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         return historyReply;
       }
 
+      if (msg.origin !== "system") {
+        log.warn(`no history reply; suppressing pane output session=${session}`, {
+          data: { rawLen: rawResult.length, channel: msg.channel },
+        });
+        return m.agentReplyUnavailable;
+      }
       log.info(
         `no history reply, using pane output session=${session} raw_len=${rawResult.length}`,
       );

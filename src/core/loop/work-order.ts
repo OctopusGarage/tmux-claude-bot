@@ -650,7 +650,7 @@ function finalSummaryContractLines(): string[] {
     "- The JSON file may contain learning with fields: regressionCandidates, capabilityEvalCandidates, monitorOrTraceCandidates, documentationCandidates. learning must classify follow-up candidates without making capability evals blocking acceptance gates.",
     "- If the WorkOrder has planning, include planReview with fields: checklistCompleted, targetScoreMet, stopConditionReached, overOptimizationAvoided, verificationCompleted, remainingRisks.",
     "- reviewGate must be an object with fields: preMutationReview, postMutationReview, aiReview, deterministicGates, decision, notes.",
-    "- reviewGate.evidence is optional but required for complex, UI/product-experience, PR-review, security, workspace, harness-auto, or long delegated tasks. Each entry must contain questionInvestigated, conclusion, evidence, uncertainty, recommendedNextStep. Store only synthesized conclusions, not raw subagent transcripts.",
+    "- reviewGate.evidence is optional but required for complex, UI/product-experience, PR-review, security, workspace, harness-auto, or long delegated tasks. Each entry must contain questionInvestigated, conclusion, evidence (a string array; a single string is normalized for compatibility), uncertainty, recommendedNextStep. Store only synthesized conclusions, not raw subagent transcripts.",
     "- reviewGate.preMutationReview must list the evidence checked before editing, including why the issue or task is real, bounded, allowed, and verifiable; use [] only for read-only/no-op tasks and explain that in notes.",
     "- reviewGate.postMutationReview must list the diff/risk review performed after editing; include regression, security, data, scheduler/state, notification, PR/merge, and switch-back risks when relevant.",
     '- reviewGate.aiReview must be one of "passed", "failed", "not-run", or "not-applicable". It means review through the existing Claude Code / Codex control surface only; do not call model-provider APIs.',
@@ -696,6 +696,7 @@ function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
         : [
             `- Original project worktree: ${isolation.sourceWorktree}. Do not edit, switch branches, pull, merge, rebase, or commit in this original worktree while executing the WorkOrder; it is reserved for the user's normal session.`,
             "- The worker must use the expected isolated worktree for all assessment, edits, commits, PR inspection, and verification unless a command is explicitly checking that the original worktree stayed clean and on its configured branch.",
+            "- In isolated execution, leave the worker on the WorkOrder branch. Never checkout, rebase, or merge the configured base or switch-back branch from this isolated worktree; the bot system owns source branch switch-back after acceptance.",
           ];
   return [
     "Execution isolation:",
@@ -754,6 +755,10 @@ function harnessAutoTask(input: {
   const bugFix = bugFixTask(input.bugFix);
   const testCoverage = testCoverageTask(input.testCoverage);
   const securityMaintenance = securityMaintenanceTask(input.securityMaintenance);
+  const securityRiskAssessment = input.securityMaintenance.riskAssessment ?? {
+    actionThreshold: 70,
+    criticalThreshold: 90,
+  };
   const tasks = [
     {
       kind: "bug-fix" as const,
@@ -770,6 +775,8 @@ function harnessAutoTask(input: {
       enabled: securityConfig.enabled,
       weight: securityConfig.weight,
       maxRounds: securityMaintenance.maxRounds,
+      actionThreshold: securityRiskAssessment.actionThreshold,
+      criticalThreshold: securityRiskAssessment.criticalThreshold,
       allowDependencyUpdates: securityMaintenance.allowDependencyUpdates,
       allowConfigHardening: securityMaintenance.allowConfigHardening,
       allowStaticAnalysisFixes: securityMaintenance.allowStaticAnalysisFixes,
@@ -853,9 +860,15 @@ function testCoverageTask(
 function securityMaintenanceTask(
   policy: LoopProjectConfig["securityMaintenance"],
 ): Extract<LoopWorkOrder["task"], { kind: "security-maintenance" }> {
+  const riskAssessment = policy.riskAssessment ?? {
+    actionThreshold: 70,
+    criticalThreshold: 90,
+  };
   return {
     kind: "security-maintenance",
     maxRounds: policy.maxRounds,
+    actionThreshold: riskAssessment.actionThreshold,
+    criticalThreshold: riskAssessment.criticalThreshold,
     allowDependencyUpdates: policy.allowDependencyUpdates,
     allowConfigHardening: policy.allowConfigHardening,
     allowStaticAnalysisFixes: policy.allowStaticAnalysisFixes,

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath, loopRunDir, loopRunsRoot } from "./artifacts.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
+import { readLoopSupervisorWorkerLeaseState } from "./supervisor-pool.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
 export type LoopSupervisorWorkOrderStateStatus =
@@ -42,6 +43,7 @@ const RECOVERABLE_FAILED_RESULTS = new Set<LoopSupervisedRunResult["status"]>([
   "dispatch-timeout",
   "invalid-output",
 ]);
+export const STALE_DISPATCHING_WORK_ORDER_MS = 5 * 60 * 1000;
 const STALE_UNFINISHED_RESERVATION_MS = 12 * 60 * 60 * 1000;
 const INVALID_FINAL_SUMMARY_GRACE_MS = 5 * 60 * 1000;
 
@@ -201,6 +203,24 @@ export function listAbandonedLoopSupervisorWorkOrders(): UnfinishedLoopSuperviso
     (state, workOrder) =>
       !TERMINAL_STATES.has(state.status) &&
       !unfinishedWorkOrderCanStillProgress(state, workOrder, Date.now()),
+  );
+}
+
+export function listStaleDispatchingLoopSupervisorWorkOrders(
+  now = Date.now(),
+): UnfinishedLoopSupervisorWorkOrder[] {
+  const activeLeaseIds = new Set(
+    readLoopSupervisorWorkerLeaseState()
+      .leases.filter((lease) => lease.status === "active")
+      .map((lease) => lease.workOrderId),
+  );
+  return listLoopSupervisorWorkOrders(
+    (state, workOrder) =>
+      state.status === "dispatching" &&
+      !activeLeaseIds.has(workOrder.id) &&
+      !hasFinalSummaryFileForState(state) &&
+      now - state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS &&
+      now - state.updatedAt <= STALE_UNFINISHED_RESERVATION_MS,
   );
 }
 

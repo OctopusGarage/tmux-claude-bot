@@ -68,6 +68,9 @@ descriptions is in [docs/commands.md](commands.md)**; this is the orientation.
   `/prompt_translate status|off|on [from] [to]` in Telegram/Feishu, or
   `tcb prompt-translate status|off|on [from] [to]` for local control input.
 - Replies show the agent's output; long output is paged.
+- Chat prompts are not replayed after a bot restart. If the service restarts
+  while a prompt is in flight, inspect the session with `/peek` and resend only
+  if needed.
 
 ### The control panel (buttons)
 Every reply carries a control panel (Telegram inline keyboard / Feishu card):
@@ -83,7 +86,8 @@ Lifecycle buttons that can interrupt work or reset context (`restart`, `clear`,
 - **Session**: `/start` `/resume` `/status` `/peek [N]` `/history [N]` `/inputs [N]`
   (recent inputs — tap one to re-run) `/restart` `/clear` `/compact` `/exit`.
 - **Projects**: create / switch / remove projects; `/recover` to relaunch agents that
-  were running before a reboot.
+  were running before a reboot. Automatic boot recovery is narrower: it resumes only
+  projects with an unfinished bot-dispatched prompt, so idle project sessions stay idle.
 - **Feishu project groups**: bind a Feishu group to one project so you switch projects
   by switching groups (no `/cd`); works without `@bot`.
 - **Settings**: `/lang` (UI language), `/voice_lang`, `/prompt_translate`, status-line install, `/prompts` (browse saved prompts). Telegram and Feishu both surface the voice and translation pickers from the settings controls.
@@ -216,7 +220,17 @@ and app secrets, and `tcb config set <key> <value>` only accepts allowlisted
 non-secret keys. Use `tcb setup --reconfigure` or `tcb setup:lark` for Telegram
 tokens, Feishu/Lark app credentials, and owner identifiers.
 
+When Loop targets use `runner.kind: agent-supervised`, enable their shared
+supervisor through the command surface:
+
+```bash
+tcb config set LOOP_SUPERVISOR_ENABLED true
+```
+
 Use `tcb automation status` to see the expensive background loops at a glance.
+The Loop row also reports the `LOOP_SUPERVISOR_ENABLED` dependency; a disabled
+dependency means agent-supervised Loop work and Runtime Guardian repair cannot
+run reliably even when the Loop tick itself is enabled.
 `tcb automation pause loop` sets `LOOP_ENGINEERING_TICK_MS=0` and records the
 previous cadence in state; `tcb automation resume loop` restores it. The same
 pattern works for `task-audit`, `runtime-guardian`, and `batch`.
@@ -328,10 +342,12 @@ Open the inline control panel and use one of the Autopilot buttons:
 conditions, non-goals, risks, and verification plan with a **Confirm
 delegation** button. Once confirmed, the command returns a run id immediately;
 final status is written under `loop-runs/...` and sent through the configured
-Telegram/Feishu notification route. If no supervisor session is available, the
-blocked reply includes a supervisor queue view so the owner can see active
-WorkOrders; Lark queue cards can cancel active-delegated tasks, but do not expose
-cancellation for scheduled system WorkOrders.
+Telegram/Feishu notification route. If no supervisor session is available because
+all Supervisor sessions are occupied, the blocked reply includes a supervisor
+queue view so the owner can see active WorkOrders. Other blocks, including
+worktree preparation failures, do not report a queue result. Lark queue cards can
+cancel active-delegated tasks, but do not expose cancellation for scheduled
+system WorkOrders.
 
 ### Terminal TUI controls
 
@@ -870,6 +886,11 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
   - or close the terminal window and open a new one. Current bot versions reset the
     orphan's terminal automatically during takeover, so this only affects sessions
     adopted before the fix.
+- **`tcb adopt` says the agent did not start** → inspect the managed pane with
+  `/peek` or `tcb peek <session>`. New managed sessions disable oh-my-zsh automatic
+  update prompts so shell startup should not swallow the pasted `claude`/`codex`
+  command; if the pane still shows a shell prompt or command error, fix that shell
+  prompt/start command and retry the adoption.
 
 ---
 

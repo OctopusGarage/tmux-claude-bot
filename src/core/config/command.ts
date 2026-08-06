@@ -23,6 +23,7 @@ type AutomationSpec = {
   tickKey: string;
   defaultTickMs: string;
   configuredKey?: string;
+  dependencyKeys?: string[];
 };
 
 type AutomationStatus = {
@@ -32,6 +33,7 @@ type AutomationStatus = {
   configured: boolean;
   tickMs: number;
   keys: string[];
+  dependencies?: Record<string, boolean>;
 };
 
 const SECRET_KEY_PATTERN = /(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE|WEBHOOK)/i;
@@ -59,6 +61,7 @@ const CONFIG_SETTABLE_KEYS = new Set([
   "AUTO_RECOVER",
   "LOOP_ENGINEERING_CONFIG_FILE",
   "LOOP_ENGINEERING_TICK_MS",
+  "LOOP_SUPERVISOR_ENABLED",
   "TASK_AUDIT_ENABLED",
   "TASK_AUDIT_TICK_MS",
   "RUNTIME_GUARDIAN_ENABLED",
@@ -73,6 +76,7 @@ const AUTOMATIONS: AutomationSpec[] = [
     tickKey: "LOOP_ENGINEERING_TICK_MS",
     defaultTickMs: "300000",
     configuredKey: "LOOP_ENGINEERING_CONFIG_FILE",
+    dependencyKeys: ["LOOP_SUPERVISOR_ENABLED"],
   },
   {
     id: "task-audit",
@@ -245,6 +249,13 @@ function automationStatusFor(spec: AutomationSpec, env: Map<string, string>): Au
     keys: [spec.tickKey, spec.enableKey, spec.configuredKey].filter(
       (candidate): candidate is string => candidate !== undefined,
     ),
+    ...(spec.dependencyKeys === undefined
+      ? {}
+      : {
+          dependencies: Object.fromEntries(
+            spec.dependencyKeys.map((key) => [key, boolEnabled(env.get(key))]),
+          ),
+        }),
   };
 }
 
@@ -276,7 +287,13 @@ function renderAutomationStatus(statuses: AutomationStatus[]): string {
     `automation: ${statuses.length} target${statuses.length === 1 ? "" : "s"}`,
     ...statuses.map(
       (status) =>
-        `- ${status.id}: ${status.enabled ? "enabled" : "disabled"} tickMs=${status.tickMs} configured=${status.configured}`,
+        `- ${status.id}: ${status.enabled ? "enabled" : "disabled"} tickMs=${status.tickMs} configured=${status.configured}${
+          status.dependencies === undefined
+            ? ""
+            : ` dependencies=${Object.entries(status.dependencies)
+                .map(([key, enabled]) => `${key}:${enabled ? "enabled" : "disabled"}`)
+                .join(",")}`
+        }`,
     ),
   ].join("\n");
 }

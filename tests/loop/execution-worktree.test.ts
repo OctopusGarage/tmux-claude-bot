@@ -2,7 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { prepareLoopExecutionWorktrees } from "../../src/core/loop/execution-worktree.js";
+import {
+  cleanupLoopExecutionWorktree,
+  prepareLoopExecutionWorktrees,
+} from "../../src/core/loop/execution-worktree.js";
 import type { LoopGitInvocation, LoopRunCommandResult } from "../../src/core/loop/run.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
@@ -71,6 +74,85 @@ function workOrder(
   };
 }
 
+describe("loop execution worktrees", () => {
+  it("removes only an expired bot-owned isolated worktree", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const worktree = join(stateDir, "loop-worktrees", "hub", "failed-run");
+    mkdirSync(worktree, { recursive: true });
+    const calls: string[] = [];
+
+    const removed = cleanupLoopExecutionWorktree({
+      worktree,
+      runGit: (invocation) => {
+        calls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
+        if (invocation.args[0] === "rev-parse") {
+          return { status: 0, stdout: `${worktree}\n`, stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(removed).toBe(true);
+    expect(calls).toEqual([
+      `${worktree}:rev-parse --show-toplevel`,
+      `${worktree}:worktree remove --force ${worktree}`,
+    ]);
+  });
+
+  it("refuses source and outside paths before invoking destructive git commands", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const runGit = () => {
+      throw new Error("destructive git command must not run");
+    };
+
+    expect(cleanupLoopExecutionWorktree({ worktree: join(stateDir, "source"), runGit })).toBe(
+      false,
+    );
+    expect(
+      cleanupLoopExecutionWorktree({ worktree: join(stateDir, "other", "repo"), runGit }),
+    ).toBe(false);
+  });
+
+  it("treats an already removed bot worktree as cleaned", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree: join(stateDir, "loop-worktrees", "hub", "already-removed"),
+        runGit: () => {
+          throw new Error("git must not run for a missing worktree");
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the lease eligible for retry when git validation or removal fails", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const worktree = join(stateDir, "loop-worktrees", "hub", "failed-cleanup");
+    mkdirSync(worktree, { recursive: true });
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        runGit: () => ({ status: 1, stdout: "", stderr: "not a worktree" }),
+      }),
+    ).toBe(false);
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        runGit: (invocation) =>
+          invocation.args[0] === "rev-parse"
+            ? { status: 0, stdout: `${worktree}\n`, stderr: "" }
+            : { status: 1, stdout: "", stderr: "busy" },
+      }),
+    ).toBe(false);
+  });
+});
+
 function gitStub(
   sourceRoot: string,
   calls: LoopGitInvocation[],
@@ -102,6 +184,26 @@ function gitStub(
         return { status: 1, stdout: "", stderr: "worktree add failed" };
       return { status: 0, stdout: "", stderr: "" };
     }
+    return { status: 0, stdout: "", stderr: "" };
+  };
+}
+
+function gitStubWithUnavailableRemote(sourceRoot: string, calls: LoopGitInvocation[]) {
+  return (invocation: LoopGitInvocation): LoopRunCommandResult => {
+    calls.push(invocation);
+    const command = invocation.args.join(" ");
+    if (command === "rev-parse --show-toplevel") {
+      return { status: 0, stdout: `${sourceRoot}\n`, stderr: "" };
+    }
+    if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+    if (command === "fetch origin main") {
+      return { status: 1, stdout: "", stderr: "Connection closed by remote host" };
+    }
+    if (command === "rev-parse --verify refs/heads/main") {
+      return { status: 0, stdout: "local-commit\n", stderr: "" };
+    }
+    if (command === "switch main") return { status: 0, stdout: "", stderr: "" };
+    if (command === "worktree add --detach") return { status: 0, stdout: "", stderr: "" };
     return { status: 0, stdout: "", stderr: "" };
   };
 }
@@ -172,6 +274,23 @@ describe("prepareLoopExecutionWorktrees", () => {
     expect(calls.map((call) => call.args.slice(0, 3).join(" "))).toContain("worktree add --detach");
   });
 
+  it("uses a verified local branch when remote fetch is unavailable", () => {
+    const repo = makeRepo();
+    const calls: LoopGitInvocation[] = [];
+
+    const prepared = prepareLoopExecutionWorktrees({
+      workOrder: workOrder(repo),
+      runGit: gitStubWithUnavailableRemote(repo, calls),
+      defaultMode: "isolated",
+    });
+
+    expect(prepared.projectPath).toContain("loop-worktrees/repo/run-1");
+    expect(calls.map((call) => call.args.join(" "))).toContain(
+      "rev-parse --verify refs/heads/main",
+    );
+    expect(calls.map((call) => call.args.join(" "))).not.toContain("pull --rebase origin main");
+  });
+
   it("reports an isolation preparation failure instead of silently using the source tree", () => {
     const repo = makeRepo();
     const calls: LoopGitInvocation[] = [];
@@ -190,6 +309,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         repositoryId: "repo",
         sourceWorktree: repo,
         reason: "isolated execution worktree could not be prepared",
+        detail: "worktree add failed",
       },
     ]);
   });
@@ -213,6 +333,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         repositoryId: "repo",
         sourceWorktree: repo,
         reason: "isolated execution worktree could not be prepared",
+        detail: "source worktree is dirty: M src/index.ts",
       },
     ]);
   });
@@ -237,6 +358,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         repositoryId: "repo",
         sourceWorktree: repo,
         reason: "isolated execution worktree could not be prepared",
+        detail: "cannot rebase: local divergence",
       },
     ]);
   });

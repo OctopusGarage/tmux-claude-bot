@@ -64,4 +64,43 @@ describe("final summary recovery", () => {
       recoverInvalidOutputFromFinalSummary(workOrder("/tmp/missing-summary.json"), original),
     ).toBe(original);
   });
+
+  it("recovers a completed summary with an itemized plan checklist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["completed the bounded recovery"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+        planReview: {
+          checklistCompleted: ["validated isolation", "ran deterministic gates"],
+          targetScoreMet: true,
+          stopConditionReached: false,
+          overOptimizationAvoided: true,
+          verificationCompleted: true,
+          remainingRisks: [],
+        },
+      })}\n`,
+    );
+
+    const recovered = recoverInvalidOutputFromFinalSummary(
+      { ...workOrder(summaryPath), planning: { required: true } } as LoopWorkOrder,
+      {
+        status: "invalid-output",
+        reason: "invalid-summary",
+        output: "summary was written but terminal output was invalid",
+      },
+    );
+
+    expect(recovered).toMatchObject({
+      status: "completed",
+      summary: { planReview: { checklistCompleted: true } },
+    });
+  });
 });

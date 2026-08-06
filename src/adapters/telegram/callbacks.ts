@@ -186,7 +186,7 @@ export async function handleCallbackQuery(
             session,
             body: formatActiveDelegateStart(result),
             replyTarget,
-            ...(result.status === "blocked"
+            ...(result.status === "blocked" && result.showQueue
               ? { replyMarkup: buildAutopilotQueueKeyboard(parsed.sid) }
               : {}),
           },

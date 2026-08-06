@@ -47,16 +47,19 @@ import {
 import { markImplementedOpportunitiesForCompletedDelegation } from "../opportunities/delegation-completion.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
+import { DailyTaskLedger } from "../tasks/task-ledger.js";
 
 const log = createLogger("autopilot.delegated-task");
 const DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS = 7_200_000;
+const WORKER_STARTUP_GRACE_MS = 2 * 60_000;
+const WORKER_STARTUP_PROBE_MS = 1_000;
 const DEFAULT_REVISION_MAX_ATTEMPTS = 3;
 export const DEFAULT_CONTEXT_DELEGATE_REQUIREMENT = [
   "Continue the current user-confirmed task from the target session context and repository state until it is genuinely complete.",
   "First inspect the live session, git status, recent commits, existing PRs, and any prior verification output to determine what remains.",
   "Do not expand scope or add unrelated features. If existing local changes or commits already satisfy part of the work, review them instead of redoing them.",
   "Before changing code, verify any suspected issue is real and actionable. After changing code, review the diff for regressions and run the relevant local verification, tests, coverage review for touched risk paths, and existing deterministic or agent-backed evals when justified.",
-  "If the matched project policy enables PRs, create or update one coherent PR against the configured base, write a clear PR body, wait for required CI and mergeability gates, auto-merge only when configured and all gates pass, then switch the local worktree back to the configured branch and rebase it onto origin.",
+  "If the matched project policy enables PRs, create or update one coherent PR against the configured base, write a clear PR body, wait for required CI and mergeability gates, and auto-merge only when configured and all gates pass. In isolated execution, leave the worker on the WorkOrder branch: never checkout or rebase the shared base/switch-back branch and never mutate the original source worktree; the bot system owns source switch-back after acceptance.",
   "Keep logs and final summary precise: what was inspected, what changed, what was verified, PR or merge result, final branch, final worktree cleanliness, and any real blocker with evidence.",
 ].join(" ");
 
@@ -68,7 +71,31 @@ export type ActiveDelegatedTaskStartResult =
       supervisorSession: string;
       reportDir: string | null;
     }
-  | { status: "blocked"; reason: string };
+  | { status: "blocked"; reason: string; showQueue: boolean };
+
+export type ActiveDelegateCompletionNotification = {
+  level: "warning" | "error";
+  title: string;
+  summary: string;
+};
+
+export function formatActiveDelegateCompletion(input: {
+  resultStatus: string;
+  gateFailures: readonly string[];
+}): ActiveDelegateCompletionNotification {
+  if (input.resultStatus === "supervisor-failed" && input.gateFailures.length > 0) {
+    return {
+      level: "warning",
+      title: "Delegated task completed; system acceptance failed",
+      summary: `Supervisor completed the delegated task, but the system acceptance gate failed: ${input.gateFailures.join("; ")}.`,
+    };
+  }
+  return {
+    level: "error",
+    title: `Delegated task ${input.resultStatus}`,
+    summary: "Active delegated task did not complete successfully.",
+  };
+}
 
 export type ActiveDelegatedTaskCancelResult =
   | {
@@ -96,6 +123,7 @@ type ActiveDelegatedTaskController = {
 };
 
 const activeDelegatedTasks = new Map<string, ActiveDelegatedTaskController>();
+const startingActiveDelegationProjects = new Set<string>();
 
 export function parseDelegateRequirement(arg: string): string | null {
   const trimmed = arg.trim();
@@ -252,6 +280,7 @@ export async function startActiveDelegatedTask(
     return {
       status: "blocked",
       reason: "loop supervisor is disabled; set LOOP_SUPERVISOR_ENABLED=true",
+      showQueue: false,
     };
   }
 
@@ -260,124 +289,344 @@ export async function startActiveDelegatedTask(
     return {
       status: "blocked",
       reason: `no project path is recorded for session "${input.session}"`,
+      showQueue: false,
     };
   }
 
-  const conflict = findProjectAutomationConflict(projectPath);
-  if (conflict !== null) {
+  const reservationKey = resolve(projectPath);
+  if (startingActiveDelegationProjects.has(reservationKey)) {
     return {
       status: "blocked",
-      reason: `project already has active automation: ${conflict.taskKind} ${conflict.runId} (${conflict.status})`,
+      reason: "project already has active automation: active delegated task is being started",
+      showQueue: true,
     };
   }
+  startingActiveDelegationProjects.add(reservationKey);
 
-  const reserved = listReservedLoopSupervisorWorkOrders();
-  const candidates = selectSupervisorSessionCandidates(deps, reserved);
-  if (candidates.length === 0) {
-    return { status: "blocked", reason: "all loop supervisor sessions have active work" };
-  }
-  const agent =
-    (await deps.configResolver.detectAgentKind?.(input.session).catch(() => null)) ??
-    deps.config.loopEngineering.supervisor.agent;
-  const now = Date.now();
-  const projectId = projectIdForSession(input.session, projectPath);
-  const runId = `${now}-${projectId}-active-delegate`;
-  const projectPolicy = findLoopProjectPolicy(deps, projectPath);
-  let workOrder = buildActiveDelegatedTaskWorkOrder({
-    session: input.session,
-    projectId,
-    projectName: basename(projectPath) || projectId,
-    projectPath,
-    agent,
-    requirement: input.requirement,
-    ...(input.opportunityIds !== undefined ? { opportunityIds: input.opportunityIds } : {}),
-    scheduledAt: now,
-    runId,
-    timeoutMs: DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS,
-    projectSessionPrefix: deps.config.projectSessionPrefix,
-    ...(projectPolicy !== null ? { projectPolicy } : {}),
-  });
-  const preparationFailures: string[] = [];
-  workOrder = prepareLoopExecutionWorktrees({
-    workOrder,
-    runGit: runGitCommand,
-    defaultMode:
-      input.worktreeIsolation ?? deps.config.loopEngineering.supervisor.worktreeIsolation,
-    onPreparationFailure: (failure) => {
-      preparationFailures.push(
-        `${failure.repositoryId}: ${failure.reason} (${failure.sourceWorktree})`,
-      );
-    },
-  });
-  if (preparationFailures.length > 0) {
-    return {
-      status: "blocked",
-      reason: `execution worktree isolation failed: ${preparationFailures.join("; ")}`,
-    };
-  }
-  const supervisorSession = await reserveFirstAvailableSupervisor(deps, candidates, workOrder, now);
-  if (supervisorSession === null) {
-    return {
-      status: "blocked",
-      reason: `failed to reserve loop supervisor sessions: ${candidates.join(", ")}`,
-    };
-  }
+  try {
+    const conflict = findProjectAutomationConflict(projectPath);
+    if (conflict !== null) {
+      return {
+        status: "blocked",
+        reason: `project already has active automation: ${conflict.taskKind} ${conflict.runId} (${conflict.status})`,
+        showQueue: false,
+      };
+    }
 
-  writeLoopSupervisorWorkOrderState({
-    workOrder,
-    supervisorSession,
-    status: "dispatching",
-    now,
-  });
-  log.info("active delegated task queued", {
-    data: {
+    const reserved = listReservedLoopSupervisorWorkOrders();
+    const allSupervisorSessions = loopSupervisorSessionNames(
+      deps.config.projectSessionPrefix,
+      deps.config.loopEngineering.supervisor.poolSize,
+    );
+    const candidates = selectSupervisorSessionCandidates(deps, reserved);
+    const queueCandidates = candidates.length > 0 ? candidates : allSupervisorSessions;
+    if (candidates.length === 0) {
+      if (queueCandidates.length === 0) {
+        return {
+          status: "blocked",
+          reason: "no loop supervisor sessions are configured",
+          showQueue: true,
+        };
+      }
+    }
+    const agent =
+      (await deps.configResolver.detectAgentKind?.(input.session).catch(() => null)) ??
+      deps.config.loopEngineering.supervisor.agent;
+    const now = Date.now();
+    const projectId = projectIdForSession(input.session, projectPath);
+    const runId = `${now}-${projectId}-active-delegate`;
+    const projectPolicy = findLoopProjectPolicy(deps, projectPath);
+    let workOrder = buildActiveDelegatedTaskWorkOrder({
+      session: input.session,
+      projectId,
+      projectName: basename(projectPath) || projectId,
+      projectPath,
+      agent,
+      requirement: input.requirement,
+      ...(input.opportunityIds !== undefined ? { opportunityIds: input.opportunityIds } : {}),
+      scheduledAt: now,
+      runId,
+      timeoutMs: DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS,
+      projectSessionPrefix: deps.config.projectSessionPrefix,
+      ...(projectPolicy !== null ? { projectPolicy } : {}),
+    });
+    const preparationFailures: string[] = [];
+    workOrder = prepareLoopExecutionWorktrees({
+      workOrder,
+      runGit: runGitCommand,
+      defaultMode:
+        input.worktreeIsolation ?? deps.config.loopEngineering.supervisor.worktreeIsolation,
+      onPreparationFailure: (failure) => {
+        preparationFailures.push(
+          `${failure.repositoryId}: ${failure.reason}${
+            failure.detail === undefined ? "" : `: ${failure.detail}`
+          } (${failure.sourceWorktree})`,
+        );
+      },
+    });
+    if (preparationFailures.length > 0) {
+      return {
+        status: "blocked",
+        reason: `execution worktree isolation failed: ${preparationFailures.join("; ")}`,
+        showQueue: false,
+      };
+    }
+    const supervisorSession = await reserveFirstAvailableSupervisor(
+      deps,
+      candidates,
+      workOrder,
+      now,
+    );
+    const queuedSupervisorSession = supervisorSession ?? queueCandidates[0];
+    if (queuedSupervisorSession === undefined) {
+      return {
+        status: "blocked",
+        reason: `failed to reserve loop supervisor sessions: ${candidates.join(", ")}`,
+        showQueue: true,
+      };
+    }
+    const assignedSupervisorSession = queuedSupervisorSession;
+    if (
+      supervisorSession === null &&
+      !(await startLoopSupervisor(deps, undefined, assignedSupervisorSession))
+    ) {
+      return {
+        status: "blocked",
+        reason: `failed to ensure queued loop supervisor session ${assignedSupervisorSession}`,
+        showQueue: true,
+      };
+    }
+
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: assignedSupervisorSession,
+      status: supervisorSession === null ? "queued" : "dispatching",
+      now,
+    });
+    const taskLedger = new DailyTaskLedger();
+    const taskLedgerId = activeDelegatedTaskLedgerId(runId);
+    taskLedger.expect({
+      taskId: taskLedgerId,
+      source: "autopilot-delegate",
+      name: `${workOrder.projectName} active delegated task`,
+      scheduledAt: now,
+      summary: `Autopilot active delegation queued for ${workOrder.projectPath}.`,
+    });
+    taskLedger.start(taskLedgerId, now);
+    log.info("active delegated task queued", {
+      data: {
+        runId,
+        projectId,
+        projectPath,
+        session: input.session,
+        supervisorSession: assignedSupervisorSession,
+        prEnabled: projectPolicy?.pullRequest.enabled ?? false,
+        prBase: projectPolicy?.pullRequest.base,
+        prSwitchBack: projectPolicy?.pullRequest.switchBack,
+        prAutoMerge: projectPolicy?.pullRequest.autoMerge,
+        opportunityIds: input.opportunityIds ?? [],
+      },
+    });
+
+    launchActiveDelegatedTask(deps, workOrder, assignedSupervisorSession, now);
+
+    return {
+      status: "queued",
       runId,
       projectId,
-      projectPath,
-      session: input.session,
-      supervisorSession,
-      prEnabled: projectPolicy?.pullRequest.enabled ?? false,
-      prBase: projectPolicy?.pullRequest.base,
-      prSwitchBack: projectPolicy?.pullRequest.switchBack,
-      prAutoMerge: projectPolicy?.pullRequest.autoMerge,
-      opportunityIds: input.opportunityIds ?? [],
-    },
-  });
+      supervisorSession: assignedSupervisorSession,
+      reportDir:
+        workOrder.finalSummaryPath?.replace(/\/supervisor-final-summary\.json$/, "") ?? null,
+    };
+  } finally {
+    startingActiveDelegationProjects.delete(reservationKey);
+  }
+}
 
+/** Resume durable active delegations after the bot process is restarted. */
+export function resumeQueuedActiveDelegatedTasks(deps: HandlerDeps): number {
+  if (!deps.config.loopEngineering.supervisor.enabled) return 0;
+  const activeLeaseIds = new Set(
+    readLoopSupervisorWorkerLeaseState()
+      .leases.filter((lease) => lease.status === "active")
+      .map((lease) => lease.workOrderId),
+  );
+  const queued = listUnfinishedLoopSupervisorWorkOrders().filter(
+    (record) =>
+      record.workOrder.task?.kind === "active-delegated-task" &&
+      (record.state.status === "queued" || record.state.status === "dispatching") &&
+      !activeLeaseIds.has(record.workOrder.id),
+  );
+  for (const record of queued) {
+    launchActiveDelegatedTask(
+      deps,
+      record.workOrder,
+      record.state.supervisorSession,
+      record.state.updatedAt,
+    );
+  }
+  if (queued.length > 0) {
+    log.info("resumed queued active delegated tasks after startup", {
+      data: { count: queued.length, runIds: queued.map((record) => record.workOrder.id) },
+    });
+  }
+  return queued.length;
+}
+
+/** Reconcile worker leases before resuming delegations after a process restart. */
+export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
+  deps: HandlerDeps,
+): Promise<number> {
+  if (!deps.config.loopEngineering.supervisor.enabled) return 0;
+
+  const leaseState = readLoopSupervisorWorkerLeaseState();
+  const activeDelegated = new Map(
+    listUnfinishedLoopSupervisorWorkOrders()
+      .filter((record) => record.workOrder.task?.kind === "active-delegated-task")
+      .map((record) => [record.workOrder.id, record]),
+  );
+  const now = Date.now();
+  let orphaned = 0;
+  for (const lease of leaseState.leases.filter((candidate) => candidate.status === "active")) {
+    const record = activeDelegated.get(lease.workOrderId);
+    if (record === undefined) continue;
+    const workerSession = record.workOrder.workerSession ?? lease.workerSession;
+    if (await workerAgentIsRunningAfterStartupGrace(deps, record.workOrder.agent, workerSession)) {
+      continue;
+    }
+
+    writeLoopSupervisorWorkOrderState({
+      workOrder: record.workOrder,
+      supervisorSession: record.state.supervisorSession,
+      status: "failed",
+      now,
+      resultStatus: "invalid-output",
+      revisionReasons: ["supervisor worker lease has no live worker session after restart"],
+    });
+    const taskLedger = new DailyTaskLedger();
+    const taskLedgerId = activeDelegatedTaskLedgerId(record.workOrder.id);
+    const ledgerRecord = taskLedger.listAll().find((task) => task.taskId === taskLedgerId);
+    if (ledgerRecord !== undefined && ledgerRecord.status === "running") {
+      taskLedger.fail(taskLedgerId, {
+        endedAt: now,
+        error: "orphaned-supervisor-worker",
+        summary: "Recovered an active delegation whose worker session no longer exists.",
+      });
+    }
+    writeLoopSupervisorWorkerLeaseState(
+      releaseLoopSupervisorWorker({
+        state: readLoopSupervisorWorkerLeaseState(),
+        workOrderId: lease.workOrderId,
+        result: "failure",
+        now,
+        retainFailureForMs:
+          (record.workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) *
+          60 *
+          60 *
+          1000,
+      }),
+    );
+    orphaned++;
+  }
+
+  if (orphaned > 0) {
+    log.warn("reconciled orphaned active delegated worker leases after startup", {
+      data: { count: orphaned },
+    });
+  }
+  return resumeQueuedActiveDelegatedTasks(deps);
+}
+
+async function workerAgentIsRunningAfterStartupGrace(
+  deps: HandlerDeps,
+  agent: LoopWorkOrder["agent"],
+  workerSession: string,
+): Promise<boolean> {
+  const deadline = Date.now() + WORKER_STARTUP_GRACE_MS;
+  for (;;) {
+    if (!(await deps.bridge.hasSession(workerSession))) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(WORKER_STARTUP_PROBE_MS, remaining)),
+      );
+      continue;
+    }
+    const agentRunning =
+      agent === "codex"
+        ? await deps.configResolver.isCodexRunning(workerSession)
+        : await deps.configResolver.isClaudeRunning(workerSession);
+    if (agentRunning) return true;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(WORKER_STARTUP_PROBE_MS, remaining)),
+    );
+  }
+}
+
+function launchActiveDelegatedTask(
+  deps: HandlerDeps,
+  workOrder: LoopWorkOrder,
+  supervisorSession: string,
+  startedAt: number,
+): void {
+  const projectPath = workOrder.projectPath;
   const controller = new AbortController();
   activeDelegatedTasks.set(projectPath, { workOrder, controller });
   void runActiveDelegatedTaskInBackground(
     deps,
     workOrder,
     supervisorSession,
-    now,
+    startedAt,
     controller.signal,
   )
-    .catch((err) => {
+    .catch(async (err) => {
       const message = normalizeError(err).message;
-      log.error("active delegated task crashed", { err, data: { runId, projectId } });
-      writeLoopSupervisorWorkOrderState({
-        workOrder,
-        supervisorSession,
-        status: "failed",
-        now: Date.now(),
-        resultStatus: "dispatch-failed",
-        revisionReasons: [message],
+      log.error("active delegated task crashed", {
+        err,
+        data: { runId: workOrder.id, projectId: workOrder.projectId },
       });
+      const endedAt = Date.now();
+      const taskLedger = new DailyTaskLedger();
+      const taskLedgerId = activeDelegatedTaskLedgerId(workOrder.id);
+      if (
+        taskLedger
+          .listAll()
+          .some((task) => task.taskId === taskLedgerId && task.status === "running")
+      ) {
+        taskLedger.fail(taskLedgerId, {
+          endedAt,
+          error: message,
+          summary: "Active delegated task crashed before completion.",
+        });
+      }
+      try {
+        writeLoopSupervisorWorkOrderState({
+          workOrder,
+          supervisorSession,
+          status: "failed",
+          now: endedAt,
+          resultStatus: "dispatch-failed",
+          revisionReasons: [message],
+        });
+      } catch (stateError) {
+        log.warn("failed to persist active delegated task failure state", { err: stateError });
+      }
+      if (workOrder.workerSession !== undefined) {
+        try {
+          await deps.bridge.killSession(workOrder.workerSession);
+        } catch (cleanupError) {
+          log.warn("failed to kill crashed active delegated worker", { err: cleanupError });
+        }
+        cleanupWorkerSessionRecords(workOrder.workerSession);
+      }
     })
     .finally(() => {
       if (activeDelegatedTasks.get(projectPath)?.workOrder.id === workOrder.id) {
         activeDelegatedTasks.delete(projectPath);
       }
     });
-
-  return {
-    status: "queued",
-    runId,
-    projectId,
-    supervisorSession,
-    reportDir: workOrder.finalSummaryPath?.replace(/\/supervisor-final-summary\.json$/, "") ?? null,
-  };
 }
 
 function findLoopProjectPolicy(deps: HandlerDeps, projectPath: string): LoopProjectConfig | null {
@@ -451,7 +700,7 @@ async function runActiveDelegatedTaskInBackground(
   startedAt: number,
   cancelSignal: AbortSignal,
 ): Promise<void> {
-  const dispatch = createLoopSupervisorTaskRunner(deps);
+  const dispatch = createLoopSupervisorTaskRunner(deps, { deferLeaseUntilConsumption: true });
   let result = await runLoopSupervisedProjectAsync({
     workOrder,
     supervisorSession,
@@ -541,6 +790,24 @@ async function finishActiveDelegatedTask(
     now: endedAt,
     resultStatus: result.status,
   });
+  const taskLedger = new DailyTaskLedger();
+  const taskLedgerId = activeDelegatedTaskLedgerId(workOrder.id);
+  if (result.status === "completed") {
+    taskLedger.finish(taskLedgerId, {
+      endedAt,
+      summary: result.summary.actionsTaken.join("; ") || "completed",
+      reportPath: completion.report.markdownPath,
+    });
+  } else {
+    taskLedger.fail(taskLedgerId, {
+      endedAt,
+      error:
+        gate.failures.join("; ") ||
+        ("reason" in result ? result.reason : `active delegation ended with ${result.status}`),
+      summary: "Active delegated task did not pass its final execution or system acceptance gate.",
+      reportPath: completion.report.markdownPath,
+    });
+  }
   settleActiveDelegatedSupervisorLease(workOrder, result, endedAt);
   if (result.status === "completed" && workOrder.workerSession !== undefined) {
     try {
@@ -569,22 +836,33 @@ async function finishActiveDelegatedTask(
       data: { runId: workOrder.id, opportunityIds: implementedOpportunityIds },
     });
   }
-  const summary =
+  const completionNotification =
     result.status === "completed"
-      ? result.summary.actionsTaken.join("; ") || "completed"
-      : "Active delegated task did not complete successfully.";
+      ? {
+          level: "info" as const,
+          title: "Delegated task completed",
+          summary: result.summary.actionsTaken.join("; ") || "completed",
+        }
+      : formatActiveDelegateCompletion({
+          resultStatus: result.status,
+          gateFailures: gate.failures,
+        });
   void deps.notifications.notify({
     source: "autopilot-delegate",
-    level: result.status === "completed" ? "info" : "error",
+    level: completionNotification.level,
     session: workOrder.notificationSession ?? supervisorSession,
-    title: `Delegated task ${result.status}`,
+    title: completionNotification.title,
     body: [
       `Project: ${workOrder.projectName}`,
       `Run: ${workOrder.id}`,
       `Report: ${completion.report.markdownPath}`,
-      `Summary: ${summary}`,
+      `Summary: ${completionNotification.summary}`,
     ].join("\n"),
   });
+}
+
+function activeDelegatedTaskLedgerId(runId: string): string {
+  return `autopilot:${runId}`;
 }
 
 function settleActiveDelegatedSupervisorLease(

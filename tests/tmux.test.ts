@@ -506,9 +506,13 @@ describe("TmuxBridge", () => {
       mockExecFile = createMockExecFile({ newSession: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await expect(bridge.createSession("my_session")).resolves.toBe(true);
-      expect(mockExecFile).toHaveBeenCalledWith("tmux", ["new-session", "-d", "-s", "my_session"], {
-        timeout: 10000,
-      });
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "tmux",
+        ["new-session", "-d", "-s", "my_session", "-e", "DISABLE_AUTO_UPDATE=true"],
+        {
+          timeout: 10000,
+        },
+      );
     });
 
     it("passes -c <cwd> to new-session so the pane starts there (no shell `cd`, no injection)", async () => {
@@ -521,7 +525,29 @@ describe("TmuxBridge", () => {
       await expect(bridge.createSession("my_session", evilPath)).resolves.toBe(true);
       expect(mockExecFile).toHaveBeenCalledWith(
         "tmux",
-        ["new-session", "-d", "-s", "my_session", "-c", evilPath],
+        ["new-session", "-d", "-s", "my_session", "-e", "DISABLE_AUTO_UPDATE=true", "-c", evilPath],
+        { timeout: 10000 },
+      );
+    });
+
+    it("disables shell auto-update prompts before typing startup commands", async () => {
+      mockExecFile = createMockExecFile({ newSession: { stdout: "", stderr: "" } });
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await bridge.createSession("tmux_proj_new", "/repo");
+
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "tmux",
+        [
+          "new-session",
+          "-d",
+          "-s",
+          "tmux_proj_new",
+          "-e",
+          "DISABLE_AUTO_UPDATE=true",
+          "-c",
+          "/repo",
+        ],
         { timeout: 10000 },
       );
     });

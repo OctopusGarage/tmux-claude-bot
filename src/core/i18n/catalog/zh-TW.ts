@@ -143,6 +143,8 @@ export const zhTW: Messages = {
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
   adoptFailed: "接管失敗：程序無法結束或未能啟動",
+  adoptAgentDidNotStart:
+    "接管失敗：原程序已結束，但 Agent 未能在受管工作階段中啟動。請用 /peek 查看畫面，修正 shell 提示或啟動命令後重試。",
   adoptBusy:
     "目標工作階段裡已有程式在前台運行（另一個 agent 或其他程式）。已中止，未動原程序——請先去那邊退出，再重新接管。",
   adoptProjectRunning:
@@ -155,6 +157,7 @@ export const zhTW: Messages = {
   agentNotRunningRestart: "未執行，請使用 /resume 復原，或 /start 新建",
   contentTruncated: "...(內容過長，已截斷)",
   agentEmptyOutput: "回傳空內容 · 用 /peek 查看畫面",
+  agentReplyUnavailable: "未擷取到有效 Agent 回覆 · 用 /peek 查看畫面，確認後可重試。",
   agentStarted: "✅ 已啟動",
   agentResumed: "🔄 已復原原工作階段",
   agentResumeMissingState: "沒有可復原的原工作階段狀態，請用 /start 新建。",

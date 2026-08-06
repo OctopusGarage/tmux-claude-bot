@@ -67,6 +67,7 @@ export function classifyLoopSupervisorScheduleRetry(
     "did not become ready in time",
     "no live loop supervisor session",
     "loop supervisor task queue is full",
+    "loop supervisor worker did not consume queued task before deadline",
     "duplicate loop supervisor task is already queued or running",
     "loop supervisor task was cancelled before enqueue",
     "loop supervisor task was cancelled",

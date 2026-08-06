@@ -147,6 +147,18 @@ const securityMaintenanceSchema = z
     scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
     branch: z.string().min(1).optional(),
     maxRounds: z.number().int().positive().default(3),
+    riskAssessment: z
+      .object({
+        command: z.string().min(1).optional(),
+        actionThreshold: z.number().int().min(0).max(100).default(70),
+        criticalThreshold: z.number().int().min(0).max(100).default(90),
+      })
+      .strict()
+      .refine(
+        (assessment) => assessment.criticalThreshold >= assessment.actionThreshold,
+        "criticalThreshold must be greater than or equal to actionThreshold",
+      )
+      .optional(),
     allowDependencyUpdates: z.boolean().default(true),
     allowConfigHardening: z.boolean().default(true),
     allowStaticAnalysisFixes: z.boolean().default(true),

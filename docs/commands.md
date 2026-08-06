@@ -31,14 +31,14 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `add_project` | Add a new project: `add_project <path>` creates it directly; with no path, opens a tap-to-navigate directory browser |
 | `new_free` | Create an independent session: `new_free [label]` opens a bare project session decoupled from any path, so multiple agents can run in the same directory |
 | `adopt` | Take over an unmanaged agent (Claude or Codex) |
-| `recover` | Recover all projects after a reboot: recreate each project session + relaunch its agent, resuming the conversation. Previews then confirms |
+| `recover` | Manually recover all rostered projects after a reboot: recreate each project session + relaunch its agent, resuming the conversation. Automatic boot recovery only resumes unfinished bot-dispatched prompts. Previews then confirms |
 | `status_install` | Install usage reporting (statusLine snapshot) for /status |
 | `queue_status` | Show message queue status |
 | `history` | Show recent conversation history (`/history N` for the Nth recent round) |
 | `inputs` | List your recent inputs (`/inputs N` for the last N) — tap one to fetch & edit it |
 | `sessions` | List resumable conversations for the current session's agent (tap one to resume) |
 | `logs` | Show current-session WARN/ERROR logs from the last hour; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
-| `autopilot` | Delegate the current confirmed work to the Loop Supervisor: `/autopilot [requirement]` or `/autopilot delegate [requirement]`. It drives implementation, review, tests, coverage review, configured PR/merge/switch-back gates, and final notification. The chat control panel exposes **Delegate now**, **Review plan first** with **Confirm delegation**, and a supervisor queue view for active work; Lark can cancel active-delegated queue items from that queue card. |
+| `autopilot` | Delegate the current confirmed work to the Loop Supervisor: `/autopilot [requirement]` or `/autopilot delegate [requirement]`. It drives implementation, review, tests, coverage review, configured PR/merge/switch-back gates, and final notification. The chat control panel exposes **Delegate now**, **Review plan first** with **Confirm delegation**, and a supervisor queue view for active work; a queue view is shown only when all Supervisor sessions are occupied. Lark can cancel active-delegated queue items from that queue card. |
 | `opportunity` | Review proactive Loop Engineering suggestions: `/opportunity [list\|show\|discuss\|dismiss\|snooze <number\|id>]`; `discuss` opens project-agent discussion. Suggestion cards keep each item readable and offer per-item show/discuss/dismiss actions plus batch actions. After approval, use Autopilot's Continue via supervisor action so execution goes through the same active-delegation pipeline. Owner-only in private chat; Lark also works in a bound project group. |
 | `batch` | Batch scheduler status and control. `/batch` → current run status; `/batch start <planId>` → start a plan; `/batch pause\|resume\|stop` → control the active run; `/batch report` → summary. Owner-only (Lark: 1:1 chat only). |
 | `dashboard` | Show the global dashboard: every live session plus bot-level totals (version, uptime, queue depth). Owner-only (Lark: 1:1 chat only). |

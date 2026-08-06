@@ -11,6 +11,45 @@ type RuntimeGuardianRepairFinding = {
   runDir?: string;
 };
 
+export function buildProjectRecoveryPrompt(input: {
+  projectId: string;
+  projectPath: string;
+  taskFamily: string;
+  classification: string;
+  reason: string;
+  taskIds: string[];
+  evidence: string[];
+}): string {
+  return [
+    "Historical scheduled task recovery for a configured project.",
+    `Project: ${input.projectId}`,
+    `Repository: ${input.projectPath}`,
+    `Task family: ${input.taskFamily}`,
+    `Recovery classification: ${input.classification}`,
+    `Classification reason: ${input.reason}`,
+    "",
+    "Scope:",
+    "- Work only in the configured project repository and its existing Loop worktree policy.",
+    "- Re-check the original evidence before editing; do not assume the historical failure is a code bug.",
+    "- Do not resolve draft PR policy, merge conflicts, external CI/account failures, or design decisions by guessing.",
+    "- If the blocker remains, report it as blocked and do not claim a fix.",
+    "- Reuse the project's configured agent, branch, verification profile, and PR policy.",
+    "",
+    "Original task ids that must receive a final report:",
+    JSON.stringify(input.taskIds),
+    "",
+    "Evidence:",
+    JSON.stringify(input.evidence, null, 2),
+    "",
+    "Required finalization:",
+    "- Verify the target worktree and branch before mutation.",
+    "- Make the smallest justified repair only when the project caused the failure.",
+    "- Run the configured deterministic verification gates.",
+    "- Record classification, evidence, changes, verification, commit/PR state, and remaining blockers.",
+    "- Update every original task id with its final repair status.",
+  ].join("\n");
+}
+
 export function buildDailyAuditRepairPrompt(input: {
   repoPath: string;
   repairBranch: string;

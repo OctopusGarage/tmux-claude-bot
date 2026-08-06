@@ -107,6 +107,28 @@ describe("DailyTaskLedger", () => {
     });
   });
 
+  it("normalizes successful and skipped tasks to the not-needed repair terminal", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-terminal-"));
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:geo:success",
+      source: "loop-engineering",
+      name: "geo architecture",
+      scheduledAt: 1,
+    });
+    ledger.finish("loop:geo:success", { endedAt: 2 });
+    ledger.markRepairStatus("loop:geo:success", {
+      repairStatus: "blocked",
+      updatedAt: 3,
+    });
+
+    expect(ledger.reconcileTerminalStatuses(4)).toBe(1);
+    expect(ledger.listAll()[0]).toMatchObject({
+      status: "success",
+      repairStatus: "not-needed",
+    });
+  });
+
   it("marks a running task as timed out after the timeout window", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-timeout-"));
     const ledger = new DailyTaskLedger();
@@ -131,6 +153,47 @@ describe("DailyTaskLedger", () => {
       status: "running-timeout",
       repairStatus: "pending",
     });
+  });
+
+  it("reconciles stale running records without touching live records or other sources", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-stale-running-"));
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "daily-audit:stale",
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: 1,
+    });
+    ledger.start("daily-audit:stale", 1_000);
+    ledger.expect({
+      taskId: "daily-audit:live",
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: 2,
+    });
+    ledger.start("daily-audit:live", 9_500);
+    ledger.expect({
+      taskId: "loop:live",
+      source: "loop-engineering",
+      name: "live loop",
+      scheduledAt: 3,
+    });
+    ledger.start("loop:live", 1_000);
+
+    expect(
+      ledger.reconcileStaleRunning(10_000, { timeoutMs: 5_000, sources: ["daily-audit"] }),
+    ).toBe(1);
+    expect(ledger.listAll()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          taskId: "daily-audit:stale",
+          status: "running-timeout",
+          repairStatus: "pending",
+        }),
+        expect.objectContaining({ taskId: "daily-audit:live", status: "running" }),
+        expect.objectContaining({ taskId: "loop:live", status: "running" }),
+      ]),
+    );
   });
 
   it("classifies common loop task failure causes", () => {

@@ -203,7 +203,7 @@ function parseLearning(value: unknown): LoopSupervisorLearning | null {
 
 function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
   if (!isRecord(value)) return null;
-  const checklistCompleted = parseBoolean(value.checklistCompleted);
+  const checklistCompleted = parseChecklistCompleted(value.checklistCompleted);
   const targetScoreMet = parseTargetScoreMet(value.targetScoreMet);
   const stopConditionReached = parseBoolean(value.stopConditionReached);
   const overOptimizationAvoided = parseBoolean(value.overOptimizationAvoided);
@@ -231,6 +231,13 @@ function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
 
 function parseBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function parseChecklistCompleted(value: unknown): boolean | null {
+  const booleanValue = parseBoolean(value);
+  if (booleanValue !== null) return booleanValue;
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null;
+  return value.length > 0;
 }
 
 function parseTargetScoreMet(value: unknown): LoopSupervisorPlanReview["targetScoreMet"] | null {
@@ -295,7 +302,7 @@ function parseReviewEvidence(value: unknown): LoopSupervisorReviewEvidence | nul
   const questionInvestigated =
     typeof value.questionInvestigated === "string" ? value.questionInvestigated : null;
   const conclusion = typeof value.conclusion === "string" ? value.conclusion : null;
-  const evidence = parseStringArray(value.evidence);
+  const evidence = parseStringArrayOrSingleton(value.evidence);
   const uncertainty = typeof value.uncertainty === "string" ? value.uncertainty : null;
   const recommendedNextStep =
     typeof value.recommendedNextStep === "string" ? value.recommendedNextStep : null;

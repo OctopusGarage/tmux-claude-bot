@@ -1,17 +1,38 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { AppConfig } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { expandTilde } from "../../shared/utils/path.js";
 import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
+import { parseLoopConfigYaml } from "../loop/config.js";
+import {
+  listTerminalLoopSupervisorWorkOrders,
+  listUnfinishedLoopSupervisorWorkOrders,
+} from "../loop/supervisor-state.js";
 import type { NotificationGateway } from "../notifications/gateway.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildDailyAuditRepairPrompt } from "../prompts/repair-prompts.js";
+import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
 import { nextFire } from "../scheduler/scheduling.js";
 import {
   buildDailyTaskAuditNotification,
   runDailyTaskAudit,
   type ScheduledTaskDiscovery,
 } from "./daily-audit.js";
+import {
+  createProjectRecoveryDelegator,
+  dispatchProjectRecovery,
+} from "./project-recovery-dispatch.js";
+import {
+  type ProjectRecoveryDispatch,
+  type ProjectRecoveryPassResult,
+  reconcileProjectRecoveryArtifacts,
+  runProjectRecoveryPass,
+} from "./project-recovery-service.js";
+import { RepairCoordinator } from "./repair-coordinator.js";
 import {
   discoverLaunchdScheduledTasks,
   discoverLoopEngineeringScheduledTasks,
@@ -23,10 +44,14 @@ import {
   type TaskAuditItem,
   type TaskWindow,
 } from "./task-ledger.js";
+import { reconcileAutopilotDelegatedTasks } from "./task-reconciliation.js";
 
 const log = createLogger("tasks.daily-audit-service");
 const LAST_FIRED_KEY = "daily-task-audit";
 const FIRST_TICK_LOOKBACK_MS = 36 * 60 * 60_000;
+const STALE_REPAIR_STATUS_MS = 30 * 60_000;
+const STALE_DAILY_AUDIT_RUN_MS = 30 * 60_000;
+let dailyTaskAuditTickInFlight = false;
 
 export type DailyTaskAuditServiceTickResult =
   | {
@@ -34,9 +59,10 @@ export type DailyTaskAuditServiceTickResult =
       scheduledAt: number;
       failures: number;
       repairDispatch: string;
+      projectRecovery: string;
       notificationStatus: "sent" | "partial" | "failed";
     }
-  | { fired: false; reason: "disabled" | "not-due" | "invalid-schedule" };
+  | { fired: false; reason: "disabled" | "not-due" | "invalid-schedule" | "in-progress" };
 
 export type DailyTaskRepairDispatch = (input: {
   repoPath: string;
@@ -45,7 +71,7 @@ export type DailyTaskRepairDispatch = (input: {
 }) => Promise<DailyTaskRepairDispatchResult | undefined>;
 
 export type DailyTaskRepairDispatchResult =
-  | { status: "queued"; detail: string }
+  | { status: "queued"; detail: string; runId?: string }
   | { status: "blocked"; detail: string };
 
 export class DailyTaskAuditStore {
@@ -60,32 +86,86 @@ export class DailyTaskAuditStore {
   }
 }
 
-export async function runDailyTaskAuditServiceTick(input: {
+export type DailyTaskAuditServiceTickInput = {
   now: number;
   config: AppConfig["taskAudit"];
   notifications: NotificationGateway;
   ledger?: DailyTaskLedger;
+  coordinator?: RepairCoordinator;
   store?: DailyTaskAuditStore;
   dispatchRepair?: DailyTaskRepairDispatch;
+  dispatchProjectRecovery?: ProjectRecoveryDispatch;
   discover?: ScheduledTaskDiscovery;
   loopConfigFile?: string;
+  reconcile?: () => Promise<void> | void;
   force?: boolean;
-}): Promise<DailyTaskAuditServiceTickResult> {
+};
+
+export async function runDailyTaskAuditServiceTick(
+  input: DailyTaskAuditServiceTickInput,
+): Promise<DailyTaskAuditServiceTickResult> {
+  if (dailyTaskAuditTickInFlight) return { fired: false, reason: "in-progress" };
+  dailyTaskAuditTickInFlight = true;
+  try {
+    return await runDailyTaskAuditServiceTickInternal(input);
+  } finally {
+    dailyTaskAuditTickInFlight = false;
+  }
+}
+
+async function runDailyTaskAuditServiceTickInternal(
+  input: DailyTaskAuditServiceTickInput,
+): Promise<DailyTaskAuditServiceTickResult> {
   if (!input.config.enabled || input.config.tickMs === 0)
     return { fired: false, reason: "disabled" };
+  await input.reconcile?.();
   const store = input.store ?? new DailyTaskAuditStore();
+  const ledger = input.ledger ?? new DailyTaskLedger();
+  const coordinator = input.coordinator ?? new RepairCoordinator();
+  const staleAudits = ledger.reconcileStaleRunning(input.now, {
+    timeoutMs: STALE_DAILY_AUDIT_RUN_MS,
+    sources: ["daily-audit"],
+  });
+  if (staleAudits > 0) {
+    log.warn("reconciled stale daily audit ledger entries", {
+      data: { count: staleAudits },
+    });
+  }
+  const repoPath = input.config.repoPath.trim() || process.cwd();
+  ledger.reconcileTerminalStatuses(input.now);
+  coordinator.reconcileExpiredLeases(input.now);
+  coordinator.reconcileDuplicateTaskIds(input.now);
+  coordinator.importPending(ledger.listAll(), {
+    projectId: "tmux-claude-bot",
+    projectPath: repoPath,
+    now: input.now,
+  });
+  reopenStaleRepairStatuses(ledger, input.now);
+  coordinator.reconcileFromLedger(ledger.listAll(), input.now);
+  const projectRecovery = await runConfiguredProjectRecovery({
+    configFile: input.loopConfigFile,
+    now: input.now,
+    ledger,
+    coordinator,
+    dispatch: input.dispatchProjectRecovery,
+  });
+  coordinator.reconcileDuplicateTaskIds(input.now);
+  coordinator.reconcileFromLedger(ledger.listAll(), input.now);
   const scheduledAt = input.force
     ? input.now
     : dueScheduledAt(input.config.schedule, store, input.now);
-  if (typeof scheduledAt !== "number") return { fired: false, reason: scheduledAt };
-  const ledger = input.ledger ?? new DailyTaskLedger();
+  if (typeof scheduledAt !== "number") {
+    if (input.config.autoRepair && input.dispatchRepair !== undefined) {
+      await dispatchRepairQueue({ coordinator, ledger, input, repoPath });
+    }
+    return { fired: false, reason: scheduledAt };
+  }
   const taskId = `daily-audit:${scheduledAt}`;
   recordDailyAuditSelfFindings({
     ledger,
     window: previousSingaporeDayWindow(input.now),
     now: input.now,
   });
-  const repoPath = input.config.repoPath.trim() || process.cwd();
   ledger.expect({
     taskId,
     source: "daily-audit",
@@ -109,42 +189,32 @@ export async function runDailyTaskAuditServiceTick(input: {
         }),
       ]),
   });
+  for (const item of result.repairCandidates) {
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: repoPath,
+      source: item.source,
+      taskFamily: item.name,
+      fingerprint: item.failureKind ?? item.error ?? item.summary ?? "unknown",
+      taskId: item.taskId,
+      ...(item.summary === undefined ? {} : { summary: item.summary }),
+      priority: 100,
+      now: input.now,
+    });
+  }
   let repairDispatch = "not-needed";
-  if (input.config.autoRepair && result.repairCandidates.length > 0) {
-    if (input.dispatchRepair === undefined) {
-      repairDispatch = "unavailable";
-    } else {
-      try {
-        const dispatchResult = await input.dispatchRepair({
-          repoPath,
-          repairBranch: input.config.repairBranch,
-          items: result.repairCandidates,
-        });
-        if (dispatchResult?.status === "blocked") {
-          repairDispatch = `blocked - ${dispatchResult.detail}`;
-        } else {
-          repairDispatch =
-            dispatchResult?.detail === undefined ? "queued" : `queued - ${dispatchResult.detail}`;
-          for (const item of result.repairCandidates) {
-            ledger.markRepairStatus(item.taskId, {
-              repairStatus: "running",
-              updatedAt: input.now,
-              summary: appendRepairSummary(item.summary, "Daily audit auto-repair delegated."),
-            });
-          }
-        }
-      } catch (err) {
-        repairDispatch = "failed";
-        log.warn("daily task audit auto repair dispatch failed", { err });
-      }
-    }
+  if (input.config.autoRepair) {
+    repairDispatch =
+      input.dispatchRepair === undefined
+        ? "unavailable"
+        : await dispatchRepairQueue({ coordinator, ledger, input, repoPath });
   }
   const notificationResult = await input.notifications.notify(
     buildDailyTaskAuditNotification({
       summary: result.summary,
       repairCandidates: result.repairCandidates,
       channel: input.config.channel,
-      repairDispatch,
+      repairDispatch: appendProjectRecoveryDispatch(repairDispatch, projectRecovery),
     }),
   );
   const notificationLog = {
@@ -175,6 +245,7 @@ export async function runDailyTaskAuditServiceTick(input: {
       scheduledAt,
       failures: result.repairCandidates.length,
       repairDispatch,
+      projectRecovery: renderProjectRecoverySummary(projectRecovery),
       notificationStatus: notificationResult.status,
     };
   }
@@ -191,9 +262,119 @@ export async function runDailyTaskAuditServiceTick(input: {
     fired: true,
     scheduledAt,
     failures: result.repairCandidates.length,
-    repairDispatch,
+    repairDispatch: appendProjectRecoveryDispatch(repairDispatch, projectRecovery),
+    projectRecovery: renderProjectRecoverySummary(projectRecovery),
     notificationStatus: notificationResult.status,
   };
+}
+
+async function dispatchRepairQueue(input: {
+  coordinator: RepairCoordinator;
+  ledger: DailyTaskLedger;
+  input: Parameters<typeof runDailyTaskAuditServiceTick>[0];
+  repoPath: string;
+}): Promise<string> {
+  if (input.input.dispatchRepair === undefined) return "unavailable";
+  const leaseId = `daily-audit-repair:${input.input.now}`;
+  const claimed = input.coordinator.claimDue({
+    now: input.input.now,
+    leaseId,
+    limit: 8,
+    projectId: "tmux-claude-bot",
+    // Project-recovery records have their own admission path above. Letting the
+    // generic repair dispatcher claim them creates a second recovery loop that
+    // can redispatch the same historical delegation after it already finished.
+    excludeSources: ["runtime-guardian", "project-recovery"],
+  });
+  if (claimed.length === 0) return "not-needed";
+  const records = input.ledger.listAll();
+  const items = claimed.flatMap((queueRecord) =>
+    queueRecord.linkedTaskIds.flatMap((taskId) => {
+      const record = records.find((candidate) => candidate.taskId === taskId);
+      return record === undefined || record.status === "expected" ? [] : [record as TaskAuditItem];
+    }),
+  );
+  if (items.length === 0) {
+    for (const record of claimed) {
+      // Retrying a record that cannot resolve to any ledger item can never
+      // produce a valid WorkOrder; preserve it as an auditable blocker.
+      input.coordinator.markTerminal(record.id, "blocked", input.input.now);
+    }
+    return "blocked - queue records have no ledger evidence";
+  }
+  try {
+    const result = await input.input.dispatchRepair({
+      repoPath: input.repoPath,
+      repairBranch: input.input.config.repairBranch,
+      items,
+    });
+    if (result?.status === "blocked") {
+      for (const record of claimed) {
+        if (isImmediateRepairDeferral(result.detail))
+          input.coordinator.releaseToQueue(record.id, input.input.now);
+        else input.coordinator.releaseForRetry(record.id, input.input.now);
+      }
+      return `blocked - ${result.detail}`;
+    }
+    for (const record of claimed) {
+      if (result?.runId !== undefined) {
+        input.coordinator.linkTaskIds(record.id, [`autopilot:${result.runId}`], input.input.now);
+      }
+      input.coordinator.markRunning(record.id, leaseId, input.input.now);
+      for (const taskId of record.linkedTaskIds) {
+        input.ledger.markRepairStatus(taskId, {
+          repairStatus: "running",
+          updatedAt: input.input.now,
+          summary: appendRepairSummary(
+            input.ledger.listAll().find((candidate) => candidate.taskId === taskId)?.summary,
+            "Repair Coordinator delegated this item.",
+          ),
+        });
+      }
+    }
+    return result?.detail === undefined ? "queued" : `queued - ${result.detail}`;
+  } catch (err) {
+    for (const record of claimed) input.coordinator.releaseForRetry(record.id, input.input.now);
+    log.warn("repair coordinator dispatch failed", { err });
+    return "failed";
+  }
+}
+
+function isImmediateRepairDeferral(detail: string): boolean {
+  return /(capacity|active automation|queue full|supervisor.*busy|no available)/i.test(detail);
+}
+
+function reopenStaleRepairStatuses(ledger: DailyTaskLedger, now: number): number {
+  const activeDelegatedTaskIds = new Set(
+    listUnfinishedLoopSupervisorWorkOrders()
+      .filter((record) => record.workOrder.task?.kind === "active-delegated-task")
+      .map((record) => `autopilot:${record.workOrder.id}`),
+  );
+  const terminalDelegatedTaskIds = new Set(
+    listTerminalLoopSupervisorWorkOrders()
+      .filter((record) => record.workOrder.task?.kind === "active-delegated-task")
+      .map((record) => `autopilot:${record.workOrder.id}`),
+  );
+  let reopened = 0;
+  for (const record of ledger.listAll()) {
+    if (record.repairStatus !== "running") continue;
+    if (record.taskId.startsWith("daily-audit:self:")) continue;
+    if (record.source === "autopilot-delegate" && activeDelegatedTaskIds.has(record.taskId))
+      continue;
+    const linkedWorkOrderIsTerminal =
+      record.source === "autopilot-delegate" && terminalDelegatedTaskIds.has(record.taskId);
+    if (!linkedWorkOrderIsTerminal && now - record.updatedAt < STALE_REPAIR_STATUS_MS) continue;
+    ledger.markRepairStatus(record.taskId, {
+      repairStatus: "pending",
+      updatedAt: now,
+      summary: appendRepairSummary(
+        record.summary,
+        "Reopened stale repair status after no active repair remained.",
+      ),
+    });
+    reopened++;
+  }
+  return reopened;
 }
 
 function dueScheduledAt(
@@ -238,13 +419,134 @@ export function startDailyTaskAudit(deps: HandlerDeps): () => void {
       config,
       notifications: deps.notifications,
       dispatchRepair: (request) => dispatchDailyTaskRepair(deps, request),
+      dispatchProjectRecovery: (request) =>
+        dispatchProjectRecovery(request, {
+          projectSessionPrefix: deps.config.projectSessionPrefix,
+          worktreeIsolation:
+            deps.config.loopEngineering.supervisor.worktreeIsolation === "source"
+              ? "source"
+              : "isolated",
+          delegate: createProjectRecoveryDelegator(deps),
+        }),
       loopConfigFile: deps.config.loopEngineering.configFile,
+      reconcile: async () => {
+        await reconcileAutopilotDelegatedTasks({
+          cleanupWorkerSession: async (session) => {
+            await deps.bridge.killSession(session);
+            cleanupWorkerSessionRecords(session);
+          },
+        });
+      },
     }).catch((err) => log.warn("daily task audit tick failed", { err }));
   };
   const timer = setInterval(tick, config.tickMs);
   (timer as { unref?: () => void }).unref?.();
   void tick();
   return () => clearInterval(timer);
+}
+
+async function runConfiguredProjectRecovery(input: {
+  configFile: string | undefined;
+  now: number;
+  ledger: DailyTaskLedger;
+  coordinator: RepairCoordinator;
+  dispatch: ProjectRecoveryDispatch | undefined;
+}): Promise<ProjectRecoveryPassResult> {
+  const empty: ProjectRecoveryPassResult = {
+    classified: 0,
+    enqueued: 0,
+    dispatched: 0,
+    waitingExternal: 0,
+    ownerDecision: 0,
+    superseded: 0,
+    unconfigured: 0,
+    deadLetter: 0,
+    deferred: 0,
+  };
+  if (input.configFile === undefined || input.configFile.trim() === "") return empty;
+  let config: ReturnType<typeof parseLoopConfigYaml>;
+  try {
+    config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
+  } catch (err) {
+    log.warn("project recovery skipped because Loop config could not be loaded", { err });
+    return empty;
+  }
+  await reconcileProjectRecoveryArtifacts({
+    now: input.now,
+    records: input.ledger.listAll(),
+    coordinator: input.coordinator,
+    updateRepairStatus: (taskId, repairStatus, summary) => {
+      input.ledger.markRepairStatus(taskId, { repairStatus, updatedAt: input.now, summary });
+    },
+  });
+  const records = input.ledger
+    .listAll()
+    .filter(
+      (record): record is ScheduledTaskRecord & { repairStatus: "pending" | "blocked" } =>
+        (record.repairStatus === "pending" ||
+          (record.repairStatus === "blocked" &&
+            record.summary?.includes(
+              "Recovery classification: needs-owner-decision; failure evidence is not specific enough",
+            ) === true)) &&
+        (record.source === "loop-engineering" || record.source === "autopilot-delegate") &&
+        ["failed", "missing", "running-timeout"].includes(record.status),
+    );
+  return runProjectRecoveryPass({
+    now: input.now,
+    records,
+    config: {
+      projects: config.projects,
+      repositories: config.prReview.repositories,
+      workspaces: config.workspaces,
+    },
+    coordinator: input.coordinator,
+    ...(input.dispatch === undefined ? {} : { dispatch: input.dispatch }),
+    canonicalize: canonicalizeRecoveryPath,
+    verifyProjectPath: verifyRecoveryProjectPath,
+    updateRepairStatus: (taskId, repairStatus, summary) => {
+      input.ledger.markRepairStatus(taskId, {
+        repairStatus,
+        updatedAt: input.now,
+        summary,
+      });
+    },
+  });
+}
+
+function canonicalizeRecoveryPath(path: string): string {
+  return resolve(expandTilde(path));
+}
+
+function verifyRecoveryProjectPath(path: string): boolean {
+  try {
+    const topLevel = execFileSync("git", ["-C", path, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return resolve(topLevel) === canonicalizeRecoveryPath(path);
+  } catch {
+    return false;
+  }
+}
+
+function appendProjectRecoveryDispatch(
+  repairDispatch: string,
+  projectRecovery: ProjectRecoveryPassResult,
+): string {
+  return `${repairDispatch} · project-recovery=${renderProjectRecoverySummary(projectRecovery)}`;
+}
+
+function renderProjectRecoverySummary(result: ProjectRecoveryPassResult): string {
+  if (result.classified === 0) return "not-needed";
+  return [
+    `classified=${result.classified}`,
+    `queued=${result.enqueued}`,
+    `dispatched=${result.dispatched}`,
+    `deferred=${result.deferred}`,
+    `external-wait=${result.waitingExternal}`,
+    `owner-decision=${result.ownerDecision + result.unconfigured}`,
+    `dead-letter=${result.deadLetter}`,
+  ].join(" ");
 }
 
 function isBotOwnedLaunchdLabel(label: string): boolean {
@@ -275,6 +577,7 @@ export async function dispatchDailyTaskRepair(
   }
   return {
     status: "queued",
+    runId: result.runId,
     detail: `runId=${result.runId} project=${result.projectId} supervisor=${result.supervisorSession}`,
   };
 }

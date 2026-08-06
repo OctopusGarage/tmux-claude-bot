@@ -46,7 +46,8 @@ export type QueuedMessage = {
   /** Optional lifecycle hook fired after the item is dequeued and before the
    * queue handler types into the target session. Used by persisted control work
    * to distinguish queued from already-dispatched WorkOrders across restarts. */
-  started?: (() => void) | undefined;
+  /** Return false to reject a dequeued item before its handler runs. */
+  started?: (() => boolean | undefined) | undefined;
   /** Don't persist this message to the on-disk backlog. For the local control
    * transport (the TUI): its client is ephemeral, so a bot restart must not
    * "restore" a prompt that has no one to reply to. Still fully queued in-memory
@@ -74,4 +75,8 @@ export type PersistedMessage = {
   controlRestore?: ControlRestoreMetadata | undefined;
   maxWaitDoneTotalMs?: number | undefined;
   ackMsgId?: string | undefined;
+  /** True after the queue has dequeued this item and started handing it to the
+   * dispatcher. Restored queues must not replay it because text may already have
+   * been typed into the agent pane before the process stopped. */
+  dispatched?: boolean | undefined;
 };

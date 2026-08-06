@@ -1,10 +1,11 @@
+import { homedir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 
 describe("NotificationGateway", () => {
   it("sends a formatted notification to every registered channel by default", async () => {
     const gateway = new NotificationGateway();
-    const telegram = vi.fn(async () => {});
+    const telegram = vi.fn(async (_message: string) => {});
     const lark = vi.fn(async () => {});
     gateway.register("telegram", telegram);
     gateway.register("lark", lark);
@@ -82,6 +83,24 @@ describe("NotificationGateway", () => {
     expect(telegramMessage).toContain("truncated for Telegram");
     expect(telegramMessage.length).toBeLessThanOrEqual(4096);
     expect(larkMessage.length).toBeGreaterThan(5000);
+  });
+
+  it("shortens home paths in notification text before sending", async () => {
+    const gateway = new NotificationGateway();
+    const telegram = vi.fn(async (_message: string) => {});
+    gateway.register("telegram", telegram);
+
+    await gateway.notify({
+      channel: "telegram",
+      title: "Daily audit",
+      body: `report: ${homedir()}/.tmux-claude-bot/state/report.md`,
+    });
+
+    expect(telegram).toHaveBeenCalledWith(
+      expect.stringContaining("report: ~/.tmux-claude-bot/state/report.md"),
+      expect.anything(),
+    );
+    expect(telegram.mock.calls[0]?.[0]).not.toContain(homedir());
   });
 
   it("fails a requested channel that has no registered sender", async () => {

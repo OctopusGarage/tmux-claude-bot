@@ -64,7 +64,7 @@ export function buildDailyTaskAuditNotification(input: {
     ...(input.channel !== undefined ? { channel: input.channel } : {}),
     level: activeIssues.length > 0 ? "warning" : "success",
     source: "daily-task-audit",
-    title: `Daily scheduled task audit: ${input.summary.window?.label ?? "unknown window"}`,
+    title: `Daily task audit · ${input.summary.window?.label ?? "unknown window"}`,
     body: renderDailyTaskAudit(input.summary, input.repairCandidates, {
       ...(input.repairDispatch !== undefined ? { repairDispatch: input.repairDispatch } : {}),
     }),
@@ -80,51 +80,29 @@ export function renderDailyTaskAudit(
   const activeIssues = activeIssueItems(summary.items);
   const closedFailures = closedFailureItems(summary.items);
   const lines = [
-    "Summary:",
-    `- success: ${counts.success}`,
-    `- failed: ${counts.failed}`,
-    `- missing: ${counts.missing}`,
-    `- running: ${counts.running}`,
-    `- running-timeout: ${counts.runningTimeout}`,
-    `- skipped: ${counts.skipped}`,
-    `- active-issues: ${activeIssues.length}`,
-    `- repair-candidates: ${repairCandidates.length}`,
-    `- closed-failures: ${closedFailures.length}`,
+    `Status: ${activeIssues.length > 0 ? "ATTENTION" : "OK"}`,
+    `Counts: ${counts.success} success · ${counts.failed} failed · ${counts.missing} missing · ${counts.running} running`,
+    `Repair: ${repairCandidates.length} candidates${
+      opts.repairDispatch === undefined ? "" : ` · ${opts.repairDispatch}`
+    }`,
   ];
   if (opts.repairDispatch !== undefined) {
-    lines.push(`- repair-dispatch: ${opts.repairDispatch}`);
+    lines.push(`Closed: ${closedFailures.length} previously reported`);
   }
   if (summary.items.length === 0) {
-    lines.push("", "No scheduled task records were found for this window.");
+    lines.push("", "No scheduled task records found.");
     return lines.join("\n");
   }
-  lines.push("", "Tasks:");
-  for (const item of summary.items) {
-    lines.push(
-      `- ${item.status}: ${item.name} (${item.source})`,
-      `  taskId: ${item.taskId}`,
-      item.repairStatus ? `  repair: ${item.repairStatus}` : "",
-      item.failureKind ? `  failure-kind: ${item.failureKind}` : "",
-      item.error ? `  error: ${item.error}` : "",
-      item.summary ? `  summary: ${item.summary}` : "",
-      item.reportPath ? `  report: ${item.reportPath}` : "",
-    );
-  }
-  if (repairCandidates.length > 0) {
-    lines.push("", "Repair candidates:");
-    for (const item of repairCandidates) {
+  if (activeIssues.length > 0) {
+    lines.push("", "Issues:");
+    const visibleIssues = activeIssues.slice(0, 8);
+    for (const item of visibleIssues) {
       lines.push(
-        `- ${item.taskId}: ${item.status}${
-          item.failureKind ? ` kind=${item.failureKind}` : ""
-        }${item.error ? ` - ${item.error}` : ""}`,
+        `• ${item.name} · ${item.status}${item.failureKind ? ` · ${item.failureKind}` : ""}`,
       );
     }
-  }
-  const closed = closedFailures;
-  if (closed.length > 0) {
-    lines.push("", "Closed failures:");
-    for (const item of closed) {
-      lines.push(`- ${item.taskId}: repair=${item.repairStatus}`);
+    if (activeIssues.length > visibleIssues.length) {
+      lines.push(`• …and ${activeIssues.length - visibleIssues.length} more`);
     }
   }
   return lines.filter((line) => line.length > 0).join("\n");

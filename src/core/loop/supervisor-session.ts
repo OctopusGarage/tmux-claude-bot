@@ -17,6 +17,7 @@ import {
   readLoopSupervisorWorkerLeaseState,
   writeLoopSupervisorWorkerLeaseState,
 } from "./supervisor-pool.js";
+import { listUnfinishedLoopSupervisorWorkOrders } from "./supervisor-state.js";
 
 export { loopSupervisorSessionName, loopSupervisorSessionNames } from "../projects/operator.js";
 
@@ -103,6 +104,26 @@ export function provisionLoopSupervisorHome(dir: string): void {
     const file = join(dir, fileName);
     if (!existsSync(file)) writeFileSync(file, LOOP_SUPERVISOR_INSTRUCTIONS);
   }
+}
+
+const LIVE_SUPERVISOR_WORK_ORDER_STATUSES = new Set([
+  "queued",
+  "dispatching",
+  "in-flight",
+  "running",
+  "needs-revision",
+]);
+
+export function staleLoopSupervisorSessions(
+  supervisorSessions: readonly string[],
+  activeWorkOrders: readonly { supervisorSession: string; status: string }[],
+): string[] {
+  const activeSessions = new Set(
+    activeWorkOrders
+      .filter((workOrder) => LIVE_SUPERVISOR_WORK_ORDER_STATUSES.has(workOrder.status))
+      .map((workOrder) => workOrder.supervisorSession),
+  );
+  return supervisorSessions.filter((session) => !activeSessions.has(session));
 }
 
 function resolveSupervisorStartCommand(config: HandlerDeps["config"]): string {
@@ -210,6 +231,33 @@ export async function startLoopSupervisors(
   const sessions = loopSupervisorSessionNames(
     deps.config.projectSessionPrefix,
     deps.config.loopEngineering.supervisor.poolSize,
+  );
+  // A supervisor process can survive a bot restart after its WorkOrder has
+  // already been marked terminal. Release the in-memory/interactive turn
+  // before accepting new work; otherwise a fresh lease can look available
+  // while the pane is still consuming the previous prompt.
+  const staleSessions = staleLoopSupervisorSessions(
+    sessions,
+    listUnfinishedLoopSupervisorWorkOrders().map((record) => ({
+      supervisorSession: record.state.supervisorSession,
+      status: record.state.status,
+    })),
+  );
+  await Promise.all(
+    staleSessions.map(async (session) => {
+      if (!(await deps.bridge.isPaneAlive(session))) return;
+      try {
+        await deps.agent.interrupt(session);
+        log.info("interrupted stale loop supervisor session after restart", {
+          data: { session },
+        });
+      } catch (err) {
+        log.warn("failed to interrupt stale loop supervisor session after restart", {
+          err,
+          data: { session },
+        });
+      }
+    }),
   );
   const results = await Promise.all(
     sessions.map((session) => startLoopSupervisor(deps, performStart, session)),

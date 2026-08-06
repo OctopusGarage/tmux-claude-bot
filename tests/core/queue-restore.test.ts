@@ -109,4 +109,29 @@ describe("restorePersistedChannel", () => {
 
     expect(summary).toEqual({ restored: 0, carriedOver: 1, skipped: 1 });
   });
+
+  it("does not re-enqueue selected-channel messages that were already dispatched", () => {
+    const alreadyDispatched = {
+      ...persisted("typed-before-restart", "lark"),
+      dispatched: true,
+    };
+    const waiting = persisted("still-waiting", "lark");
+    const enqueued: string[] = [];
+
+    const summary = restorePersistedChannel({
+      channel: "lark",
+      loadPersisted: () => [alreadyDispatched, waiting],
+      enqueue: (message) => {
+        enqueued.push(message.id);
+        return "queued";
+      },
+      keepPersistedCarryover: (messages) => {
+        expect(messages).toEqual([]);
+      },
+      restore: queued,
+    });
+
+    expect(summary).toEqual({ restored: 1, carriedOver: 0, skipped: 1 });
+    expect(enqueued).toEqual(["still-waiting"]);
+  });
 });

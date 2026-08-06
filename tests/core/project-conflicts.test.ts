@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -89,6 +89,10 @@ describe("project automation conflicts", () => {
     });
 
     expect(findProjectAutomationConflictForSession("source-session")).toBeNull();
+    expect(findProjectAutomationConflict(sourceDir)).toMatchObject({
+      runId: "isolated-run",
+      projectPath: isolatedDir,
+    });
     expect(findProjectAutomationConflict(isolatedDir)).toMatchObject({
       runId: "isolated-run",
       projectPath: isolatedDir,
@@ -108,5 +112,52 @@ describe("project automation conflicts", () => {
       runId: "source-run",
       projectPath: sourceDir,
     });
+  });
+
+  it("does not reserve a work order after its final summary is already present", () => {
+    const summaryDir = join(stateDir, "loop-runs", "completed-run");
+    const finalSummaryPath = join(summaryDir, "supervisor-final-summary.json");
+    writeLoopSupervisorWorkOrderState({
+      workOrder: {
+        id: "completed-run",
+        scheduledAt: Date.now(),
+        projectId: "tmux-claude-bot",
+        projectName: "tmux-claude-bot",
+        projectPath: sourceDir,
+        agent: "codex",
+        goal: "test",
+        maxRounds: 1,
+        targetScore: 95,
+        runner: { kind: "agent-supervised" },
+        allowedActions: [],
+        blockedActions: [],
+        skills: { approved: [] },
+        preflight: { commands: [] },
+        assessment: { command: "true" },
+        execution: { agent: true },
+        recovery: { maxAttempts: 0 },
+        commitPolicy: { enabled: false },
+        requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:completed-run]",
+        finalSummaryPath,
+      } as unknown as LoopWorkOrder,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    mkdirSync(summaryDir, { recursive: true });
+    writeFileSync(
+      finalSummaryPath,
+      JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["done"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      }),
+    );
+
+    expect(findProjectAutomationConflict(sourceDir)).toBeNull();
   });
 });

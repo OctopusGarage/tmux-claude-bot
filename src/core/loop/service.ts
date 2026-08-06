@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePath, sep } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { WorktreeIsolationMode } from "../../shared/types.js";
@@ -22,7 +22,11 @@ import {
 import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 import { LoopBacklogStore } from "./backlog.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
-import { prepareLoopExecutionWorktrees } from "./execution-worktree.js";
+import {
+  cleanupLoopExecutionWorktree,
+  isBotOwnedLoopExecutionWorktree,
+  prepareLoopExecutionWorktrees,
+} from "./execution-worktree.js";
 import {
   recoverInvalidOutputFromFinalSummaryAsync,
   supervisorFinalStatusToRunStatus,
@@ -37,6 +41,7 @@ import {
   runLoopProjectAsync,
 } from "./run.js";
 import { LoopSchedulerStore, runLoopSchedulerTick } from "./scheduler.js";
+import { parseSecurityRiskAssessment } from "./security-assessment.js";
 import {
   type LoopSupervisedRunResult,
   runLoopSupervisedProjectAsync,
@@ -56,6 +61,7 @@ import {
   listAbandonedLoopSupervisorWorkOrders,
   listRecoverableFailedLoopSupervisorWorkOrders,
   listRecoverableFinalSummaryLoopSupervisorWorkOrders,
+  listStaleDispatchingLoopSupervisorWorkOrders,
   listTerminalLoopSupervisorWorkOrders,
   listUnfinishedLoopSupervisorWorkOrders,
   workOrderStateForResult,
@@ -69,12 +75,17 @@ import {
   buildRepositoryPullRequestReviewWorkOrder,
   parseSupervisorFinalSummaryFile,
 } from "./work-order.js";
+import {
+  assessWorkspaceArchitecture,
+  parseArchitectureAssessment,
+} from "./workspace-assessment.js";
 
 const log = createLogger("loop.service");
 const DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS = 7_200_000;
 const DEFAULT_SUPERVISED_PR_CHECK_POLL_ATTEMPTS = 30;
 const DEFAULT_SUPERVISED_PR_CHECK_POLL_INTERVAL_SECONDS = 30;
 const DEFAULT_SUPERVISOR_REVISION_MAX_ATTEMPTS = 3;
+const DEFAULT_GITHUB_PERMISSION_CHECK_ATTEMPTS = 3;
 const LOG_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export type SupervisedSystemGateProject = Pick<LoopProjectConfig, "id" | "name" | "path"> & {
@@ -418,6 +429,226 @@ export async function runLoopServiceTickAsync(input: {
     if (runner?.kind !== "agent-supervised") {
       throw new Error(`loop target "${due.projectId}" is not agent-supervised`);
     }
+
+    let preDispatchAssessment:
+      | { score: number; targetScore: number; decision: "run"; notes: string[] }
+      | undefined;
+    if (workspace !== undefined && due.jobKind === "workspace-architecture") {
+      const assessment = assessWorkspaceArchitecture({
+        targetScore: workspace.architecture.targetScore,
+        repositories: workspace.repositories,
+        exists: existsSync,
+        runGit:
+          input.runGit ?? (() => ({ status: 1, stdout: "", stderr: "git adapter unavailable" })),
+      });
+      if (assessment.decision === "skip") {
+        recordDueTargetWithoutDispatch(
+          target,
+          `workspace Architecture score ${assessment.score} reached target ${assessment.targetScore}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
+          "not-needed",
+        );
+        return;
+      }
+      if (assessment.decision === "block" || assessment.score === null) {
+        recordDueTargetWithoutDispatch(
+          target,
+          `workspace Architecture pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
+          "blocked",
+        );
+        return;
+      }
+      preDispatchAssessment = {
+        score: assessment.score,
+        targetScore: assessment.targetScore,
+        decision: "run",
+        notes: assessment.notes,
+      };
+    } else if (workspace !== undefined && due.jobKind === "security-maintenance") {
+      const policy = workspace.securityMaintenance.riskAssessment ?? {
+        actionThreshold: 70,
+        criticalThreshold: 90,
+      };
+      const command = policy.command;
+      const assessment =
+        command === undefined
+          ? {
+              riskScore: null,
+              actionThreshold: policy.actionThreshold,
+              criticalThreshold: policy.criticalThreshold,
+              critical: false,
+              decision: "block" as const,
+              notes: [],
+              blockers: ["security risk assessment command is not configured"],
+            }
+          : (() => {
+              const commandResult = input.runCommand({
+                kind: "assessment",
+                command,
+                cwd: workspace.root,
+                env: {
+                  LOOP_PROJECT_ID: workspace.id,
+                  LOOP_PROJECT_NAME: workspace.name,
+                  LOOP_PROJECT_AGENT: workspace.agent,
+                  LOOP_PROJECT_GOAL: workspace.securityMaintenance.prompt ?? "",
+                  LOOP_PROJECT_PATH: workspace.root,
+                  LOOP_BOT_ROOT: process.cwd(),
+                  LOOP_SECURITY_ACTION_THRESHOLD: String(policy.actionThreshold),
+                  LOOP_SECURITY_CRITICAL_THRESHOLD: String(policy.criticalThreshold),
+                },
+              });
+              return parseSecurityRiskAssessment(
+                commandResult.status,
+                commandResult.stdout,
+                policy.actionThreshold,
+                policy.criticalThreshold,
+              );
+            })();
+      if (assessment.decision === "skip") {
+        recordDueTargetWithoutDispatch(
+          target,
+          `workspace Security Maintenance risk score ${assessment.riskScore} was below action threshold ${assessment.actionThreshold}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
+          "not-needed",
+        );
+        return;
+      }
+      if (assessment.decision === "block" || assessment.riskScore === null) {
+        recordDueTargetWithoutDispatch(
+          target,
+          `workspace Security Maintenance pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
+          "blocked",
+        );
+        return;
+      }
+      preDispatchAssessment = {
+        score: assessment.riskScore,
+        targetScore: assessment.actionThreshold,
+        decision: "run",
+        notes: [
+          `security action threshold=${assessment.actionThreshold}`,
+          `critical threshold=${assessment.criticalThreshold}`,
+          ...assessment.notes,
+        ],
+      };
+    } else if (project !== undefined && due.jobKind === "architecture") {
+      const command = project.assessment.command;
+      const assessment =
+        command === undefined
+          ? {
+              score: null,
+              targetScore: project.targetScore,
+              decision: "block" as const,
+              notes: [],
+              blockers: ["project Architecture assessment command is not configured"],
+            }
+          : (() => {
+              const commandResult = input.runCommand({
+                kind: "assessment",
+                command,
+                cwd: project.path,
+                env: {
+                  LOOP_PROJECT_ID: project.id,
+                  LOOP_PROJECT_NAME: project.name,
+                  LOOP_PROJECT_AGENT: project.agent,
+                  LOOP_PROJECT_GOAL: project.goal,
+                  LOOP_PROJECT_PATH: project.path,
+                  LOOP_BOT_ROOT: process.cwd(),
+                  LOOP_PROJECT_TARGET_SCORE: String(project.targetScore),
+                  LOOP_PROJECT_MAX_ROUNDS: String(project.maxRounds),
+                },
+              });
+              return parseArchitectureAssessment(
+                commandResult.status,
+                commandResult.stdout,
+                project.targetScore,
+              );
+            })();
+      if (assessment.decision === "skip") {
+        recordDueTargetWithoutDispatch(
+          target,
+          `project Architecture score ${assessment.score} reached target ${assessment.targetScore}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
+          "not-needed",
+        );
+        return;
+      }
+      if (assessment.decision === "block" || assessment.score === null) {
+        recordDueTargetWithoutDispatch(
+          target,
+          `project Architecture pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
+          "blocked",
+        );
+        return;
+      }
+      preDispatchAssessment = {
+        score: assessment.score,
+        targetScore: assessment.targetScore,
+        decision: "run",
+        notes: assessment.notes,
+      };
+    } else if (project !== undefined && due.jobKind === "security-maintenance") {
+      const policy = project.securityMaintenance.riskAssessment ?? {
+        actionThreshold: 70,
+        criticalThreshold: 90,
+      };
+      const command = policy.command;
+      const assessment =
+        command === undefined
+          ? {
+              riskScore: null,
+              actionThreshold: policy.actionThreshold,
+              criticalThreshold: policy.criticalThreshold,
+              critical: false,
+              decision: "block" as const,
+              notes: [],
+              blockers: ["security risk assessment command is not configured"],
+            }
+          : (() => {
+              const commandResult = input.runCommand({
+                kind: "assessment",
+                command,
+                cwd: project.path,
+                env: {
+                  LOOP_PROJECT_ID: project.id,
+                  LOOP_PROJECT_NAME: project.name,
+                  LOOP_PROJECT_AGENT: project.agent,
+                  LOOP_PROJECT_GOAL: project.goal,
+                  LOOP_SECURITY_ACTION_THRESHOLD: String(policy.actionThreshold),
+                  LOOP_SECURITY_CRITICAL_THRESHOLD: String(policy.criticalThreshold),
+                },
+              });
+              return parseSecurityRiskAssessment(
+                commandResult.status,
+                commandResult.stdout,
+                policy.actionThreshold,
+                policy.criticalThreshold,
+              );
+            })();
+      if (assessment.decision === "skip") {
+        recordDueTargetWithoutDispatch(
+          target,
+          `project Security Maintenance risk score ${assessment.riskScore} was below action threshold ${assessment.actionThreshold}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
+          "not-needed",
+        );
+        return;
+      }
+      if (assessment.decision === "block" || assessment.riskScore === null) {
+        recordDueTargetWithoutDispatch(
+          target,
+          `project Security Maintenance pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
+          "blocked",
+        );
+        return;
+      }
+      preDispatchAssessment = {
+        score: assessment.riskScore,
+        targetScore: assessment.actionThreshold,
+        decision: "run",
+        notes: [
+          `security action threshold=${assessment.actionThreshold}`,
+          `critical threshold=${assessment.criticalThreshold}`,
+          ...assessment.notes,
+        ],
+      };
+    }
     const { startedAt, runId, ledgerTaskId } = beginLedger(target);
     log.info("loop engineering supervised dispatch start", {
       data: {
@@ -472,6 +703,9 @@ export async function runLoopServiceTickAsync(input: {
                               ? "bug-fix"
                               : "architecture",
             });
+    if (preDispatchAssessment !== undefined) {
+      workOrder = { ...workOrder, preDispatchAssessment };
+    }
     const preparationFailures: string[] = [];
     workOrder = prepareLoopExecutionWorktrees({
       workOrder,
@@ -647,7 +881,12 @@ export async function runLoopServiceTickAsync(input: {
       now: endedAt,
       resultStatus: result.status,
     });
-    settleLoopSupervisorWorkerLease(workOrder, result, endedAt);
+    const isolatedCleanupFailed =
+      result.status === "completed" &&
+      input.runGit !== undefined &&
+      isPreparedIsolatedExecutionWorktree(workOrder) &&
+      !cleanupLoopExecutionWorktree({ worktree: workOrder.projectPath, runGit: input.runGit });
+    settleLoopSupervisorWorkerLease(workOrder, result, endedAt, isolatedCleanupFailed);
     if (result.status === "completed") {
       await cleanupCompletedWorkerSession(workOrder, input.cleanupCompletedWorkerSession);
     }
@@ -829,7 +1068,11 @@ export async function runLoopServiceTickAsync(input: {
     }
   };
 
-  const skipDueTarget = (target: ResolvedDue, summary: string): void => {
+  const recordDueTargetWithoutDispatch = (
+    target: ResolvedDue,
+    summary: string,
+    repairStatus: "not-needed" | "blocked",
+  ): void => {
     const endedAt = Date.now();
     const taskId = `loop:${target.due.jobKey}:${target.due.scheduledAt}`;
     taskLedger.expect({
@@ -838,18 +1081,27 @@ export async function runLoopServiceTickAsync(input: {
       name: `${target.due.projectId} ${target.due.jobKind}`,
       scheduledAt: target.due.scheduledAt,
     });
-    taskLedger.skip(taskId, { endedAt, summary });
+    if (repairStatus === "not-needed") {
+      taskLedger.skip(taskId, { endedAt, summary });
+    } else {
+      taskLedger.fail(taskId, { endedAt, error: summary, summary });
+      taskLedger.markRepairStatus(taskId, { repairStatus, updatedAt: endedAt, summary });
+    }
     input.schedulerStore.setLastFired(target.due.jobKey, target.due.scheduledAt);
-    log.info("loop engineering due target skipped by conflict planner", {
+    log.info("loop engineering due target completed without supervisor dispatch", {
       data: {
         projectId: target.due.projectId,
         jobKey: target.due.jobKey,
         jobKind: target.due.jobKind,
         scheduledAt: new Date(target.due.scheduledAt).toISOString(),
         summary,
+        repairStatus,
       },
     });
   };
+
+  const skipDueTarget = (target: ResolvedDue, summary: string): void =>
+    recordDueTargetWithoutDispatch(target, summary, "not-needed");
 
   for (const due of scheduler.dueProjects) {
     const target = resolveDue(due);
@@ -1348,6 +1600,7 @@ export function reconcileLoopSupervisorWorkOrders(input: {
     ...listRecoverableFinalSummaryLoopSupervisorWorkOrders(),
     ...listUnfinishedLoopSupervisorWorkOrders(),
     ...listRecoverableFailedLoopSupervisorWorkOrders(),
+    ...listStaleDispatchingLoopSupervisorWorkOrders(input.now),
   ];
   const schedulerStore = new LoopSchedulerStore();
   const taskLedger = new DailyTaskLedger();
@@ -1355,19 +1608,34 @@ export function reconcileLoopSupervisorWorkOrders(input: {
   let recovered = 0;
   let failed = 0;
 
-  for (const record of unfinished) {
+  for (const record of new Map(unfinished.map((entry) => [entry.workOrder.id, entry])).values()) {
     const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
-    if (!parsed.ok) continue;
+    const staleDispatching =
+      record.state.status === "dispatching" &&
+      !parsed.ok &&
+      !readLoopSupervisorWorkerLeaseState().leases.some(
+        (lease) => lease.status === "active" && lease.workOrderId === record.workOrder.id,
+      );
+    if (!parsed.ok && !staleDispatching) continue;
     const project = systemGateProjectForRecoveredWorkOrder(config, record.workOrder);
     checked++;
 
-    const recoveredResult: LoopSupervisedRunResult = {
-      status: supervisorFinalStatusToRunStatus(parsed.summary.status),
-      summary: parsed.summary,
-      output: `recovered supervisor final summary from ${
-        record.workOrder.finalSummaryPath ?? "work order state"
-      }`,
-    };
+    const recoveredResult: LoopSupervisedRunResult | undefined = staleDispatching
+      ? {
+          status: "dispatch-failed",
+          reason: "dispatch reservation expired before a supervisor worker lease was acquired",
+          output: "dispatch reservation expired before a supervisor worker lease was acquired",
+        }
+      : parsed.ok
+        ? {
+            status: supervisorFinalStatusToRunStatus(parsed.summary.status),
+            summary: parsed.summary,
+            output: `recovered supervisor final summary from ${
+              record.workOrder.finalSummaryPath ?? "work order state"
+            }`,
+          }
+        : undefined;
+    if (recoveredResult === undefined) continue;
     const gate = runSupervisedSystemGateOutcome({
       project,
       workOrder: record.workOrder,
@@ -1435,11 +1703,37 @@ export function reconcileLoopSupervisorWorkOrders(input: {
       data: { settled: settledTerminalLeases },
     });
   }
-  const settledAbandonedLeases = reconcileAbandonedLoopSupervisorWorkerLeases(input.now);
-  if (settledAbandonedLeases > 0) {
+  const abandonedWorkOrders = reconcileAbandonedLoopSupervisorWorkOrders(
+    input.now,
+    taskLedger,
+    schedulerStore,
+  );
+  checked += abandonedWorkOrders;
+  failed += abandonedWorkOrders;
+  if (abandonedWorkOrders > 0) {
     log.info("loop engineering abandoned supervisor worker leases reconciled", {
-      data: { settled: settledAbandonedLeases },
+      data: { settled: abandonedWorkOrders },
     });
+  }
+  if (input.runGit !== undefined) {
+    const terminalWorktrees = reconcileTerminalLoopSupervisorWorktrees({
+      now: input.now,
+      runGit: input.runGit,
+    });
+    if (terminalWorktrees > 0) {
+      log.info("loop engineering terminal supervisor worktrees reconciled", {
+        data: { removed: terminalWorktrees },
+      });
+    }
+    const expiredWorktrees = reconcileExpiredLoopSupervisorWorkerWorktrees({
+      now: input.now,
+      runGit: input.runGit,
+    });
+    if (expiredWorktrees > 0) {
+      log.info("loop engineering expired supervisor worktrees reconciled", {
+        data: { removed: expiredWorktrees },
+      });
+    }
   }
 
   return { checked, recovered, failed };
@@ -1449,8 +1743,9 @@ function settleLoopSupervisorWorkerLease(
   workOrder: LoopWorkOrder,
   result: LoopSupervisedRunResult,
   now: number,
+  cleanupFailed = false,
 ): void {
-  settleLoopSupervisorWorkerLeaseForStatus(workOrder, result.status, now);
+  settleLoopSupervisorWorkerLeaseForStatus(workOrder, result.status, now, cleanupFailed);
 }
 
 function reconcileTerminalLoopSupervisorWorkerLeases(now: number): number {
@@ -1472,7 +1767,11 @@ function reconcileTerminalLoopSupervisorWorkerLeases(now: number): number {
   return settled;
 }
 
-function reconcileAbandonedLoopSupervisorWorkerLeases(now: number): number {
+function reconcileAbandonedLoopSupervisorWorkOrders(
+  now: number,
+  taskLedger: DailyTaskLedger,
+  schedulerStore: LoopSchedulerStore,
+): number {
   const activeLeasedWorkOrders = new Set(
     readLoopSupervisorWorkerLeaseState()
       .leases.filter((lease) => lease.status === "active")
@@ -1480,7 +1779,6 @@ function reconcileAbandonedLoopSupervisorWorkerLeases(now: number): number {
   );
   let settled = 0;
   for (const record of listAbandonedLoopSupervisorWorkOrders()) {
-    if (!activeLeasedWorkOrders.has(record.workOrder.id)) continue;
     writeLoopSupervisorWorkOrderState({
       workOrder: record.workOrder,
       supervisorSession: record.state.supervisorSession,
@@ -1489,7 +1787,30 @@ function reconcileAbandonedLoopSupervisorWorkerLeases(now: number): number {
       resultStatus: "invalid-output",
       revisionReasons: ["supervisor work order can no longer progress"],
     });
-    settleLoopSupervisorWorkerLeaseForStatus(record.workOrder, "invalid-output", now);
+    schedulerStore.setLastFired(jobKeyForWorkOrder(record.workOrder), record.workOrder.scheduledAt);
+    const jobKey = jobKeyForWorkOrder(record.workOrder);
+    const ledgerTaskId = `loop:${jobKey}:${record.workOrder.scheduledAt}`;
+    const existing = taskLedger.listAll().find((task) => task.taskId === ledgerTaskId);
+    if (existing === undefined) {
+      taskLedger.expect({
+        taskId: ledgerTaskId,
+        source: "loop-engineering",
+        name: `${record.workOrder.projectId} ${record.workOrder.task?.kind ?? "architecture"}`,
+        scheduledAt: record.workOrder.scheduledAt,
+      });
+      taskLedger.start(ledgerTaskId, record.state.updatedAt);
+    }
+    if (existing?.status !== "failed" && existing?.status !== "success") {
+      taskLedger.fail(ledgerTaskId, {
+        endedAt: now,
+        error: "supervisor work order can no longer progress",
+        summary: "Reconciled stale supervisor dispatch without an active worker lease.",
+        reportPath: record.runDir,
+      });
+    }
+    if (activeLeasedWorkOrders.has(record.workOrder.id)) {
+      settleLoopSupervisorWorkerLeaseForStatus(record.workOrder, "invalid-output", now);
+    }
     settled++;
   }
   return settled;
@@ -1507,6 +1828,7 @@ function settleLoopSupervisorWorkerLeaseForStatus(
   workOrder: LoopWorkOrder,
   resultStatus: LoopSupervisedRunResult["status"],
   now: number,
+  cleanupFailed = false,
 ): void {
   const retainFailureForMs =
     (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000;
@@ -1514,7 +1836,7 @@ function settleLoopSupervisorWorkerLeaseForStatus(
     releaseLoopSupervisorWorker({
       state: readLoopSupervisorWorkerLeaseState(),
       workOrderId: workOrder.id,
-      result: resultStatus === "completed" ? "success" : "failure",
+      result: resultStatus === "completed" && !cleanupFailed ? "success" : "failure",
       now,
       retainFailureForMs,
     }),
@@ -1524,9 +1846,70 @@ function settleLoopSupervisorWorkerLeaseForStatus(
       workOrderId: workOrder.id,
       projectId: workOrder.projectId,
       resultStatus,
-      leaseResult: resultStatus === "completed" ? "success" : "failure",
+      leaseResult: resultStatus === "completed" && !cleanupFailed ? "success" : "failure",
     },
   });
+}
+
+function isPreparedIsolatedExecutionWorktree(workOrder: LoopWorkOrder): boolean {
+  return (
+    workOrder.executionIsolation?.preparedBy === "system-git-worktree" &&
+    workOrder.executionIsolation.worktreeIsolation === "isolated" &&
+    isBotOwnedLoopExecutionWorktree(workOrder.projectPath)
+  );
+}
+
+function reconcileTerminalLoopSupervisorWorktrees(input: {
+  now: number;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): number {
+  let removed = 0;
+  for (const record of listTerminalLoopSupervisorWorkOrders()) {
+    if (!isPreparedIsolatedExecutionWorktree(record.workOrder)) continue;
+    const retainFailureForMs =
+      (record.workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000;
+    const eligibleAt =
+      record.state.status === "completed"
+        ? record.state.updatedAt
+        : record.state.updatedAt + retainFailureForMs;
+    if (eligibleAt > input.now) continue;
+    if (!existsSync(record.workOrder.projectPath)) continue;
+    if (
+      cleanupLoopExecutionWorktree({
+        worktree: record.workOrder.projectPath,
+        runGit: input.runGit,
+      })
+    ) {
+      removed++;
+    }
+  }
+  return removed;
+}
+
+function reconcileExpiredLoopSupervisorWorkerWorktrees(input: {
+  now: number;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): number {
+  const state = readLoopSupervisorWorkerLeaseState();
+  const expired = state.leases.filter(
+    (lease) => lease.status === "retained" && (lease.retainUntil ?? Infinity) <= input.now,
+  );
+  if (expired.length === 0) return 0;
+
+  let removed = 0;
+  const remaining = state.leases.filter((lease) => {
+    if (!expired.includes(lease)) return true;
+    if (!isBotOwnedLoopExecutionWorktree(lease.projectPath)) return true;
+    if (!cleanupLoopExecutionWorktree({ worktree: lease.projectPath, runGit: input.runGit })) {
+      return true;
+    }
+    removed++;
+    return false;
+  });
+  if (remaining.length !== state.leases.length) {
+    writeLoopSupervisorWorkerLeaseState({ leases: remaining });
+  }
+  return removed;
 }
 
 function systemGateProjectForRecoveredWorkOrder(
@@ -1683,6 +2066,7 @@ export function runSupervisedSystemGateOutcome(input: {
     } else {
       evidence.push("target worktree clean");
     }
+    failures.push(...isolatedExecutionBranchGate(input.project, input.workOrder, input.runGit));
 
     if (input.project.pullRequest.enabled) {
       failures.push(
@@ -2019,6 +2403,32 @@ function workspaceRepositoryGate(
     }
   }
   return failures;
+}
+
+function isolatedExecutionBranchGate(
+  project: SupervisedSystemGateProject,
+  workOrder: LoopWorkOrder,
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
+): string[] {
+  if (
+    workOrder.executionIsolation?.sourceWorktree === undefined ||
+    workOrder.commitPolicy.branch === undefined
+  ) {
+    return [];
+  }
+  const branch = runGit({ cwd: project.path, args: ["branch", "--show-current"] });
+  if (branch.status !== 0) {
+    return [
+      `isolated worktree branch check failed: ${branch.stderr || branch.stdout || "unknown error"}`,
+    ];
+  }
+  const actualBranch = branch.stdout.trim();
+  if (actualBranch !== workOrder.commitPolicy.branch) {
+    return [
+      `isolated worktree is on "${actualBranch || "detached HEAD"}", expected WorkOrder branch "${workOrder.commitPolicy.branch}"`,
+    ];
+  }
+  return [];
 }
 
 function switchBackWorktreeGate(input: {
@@ -2516,29 +2926,57 @@ function runGithubAccountPermissionGate(input: {
 }): string[] {
   const account = input.project.pullRequest.githubAccount;
   if (account === undefined) return [];
-  const result = input.runCommand({
-    kind: "pr",
-    command: `${ghCommandPrefix(input.project)} repo view --json viewerPermission`,
-    cwd: input.project.path,
-    env: {},
-  });
-  if (result.status !== 0) {
-    return [
-      `GitHub account ${account} permission check failed: ${
-        result.stderr || result.stdout || "unknown error"
-      }`,
-    ];
+  const command = `${ghCommandPrefix(input.project)} repo view --json viewerPermission`;
+  const attempts = positiveIntegerEnv(
+    "TCB_LOOP_GITHUB_PERMISSION_CHECK_ATTEMPTS",
+    DEFAULT_GITHUB_PERMISSION_CHECK_ATTEMPTS,
+  );
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = input.runCommand({
+      kind: "pr",
+      command,
+      cwd: input.project.path,
+      env: {},
+    });
+    if (result.status === 0) {
+      const permission = parseViewerPermission(result.stdout);
+      if (permission === null) {
+        return [`GitHub account ${account} permission check returned invalid JSON`];
+      }
+      if (!["WRITE", "MAINTAIN", "ADMIN"].includes(permission)) {
+        return [
+          `GitHub account ${account} has ${permission} permission; WRITE, MAINTAIN, or ADMIN is required`,
+        ];
+      }
+      return [];
+    }
+
+    const detail = result.stderr || result.stdout || "unknown error";
+    if (attempt === attempts || !isTransientGithubPermissionFailure(detail)) {
+      return [`GitHub account ${account} permission check failed: ${detail}`];
+    }
+    log.warn("loop engineering GitHub permission check transient failure; retrying", {
+      data: { projectId: input.project.id, projectName: input.project.name, account, attempt },
+    });
   }
-  const permission = parseViewerPermission(result.stdout);
-  if (permission === null) {
-    return [`GitHub account ${account} permission check returned invalid JSON`];
-  }
-  if (!["WRITE", "MAINTAIN", "ADMIN"].includes(permission)) {
-    return [
-      `GitHub account ${account} has ${permission} permission; WRITE, MAINTAIN, or ADMIN is required`,
-    ];
-  }
-  return [];
+  return [`GitHub account ${account} permission check failed: unknown error`];
+}
+
+function isTransientGithubPermissionFailure(detail: string): boolean {
+  const text = detail.toLowerCase();
+  return [
+    "tls handshake timeout",
+    "i/o timeout",
+    "timed out",
+    "connection reset",
+    "connection refused",
+    "temporary failure in name resolution",
+    "could not resolve host",
+    "network is unreachable",
+    "bad gateway",
+    "service unavailable",
+    "too many requests",
+  ].some((marker) => text.includes(marker));
 }
 
 function parseViewerPermission(stdout: string): string | null {

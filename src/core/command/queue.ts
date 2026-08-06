@@ -92,8 +92,9 @@ export class MessageQueue {
 
   private writePersistedNow(): void {
     const messages: PersistedMessage[] = [];
-    const collect = (msg: QueuedMessage): void => {
+    const collect = (msg: QueuedMessage, dispatched = false): void => {
       if (msg.ephemeral) return; // local-control messages are never restored
+      if (msg.channel !== "control") return; // user chat prompts are never replayed after restart
       messages.push({
         id: msg.id,
         text: msg.text,
@@ -108,15 +109,18 @@ export class MessageQueue {
         traceId: msg.traceId,
         controlRestore: msg.controlRestore,
         ackMsgId: msg.ackMsgId,
+        ...(dispatched ? { dispatched: true } : {}),
       });
     };
     for (const msg of this.globalQueue.toArray()) collect(msg);
     for (const queue of this.sessionQueues.values()) {
       for (const msg of queue.toArray()) collect(msg);
     }
+    if (this.currentGlobalMessage !== undefined) collect(this.currentGlobalMessage, true);
+    for (const msg of this.currentSessionMessage.values()) collect(msg, true);
     const liveIds = new Set(messages.map((msg) => msg.id));
     for (const msg of this.persistedCarryover.values()) {
-      if (!liveIds.has(msg.id)) messages.push(msg);
+      if (msg.channel === "control" && !liveIds.has(msg.id)) messages.push(msg);
     }
     try {
       fs.writeFileSync(this.persistPath, JSON.stringify(messages, null, 2), "utf-8");
@@ -468,7 +472,14 @@ export class MessageQueue {
     }
     this.currentSessionMessage.set(sessionName, msg);
     log.info(`processing session=${sessionName} action=${msg.action} msgId=${msg.id}`);
-    msg.started?.();
+    if (msg.started?.() === false) {
+      this.processingSessions.delete(sessionName);
+      this.currentSessionMessage.delete(sessionName);
+      msg.reject(new Error("queued task could not acquire its supervisor lease"));
+      void this.processSession(sessionName, false);
+      return;
+    }
+    this.writePersistedNow();
 
     if (!this.handler) {
       log.error(`handler not set session=${sessionName}`);
@@ -506,6 +517,7 @@ export class MessageQueue {
         if (!msg) break;
         this.currentGlobalMessage = msg;
         log.info(`processing global action=${msg.action} msgId=${msg.id}`);
+        this.writePersistedNow();
 
         if (!this.handler) {
           log.error("handler not set for global message");

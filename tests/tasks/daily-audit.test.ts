@@ -1,8 +1,8 @@
 import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runDailyTaskAudit } from "../../src/core/tasks/daily-audit.js";
+import { renderDailyTaskAudit, runDailyTaskAudit } from "../../src/core/tasks/daily-audit.js";
 import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -13,6 +13,46 @@ afterEach(() => {
 });
 
 describe("runDailyTaskAudit", () => {
+  it("renders a compact audit summary without task paths or verbose raw errors", () => {
+    const body = renderDailyTaskAudit(
+      {
+        window: { start: 0, end: 1, label: "2026-08-04 SGT" },
+        counts: {
+          success: 3,
+          failed: 2,
+          missing: 1,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [
+          {
+            taskId: "loop:demo:test-coverage:1",
+            source: "loop-engineering",
+            name: "demo test-coverage",
+            scheduledAt: 1,
+            status: "failed",
+            failureKind: "system-gate",
+            error: `system gate failed at ${homedir()}/project/report.json`,
+            reportPath: `${homedir()}/project/report.md`,
+            repairStatus: "pending",
+            updatedAt: 1,
+          },
+        ],
+      },
+      [],
+      { repairDispatch: "queued" },
+    );
+
+    expect(body).toContain("Status: ATTENTION");
+    expect(body).toContain("Counts: 3 success · 2 failed · 1 missing · 0 running");
+    expect(body).toContain("Repair: 0 candidates · queued");
+    expect(body).toContain("demo test-coverage · failed · system-gate");
+    expect(body).not.toContain("taskId:");
+    expect(body).not.toContain("report:");
+    expect(body).not.toContain(homedir());
+  });
+
   it("sends a previous-day success and failure summary and returns repair candidates", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-"));
     const ledger = new DailyTaskLedger();
@@ -45,8 +85,8 @@ describe("runDailyTaskAudit", () => {
       expect.objectContaining({
         channel: "lark",
         level: "warning",
-        title: "Daily scheduled task audit: 2026-07-27 SGT",
-        body: expect.stringContaining("failed: 1"),
+        title: "Daily task audit · 2026-07-27 SGT",
+        body: expect.stringContaining("Counts: 1 success · 1 failed · 0 missing · 0 running"),
       }),
     );
     expect(result.repairCandidates.map((item) => item.taskId)).toEqual(["radar:daily:failed"]);
@@ -81,7 +121,7 @@ describe("runDailyTaskAudit", () => {
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         level: "warning",
-        body: expect.stringContaining("missing: 1"),
+        body: expect.stringContaining("Counts: 0 success · 0 failed · 1 missing · 0 running"),
       }),
     );
   });
@@ -112,11 +152,11 @@ describe("runDailyTaskAudit", () => {
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         level: "warning",
-        body: expect.stringContaining("running: 1"),
+        body: expect.stringContaining("Counts: 0 success · 0 failed · 0 missing · 1 running"),
       }),
     );
-    expect(notifiedBody(notify)).toContain("active-issues: 1");
-    expect(notifiedBody(notify)).toContain("repair-candidates: 0");
+    expect(notifiedBody(notify)).toContain("Status: ATTENTION");
+    expect(notifiedBody(notify)).toContain("Repair: 0 candidates");
   });
 
   it("keeps superseded failures in the report but excludes them from repair candidates", async () => {
@@ -154,13 +194,11 @@ describe("runDailyTaskAudit", () => {
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         level: "success",
-        body: expect.stringContaining("failed: 1"),
+        body: expect.stringContaining("Counts: 0 success · 1 failed · 0 missing · 0 running"),
       }),
     );
-    expect(notifiedBodies[0]).toContain("repair: fixed");
-    expect(notifiedBodies[0]).toContain("active-issues: 0");
-    expect(notifiedBodies[0]).toContain("closed-failures: 1");
-    expect(notifiedBodies[0]).toContain("Closed failures:");
+    expect(notifiedBodies[0]).toContain("Status: OK");
+    expect(notifiedBodies[0]).toContain("Repair: 0 candidates");
   });
 
   it("renders failure kinds for active repair candidates", async () => {
@@ -195,10 +233,9 @@ describe("runDailyTaskAudit", () => {
       taskId: "loop:geo-frontend:bug-fix",
       failureKind: "external-ci",
     });
-    expect(notifiedBodies[0]).toContain("failure-kind: external-ci");
-    expect(notifiedBodies[0]).toContain("active-issues: 1");
-    expect(notifiedBodies[0]).toContain("repair-candidates: 1");
-    expect(notifiedBodies[0]).toContain("kind=external-ci");
+    expect(notifiedBodies[0]).toContain("geo-frontend bug-fix · failed · external-ci");
+    expect(notifiedBodies[0]).toContain("Status: ATTENTION");
+    expect(notifiedBodies[0]).toContain("Repair: 1 candidates");
   });
 });
 

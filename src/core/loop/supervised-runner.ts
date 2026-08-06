@@ -20,6 +20,7 @@ export type SupervisorDispatchRequest = {
   workOrder: LoopWorkOrder;
   timeoutMs?: number;
   contextReset?: "none" | "compact" | "clear";
+  deferLeaseUntilConsumption?: boolean;
 };
 
 export type SupervisorDispatchResult = {

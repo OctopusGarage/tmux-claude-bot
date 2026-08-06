@@ -30,11 +30,14 @@ export function listReservedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisor
 
 export function findProjectAutomationConflict(
   projectPath: string,
+  options: { includeSourceWorktree?: boolean } = {},
 ): ProjectAutomationConflict | null {
   const targetPath = resolve(projectPath);
   const record =
     listReservedLoopSupervisorWorkOrders().find((candidate) =>
-      workOrderResourcePaths(candidate.workOrder).some((path) => resolve(path) === targetPath),
+      workOrderResourcePaths(candidate.workOrder, options.includeSourceWorktree ?? true).some(
+        (path) => resolve(path) === targetPath,
+      ),
     ) ?? null;
   if (record === null) return null;
   return {
@@ -49,14 +52,22 @@ export function findProjectAutomationConflict(
   };
 }
 
-function workOrderResourcePaths(workOrder: UnfinishedLoopSupervisorWorkOrder["workOrder"]) {
+function workOrderResourcePaths(
+  workOrder: UnfinishedLoopSupervisorWorkOrder["workOrder"],
+  includeSourceWorktree: boolean,
+) {
+  const sourceWorktree = workOrder.executionIsolation?.sourceWorktree;
   if (workOrder.workspace !== undefined) {
     return [
       workOrder.workspace.root,
       ...workOrder.workspace.repositories.map((repository) => repository.path),
+      ...(includeSourceWorktree && sourceWorktree !== undefined ? [sourceWorktree] : []),
     ];
   }
-  return [workOrder.projectPath];
+  return [
+    workOrder.projectPath,
+    ...(includeSourceWorktree && sourceWorktree !== undefined ? [sourceWorktree] : []),
+  ];
 }
 
 export function findProjectAutomationConflictForSession(
@@ -64,5 +75,5 @@ export function findProjectAutomationConflictForSession(
 ): ProjectAutomationConflict | null {
   const projectPath = getPathBySession(session);
   if (projectPath === null) return null;
-  return findProjectAutomationConflict(projectPath);
+  return findProjectAutomationConflict(projectPath, { includeSourceWorktree: false });
 }

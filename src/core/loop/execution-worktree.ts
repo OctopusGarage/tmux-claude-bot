@@ -49,21 +49,84 @@ export function prepareLoopExecutionWorktrees(input: {
     sourceWorktree: input.workOrder.projectPath,
     workOrder: input.workOrder,
   });
-  return prepared === null
-    ? looksLikeGitWorktree(input.workOrder.projectPath)
+  if (prepared === null) {
+    return looksLikeGitWorktree(input.workOrder.projectPath)
       ? failExecutionWorktreePreparation(input, {
           repositoryId: input.workOrder.projectId,
           sourceWorktree: input.workOrder.projectPath,
           reason: "isolated execution worktree could not be prepared",
         })
-      : input.workOrder
-    : withLoopExecutionWorktree(input.workOrder, prepared.executionWorktree);
+      : input.workOrder;
+  }
+  if ("detail" in prepared) {
+    return failExecutionWorktreePreparation(input, {
+      repositoryId: input.workOrder.projectId,
+      sourceWorktree: input.workOrder.projectPath,
+      reason: "isolated execution worktree could not be prepared",
+      detail: prepared.detail,
+    });
+  }
+  return withLoopExecutionWorktree(input.workOrder, prepared.executionWorktree);
+}
+
+/**
+ * Remove an isolated execution worktree after its retention window expires.
+ *
+ * Only paths created below this bot's state-owned loop-worktrees directory are
+ * eligible. The git toplevel check is deliberately repeated before removal so
+ * a stale lease can never turn into a destructive command against a configured
+ * source repository.
+ */
+export function cleanupLoopExecutionWorktree(input: {
+  worktree: string;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): boolean {
+  const worktree = resolvePath(input.worktree);
+  if (!isBotOwnedLoopExecutionWorktree(worktree)) {
+    log.warn("loop refused to remove worktree outside bot-owned state", {
+      data: { worktree },
+    });
+    return false;
+  }
+  if (!existsSync(worktree)) return true;
+  const topLevel = input.runGit({ cwd: worktree, args: ["rev-parse", "--show-toplevel"] });
+  if (topLevel.status !== 0 || resolvePath(topLevel.stdout.trim()) !== worktree) {
+    log.warn("loop refused to remove path that is not the expected git worktree", {
+      data: {
+        worktree,
+        reason: topLevel.stderr || topLevel.stdout || "git toplevel verification failed",
+      },
+    });
+    return false;
+  }
+  const removed = input.runGit({
+    cwd: worktree,
+    args: ["worktree", "remove", "--force", worktree],
+  });
+  if (removed.status !== 0) {
+    log.warn("loop failed to remove expired isolated worktree", {
+      data: {
+        worktree,
+        reason: removed.stderr || removed.stdout || "git worktree remove failed",
+      },
+    });
+    return false;
+  }
+  log.info("loop removed expired isolated worktree", { data: { worktree } });
+  return true;
+}
+
+export function isBotOwnedLoopExecutionWorktree(worktree: string): boolean {
+  const root = resolvePath(join(appStateDir(), "loop-worktrees"));
+  const resolved = resolvePath(worktree);
+  return resolved !== root && resolved.startsWith(`${root}/`);
 }
 
 export type LoopExecutionWorktreePreparationFailure = {
   repositoryId: string;
   sourceWorktree: string;
   reason: string;
+  detail?: string;
 };
 
 function prepareWorkspaceExecutionWorktrees(
@@ -124,12 +187,13 @@ function prepareWorkspaceExecutionWorktrees(
       workOrder,
       repositoryId: repository.id,
     });
-    if (prepared === null) {
+    if (prepared === null || "detail" in prepared) {
       if (looksLikeGitWorktree(repository.path)) {
         onPreparationFailure?.({
           repositoryId: repository.id,
           sourceWorktree: repository.path,
           reason: "isolated execution worktree could not be prepared",
+          ...(prepared === null ? {} : { detail: prepared.detail }),
         });
       }
       return { id: repository.id, path: repository.path };
@@ -198,7 +262,8 @@ function prepareSourceExecutionWorktree(input: {
     });
     return null;
   }
-  if (!syncSourceExecutionBranch(input, "source execution")) return null;
+  const syncFailure = syncSourceExecutionBranch(input, "source execution");
+  if (syncFailure !== null) return null;
   const status = input.runGit({
     cwd: input.sourceWorktree,
     args: ["status", "--porcelain"],
@@ -234,7 +299,7 @@ function prepareGitExecutionWorktree(input: {
   sourceWorktree: string;
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
   repositoryId?: string;
-}): { executionWorktree: string } | null {
+}): { executionWorktree: string } | { detail: string } | null {
   if (!looksLikeGitWorktree(input.sourceWorktree)) {
     log.warn("loop skipped execution worktree isolation because target has no .git entry", {
       data: loggableInput(input),
@@ -261,7 +326,8 @@ function prepareGitExecutionWorktree(input: {
     });
     return null;
   }
-  if (!syncSourceExecutionBranch(input, "isolated execution")) return null;
+  const syncFailure = syncSourceExecutionBranch(input, "isolated execution");
+  if (syncFailure !== null) return { detail: syncFailure };
 
   const executionWorktree = loopExecutionWorktreePath(input.workOrder, input.repositoryId);
   mkdirSync(dirname(executionWorktree), { recursive: true });
@@ -292,7 +358,7 @@ function prepareGitExecutionWorktree(input: {
         reason: added.stderr || added.stdout || "git worktree add failed",
       },
     });
-    return null;
+    return { detail: added.stderr || added.stdout || "git worktree add failed" };
   }
   log.info("loop prepared isolated execution worktree", {
     data: { ...loggableInput(input), executionWorktree },
@@ -308,43 +374,60 @@ function syncSourceExecutionBranch(
     repositoryId?: string;
   },
   purpose: string,
-): boolean {
+): string | null {
   const branch = executionBaseBranch(input.workOrder, input.repositoryId);
-  if (branch === undefined) return true;
+  if (branch === undefined) return null;
   const cleanBefore = input.runGit({
     cwd: input.sourceWorktree,
     args: ["status", "--porcelain"],
   });
   if (cleanBefore.status !== 0 || cleanBefore.stdout.trim().length > 0) {
+    const reason =
+      cleanBefore.status !== 0
+        ? cleanBefore.stderr || cleanBefore.stdout || "git status failed"
+        : `source worktree is dirty: ${cleanBefore.stdout.trim()}`;
     log.warn(`loop ${purpose} blocked before branch sync`, {
       data: {
         ...loggableInput(input),
         branch,
-        reason:
-          cleanBefore.status !== 0
-            ? cleanBefore.stderr || cleanBefore.stdout || "git status failed"
-            : `source worktree is dirty: ${cleanBefore.stdout.trim()}`,
+        reason,
       },
     });
-    return false;
+    return reason;
   }
   const commands: Array<{ label: string; args: string[] }> = [
     { label: "fetch", args: ["fetch", "origin", branch] },
     { label: "switch", args: ["switch", branch] },
     { label: "pull-rebase", args: ["pull", "--rebase", "origin", branch] },
   ];
+  let remoteUnavailable = false;
   for (const command of commands) {
+    if (remoteUnavailable && command.label === "pull-rebase") continue;
     const result = input.runGit({ cwd: input.sourceWorktree, args: command.args });
     if (result.status !== 0) {
+      const reason = result.stderr || result.stdout || `git ${command.args.join(" ")} failed`;
+      if (command.label === "fetch" && isRemoteTransportFailure(reason)) {
+        const localBranch = input.runGit({
+          cwd: input.sourceWorktree,
+          args: ["rev-parse", "--verify", `refs/heads/${branch}`],
+        });
+        if (localBranch.status === 0 && localBranch.stdout.trim().length > 0) {
+          remoteUnavailable = true;
+          log.warn("loop branch sync using verified local branch because remote is unavailable", {
+            data: { ...loggableInput(input), branch, reason },
+          });
+          continue;
+        }
+      }
       log.warn(`loop ${purpose} branch sync failed`, {
         data: {
           ...loggableInput(input),
           branch,
           step: command.label,
-          reason: result.stderr || result.stdout || `git ${command.args.join(" ")} failed`,
+          reason,
         },
       });
-      return false;
+      return reason;
     }
   }
   const cleanAfter = input.runGit({
@@ -352,22 +435,29 @@ function syncSourceExecutionBranch(
     args: ["status", "--porcelain"],
   });
   if (cleanAfter.status !== 0 || cleanAfter.stdout.trim().length > 0) {
+    const reason =
+      cleanAfter.status !== 0
+        ? cleanAfter.stderr || cleanAfter.stdout || "git status failed"
+        : `source worktree is dirty after pull --rebase: ${cleanAfter.stdout.trim()}`;
     log.warn(`loop ${purpose} blocked after branch sync`, {
       data: {
         ...loggableInput(input),
         branch,
-        reason:
-          cleanAfter.status !== 0
-            ? cleanAfter.stderr || cleanAfter.stdout || "git status failed"
-            : `source worktree is dirty after pull --rebase: ${cleanAfter.stdout.trim()}`,
+        reason,
       },
     });
-    return false;
+    return reason;
   }
   log.info(`loop ${purpose} source branch synced`, {
     data: { ...loggableInput(input), branch },
   });
-  return true;
+  return null;
+}
+
+function isRemoteTransportFailure(reason: string): boolean {
+  return /connection closed|could not read from remote|could not resolve host|network is unreachable|timed out|connection reset|temporary failure/i.test(
+    reason,
+  );
 }
 
 function executionBaseBranch(workOrder: LoopWorkOrder, repositoryId?: string): string | undefined {

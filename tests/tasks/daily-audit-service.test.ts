@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import { NotificationGateway } from "../../src/core/notifications/gateway.js";
 import {
+  DailyTaskAuditStore,
   dispatchDailyTaskRepair,
   runDailyTaskAuditServiceTick,
 } from "../../src/core/tasks/daily-audit-service.js";
@@ -30,6 +31,85 @@ afterEach(() => {
 });
 
 describe("runDailyTaskAuditServiceTick", () => {
+  it("serializes overlapping audit ticks instead of dispatching duplicate repairs", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-lock-"));
+    let release!: () => void;
+    let entered!: () => void;
+    const enteredPromise = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const reconcileGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const input = {
+      now: Date.parse("2026-07-28T02:05:00Z"),
+      config: {
+        enabled: true,
+        tickMs: 300000,
+        schedule: "0 2 * * *",
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        autoRepair: false,
+        repairWorktreeIsolation: "isolated" as const,
+        channel: "lark" as const,
+      },
+      notifications: new NotificationGateway(),
+      discover: () => [],
+      reconcile: async () => {
+        entered();
+        await reconcileGate;
+      },
+    };
+    const first = runDailyTaskAuditServiceTick(input);
+    await enteredPromise;
+    await expect(runDailyTaskAuditServiceTick(input)).resolves.toEqual({
+      fired: false,
+      reason: "in-progress",
+    });
+    release();
+    await first;
+  });
+
+  it("reopens stale repair statuses after the repair worker is no longer active", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-daily-audit-stale-repair-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const ledger = new DailyTaskLedger();
+    const scheduledAt = Date.parse("2026-07-27T02:00:00Z");
+    ledger.expect({
+      taskId: "loop:stale:failed",
+      source: "loop-engineering",
+      name: "stale task",
+      scheduledAt,
+    });
+    ledger.fail("loop:stale:failed", { endedAt: scheduledAt + 1000, error: "failed" });
+    ledger.markRepairStatus("loop:stale:failed", {
+      repairStatus: "running",
+      updatedAt: Date.parse("2026-07-27T03:00:00Z"),
+    });
+
+    await runDailyTaskAuditServiceTick({
+      now: Date.parse("2026-07-28T02:00:00Z"),
+      config: {
+        enabled: true,
+        tickMs: 300000,
+        schedule: "0 2 * * *",
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        autoRepair: false,
+        repairWorktreeIsolation: "isolated",
+        channel: "lark",
+      },
+      notifications: new NotificationGateway(),
+      ledger,
+      store: new DailyTaskAuditStore(),
+      force: true,
+    });
+
+    expect(ledger.listAll().find((record) => record.taskId === "loop:stale:failed")).toMatchObject({
+      repairStatus: "pending",
+    });
+  });
+
   it("fires once when the audit schedule is due and records the audit task", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-service-"));
     const notifications = new NotificationGateway();
@@ -193,7 +273,7 @@ describe("runDailyTaskAuditServiceTick", () => {
       }),
     );
     expect(events[0]).toBe("dispatch");
-    expect(events[1]).toContain("repair-dispatch: queued - runId=repair-run-1");
+    expect(events[1]).toContain("Repair: 1 candidates · queued - runId=repair-run-1");
     expect(
       ledger.listForWindow({
         start: Date.parse("2026-07-27T00:00:00Z"),
@@ -245,7 +325,7 @@ describe("runDailyTaskAuditServiceTick", () => {
     });
 
     expect(result).toMatchObject({ fired: true, failures: 1 });
-    expect(sentMessages[0]).toContain("repair-dispatch: failed");
+    expect(sentMessages[0]).toContain("Repair: 1 candidates · failed");
     expect(
       ledger.listForWindow({
         start: Date.parse("2026-07-28T00:00:00Z"),
@@ -256,6 +336,138 @@ describe("runDailyTaskAuditServiceTick", () => {
       status: "success",
       summary: expect.stringContaining("failures=1 repair-dispatch=failed"),
     });
+  });
+
+  it("returns capacity and active-automation deferrals directly to the queue", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-capacity-"));
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:tmux-claude-bot:capacity",
+      source: "loop-engineering",
+      name: "tmux-claude-bot architecture",
+      scheduledAt: 1,
+    });
+    ledger.fail("loop:tmux-claude-bot:capacity", { endedAt: 2, error: "dispatch-failed" });
+
+    await runDailyTaskAuditServiceTick({
+      now: 3,
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: true,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications: new NotificationGateway(),
+      ledger,
+      dispatchRepair: vi.fn(async () => ({
+        status: "blocked" as const,
+        detail: "project already has active automation",
+      })),
+      force: true,
+    });
+
+    const { RepairCoordinator } = await import("../../src/core/tasks/repair-coordinator.js");
+    expect(new RepairCoordinator().list()[0]).toMatchObject({
+      status: "pending",
+      nextAttemptAt: 3,
+    });
+  });
+
+  it("does not let generic daily repair dispatch claim project-recovery records", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-daily-audit-project-recovery-owner-"),
+    );
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "autopilot:historical-recovery",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1,
+    });
+    ledger.fail("autopilot:historical-recovery", {
+      endedAt: 2,
+      error: "orphaned-supervisor-worker",
+    });
+    const { RepairCoordinator } = await import("../../src/core/tasks/repair-coordinator.js");
+    const coordinator = new RepairCoordinator();
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "orphaned-supervisor-worker",
+      taskId: "autopilot:historical-recovery",
+      now: 3,
+    });
+    const dispatchRepair = vi.fn(async () => ({
+      status: "queued" as const,
+      detail: "should not be called",
+    }));
+
+    await runDailyTaskAuditServiceTick({
+      now: 3,
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: true,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications: new NotificationGateway(),
+      ledger,
+      coordinator,
+      dispatchRepair,
+      force: true,
+    });
+
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(coordinator.list()[0]).toMatchObject({ status: "pending" });
+  });
+
+  it("terminalizes queue records that have no ledger evidence", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-missing-evidence-"));
+    const { RepairCoordinator } = await import("../../src/core/tasks/repair-coordinator.js");
+    const coordinator = new RepairCoordinator();
+    const queueRecord = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "loop-engineering",
+      taskFamily: "missing-run",
+      fingerprint: "no explicit run record",
+      taskId: "loop:missing-run",
+      now: 1,
+    });
+    const result = await runDailyTaskAuditServiceTick({
+      now: 2,
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: true,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications: new NotificationGateway(),
+      coordinator,
+      dispatchRepair: vi.fn(async () => ({ status: "queued" as const, detail: "test" })),
+      force: true,
+    });
+
+    expect(result.fired).toBe(true);
+    if (!result.fired) throw new Error("expected forced audit to fire");
+    expect(result.repairDispatch).toContain("no ledger evidence");
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: queueRecord.id, status: "blocked" }),
+    ]);
   });
 
   it("self-audits the previous daily audit when its repair dispatch failed", async () => {
@@ -316,8 +528,8 @@ describe("runDailyTaskAuditServiceTick", () => {
         ],
       }),
     );
-    expect(sentMessages[0]).toContain("daily-audit:self:");
-    expect(sentMessages[0]).toContain("repair-dispatch: queued - runId=self-repair-1");
+    expect(sentMessages[0]).toContain("Daily task audit self-check · failed · unknown");
+    expect(sentMessages[0]).toContain("Repair: 1 candidates · queued - runId=self-repair-1");
   });
 
   it("self-audits partial previous audit notification without re-dispatching active self repair", async () => {

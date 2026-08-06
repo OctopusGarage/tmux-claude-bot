@@ -140,6 +140,8 @@ function securityMaintenancePolicy(workOrder: LoopWorkOrder): string[] {
   if (task.kind !== "security-maintenance") return [];
   return [
     "Security maintenance task.",
+    `- Risk gate: action threshold ${task.actionThreshold}; critical threshold ${task.criticalThreshold}. The pre-dispatch assessment has already determined this run is actionable, but independently verify the finding before editing.`,
+    "- Treat a critical finding or a confirmed risk at or above the action threshold as repairable; record lower-risk, unreachable, speculative, or false-positive findings as not-needed or follow-ups without changing code.",
     `- Run at most ${task.maxRounds} focused security round(s). Stop when no confirmed actionable security issue remains within this task's allowed scope.`,
     "- Check broadly for security risk, not only dependency advisories: dependency vulnerabilities, GitHub security findings, static analysis findings, secret or token exposure, unsafe auth/permission checks, webhook verification, CORS, file/path handling, uploads, deserialization/parsing, SSRF, command execution, logging of sensitive data, CI secret handling, and supply-chain risk.",
     "- Use native exploration to inspect independent security surfaces when useful, but repair only confirmed or plausibly reachable findings.",
@@ -342,6 +344,8 @@ function harnessSubtaskAsWorkOrderTask(
   return {
     kind: "security-maintenance",
     maxRounds: subtask.maxRounds,
+    actionThreshold: subtask.actionThreshold,
+    criticalThreshold: subtask.criticalThreshold,
     allowDependencyUpdates: subtask.allowDependencyUpdates,
     allowConfigHardening: subtask.allowConfigHardening,
     allowStaticAnalysisFixes: subtask.allowStaticAnalysisFixes,

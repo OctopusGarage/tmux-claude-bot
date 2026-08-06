@@ -116,6 +116,10 @@ same-repository issues before merging.
 
 Workspace tasks are generic multi-repository WorkOrders, not architecture-only
 jobs. The internal `workspace-architecture` name is a compatibility job kind,
+and its scheduler performs the same deterministic score-first gate as project
+Architecture before allocating a supervisor or worker. The default target is
+95; a target-reaching score records a no-op and an invalid cross-repository
+assessment records a blocked terminal outcome without editing repositories.
 not the workspace capability boundary.
 
 ## Isolation And Conflict Control
@@ -127,6 +131,9 @@ Runtime Guardian fast-heal, and only after clean-worktree preflight.
 Conflict rules:
 
 - Only one code-changing automation should own a project or branch at a time.
+- Security Maintenance must pass its deterministic risk gate before it can own
+  a project or branch: critical findings or risk scores at or above the action
+  threshold may run; lower-risk or invalid assessments must not mutate code.
 - `harnessAuto` consumes overlapping architecture, bug-fix, test-coverage, and
   security-maintenance work for the same resource.
 - Ordinary chat prompts should block when active automation owns the project,

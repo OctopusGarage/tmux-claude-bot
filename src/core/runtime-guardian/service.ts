@@ -7,14 +7,23 @@ import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
+import { loopRunDir } from "../loop/artifacts.js";
 import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
-import { listTerminalLoopSupervisorWorkOrders } from "../loop/supervisor-state.js";
+import {
+  listStaleDispatchingLoopSupervisorWorkOrders,
+  listTerminalLoopSupervisorWorkOrders,
+  STALE_DISPATCHING_WORK_ORDER_MS,
+} from "../loop/supervisor-state.js";
 import {
   type LoopSupervisorReviewGateDeterministicGate,
+  type LoopWorkOrder,
   parseSupervisorFinalSummaryFile,
 } from "../loop/work-order.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildRuntimeGuardianRepairPrompt } from "../prompts/repair-prompts.js";
+import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
+import { RepairCoordinator } from "../tasks/repair-coordinator.js";
+import { reconcileAutopilotDelegatedTasks } from "../tasks/task-reconciliation.js";
 
 const log = createLogger("runtime-guardian");
 
@@ -22,10 +31,12 @@ export { buildRuntimeGuardianRepairPrompt };
 
 export type RuntimeGuardianFindingKind =
   | "missing-system-gate"
+  | "terminal-system-gate-failure"
   | "failed-eval-outcome"
   | "terminal-invalid-output"
   | "terminal-agent-transient-failure"
   | "terminal-work-order-active-lease"
+  | "stale-dispatching-work-order"
   | "read-only-smoke-preflight-blocked";
 
 export type RuntimeGuardianFinding = {
@@ -68,6 +79,69 @@ export type RuntimeGuardianRepairReadinessCheck = (
   },
 ) => { ok: true } | { ok: false; reason: string };
 
+export function reconcileRuntimeGuardianQueue(input: {
+  coordinator: RepairCoordinator;
+  now: number;
+  findings: readonly RuntimeGuardianFinding[];
+}): number {
+  const byRunId = new Map(input.findings.map((finding) => [finding.runId, finding]));
+  const terminalByRunId = new Map(
+    listTerminalLoopSupervisorWorkOrders().map((record) => [record.workOrder.id, record]),
+  );
+  let reconciled = 0;
+  for (const record of input.coordinator.list()) {
+    if (record.source !== "runtime-guardian" || isQueueTerminal(record.status)) continue;
+    const finding = record.linkedTaskIds.map((id) => byRunId.get(id)).find(Boolean);
+    if (finding !== undefined && isTargetOrExternalBlocker(finding)) {
+      input.coordinator.markTerminal(record.id, "blocked", input.now);
+      reconciled++;
+      continue;
+    }
+    if (record.taskFamily !== "terminal-invalid-output") continue;
+    const terminal = record.linkedTaskIds
+      .map((id) => terminalByRunId.get(id))
+      .find((candidate) => candidate !== undefined);
+    const artifactEvidence =
+      terminal === undefined
+        ? record.linkedTaskIds
+            .map((id) => readPassingTerminalArtifacts(loopRunDir(record.projectId, id)))
+            .find(Boolean)
+        : readPassingTerminalArtifacts(terminal.runDir, terminal.workOrder);
+    if (artifactEvidence === false) continue;
+    input.coordinator.markTerminal(
+      record.id,
+      artifactEvidence === "fixed" ? "fixed" : "not-reproducible",
+      input.now,
+    );
+    reconciled++;
+  }
+  return reconciled;
+}
+
+function readPassingTerminalArtifacts(
+  runDir: string,
+  workOrder?: LoopWorkOrder,
+): "fixed" | "not-reproducible" | false {
+  const candidate =
+    workOrder ?? (readJsonRecord(join(runDir, "work-order.json")) as LoopWorkOrder | null);
+  if (candidate === null) return false;
+  const parsed = parseSupervisorFinalSummaryFile(candidate);
+  const gate = readJsonRecord(join(runDir, "system-gate.json"));
+  const rawSummary = readJsonRecord(join(runDir, "supervisor-final-summary.json"));
+  if (rawSummary === null) {
+    return false;
+  }
+  const substantiveSuccess =
+    rawSummary.status === "completed" &&
+    rawSummary.finalVerification === "passed" &&
+    isRecord(rawSummary.reviewGate) &&
+    rawSummary.reviewGate.decision === "pass";
+  if (substantiveSuccess) {
+    return parsed.ok ? "fixed" : "not-reproducible";
+  }
+  return gate?.accepted === true && !parsed.ok ? "not-reproducible" : false;
+}
+
 export class RuntimeGuardianStore {
   private readonly handled = new JsonMapStore<number>("runtime_guardian_handled_findings.json");
 
@@ -95,10 +169,12 @@ export async function runRuntimeGuardianTick(input: {
   discover?: RuntimeGuardianFindingDiscovery;
   dispatchRepair?: RuntimeGuardianRepairDispatch;
   checkRepairReadiness?: RuntimeGuardianRepairReadinessCheck;
+  reconcile?: () => Promise<void> | void;
 }): Promise<RuntimeGuardianTickResult> {
   if (!input.config.enabled || input.config.tickMs === 0) {
     return { fired: false, reason: "disabled" };
   }
+  await input.reconcile?.();
 
   const store = input.store ?? new RuntimeGuardianStore();
   const discovered = (
@@ -107,8 +183,12 @@ export async function runRuntimeGuardianTick(input: {
       discoverRuntimeGuardianFindings({
         now: input.now,
         lookbackMs: input.config.lookbackMs,
+        repoPath: runtimeGuardianRepoPath(input.config),
       }))
   )();
+  const coordinator = new RepairCoordinator();
+  coordinator.reconcileDuplicateTaskIds(input.now);
+  reconcileRuntimeGuardianQueue({ coordinator, now: input.now, findings: discovered });
   const findings = discovered
     .filter((finding) => !isCoolingDown(store, finding, input.now, input.config.cooldownMs))
     .slice(0, input.config.maxFindingsPerTick);
@@ -130,6 +210,21 @@ export async function runRuntimeGuardianTick(input: {
     };
   }
 
+  const repairableFindings = findings.filter((finding) => !isTargetOrExternalBlocker(finding));
+  const nonRepairableFindings = findings.filter(isTargetOrExternalBlocker);
+  for (const finding of nonRepairableFindings) {
+    store.markHandled(fingerprintForFinding(finding), input.now);
+  }
+  if (repairableFindings.length === 0) {
+    return {
+      fired: true,
+      mode: input.config.mode,
+      findings,
+      repairDispatch: "blocked",
+      detail: "findings are target or external blockers; no bot self-repair dispatched",
+    };
+  }
+
   const repoPath = runtimeGuardianRepoPath(input.config);
   const repairAttemptAt = store.lastRepairAttemptAt(repoPath);
   if (
@@ -144,7 +239,7 @@ export async function runRuntimeGuardianTick(input: {
     return {
       fired: true,
       mode: input.config.mode,
-      findings,
+      findings: repairableFindings,
       repairDispatch: "unavailable",
       detail: "repair dispatch is unavailable",
     };
@@ -157,14 +252,19 @@ export async function runRuntimeGuardianTick(input: {
   });
   if (!readiness.ok) {
     log.warn("runtime guardian repair blocked by readiness check", {
-      data: { reason: readiness.reason, repoPath, findings: findings.map(loggableFinding) },
+      data: {
+        reason: readiness.reason,
+        repoPath,
+        findings: repairableFindings.map(loggableFinding),
+      },
     });
     store.markRepairAttempt(repoPath, input.now);
-    for (const finding of findings) store.markHandled(fingerprintForFinding(finding), input.now);
+    for (const finding of repairableFindings)
+      store.markHandled(fingerprintForFinding(finding), input.now);
     return {
       fired: true,
       mode: input.config.mode,
-      findings,
+      findings: repairableFindings,
       repairDispatch: "blocked",
       detail: readiness.reason,
     };
@@ -175,30 +275,30 @@ export async function runRuntimeGuardianTick(input: {
       repoPath,
       repairBranch: input.config.repairBranch,
       mode: input.config.mode,
-      findings,
+      findings: repairableFindings,
     });
     store.markRepairAttempt(repoPath, input.now);
     for (const finding of findings) store.markHandled(fingerprintForFinding(finding), input.now);
     if (dispatch?.status === "blocked") {
       log.warn("runtime guardian repair delegation blocked", {
-        data: { detail: dispatch.detail, findings: findings.map(loggableFinding) },
+        data: { detail: dispatch.detail, findings: repairableFindings.map(loggableFinding) },
       });
       return {
         fired: true,
         mode: input.config.mode,
-        findings,
+        findings: repairableFindings,
         repairDispatch: "blocked",
         detail: dispatch.detail,
       };
     }
     const detail = dispatch?.detail ?? "queued";
     log.warn("runtime guardian delegated repair", {
-      data: { detail, findings: findings.map(loggableFinding) },
+      data: { detail, findings: repairableFindings.map(loggableFinding) },
     });
     return {
       fired: true,
       mode: input.config.mode,
-      findings,
+      findings: repairableFindings,
       repairDispatch: "queued",
       detail,
     };
@@ -215,16 +315,39 @@ export async function runRuntimeGuardianTick(input: {
 }
 
 export function discoverRuntimeGuardianFindings(
-  input: { now: number; lookbackMs: number } = { now: Date.now(), lookbackMs: 86_400_000 },
+  input: { now: number; lookbackMs: number; repoPath?: string } = {
+    now: Date.now(),
+    lookbackMs: 86_400_000,
+  },
 ): RuntimeGuardianFinding[] {
   const findings: RuntimeGuardianFinding[] = [];
   const terminal = listTerminalLoopSupervisorWorkOrders();
+
+  for (const record of listStaleDispatchingLoopSupervisorWorkOrders(input.now)) {
+    if (input.repoPath !== undefined && record.workOrder.projectPath !== input.repoPath) continue;
+    if (isOutsideLookback(record.state.updatedAt, input.now, input.lookbackMs)) continue;
+    findings.push({
+      kind: "stale-dispatching-work-order",
+      severity: "high",
+      runId: record.workOrder.id,
+      projectId: record.workOrder.projectId,
+      projectPath: record.workOrder.projectPath,
+      runDir: record.runDir,
+      evidence: [
+        `dispatching work-order has no active supervisor lease: ${record.workOrder.id}`,
+        `dispatch reservation exceeded ${STALE_DISPATCHING_WORK_ORDER_MS / 1000}s`,
+        "no supervisor final summary exists",
+      ],
+    });
+  }
 
   for (const record of terminal) {
     if (isOutsideLookback(record.state.updatedAt, input.now, input.lookbackMs)) continue;
     const gatePath = join(record.runDir, "system-gate.json");
     const finalSummaryPath =
       record.workOrder.finalSummaryPath ?? join(record.runDir, "supervisor-final-summary.json");
+    const systemGateFailure = terminalSystemGateFailureFinding(record, gatePath);
+    if (systemGateFailure !== null) findings.push(systemGateFailure);
     const failedEvalOutcome = failedEvalOutcomeFinding(record, gatePath);
     if (failedEvalOutcome !== null) findings.push(failedEvalOutcome);
     if (
@@ -246,10 +369,11 @@ export function discoverRuntimeGuardianFindings(
         ],
       });
     }
+    const parsedFinalSummary = parseSupervisorFinalSummaryFile(record.workOrder);
     if (
       record.state.status === "failed" &&
       record.state.resultStatus === "invalid-output" &&
-      !parseSupervisorFinalSummaryFile(record.workOrder).ok
+      (!hasSuccessfulDurableFinalSummary(record) || !existsSync(gatePath))
     ) {
       findings.push({
         kind: "terminal-invalid-output",
@@ -261,6 +385,15 @@ export function discoverRuntimeGuardianFindings(
         evidence: [
           `terminal failed work-order has resultStatus=invalid-output: ${record.workOrder.id}`,
           `runDir: ${record.runDir}`,
+          ...(parsedFinalSummary.ok && !existsSync(gatePath)
+            ? [`system gate evidence is missing: ${gatePath}`]
+            : []),
+          ...(parsedFinalSummary.ok && parsedFinalSummary.summary.status !== "completed"
+            ? [`final summary status is ${parsedFinalSummary.summary.status}`]
+            : []),
+          ...(parsedFinalSummary.ok && parsedFinalSummary.summary.finalVerification !== "passed"
+            ? [`final summary verification is ${parsedFinalSummary.summary.finalVerification}`]
+            : []),
         ],
       });
     }
@@ -292,6 +425,40 @@ export function discoverRuntimeGuardianFindings(
   }
 
   return findings;
+}
+
+function terminalSystemGateFailureFinding(
+  record: ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number],
+  gatePath: string,
+): RuntimeGuardianFinding | null {
+  if (
+    record.state.status !== "failed" ||
+    record.state.resultStatus !== "supervisor-failed" ||
+    !existsSync(gatePath)
+  ) {
+    return null;
+  }
+  const parsed = readJsonRecord(gatePath);
+  if (parsed?.accepted !== false) return null;
+  const failures = Array.isArray(parsed.failures)
+    ? parsed.failures.filter((failure): failure is string => typeof failure === "string")
+    : [];
+  return {
+    kind: "terminal-system-gate-failure",
+    severity: "high",
+    runId: record.workOrder.id,
+    projectId: record.workOrder.projectId,
+    projectPath: record.workOrder.projectPath,
+    runDir: record.runDir,
+    evidence: [
+      `system gate rejected terminal work-order: ${record.workOrder.id}`,
+      `resultStatus: ${record.state.resultStatus ?? "unknown"}`,
+      ...(failures.length > 0
+        ? failures
+        : ["system-gate.json recorded accepted=false without failure details"]),
+      `system gate evidence exists: ${gatePath}`,
+    ],
+  };
 }
 
 function failedEvalOutcomeFinding(
@@ -329,6 +496,17 @@ function readJsonRecord(path: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function hasSuccessfulDurableFinalSummary(
+  record: ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number],
+): boolean {
+  const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
+  return (
+    parsed.ok &&
+    parsed.summary.status === "completed" &&
+    parsed.summary.finalVerification === "passed"
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -515,18 +693,73 @@ export async function dispatchRuntimeGuardianRepair(
   }
   const session = sessionNameFromPath(request.repoPath, deps.config.projectSessionPrefix);
   setPathForSession(session, request.repoPath);
+  const now = Date.now();
+  const coordinator = new RepairCoordinator();
+  const repairableFindings = request.findings.filter(
+    (finding) => !isTargetOrExternalBlocker(finding),
+  );
+  const queued = request.findings.map((finding) =>
+    coordinator.enqueue({
+      projectId: finding.projectId,
+      projectPath: finding.projectPath,
+      source: "runtime-guardian",
+      taskFamily: finding.kind,
+      fingerprint: finding.evidence.join(" | "),
+      taskId: finding.runId,
+      summary: finding.evidence.join("; "),
+      priority: finding.severity === "high" ? 100 : 50,
+      now,
+    }),
+  );
+  for (const [index, finding] of request.findings.entries()) {
+    if (isTargetOrExternalBlocker(finding)) {
+      const record = queued[index];
+      if (record !== undefined) coordinator.markTerminal(record.id, "blocked", now);
+    }
+  }
+  if (repairableFindings.length === 0) {
+    return {
+      status: "blocked",
+      detail: "findings are target or external blockers; no bot self-repair dispatched",
+    };
+  }
+  const claimed = coordinator.claimIds(
+    queued
+      .filter(
+        (_record, index) =>
+          request.findings[index] !== undefined &&
+          !isTargetOrExternalBlocker(request.findings[index]),
+      )
+      .map((record) => record.id),
+    { now, leaseId: `runtime-guardian:${now}`, limit: repairableFindings.length },
+  );
+  if (claimed.length === 0)
+    return { status: "blocked", detail: "repair queue has no due findings" };
   const result = await startActiveDelegatedTask(deps, {
     session,
     requirement: buildRuntimeGuardianRepairPrompt(request),
     worktreeIsolation: runtimeGuardianRepairWorktreeIsolation(deps.config.runtimeGuardian),
   });
   if (result.status === "blocked") {
+    for (const record of claimed) coordinator.releaseForRetry(record.id, now);
     return { status: "blocked", detail: result.reason };
   }
+  for (const record of claimed) coordinator.markRunning(record.id, `runtime-guardian:${now}`, now);
   return {
     status: "queued",
     detail: `runId=${result.runId} project=${result.projectId} supervisor=${result.supervisorSession}`,
   };
+}
+
+function isTargetOrExternalBlocker(finding: RuntimeGuardianFinding): boolean {
+  const evidence = finding.evidence.join(" ").toLowerCase();
+  return /(source worktree is dirty|isolated worktree is on|github account .*permission|tls handshake|billing|spending limit|external (service|ci)|runner .*unavailable)/.test(
+    evidence,
+  );
+}
+
+function isQueueTerminal(status: string): boolean {
+  return ["fixed", "blocked", "not-reproducible", "superseded", "dead-letter"].includes(status);
 }
 
 function runtimeGuardianRepairWorktreeIsolation(
@@ -547,6 +780,14 @@ export function startRuntimeGuardian(deps: HandlerDeps): () => void {
       now: Date.now(),
       config,
       dispatchRepair: (request) => dispatchRuntimeGuardianRepair(deps, request),
+      reconcile: async () => {
+        await reconcileAutopilotDelegatedTasks({
+          cleanupWorkerSession: async (session) => {
+            await deps.bridge.killSession(session);
+            cleanupWorkerSessionRecords(session);
+          },
+        });
+      },
     }).catch((err) => log.warn("runtime guardian tick failed", { err }));
   };
   const timer = setInterval(tick, config.tickMs);

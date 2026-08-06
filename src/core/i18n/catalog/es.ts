@@ -148,6 +148,8 @@ export const es: Messages = {
       ? `✅ Adoptado y sesión reanudada: ${proj}`
       : `✅ Adoptado e iniciado de nuevo: ${proj}`,
   adoptFailed: "Fallo al adoptar: el proceso no terminó o el agente no se inició",
+  adoptAgentDidNotStart:
+    "Fallo al adoptar: el proceso original terminó, pero el agente no se inició en la sesión gestionada. Usa /peek para revisar el panel, corrige el prompt de shell o el comando de inicio y vuelve a intentarlo.",
   adoptBusy:
     "La sesión destino ya tiene un programa en primer plano (otro agente u otra cosa). Se canceló sin tocar el original — sal de ahí primero y vuelve a adoptar.",
   adoptProjectRunning:
@@ -161,6 +163,8 @@ export const es: Messages = {
     "No está en ejecución — usa /resume para restaurarlo, o /start para iniciar uno nuevo",
   contentTruncated: "...(contenido demasiado largo, truncado)",
   agentEmptyOutput: "No devolvió nada · /peek para ver el panel",
+  agentReplyUnavailable:
+    "No se capturó una respuesta válida del agente · usa /peek para revisar el panel y vuelve a intentar si hace falta.",
   agentStarted: "✅ Iniciado",
   agentResumed: "🔄 Sesión anterior reanudada",
   agentResumeMissingState:

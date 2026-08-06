@@ -156,6 +156,8 @@ export const zh = {
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管并续接会话：${proj}` : `✅ 已接管并新建会话：${proj}`,
   adoptFailed: "接管失败：进程无法结束或未能启动",
+  adoptAgentDidNotStart:
+    "接管失败：原进程已结束，但 Agent 未能在纳管会话中启动。请用 /peek 查看画面，修正 shell 提示或启动命令后重试。",
   adoptBusy:
     "目标会话里已有程序在前台运行（另一个 agent 或其他程序）。已中止，未动原进程——请先去那边退出，再重新接管。",
   adoptProjectRunning:
@@ -168,6 +170,7 @@ export const zh = {
   agentNotRunningRestart: "未运行，请使用 /resume 恢复，或 /start 新建",
   contentTruncated: "...(内容过长，已截断)",
   agentEmptyOutput: "返回空内容 · 用 /peek 查看画面",
+  agentReplyUnavailable: "未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。",
   agentStarted: "✅ 已启动",
   agentResumed: "🔄 已恢复原会话",
   agentResumeMissingState: "没有可恢复的原会话状态，请用 /start 新建。",

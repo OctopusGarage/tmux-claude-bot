@@ -145,6 +145,8 @@ export const yue: Messages = {
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
   adoptFailed: "接管失敗：程序無法結束或未能啟動",
+  adoptAgentDidNotStart:
+    "接管失敗：原程序已結束，但 Agent 未能喺受管會話入面啟動。請用 /peek 睇畫面，修正 shell 提示或啟動命令後再試。",
   adoptBusy:
     "目標會話中已有程式在前台運行（另一個 agent 或其他程式）。已中止，未動原程序——請先至該處退出，再重新接管。",
   adoptProjectRunning:
@@ -156,6 +158,7 @@ export const yue: Messages = {
   agentNotRunningRestart: "未運行，請使用 /resume 恢復，或 /start 新建",
   contentTruncated: "...(內容過長，已截斷)",
   agentEmptyOutput: "沒有返回內容 · 用 /peek 查看畫面",
+  agentReplyUnavailable: "未擷取到有效 Agent 回覆 · 用 /peek 查看畫面，確認後可重試。",
   agentStarted: "✅ 已啟動",
   agentResumed: "🔄 已恢復原會話",
   agentResumeMissingState: "沒有可恢復嘅原會話狀態，請用 /start 新建。",

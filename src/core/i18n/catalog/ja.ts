@@ -148,6 +148,8 @@ export const ja: Messages = {
       ? `✅ 引き継ぎ、セッションを再開しました: ${proj}`
       : `✅ 引き継ぎ、新規開始しました: ${proj}`,
   adoptFailed: "引き継ぎ失敗: プロセスを終了できないか、エージェントが起動しませんでした",
+  adoptAgentDidNotStart:
+    "引き継ぎ失敗: 元のプロセスは終了しましたが、管理対象セッションでエージェントが起動しませんでした。/peek で画面を確認し、シェルのプロンプトまたは起動コマンドを修正してから再試行してください。",
   adoptBusy:
     "対象のセッションのフォアグラウンドで既にプログラムが動作中です（別のエージェントなど）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
   adoptProjectRunning:
@@ -161,6 +163,8 @@ export const ja: Messages = {
     "実行されていません · /resume で復元、または /start で新規開始してください",
   contentTruncated: "...(内容が長すぎるため省略しました)",
   agentEmptyOutput: "出力が空です · /peek で画面を確認",
+  agentReplyUnavailable:
+    "有効な Agent 返信を取得できませんでした · /peek で画面を確認し、必要なら再試行してください。",
   agentStarted: "✅ 起動しました",
   agentResumed: "🔄 前回のセッションを復元しました",
   agentResumeMissingState:

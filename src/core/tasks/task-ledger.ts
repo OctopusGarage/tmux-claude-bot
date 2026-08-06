@@ -210,6 +210,54 @@ export class DailyTaskLedger {
     return record;
   }
 
+  reconcileTerminalStatuses(now: number): number {
+    let updated = 0;
+    for (const [taskId, record] of this.store.sortedEntries()) {
+      if (!["success", "skipped"].includes(record.status)) continue;
+      if (record.repairStatus === "not-needed") continue;
+      this.store.set(taskId, {
+        ...record,
+        repairStatus: "not-needed",
+        summary: appendSummary(
+          record.summary,
+          "Normalized terminal task state: successful or skipped task needs no repair.",
+        ),
+        updatedAt: now,
+      });
+      updated++;
+    }
+    return updated;
+  }
+
+  reconcileStaleRunning(
+    now: number,
+    input: { timeoutMs?: number; sources?: ScheduledTaskSource[] } = {},
+  ): number {
+    const timeoutMs = input.timeoutMs ?? RUNNING_TIMEOUT_MS;
+    const sources = input.sources === undefined ? null : new Set(input.sources);
+    let updated = 0;
+    for (const [taskId, record] of this.store.sortedEntries()) {
+      if (record.status !== "running") continue;
+      if (sources !== null && !sources.has(record.source)) continue;
+      if (now - record.updatedAt < timeoutMs) continue;
+      this.store.set(taskId, {
+        ...record,
+        status: "running-timeout",
+        endedAt: now,
+        error: `Task execution exceeded the ${Math.round(timeoutMs / 60_000)} minute recovery timeout.`,
+        failureKind: "agent-timeout",
+        repairStatus: "pending",
+        summary: appendSummary(
+          record.summary,
+          "Reconciled stale running task after its execution owner disappeared.",
+        ),
+        updatedAt: now,
+      });
+      updated++;
+    }
+    return updated;
+  }
+
   reconcileSupersededFailures(): number {
     let updated = 0;
     const successes = this.store
@@ -221,6 +269,13 @@ export class DailyTaskLedger {
       updated += this.supersedeEarlierFailures(success);
     }
     return updated;
+  }
+
+  listAll(): ScheduledTaskRecord[] {
+    return this.store
+      .sortedEntries()
+      .map(([, record]) => record)
+      .sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
   }
 
   listForWindow(window: TaskWindow): ScheduledTaskRecord[] {

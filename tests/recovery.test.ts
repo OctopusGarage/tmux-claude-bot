@@ -8,6 +8,7 @@ import { markSessionRunning } from "../src/core/agents/runningSessions.js";
 import { setStartCommand } from "../src/core/agents/startCommandMap.js";
 import { setPathForSession } from "../src/core/projects/sessionPathMap.js";
 import { recoverProjects } from "../src/core/recovery/recover.js";
+import { hasRecoveryIntent, markRecoveryIntent } from "../src/core/recovery/recovery-intent.js";
 import { fakeDeps } from "./adapters/lark/_fakes.js";
 
 let dir: string;
@@ -57,6 +58,40 @@ describe("recoverProjects", () => {
     );
     expect(deps.agent.start).not.toHaveBeenCalled();
     expect(res.launched.map((i) => i.session)).toEqual(["tmux_proj_a"]);
+  });
+
+  it("auto recovery skips an idle roster entry even when it has a recorded resume id", async () => {
+    setPathForSession("tmux_proj_idle", realDir);
+    markSessionRunning("tmux_proj_idle");
+    setAgentKind("tmux_proj_idle", "claude");
+    setStartCommand("tmux_proj_idle", "claude");
+    recordLiveSessionId("tmux_proj_idle", "uuid-idle");
+    const deps = recoverDeps({ paneAlive: false });
+
+    const res = await recoverProjects(deps, { autoOnly: true, staggerMs: 0 });
+
+    expect(res.launched).toHaveLength(0);
+    expect(deps.agent.startWithResume).not.toHaveBeenCalled();
+  });
+
+  it("auto recovery resumes a session with an unfinished task intent", async () => {
+    setPathForSession("tmux_proj_active", realDir);
+    markSessionRunning("tmux_proj_active");
+    setAgentKind("tmux_proj_active", "claude");
+    setStartCommand("tmux_proj_active", "claude");
+    recordLiveSessionId("tmux_proj_active", "uuid-active");
+    markRecoveryIntent("tmux_proj_active", "msg-active", 1000);
+    const deps = recoverDeps({ paneAlive: false });
+
+    const res = await recoverProjects(deps, { autoOnly: true, staggerMs: 0 });
+
+    expect(res.launched.map((item) => item.session)).toEqual(["tmux_proj_active"]);
+    expect(deps.agent.startWithResume).toHaveBeenCalledWith(
+      "tmux_proj_active",
+      "uuid-active",
+      "claude",
+    );
+    expect(hasRecoveryIntent("tmux_proj_active")).toBe(false);
   });
 
   it("starts fresh (no resume) when no session id was recorded", async () => {

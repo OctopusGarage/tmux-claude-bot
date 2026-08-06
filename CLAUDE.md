@@ -113,6 +113,13 @@ Write maintained documentation, source comments, and test comments in English.
 Localized user-facing strings are allowed only in i18n catalogs, UI fixtures,
 and tests that intentionally verify localized behavior.
 
+## User-Facing Paths
+
+Never expose a personal absolute path in a user-facing message, notification,
+card, or CLI display. Use the shared `tildeifyHome` / `tildeifyHomeDeep`
+boundary so paths under the current home render as `~/...`; keep canonical
+absolute paths only in internal state, logs, and artifacts.
+
 Loop Engineering assessment findings must declare every path the active agent is
 allowed to change in `affectedFiles`, including architecture guard directories,
 config files, docs, and lockfiles. A dirty worktree after staging those affected

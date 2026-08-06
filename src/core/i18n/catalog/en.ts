@@ -145,6 +145,8 @@ export const en: Messages = {
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ Adopted and resumed session: ${proj}` : `✅ Adopted and started fresh: ${proj}`,
   adoptFailed: "Takeover failed: process would not end, or the agent did not start",
+  adoptAgentDidNotStart:
+    "Takeover failed: the original process ended, but the agent did not start in the managed session. Use /peek to inspect the pane, fix the shell prompt or startup command, then retry.",
   adoptBusy:
     "The target session already has a program in the foreground (another agent or something else). Aborted without touching the original — please exit it there first, then adopt again.",
   adoptProjectRunning:
@@ -157,6 +159,8 @@ export const en: Messages = {
   agentNotRunningRestart: "Not running — use /resume to restore it, or /start for a new session",
   contentTruncated: "...(content too long, truncated)",
   agentEmptyOutput: "Returned nothing · /peek to view the pane",
+  agentReplyUnavailable:
+    "No valid agent reply was captured · use /peek to inspect the pane, then retry if needed.",
   agentStarted: "✅ Started",
   agentResumed: "🔄 Resumed the previous session",
   agentResumeMissingState: "No resumable previous session state — use /start to create a new one.",

@@ -117,6 +117,8 @@ export type HarnessAutoSubtask =
       enabled: boolean;
       weight: number;
       maxRounds: number;
+      actionThreshold: number;
+      criticalThreshold: number;
       allowDependencyUpdates: boolean;
       allowConfigHardening: boolean;
       allowStaticAnalysisFixes: boolean;
@@ -153,6 +155,8 @@ export type LoopWorkOrderTask =
   | {
       kind: "security-maintenance";
       maxRounds: number;
+      actionThreshold: number;
+      criticalThreshold: number;
       allowDependencyUpdates: boolean;
       allowConfigHardening: boolean;
       allowStaticAnalysisFixes: boolean;
@@ -258,6 +262,12 @@ export type LoopWorkOrder = {
   skills: { approved: ApprovedSkill[] };
   preflight: LoopProjectConfig["preflight"];
   assessment: LoopProjectConfig["assessment"];
+  preDispatchAssessment?: {
+    score: number;
+    targetScore: number;
+    decision: "run";
+    notes: string[];
+  };
   eval?: LoopProjectConfig["eval"];
   execution: LoopProjectConfig["execution"];
   recovery: LoopProjectConfig["recovery"];

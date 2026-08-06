@@ -56,6 +56,10 @@ import {
   dispatchDailyTaskRepair,
   runDailyTaskAuditServiceTick,
 } from "../../core/tasks/daily-audit-service.js";
+import {
+  createProjectRecoveryDelegator,
+  dispatchProjectRecovery,
+} from "../../core/tasks/project-recovery-dispatch.js";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { AgentKind } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -274,6 +278,15 @@ export function createControlOperationHandlers(
           config: deps.config.taskAudit,
           notifications: deps.notifications,
           dispatchRepair: (request) => dispatchDailyTaskRepair(deps, request),
+          dispatchProjectRecovery: (request) =>
+            dispatchProjectRecovery(request, {
+              projectSessionPrefix: deps.config.projectSessionPrefix,
+              worktreeIsolation:
+                deps.config.loopEngineering.supervisor.worktreeIsolation === "source"
+                  ? "source"
+                  : "isolated",
+              delegate: createProjectRecoveryDelegator(deps),
+            }),
           loopConfigFile: deps.config.loopEngineering.configFile,
           force: req.force ?? false,
         }),

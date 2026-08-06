@@ -23,7 +23,6 @@ vi.mock("../../../src/adapters/telegram/views.js", () => ({
 vi.mock("../../../src/adapters/telegram/callbacks.js", () => ({ handleCallbackQuery: vi.fn() }));
 vi.mock("../../../src/adapters/telegram/executor.js", () => ({
   handleQueuedCommand: vi.fn(),
-  createRestoredMessage: vi.fn(),
 }));
 vi.mock("../../../src/shared/utils/logger.js", () => {
   const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };

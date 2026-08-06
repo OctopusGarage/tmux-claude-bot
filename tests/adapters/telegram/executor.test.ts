@@ -1,12 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  createRestoredMessage,
   enqueueSessionCommand,
   handleQueuedCommand,
 } from "../../../src/adapters/telegram/executor.js";
 import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-target.js";
-import type { PersistedMessage } from "../../../src/core/command/queue.js";
-import { fakeBot, fakeCtx, fakeDeps } from "./_fakes.js";
+import { fakeCtx, fakeDeps } from "./_fakes.js";
 
 describe("enqueueSessionCommand", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -172,54 +170,5 @@ describe("handleQueuedCommand", () => {
 
     expect(deps.queue.enqueued).toHaveLength(0);
     expect(ctx.texts().some((t) => t.includes("没有活跃会话"))).toBe(true);
-  });
-});
-
-describe("createRestoredMessage", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  const persisted = (over: Partial<PersistedMessage> = {}): PersistedMessage =>
-    ({
-      id: "p1",
-      text: "restore me",
-      chatId: 777,
-      sessionName: "proj-1",
-      action: "text",
-      channel: "telegram",
-      ...over,
-    }) as PersistedMessage;
-
-  it("carries over the persisted fields and tags channel:'telegram'", () => {
-    const bot = fakeBot();
-    const msg = createRestoredMessage(persisted(), bot);
-
-    expect(msg.id).toBe("p1");
-    expect(msg.text).toBe("restore me");
-    expect(msg.sessionName).toBe("proj-1");
-    expect(msg.channel).toBe("telegram");
-  });
-
-  it("on resolve sends a 'Recovered' message to the numeric chat id", async () => {
-    const bot = fakeBot();
-    const msg = createRestoredMessage(persisted({ chatId: "888" as unknown as number }), bot);
-
-    msg.resolve("output text");
-    await vi.waitFor(() => expect(bot.sent.length).toBeGreaterThanOrEqual(1));
-
-    expect(bot.sent[0]?.chatId).toBe(888); // Number(chatId) cast
-    expect(bot.sent[0]?.text).toContain("Recovered");
-    expect(bot.texts().some((t) => t.includes("output text"))).toBe(true);
-  });
-
-  it("on reject sends a 'Recovered failed' message", async () => {
-    const bot = fakeBot();
-    const msg = createRestoredMessage(persisted(), bot);
-
-    msg.reject(new Error("kaboom"));
-    await vi.waitFor(() => expect(bot.sent.length).toBeGreaterThanOrEqual(1));
-
-    expect(bot.texts().some((t) => t.includes("Recovered failed") && t.includes("kaboom"))).toBe(
-      true,
-    );
   });
 });

@@ -576,7 +576,7 @@ async function handleApDelegate(ctx: CardCtx): Promise<void> {
   if (requirement === null) return;
   const result = await startActiveDelegatedTask(ctx.deps, { session, requirement });
   await sendText(ctx.channel, ctx.evt.chatId, formatActiveDelegateStart(result));
-  if (result.status === "blocked") {
+  if (result.status === "blocked" && result.showQueue) {
     await sendCard(ctx.channel, ctx.evt.chatId, autopilotQueueCard(listActiveDelegateQueue()));
   }
 }

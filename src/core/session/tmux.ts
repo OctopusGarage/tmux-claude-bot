@@ -257,7 +257,7 @@ export class TmuxBridge {
    * spaces, $, backticks, quotes or `;`).
    */
   async createSession(sessionName: string, cwd?: string): Promise<boolean> {
-    const args = ["new-session", "-d", "-s", sessionName];
+    const args = ["new-session", "-d", "-s", sessionName, "-e", "DISABLE_AUTO_UPDATE=true"];
     if (cwd !== undefined) args.push("-c", cwd);
     try {
       await this.execFile("tmux", args, { timeout: 10000 });

@@ -84,6 +84,13 @@ Write maintained documentation, source comments, and test comments in English.
 Localized user-facing strings are allowed only in i18n catalogs, UI fixtures,
 and tests that intentionally verify localized behavior.
 
+## User-Facing Paths
+
+Never expose personal absolute paths in user-facing messages, notifications,
+cards, or CLI output. Route text through `tildeifyHome` and structured payloads
+through `tildeifyHomeDeep`; use `~/...` for paths under the current home. Keep
+canonical absolute paths only in internal state, logs, and artifacts.
+
 ## Usage Documentation Lookup
 
 When the task is about how to use tmux-claude-bot, available commands, setup,

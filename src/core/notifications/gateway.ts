@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { normalizeError } from "../../shared/utils/error.js";
+import { tildeifyHome } from "../../shared/utils/path.js";
 import { type AttachmentKind, validateAttachment } from "../attachments/classify.js";
 
 export type NotificationChannel = "telegram" | "lark";
@@ -219,7 +220,7 @@ export function formatNotification(req: NotificationRequest): string {
   if (req.source?.trim()) lines.push(`source: ${req.source.trim()}`);
   const head = lines.join("\n");
   const body = req.body?.trimEnd();
-  return body ? `${head}\n\n${body}` : head;
+  return tildeifyHome(body ? `${head}\n\n${body}` : head);
 }
 
 function messageForChannel(channel: NotificationChannel, message: string): string {

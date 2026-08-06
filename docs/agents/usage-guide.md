@@ -122,6 +122,9 @@ operating an existing install, inspect and pause the top-level loop with
 workspaces, or repository-wide PR-review entries with
 `tcb loop targets list <file>` and `tcb loop targets disable <file> <kind> <id>`
 instead of hand-editing YAML.
+Use `tcb config set LOOP_SUPERVISOR_ENABLED true` for the supervisor dependency,
+and confirm it in `tcb automation status --json` before relying on supervised
+Loop work or Runtime Guardian repair.
 
 `pullRequest.autoMerge: true` is set, the bot merges the checked PR and rebases
 the local switch-back branch onto origin afterward. Set
@@ -188,7 +191,9 @@ keeps discussion and execution separate; after owner approval, use the project
 control panel's **Delegate now** button, or **Review plan first** followed by
 **Confirm delegation**, or `/autopilot delegate` so all implementation work goes
 through the same Loop Supervisor active-delegation pipeline. If all supervisor
-sessions are busy, the blocked Autopilot reply exposes a queue view; Lark can
+sessions are busy, the blocked Autopilot reply exposes a queue view; other
+blocks, such as project conflicts, missing session paths, or worktree
+preparation failures, do not pretend that the request was queued. Lark can
 cancel queued/running active-delegated tasks from that queue card, while
 scheduled system WorkOrders remain non-cancellable there.
 For coordinated frontend/backend or otherwise coupled repositories, add a
@@ -200,6 +205,12 @@ branch. Workspace entries support the same task families as projects:
 `opportunityDiscovery`, and `pullRequestReview`. The internal
 `workspace-architecture` job kind is only a compatibility name for architecture
 run ids; it is not the workspace feature boundary.
+
+Daily Task Audit and Runtime Guardian use the same repair coordinator. A worker
+delivery that is queued but never consumed times out as retryable; project
+recovery is deduplicated per project while an active recovery exists; and only
+an authoritative passing supervisor final summary closes the ledger and queue.
+An existing active recovery is reported as deferred rather than launched again.
 
 **Hand off a clarified interactive task** → use `/autopilot [requirement]`,
 `/autopilot delegate [requirement]`, or `tcb autopilot <project> "[requirement]"`.
@@ -245,6 +256,11 @@ machine-readable output). The command goes through the running bot's control
 socket, so it uses the same config, notification gateway, and auto-repair path as
 the scheduled service.
 
+Historical Loop failures are classified by the project-scoped Recovery
+Coordinator: retryable failures are recreated through the configured project's
+own WorkOrder policy, while external waits and owner decisions remain visible
+without unsafe edits.
+
 **Evaluate system prompts** → use `tcb prompts governed list --json` to see every
 repo-owned governed prompt, `tcb prompts governed show <promptId>` to inspect
 owner and safety metadata, `tcb prompts governed render <promptId>` to inspect
@@ -261,9 +277,10 @@ restart tmux-claude-bot`). To pick up SOURCE changes, deploy a fresh build:
 `node dist/cli.js install` (rebuilds `dist/` then restarts). Plain restart alone won't
 rebuild.
 
-**Recover after a reboot** → agents that were running before a reboot are relaunched
-automatically on boot; to do it on demand use `/recover` (chat) / `R` (TUI) / `tcb
-recover`. This is host-wide; for one accidentally exited current project use
+**Recover after a reboot** → unfinished bot-dispatched prompts are relaunched
+automatically on boot; idle project sessions are left alone. To manually recover
+the full roster, use `/recover` (chat) / `R` (TUI) / `tcb recover`. This is host-wide;
+for one accidentally exited current project use
 `/resume`.
 
 ---

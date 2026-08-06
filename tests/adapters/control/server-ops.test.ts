@@ -238,6 +238,7 @@ describe("control server op dispatch (real unix socket)", () => {
         notifications: expect.any(Object),
         loopConfigFile: "/tmp/loop.yml",
         dispatchRepair: expect.any(Function),
+        dispatchProjectRecovery: expect.any(Function),
       }),
     );
   });
