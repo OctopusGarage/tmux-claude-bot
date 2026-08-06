@@ -99,6 +99,7 @@ type NotifyCliOpts = {
   channel?: string;
   level?: string;
   source?: string;
+  session?: string;
   attach?: string[];
   stdin?: boolean;
 };
@@ -135,6 +136,7 @@ export async function buildNotifyRequest(
       : {}),
     ...(opts.level !== undefined ? { level: opts.level as NotificationLevel } : {}),
     ...(opts.source !== undefined ? { source: opts.source } : {}),
+    ...(opts.session !== undefined ? { session: opts.session } : {}),
     ...(opts.attach !== undefined && opts.attach.length > 0
       ? {
           attachments: opts.attach.map((path) => ({

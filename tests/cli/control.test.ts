@@ -119,6 +119,20 @@ describe("buildNotifyRequest", () => {
     });
   });
 
+  it("preserves an explicit project session for bound-group routing", async () => {
+    await expect(
+      buildNotifyRequest([], {
+        title: "Radar ready",
+        channel: "lark",
+        session: "tmux_proj_example",
+      }),
+    ).resolves.toEqual({
+      title: "Radar ready",
+      channel: "lark",
+      session: "tmux_proj_example",
+    });
+  });
+
   it("uses positional text as the title when --title is omitted", async () => {
     await expect(buildNotifyRequest(["Build", "done"], {})).resolves.toEqual({
       title: "Build done",

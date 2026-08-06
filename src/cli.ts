@@ -387,6 +387,7 @@ program
   .option("--channel <telegram|lark|both>", "target channel; default is every configured channel")
   .option("--level <info|success|warning|error>", "notification level", "info")
   .option("--source <name>", "source label, such as deploy or backup")
+  .option("--session <session>", "project session used for bound Feishu group routing")
   .option("--attach <file>", "attach a file to the notification; repeatable", collect, [])
   .option("--json", "output JSON")
   .action(async (text, o) => (await ctl()).cmdNotify(text ?? [], o));

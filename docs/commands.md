@@ -104,7 +104,9 @@ printf '%s\n' "line 1" "line 2" | tcb notify --title "Nightly report" --stdin
 ```
 
 `tcb notify` uses the existing local control socket, targets the configured owner
-recipient(s), and does not subscribe the caller to incoming chat messages.
+recipient(s), and does not subscribe the caller to incoming chat messages. Add
+`--session <session>` for project-bound Feishu/Lark group routing when a session
+is known.
 
 ## Local Scheduled Task Reporting
 

@@ -185,7 +185,7 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 |---------|--------------|
 | `tcb sessions` | list the running sessions |
 | `tcb projects` | list projects (live + recent); `tcb open <name>` to start one |
-| `tcb notify [text...]` | send a local send-only notification through the configured Telegram/Feishu bot; use `--title`, `--body` or `--stdin`, `--channel telegram\|lark\|both`, `--level info\|success\|warning\|error`, `--source <name>`, and repeatable `--attach <file>` |
+| `tcb notify [text...]` | send a local send-only notification through the configured Telegram/Feishu bot; use `--title`, `--body` or `--stdin`, `--channel telegram\|lark\|both`, `--level info\|success\|warning\|error`, `--source <name>`, optional `--session <session>` for project-bound Feishu routing, and repeatable `--attach <file>` |
 | `tcb task report --id <id> --source <source> --name <name> --scheduled-at <time> --status <status>` | record an external scheduled task in the shared daily task ledger; add `--repair-status fixed\|superseded\|not-reproducible\|blocked` after repair review |
 | `tcb send <project> "<prompt>"` | send a prompt to a project's agent; **waits for the reply** (`--no-wait` / `--timeout <s>`) |
 | `tcb peek <project>` | print a snapshot of its session pane |

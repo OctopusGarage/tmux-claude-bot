@@ -93,6 +93,9 @@ Feishu owner targets; the caller does not need chat credentials or SDKs. Example
 Use `--stdin` for multi-line bodies. Use repeatable `--attach <file>` for owner
 notification files, for example:
 `tcb notify --source radar --title "Radar ready" --body "Daily report attached" --attach report.md --attach report.html`.
+When a project has a Feishu/Lark group bound to a bot session, add
+`--session <session>` so the notification is delivered to that group instead of
+the owner fallback.
 For scheduled monitors that should appear in the daily audit, also call
 `tcb task report --id <id> --source radar-monitor|article-monitor|external-monitor|launchd
 --name <name> --scheduled-at <iso> --status running|success|failed|skipped`.
