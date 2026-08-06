@@ -532,6 +532,45 @@ describe("runtime guardian", () => {
     expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
   });
 
+  it("keeps terminal invalid-output findings when the durable summary is not a successful completion", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-invalid-output-blocked-summary",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = workOrder("run-invalid-output-blocked-summary", projectDir, summaryPath);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["blocked before completion"],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        commits: [],
+        followUps: ["retry after resolving the blocker"],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-invalid-output",
+        runId: "run-invalid-output-blocked-summary",
+      }),
+    ]);
+  });
+
   it("builds a repair prompt that prevents target-repo edits and PR handling", () => {
     const prompt = buildRuntimeGuardianRepairPrompt({
       repoPath: "/repo/tmux-claude-bot",

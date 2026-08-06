@@ -246,7 +246,7 @@ export function discoverRuntimeGuardianFindings(
     if (
       record.state.status === "failed" &&
       record.state.resultStatus === "invalid-output" &&
-      !parseSupervisorFinalSummaryFile(record.workOrder).ok
+      !hasSuccessfulDurableFinalSummary(record)
     ) {
       findings.push({
         kind: "terminal-invalid-output",
@@ -289,6 +289,17 @@ export function discoverRuntimeGuardianFindings(
   }
 
   return findings;
+}
+
+function hasSuccessfulDurableFinalSummary(
+  record: ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number],
+): boolean {
+  const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
+  return (
+    parsed.ok &&
+    parsed.summary.status === "completed" &&
+    parsed.summary.finalVerification === "passed"
+  );
 }
 
 function terminalAgentTransientFailureFinding(
