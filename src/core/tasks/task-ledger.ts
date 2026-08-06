@@ -1,14 +1,18 @@
 import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 
-export type ScheduledTaskSource =
-  | "loop-engineering"
-  | "batch-scheduler"
-  | "article-monitor"
-  | "radar-monitor"
-  | "external-monitor"
-  | "launchd"
-  | "daily-audit";
+export const SCHEDULED_TASK_SOURCES = [
+  "loop-engineering",
+  "batch-scheduler",
+  "article-monitor",
+  "radar-monitor",
+  "external-monitor",
+  "launchd",
+  "daily-audit",
+  "autopilot-delegate",
+] as const;
+
+export type ScheduledTaskSource = (typeof SCHEDULED_TASK_SOURCES)[number];
 
 export type ScheduledTaskStatus =
   | "expected"
