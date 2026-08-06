@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "projectId": "knowledge-engine",
+  "runId": "1786010400000-knowledge-engine",
+  "supervisorSession": "tmux_proj_loop-supervisor-1",
+  "scheduledAt": 1786010400000,
+  "updatedAt": 1786011231713,
+  "resultStatus": "supervisor-failed"
+}

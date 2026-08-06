@@ -1,0 +1,113 @@
+{
+  "id": "1785937800000-tmux-claude-bot-bug-fix",
+  "scheduledAt": 1785937800000,
+  "task": {
+    "kind": "bug-fix",
+    "maxRounds": 5,
+    "maxBugsPerRound": 2,
+    "requireRegressionTest": true,
+    "cleanupPolicy": "conservative",
+    "prompt": "Find and fix only confirmed production-risk bugs. Prioritize scheduler correctness, supervisor state, PR/merge gates, notification delivery, launchd/dev-service behavior, and task-audit reporting. Do not add features or perform architecture cleanup.\n"
+  },
+  "projectId": "tmux-claude-bot",
+  "projectName": "tmux-claude-bot",
+  "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+  "cleanupPolicy": "aggressive",
+  "executionIsolation": {
+    "mode": "supervised-worker",
+    "expectedWorktree": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "worktreeIsolation": "isolated",
+    "contextReset": "compact",
+    "cleanup": {
+      "success": "release-worker",
+      "failure": "retain-for-ttl",
+      "retainFailureForHours": 72
+    }
+  },
+  "notificationSession": "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-tmux-claude-bot",
+  "workerSession": "tmux_proj_loop-worker-tmux-claude-bot-1785937800000-tmux-claude-bot-bug-fix",
+  "agent": "codex",
+  "goal": "Use improve-codebase-architecture to keep the tmux-claude-bot architecture improving in small, verified, reviewable slices. Open the PR against dev; after CI and mergeability checks pass, let the system gate merge it into dev, switch back to dev, and fast-forward the local dev branch.\n",
+  "maxRounds": 5,
+  "targetScore": 95,
+  "runner": {
+    "kind": "agent-supervised",
+    "timeoutMs": 7200000,
+    "maxTurns": 20,
+    "requireConfirmation": false
+  },
+  "allowedActions": [
+    "tests",
+    "docs",
+    "small-refactor",
+    "dependency-upgrade"
+  ],
+  "blockedActions": [
+    "direct-model-api",
+    "broad-rewrite"
+  ],
+  "skills": {
+    "approved": [
+      {
+        "id": "improve-codebase-architecture",
+        "sourceUrl": "https://github.com/mattpocock/skills/blob/main/skills/engineering/improve-codebase-architecture/SKILL.md",
+        "ref": "pinned-local-20260716",
+        "checksum": "local-installed",
+        "platforms": [
+          "claude",
+          "codex"
+        ],
+        "tags": [
+          "architecture",
+          "refactor"
+        ],
+        "trustLevel": "approved",
+        "risk": "medium",
+        "updatePolicy": "manual"
+      }
+    ]
+  },
+  "preflight": {
+    "commands": [
+      "test -d node_modules",
+      "test -x node_modules/.bin/tsc",
+      "test -x node_modules/.bin/vitest",
+      "test -x node_modules/.bin/biome",
+      "test -x node_modules/.bin/eslint"
+    ],
+    "repair": {
+      "agent": true,
+      "prompt": "Repair the tmux-claude-bot local Node environment using this repository's own package manager and setup docs. Read AGENTS.md, CLAUDE.md, README.md, and llms.txt first, install dependencies if node_modules or required tool binaries are missing, and do not continue architecture work until preflight passes.\n"
+    }
+  },
+  "assessment": {
+    "command": "node /Users/kingsonwu/.tmux-claude-bot/state/loop-tmux-claude-bot-assess.mjs"
+  },
+  "execution": {
+    "agent": true
+  },
+  "recovery": {
+    "agent": true,
+    "dirtyWorktree": true,
+    "maxAttempts": 1
+  },
+  "commitPolicy": {
+    "enabled": true,
+    "perRound": true,
+    "branch": "loop/tmux-claude-bot/bug-fix/1785937800000-tmux-claude-bot-bug-fix"
+  },
+  "pullRequestPolicy": {
+    "enabled": true,
+    "base": "dev",
+    "switchBack": "dev",
+    "autoMerge": true,
+    "mergeMethod": "squash",
+    "githubAccount": "Kingson4Wu"
+  },
+  "requiredFinalMarker": "[LOOP_SUPERVISOR_DONE:1785937800000-tmux-claude-bot-bug-fix]",
+  "finalSummaryPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-runs/tmux-claude-bot/1785937800000-tmux-claude-bot-bug-fix/supervisor-final-summary.json",
+  "eval": {
+    "agent": true,
+    "minScore": 95
+  }
+}

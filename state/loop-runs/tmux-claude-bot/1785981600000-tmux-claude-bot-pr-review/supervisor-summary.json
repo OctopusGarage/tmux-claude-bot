@@ -1,0 +1,24 @@
+{
+  "workOrderId": "1785981600000-tmux-claude-bot-pr-review",
+  "runId": "1785981600000-tmux-claude-bot-pr-review",
+  "project": {
+    "id": "tmux-claude-bot",
+    "name": "tmux-claude-bot",
+    "path": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "agent": "codex"
+  },
+  "status": "dispatch-failed",
+  "supervisor": {
+    "session": "tmux_proj_loop-supervisor-2"
+  },
+  "timestamps": {
+    "scheduledAt": 1785981600000,
+    "startedAt": 1786019464443,
+    "endedAt": 1786019464498
+  },
+  "result": {
+    "status": "dispatch-failed",
+    "output": "execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)",
+    "reason": "execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+  }
+}

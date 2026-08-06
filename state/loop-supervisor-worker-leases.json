@@ -1,1 +1,13 @@
-{}
+{
+  "leases": [
+    {
+      "workerSession": "tmux_proj_loop-supervisor-1",
+      "workOrderId": "1785942600000-geo-backend-test-coverage",
+      "projectId": "geo-backend",
+      "projectPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/geo-backend/1785942600000-geo-backend-test-coverage",
+      "status": "active",
+      "leasedAt": 1786019464570,
+      "updatedAt": 1786020711754
+    }
+  ]
+}

@@ -88,7 +88,7 @@ projects:
         or perform architecture cleanup.
     testCoverage:
       enabled: true
-      schedule: 0 15 * * *
+      schedule: 10 15 * * *
       branch: loop/geo-backend/test-coverage
       targetCoverage: 80
       maxRounds: 5
@@ -107,7 +107,11 @@ projects:
         narrowly, and add regression coverage when practical.
     securityMaintenance:
       enabled: true
-      schedule: 0 16 * * *
+      riskAssessment:
+        command: "node \"$LOOP_BOT_ROOT/scripts/loop-security-risk-assess.mjs\""
+        actionThreshold: 70
+        criticalThreshold: 90
+      schedule: 10 16 * * *
       branch: loop/geo-backend/security-maintenance
       maxRounds: 3
       allowDependencyUpdates: true
@@ -229,6 +233,10 @@ projects:
         narrowly, and add regression coverage when practical.
     securityMaintenance:
       enabled: true
+      riskAssessment:
+        command: "node \"$LOOP_BOT_ROOT/scripts/loop-security-risk-assess.mjs\""
+        actionThreshold: 70
+        criticalThreshold: 90
       schedule: 20 16 * * *
       branch: loop/geo-frontend/security-maintenance
       maxRounds: 3
@@ -350,7 +358,11 @@ projects:
         narrowly, and add regression coverage when practical.
     securityMaintenance:
       enabled: true
-      schedule: 40 15 * * *
+      riskAssessment:
+        command: "node \"$LOOP_BOT_ROOT/scripts/loop-security-risk-assess.mjs\""
+        actionThreshold: 70
+        criticalThreshold: 90
+      schedule: 50 15 * * *
       branch: loop/knowledge-engine/security-maintenance
       maxRounds: 3
       allowDependencyUpdates: true
@@ -474,6 +486,10 @@ projects:
         it, fix it narrowly, and add regression coverage when practical.
     securityMaintenance:
       enabled: true
+      riskAssessment:
+        command: "node \"$LOOP_BOT_ROOT/scripts/loop-security-risk-assess.mjs\""
+        actionThreshold: 70
+        criticalThreshold: 90
       schedule: 0 15 * * *
       branch: loop/alcove/security-maintenance
       maxRounds: 3
@@ -571,6 +587,373 @@ projects:
       enabled: true
       maxItemsPerRun: 3
     enabled: true
+  - id: english-pilot
+    name: english-pilot
+    path: /Users/kingsonwu/programming/OctopusGarage/english-pilot
+    agent: codex
+    worktreeIsolation: isolated
+    cleanupPolicy: aggressive
+    schedule: 20 9 * * *
+    runner:
+      kind: agent-supervised
+      timeoutMs: 7200000
+      maxTurns: 20
+      requireConfirmation: false
+    goal: >
+      Use improve-codebase-architecture to keep the EnglishPilot architecture
+      improving in small, verified, reviewable slices. Open the PR against dev;
+      after CI and mergeability checks pass, let the system gate merge it into
+      dev, switch back to dev, and fast-forward the local dev branch.
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: >-
+        node "$LOOP_BOT_ROOT/scripts/loop-architecture-assess.mjs"
+        --project-id english-pilot --project-name english-pilot
+        --project-path "$LOOP_PROJECT_PATH" --target-score "$LOOP_PROJECT_TARGET_SCORE"
+        --verification-commands "npm run typecheck|npm test"
+        --affected-files "src|tests|package.json|package-lock.json"
+        --required-docs "README.md|AGENTS.md"
+        --guard-files ".codegraph|package.json|tsconfig.json|vitest.config.ts"
+    preflight:
+      commands:
+        - test -d node_modules
+        - test -x node_modules/.bin/tsc
+        - test -x node_modules/.bin/vitest
+        - test -x node_modules/.bin/eslint
+        - test -x node_modules/.bin/prettier
+      repair:
+        agent: true
+        prompt: >
+          Repair the EnglishPilot local Node/TypeScript environment using this
+          repository's own setup docs and scripts. Read AGENTS.md, CLAUDE.md,
+          README.md, and package.json first. Prefer the project-owned npm setup
+          path and do not continue architecture work until preflight passes.
+    execution:
+      agent: true
+    recovery:
+      agent: true
+      dirtyWorktree: true
+      maxAttempts: 1
+    eval:
+      agent: true
+      minScore: 95
+    commit:
+      enabled: true
+      perRound: true
+      branch: loop/english-pilot/architecture
+    pullRequest:
+      enabled: true
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      githubAccount: Kingson4Wu
+    bugFix:
+      enabled: true
+      schedule: 30 13 * * *
+      branch: loop/english-pilot/bug-fix
+      maxRounds: 5
+      maxBugsPerRound: 2
+      requireRegressionTest: true
+      prompt: >
+        Find and fix only confirmed production-risk bugs. Prioritize CLI/server
+        behavior, persistence/state consistency, permissions, scheduling,
+        automation, and user-visible failures. Do not add features or perform
+        architecture cleanup.
+    testCoverage:
+      enabled: true
+      schedule: 40 15 * * *
+      branch: loop/english-pilot/test-coverage
+      targetCoverage: 80
+      maxRounds: 5
+      requireMeaningfulTests: true
+      allowIntegrationTests: true
+      allowSmokeTests: true
+      allowE2ETests: true
+      allowAiEvalTests: false
+      prompt: >
+        Raise meaningful test coverage to at least 80%. First inspect the
+        existing TypeScript test stack, coverage command/report, uncovered
+        CLI/server behavior, persistence/state consistency, permissions,
+        scheduling, automation, and user-visible failure paths. Add tests only
+        for real behavior and plausible regressions; do not add weak tests
+        purely to move the metric.
+    securityMaintenance:
+      enabled: true
+      riskAssessment:
+        command: "node \"$LOOP_BOT_ROOT/scripts/loop-security-risk-assess.mjs\""
+        actionThreshold: 70
+        criticalThreshold: 90
+      schedule: 40 16 * * *
+      branch: loop/english-pilot/security-maintenance
+      maxRounds: 3
+      allowDependencyUpdates: true
+      allowConfigHardening: true
+      allowStaticAnalysisFixes: true
+      prompt: >
+        Automatically check and fix confirmed security risks. Include dependency
+        advisories, GitHub security findings, static analysis, secrets, auth and
+        permission boundaries, webhooks, CORS, file/path handling, uploads,
+        command execution, sensitive logging, CI secrets, and supply-chain
+        issues. First judge reachability and severity; do not blindly upgrade
+        dependencies or harden config unless the risk is real or plausibly
+        reachable.
+    harnessAuto:
+      enabled: true
+      schedule: 30 17 * * *
+      scheduleJitterMinutes: 20
+      branch: loop/english-pilot/harness-auto
+      maxRounds: 4
+      strategy: health-first
+      tasks:
+        - kind: bug-fix
+          enabled: true
+          weight: 40
+        - kind: security-maintenance
+          enabled: true
+          weight: 30
+        - kind: test-coverage
+          enabled: true
+          weight: 20
+        - kind: architecture
+          enabled: true
+          weight: 10
+      stopWhen:
+        healthScoreAtLeast: 95
+        noConfirmedIssues: true
+      prompt: >
+        Orchestrate EnglishPilot project health as one cohesive run. Start with a
+        current health assessment, then choose only enabled subtasks that address
+        confirmed risk or meaningful quality gaps. Keep fixes narrow, verify
+        before and after changes, create one PR against dev for the whole harness
+        run, allow auto-merge only after CI and mergeability pass, then switch the
+        local worktree back to dev and fast-forward it.
+    opportunityDiscovery:
+      enabled: true
+      schedule: 40 10 * * *
+      scheduleJitterMinutes: 20
+      notificationChannel: both
+      maxSuggestions: 3
+      minConfidence: medium
+      categories:
+        - product-feature
+        - workflow-automation
+        - developer-experience
+        - reliability
+        - architecture
+      cooldownDays: 14
+      requireEvidence: true
+      prompt: >
+        Proactively discover grounded EnglishPilot feature or optimization
+        opportunities worth owner discussion before implementation. Focus on
+        workflow value, automation leverage, developer experience, reliability,
+        and architecture backed by concrete repository evidence. Do not edit
+        files, create branches, commit, push, or open PRs during discovery.
+    pullRequestReview:
+      enabled: true
+      schedule: 40 1 * * *
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+      prompt: >
+        Carefully review loop-created PRs from the previous day. Run two
+        independent passes. Focus on introduced bugs, broken tests, CI failures,
+        mergeability, data loss, security, migrations, and user-visible
+        regressions. If both passes find no real issue and CI is green, merge the
+        PR, switch back to dev, and fast-forward the local dev branch.
+    allowedActions:
+      - tests
+      - docs
+      - small-refactor
+      - dependency-upgrade
+    blockedActions:
+      - direct-model-api
+      - broad-rewrite
+    selfImprovement:
+      enabled: true
+      maxItemsPerRun: 3
+    enabled: true
+
+  - id: fluent-frame
+    name: fluent-frame
+    path: /Users/kingsonwu/programming/OctopusGarage/fluent-frame
+    agent: codex
+    worktreeIsolation: isolated
+    cleanupPolicy: aggressive
+    schedule: 40 9 * * *
+    runner:
+      kind: agent-supervised
+      timeoutMs: 7200000
+      maxTurns: 20
+      requireConfirmation: false
+    goal: >
+      Use improve-codebase-architecture to keep the Fluent Frame architecture
+      improving in small, verified, reviewable slices. Open the PR against dev;
+      after CI and mergeability checks pass, let the system gate merge it into
+      dev, switch back to dev, and fast-forward the local dev branch.
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: >-
+        node "$LOOP_BOT_ROOT/scripts/loop-architecture-assess.mjs"
+        --project-id fluent-frame --project-name fluent-frame
+        --project-path "$LOOP_PROJECT_PATH" --target-score "$LOOP_PROJECT_TARGET_SCORE"
+        --verification-commands "pnpm run typecheck|pnpm test"
+        --affected-files "apps|packages|scripts|package.json|pnpm-lock.yaml"
+        --required-docs "README.md"
+        --guard-files ".codegraph|package.json|tsconfig.json|pnpm-workspace.yaml"
+    preflight:
+      commands:
+        - test -f pnpm-lock.yaml
+        - command -v pnpm
+        - test -d node_modules
+      repair:
+        agent: true
+        prompt: >
+          Repair the Fluent Frame local pnpm workspace using this repository's
+          own setup docs and scripts. Read README.md, package.json, and the
+          workspace manifests first. Prefer the project-owned pnpm setup path
+          and do not continue architecture work until preflight passes.
+    execution:
+      agent: true
+    recovery:
+      agent: true
+      dirtyWorktree: true
+      maxAttempts: 1
+    eval:
+      agent: true
+      minScore: 95
+    commit:
+      enabled: true
+      perRound: true
+      branch: loop/fluent-frame/architecture
+    pullRequest:
+      enabled: true
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      githubAccount: Kingson4Wu
+    bugFix:
+      enabled: true
+      schedule: 10 14 * * *
+      branch: loop/fluent-frame/bug-fix
+      maxRounds: 5
+      maxBugsPerRound: 2
+      requireRegressionTest: true
+      prompt: >
+        Find and fix only confirmed production-risk bugs. Prioritize extension,
+        native-host, shared-package, persistence/state, permissions, scheduling,
+        automation, and user-visible failures. Do not add features or perform
+        architecture cleanup.
+    testCoverage:
+      enabled: true
+      schedule: 0 16 * * *
+      branch: loop/fluent-frame/test-coverage
+      targetCoverage: 80
+      maxRounds: 5
+      requireMeaningfulTests: true
+      allowIntegrationTests: true
+      allowSmokeTests: true
+      allowE2ETests: true
+      allowAiEvalTests: false
+      prompt: >
+        Raise meaningful test coverage to at least 80% across the workspace.
+        Inspect existing package test stacks and reports first; add tests only
+        for real behavior and plausible regressions, not merely to move a
+        metric.
+    securityMaintenance:
+      enabled: true
+      riskAssessment:
+        command: "node \"$LOOP_BOT_ROOT/scripts/loop-security-risk-assess.mjs\""
+        actionThreshold: 70
+        criticalThreshold: 90
+      schedule: 0 17 * * *
+      branch: loop/fluent-frame/security-maintenance
+      maxRounds: 3
+      allowDependencyUpdates: true
+      allowConfigHardening: true
+      allowStaticAnalysisFixes: true
+      prompt: >
+        Automatically check and fix confirmed security risks across the browser
+        extension, native host, shared packages, scripts, CI, dependencies,
+        secrets, permissions, file/path handling, command execution, and logging.
+        First judge reachability and severity; do not blindly upgrade dependencies
+        or harden config unless the risk is real or plausibly reachable.
+    harnessAuto:
+      enabled: true
+      schedule: 30 18 * * *
+      scheduleJitterMinutes: 20
+      branch: loop/fluent-frame/harness-auto
+      maxRounds: 4
+      strategy: health-first
+      tasks:
+        - kind: bug-fix
+          enabled: true
+          weight: 40
+        - kind: security-maintenance
+          enabled: true
+          weight: 30
+        - kind: test-coverage
+          enabled: true
+          weight: 20
+        - kind: architecture
+          enabled: true
+          weight: 10
+      stopWhen:
+        healthScoreAtLeast: 95
+        noConfirmedIssues: true
+      prompt: >
+        Orchestrate Fluent Frame project health as one cohesive run. Start with a
+        current health assessment, choose only enabled subtasks that address
+        confirmed risk or meaningful quality gaps, keep fixes narrow, verify
+        before and after changes, create one PR against dev, allow auto-merge only
+        after CI and mergeability pass, then switch back to dev and fast-forward.
+    opportunityDiscovery:
+      enabled: true
+      schedule: 20 11 * * *
+      scheduleJitterMinutes: 20
+      notificationChannel: both
+      maxSuggestions: 3
+      minConfidence: medium
+      categories:
+        - product-feature
+        - workflow-automation
+        - developer-experience
+        - reliability
+        - architecture
+      cooldownDays: 14
+      requireEvidence: true
+      prompt: >
+        Proactively discover grounded Fluent Frame feature or optimization
+        opportunities worth owner discussion before implementation. Focus on
+        workflow value, automation leverage, developer experience, reliability,
+        and architecture backed by concrete repository evidence. Do not edit
+        files, create branches, commit, push, or open PRs during discovery.
+    pullRequestReview:
+      enabled: true
+      schedule: 50 1 * * *
+      lookbackHours: 48
+      consecutivePasses: 2
+      autoMerge: true
+      prompt: >
+        Carefully review loop-created PRs from the previous day in two
+        independent passes. Focus on introduced bugs, tests, CI, mergeability,
+        data loss, security, migrations, and user-visible regressions. If both
+        passes find no real issue and CI is green, merge, switch back to dev, and
+        fast-forward the local dev branch.
+    allowedActions:
+      - tests
+      - docs
+      - small-refactor
+      - dependency-upgrade
+    blockedActions:
+      - direct-model-api
+      - broad-rewrite
+    selfImprovement:
+      enabled: true
+      maxItemsPerRun: 3
+    enabled: true
+
   - id: tmux-claude-bot
     name: tmux-claude-bot
     path: /Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot
@@ -629,7 +1012,7 @@ projects:
       githubAccount: Kingson4Wu
     bugFix:
       enabled: true
-      schedule: 30 13 * * *
+      schedule: 50 13 * * *
       branch: loop/tmux-claude-bot/bug-fix
       maxRounds: 5
       maxBugsPerRound: 2
@@ -641,7 +1024,11 @@ projects:
         features or perform architecture cleanup.
     securityMaintenance:
       enabled: true
-      schedule: 20 14 * * *
+      riskAssessment:
+        command: "node \"$LOOP_BOT_ROOT/scripts/loop-security-risk-assess.mjs\""
+        actionThreshold: 70
+        criticalThreshold: 90
+      schedule: 20 17 * * *
       branch: loop/tmux-claude-bot/security-maintenance
       maxRounds: 3
       allowDependencyUpdates: true
@@ -672,7 +1059,7 @@ projects:
         finding, and never auto-merge it.
     opportunityDiscovery:
       enabled: true
-      schedule: 20 10 * * *
+      schedule: 50 10 * * *
       scheduleJitterMinutes: 20
       notificationChannel: both
       maxSuggestions: 3
@@ -698,7 +1085,7 @@ projects:
         checks, and the configured switch-back behavior.
     pullRequestReview:
       enabled: true
-      schedule: 40 1 * * *
+      schedule: 0 2 * * *
       lookbackHours: 48
       consecutivePasses: 2
       autoMerge: true
@@ -903,6 +1290,54 @@ prReview:
       agent: codex
       worktreeIsolation: isolated
       schedule: 10 4 * * *
+      switchBack: dev
+      githubAccount: Kingson4Wu
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.
+      enabled: true
+    - id: english-pilot-all-prs
+      name: english-pilot all PRs
+      path: /Users/kingsonwu/programming/OctopusGarage/english-pilot
+      repo: OctopusGarage/english-pilot
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 30 4 * * *
+      switchBack: dev
+      githubAccount: Kingson4Wu
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: >
+          Only repair small deterministic check failures on same-repository PR
+          branches. Do not repair fork PRs, drafts, conflicts, broad refactors,
+          or changes needing product/security design judgment.
+      prompt: >
+        Review all open PRs for this repository. Merge only when both review
+        passes find no introduced bug or operational risk, CI/status checks are
+        green, and GitHub reports the PR is mergeable.
+      enabled: true
+    - id: fluent-frame-all-prs
+      name: fluent-frame all PRs
+      path: /Users/kingsonwu/programming/OctopusGarage/fluent-frame
+      repo: OctopusGarage/fluent-frame
+      agent: codex
+      worktreeIsolation: isolated
+      schedule: 40 4 * * *
       switchBack: dev
       githubAccount: Kingson4Wu
       lookbackHours: 72

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "taskId": "architecture",
+  "source": {
+    "kind": "work-order-final-summary",
+    "workOrderId": "1786010400000-knowledge-engine",
+    "projectId": "knowledge-engine"
+  },
+  "executionBoundary": "worker-internal",
+  "outcome": {
+    "status": "failed",
+    "finalVerification": "failed",
+    "reviewDecision": "pass",
+    "reason": "final-verification-failed"
+  },
+  "evidence": [],
+  "deterministicGates": [
+    {
+      "name": "isolated worktree",
+      "result": "passed",
+      "command": "git -C <expected-worktree> rev-parse --show-toplevel; git status --porcelain",
+      "evidence": "Exact expected toplevel; clean after commit."
+    },
+    {
+      "name": "focused tests",
+      "result": "passed",
+      "command": "uv run pytest focused suite",
+      "evidence": "124 passed."
+    },
+    {
+      "name": "repository health",
+      "result": "passed",
+      "command": "uv run scripts/check-health.sh",
+      "evidence": "1,040 passed, 3 skipped; 86.80% coverage against 70% threshold; Ruff/SAST, formatting, static-quality, dependency audit, and Pyright passed."
+    },
+    {
+      "name": "diff and import checks",
+      "result": "passed",
+      "command": "git diff --check; public export/import smoke",
+      "evidence": "All checks passed; public exports and concrete runtime imports smoke passed."
+    },
+    {
+      "name": "commit hook",
+      "result": "passed",
+      "command": "git commit",
+      "evidence": "Secret scanning hook passed."
+    },
+    {
+      "name": "assessment",
+      "result": "passed",
+      "command": "node /Users/kingsonwu/.tmux-claude-bot/state/loop-knowledge-engine-assess.mjs",
+      "evidence": "Assessment completed without a failure; numeric score was null."
+    }
+  ],
+  "notes": [
+    "Deterministic gates are authoritative and all required implementation gates passed. The assessment script did not emit a numeric score, so the configured target score could not be evaluated; the bounded slice was accepted on verified code and health evidence."
+  ],
+  "learningCandidates": {
+    "regression": [
+      "Add a focused import-boundary regression test if future package-initializer coupling is reintroduced."
+    ],
+    "capability": [],
+    "monitorOrTrace": [],
+    "documentation": []
+  }
+}

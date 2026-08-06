@@ -1,0 +1,113 @@
+{
+  "id": "1786018200000-geo-backend-bug-fix",
+  "scheduledAt": 1786018200000,
+  "task": {
+    "kind": "bug-fix",
+    "maxRounds": 5,
+    "maxBugsPerRound": 2,
+    "requireRegressionTest": true,
+    "cleanupPolicy": "conservative",
+    "prompt": "Find and fix only confirmed production-risk bugs. Prioritize API contracts, persistence consistency, authorization, concurrency, scheduling/state handling, and error-handling bugs. Do not add features or perform architecture cleanup.\n"
+  },
+  "projectId": "geo-backend",
+  "projectName": "geo-backend",
+  "projectPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/geo-backend/1786018200000-geo-backend-bug-fix",
+  "cleanupPolicy": "conservative",
+  "executionIsolation": {
+    "mode": "supervised-worker",
+    "expectedWorktree": "/Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/geo-backend/1786018200000-geo-backend-bug-fix",
+    "worktreeIsolation": "isolated",
+    "contextReset": "compact",
+    "cleanup": {
+      "success": "release-worker",
+      "failure": "retain-for-ttl",
+      "retainFailureForHours": 72
+    },
+    "sourceWorktree": "/Users/kingsonwu/programming/miao2016/realestate/geo-backend",
+    "preparedBy": "system-git-worktree"
+  },
+  "notificationSession": "tmux_proj_-Users-kingsonwu-programming-miao2016-realestate-geo-backend",
+  "workerSession": "tmux_proj_loop-worker-geo-backend-1786018200000-geo-backend-bug-fix",
+  "agent": "codex",
+  "goal": "Use improve-codebase-architecture to keep the Geo backend architecture improving in small, verified, reviewable slices.\n",
+  "maxRounds": 5,
+  "targetScore": 95,
+  "runner": {
+    "kind": "agent-supervised",
+    "timeoutMs": 7200000,
+    "maxTurns": 20,
+    "requireConfirmation": false
+  },
+  "allowedActions": [
+    "tests",
+    "docs",
+    "small-refactor",
+    "dependency-upgrade"
+  ],
+  "blockedActions": [
+    "direct-model-api",
+    "broad-rewrite"
+  ],
+  "skills": {
+    "approved": [
+      {
+        "id": "improve-codebase-architecture",
+        "sourceUrl": "https://github.com/mattpocock/skills/blob/main/skills/engineering/improve-codebase-architecture/SKILL.md",
+        "ref": "pinned-local-20260716",
+        "checksum": "local-installed",
+        "platforms": [
+          "claude",
+          "codex"
+        ],
+        "tags": [
+          "architecture",
+          "refactor"
+        ],
+        "trustLevel": "approved",
+        "risk": "medium",
+        "updatePolicy": "manual"
+      }
+    ]
+  },
+  "preflight": {
+    "commands": [
+      "test -x .venv/bin/ruff",
+      "test -x .venv/bin/pyright",
+      "test -x .venv/bin/pytest"
+    ],
+    "repair": {
+      "agent": true,
+      "prompt": "Repair the Geo backend local Python environment using this repository's own setup docs and scripts. Read CLAUDE.md and README.md first. Prefer the project-owned setup path and do not continue architecture work until preflight passes.\n"
+    }
+  },
+  "assessment": {
+    "command": "node /Users/kingsonwu/.tmux-claude-bot/state/loop-geo-backend-assess.mjs"
+  },
+  "execution": {
+    "agent": true
+  },
+  "recovery": {
+    "agent": true,
+    "dirtyWorktree": true,
+    "maxAttempts": 1
+  },
+  "commitPolicy": {
+    "enabled": true,
+    "perRound": true,
+    "branch": "loop/geo-backend/bug-fix/1786018200000-geo-backend-bug-fix"
+  },
+  "pullRequestPolicy": {
+    "enabled": true,
+    "base": "main",
+    "switchBack": "main",
+    "autoMerge": false,
+    "mergeMethod": "squash",
+    "githubAccount": "miao2016"
+  },
+  "requiredFinalMarker": "[LOOP_SUPERVISOR_DONE:1786018200000-geo-backend-bug-fix]",
+  "finalSummaryPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-runs/geo-backend/1786018200000-geo-backend-bug-fix/supervisor-final-summary.json",
+  "eval": {
+    "agent": true,
+    "minScore": 95
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "status": "blocked",
+  "projectId": "alcove",
+  "actionsTaken": [
+    "Validated the configured Alcove expected worktree path before any sync or assessment.",
+    "The path /Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/alcove/1786011600000-alcove-opportunity-discovery does not exist, so no repository or project state was accessed.",
+    "Did not open a worker, delegate work, edit files, create branches, commit, push, or open a PR.",
+    "Recorded an empty opportunity report with coverage unknown because repository evidence could not be collected."
+  ],
+  "delegatedTasks": [],
+  "finalVerification": "not-run",
+  "reviewGate": {
+    "preMutationReview": [],
+    "postMutationReview": [],
+    "aiReview": "not-applicable",
+    "deterministicGates": [
+      {
+        "name": "expected isolated worktree exists",
+        "result": "failed",
+        "command": "git -C /Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/alcove/1786011600000-alcove-opportunity-discovery rev-parse --show-toplevel",
+        "evidence": "fatal: cannot change to ... No such file or directory"
+      },
+      {
+        "name": "opportunity report artifact",
+        "result": "passed",
+        "command": "test -s /Users/kingsonwu/.tmux-claude-bot/state/loop-runs/alcove/1786011600000-alcove-opportunity-discovery/opportunities.json",
+        "evidence": "Report written with valid required top-level fields and zero suggestions."
+      }
+    ],
+    "decision": "block",
+    "notes": "Read-only discovery could not begin because the system-prepared isolated worktree was missing. No suggestion meets the evidence requirement."
+  },
+  "commits": [],
+  "followUps": [
+    "Recreate or repair the prepared Alcove isolated worktree, then rerun this bounded discovery WorkOrder."
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "id": "1786011600000-alcove-opportunity-discovery",
+  "scheduledAt": 1786011600000,
+  "task": {
+    "kind": "opportunity-discovery",
+    "maxRounds": 1,
+    "maxSuggestions": 3,
+    "minConfidence": "medium",
+    "categories": [
+      "product-feature",
+      "workflow-automation",
+      "developer-experience",
+      "reliability",
+      "architecture"
+    ],
+    "cooldownDays": 14,
+    "requireEvidence": true,
+    "notificationChannel": "both",
+    "prompt": "Proactively discover grounded Alcove feature or optimization opportunities that are worth owner discussion before implementation. Focus on user-visible workflow value, automation leverage, developer experience, reliability, and architecture opportunities backed by concrete repository evidence. Do not edit files, create branches, commit, push, or open PRs during discovery. For any suggestion likely to be delegated later, write a delegateRequirement that explicitly requires branching from dev, opening a PR against dev, waiting for CI and mergeability, allowing auto-merge only when the project policy permits it, then switching the local worktree back to dev and fast-forwarding it.\n"
+  },
+  "projectId": "alcove",
+  "projectName": "alcove",
+  "projectPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/alcove/1786011600000-alcove-opportunity-discovery",
+  "cleanupPolicy": "aggressive",
+  "executionIsolation": {
+    "mode": "supervised-worker",
+    "expectedWorktree": "/Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/alcove/1786011600000-alcove-opportunity-discovery",
+    "worktreeIsolation": "isolated",
+    "contextReset": "compact",
+    "cleanup": {
+      "success": "release-worker",
+      "failure": "retain-for-ttl",
+      "retainFailureForHours": 72
+    },
+    "sourceWorktree": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "preparedBy": "system-git-worktree"
+  },
+  "notificationSession": "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-alcove",
+  "workerSession": "tmux_proj_loop-worker-alcove-1786011600000-alcove-opportunity-discovery",
+  "agent": "codex",
+  "goal": "Use improve-codebase-architecture to keep the Alcove architecture improving in small, verified, reviewable slices. Open the PR against dev; after CI and mergeability checks pass, let the system gate merge it into dev, switch back to dev, and fast-forward the local dev branch.\n",
+  "maxRounds": 1,
+  "targetScore": 95,
+  "runner": {
+    "kind": "agent-supervised",
+    "timeoutMs": 7200000,
+    "maxTurns": 20,
+    "requireConfirmation": false
+  },
+  "allowedActions": [
+    "tests",
+    "docs",
+    "small-refactor",
+    "dependency-upgrade"
+  ],
+  "blockedActions": [
+    "direct-model-api",
+    "broad-rewrite"
+  ],
+  "skills": {
+    "approved": [
+      {
+        "id": "improve-codebase-architecture",
+        "sourceUrl": "https://github.com/mattpocock/skills/blob/main/skills/engineering/improve-codebase-architecture/SKILL.md",
+        "ref": "pinned-local-20260716",
+        "checksum": "local-installed",
+        "platforms": [
+          "claude",
+          "codex"
+        ],
+        "tags": [
+          "architecture",
+          "refactor"
+        ],
+        "trustLevel": "approved",
+        "risk": "medium",
+        "updatePolicy": "manual"
+      }
+    ]
+  },
+  "preflight": {
+    "commands": [
+      "test -x .venv/bin/ruff",
+      "test -x .venv/bin/mypy",
+      "test -x .venv/bin/pytest"
+    ],
+    "repair": {
+      "agent": true,
+      "prompt": "Repair the Alcove local Python environment using this repository's own setup docs and scripts. Read AGENTS.md, CLAUDE.md, README.md, and pyproject.toml first. Prefer the project-owned uv setup path and do not continue architecture work until preflight passes.\n"
+    }
+  },
+  "assessment": {
+    "command": "true"
+  },
+  "execution": {
+    "agent": true
+  },
+  "recovery": {
+    "agent": true,
+    "dirtyWorktree": true,
+    "maxAttempts": 1
+  },
+  "commitPolicy": {
+    "enabled": false,
+    "perRound": false
+  },
+  "pullRequestPolicy": {
+    "enabled": false,
+    "base": "dev",
+    "switchBack": "dev",
+    "autoMerge": false,
+    "mergeMethod": "squash",
+    "githubAccount": "Kingson4Wu"
+  },
+  "requiredFinalMarker": "[LOOP_SUPERVISOR_DONE:1786011600000-alcove-opportunity-discovery]",
+  "finalSummaryPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-runs/alcove/1786011600000-alcove-opportunity-discovery/supervisor-final-summary.json",
+  "opportunityReportPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-runs/alcove/1786011600000-alcove-opportunity-discovery/opportunities.json"
+}

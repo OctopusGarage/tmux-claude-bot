@@ -715,5 +715,145 @@
     "updatedAt": 1785901955518,
     "fingerprint": "6c7381701ecddaca",
     "status": "discussing"
+  },
+  "alcove-20260806-90e676a6": {
+    "title": "Make blog capture adapters explicit and retryable",
+    "category": "product-feature",
+    "confidence": "high",
+    "problem": "Unsupported or unavailable blog capture adapters return pending; blog runs then fail, mark the source needs_attention, and do not advance seen state.",
+    "whyNow": "Blog monitoring and alerting were recently hardened, while the module documentation explicitly leaves non-Clipsmith adapters for later.",
+    "value": "Keeps blog monitoring useful when optional capture tooling is unavailable, with reviewable context and without repeated failure alerts or lost items.",
+    "evidence": [
+      "src/alcove/blog_capture.py:16-35 shows pending behavior for unsupported/unavailable adapters",
+      "src/alcove/blog_run.py:193-214 makes pending capture fail the run and prevents seen-state advancement",
+      "tests/test_blog_capture.py:36-63 covers the current pending behavior",
+      "docs/modules.md:369 documents deferred adapters",
+      "commit 582465b tightened blog alerts"
+    ],
+    "recommendedApproach": "Add an adapter registry with a built-in metadata/manual inbox adapter, persist pending capture records, and provide an explicit retry/resolve path; advance seen state only after successful capture or explicit user resolution.",
+    "alternatives": [
+      "Require Clipsmith installation for all capture adapters",
+      "Reject unsupported adapters during blog configuration"
+    ],
+    "acceptanceCriteria": [
+      "Unsupported adapters are rejected or clearly shown as unavailable at configuration time",
+      "A fallback adapter creates a reviewable inbox item containing title, URL, and discovery metadata",
+      "Pending captures survive process restarts and are retryable",
+      "Repeated scheduler ticks do not create duplicate captures or alerts",
+      "Unit and isolated smoke tests cover unavailable, pending, retry, and success paths"
+    ],
+    "risks": [
+      "Inbox duplication",
+      "Partial capture state",
+      "Unclear ownership between Alcove and Clipsmith"
+    ],
+    "nonGoals": [
+      "OCR",
+      "Browser extraction",
+      "Replacing the Clipsmith capture pipeline"
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev, implement only this bounded slice, open a PR against dev, wait for CI and mergeability, allow auto-merge only when project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260806-90e676a6",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1786011600000-alcove-opportunity-discovery",
+    "discoveredAt": 1786012776744,
+    "updatedAt": 1786012776744,
+    "fingerprint": "6f8b226d9ca81231",
+    "status": "proposed"
+  },
+  "alcove-20260806-696ccd2e": {
+    "title": "Optionally generate radar action proposals during scheduled runs",
+    "category": "workflow-automation",
+    "confidence": "medium",
+    "problem": "Radar proposals are available through a separate manual command, while scheduled service runs execute radars but do not generate storage-only proposals.",
+    "whyNow": "The proposal lifecycle, dashboard projection, and MCP exposure were recently added, but the scheduled workflow still requires a separate generation step.",
+    "value": "Turns scheduled radar signals into a visible, reviewable planner queue while preserving explicit confirmation before any task, idea, or prompt write.",
+    "evidence": [
+      "src/alcove/radars/module.py:266-325 implements proposal generation separately",
+      "src/alcove/service.py:104 runs scheduled radars without proposal generation",
+      "docs/radars.md:93-116 documents the manual proposal step",
+      "tests/test_radar_proposals.py covers the current proposal lifecycle",
+      "commit ad1b3b7 added the proposal lifecycle"
+    ],
+    "recommendedApproach": "Add an opt-in per-radar proposal policy with action type and threshold; after a successful scheduled run, generate idempotent proposals from existing artifacts and expose generated/pending counts in service health/dashboard data.",
+    "alternatives": [
+      "Keep generation manual but add a Hub command hint",
+      "Add a dashboard Generate proposals action without changing scheduling"
+    ],
+    "acceptanceCriteria": [
+      "Default behavior remains unchanged",
+      "Opted-in scheduled runs generate idempotent proposals without fetching again or mutating tasks, ideas, or prompts",
+      "Provenance and duplicate handling remain intact",
+      "Dashboard and service output report proposal counts",
+      "Tests cover enabled, disabled, failed-run, duplicate, and confirmation flows"
+    ],
+    "risks": [
+      "Proposal noise",
+      "Growing pending queues",
+      "Users mistaking proposals for accepted actions"
+    ],
+    "nonGoals": [
+      "Auto-accepting proposals",
+      "Adding AI-generated actions"
+    ],
+    "estimatedComplexity": "medium",
+    "delegateRequirement": "After owner approval, branch from dev, implement only this bounded slice, open a PR against dev, wait for CI and mergeability, allow auto-merge only when project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260806-696ccd2e",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1786011600000-alcove-opportunity-discovery",
+    "discoveredAt": 1786012776744,
+    "updatedAt": 1786012776744,
+    "fingerprint": "06445c5838c920cb",
+    "status": "proposed"
+  },
+  "alcove-20260806-b3100808": {
+    "title": "Track task-health notifications per sink and retry partial delivery",
+    "category": "reliability",
+    "confidence": "high",
+    "problem": "A partial multi-sink delivery is persisted as sent, so later ticks skip the entire day even when one sink failed or was unavailable.",
+    "whyNow": "Notification routing was the latest commit, and existing tests explicitly codify that a partial send suppresses later retries.",
+    "value": "Prevents silent loss of operational alerts while avoiding duplicate sends to sinks that already succeeded.",
+    "evidence": [
+      "src/alcove/service_task_health_notifications.py:29-47 persists the aggregate delivery state",
+      "src/alcove/service_task_health.py:83-100 drives task-health notification state",
+      "tests/test_service.py:802-855 codifies partial-send suppression",
+      "commit 3580821 routed radar notifications to AlcoveHub"
+    ],
+    "recommendedApproach": "Persist per-sink delivery status and errors, retry only failed or skipped sinks, and mark the day complete only when all configured sinks succeed or are intentionally skipped.",
+    "alternatives": [
+      "Retry the whole notification on partial status",
+      "Remove daily deduplication"
+    ],
+    "acceptanceCriteria": [
+      "Partial state records each sink status and error",
+      "Subsequent ticks retry failed sinks only",
+      "Successful sinks are not duplicated",
+      "Full success still suppresses same-day duplicates",
+      "Legacy state records remain readable and migrate safely"
+    ],
+    "risks": [
+      "Duplicate delivery after ambiguous network failures",
+      "State schema migration complexity"
+    ],
+    "nonGoals": [
+      "Redesigning generic notification APIs",
+      "Adding new notification channels"
+    ],
+    "estimatedComplexity": "small",
+    "delegateRequirement": "After owner approval, branch from dev, implement only this bounded slice, open a PR against dev, wait for CI and mergeability, allow auto-merge only when project policy permits it, then switch the local worktree back to dev and fast-forward it.",
+    "id": "alcove-20260806-b3100808",
+    "projectId": "alcove",
+    "projectName": "alcove",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/alcove",
+    "runId": "1786011600000-alcove-opportunity-discovery",
+    "discoveredAt": 1786012776744,
+    "updatedAt": 1786012776744,
+    "fingerprint": "b54558acbda0e339",
+    "status": "proposed"
   }
 }

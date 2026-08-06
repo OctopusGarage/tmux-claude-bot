@@ -15,5 +15,10 @@
   "tmux_proj_-Users-kingsonwu-programming-yslabali-labali-fox-lark-coding-agent-bridge": "codex",
   "tmux_proj_loop-supervisor-1": "codex",
   "tmux_proj_loop-supervisor-3": "codex",
-  "tmux_proj_loop-supervisor-2": "codex"
+  "tmux_proj_loop-supervisor-2": "codex",
+  "tmux_proj_loop-worker-knowledge-engine-1786010400000-knowledge-engine": "codex",
+  "tmux_proj_loop-supervisor-5": "codex",
+  "tmux_proj_loop-supervisor-4": "codex",
+  "tmux_proj_loop-worker-geo-backend-1786018200000-geo-backend-bug-fix": "codex",
+  "tmux_proj_loop-worker-geo-backend-1785942600000-geo-backend-test-coverage": "codex"
 }

@@ -10,5 +10,10 @@
   "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-alcove": "codex --yolo",
   "tmux_proj_loop-supervisor-1": "codex --yolo",
   "tmux_proj_loop-supervisor-3": "codex --yolo",
-  "tmux_proj_loop-supervisor-2": "codex --yolo"
+  "tmux_proj_loop-supervisor-2": "codex --yolo",
+  "tmux_proj_loop-worker-knowledge-engine-1786010400000-knowledge-engine": "codex --yolo",
+  "tmux_proj_loop-supervisor-5": "codex --yolo",
+  "tmux_proj_loop-supervisor-4": "codex --yolo",
+  "tmux_proj_loop-worker-geo-backend-1786018200000-geo-backend-bug-fix": "codex --yolo",
+  "tmux_proj_loop-worker-geo-backend-1785942600000-geo-backend-test-coverage": "codex --yolo"
 }

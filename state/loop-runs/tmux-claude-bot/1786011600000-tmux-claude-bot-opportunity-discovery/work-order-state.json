@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "projectId": "tmux-claude-bot",
+  "runId": "1786011600000-tmux-claude-bot-opportunity-discovery",
+  "supervisorSession": "tmux_proj_loop-supervisor-1",
+  "scheduledAt": 1786011600000,
+  "updatedAt": 1786011858615,
+  "resultStatus": "dispatch-failed"
+}

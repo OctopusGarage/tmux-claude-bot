@@ -1,5 +1,5 @@
 {
-  "tmux_proj_-Users-kingsonwu-AlcoveHub": 1786002706734,
+  "tmux_proj_-Users-kingsonwu-AlcoveHub": 1786020792428,
   "tmux_proj_-Users-kingsonwu-_alcove-workspaces-data-family": 1785241296935,
   "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-alcove": 1786008062802,
   "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-tmux-claude-bot": 1785982725820,
@@ -13,7 +13,13 @@
   "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-clipsmith": 1785914220868,
   "tmux_proj_-Users-kingsonwu-programming-yslabali-labali-fox-lark-coding-agent-bridge": 1785846180989,
   "tmux_proj_home": 1785914126736,
-  "tmux_proj_loop-supervisor-1": 1786009187264,
+  "tmux_proj_loop-supervisor-1": 1786020711785,
   "tmux_proj_loop-supervisor-2": 1786009187285,
-  "tmux_proj_loop-supervisor-3": 1786009187299
+  "tmux_proj_loop-supervisor-3": 1786009187299,
+  "tmux_proj_loop-worker-knowledge-engine-1786010400000-knowledge-engine": 1786011057158,
+  "tmux_proj_loop-worker-alcove-1786011600000-alcove-opportunity-discovery": 1786012695104,
+  "tmux_proj_loop-supervisor-5": 1786018868938,
+  "tmux_proj_loop-supervisor-4": 1786018869099,
+  "tmux_proj_loop-worker-geo-backend-1786018200000-geo-backend-bug-fix": 1786019200084,
+  "tmux_proj_loop-worker-geo-backend-1785942600000-geo-backend-test-coverage": 1786020723034
 }

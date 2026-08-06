@@ -1,1 +1,74 @@
-{}
+{
+  "knowledge-engine-7a923d9cf08b": {
+    "id": "knowledge-engine-7a923d9cf08b",
+    "projectId": "knowledge-engine",
+    "text": "Deferred broader architecture candidates from the assessment because conservative policy and the one-slice limit prohibit opportunistic cleanup.",
+    "status": "open",
+    "createdAt": 1786011231713,
+    "runId": "1786010400000-knowledge-engine"
+  },
+  "knowledge-engine-3b30d0e0fd88": {
+    "id": "knowledge-engine-3b30d0e0fd88",
+    "projectId": "knowledge-engine",
+    "text": "No PR was opened; the worker remains on loop/knowledge-engine/architecture/1786010400000-knowledge-engine for system-managed acceptance and release.",
+    "status": "open",
+    "createdAt": 1786011231713,
+    "runId": "1786010400000-knowledge-engine"
+  },
+  "knowledge-engine-a89366decea3": {
+    "id": "knowledge-engine-a89366decea3",
+    "projectId": "knowledge-engine",
+    "text": "supervised system gate failed: isolated worktree is on \"main\", expected WorkOrder branch \"loop/knowledge-engine/architecture/1786010400000-knowledge-engine\"; PR lookup failed: no pull requests found for branch \"loop/knowledge-engine/architecture/1786010400000-knowledge-engine\"",
+    "status": "open",
+    "createdAt": 1786011231713,
+    "runId": "1786010400000-knowledge-engine"
+  },
+  "alcove-fc443e65b229": {
+    "id": "alcove-fc443e65b229",
+    "projectId": "alcove",
+    "text": "Owner discussion is required before any delegation; no implementation was started",
+    "status": "open",
+    "createdAt": 1786012776744,
+    "runId": "1786011600000-alcove-opportunity-discovery"
+  },
+  "alcove-4df8d266914d": {
+    "id": "alcove-4df8d266914d",
+    "projectId": "alcove",
+    "text": "If approved, each suggestion's delegateRequirement governs the later PR workflow",
+    "status": "open",
+    "createdAt": 1786012776744,
+    "runId": "1786011600000-alcove-opportunity-discovery"
+  },
+  "alcove-6773377fb204": {
+    "id": "alcove-6773377fb204",
+    "projectId": "alcove",
+    "text": "Worker should be released after system acceptance under the success cleanup policy",
+    "status": "open",
+    "createdAt": 1786012776744,
+    "runId": "1786011600000-alcove-opportunity-discovery"
+  },
+  "geo-backend-819a65a1ec29": {
+    "id": "geo-backend-819a65a1ec29",
+    "projectId": "geo-backend",
+    "text": "Repair the isolated .venv using the repository-owned setup path, then rerun the configured quality gate and focused pytest suite.",
+    "status": "open",
+    "createdAt": 1786019264026,
+    "runId": "1786018200000-geo-backend-bug-fix"
+  },
+  "geo-backend-8525a3f3555c": {
+    "id": "geo-backend-8525a3f3555c",
+    "projectId": "geo-backend",
+    "text": "Re-evaluate the deferred recovery-session disappearance loop and resource-list refresh behavior only after the project environment is runnable.",
+    "status": "open",
+    "createdAt": 1786019264026,
+    "runId": "1786018200000-geo-backend-bug-fix"
+  },
+  "geo-backend-a67189a7244b": {
+    "id": "geo-backend-a67189a7244b",
+    "projectId": "geo-backend",
+    "text": "No PR or merge workflow was started because no code changed.",
+    "status": "open",
+    "createdAt": 1786019264026,
+    "runId": "1786018200000-geo-backend-bug-fix"
+  }
+}

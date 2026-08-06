@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "projectId": "geo-backend",
+  "runId": "1786018200000-geo-backend-bug-fix",
+  "supervisorSession": "tmux_proj_loop-supervisor-1",
+  "scheduledAt": 1786018200000,
+  "updatedAt": 1786019264026,
+  "resultStatus": "blocked"
+}

@@ -34,7 +34,7 @@
   "missing-system-gate:tmux-claude-bot:1785421200000-tmux-claude-bot-security-maintenance": 1785468352586,
   "missing-system-gate:tmux-claude-bot:1785462356646-tmux-claude-bot-active-delegate": 1785468472586,
   "terminal-work-order-active-lease:tmux-claude-bot:1785465484175-tmux-claude-bot-active-delegate": 1785465626175,
-  "__repair-attempt__:/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot": 1786008235424,
+  "__repair-attempt__:/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot": 1786013066118,
   "terminal-invalid-output:geo-backend:1785677677298-geo-backend-active-delegate": 1785735072462,
   "read-only-smoke-preflight-blocked:geo-frontend:1785680571842-geo-frontend-active-delegate": 1785766659830,
   "terminal-invalid-output:tmux-claude-bot:1785692901471-tmux-claude-bot-active-delegate": 1785772186177,
@@ -66,5 +66,6 @@
   "terminal-system-gate-failure:alcove:1785939566020-alcove-active-delegate": 1786008235424,
   "terminal-system-gate-failure:alcove:1785948345737-alcove-active-delegate": 1786007995419,
   "terminal-system-gate-failure:alcove:1785939106841-alcove-active-delegate": 1786008835435,
-  "terminal-invalid-output:alcove:1785943695274-alcove-active-delegate": 1786008235424
+  "terminal-invalid-output:alcove:1785943695274-alcove-active-delegate": 1786008235424,
+  "terminal-system-gate-failure:knowledge-engine:1786010400000-knowledge-engine": 1786020306782
 }

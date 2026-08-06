@@ -1,1 +1,276 @@
-{}
+{
+  "repair-1786011860028-1": {
+    "id": "repair-1786011860028-1",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot opportunity-discovery|unknown",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot opportunity-discovery",
+    "fingerprint": "unknown",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:opportunity-discovery:1786011600000"
+    ],
+    "summaries": [
+      "Loop supervisor run did not complete successfully."
+    ],
+    "status": "blocked",
+    "priority": 100,
+    "attempt": 5,
+    "createdAt": 1786011860028,
+    "updatedAt": 1786013164623,
+    "nextAttemptAt": 1786013542710
+  },
+  "repair-1786018866768-2": {
+    "id": "repair-1786018866768-2",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot bug-fix|unknown",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot bug-fix",
+    "fingerprint": "unknown",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:bug-fix:1785937800000"
+    ],
+    "summaries": [
+      "Loop supervisor run did not complete successfully."
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 1,
+    "createdAt": 1786018866768,
+    "updatedAt": 1786019166772,
+    "nextAttemptAt": 1786018896768
+  },
+  "repair-1786019166772-3": {
+    "id": "repair-1786019166772-3",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot bug-fix|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot bug-fix",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:bug-fix:1785937800000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M state/loop-engineering.yml (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 1,
+    "createdAt": 1786019166772,
+    "updatedAt": 1786019466784,
+    "nextAttemptAt": 1786019196772
+  },
+  "repair-1786019466784-4": {
+    "id": "repair-1786019466784-4",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot pull-request-review|unknown",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot pull-request-review",
+    "fingerprint": "unknown",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:pull-request-review:1785981600000"
+    ],
+    "summaries": [
+      "Loop supervisor run did not complete successfully."
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 1,
+    "createdAt": 1786019466784,
+    "updatedAt": 1786019766788,
+    "nextAttemptAt": 1786019496784
+  },
+  "repair-1786019466784-5": {
+    "id": "repair-1786019466784-5",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot bug-fix|dirty-worktree / unknown",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "project-recovery",
+    "taskFamily": "tmux-claude-bot bug-fix",
+    "fingerprint": "dirty-worktree | unknown",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:bug-fix:1785937800000",
+      "loop:tmux-claude-bot:pull-request-review:1785981600000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M state/loop-engineering.yml (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "pending",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786019466784,
+    "updatedAt": 1786020666821,
+    "nextAttemptAt": 1786020666821
+  },
+  "repair-1786019766788-6": {
+    "id": "repair-1786019766788-6",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot bug-fix|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot bug-fix",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:bug-fix:1785937800000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M state/loop-engineering.yml (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786019766788,
+    "updatedAt": 1786019766788,
+    "nextAttemptAt": 1786019766788
+  },
+  "repair-1786019766788-7": {
+    "id": "repair-1786019766788-7",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot pull-request-review|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot pull-request-review",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:pull-request-review:1785981600000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M state/loop-engineering.yml (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786019766788,
+    "updatedAt": 1786019766788,
+    "nextAttemptAt": 1786019766788
+  },
+  "repair-1786020066795-8": {
+    "id": "repair-1786020066795-8",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot bug-fix|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot bug-fix",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:bug-fix:1785937800000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M docs/commands.md\n M docs/examples/loop-skills-catalog.example.yml\n M docs/intelligent-automation.md\n M docs/manual.md\n M state/loop-engineering.yml\n M tests/docs-contract.test.ts (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786020066795,
+    "updatedAt": 1786020066795,
+    "nextAttemptAt": 1786020066795
+  },
+  "repair-1786020066795-9": {
+    "id": "repair-1786020066795-9",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot pull-request-review|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot pull-request-review",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:pull-request-review:1785981600000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M docs/commands.md\n M docs/examples/loop-skills-catalog.example.yml\n M docs/intelligent-automation.md\n M docs/manual.md\n M state/loop-engineering.yml\n M tests/docs-contract.test.ts (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786020066795,
+    "updatedAt": 1786020066795,
+    "nextAttemptAt": 1786020066795
+  },
+  "repair-1786020366793-10": {
+    "id": "repair-1786020366793-10",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot bug-fix|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot bug-fix",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:bug-fix:1785937800000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M docs/commands.md\n M docs/examples/loop-skills-catalog.example.yml\n M docs/intelligent-automation.md\n M docs/manual.md\n M state/loop-engineering.yml\n M tests/docs-contract.test.ts (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786020366793,
+    "updatedAt": 1786020366793,
+    "nextAttemptAt": 1786020366793
+  },
+  "repair-1786020366793-11": {
+    "id": "repair-1786020366793-11",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot pull-request-review|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot pull-request-review",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:pull-request-review:1785981600000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M docs/commands.md\n M docs/examples/loop-skills-catalog.example.yml\n M docs/intelligent-automation.md\n M docs/manual.md\n M state/loop-engineering.yml\n M tests/docs-contract.test.ts (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786020366793,
+    "updatedAt": 1786020366793,
+    "nextAttemptAt": 1786020366793
+  },
+  "repair-1786020666821-12": {
+    "id": "repair-1786020666821-12",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot bug-fix|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot bug-fix",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:bug-fix:1785937800000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M .gitignore\n M docs/commands.md\n M docs/examples/loop-skills-catalog.example.yml\n M docs/intelligent-automation.md\n M docs/manual.md\n D state/loop-engineering.yml\n M tests/docs-contract.test.ts (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786020666821,
+    "updatedAt": 1786020666821,
+    "nextAttemptAt": 1786020666821
+  },
+  "repair-1786020666821-13": {
+    "id": "repair-1786020666821-13",
+    "dedupeKey": "tmux-claude-bot|/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot|tmux-claude-bot pull-request-review|dirty-worktree",
+    "projectId": "tmux-claude-bot",
+    "projectPath": "/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot",
+    "source": "loop-engineering",
+    "taskFamily": "tmux-claude-bot pull-request-review",
+    "fingerprint": "dirty-worktree",
+    "linkedTaskIds": [
+      "loop:tmux-claude-bot:pull-request-review:1785981600000"
+    ],
+    "summaries": [
+      "Recovery dispatch deferred: execution worktree isolation failed: tmux-claude-bot: isolated execution worktree could not be prepared: source worktree is dirty: M .gitignore\n M docs/commands.md\n M docs/examples/loop-skills-catalog.example.yml\n M docs/intelligent-automation.md\n M docs/manual.md\n D state/loop-engineering.yml\n M tests/docs-contract.test.ts (/Users/kingsonwu/programming/OctopusGarage/tmux-claude-bot)"
+    ],
+    "status": "superseded",
+    "priority": 100,
+    "attempt": 0,
+    "createdAt": 1786020666821,
+    "updatedAt": 1786020666821,
+    "nextAttemptAt": 1786020666821
+  }
+}

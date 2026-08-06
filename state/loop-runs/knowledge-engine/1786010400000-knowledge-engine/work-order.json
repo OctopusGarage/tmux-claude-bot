@@ -1,0 +1,108 @@
+{
+  "id": "1786010400000-knowledge-engine",
+  "scheduledAt": 1786010400000,
+  "task": {
+    "kind": "architecture"
+  },
+  "projectId": "knowledge-engine",
+  "projectName": "knowledge-engine",
+  "projectPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/knowledge-engine/1786010400000-knowledge-engine",
+  "cleanupPolicy": "conservative",
+  "executionIsolation": {
+    "mode": "supervised-worker",
+    "expectedWorktree": "/Users/kingsonwu/.tmux-claude-bot/state/loop-worktrees/knowledge-engine/1786010400000-knowledge-engine",
+    "worktreeIsolation": "isolated",
+    "contextReset": "compact",
+    "cleanup": {
+      "success": "release-worker",
+      "failure": "retain-for-ttl",
+      "retainFailureForHours": 72
+    },
+    "sourceWorktree": "/Users/kingsonwu/programming/miao2016/knowledge-engine",
+    "preparedBy": "system-git-worktree"
+  },
+  "notificationSession": "tmux_proj_-Users-kingsonwu-programming-miao2016-knowledge-engine",
+  "workerSession": "tmux_proj_loop-worker-knowledge-engine-1786010400000-knowledge-engine",
+  "agent": "codex",
+  "goal": "Use improve-codebase-architecture to keep the Knowledge Engine architecture improving in small, verified, reviewable slices.\n",
+  "maxRounds": 3,
+  "targetScore": 95,
+  "runner": {
+    "kind": "agent-supervised",
+    "timeoutMs": 7200000,
+    "maxTurns": 20,
+    "requireConfirmation": false
+  },
+  "allowedActions": [
+    "tests",
+    "docs",
+    "small-refactor",
+    "dependency-upgrade"
+  ],
+  "blockedActions": [
+    "direct-model-api",
+    "broad-rewrite"
+  ],
+  "skills": {
+    "approved": [
+      {
+        "id": "improve-codebase-architecture",
+        "sourceUrl": "https://github.com/mattpocock/skills/blob/main/skills/engineering/improve-codebase-architecture/SKILL.md",
+        "ref": "pinned-local-20260716",
+        "checksum": "local-installed",
+        "platforms": [
+          "claude",
+          "codex"
+        ],
+        "tags": [
+          "architecture",
+          "refactor"
+        ],
+        "trustLevel": "approved",
+        "risk": "medium",
+        "updatePolicy": "manual"
+      }
+    ]
+  },
+  "preflight": {
+    "commands": [
+      "test -x .venv/bin/ruff",
+      "test -x .venv/bin/pyright",
+      "test -x .venv/bin/pytest"
+    ],
+    "repair": {
+      "agent": true,
+      "prompt": "Repair the Knowledge Engine local Python environment using this repository's own setup docs and scripts. Read CLAUDE.md and README.md first. Prefer the project-owned setup path and do not continue architecture work until preflight passes.\n"
+    }
+  },
+  "assessment": {
+    "command": "node /Users/kingsonwu/.tmux-claude-bot/state/loop-knowledge-engine-assess.mjs"
+  },
+  "execution": {
+    "agent": true
+  },
+  "recovery": {
+    "agent": true,
+    "dirtyWorktree": true,
+    "maxAttempts": 1
+  },
+  "commitPolicy": {
+    "enabled": true,
+    "perRound": true,
+    "branch": "loop/knowledge-engine/architecture/1786010400000-knowledge-engine"
+  },
+  "pullRequestPolicy": {
+    "enabled": true,
+    "base": "main",
+    "switchBack": "main",
+    "autoMerge": false,
+    "mergeMethod": "squash",
+    "githubAccount": "miao2016"
+  },
+  "requiredFinalMarker": "[LOOP_SUPERVISOR_DONE:1786010400000-knowledge-engine]",
+  "finalSummaryPath": "/Users/kingsonwu/.tmux-claude-bot/state/loop-runs/knowledge-engine/1786010400000-knowledge-engine/supervisor-final-summary.json",
+  "eval": {
+    "agent": true,
+    "minScore": 95
+  }
+}

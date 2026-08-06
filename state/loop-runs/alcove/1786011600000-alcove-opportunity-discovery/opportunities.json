@@ -1,0 +1,16 @@
+{
+  "projectId": "alcove",
+  "projectName": "alcove",
+  "generatedAt": "2026-08-06T00:00:00.000Z",
+  "coverage": "unknown",
+  "checkedSignals": [
+    "isolated worktree existence",
+    "isolated worktree root validation",
+    "worker-session availability"
+  ],
+  "skippedSignals": [
+    "repository source, docs, tests, logs, TODOs, and UX exploration because the prepared isolated worktree was missing",
+    "worker delegation because the required isolated target could not be opened safely"
+  ],
+  "suggestions": []
+}

@@ -1,0 +1,14 @@
+{
+  "workOrderId": "1785937800000-tmux-claude-bot-bug-fix",
+  "projectId": "tmux-claude-bot",
+  "resultStatus": "dispatch-failed",
+  "accepted": false,
+  "supervisorReviewGate": null,
+  "evalReport": null,
+  "evidence": [
+    "supervisor result was dispatch-failed; system acceptance gate skipped"
+  ],
+  "failures": [],
+  "recoverableFailures": [],
+  "writtenAt": 1786018864591
+}

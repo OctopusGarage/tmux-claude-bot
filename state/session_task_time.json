@@ -1,7 +1,7 @@
 {
   "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-tmux-claude-bot": 27385218,
   "tmux_proj_-Users-kingsonwu-programming-kingson4wu-entropy-nexus-social_media_posts": 27567381,
-  "tmux_proj_-Users-kingsonwu-AlcoveHub": 8584361,
+  "tmux_proj_-Users-kingsonwu-AlcoveHub": 8697751,
   "tmux_proj_-Users-kingsonwu-_alcove-workspaces-data-family": 92146,
   "tmux_proj_-Users-kingsonwu-programming-miao2016-realestate-geo-backend": 3736714,
   "tmux_proj_-Users-kingsonwu-programming-miao2016-agent-skill-platform": 3717606,
@@ -10,5 +10,9 @@
   "tmux_proj_-Users-kingsonwu-programming-miao2016-datavibe-datavibe-backend": 123116,
   "tmux_proj_-Users-kingsonwu-programming-miao2016-realestate-geo-frontend": 4537335,
   "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-alcove": 17384588,
-  "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-clipsmith": 4558699
+  "tmux_proj_-Users-kingsonwu-programming-OctopusGarage-clipsmith": 4558699,
+  "tmux_proj_loop-supervisor-1": 2329743,
+  "tmux_proj_loop-worker-knowledge-engine-1786010400000-knowledge-engine": 268284,
+  "tmux_proj_loop-worker-geo-backend-1786018200000-geo-backend-bug-fix": 262954,
+  "tmux_proj_loop-worker-geo-backend-1785942600000-geo-backend-test-coverage": 547632
 }

@@ -1,0 +1,107 @@
+{
+  "workOrderId": "1786011600000-alcove-opportunity-discovery",
+  "projectId": "alcove",
+  "resultStatus": "completed",
+  "accepted": true,
+  "supervisorReviewGate": {
+    "preMutationReview": [],
+    "postMutationReview": [],
+    "aiReview": "passed",
+    "deterministicGates": [
+      {
+        "name": "isolated git toplevel",
+        "result": "passed",
+        "command": "git -C <expected-worktree> rev-parse --show-toplevel",
+        "evidence": "Matched the configured expected worktree"
+      },
+      {
+        "name": "clean detached base",
+        "result": "passed",
+        "command": "git status --short; git fetch origin dev; git switch --detach origin/dev",
+        "evidence": "Clean worktree and HEAD 3580821b3560e1c1c27e368979b6c3a94b03e1d4"
+      },
+      {
+        "name": "opportunity artifact",
+        "result": "passed",
+        "command": "JSON parse and schema review of opportunities.json",
+        "evidence": "Exactly the required top-level fields and three valid suggestions"
+      },
+      {
+        "name": "project mutation check",
+        "result": "passed",
+        "command": "git status --porcelain=v1 -uno",
+        "evidence": "Worker reported no files changed"
+      }
+    ],
+    "decision": "pass",
+    "notes": [
+      "Read-only/no-op discovery: pre- and post-mutation diff reviews are empty by design. Deterministic artifact and isolation gates passed. Worker AI review was advisory and found evidence-backed bounded opportunities."
+    ]
+  },
+  "evalReport": {
+    "schemaVersion": 1,
+    "taskId": "opportunity-discovery",
+    "source": {
+      "kind": "work-order-final-summary",
+      "workOrderId": "1786011600000-alcove-opportunity-discovery",
+      "projectId": "alcove"
+    },
+    "executionBoundary": "worker-internal",
+    "outcome": {
+      "status": "passed",
+      "finalVerification": "passed",
+      "reviewDecision": "pass"
+    },
+    "evidence": [],
+    "deterministicGates": [
+      {
+        "name": "isolated git toplevel",
+        "result": "passed",
+        "command": "git -C <expected-worktree> rev-parse --show-toplevel",
+        "evidence": "Matched the configured expected worktree"
+      },
+      {
+        "name": "clean detached base",
+        "result": "passed",
+        "command": "git status --short; git fetch origin dev; git switch --detach origin/dev",
+        "evidence": "Clean worktree and HEAD 3580821b3560e1c1c27e368979b6c3a94b03e1d4"
+      },
+      {
+        "name": "opportunity artifact",
+        "result": "passed",
+        "command": "JSON parse and schema review of opportunities.json",
+        "evidence": "Exactly the required top-level fields and three valid suggestions"
+      },
+      {
+        "name": "project mutation check",
+        "result": "passed",
+        "command": "git status --porcelain=v1 -uno",
+        "evidence": "Worker reported no files changed"
+      }
+    ],
+    "notes": [
+      "Read-only/no-op discovery: pre- and post-mutation diff reviews are empty by design. Deterministic artifact and isolation gates passed. Worker AI review was advisory and found evidence-backed bounded opportunities."
+    ],
+    "learningCandidates": {
+      "regression": [
+        "Add deterministic coverage for partial notification delivery retry semantics if the owner approves that opportunity"
+      ],
+      "capability": [],
+      "monitorOrTrace": [
+        "Observe pending blog captures and per-sink notification outcomes if either opportunity is implemented"
+      ],
+      "documentation": [
+        "Document the selected scheduled radar proposal policy and blog adapter availability behavior if implemented"
+      ]
+    }
+  },
+  "evidence": [
+    "eval outcome=passed",
+    "supervisor reviewGate decision=pass, aiReview=passed",
+    "discovery-only task; mutating git and PR gates skipped",
+    "no mutating git or PR gate required"
+  ],
+  "failures": [],
+  "recoverableFailures": [],
+  "writtenAt": 1786012776744
+}
