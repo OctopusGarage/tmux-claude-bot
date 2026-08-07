@@ -119,6 +119,17 @@ describe("repository review queue", () => {
     expect(store.lease(created.id, "worker-2", 151, 50)?.leaseOwner).toBe("worker-2");
   });
 
+  it("reclaims a lease owned by a process that exited before its long lease expires", () => {
+    const store = queue();
+    const created = store.enqueue(item());
+
+    expect(store.lease(created.id, "99999999:worker-1", 100, 86_400_000)).not.toBeNull();
+
+    expect(store.listReady(101)).toEqual([
+      expect.objectContaining({ id: created.id, status: "pending" }),
+    ]);
+  });
+
   it("retries transient failures with backoff and supports terminal decisions", () => {
     const store = queue();
     const failed = store.enqueue(item({ repositoryId: "retry" }));

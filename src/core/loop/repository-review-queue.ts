@@ -203,7 +203,7 @@ export class RepositoryReviewQueue {
       if (
         (item.status !== "leased" && item.status !== "running") ||
         item.leaseUntil === undefined ||
-        item.leaseUntil > now
+        (item.leaseUntil > now && !leaseOwnerProcessExited(item.leaseOwner))
       ) {
         continue;
       }
@@ -218,6 +218,19 @@ export class RepositoryReviewQueue {
       delete recovered.leaseUntil;
       this.items.set(item.id, recovered);
     }
+  }
+}
+
+function leaseOwnerProcessExited(owner: string | undefined): boolean {
+  const pidText = owner?.split(":", 1)[0];
+  if (pidText === undefined || !/^\d+$/.test(pidText)) return false;
+  const pid = Number(pidText);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
   }
 }
 
