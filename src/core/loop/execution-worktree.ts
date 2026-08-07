@@ -326,8 +326,8 @@ function prepareGitExecutionWorktree(input: {
     });
     return null;
   }
-  const syncFailure = syncSourceExecutionBranch(input, "isolated execution");
-  if (syncFailure !== null) return { detail: syncFailure };
+  const base = prepareIsolatedExecutionBase(input);
+  if ("detail" in base) return base;
 
   const executionWorktree = loopExecutionWorktreePath(input.workOrder, input.repositoryId);
   mkdirSync(dirname(executionWorktree), { recursive: true });
@@ -348,7 +348,7 @@ function prepareGitExecutionWorktree(input: {
 
   const added = input.runGit({
     cwd: input.sourceWorktree,
-    args: ["worktree", "add", "--detach", executionWorktree, "HEAD"],
+    args: ["worktree", "add", "--detach", executionWorktree, base.ref],
   });
   if (added.status !== 0) {
     log.warn("loop failed to prepare isolated execution worktree", {
@@ -364,6 +364,55 @@ function prepareGitExecutionWorktree(input: {
     data: { ...loggableInput(input), executionWorktree },
   });
   return { executionWorktree };
+}
+
+/**
+ * Prepare an isolated worker from a current base ref without changing the
+ * configured source checkout. In particular, never switch or pull --rebase in
+ * the source worktree: another user session or WorkOrder may be using it.
+ */
+function prepareIsolatedExecutionBase(input: {
+  workOrder: LoopWorkOrder;
+  sourceWorktree: string;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  repositoryId?: string;
+}): { ref: string } | { detail: string } {
+  const cleanBefore = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["status", "--porcelain"],
+  });
+  if (cleanBefore.status !== 0 || cleanBefore.stdout.trim().length > 0) {
+    return {
+      detail:
+        cleanBefore.status !== 0
+          ? cleanBefore.stderr || cleanBefore.stdout || "git status failed"
+          : `source worktree is dirty: ${cleanBefore.stdout.trim()}`,
+    };
+  }
+
+  const branch = executionBaseBranch(input.workOrder, input.repositoryId);
+  if (branch === undefined) return { ref: "HEAD" };
+
+  const fetched = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["fetch", "origin", branch],
+  });
+  if (fetched.status === 0) return { ref: `origin/${branch}` };
+
+  const reason = fetched.stderr || fetched.stdout || `git fetch origin ${branch} failed`;
+  if (isRemoteTransportFailure(reason)) {
+    const localBranch = input.runGit({
+      cwd: input.sourceWorktree,
+      args: ["rev-parse", "--verify", `refs/heads/${branch}`],
+    });
+    if (localBranch.status === 0 && localBranch.stdout.trim().length > 0) {
+      log.warn("loop isolated execution using verified local base because remote is unavailable", {
+        data: { ...loggableInput(input), branch, reason },
+      });
+      return { ref: branch };
+    }
+  }
+  return { detail: reason };
 }
 
 function syncSourceExecutionBranch(

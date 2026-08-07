@@ -455,9 +455,11 @@ centralized.
   for every repository they touch.
 - In isolated execution, the worker must stay on the WorkOrder branch and must
   not checkout, rebase, or mutate the shared base/switch-back branch or the
-  original source worktree. The bot system owns source branch switch-back after
-  acceptance; this prevents an isolated worker from advancing a branch ref while
-  leaving the user's source worktree on an older tree.
+  original source worktree. Preparation may fetch a remote ref for the isolated
+  worktree, but must never run `git switch` or `git pull --rebase` in the source
+  checkout. The bot system owns source branch switch-back after acceptance; this
+  prevents an isolated worker from advancing a branch ref while leaving the
+  user's source worktree on an older tree.
 - A dedicated supervised worker context should be leased per WorkOrder or per
   bounded run slice. It must use the reserved session name shape
   `<projectSessionPrefix>loop-worker-*`; generated WorkOrders include the run

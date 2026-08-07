@@ -787,13 +787,13 @@ workspaces:
         }
         if (
           invocation.cwd === backend &&
-          command === `worktree add --detach ${backendWorktree} HEAD`
+          command === `worktree add --detach ${backendWorktree} origin/main`
         ) {
           return { status: 0, stdout: "", stderr: "" };
         }
         if (
           invocation.cwd === frontend &&
-          command === `worktree add --detach ${frontendWorktree} HEAD`
+          command === `worktree add --detach ${frontendWorktree} origin/main`
         ) {
           return { status: 0, stdout: "", stderr: "" };
         }
@@ -854,11 +854,11 @@ workspaces:
     expect(dispatchedProjectIds).toEqual(["geo"]);
     expect(gitCalls).toContainEqual({
       cwd: backend,
-      args: ["worktree", "add", "--detach", backendWorktree, "HEAD"],
+      args: ["worktree", "add", "--detach", backendWorktree, "origin/main"],
     });
     expect(gitCalls).toContainEqual({
       cwd: frontend,
-      args: ["worktree", "add", "--detach", frontendWorktree, "HEAD"],
+      args: ["worktree", "add", "--detach", frontendWorktree, "origin/main"],
     });
     expect(gitCalls).toContainEqual({ cwd: backendWorktree, args: ["status", "--porcelain"] });
     expect(gitCalls).toContainEqual({ cwd: frontendWorktree, args: ["status", "--porcelain"] });
@@ -3921,7 +3921,7 @@ prReview:
     expect(result).toMatchObject({ ran: 1, failed: 0 });
     expect(gitCommands).toContainEqual({
       cwd: projectDir,
-      args: ["worktree", "add", "--detach", expectedWorktree, "HEAD"],
+      args: ["worktree", "add", "--detach", expectedWorktree, "origin/dev"],
     });
     expect(gitCommands).toContainEqual({ cwd: expectedWorktree, args: ["status", "--porcelain"] });
     expect(gitCommands).toContainEqual({ cwd: projectDir, args: ["branch", "--show-current"] });
