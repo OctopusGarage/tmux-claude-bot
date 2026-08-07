@@ -84,6 +84,8 @@ adapters may discover and render findings, but claim, immediate deferral,
 retry-backoff, and queue terminalization must not be reimplemented by an
 adapter. Shared automation notification intent owns severity and content facts;
 Telegram and Lark remain the only channel-rendering adapters.
+Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
+through this module; neither may directly claim, retry, or mark a repair running.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
 same task before dispatch; project recovery wins over an accidental bot-owned
 import for the same task.

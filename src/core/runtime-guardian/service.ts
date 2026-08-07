@@ -22,6 +22,7 @@ import {
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildRuntimeGuardianRepairPrompt } from "../prompts/repair-prompts.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
+import { admitRecoveryFindings } from "../tasks/recovery-admission.js";
 import { RepairCoordinator } from "../tasks/repair-coordinator.js";
 import { reconcileAutopilotDelegatedTasks } from "../tasks/task-reconciliation.js";
 
@@ -719,8 +720,15 @@ export async function dispatchRuntimeGuardianRepair(
   const repairableFindings = request.findings.filter(
     (finding) => !isTargetOrExternalBlocker(finding),
   );
-  const queued = request.findings.map((finding) =>
-    coordinator.enqueue({
+  if (repairableFindings.length === 0) {
+    return {
+      status: "blocked",
+      detail: "findings are target or external blockers; no bot self-repair dispatched",
+    };
+  }
+  let delegated: Awaited<ReturnType<typeof startActiveDelegatedTask>> | undefined;
+  const admission = await admitRecoveryFindings({
+    findings: repairableFindings.map((finding) => ({
       projectId: finding.projectId,
       projectPath: finding.projectPath,
       source: "runtime-guardian",
@@ -729,46 +737,34 @@ export async function dispatchRuntimeGuardianRepair(
       taskId: finding.runId,
       summary: finding.evidence.join("; "),
       priority: finding.severity === "high" ? 100 : 50,
-      now,
-    }),
-  );
-  for (const [index, finding] of request.findings.entries()) {
-    if (isTargetOrExternalBlocker(finding)) {
-      const record = queued[index];
-      if (record !== undefined) coordinator.markTerminal(record.id, "blocked", now);
-    }
-  }
-  if (repairableFindings.length === 0) {
-    return {
-      status: "blocked",
-      detail: "findings are target or external blockers; no bot self-repair dispatched",
-    };
-  }
-  const claimed = coordinator.claimIds(
-    queued
-      .filter(
-        (_record, index) =>
-          request.findings[index] !== undefined &&
-          !isTargetOrExternalBlocker(request.findings[index]),
-      )
-      .map((record) => record.id),
-    { now, leaseId: `runtime-guardian:${now}`, limit: repairableFindings.length },
-  );
-  if (claimed.length === 0)
-    return { status: "blocked", detail: "repair queue has no due findings" };
-  const result = await startActiveDelegatedTask(deps, {
-    session,
-    requirement: buildRuntimeGuardianRepairPrompt(request),
-    worktreeIsolation: runtimeGuardianRepairWorktreeIsolation(deps.config.runtimeGuardian),
+    })),
+    coordinator,
+    now,
+    leaseId: `runtime-guardian:${now}`,
+    dispatch: async () => {
+      delegated = await startActiveDelegatedTask(deps, {
+        session,
+        requirement: buildRuntimeGuardianRepairPrompt(request),
+        worktreeIsolation: runtimeGuardianRepairWorktreeIsolation(deps.config.runtimeGuardian),
+      });
+      return delegated.status === "blocked"
+        ? { status: "blocked", detail: delegated.reason }
+        : {
+            status: "queued",
+            detail: `runId=${delegated.runId} project=${delegated.projectId} supervisor=${delegated.supervisorSession}`,
+          };
+    },
   });
-  if (result.status === "blocked") {
-    for (const record of claimed) coordinator.releaseForRetry(record.id, now);
-    return { status: "blocked", detail: result.reason };
+  if (
+    admission.disposition !== "queued" ||
+    delegated === undefined ||
+    delegated.status === "blocked"
+  ) {
+    return { status: "blocked", detail: admission.detail };
   }
-  for (const record of claimed) coordinator.markRunning(record.id, `runtime-guardian:${now}`, now);
   return {
     status: "queued",
-    detail: `runId=${result.runId} project=${result.projectId} supervisor=${result.supervisorSession}`,
+    detail: admission.detail,
   };
 }
 
