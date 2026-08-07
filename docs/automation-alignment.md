@@ -85,7 +85,9 @@ retry-backoff, and queue terminalization must not be reimplemented by an
 adapter. Shared automation notification intent owns severity and content facts;
 Telegram and Lark remain the only channel-rendering adapters.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
-through this module; neither may directly claim, retry, terminalize, or mark a repair running.
+through this module; neither may directly claim, retry, or mark a repair running
+during admission and dispatch. Runtime Guardian may still reconcile an existing
+record to a terminal outcome from authoritative later artifacts.
 Known target-project and external blockers are admitted there as durable terminal
 records without invoking a bot repair.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
