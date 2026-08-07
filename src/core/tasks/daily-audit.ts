@@ -2,6 +2,7 @@ import type {
   NotificationChannelSelection,
   NotificationRequest,
 } from "../notifications/gateway.js";
+import { buildAutomationNotificationIntent } from "../notifications/automation-intent.js";
 import { mergeDiscoveredTaskRecords } from "./task-discovery.js";
 import {
   type DailyTaskLedger,
@@ -60,14 +61,20 @@ export function buildDailyTaskAuditNotification(input: {
   repairDispatch?: string;
 }): NotificationRequest {
   const activeIssues = activeIssueItems(input.summary.items);
+  const body = renderDailyTaskAudit(input.summary, input.repairCandidates, {
+    ...(input.repairDispatch !== undefined ? { repairDispatch: input.repairDispatch } : {}),
+  });
+  const intent = buildAutomationNotificationIntent({
+    title: `Daily task audit · ${input.summary.window?.label ?? "unknown window"}`,
+    status: activeIssues.length > 0 ? "attention" : "ok",
+    summary: body.split("\n"),
+  });
   return {
     ...(input.channel !== undefined ? { channel: input.channel } : {}),
-    level: activeIssues.length > 0 ? "warning" : "success",
+    level: intent.level,
     source: "daily-task-audit",
-    title: `Daily task audit · ${input.summary.window?.label ?? "unknown window"}`,
-    body: renderDailyTaskAudit(input.summary, input.repairCandidates, {
-      ...(input.repairDispatch !== undefined ? { repairDispatch: input.repairDispatch } : {}),
-    }),
+    title: intent.title,
+    body: intent.sections.flatMap((section) => section.lines).join("\n"),
   };
 }
 
