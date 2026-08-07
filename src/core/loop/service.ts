@@ -2475,7 +2475,6 @@ function runSupervisedAutoMerge(input: {
         "pr merge",
         shellQuoteLocal(input.commitBranch),
         mergeMethodFlag(input.project.pullRequest.mergeMethod),
-        "--delete-branch",
       ].join(" "),
       cwd: input.project.path,
       env: {},
