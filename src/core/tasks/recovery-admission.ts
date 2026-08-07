@@ -1,4 +1,4 @@
-import { type RepairQueueRecord, RepairCoordinator } from "./repair-coordinator.js";
+import type { RepairCoordinator, RepairQueueRecord } from "./repair-coordinator.js";
 
 export type RecoveryFinding = {
   projectId: string;
@@ -37,15 +37,16 @@ export async function admitRecoveryFindings(input: {
 
   const claimed = input.coordinator.claimIds(
     input.findings
-      .map((finding) =>
-        input.coordinator
-          .list()
-          .find(
-            (record) =>
-              record.projectId === finding.projectId &&
-              record.taskFamily === finding.taskFamily &&
-              record.fingerprint === finding.fingerprint,
-          )?.id,
+      .map(
+        (finding) =>
+          input.coordinator
+            .list()
+            .find(
+              (record) =>
+                record.projectId === finding.projectId &&
+                record.taskFamily === finding.taskFamily &&
+                record.fingerprint === finding.fingerprint,
+            )?.id,
       )
       .filter((id): id is string => id !== undefined),
     { now: input.now, leaseId: input.leaseId, limit: input.findings.length },
@@ -60,7 +61,8 @@ export async function admitRecoveryFindings(input: {
 
   const dispatch = await input.dispatch(claimed);
   if (dispatch.status === "queued") {
-    for (const record of claimed) input.coordinator.markRunning(record.id, input.leaseId, input.now);
+    for (const record of claimed)
+      input.coordinator.markRunning(record.id, input.leaseId, input.now);
     return {
       disposition: "queued",
       admitted: input.findings.length,

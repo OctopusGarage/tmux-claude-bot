@@ -3,7 +3,10 @@ import {
   admitRecoveryFindings,
   type RecoveryFinding,
 } from "../../src/core/tasks/recovery-admission.js";
-import { InMemoryRepairQueueStore, RepairCoordinator } from "../../src/core/tasks/repair-coordinator.js";
+import {
+  InMemoryRepairQueueStore,
+  RepairCoordinator,
+} from "../../src/core/tasks/repair-coordinator.js";
 
 function finding(overrides: Partial<RecoveryFinding> = {}): RecoveryFinding {
   return {
@@ -33,9 +36,7 @@ describe("recovery admission", () => {
     });
 
     expect(result).toMatchObject({ disposition: "queued", admitted: 1, claimed: 1 });
-    expect(dispatch).toHaveBeenCalledWith([
-      expect.objectContaining({ linkedTaskIds: ["run-1"] }),
-    ]);
+    expect(dispatch).toHaveBeenCalledWith([expect.objectContaining({ linkedTaskIds: ["run-1"] })]);
     expect(coordinator.list()).toEqual([expect.objectContaining({ status: "running" })]);
   });
 

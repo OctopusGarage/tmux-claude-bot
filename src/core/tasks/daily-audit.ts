@@ -1,8 +1,8 @@
+import { buildAutomationNotificationIntent } from "../notifications/automation-intent.js";
 import type {
   NotificationChannelSelection,
   NotificationRequest,
 } from "../notifications/gateway.js";
-import { buildAutomationNotificationIntent } from "../notifications/automation-intent.js";
 import { mergeDiscoveredTaskRecords } from "./task-discovery.js";
 import {
   type DailyTaskLedger,
