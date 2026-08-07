@@ -2362,6 +2362,14 @@ export type SupervisedSystemGateOutcome = {
   evidence: string[];
 };
 
+export type SystemGateFinding = {
+  code: string;
+  repairDisposition: "bot-repairable" | "target-or-external-blocker";
+  retry: "automatic" | "manual";
+  evidence: string[];
+  display: string;
+};
+
 export function writeSupervisedSystemGateArtifact(input: {
   workOrder: LoopWorkOrder;
   report: ReturnType<typeof completeLoopSupervisorRun>["report"];
@@ -2394,6 +2402,7 @@ export function writeSupervisedSystemGateArtifact(input: {
         ...(input.gate.result.repairDisposition === undefined
           ? {}
           : { repairDisposition: input.gate.result.repairDisposition }),
+        findings: systemGateFindings(input.gate),
         recoverableFailures: supervisorRevisionFailures(input.gate.failures),
         writtenAt: input.writtenAt,
       },
@@ -2401,6 +2410,21 @@ export function writeSupervisedSystemGateArtifact(input: {
       2,
     )}\n`,
   );
+}
+
+function systemGateFindings(input: SupervisedSystemGateOutcome): SystemGateFinding[] {
+  const disposition = input.result.repairDisposition;
+  if (disposition === undefined) return [];
+  const display = "reason" in input.result ? input.result.reason : input.result.output;
+  return [
+    {
+      code: input.result.status,
+      repairDisposition: disposition,
+      retry: disposition === "bot-repairable" ? "automatic" : "manual",
+      evidence: input.evidence,
+      display,
+    },
+  ];
 }
 
 export function runSupervisedSystemGateOutcome(input: {

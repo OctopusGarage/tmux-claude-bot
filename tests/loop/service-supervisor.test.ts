@@ -593,6 +593,15 @@ prReview:
       resultStatus: "dispatch-failed",
       accepted: false,
       repairDisposition: "bot-repairable",
+      findings: [
+        {
+          code: "dispatch-failed",
+          repairDisposition: "bot-repairable",
+          retry: "automatic",
+          evidence: ["supervisor result was dispatch-failed; system acceptance gate skipped"],
+          display: "worker was already leased",
+        },
+      ],
     });
   });
 
