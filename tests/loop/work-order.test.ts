@@ -1835,6 +1835,77 @@ prReview:
     }
   });
 
+  it("normalizes a singleton remaining risk from a supervisor plan review", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "blocked",
+          projectId: "datavibe",
+          actionsTaken: ["verified"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          planReview: {
+            checklistCompleted: true,
+            targetScoreMet: true,
+            stopConditionReached: true,
+            overOptimizationAvoided: true,
+            verificationCompleted: true,
+            remainingRisks: "Remote mergeability remains unresolved.",
+          },
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.planReview?.remainingRisks).toEqual([
+        "Remote mergeability remains unresolved.",
+      ]);
+    }
+  });
+
+  it("normalizes structured reviewGate notes from a supervisor summary", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "blocked",
+          projectId: "datavibe",
+          actionsTaken: ["verified"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "block",
+            notes: {
+              delegationBrief: { objective: "Review PRs." },
+              planReview: { verificationCompleted: true },
+            },
+          },
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.reviewGate?.notes).toEqual([
+        "delegationBrief=objective=Review PRs.; planReview=verificationCompleted=true",
+      ]);
+    }
+  });
+
   it("keeps old final summaries parseable when reviewGate is absent", () => {
     const result = parseSupervisorFinalSummary(
       [

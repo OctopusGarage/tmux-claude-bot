@@ -208,7 +208,7 @@ function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
   const stopConditionReached = parseBoolean(value.stopConditionReached);
   const overOptimizationAvoided = parseBoolean(value.overOptimizationAvoided);
   const verificationCompleted = parseBoolean(value.verificationCompleted);
-  const remainingRisks = parseStringArray(value.remainingRisks);
+  const remainingRisks = parseStringArrayOrSingleton(value.remainingRisks);
   if (
     checklistCompleted === null ||
     targetScoreMet === null ||
@@ -254,7 +254,7 @@ function parseReviewGate(value: unknown): LoopSupervisorReviewGate | null {
     REVIEW_GATE_DECISIONS.has(value.decision as LoopSupervisorReviewGate["decision"])
       ? (value.decision as LoopSupervisorReviewGate["decision"])
       : null;
-  const notes = parseStringArrayOrSingleton(value.notes);
+  const notes = parseReviewNotes(value.notes);
   const evidence =
     value.evidence === undefined ? undefined : parseReviewEvidenceList(value.evidence);
   if (
@@ -426,6 +426,11 @@ function describeActionValue(value: unknown): string {
 function parseStringArrayOrSingleton(value: unknown): string[] | null {
   if (typeof value === "string") return [value];
   return parseStringArray(value);
+}
+
+function parseReviewNotes(value: unknown): string[] | null {
+  if (isRecord(value)) return [describeActionValue(value)];
+  return parseStringArrayOrSingleton(value);
 }
 
 function parseSupervisorFinalStatus(value: unknown): SupervisorFinalStatus | null {
