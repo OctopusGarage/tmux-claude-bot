@@ -1,5 +1,4 @@
 import type { TaskCapabilityDependency } from "../capabilities/types.js";
-import type { LoopConfig } from "./config.js";
 
 export const LOOP_SCHEDULED_JOB_KINDS = [
   "architecture",
@@ -311,6 +310,18 @@ type LoopWorkspaceLike = ScheduledEntity & {
   pullRequestReview: ProjectPolicy;
 };
 
+type LoopRepositoryPullRequestReviewLike = ScheduledEntity & {
+  enabled: boolean;
+  schedule: string;
+  scheduleJitterMinutes?: number | undefined;
+};
+
+type LoopSchedulingConfig = {
+  projects: LoopProjectLike[];
+  workspaces: LoopWorkspaceLike[];
+  prReview: { repositories: LoopRepositoryPullRequestReviewLike[] };
+};
+
 type ProjectTaskFamily = {
   summaryKind: LoopScheduledJobKind;
   jobKind: LoopTaskSchedulerJobKind;
@@ -482,7 +493,7 @@ export function workspaceScheduledJobs<Workspace extends LoopWorkspaceLike>(
  * discovery. Task-family policy, keys, and kinds must not be reconstructed by
  * either caller.
  */
-export function loopScheduledJobs(config: LoopConfig): LoopScheduledJob[] {
+export function loopScheduledJobs(config: LoopSchedulingConfig): LoopScheduledJob[] {
   return [
     ...config.projects.flatMap(projectScheduledJobs),
     ...config.prReview.repositories
