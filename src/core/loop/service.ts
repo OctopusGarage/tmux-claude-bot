@@ -93,6 +93,31 @@ const REPOSITORY_REVIEW_QUEUE_LEASE_MS = 24 * 60 * 60 * 1000;
 const REPOSITORY_REVIEW_RETRY_BASE_MS = 15 * 60 * 1000;
 const REPOSITORY_REVIEW_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
 const LOG_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const inFlightSupervisorSessions = new Set<string>();
+
+/**
+ * Reserve supervisor sessions synchronously before any asynchronous readiness
+ * checks. This prevents concurrent service ticks from selecting the same
+ * supervisor between their persisted-work checks and dispatch.
+ */
+export function reserveLoopSupervisorSessions(
+  sessions: readonly string[],
+  activeSessions: ReadonlySet<string>,
+  reservations: Set<string> = inFlightSupervisorSessions,
+): string[] {
+  const available = sessions.filter(
+    (session) => !activeSessions.has(session) && !reservations.has(session),
+  );
+  for (const session of available) reservations.add(session);
+  return available;
+}
+
+function releaseLoopSupervisorSessions(
+  sessions: readonly string[],
+  reservations: Set<string> = inFlightSupervisorSessions,
+): void {
+  for (const session of sessions) reservations.delete(session);
+}
 
 export type SupervisedSystemGateProject = Pick<LoopProjectConfig, "id" | "name" | "path"> & {
   commit: LoopWorkOrder["commitPolicy"];
@@ -1063,140 +1088,161 @@ export async function runLoopServiceTickAsync(input: {
   const flushSupervisedBuffer = async (): Promise<void> => {
     if (supervisedBuffer.length === 0) return;
     const active = activeLoopSupervisorWork(input.configFile);
+    const reservedSupervisorSessions = reserveLoopSupervisorSessions(
+      supervisorSessions,
+      active.supervisorSessions,
+    );
     const availableSupervisorSessions =
-      supervisorSessions.length === 0
-        ? supervisorSessions
-        : supervisorSessions.filter((session) => !active.supervisorSessions.has(session));
-    const idleSupervisorSessions =
-      input.isSupervisorSessionAvailable === undefined
-        ? availableSupervisorSessions
-        : await asyncFilter(availableSupervisorSessions, input.isSupervisorSessionAvailable);
-    if (supervisorSessions.length > 0 && idleSupervisorSessions.length === 0) {
-      log.warn("loop engineering supervised dispatch skipped because supervisor pool is busy", {
-        data: {
-          pending: supervisedBuffer.map((target) => ({
-            projectId: target.due.projectId,
-            jobKey: target.due.jobKey,
-            jobKind: target.due.jobKind,
-          })),
-          activeSupervisorSessions: [...active.supervisorSessions],
-          unavailableSupervisorSessions: availableSupervisorSessions.filter(
-            (session) => !idleSupervisorSessions.includes(session),
-          ),
-        },
-      });
+      supervisorSessions.length === 0 ? supervisorSessions : reservedSupervisorSessions;
+    try {
+      const idleSupervisorSessions =
+        input.isSupervisorSessionAvailable === undefined
+          ? availableSupervisorSessions
+          : await asyncFilter(availableSupervisorSessions, input.isSupervisorSessionAvailable);
+      if (supervisorSessions.length > 0 && idleSupervisorSessions.length === 0) {
+        log.warn("loop engineering supervised dispatch skipped because supervisor pool is busy", {
+          data: {
+            pending: supervisedBuffer.map((target) => ({
+              projectId: target.due.projectId,
+              jobKey: target.due.jobKey,
+              jobKind: target.due.jobKind,
+            })),
+            activeSupervisorSessions: [...active.supervisorSessions],
+            unavailableSupervisorSessions: availableSupervisorSessions.filter(
+              (session) => !idleSupervisorSessions.includes(session),
+            ),
+          },
+        });
+        supervisedBuffer = [];
+        return;
+      }
+      const plan = planSupervisedDispatch(supervisedBuffer, active);
       supervisedBuffer = [];
-      return;
-    }
-    const plan = planSupervisedDispatch(supervisedBuffer, active);
-    supervisedBuffer = [];
-    for (const skipped of plan.skipped) {
-      skipDueTarget(skipped.target, skipped.reason);
-    }
-    if (plan.deferred.length > 0) {
-      log.info("loop engineering supervised targets deferred by conflict planner", {
-        data: {
-          deferred: plan.deferred.map((deferred) => ({
-            projectId: deferred.target.due.projectId,
-            jobKey: deferred.target.due.jobKey,
-            jobKind: deferred.target.due.jobKind,
-            reason: deferred.reason,
-            conflictsWith: deferred.conflictsWith,
-          })),
-        },
-      });
-    }
-    const readyTargets = plan.ready;
-    if (readyTargets.length === 0) return;
-    const batches = allocateLoopSupervisorBatches(readyTargets, idleSupervisorSessions);
-    for (const batch of batches) {
-      await Promise.all(
-        batch.map(({ item, supervisorSession }) => runSupervisedDue(item, supervisorSession)),
-      );
+      for (const skipped of plan.skipped) {
+        skipDueTarget(skipped.target, skipped.reason);
+      }
+      if (plan.deferred.length > 0) {
+        log.info("loop engineering supervised targets deferred by conflict planner", {
+          data: {
+            deferred: plan.deferred.map((deferred) => ({
+              projectId: deferred.target.due.projectId,
+              jobKey: deferred.target.due.jobKey,
+              jobKind: deferred.target.due.jobKind,
+              reason: deferred.reason,
+              conflictsWith: deferred.conflictsWith,
+            })),
+          },
+        });
+      }
+      const readyTargets = plan.ready;
+      if (readyTargets.length === 0) return;
+      const batches = allocateLoopSupervisorBatches(readyTargets, idleSupervisorSessions);
+      for (const batch of batches) {
+        await Promise.all(
+          batch.map(({ item, supervisorSession }) => runSupervisedDue(item, supervisorSession)),
+        );
+      }
+    } finally {
+      releaseLoopSupervisorSessions(reservedSupervisorSessions);
     }
   };
 
   const drainRepositoryReviewQueue = async (): Promise<void> => {
     const active = activeLoopSupervisorWork(input.configFile);
-    const availableSupervisorSessions = supervisorSessions.filter(
-      (session) => !active.supervisorSessions.has(session),
+    const reservedSupervisorSessions = reserveLoopSupervisorSessions(
+      supervisorSessions,
+      active.supervisorSessions,
     );
-    const idleSupervisorSessions =
-      input.isSupervisorSessionAvailable === undefined
-        ? availableSupervisorSessions
-        : await asyncFilter(availableSupervisorSessions, input.isSupervisorSessionAvailable);
-    if (idleSupervisorSessions.length === 0) return;
+    try {
+      const idleSupervisorSessions =
+        input.isSupervisorSessionAvailable === undefined
+          ? reservedSupervisorSessions
+          : await asyncFilter(reservedSupervisorSessions, input.isSupervisorSessionAvailable);
+      if (idleSupervisorSessions.length === 0) return;
 
-    const now = Date.now();
-    const queueItems = repositoryReviewQueue.listReady(now, idleSupervisorSessions.length);
-    const targets = queueItems.flatMap((item) => {
-      const repository = config.prReview.repositories.find(
-        (candidate) => candidate.id === item.repositoryId,
+      const now = Date.now();
+      const queueItems = repositoryReviewQueue.listReady(now, idleSupervisorSessions.length);
+      const targets = queueItems.flatMap((item) => {
+        const repository = config.prReview.repositories.find(
+          (candidate) => candidate.id === item.repositoryId,
+        );
+        if (repository === undefined) return [];
+        return [
+          {
+            item,
+            target: resolveDue({
+              projectId: repository.id,
+              name: repository.name,
+              jobKey: `pr-review:${repository.id}`,
+              jobKind: "repository-pull-request-review",
+              scheduledAt: item.scheduledAt,
+              effectiveAt: item.scheduledAt,
+              jitterMs: 0,
+              action: "would-run",
+            }),
+          },
+        ];
+      });
+      const plan = planSupervisedDispatch(
+        targets.map(({ target }) => target),
+        active,
       );
-      if (repository === undefined) return [];
-      return [
-        {
-          item,
-          target: resolveDue({
-            projectId: repository.id,
-            name: repository.name,
-            jobKey: `pr-review:${repository.id}`,
-            jobKind: "repository-pull-request-review",
-            scheduledAt: item.scheduledAt,
-            effectiveAt: item.scheduledAt,
-            jitterMs: 0,
-            action: "would-run",
-          }),
-        },
-      ];
-    });
-    const plan = planSupervisedDispatch(
-      targets.map(({ target }) => target),
-      active,
-    );
-    if (plan.ready.length === 0) return;
-    const targetByKey = new Map(
-      targets.map(({ item, target }) => [`${target.due.projectId}:${item.scheduledAt}`, item]),
-    );
-    const batches = allocateLoopSupervisorBatches(plan.ready, idleSupervisorSessions);
-    for (const batch of batches) {
-      await Promise.all(
-        batch.map(async ({ item: target, supervisorSession }) => {
-          const queueItem = targetByKey.get(`${target.due.projectId}:${target.due.scheduledAt}`);
-          if (queueItem === undefined) return;
-          const owner = `${process.pid}:${supervisorSession}`;
-          const leased = repositoryReviewQueue.lease(
-            queueItem.id,
-            owner,
-            now,
-            REPOSITORY_REVIEW_QUEUE_LEASE_MS,
-          );
-          if (leased === null) return;
-          repositoryReviewQueue.markRunning(leased.id, owner, Date.now());
-          try {
-            const result = await runSupervisedDue(target, supervisorSession, false);
-            if (result === "completed") {
-              repositoryReviewQueue.complete(leased.id, owner, Date.now(), "completed");
-            } else if (result === "manual-review") {
-              repositoryReviewQueue.manualReview(
-                leased.id,
-                owner,
-                Date.now(),
-                "repository review recorded an explicit manual decision",
-              );
-            } else if (result === "blocked") {
-              const retryDelay = Math.min(
-                REPOSITORY_REVIEW_RETRY_MAX_MS,
-                REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
-              );
-              repositoryReviewQueue.retry(
-                leased.id,
-                owner,
-                Date.now(),
-                "repository review has retryable or incomplete decisions",
-                Date.now() + retryDelay,
-              );
-            } else {
+      if (plan.ready.length === 0) return;
+      const targetByKey = new Map(
+        targets.map(({ item, target }) => [`${target.due.projectId}:${item.scheduledAt}`, item]),
+      );
+      const batches = allocateLoopSupervisorBatches(plan.ready, idleSupervisorSessions);
+      for (const batch of batches) {
+        await Promise.all(
+          batch.map(async ({ item: target, supervisorSession }) => {
+            const queueItem = targetByKey.get(`${target.due.projectId}:${target.due.scheduledAt}`);
+            if (queueItem === undefined) return;
+            const owner = `${process.pid}:${supervisorSession}`;
+            const leased = repositoryReviewQueue.lease(
+              queueItem.id,
+              owner,
+              now,
+              REPOSITORY_REVIEW_QUEUE_LEASE_MS,
+            );
+            if (leased === null) return;
+            repositoryReviewQueue.markRunning(leased.id, owner, Date.now());
+            try {
+              const result = await runSupervisedDue(target, supervisorSession, false);
+              if (result === "completed") {
+                repositoryReviewQueue.complete(leased.id, owner, Date.now(), "completed");
+              } else if (result === "manual-review") {
+                repositoryReviewQueue.manualReview(
+                  leased.id,
+                  owner,
+                  Date.now(),
+                  "repository review recorded an explicit manual decision",
+                );
+              } else if (result === "blocked") {
+                const retryDelay = Math.min(
+                  REPOSITORY_REVIEW_RETRY_MAX_MS,
+                  REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
+                );
+                repositoryReviewQueue.retry(
+                  leased.id,
+                  owner,
+                  Date.now(),
+                  "repository review has retryable or incomplete decisions",
+                  Date.now() + retryDelay,
+                );
+              } else {
+                const retryDelay = Math.min(
+                  REPOSITORY_REVIEW_RETRY_MAX_MS,
+                  REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
+                );
+                repositoryReviewQueue.fail(
+                  leased.id,
+                  owner,
+                  Date.now(),
+                  `repository review supervisor result: ${result}`,
+                  Date.now() + retryDelay,
+                );
+              }
+            } catch (err) {
               const retryDelay = Math.min(
                 REPOSITORY_REVIEW_RETRY_MAX_MS,
                 REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
@@ -1205,25 +1251,15 @@ export async function runLoopServiceTickAsync(input: {
                 leased.id,
                 owner,
                 Date.now(),
-                `repository review supervisor result: ${result}`,
+                err instanceof Error ? err.message : String(err),
                 Date.now() + retryDelay,
               );
             }
-          } catch (err) {
-            const retryDelay = Math.min(
-              REPOSITORY_REVIEW_RETRY_MAX_MS,
-              REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
-            );
-            repositoryReviewQueue.fail(
-              leased.id,
-              owner,
-              Date.now(),
-              err instanceof Error ? err.message : String(err),
-              Date.now() + retryDelay,
-            );
-          }
-        }),
-      );
+          }),
+        );
+      }
+    } finally {
+      releaseLoopSupervisorSessions(reservedSupervisorSessions);
     }
   };
 

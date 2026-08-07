@@ -284,7 +284,10 @@ function loadEnvFile(): void {
   // `tcb dashboard --json` / `tcb logs --json` (it would break `| jq`).
   const explicit = process.env.TCB_ENV_FILE;
   if (explicit) {
-    loadEnv({ path: explicit, quiet: true });
+    // An explicitly selected environment file is the operator's source of
+    // truth. Override inherited launch-shell values so dev and service starts
+    // cannot silently use a stale supervisor pool size or schedule.
+    loadEnv({ path: explicit, quiet: true, override: true });
     return;
   }
   loadEnv({ path: appStateFile(".env"), quiet: true });

@@ -8,6 +8,7 @@ import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
   reconcileLoopSupervisorWorkOrders,
+  reserveLoopSupervisorSessions,
   runLoopServiceTickAsync,
   runSupervisedSystemGateOutcome,
   startLoopEngineering,
@@ -132,6 +133,21 @@ function finalMarkerFromPrompt(prompt: string): string {
 }
 
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("does not reuse a supervisor reserved by a concurrent service tick", () => {
+    const reservations = new Set(["tmux_proj_loop-supervisor-1"]);
+
+    expect(
+      reserveLoopSupervisorSessions(
+        ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+        new Set(),
+        reservations,
+      ),
+    ).toEqual(["tmux_proj_loop-supervisor-2"]);
+    expect(reservations).toEqual(
+      new Set(["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"]),
+    );
+  });
+
   it("returns explicit system gate evidence for accepted report-only work", () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {

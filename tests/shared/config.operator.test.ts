@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/shared/config.js";
 
@@ -68,5 +70,32 @@ describe("loop supervisor config", () => {
       resetBeforeWorkOrder: "compact",
       worktreeIsolation: "source",
     });
+  });
+
+  it("gives an explicit TCB_ENV_FILE precedence over inherited supervisor settings", () => {
+    const dir = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "tcb-config-test-"));
+    const envFile = join(dir, ".env");
+    const previousEnvFile = process.env.TCB_ENV_FILE;
+    const previousPoolSize = process.env.LOOP_SUPERVISOR_POOL_SIZE;
+    writeFileSync(
+      envFile,
+      [
+        "TELEGRAM_BOT_TOKEN=t",
+        "TELEGRAM_OWNER_ID=1",
+        "LOOP_SUPERVISOR_ENABLED=true",
+        "LOOP_SUPERVISOR_POOL_SIZE=5",
+      ].join("\n"),
+    );
+    process.env.TCB_ENV_FILE = envFile;
+    process.env.LOOP_SUPERVISOR_POOL_SIZE = "3";
+    try {
+      expect(loadConfig().loopEngineering.supervisor.poolSize).toBe(5);
+    } finally {
+      if (previousEnvFile === undefined) delete process.env.TCB_ENV_FILE;
+      else process.env.TCB_ENV_FILE = previousEnvFile;
+      if (previousPoolSize === undefined) delete process.env.LOOP_SUPERVISOR_POOL_SIZE;
+      else process.env.LOOP_SUPERVISOR_POOL_SIZE = previousPoolSize;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
