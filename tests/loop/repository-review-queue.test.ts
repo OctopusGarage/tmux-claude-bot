@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -30,6 +30,67 @@ function item(overrides: Partial<RepositoryReviewQueueItem> = {}) {
 }
 
 describe("repository review queue", () => {
+  it("migrates legacy blocked records without decision evidence back to retryable", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-pr-review-queue-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    writeFileSync(
+      join(stateDir, "repository-pr-review-queue.json"),
+      JSON.stringify({
+        legacy: {
+          id: "legacy",
+          repositoryId: "repo-prs",
+          scheduledAt: 100,
+          priority: 100,
+          status: "blocked",
+          attempt: 1,
+          createdAt: 100,
+          updatedAt: 110,
+          nextAttemptAt: 100,
+        },
+      }),
+    );
+
+    const store = new RepositoryReviewQueue();
+
+    expect(store.listReady(200)).toEqual([
+      expect.objectContaining({
+        id: "legacy",
+        status: "retry-wait",
+        nextAttemptAt: 200,
+        lastError: "migrated legacy blocked repository review",
+      }),
+    ]);
+  });
+
+  it("does not migrate blocked records that contain an explicit decision reason", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-pr-review-queue-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    writeFileSync(
+      join(stateDir, "repository-pr-review-queue.json"),
+      JSON.stringify({
+        blocked: {
+          id: "blocked",
+          repositoryId: "repo-prs",
+          scheduledAt: 100,
+          priority: 100,
+          status: "blocked",
+          attempt: 1,
+          createdAt: 100,
+          updatedAt: 110,
+          nextAttemptAt: 100,
+          lastError: "requires owner decision",
+        },
+      }),
+    );
+
+    const store = new RepositoryReviewQueue();
+
+    expect(store.listReady(200)).toEqual([]);
+    expect(store.list({ all: true })).toEqual([
+      expect.objectContaining({ id: "blocked", status: "blocked" }),
+    ]);
+  });
+
   it("deduplicates the same repository occurrence and returns it in priority order", () => {
     const store = queue();
     const first = store.enqueue(item({ priority: 10 }));
@@ -39,6 +100,14 @@ describe("repository review queue", () => {
     expect(duplicate.id).toBe(first.id);
     expect(urgent.status).toBe("pending");
     expect(store.listReady(101).map((entry) => entry.id)).toEqual([urgent.id, first.id]);
+  });
+
+  it("sorts equal-priority occurrences by creation time and id", () => {
+    const store = queue();
+    const first = store.enqueue(item({ repositoryId: "same-a", priority: 10 }));
+    const second = store.enqueue(item({ repositoryId: "same-b", priority: 10 }));
+
+    expect(store.listReady(100).map((entry) => entry.id)).toEqual([first.id, second.id].sort());
   });
 
   it("reclaims an expired lease and does not lease an item twice", () => {

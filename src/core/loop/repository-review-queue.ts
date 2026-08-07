@@ -77,6 +77,7 @@ export class RepositoryReviewQueue {
   }
 
   listReady(now: number, limit = Number.POSITIVE_INFINITY): RepositoryReviewQueueItem[] {
+    this.migrateLegacyBlocked(now);
     this.reclaimExpiredLeases(now);
     return this.items
       .sortedEntries()
@@ -89,6 +90,25 @@ export class RepositoryReviewQueue {
         (a, b) => b.priority - a.priority || a.createdAt - b.createdAt || a.id.localeCompare(b.id),
       )
       .slice(0, limit);
+  }
+
+  /**
+   * Older queue versions recorded every unsuccessful review as terminal
+   * `blocked`, without a decision reason. Modern `blocked` records are
+   * evidence-backed terminal decisions, so only the unannotated legacy shape
+   * is safe to reopen.
+   */
+  private migrateLegacyBlocked(now: number): void {
+    for (const [id, item] of this.items.sortedEntries()) {
+      if (item.status !== "blocked" || item.lastError !== undefined) continue;
+      this.items.set(id, {
+        ...item,
+        status: "retry-wait",
+        updatedAt: now,
+        nextAttemptAt: now,
+        lastError: "migrated legacy blocked repository review",
+      });
+    }
   }
 
   lease(id: string, owner: string, now: number, leaseMs: number): RepositoryReviewQueueItem | null {
