@@ -280,6 +280,31 @@ describe("prepareLoopExecutionWorktrees", () => {
     expect(calls.map((call) => call.args.slice(0, 3).join(" "))).toContain("worktree add --detach");
   });
 
+  it("checks out the required WorkOrder branch before dispatching an isolated worker", () => {
+    const repo = makeRepo();
+    const calls: LoopGitInvocation[] = [];
+
+    prepareLoopExecutionWorktrees({
+      workOrder: {
+        ...workOrder(repo),
+        commitPolicy: { enabled: true, perRound: false, branch: "loop/repo/run-1" },
+      },
+      runGit: gitStub(repo, calls),
+      defaultMode: "isolated",
+    });
+
+    const executionWorktree = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-worktrees",
+      "repo",
+      "run-1",
+    );
+    expect(calls).toContainEqual({
+      cwd: executionWorktree,
+      args: ["switch", "-C", "loop/repo/run-1", "origin/main"],
+    });
+  });
+
   it("uses a verified local branch when remote fetch is unavailable", () => {
     const repo = makeRepo();
     const calls: LoopGitInvocation[] = [];

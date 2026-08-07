@@ -350,6 +350,8 @@ function prepareGitExecutionWorktree(input: {
     existingTopLevel.stdout.trim().length > 0 &&
     resolvePath(existingTopLevel.stdout.trim()) === resolvePath(executionWorktree)
   ) {
+    const branchFailure = prepareIsolatedExecutionBranch(input, executionWorktree, base.ref, false);
+    if (branchFailure !== null) return { detail: branchFailure };
     log.info("loop reusing existing isolated execution worktree", {
       data: { ...loggableInput(input), executionWorktree },
     });
@@ -370,10 +372,32 @@ function prepareGitExecutionWorktree(input: {
     });
     return { detail: added.stderr || added.stdout || "git worktree add failed" };
   }
+  const branchFailure = prepareIsolatedExecutionBranch(input, executionWorktree, base.ref);
+  if (branchFailure !== null) return { detail: branchFailure };
   log.info("loop prepared isolated execution worktree", {
     data: { ...loggableInput(input), executionWorktree },
   });
   return { executionWorktree };
+}
+
+function prepareIsolatedExecutionBranch(
+  input: {
+    workOrder: LoopWorkOrder;
+    runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  },
+  executionWorktree: string,
+  baseRef: string,
+  resetBranch = true,
+): string | null {
+  const branch = input.workOrder.commitPolicy.branch;
+  if (branch === undefined) return null;
+  const args = resetBranch ? ["switch", "-C", branch, baseRef] : ["switch", branch];
+  const switched = input.runGit({
+    cwd: executionWorktree,
+    args,
+  });
+  if (switched.status === 0) return null;
+  return switched.stderr || switched.stdout || `git ${args.join(" ")} failed`;
 }
 
 /**
