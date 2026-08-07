@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { SCHEDULED_TASK_SOURCES } from "./core/tasks/task-ledger.js";
 import { appVersion } from "./shared/version.js";
 
 // Operational logs mirror to stdout only for the bot itself (the `run` command,
@@ -902,10 +903,7 @@ task
   .command("report")
   .description("record an external scheduled task in the shared daily task ledger")
   .requiredOption("--id <id>", "stable task id")
-  .requiredOption(
-    "--source <source>",
-    "task source: article-monitor, radar-monitor, external-monitor, launchd, loop-engineering, batch-scheduler, daily-audit",
-  )
+  .requiredOption("--source <source>", `task source: ${SCHEDULED_TASK_SOURCES.join(", ")}`)
   .requiredOption("--name <name>", "human readable task name")
   .requiredOption("--scheduled-at <time>", "scheduled time, epoch ms or ISO")
   .requiredOption("--status <status>", "running, success, failed, or skipped")
@@ -921,15 +919,7 @@ task
   .option("--json", "output JSON")
   .action(async (o) => {
     const { recordExternalTaskReport } = await import("./core/tasks/task-report.js");
-    const sources = new Set([
-      "loop-engineering",
-      "batch-scheduler",
-      "article-monitor",
-      "radar-monitor",
-      "external-monitor",
-      "launchd",
-      "daily-audit",
-    ]);
+    const sources = new Set(SCHEDULED_TASK_SOURCES);
     const statuses = new Set(["running", "success", "failed", "skipped"]);
     const repairStatuses = new Set([
       "not-needed",
