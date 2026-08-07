@@ -130,6 +130,81 @@ describe("repository review queue", () => {
     ]);
   });
 
+  it("adopts a pending occurrence when its supervisor work order survived a restart", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "restartable" }));
+
+    expect(
+      store.adoptRunning(
+        "restartable",
+        100,
+        `${process.pid}:tmux_proj_loop-supervisor-4`,
+        200,
+        1_000,
+      ),
+    ).toMatchObject({
+      id: created.id,
+      status: "running",
+      leaseOwner: `${process.pid}:tmux_proj_loop-supervisor-4`,
+      attempt: 1,
+    });
+    expect(store.listReady(200)).toEqual([]);
+  });
+
+  it("requeues an occurrence when its supervisor work order ended in a retryable failure", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "failed-after-restart" }));
+
+    expect(
+      store.retryOccurrence(
+        "failed-after-restart",
+        100,
+        200,
+        "supervisor work order ended with invalid output",
+        200,
+      ),
+    ).toBe(true);
+    expect(store.listReady(200)).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        status: "retry-wait",
+        nextAttemptAt: 200,
+        lastError: "supervisor work order ended with invalid output",
+      }),
+    ]);
+  });
+
+  it("does not repeatedly requeue the same terminal work order on every tick", () => {
+    const store = queue();
+    store.enqueue(item({ repositoryId: "reconcile-once" }));
+
+    expect(
+      store.retryOccurrence(
+        "reconcile-once",
+        100,
+        200,
+        "recovered supervisor work order result: dispatch-failed",
+        500,
+      ),
+    ).toBe(true);
+    expect(
+      store.retryOccurrence(
+        "reconcile-once",
+        100,
+        300,
+        "recovered supervisor work order result: dispatch-failed",
+        300,
+      ),
+    ).toBe(false);
+    expect(store.list({ all: true })[0]).toMatchObject({
+      status: "retry-wait",
+      nextAttemptAt: 500,
+      updatedAt: 200,
+    });
+    expect(store.listReady(499)).toEqual([]);
+    expect(store.listReady(500)).toHaveLength(1);
+  });
+
   it("retries transient failures with backoff and supports terminal decisions", () => {
     const store = queue();
     const failed = store.enqueue(item({ repositoryId: "retry" }));

@@ -133,6 +133,76 @@ export class RepositoryReviewQueue {
     return leased;
   }
 
+  /**
+   * Reconnect a queue occurrence to a supervisor WorkOrder that survived a
+   * service restart. The WorkOrder is authoritative here; launching another
+   * review would duplicate the work in its isolated worktree.
+   */
+  adoptRunning(
+    repositoryId: string,
+    scheduledAt: number,
+    owner: string,
+    now: number,
+    leaseMs: number,
+  ): RepositoryReviewQueueItem | null {
+    const id = queueId(repositoryId, scheduledAt);
+    const existing = this.items.get(id);
+    if (existing?.status === "running" && existing.leaseOwner === owner) return existing;
+    const leased = this.lease(id, owner, now, leaseMs);
+    return leased === null ? null : this.markRunning(id, owner, now);
+  }
+
+  retryOccurrence(
+    repositoryId: string,
+    scheduledAt: number,
+    now: number,
+    error: string,
+    nextAttemptAt: number,
+  ): boolean {
+    const id = queueId(repositoryId, scheduledAt);
+    const item = this.items.get(id);
+    if (
+      item === undefined ||
+      isTerminal(item.status) ||
+      (item.status === "retry-wait" && item.lastError === error)
+    ) {
+      return false;
+    }
+    const retrying: RepositoryReviewQueueItem = {
+      ...item,
+      status: "retry-wait",
+      updatedAt: now,
+      nextAttemptAt,
+      lastError: error,
+    };
+    delete retrying.leaseOwner;
+    delete retrying.leaseUntil;
+    this.items.set(id, retrying);
+    return true;
+  }
+
+  completeOccurrence(
+    repositoryId: string,
+    scheduledAt: number,
+    now: number,
+    status: "completed" | "blocked" | "manual-review",
+    error?: string,
+  ): boolean {
+    const id = queueId(repositoryId, scheduledAt);
+    const item = this.items.get(id);
+    if (item === undefined || isTerminal(item.status)) return false;
+    const terminal: RepositoryReviewQueueItem = {
+      ...item,
+      status,
+      updatedAt: now,
+      ...(error === undefined ? {} : { lastError: error }),
+    };
+    delete terminal.leaseOwner;
+    delete terminal.leaseUntil;
+    this.items.set(id, terminal);
+    return true;
+  }
+
   markRunning(id: string, owner: string, now: number): RepositoryReviewQueueItem | null {
     const item = this.items.get(id);
     if (item?.status !== "leased" || item.leaseOwner !== owner) return null;

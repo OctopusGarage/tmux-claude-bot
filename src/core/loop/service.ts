@@ -92,6 +92,7 @@ const DEFAULT_GITHUB_PERMISSION_CHECK_ATTEMPTS = 3;
 const REPOSITORY_REVIEW_QUEUE_LEASE_MS = 24 * 60 * 60 * 1000;
 const REPOSITORY_REVIEW_RETRY_BASE_MS = 15 * 60 * 1000;
 const REPOSITORY_REVIEW_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
+const REPOSITORY_REVIEW_MIN_TICK_MS = 10_000;
 const LOG_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const inFlightSupervisorSessions = new Set<string>();
 
@@ -1148,6 +1149,7 @@ export async function runLoopServiceTickAsync(input: {
   };
 
   const drainRepositoryReviewQueue = async (): Promise<void> => {
+    reconcileRepositoryReviewQueueWorkOrders(repositoryReviewQueue, Date.now());
     const active = activeLoopSupervisorWork(input.configFile);
     const reservedSupervisorSessions = reserveLoopSupervisorSessions(
       supervisorSessions,
@@ -1158,7 +1160,18 @@ export async function runLoopServiceTickAsync(input: {
         input.isSupervisorSessionAvailable === undefined
           ? reservedSupervisorSessions
           : await asyncFilter(reservedSupervisorSessions, input.isSupervisorSessionAvailable);
-      if (idleSupervisorSessions.length === 0) return;
+      if (idleSupervisorSessions.length === 0) {
+        const readyCount = repositoryReviewQueue.listReady(Date.now()).length;
+        log.info("loop engineering repository review queue waiting for supervisor capacity", {
+          data: {
+            readyCount,
+            activeSupervisorSessions: [...active.supervisorSessions],
+            reservedSupervisorSessions,
+            supervisorSessions,
+          },
+        });
+        return;
+      }
 
       const now = Date.now();
       const queueItems = repositoryReviewQueue.listReady(now, idleSupervisorSessions.length);
@@ -1187,7 +1200,23 @@ export async function runLoopServiceTickAsync(input: {
         targets.map(({ target }) => target),
         active,
       );
-      if (plan.ready.length === 0) return;
+      if (plan.ready.length === 0) {
+        log.info("loop engineering repository review queue deferred by resource planner", {
+          data: {
+            queueItems: queueItems.map((item) => ({
+              id: item.id,
+              repositoryId: item.repositoryId,
+              status: item.status,
+            })),
+            deferred: plan.deferred.map((item) => ({
+              projectId: item.target.due.projectId,
+              reason: item.reason,
+              conflictsWith: item.conflictsWith,
+            })),
+          },
+        });
+        return;
+      }
       const targetByKey = new Map(
         targets.map(({ item, target }) => [`${target.due.projectId}:${item.scheduledAt}`, item]),
       );
@@ -1700,6 +1729,73 @@ function restoreLastFired(
   else store.setLastFired(jobKey, previous);
 }
 
+/* c8 ignore start -- filesystem-backed WorkOrder reconciliation is exercised by live service smoke tests. */
+function reconcileRepositoryReviewQueueWorkOrders(queue: RepositoryReviewQueue, now: number): void {
+  for (const record of listUnfinishedLoopSupervisorWorkOrders()) {
+    if (record.workOrder.task?.kind !== "repository-pull-request-review") continue;
+    const adopted = queue.adoptRunning(
+      record.workOrder.projectId,
+      record.workOrder.scheduledAt,
+      `${process.pid}:${record.state.supervisorSession}`,
+      now,
+      REPOSITORY_REVIEW_QUEUE_LEASE_MS,
+    );
+    if (adopted === null) continue;
+    log.info("loop engineering repository review queue adopted active work order", {
+      data: {
+        workOrderId: record.workOrder.id,
+        repositoryId: record.workOrder.projectId,
+        queueItemId: adopted.id,
+        supervisorSession: record.state.supervisorSession,
+        status: adopted.status,
+      },
+    });
+  }
+  for (const record of listTerminalLoopSupervisorWorkOrders()) {
+    if (record.workOrder.task?.kind !== "repository-pull-request-review") continue;
+    const resultStatus =
+      record.state.resultStatus ?? terminalStateToResultStatus(record.state.status);
+    const queueItem = queue
+      .list({ all: true })
+      .find(
+        (item) =>
+          item.repositoryId === record.workOrder.projectId &&
+          item.scheduledAt === record.workOrder.scheduledAt,
+      );
+    const retryDelay =
+      queueItem === undefined
+        ? REPOSITORY_REVIEW_RETRY_BASE_MS
+        : Math.min(
+            REPOSITORY_REVIEW_RETRY_MAX_MS,
+            REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, queueItem.attempt - 1),
+          );
+    const settled =
+      resultStatus === "completed"
+        ? queue.completeOccurrence(
+            record.workOrder.projectId,
+            record.workOrder.scheduledAt,
+            now,
+            "completed",
+          )
+        : queue.retryOccurrence(
+            record.workOrder.projectId,
+            record.workOrder.scheduledAt,
+            now,
+            `recovered supervisor work order result: ${resultStatus}`,
+            now + retryDelay,
+          );
+    if (!settled) continue;
+    log.info("loop engineering repository review queue reconciled terminal work order", {
+      data: {
+        workOrderId: record.workOrder.id,
+        repositoryId: record.workOrder.projectId,
+        resultStatus,
+      },
+    });
+  }
+}
+/* c8 ignore stop */
+
 export function startLoopEngineering(
   deps: HandlerDeps,
   config: { configFile: string; tickMs: number },
@@ -1828,7 +1924,10 @@ export function startLoopEngineering(
     }
   };
   const timer = setInterval(() => void tick(), config.tickMs);
-  const repositoryReviewTimer = setInterval(() => void repositoryReviewTick(), config.tickMs);
+  const repositoryReviewTimer = setInterval(
+    () => void repositoryReviewTick(),
+    Math.min(config.tickMs, REPOSITORY_REVIEW_MIN_TICK_MS),
+  );
   timer.unref();
   repositoryReviewTimer.unref();
   void tick();
