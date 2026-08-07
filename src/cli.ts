@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { SCHEDULED_TASK_SOURCES } from "./core/tasks/task-ledger.js";
 import { appVersion } from "./shared/version.js";
 
 // Operational logs mirror to stdout only for the bot itself (the `run` command,
@@ -22,6 +23,11 @@ import { appVersion } from "./shared/version.js";
 // without each one having to remember the flag. (The JSONL log file is written
 // regardless; only the stdout mirror is suppressed.)
 process.env.TCB_LOG_QUIET ??= "1";
+
+process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EPIPE") process.exit(0);
+  throw err;
+});
 
 // dist/cli.js -> package root is one level up. Works the same when this file is
 // run from source (src/cli.ts) via tsx.
@@ -86,6 +92,162 @@ program
   .description("run health checks against the install")
   .action(async () => {
     await import("./scripts/doctor.js");
+  });
+
+const configCommand = program
+  .command("config")
+  .description("inspect and safely edit non-secret personal configuration");
+
+configCommand
+  .command("list")
+  .description("list .env configuration with secrets redacted")
+  .option("--json", "output config entries as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runConfigCommand } = await import("./core/config/command.js");
+    const result = runConfigCommand(["list", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+configCommand
+  .command("get <key>")
+  .description("show one .env configuration value with secrets redacted")
+  .option("--json", "output config entry as JSON")
+  .action(async (key: string, o: { json?: boolean }) => {
+    const { runConfigCommand } = await import("./core/config/command.js");
+    const result = runConfigCommand(["get", key, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+configCommand
+  .command("set <key> <value>")
+  .description("set an allowlisted non-secret .env configuration value")
+  .option("--json", "output set result as JSON")
+  .action(async (key: string, value: string, o: { json?: boolean }) => {
+    const { runConfigCommand } = await import("./core/config/command.js");
+    const result = runConfigCommand(["set", key, value, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+const automation = program
+  .command("automation")
+  .description("inspect and pause or resume high-cost background automation");
+
+automation
+  .command("status")
+  .description("show Loop Engineering, task audit, runtime guardian, and batch scheduler state")
+  .option("--json", "output automation status as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runAutomationCommand } = await import("./core/config/command.js");
+    const result = runAutomationCommand(["status", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+for (const action of ["pause", "resume"] as const) {
+  automation
+    .command(`${action} <target>`)
+    .description(`${action} loop, task-audit, runtime-guardian, or batch automation`)
+    .option("--json", "output toggle result as JSON")
+    .action(async (target: string, o: { json?: boolean }) => {
+      const { runAutomationCommand } = await import("./core/config/command.js");
+      const result = runAutomationCommand([action, target, ...(o.json ? ["--json"] : [])]);
+      if (result.exitCode === 0) console.log(result.stdout);
+      else {
+        console.error(result.stderr);
+        process.exit(1);
+      }
+    });
+}
+
+const capabilities = program
+  .command("capabilities")
+  .description("inspect curated external skills and task capability dependencies");
+
+capabilities
+  .command("list")
+  .description("list the curated default capability catalog")
+  .option("--json", "output capability catalog as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
+    const result = runCapabilitiesCommand(["list", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+capabilities
+  .command("status")
+  .description("show task-specific capability readiness")
+  .requiredOption("--task <taskKind>", "Loop WorkOrder task kind")
+  .option("--json", "output capability status as JSON")
+  .action(async (o: { task: string; json?: boolean }) => {
+    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
+    const result = runCapabilitiesCommand([
+      "status",
+      "--task",
+      o.task,
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+capabilities
+  .command("install")
+  .description("print the default approved-skill install plan for curated capabilities")
+  .option("--default", "use the repo-maintained default capability catalog")
+  .option("--json", "output capability install plan as JSON")
+  .action(async (o: { default?: boolean; json?: boolean }) => {
+    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
+    const result = runCapabilitiesCommand([
+      "install",
+      ...(o.default ? ["--default"] : []),
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+capabilities
+  .command("update")
+  .description("print the default approved-skill refresh path for curated capabilities")
+  .option("--default", "use the repo-maintained default capability catalog")
+  .option("--json", "output capability update plan as JSON")
+  .action(async (o: { default?: boolean; json?: boolean }) => {
+    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
+    const result = runCapabilitiesCommand([
+      "update",
+      ...(o.default ? ["--default"] : []),
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
   });
 
 program
@@ -160,28 +322,17 @@ program
 program
   .command("autopilot [project] [verb...]")
   .description(
-    "no args: status across sessions · <project>: its autopilot view · <project> <verb>: drive it (on|off|stop|`goal <id>`|`goals <id,id> [rounds N]`|confirm|reject|delegate [requirement])",
+    "<project> [delegate [requirement]|cancel]: delegate the current session's work to the Loop Supervisor",
   )
   .option("--json", "output JSON")
   .action(async (project: string | undefined, verb: string[], o) => {
     if (project) return (await ctl()).cmdAutopilot(project, verb, o);
-    try {
-      const { bootstrap } = await import("./bootstrap.js");
-      const { buildAutopilotSnapshot, formatAutopilotText } = await import(
-        "./core/autopilot/autopilot-snapshot.js"
-      );
-      const deps = bootstrap();
-      const snap = await buildAutopilotSnapshot(deps);
-      process.stdout.write(
-        o.json ? `${JSON.stringify(snap, null, 2)}\n` : `${formatAutopilotText(snap)}\n`,
-      );
-      process.exit(0); // bootstrap starts a live fs.watch (activity watcher) that would otherwise hang the process
-    } catch (err) {
-      process.stderr.write(
-        `autopilot failed: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-      process.exit(1);
-    }
+    const message =
+      "Usage: tcb autopilot <project> [delegate [requirement]|cancel]\nAutopilot now means supervisor-backed delegation only.\n";
+    process.stdout.write(
+      o.json ? `${JSON.stringify({ usage: message.trim() }, null, 2)}\n` : message,
+    );
+    process.exit(0);
   });
 
 program
@@ -237,6 +388,7 @@ program
   .option("--channel <telegram|lark|both>", "target channel; default is every configured channel")
   .option("--level <info|success|warning|error>", "notification level", "info")
   .option("--source <name>", "source label, such as deploy or backup")
+  .option("--session <session>", "project session used for bound Feishu group routing")
   .option("--attach <file>", "attach a file to the notification; repeatable", collect, [])
   .option("--json", "output JSON")
   .action(async (text, o) => (await ctl()).cmdNotify(text ?? [], o));
@@ -269,6 +421,13 @@ program
   .action(async (project, o) => (await ctl()).cmdOpen(project, o));
 
 program
+  .command("open-worker <session> <path>")
+  .description("start an isolated automation worker session at a project path")
+  .option("--agent <kind>", "start with a specific agent when the worker is stopped (claude|codex)")
+  .option("--json", "output JSON")
+  .action(async (session, projectPath, o) => (await ctl()).cmdOpenWorker(session, projectPath, o));
+
+program
   .command("adopt [pid]")
   .description(
     "list unmanaged claude/codex processes, or adopt one by PID (stops it, resumes under management)",
@@ -293,28 +452,262 @@ program
 
 program
   .command("skill")
-  .description(
-    "install the AI operating skill into Claude Code / Codex (so an agent can drive the bot)",
-  )
+  .description("manage Home Operator skill installation scopes for Claude Code / Codex discovery")
   .argument("[action]", "install", "install")
   .option("--tool <claude|codex>", "install for one tool only")
+  .option(
+    "--scope <operator-home|global|all>",
+    "installation scope (install default: operator-home)",
+  )
   .option("--json", "output JSON")
-  .action(async (action: string, o: { tool?: "claude" | "codex"; json?: boolean }) => {
-    if (action !== "install") {
-      console.error(`unknown skill action "${action}". Try: tmux-claude-bot skill install`);
+  .action(
+    async (
+      action: string,
+      o: { tool?: "claude" | "codex"; scope?: "operator-home" | "global" | "all"; json?: boolean },
+    ) => {
+      if (!["install", "status", "uninstall"].includes(action)) {
+        console.error(
+          `unknown skill action "${action}". Try: tmux-claude-bot skill install|status|uninstall`,
+        );
+        process.exit(1);
+      }
+      const { installSkill, skillInstallStatus, uninstallSkill } = await import("./cli/skill.js");
+      const { operatorHomeDir, provisionOperatorHome } = await import(
+        "./core/projects/operator-home.js"
+      );
+      const { tildeifyHome } = await import("./shared/utils/path.js");
+      const only = o.tool ? [o.tool] : undefined;
+      const operatorHome = operatorHomeDir({
+        homeOperator: { dir: process.env.HOME_OPERATOR_DIR ?? "" },
+      });
+      const requestedScope = o.scope ?? (action === "status" ? "all" : "operator-home");
+      if (!["operator-home", "global", "all"].includes(requestedScope)) {
+        console.error(
+          `unknown skill scope "${requestedScope}". Try: operator-home, global, or all`,
+        );
+        process.exit(1);
+      }
+      const scopedHomes =
+        requestedScope === "all"
+          ? ([
+              ["operator-home", operatorHome],
+              ["global", undefined],
+            ] as const)
+          : ([
+              [requestedScope, requestedScope === "operator-home" ? operatorHome : undefined],
+            ] as const);
+      if (action === "status") {
+        const status = scopedHomes.flatMap(([scope, home]) =>
+          skillInstallStatus({ ...(home !== undefined ? { home } : {}), only, scope }),
+        );
+        if (o.json) console.log(JSON.stringify(status, null, 2));
+        else {
+          for (const item of status) {
+            console.log(
+              `${item.scope}/${item.tool}${item.legacy ? " legacy" : ""}: ${
+                item.installed ? "installed" : "missing"
+              } ${tildeifyHome(item.path)}`,
+            );
+          }
+        }
+        return;
+      }
+      if (action === "uninstall") {
+        const done = scopedHomes.flatMap(([scope, home]) =>
+          uninstallSkill({
+            ...(home !== undefined ? { home } : {}),
+            only,
+            scope,
+            log: o.json ? undefined : (m) => console.log(`  ${tildeifyHome(m)}`),
+          }),
+        );
+        if (o.json) console.log(JSON.stringify(done, null, 2));
+        else console.log(`Removed ${done.filter((d) => d.removed).length} tcb skill file(s).`);
+        return;
+      }
+      const done = scopedHomes.flatMap(([scope, home]) => {
+        if (scope === "operator-home") provisionOperatorHome(operatorHome);
+        return installSkill({
+          pkgRoot: PKG_ROOT,
+          ...(home !== undefined ? { home } : {}),
+          only,
+          scope,
+          log: o.json ? undefined : (m) => console.log(`  ${tildeifyHome(m)}`),
+        });
+      });
+      if (o.json) console.log(JSON.stringify(done, null, 2));
+      else {
+        console.log(
+          `Installed tcb-home-operator skill targets: ${done
+            .map((d) => `${d.scope}/${d.tool}`)
+            .join(", ")}`,
+        );
+        if (requestedScope !== "operator-home") {
+          console.log("Legacy global skill names were removed if present.");
+        }
+      }
+    },
+  );
+
+program
+  .command("ai-tools")
+  .description("install or inspect role-scoped AI tool surfaces")
+  .argument("[action]", "status")
+  .option("--dir <path>", "operator home directory for generated skill and MCP files")
+  .option("--command <command>", "stdio command written into generated MCP profile files")
+  .option("--json", "output JSON")
+  .action(async (action: string, opts: { dir?: string; command?: string; json?: boolean }) => {
+    if (!["install", "status"].includes(action)) {
+      console.error(`unknown ai-tools action "${action}". Try: install or status`);
       process.exit(1);
     }
-    const { installSkill } = await import("./cli/skill.js");
+    const { existsSync } = await import("node:fs");
+    const { installSkill, skillInstallStatus, uninstallSkill } = await import("./cli/skill.js");
+    const {
+      defaultOperatorHomeAiToolFiles,
+      globalHomeOperatorSkillFiles,
+      legacyGlobalHomeOperatorSkillFiles,
+    } = await import("./core/ai-tools/install-contract.js");
+    const { installMcpProfiles, MCP_PROFILES } = await import("./core/mcp/profiles.js");
+    const { operatorHomeDir, provisionOperatorHome } = await import(
+      "./core/projects/operator-home.js"
+    );
     const { tildeifyHome } = await import("./shared/utils/path.js");
-    const done = installSkill({
-      pkgRoot: PKG_ROOT,
-      only: o.tool ? [o.tool] : undefined,
-      log: o.json ? undefined : (m) => console.log(`  ${tildeifyHome(m)}`),
-    });
-    if (o.json) console.log(JSON.stringify(done, null, 2));
-    else
-      console.log(`Installed the tmux-claude-bot skill for: ${done.map((d) => d.tool).join(", ")}`);
+    const operatorHome =
+      opts.dir ??
+      operatorHomeDir({
+        homeOperator: { dir: process.env.HOME_OPERATOR_DIR ?? "" },
+      });
+
+    if (action === "install") {
+      provisionOperatorHome(operatorHome);
+      const removedGlobal = uninstallSkill({ scope: "global" });
+      const skills = installSkill({
+        pkgRoot: PKG_ROOT,
+        home: operatorHome,
+        scope: "operator-home",
+      });
+      const mcp = installMcpProfiles({
+        homeDir: operatorHome,
+        profiles: [...MCP_PROFILES],
+        ...(opts.command !== undefined ? { command: opts.command } : {}),
+      });
+      const result = { operatorHome, removedGlobal, skills, mcp };
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Installed default AI tool surfaces in ${tildeifyHome(operatorHome)}.`);
+        console.log(
+          `Removed ${removedGlobal.filter((item) => item.removed).length} global skill file(s).`,
+        );
+        for (const item of skills) {
+          console.log(`  skill ${item.scope}/${item.tool}: ${tildeifyHome(item.path)}`);
+        }
+        for (const item of mcp) {
+          console.log(
+            `  mcp ${item.profile}: ${tildeifyHome(item.path)} (${item.command} ${item.args.join(" ")})`,
+          );
+        }
+      }
+      return;
+    }
+
+    const expected = defaultOperatorHomeAiToolFiles(operatorHome).map((file) => ({
+      ...file,
+      installed: existsSync(file.path),
+    }));
+    const global = [
+      ...globalHomeOperatorSkillFiles(),
+      ...legacyGlobalHomeOperatorSkillFiles().map((file) => ({ ...file, legacy: true })),
+    ].map((file) => ({
+      ...file,
+      installed: existsSync(file.path),
+    }));
+    const skillStatus = skillInstallStatus({ home: operatorHome, scope: "operator-home" });
+    const result = { operatorHome, expected, global, skillStatus };
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Operator home: ${tildeifyHome(operatorHome)}`);
+      for (const item of expected) {
+        const label =
+          item.surface === "mcp" ? `mcp/${item.profile ?? "unknown"}` : `skill/${item.client}`;
+        console.log(`  ${item.installed ? "ok" : "missing"} ${label}: ${tildeifyHome(item.path)}`);
+      }
+      for (const item of global) {
+        console.log(
+          `  ${item.installed ? "present" : "absent"} global/${item.client}${
+            "legacy" in item ? " legacy" : ""
+          }: ${tildeifyHome(item.path)}`,
+        );
+      }
+    }
   });
+
+program
+  .command("mcp")
+  .description("run tmux-claude-bot MCP servers")
+  .argument("[profileOrAction]", "observer")
+  .option("--profile <observer|home>", "profile to install (default: all)")
+  .option("--dir <path>", "operator home directory for generated MCP profile files")
+  .option("--command <command>", "stdio command written into generated profile files")
+  .option("--json", "output JSON")
+  .action(
+    async (
+      profileOrAction: string,
+      opts: { profile?: string; dir?: string; command?: string; json?: boolean },
+    ) => {
+      if (profileOrAction === "install") {
+        const { installMcpProfiles, MCP_PROFILES, parseMcpProfile } = await import(
+          "./core/mcp/profiles.js"
+        );
+        const { operatorHomeDir, provisionOperatorHome } = await import(
+          "./core/projects/operator-home.js"
+        );
+        const { tildeifyHome } = await import("./shared/utils/path.js");
+        const profile =
+          opts.profile === undefined ? null : parseMcpProfile(opts.profile.toLowerCase());
+        if (opts.profile !== undefined && profile === null) {
+          console.error(`unknown MCP profile "${opts.profile}". Try: observer or home`);
+          process.exit(1);
+        }
+        const homeDir =
+          opts.dir ??
+          operatorHomeDir({
+            homeOperator: { dir: process.env.HOME_OPERATOR_DIR ?? "" },
+          });
+        provisionOperatorHome(homeDir);
+        const done = installMcpProfiles({
+          homeDir,
+          profiles: profile === null ? [...MCP_PROFILES] : [profile],
+          ...(opts.command !== undefined ? { command: opts.command } : {}),
+        });
+        if (opts.json) {
+          console.log(JSON.stringify(done, null, 2));
+        } else {
+          for (const item of done) {
+            console.log(
+              `${item.profile}: ${tildeifyHome(item.path)} (${item.command} ${item.args.join(" ")})`,
+            );
+          }
+        }
+        return;
+      }
+      const profile = profileOrAction;
+      if (profile === "observer") {
+        const { runObserverMcpServer } = await import("./mcp/observer.js");
+        await runObserverMcpServer();
+        return;
+      }
+      if (profile === "home") {
+        const { runHomeMcpServer } = await import("./mcp/home.js");
+        await runHomeMcpServer();
+        return;
+      }
+      console.error(`unknown MCP profile "${profile}". Try: tmux-claude-bot mcp observer|home`);
+      process.exit(1);
+    },
+  );
 
 program
   .command("recover")
@@ -350,6 +743,8 @@ program
   .option("--component <prefix>")
   .option("--level <level>", "minimum level (DEBUG|INFO|WARN|ERROR)")
   .option("--grep <text>")
+  .option("--run-id <id>", "match a loop run id anywhere in the structured record")
+  .option("--since <time>", "ISO time, epoch ms, or relative duration such as 30m, 2h, 1d")
   .option("--days <n>", "how many daily files back to read", "1")
   .option("-n, --n <count>", "keep the last N")
   .option("--json", "output JSON lines")
@@ -508,10 +903,7 @@ task
   .command("report")
   .description("record an external scheduled task in the shared daily task ledger")
   .requiredOption("--id <id>", "stable task id")
-  .requiredOption(
-    "--source <source>",
-    "task source: article-monitor, radar-monitor, external-monitor, launchd, loop-engineering, batch-scheduler, daily-audit",
-  )
+  .requiredOption("--source <source>", `task source: ${SCHEDULED_TASK_SOURCES.join(", ")}`)
   .requiredOption("--name <name>", "human readable task name")
   .requiredOption("--scheduled-at <time>", "scheduled time, epoch ms or ISO")
   .requiredOption("--status <status>", "running, success, failed, or skipped")
@@ -527,15 +919,7 @@ task
   .option("--json", "output JSON")
   .action(async (o) => {
     const { recordExternalTaskReport } = await import("./core/tasks/task-report.js");
-    const sources = new Set([
-      "loop-engineering",
-      "batch-scheduler",
-      "article-monitor",
-      "radar-monitor",
-      "external-monitor",
-      "launchd",
-      "daily-audit",
-    ]);
+    const sources = new Set(SCHEDULED_TASK_SOURCES);
     const statuses = new Set(["running", "success", "failed", "skipped"]);
     const repairStatuses = new Set([
       "not-needed",
@@ -607,6 +991,96 @@ task
 
 const loop = program.command("loop").description("validate Loop Engineering configs");
 
+const prompts = program
+  .command("prompts")
+  .description("inspect prompt libraries and governed system prompts");
+
+const governedPrompts = prompts
+  .command("governed")
+  .description("inspect and evaluate repo-owned governed system prompts");
+
+governedPrompts
+  .command("list")
+  .description("list governed system prompts")
+  .option("--json", "output prompt metadata as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runGovernedPromptsCommand } = await import("./core/prompts/command.js");
+    const result = runGovernedPromptsCommand(["list", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+governedPrompts
+  .command("show <promptId>")
+  .description("show governed prompt metadata and source owner")
+  .option("--json", "output prompt metadata as JSON")
+  .action(async (promptId: string, o: { json?: boolean }) => {
+    const { runGovernedPromptsCommand } = await import("./core/prompts/command.js");
+    const result = runGovernedPromptsCommand(["show", promptId, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+governedPrompts
+  .command("render <promptId>")
+  .description("render a governed prompt with a built-in fixture")
+  .option("--fixture <name>", "fixture name", "default")
+  .option("--json", "output rendered prompt as JSON")
+  .action(async (promptId: string, o: { fixture?: string; json?: boolean }) => {
+    const { runGovernedPromptsCommand } = await import("./core/prompts/command.js");
+    const result = runGovernedPromptsCommand([
+      "render",
+      promptId,
+      ...(o.fixture !== undefined ? ["--fixture", o.fixture] : []),
+      ...(o.json ? ["--json"] : []),
+    ]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+governedPrompts
+  .command("check")
+  .description("run deterministic governed prompt metadata checks")
+  .option("--json", "output check result as JSON")
+  .action(async (o: { json?: boolean }) => {
+    const { runGovernedPromptsCommand } = await import("./core/prompts/command.js");
+    const result = runGovernedPromptsCommand(["check", ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+governedPrompts
+  .command("eval [promptId]")
+  .description("generate an active-agent AI eval prompt for governed prompts")
+  .option("--all", "evaluate every governed prompt")
+  .option("--output <file>", "write the generated eval prompt to a file")
+  .action(async (promptId: string | undefined, o: { all?: boolean; output?: string }) => {
+    const { runGovernedPromptsCommand } = await import("./core/prompts/command.js");
+    const result = runGovernedPromptsCommand([
+      "eval",
+      ...(o.all ? ["--all"] : []),
+      ...(promptId !== undefined ? [promptId] : []),
+      ...(o.output !== undefined ? ["--output", o.output] : []),
+    ]);
+    if (result.exitCode === 0) console.log(result.stdout);
+    else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
 loop
   .command("validate <file>")
   .description("validate a Loop Engineering YAML config without executing projects")
@@ -677,6 +1151,49 @@ loopReports
       process.exit(1);
     }
   });
+
+const loopTargets = loop
+  .command("targets")
+  .description("inspect and toggle Loop Engineering targets");
+
+loopTargets
+  .command("list <file>")
+  .description("list Loop Engineering projects, workspaces, and PR review repositories")
+  .option("--json", "output targets as JSON")
+  .action(async (file: string, o: { json?: boolean }) => {
+    const { runLoopCommand } = await import("./core/loop/loop-command.js");
+    const result = runLoopCommand(["targets", "list", file, ...(o.json ? ["--json"] : [])]);
+    if (result.exitCode === 0) {
+      console.log(result.stdout);
+    } else {
+      console.error(result.stderr);
+      process.exit(1);
+    }
+  });
+
+for (const action of ["enable", "disable"] as const) {
+  loopTargets
+    .command(`${action} <file> <kind> <id>`)
+    .description(`${action} a Loop Engineering project, workspace, or PR review repository`)
+    .option("--json", "output toggle result as JSON")
+    .action(async (file: string, kind: string, id: string, o: { json?: boolean }) => {
+      const { runLoopCommand } = await import("./core/loop/loop-command.js");
+      const result = runLoopCommand([
+        "targets",
+        action,
+        file,
+        kind,
+        id,
+        ...(o.json ? ["--json"] : []),
+      ]);
+      if (result.exitCode === 0) {
+        console.log(result.stdout);
+      } else {
+        console.error(result.stderr);
+        process.exit(1);
+      }
+    });
+}
 
 const loopBacklog = loop.command("backlog").description("manage Loop Engineering backlog items");
 

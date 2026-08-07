@@ -11,12 +11,13 @@ import type { LogFilter, LogRecord } from "./log-query.js";
 export function logsArgToFilter(
   arg: string | undefined,
   session: string | undefined,
+  now = Date.now(),
 ): LogFilter | null {
   const a = arg?.trim();
   if (a?.startsWith("t_")) return { trace: a, n: 50 };
   if (!session) return null;
   if (a && /^\d+$/.test(a)) return { session, n: Number.parseInt(a, 10) };
-  return { session, levelMin: "WARN", n: 30 };
+  return { session, levelMin: "WARN", since: now - 3_600_000, n: 30 };
 }
 
 /** Render records into a compact chat block, keeping the NEWEST lines that fit. */

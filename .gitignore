@@ -25,6 +25,10 @@ logs/
 docs/superpowers/
 .running
 
+# Live runtime state belongs to the user state directory or a dedicated private
+# backup, never in this source repository.
+/state/
+
 # Stryker mutation testing artifacts
 reports/
 .stryker-tmp/
@@ -32,3 +36,7 @@ reports/
 .codegraph/
 # Personal, machine-specific operating rules (self-evolving dev mode); not shared.
 /CLAUDE.local.md
+
+# added by git-auto-sync
+state/.env.bak.1782450641
+state/.env.bak.loop-1784174356044

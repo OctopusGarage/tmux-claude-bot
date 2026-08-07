@@ -94,6 +94,29 @@ describe("MessageQueue", () => {
       expect(rejected?.message).toBe("boom");
     });
 
+    it("rejects a dequeued message when its start hook cannot acquire a lease", async () => {
+      const queue = new MessageQueue(10);
+      const handled: string[] = [];
+      const rejections: string[] = [];
+      queue.setHandler(async (msg) => {
+        handled.push(msg.id);
+        msg.resolve("ok");
+      });
+
+      queue.enqueue({
+        ...createTestMessage({
+          id: "lease-blocked",
+          reject: (error) => rejections.push(error.message),
+        }),
+        started: () => false,
+      });
+
+      await waitFor(() => rejections.length === 1);
+      expect(rejections).toEqual(["queued task could not acquire its supervisor lease"]);
+      expect(handled).toEqual([]);
+      expect(queue.size("s1")).toBe(0);
+    });
+
     it("does not re-run the handler (tmux sends are not idempotent)", async () => {
       // The old retry loop would re-run a throwing handler up to 3x → triple
       // sendKeys. A throwing handler must run exactly once.
@@ -127,7 +150,7 @@ describe("MessageQueue", () => {
 
       queue.enqueue(createTestMessage({ id: "1", text: "a", action: "text" }));
 
-      // While busy: the message stays QUEUED (counts in size, "排队中"), unrun.
+      // While busy: the message stays QUEUED, counts in size, and remains unrun.
       await new Promise((r) => setTimeout(r, 60));
       expect(results).toEqual([]);
       expect(queue.size("s1")).toBe(1);

@@ -1,12 +1,17 @@
-import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
+import { isProviderTransientFailure } from "../agents/transient-failure.js";
 import {
   buildLoopSupervisorFinalizationPrompt,
   buildLoopSupervisorPrompt,
   buildLoopSupervisorRevisionPrompt,
+} from "../prompts/loop-supervisor.js";
+import { recoverNonTerminalPullRequestDecisions } from "./final-summary-contract.js";
+import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
+import {
   type LoopSupervisorFinalSummary,
   type LoopWorkOrder,
   parseSupervisorFinalSummary,
   parseSupervisorFinalSummaryFile,
+  validateSupervisorFinalSummaryForWorkOrder,
 } from "./work-order.js";
 
 export type SupervisorDispatchRequest = {
@@ -16,6 +21,7 @@ export type SupervisorDispatchRequest = {
   workOrder: LoopWorkOrder;
   timeoutMs?: number;
   contextReset?: "none" | "compact" | "clear";
+  deferLeaseUntilConsumption?: boolean;
 };
 
 export type SupervisorDispatchResult = {
@@ -52,6 +58,7 @@ export type LoopSupervisedRunnerInput = {
   timeoutMs: number;
   resetBeforeWorkOrder?: "none" | "compact" | "clear";
   cancelSignal?: AbortSignal;
+  transientDispatchMaxAttempts?: number;
   dispatch: (request: SupervisorDispatchRequest) => Promise<SupervisorDispatchResult>;
 };
 
@@ -60,6 +67,10 @@ export type LoopSupervisorRevisionInput = LoopSupervisedRunnerInput & {
   attempt: number;
   maxAttempts: number;
   previousOutput: string;
+};
+
+type SupervisorPromptSequenceInput = LoopSupervisedRunnerInput & {
+  prompt: string;
 };
 
 export async function runLoopSupervisedProjectAsync(
@@ -138,12 +149,40 @@ async function runSupervisorDispatchSequence(
   input: LoopSupervisedRunnerInput,
   signal: AbortSignal,
 ): Promise<LoopSupervisedRunResult> {
-  const first = await input.dispatch({
-    session: input.supervisorSession,
-    prompt: buildLoopSupervisorPrompt(input.workOrder),
+  return runSupervisorPromptSequence(
+    {
+      ...input,
+      prompt: buildLoopSupervisorPrompt(input.workOrder),
+    },
     signal,
-    workOrder: input.workOrder,
-    timeoutMs: input.timeoutMs,
+  );
+}
+
+async function runSupervisorRevisionSequence(
+  input: LoopSupervisorRevisionInput,
+  signal: AbortSignal,
+): Promise<LoopSupervisedRunResult> {
+  return runSupervisorPromptSequence(
+    {
+      ...input,
+      prompt: buildLoopSupervisorRevisionPrompt({
+        workOrder: input.workOrder,
+        failures: input.failures,
+        attempt: input.attempt,
+        maxAttempts: input.maxAttempts,
+        previousOutput: input.previousOutput,
+      }),
+    },
+    signal,
+  );
+}
+
+async function runSupervisorPromptSequence(
+  input: SupervisorPromptSequenceInput,
+  signal: AbortSignal,
+): Promise<LoopSupervisedRunResult> {
+  const first = await dispatchWithProviderTransientRetry(input, signal, {
+    prompt: input.prompt,
     ...(input.resetBeforeWorkOrder !== undefined
       ? { contextReset: input.resetBeforeWorkOrder }
       : {}),
@@ -153,12 +192,8 @@ async function runSupervisorDispatchSequence(
     return firstParsed;
   }
 
-  const finalization = await input.dispatch({
-    session: input.supervisorSession,
+  const finalization = await dispatchWithProviderTransientRetry(input, signal, {
     prompt: buildLoopSupervisorFinalizationPrompt(input.workOrder, firstParsed.output),
-    signal,
-    workOrder: input.workOrder,
-    timeoutMs: input.timeoutMs,
   });
   const secondParsed = parseDispatchOutput(finalization, input.workOrder);
   if (secondParsed.status !== "invalid-output") return secondParsed;
@@ -168,41 +203,33 @@ async function runSupervisorDispatchSequence(
   };
 }
 
-async function runSupervisorRevisionSequence(
-  input: LoopSupervisorRevisionInput,
+async function dispatchWithProviderTransientRetry(
+  input: SupervisorPromptSequenceInput,
   signal: AbortSignal,
-): Promise<LoopSupervisedRunResult> {
-  const first = await input.dispatch({
-    session: input.supervisorSession,
-    prompt: buildLoopSupervisorRevisionPrompt({
-      workOrder: input.workOrder,
-      failures: input.failures,
-      attempt: input.attempt,
-      maxAttempts: input.maxAttempts,
-      previousOutput: input.previousOutput,
-    }),
-    signal,
-    workOrder: input.workOrder,
-    timeoutMs: input.timeoutMs,
-  });
-  const firstParsed = parseDispatchOutput(first, input.workOrder);
-  if (firstParsed.status !== "invalid-output") {
-    return firstParsed;
+  request: { prompt: string; contextReset?: SupervisorDispatchRequest["contextReset"] },
+): Promise<SupervisorDispatchResult> {
+  const maxAttempts = Math.max(1, input.transientDispatchMaxAttempts ?? 2);
+  let last: SupervisorDispatchResult | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await input.dispatch({
+        session: input.supervisorSession,
+        prompt: request.prompt,
+        signal,
+        workOrder: input.workOrder,
+        timeoutMs: input.timeoutMs,
+        ...(request.contextReset !== undefined ? { contextReset: request.contextReset } : {}),
+      });
+      last = result;
+      if (result.status === 0 || !isProviderTransientFailure(joinOutput(result))) return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      last = { status: 1, stdout: "", stderr: message };
+      if (!isProviderTransientFailure(message)) throw err;
+    }
+    if (signal.aborted) return last;
   }
-
-  const finalization = await input.dispatch({
-    session: input.supervisorSession,
-    prompt: buildLoopSupervisorFinalizationPrompt(input.workOrder, firstParsed.output),
-    signal,
-    workOrder: input.workOrder,
-    timeoutMs: input.timeoutMs,
-  });
-  const secondParsed = parseDispatchOutput(finalization, input.workOrder);
-  if (secondParsed.status !== "invalid-output") return secondParsed;
-  return {
-    ...secondParsed,
-    output: [firstParsed.output, secondParsed.output].filter(Boolean).join("\n"),
-  };
+  return last ?? { status: 1, stdout: "", stderr: "dispatch failed" };
 }
 
 function parseDispatchOutput(
@@ -218,10 +245,14 @@ function parseDispatchOutput(
   if (!parsed.ok) {
     return { status: "invalid-output", reason: parsed.reason, output };
   }
+  const summary = recoverNonTerminalPullRequestDecisions(workOrder, parsed.summary);
+  if (!validateSupervisorFinalSummaryForWorkOrder(workOrder, summary)) {
+    return { status: "invalid-output", reason: "invalid-summary", output };
+  }
 
   return {
-    status: supervisorFinalStatusToRunStatus(parsed.summary.status),
-    summary: parsed.summary,
+    status: supervisorFinalStatusToRunStatus(summary.status),
+    summary,
     output,
   };
 }

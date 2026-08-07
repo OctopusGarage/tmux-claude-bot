@@ -4,7 +4,6 @@ import { sleep } from "../../shared/utils/sleep.js";
 import { clearAgentRuntimeRecord } from "../agents/agent-runtime-records.js";
 import { markSessionStopped } from "../agents/runningSessions.js";
 import { clearPicker } from "../autopilot/picker-state.js";
-import { clearAutopilotState } from "../autopilot/state-store.js";
 import type { HandlerDeps } from "../deps.js";
 import { clearTaskTiming } from "../session/task-timing.js";
 import {
@@ -161,7 +160,6 @@ function cleanupSessionRecords(deps: HandlerDeps, sessionName: string): void {
   clearAgentRuntimeRecord(sessionName);
   clearTaskTiming(sessionName);
   clearPathForSession(sessionName);
-  clearAutopilotState(sessionName);
   clearPicker(sessionName);
   markSessionStopped(sessionName);
   clearReplyTarget(sessionName);

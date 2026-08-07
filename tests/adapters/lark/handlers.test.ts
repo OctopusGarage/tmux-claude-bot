@@ -205,6 +205,24 @@ describe("makeMessageHandler", () => {
     expect(deps.queue.enqueued[0]?.text).toBe("first line\nsecond line\nthird line");
   });
 
+  it("enqueues rich-text post messages as text prompts", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
+    const prompt = [
+      "Please review this project in depth and objectively analyze its knowledge base architecture and related workflows.",
+      "Project path:",
+      "~/programming/yslabali/ysinsight-context",
+    ].join("\n");
+
+    await handler(fakeMessage({ rawContentType: "post", content: prompt }));
+
+    expect(channel.texts()).not.toContain("暂仅支持文本和语音消息");
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]?.action).toBe("text");
+    expect(deps.queue.enqueued[0]?.text).toBe(prompt);
+  });
+
   it("records lark as the recent owner activity channel for accepted messages", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();

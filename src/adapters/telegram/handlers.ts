@@ -9,7 +9,6 @@ import {
 } from "../../core/autopilot/delegated-task.js";
 import { buildHelpBody, getTelegramActions } from "../../core/command/action-registry.js";
 import { startDisposition } from "../../core/command/dispatch.js";
-import { restorePersistedChannel } from "../../core/command/queue-restore.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
 import { formatDashboardForChat } from "../../core/dashboard/dashboard-view.js";
 import type { HandlerDeps } from "../../core/deps.js";
@@ -58,8 +57,9 @@ import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { handleCallbackQuery } from "./callbacks.js";
-import { createRestoredMessage, handleQueuedCommand } from "./executor.js";
+import { handleQueuedCommand } from "./executor.js";
 import {
+  buildAutopilotQueueKeyboard,
   buildIdleKeyboard,
   buildLangKeyboard,
   buildOrphanKeyboard,
@@ -100,19 +100,9 @@ import {
 const log = createLogger("telegram.handlers");
 
 export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: ReplyTargetMap): void {
-  // Restore this channel's persisted backlog on boot. Drop ONLY the Telegram
-  // channel — Lark restores + drops its own in startLark, so a Telegram+Lark
-  // deployment loses neither side's queue regardless of which starts first.
-  const restored = restorePersistedChannel({
-    channel: "telegram",
-    loadPersisted: () => deps.queue.loadPersisted(),
-    enqueue: (message) => deps.queue.enqueue(message),
-    keepPersistedCarryover: (messages) => deps.queue.keepPersistedCarryover(messages),
-    restore: (message) => createRestoredMessage(message, bot),
-  });
-  if (restored.restored > 0) {
-    log.info("queue restored", { channel: "telegram", data: restored });
-  }
+  // Chat prompts are intentionally not restored across bot restarts. Replaying a
+  // recovered user message can duplicate input that was already typed into the
+  // agent pane before the process stopped.
 
   bot.command("lang", async (ctx) => {
     const arg = (ctx.message?.text ?? "").split(/\s+/)[1]?.trim();
@@ -128,7 +118,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     // Match case-insensitively so a typed `/lang zh-TW` resolves despite the hyphen/case.
     const code = UI_LANGS.find((x) => x.code.toLowerCase() === arg.toLowerCase())?.code;
     if (!code) {
-      await reply(ctx, "err", "用法 / Usage: /lang <en|zh|zh-TW|yue|ja|es>", { replyTarget });
+      await reply(ctx, "err", messages("telegram").langUsage, { replyTarget });
       return;
     }
     setUiLang("telegram", code);
@@ -143,7 +133,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       await reply(
         ctx,
         "info",
-        formatPromptTranslateCommandResult(promptTranslateStatus("telegram")),
+        formatPromptTranslateCommandResult(promptTranslateStatus("telegram"), messages("telegram")),
         {
           replyTarget,
           replyMarkup: buildPromptTranslateKeyboard(),
@@ -152,9 +142,14 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       return;
     }
     const result = await applyPromptTranslateCommand("telegram", arg);
-    await reply(ctx, result.ok ? "info" : "err", formatPromptTranslateCommandResult(result), {
-      replyTarget,
-    });
+    await reply(
+      ctx,
+      result.ok ? "info" : "err",
+      formatPromptTranslateCommandResult(result, messages("telegram")),
+      {
+        replyTarget,
+      },
+    );
   });
 
   bot.command("translate_install", async (ctx) => {
@@ -461,8 +456,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   // Supervisor-backed Autopilot: /autopilot [requirement] delegates the current
-  // session context to the Loop Supervisor. The old keep-alive/goal-cycle
-  // Autopilot surface is intentionally not exposed.
+  // session context to the Loop Supervisor.
   bot.command("autopilot", async (ctx) => {
     const session = await resolveSessionFromReply(ctx, replyTarget, deps);
     if (!session) {
@@ -487,6 +481,9 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
         session,
         body: formatActiveDelegateStart(result),
         replyTarget,
+        ...(result.status === "blocked" && result.showQueue
+          ? { replyMarkup: buildAutopilotQueueKeyboard(sessionShortId(session)) }
+          : {}),
       },
     );
   });
@@ -568,7 +565,7 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
     const replyToMsg = ctx.message.reply_to_message;
     let targetSession: string | null = null;
     if (replyToMsg) {
-      // Reply to a "已排队" ack with new text → rewrite that still-waiting message
+      // Reply to a localized queued ack with new text: rewrite that still-waiting message.
       // in place (keeps its queue position). TERMINAL unless it wasn't one of our
       // acks: a rewrite blocked by dedup is reported, never silently re-enqueued as a
       // fresh prompt (which dedup would then drop, losing the edit).

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,10 @@ import {
 } from "../../src/core/loop/agent-queue.js";
 import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
 import { listLoopReports } from "../../src/core/loop/report.js";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { sessionNameFromPath } from "../../src/core/projects/sessionPathMap.js";
 
@@ -357,6 +361,223 @@ describe("createLoopSupervisorTaskRunner", () => {
     expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
     expect(handled).toEqual(["tmux_proj_loop-supervisor:Run supervised work order"]);
     expect(waitHorizons).toEqual([7_200_000]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: "tmux_proj_loop-supervisor",
+        workOrderId: "wo-1",
+        status: "active",
+      }),
+    ]);
+  });
+
+  it("marks supervisor queue work done when the final marker or final summary is visible", async () => {
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const deps = {
+      queue,
+      config: { projectSessionPrefix: "tmux_proj_" },
+      bridge: {
+        hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+      },
+    };
+    const finalSummaryDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      workOrder.projectId,
+      workOrder.id,
+    );
+    const workOrderWithSummaryPath = {
+      ...workOrder,
+      finalSummaryPath: join(finalSummaryDir, "supervisor-final-summary.json"),
+    };
+    mkdirSync(finalSummaryDir, { recursive: true });
+    writeFileSync(
+      workOrderWithSummaryPath.finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: workOrder.projectId,
+        actionsTaken: ["done"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const probes: boolean[] = [];
+    queue.setHandler(async (message) => {
+      probes.push(message.doneProbe?.("still shows active turn") ?? false);
+      probes.push(message.doneProbe?.(`${workOrder.requiredFinalMarker}\nsummary`) ?? false);
+      message.resolve("supervisor done");
+    });
+
+    const result = await createLoopSupervisorTaskRunner(deps)({
+      session: "tmux_proj_loop-supervisor",
+      prompt: "Run supervised work order",
+      signal: new AbortController().signal,
+      workOrder: workOrderWithSummaryPath,
+    });
+
+    expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
+    expect(probes).toEqual([true, true]);
+  });
+
+  it("blocks supervisor work when the worker is already leased", async () => {
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "wo-active",
+          projectId: "active",
+          projectPath: "/repo/active",
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_000,
+        },
+      ],
+    });
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const deps = {
+      queue,
+      config: { projectSessionPrefix: "tmux_proj_" },
+      bridge: {
+        hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+      },
+    };
+
+    const result = await createLoopSupervisorTaskRunner(deps)({
+      session: "tmux_proj_loop-supervisor",
+      prompt: "Run supervised work order",
+      signal: new AbortController().signal,
+      workOrder,
+    });
+
+    expect(result).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "worker tmux_proj_loop-supervisor is leased by wo-active",
+    });
+    expect(queue.isEmpty()).toBe(true);
+  });
+
+  it("queues deferred supervisor work behind an active worker lease", async () => {
+    vi.useFakeTimers();
+    try {
+      writeLoopSupervisorWorkerLeaseState({
+        leases: [
+          {
+            workerSession: "tmux_proj_loop-supervisor",
+            workOrderId: "wo-active",
+            projectId: "active",
+            projectPath: "/repo/active",
+            status: "active",
+            leasedAt: 1_000,
+            updatedAt: 1_000,
+          },
+        ],
+      });
+      const queue = new MessageQueue(
+        30,
+        join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+      );
+      const deps = {
+        queue,
+        config: { projectSessionPrefix: "tmux_proj_" },
+        bridge: {
+          hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+        },
+      };
+      queue.setReadinessProbe(async () => false, 60_000);
+      queue.setHandler(async (message) => message.resolve("should wait"));
+      const controller = new AbortController();
+      const pending = createLoopSupervisorTaskRunner(deps)({
+        session: "tmux_proj_loop-supervisor",
+        prompt: "Run deferred supervised work order",
+        signal: controller.signal,
+        workOrder,
+        deferLeaseUntilConsumption: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(queue.size("tmux_proj_loop-supervisor")).toBe(1);
+      controller.abort();
+      await expect(pending).resolves.toMatchObject({
+        status: 1,
+        stderr: "loop supervisor task was cancelled",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("acquires a deferred supervisor lease when the queued item is consumed", async () => {
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const deps = {
+      queue,
+      config: { projectSessionPrefix: "tmux_proj_" },
+      bridge: {
+        hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+      },
+    };
+    queue.setHandler(async (message) => message.resolve("supervisor done"));
+
+    const result = await createLoopSupervisorTaskRunner(deps)({
+      session: "tmux_proj_loop-supervisor",
+      prompt: "Run deferred supervised work order",
+      signal: new AbortController().signal,
+      workOrder,
+      deferLeaseUntilConsumption: true,
+    });
+
+    expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: "tmux_proj_loop-supervisor",
+        workOrderId: workOrder.id,
+        status: "active",
+      }),
+    ]);
+  });
+
+  it("retains a supervisor worker lease when queued work fails", async () => {
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const deps = {
+      queue,
+      config: { projectSessionPrefix: "tmux_proj_" },
+      bridge: {
+        hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+      },
+    };
+    queue.setHandler(async (message) => {
+      message.reject(new Error("supervisor failed"));
+    });
+
+    const result = await createLoopSupervisorTaskRunner(deps)({
+      session: "tmux_proj_loop-supervisor",
+      prompt: "Run supervised work order",
+      signal: new AbortController().signal,
+      workOrder,
+    });
+
+    expect(result).toEqual({ status: 1, stdout: "", stderr: "supervisor failed" });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: "tmux_proj_loop-supervisor",
+        workOrderId: "wo-1",
+        status: "retained",
+        retainUntil: expect.any(Number),
+      }),
+    ]);
   });
 
   it("queues clear before a loop supervisor work order when requested", async () => {
@@ -585,6 +806,42 @@ describe("createLoopSupervisorTaskRunner", () => {
         status: 1,
         stdout: "",
         stderr: "loop supervisor task was cancelled",
+      });
+      expect(queue.size("tmux_proj_loop-supervisor")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails clearly when readiness never allows the worker to consume the task", async () => {
+    vi.useFakeTimers();
+    try {
+      const queue = new MessageQueue(
+        30,
+        join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+      );
+      const deps = {
+        queue,
+        config: { projectSessionPrefix: "tmux_proj_" },
+        bridge: {
+          hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+        },
+      };
+      queue.setReadinessProbe(async () => false, 1_000);
+      queue.setHandler(async (message) => message.resolve("should not run"));
+
+      const pending = createLoopSupervisorTaskRunner(deps)({
+        session: "tmux_proj_loop-supervisor",
+        prompt: "Run supervised work order",
+        signal: new AbortController().signal,
+        workOrder,
+      });
+
+      await vi.advanceTimersByTimeAsync(31_000);
+      const result = await Promise.race([pending, Promise.resolve("not-resolved" as const)]);
+      expect(result).toMatchObject({
+        status: 1,
+        stderr: "loop supervisor worker did not consume queued task before deadline",
       });
       expect(queue.size("tmux_proj_loop-supervisor")).toBe(0);
     } finally {

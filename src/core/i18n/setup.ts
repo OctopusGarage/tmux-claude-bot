@@ -5,7 +5,9 @@ import { isUiLang, type Lang } from "./index.js";
  * setup:lark`). Kept separate from the chat-UI catalog (Messages) because the
  * audiences differ: this is operator-facing CLI guidance, picked once at the
  * start of the wizard via {@link parseSetupLang}. Every catalog implements the
- * full {@link SetupMessages} shape.
+ * full {@link SetupMessages} shape. New setup/onboarding copy must be added to
+ * this interface and every setup catalog; `tests/core/i18n.test.ts` verifies key
+ * parity and non-empty renders.
  */
 export interface SetupMessages {
   // Shared / non-interactive

@@ -1,46 +1,87 @@
-# Install guide (for an AI assistant or a human)
+# Install Guide
 
-**tmux-claude-bot** is a macOS Telegram bot that drives Claude Code in tmux sessions.
-You're reading this from an extracted release tarball. Follow these steps; give the
-user the exact commands (or run them), ask for what's needed, and read any errors.
+**tmux-claude-bot** is a macOS/Linux Telegram and Feishu/Lark bot that drives
+Claude Code or OpenAI Codex in tmux sessions. This guide is suitable for a human
+operator or an AI assistant installing from an extracted release tarball.
 
-## 1. Prerequisites (macOS only — the bot runs as a launchd service)
+## 1. Prerequisites
 
-- **node** v20+ — `node -v`. If missing, install via [nvm](https://github.com/nvm-sh/nvm).
-- **tmux** — `tmux -V`. If missing: `brew install tmux`.
-- **Claude Code CLI** (`claude`) — optional; the bot can use a custom `CLAUDE_START_COMMAND`. See https://docs.anthropic.com/en/docs/claude-code.
+- **Node.js** v22+ — `node -v`. If missing, install via
+  [nvm](https://github.com/nvm-sh/nvm).
+- **tmux** — `tmux -V`. If missing, install it with `brew install tmux` on macOS
+  or `sudo apt install tmux` on Debian/Ubuntu.
+- **Claude Code** (`claude`) or **Codex** (`codex`) — optional at install time;
+  configure `CLAUDE_START_COMMAND` if you use a custom agent command.
 
-## 2. Get a Telegram bot token
+## 2. Get Chat Credentials
 
-In Telegram, message **@BotFather**, send `/newbot`, follow the prompts, and copy the
-token it returns (looks like `123456:ABC-...`). The setup wizard will ask for it. (It
-also auto-captures the user's numeric Telegram id — they just message the bot when
-prompted — so the bot only obeys them.)
+For Telegram, message **@BotFather**, send `/newbot`, follow the prompts, and
+copy the token it returns. The setup wizard also captures your numeric Telegram
+user id after you message the bot once.
 
-## 3. Install
+For Feishu/Lark, the setup wizard can launch the QR onboarding flow. You can also
+run `tcb setup:lark` later.
 
-Run the one-line installer (this is the canonical install; it places a managed copy in
-`~/.tmux-claude-bot`, runs the setup wizard, and registers an auto-restarting service):
+## 3. Install Or Update
+
+Run the one-line installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/install.sh | bash
 ```
 
-The wizard asks for the bot token (validated live) and which directories the bot may
-use. Re-running the one-liner later **updates** to the latest release; `.env` and state
-are preserved. Pin a version with `TMUX_CLAUDE_BOT_VERSION=vX.Y.Z`.
+The installer places the managed copy in `~/.tmux-claude-bot`, installs
+dependencies, builds the runtime bundle, creates global launchers in
+`~/.local/bin`, runs setup, registers the managed service, provisions the
+isolated Home Operator workspace, installs the default Home Operator skill
+there, removes stale global skill copies, and refreshes MCP profile descriptors
+there.
+
+Re-running the same command updates the managed copy while preserving `.env` and
+runtime state. Pin a release with `TMUX_CLAUDE_BOT_VERSION=vX.Y.Z`.
+
+Useful install-time opt-outs:
+
+- `TCB_SKIP_SERVICE=1` — skip launchd/systemd registration.
+- `TCB_SKIP_AI_TOOLS=1` — skip default AI tool surface installation.
+- `TCB_SKIP_MCP=1` — legacy alias for skipping default AI tool surface installation.
 
 ## 4. Verify
 
-- `launchctl list | grep com.octopusgarage.tmux-claude-bot` — shows a PID and exit code `0`.
-- `tail -n 20 ~/.tmux-claude-bot/logs/launchd.out.log` — shows `Connected to Telegram`.
-- Message the bot in Telegram — it should reply.
+Run the health check first:
 
-## 5. Manage / troubleshoot
+```bash
+tcb doctor
+```
 
-- Logs: `~/.tmux-claude-bot/logs/launchd.out.log` and `launchd.err.log` (read these first on any failure).
-- Health check: `cd ~/.tmux-claude-bot && npm run doctor`.
-- Reconfigure: `cd ~/.tmux-claude-bot && npm run setup:reconfigure`.
-- Restart: `launchctl kickstart -k gui/$(id -u)/com.octopusgarage.tmux-claude-bot`.
-- Uninstall: `cd ~/.tmux-claude-bot && npm run service:uninstall`.
-- Only one instance may run (Telegram returns 409 Conflict otherwise).
+Then verify the managed service:
+
+```bash
+# macOS
+launchctl list | grep com.octopusgarage.tmux-claude-bot
+
+# Linux
+systemctl --user status tmux-claude-bot
+```
+
+Finally, message the configured Telegram or Feishu/Lark bot. It should reply and
+show the control panel.
+
+## 5. Manage
+
+- Health check: `tcb doctor`
+- Reconfigure: `tcb setup --reconfigure`
+- Add or refresh Feishu/Lark: `tcb setup:lark`
+- Refresh default AI tool surfaces: `tcb ai-tools install`
+- Inspect AI tool surfaces: `tcb ai-tools status`
+- Refresh MCP descriptors only: `tcb mcp install`
+- Skill scopes: `tcb skill status`; optional global copy:
+  `tcb skill install --scope global`
+- Terminal UI: `tcb tui`
+- Restart service: `tcb service restart`
+- Service logs: `tcb service logs`
+- Uninstall: `tcb service uninstall`
+
+Only one running bot instance should use the same state directory. If Telegram
+reports a 409 conflict, stop the duplicate instance before restarting the
+managed service.

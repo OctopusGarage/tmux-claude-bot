@@ -2,7 +2,7 @@ import { UI_ICONS } from "../../../shared/ui/icons.js";
 import type { Messages } from "./zh.js";
 
 /** Traditional Chinese (Taiwan) catalog. Typed `: Messages`, so it must
- * implement every key in zh.ts. Localised vocabulary (專案/佇列/預設/辨識). */
+ * implement every key in zh.ts. Localized vocabulary belongs in string values. */
 export const zhTW: Messages = {
   ackReceived: "已接收",
   queuedAt: (pos) => `已排隊 · 第 ${pos} 位`,
@@ -28,6 +28,13 @@ export const zhTW: Messages = {
   promptTranslateInstallOk: "🌐 prompt 翻譯相依套件已就緒 · 現在可以開啟翻譯模式",
   promptTranslateInstallFailed: (e) =>
     `🌐 安裝失敗 · ${e} · 可在主機執行 npm run translate:install 查看詳情`,
+  promptTranslateCommandUsage: (usage) => `用法：/prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `Prompt translation 不可用：${error}`,
+  promptTranslateDisabledFor: (source) => `已關閉 ${source} 的 prompt translation`,
+  promptTranslateStatusOff: (source) => `${source} 的 prompt translation：off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `${source} 的 prompt translation：argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `已開啟。${line}`,
   voiceEmpty: "沒聽清楚 · 請再說一遍或改傳文字",
   voiceUnsupported: "語音轉錄僅支援 Apple Silicon",
   voiceNotInstalled: "語音轉錄尚未安裝（在儲存庫執行 npm run whisper:install）",
@@ -136,6 +143,8 @@ export const zhTW: Messages = {
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
   adoptFailed: "接管失敗：程序無法結束或未能啟動",
+  adoptAgentDidNotStart:
+    "接管失敗：原程序已結束，但 Agent 未能在受管工作階段中啟動。請用 /peek 查看畫面，修正 shell 提示或啟動命令後重試。",
   adoptBusy:
     "目標工作階段裡已有程式在前台運行（另一個 agent 或其他程式）。已中止，未動原程序——請先去那邊退出，再重新接管。",
   adoptProjectRunning:
@@ -148,10 +157,14 @@ export const zhTW: Messages = {
   agentNotRunningRestart: "未執行，請使用 /resume 復原，或 /start 新建",
   contentTruncated: "...(內容過長，已截斷)",
   agentEmptyOutput: "回傳空內容 · 用 /peek 查看畫面",
+  agentReplyUnavailable: "未擷取到有效 Agent 回覆 · 用 /peek 查看畫面，確認後可重試。",
   agentStarted: "✅ 已啟動",
   agentResumed: "🔄 已復原原工作階段",
   agentResumeMissingState: "沒有可復原的原工作階段狀態，請用 /start 新建。",
   agentAlreadyRunning: "✅ 已在執行中，無需重複啟動",
+  agentInputNotReady: "Agent 暫時還沒準備好接收輸入，請稍後重試；如果持續出現，請重啟此會話。",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `專案正在執行自動化任務，暫時不能傳送一般訊息。\n任務：${taskKind}\n專案：${projectId}\nRun：${runId}\nSupervisor：${supervisor}\n\n請等待任務完成，或先查看/取消該任務後再繼續。`,
   agentStartedWith: (label) => `✅ 已用「${label}」啟動`,
   startPickerTitle: "🚀 選擇啟動方式",
   startPickerPrompt: "設定了多個啟動指令,選一個啟動:",
@@ -394,69 +407,55 @@ export const zhTW: Messages = {
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
   cmdBatch: "批次排程器：查看狀態或控制批次執行（start/pause/resume/stop/report）",
   cmdAutopilot: "把目前工作階段交給 Loop Supervisor 託管推進",
-  cmdOpportunity: "查看主動機會建議，並託管已確認的工作",
-  cmdGoals: "列出 autopilot 目標預設",
+  cmdOpportunity: "查看並討論主動機會建議",
   cmdSysload: "查看本機負載/發熱/失控程序",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "把目前工作階段上下文交給 Loop Supervisor，繼續完成實作、複核、驗證、PR 處理和最終通知。",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot 已暫停 [${session}]：${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot 已停止 [${session}]：${reason}`,
-  autopilotNotifyUsage: (session, pct) => `🛑 autopilot 目標暫停 [${session}]：用量達 ${pct}% 門檻`,
-  autopilotNotifyMaxIter: (session) => `⏹️ autopilot 目標停止 [${session}]：已達最大迭代`,
-  autopilotNotifyWallClock: (session) => `⏹️ autopilot 目標停止 [${session}]：已達時長上限`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]：階段判定完成，請確認（/autopilot confirm）或繼續（/autopilot reject）`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ autopilot 目標完成 [${session}]：${goalId}（請確認）`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ autopilot 循環完成 [${session}]：已跑滿 ${rounds} 輪（請確認）`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ autopilot 保活任務完成 [${session}]：偵測到完成標記`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]：進入目標 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 輪）`,
+    "把目前工作階段上下文交給 Loop Supervisor。範圍已清楚時可直接託管；需要先看清任務清單、驗收標準和停止條件時，先看計劃再確認推進。",
   batchRunStarted: (planId, tasks) => `🚀 批次執行已啟動：計劃 ${planId}，共 ${tasks} 個任務`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ 批次池已暫停 [${agent}]：額度已達上限，預計恢復 ${resumeAt}`,
   batchRunComplete: (summary) => `✅ 批次執行完成\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "已開啟全域託管:所有活躍工作階段自動保活(某個工作階段用 /autopilot off 單獨退出)"
-      : "已關閉全域託管",
-  autopilotStatus: (o) =>
-    `Autopilot：${o.enabled ? "開" : "關"}（${o.pureKeepAlive ? "純保活" : "隨目標"}，已干預 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw) =>
-    `未知子指令「${raw}」。用法：/autopilot [delegate [需求]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} 開啟保活/目標`,
-  btnApDisable: "⏹ 關閉保活/目標",
+    `未知子指令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
+  autopilotPlanPreviewBody:
+    "託管前計劃預覽\n\n目標：基於目前工作階段和倉庫狀態，繼續推進使用者已確認的任務，直到真正完成。\n\n任務清單：檢查現場上下文、git 狀態、近期提交、現有 PR 和之前的驗證結果；判斷還剩什麼；只做必要改動；複核 diff；執行相關本地驗證、觸及風險路徑的覆蓋率複核，以及有必要時使用既有 eval。\n\n驗收標準：最終 summary 記錄檢查了什麼、改了什麼、驗證了什麼、PR/合併結果、最終分支、乾淨 worktree，以及任何真實 blocker 和證據。\n\n停止條件：任務已完成、確認存在真實 blocker、或繼續推進會越過目前範圍時停止；避免為了最佳化而最佳化。\n\n非目標：不擴大範圍，不重做已經滿足要求的工作，不為了 bot 策略去安裝目標專案依賴，不在專案策略未允許時合併。\n\n確認這份計劃符合你的意圖後，再繼續託管推進。",
+  langUsage: "用法 / Usage: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "用 `/sessions <id前綴>` 恢復",
+  opportunityProjectFallback: "專案",
+  opportunityProjectCount: (n) => `${n} 個專案`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} 個建議\n可以繼續討論；確認要執行時，請使用 Autopilot 託管。`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} 個建議\n先參與討論，確認清楚後再託管執行。`,
+  btnOpportunityContinueDiscuss: "繼續討論",
+  btnOpportunityDiscussAll: "討論全部",
+  btnOpportunityShow: "查看詳情",
+  btnOpportunityDiscuss: "參與討論",
+  btnOpportunityDismiss: "暫不處理",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `已略過 ${n} 個建議。`,
+  opportunitySkippedMissing: (n, ids) => `已略過 ${n} 個建議。缺失：${ids}`,
+  opportunityMixedProjects: "不能一起討論來自不同專案的建議。",
+  opportunityCannotOpenProject: (reason) => `無法開啟專案進行討論：${reason}`,
+  opportunityDiscussionStarted: (n) => `正在討論 ${n} 個建議。`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `專案正在執行自動化任務，暫時不能參與討論。請等目前任務完成後再試。\n\n任務：${taskKind}\nRun：${runId}\nSupervisor：${supervisorSession}`,
+  opportunityQueueBusy:
+    "專案 agent 目前正在處理任務或已有排隊訊息，暫時不能參與討論。請等目前任務完成後再試。",
+  opportunityGitStatusUnknown: (reason) => `無法確認專案 git 狀態，暫時不能參與討論。\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `專案工作區不乾淨，暫時不能參與討論。請先處理現有改動後再試。\n\n${preview}`,
   btnApDelegate: "🚀 繼續託管推進",
+  btnApDelegateNow: "🚀 直接託管",
+  btnApReviewPlan: "📋 先看計劃",
+  btnApConfirmDelegate: "✅ 確認託管",
   btnApCancelDelegate: "⛔ 取消託管",
-  btnApPickGoals: "🎯 選目標",
-  btnApGlobalOn: "🌐 全域:開",
-  btnApGlobalOff: "🌐 全域:關",
-  btnApStop: "⏹ 停止目標",
-  btnApConfirm: "✅ 確認完成",
-  btnApContinue: "▶️ 繼續打磨",
+  btnApQueue: `${UI_ICONS.tone.queue} 查看隊列`,
   btnApBack: "↩︎ 返回",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) => `▶️ 開始(${n} 個目標 · ${rounds} 輪)`,
-  apRoundsLabel: (rounds: number) => `輪數:${rounds}`,
-  goalTestCoverage: "提升測試覆蓋",
-  goalFixTests: "修復測試",
-  goalCodeReview: "程式碼審查",
-  goalAddFeature: "新增功能",
-  goalRefactorElegant: "重構為優雅專業",
-  goalUiPolish: "打磨介面",
-  goalImproveArchitecture: "提升架構品質",
-  goalHardenStandards: "加固工程規範與門禁",
-  goalPolishGithub: "GitHub 專業化",
-  goalSyncDocs: "文件與程式碼對齊",
-  autopilotGoalStarted: (id) => `已啟動目標：${id}`,
-  autopilotUnknownGoal: (ids) => `未知目標。可用：${ids}`,
-  goalsTitle: "🎯 目標預設",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Supervisor 隊列`,
   noLogsContext: "無目前工作階段，請先選擇專案或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──

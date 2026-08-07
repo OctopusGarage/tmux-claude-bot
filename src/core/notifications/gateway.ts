@@ -1,17 +1,32 @@
 import { statSync } from "node:fs";
 import { normalizeError } from "../../shared/utils/error.js";
+import { tildeifyHome } from "../../shared/utils/path.js";
 import { type AttachmentKind, validateAttachment } from "../attachments/classify.js";
 
 export type NotificationChannel = "telegram" | "lark";
 export type NotificationChannelSelection = NotificationChannel | "both";
 export type NotificationLevel = "info" | "success" | "warning" | "error";
 
+export const NOTIFICATION_SOURCE_CATALOG = [
+  "autopilot-delegate",
+  "batch-scheduler",
+  "daily-audit",
+  "daily-task-audit",
+  "long-task-monitor",
+  "loop-engineering",
+  "opportunity-discovery",
+  "runtime-guardian",
+  "tmux-claude-bot",
+] as const;
+
+export type NotificationSource = (typeof NOTIFICATION_SOURCE_CATALOG)[number];
+
 export interface NotificationRequest {
   channel?: NotificationChannelSelection;
   level?: NotificationLevel;
   title: string;
   body?: string;
-  source?: string;
+  source?: NotificationSource | (string & {});
   session?: string;
   attachments?: NotificationAttachment[];
   opportunities?: NotificationOpportunity[];
@@ -26,6 +41,8 @@ export interface NotificationOpportunity {
   estimatedComplexity: string;
   status: string;
   value: string;
+  problem?: string;
+  recommendedApproach?: string;
 }
 
 export interface NotificationAttachment {
@@ -37,6 +54,13 @@ export interface NotificationDelivery {
   channel: NotificationChannel;
   ok: boolean;
   error?: string;
+  messageSent?: boolean;
+  failedStage?:
+    | "sender-missing"
+    | "message"
+    | "attachment-sender-missing"
+    | "attachment-validation"
+    | "attachment";
 }
 
 export interface NotificationResult {
@@ -51,6 +75,7 @@ export type NotificationAttachmentSendFn = (
   path: string,
   kind: AttachmentKind,
   caption?: string,
+  request?: NotificationRequest,
 ) => Promise<void>;
 
 export type NotificationOptions = {
@@ -97,7 +122,13 @@ export class NotificationGateway {
       channels.map(async (channel): Promise<InternalNotificationDelivery> => {
         const sender = this.senders.get(channel);
         if (!sender)
-          return { channel, ok: false, error: "no sender registered", messageSent: false };
+          return {
+            channel,
+            ok: false,
+            error: "no sender registered",
+            messageSent: false,
+            failedStage: "sender-missing",
+          };
         let messageSent = false;
         try {
           await sender(messageForChannel(channel, message), req);
@@ -109,6 +140,7 @@ export class NotificationGateway {
               ok: false,
               error: "no attachment sender registered",
               messageSent,
+              failedStage: "attachment-sender-missing",
             };
           }
           for (const attachment of attachments) {
@@ -117,20 +149,43 @@ export class NotificationGateway {
               opts.statInfo ?? defaultStatInfo,
             );
             if (!validation.ok) {
-              return { channel, ok: false, error: validation.error, messageSent };
+              return {
+                channel,
+                ok: false,
+                error: validation.error,
+                messageSent,
+                failedStage: "attachment-validation",
+              };
             }
-            await attachmentSender?.(attachment.path, validation.kind, attachment.caption);
+            try {
+              await attachmentSender?.(attachment.path, validation.kind, attachment.caption, req);
+            } catch (err) {
+              return {
+                channel,
+                ok: false,
+                error: normalizeError(err).message,
+                messageSent,
+                failedStage: "attachment",
+              };
+            }
           }
           return { channel, ok: true, messageSent };
         } catch (err) {
-          return { channel, ok: false, error: normalizeError(err).message, messageSent };
+          return {
+            channel,
+            ok: false,
+            error: normalizeError(err).message,
+            messageSent,
+            failedStage: messageSent ? "attachment" : "message",
+          };
         }
       }),
     );
     const ok = deliveries.filter((d) => d.ok).length;
-    const publicDeliveries = deliveries.map(
-      ({ messageSent: _messageSent, ...delivery }) => delivery,
-    );
+    const publicDeliveries = deliveries.map((delivery): NotificationDelivery => {
+      if (delivery.ok) return { channel: delivery.channel, ok: true };
+      return delivery;
+    });
     if (ok === deliveries.length) return { status: "sent", deliveries: publicDeliveries };
     if (ok > 0) return { status: "partial", deliveries: publicDeliveries };
     if (deliveries.some((delivery) => delivery.messageSent)) {
@@ -165,7 +220,7 @@ export function formatNotification(req: NotificationRequest): string {
   if (req.source?.trim()) lines.push(`source: ${req.source.trim()}`);
   const head = lines.join("\n");
   const body = req.body?.trimEnd();
-  return body ? `${head}\n\n${body}` : head;
+  return tildeifyHome(body ? `${head}\n\n${body}` : head);
 }
 
 function messageForChannel(channel: NotificationChannel, message: string): string {

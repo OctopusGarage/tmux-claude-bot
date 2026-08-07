@@ -2,7 +2,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
+import {
+  DailyTaskLedger,
+  SCHEDULED_TASK_SOURCES,
+  singaporeDayWindow,
+} from "../../src/core/tasks/task-ledger.js";
 import { recordExternalTaskReport } from "../../src/core/tasks/task-report.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -13,6 +17,28 @@ afterEach(() => {
 });
 
 describe("recordExternalTaskReport", () => {
+  it("records an autopilot delegation repair status in the shared task ledger", () => {
+    expect(SCHEDULED_TASK_SOURCES).toContain("autopilot-delegate");
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-autopilot-"));
+    const scheduledAt = Date.parse("2026-07-27T03:00:00Z");
+
+    recordExternalTaskReport({
+      taskId: "autopilot:delegation:2026-07-27",
+      source: "autopilot-delegate",
+      name: "autopilot delegated task",
+      scheduledAt,
+      status: "failed",
+      error: "invalid final summary",
+      repairStatus: "fixed",
+    });
+
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-27"))[0]).toMatchObject({
+      taskId: "autopilot:delegation:2026-07-27",
+      source: "autopilot-delegate",
+      repairStatus: "fixed",
+    });
+  });
+
   it("records an external radar monitor failure in the shared task ledger", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-"));
     const scheduledAt = Date.parse("2026-07-27T03:00:00Z");

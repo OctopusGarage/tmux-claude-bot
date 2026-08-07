@@ -9,6 +9,8 @@ import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import { performStart } from "../../../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
+import { resolveProjectPath } from "../../../src/core/projects/project-ops.js";
+import { getPathBySession, setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
 import { runDailyTaskAuditServiceTick } from "../../../src/core/tasks/daily-audit-service.js";
 
 // Stub the core collaborators each op delegates to — we're covering the control
@@ -16,6 +18,10 @@ import { runDailyTaskAuditServiceTick } from "../../../src/core/tasks/daily-audi
 const h = vi.hoisted(() => ({
   openResult: { status: "switched", sessionName: "sOpen" } as unknown,
   openPathResult: { status: "created", sessionName: "sNew", projectPath: "/p" } as unknown,
+  resolvedProjectPath: { resolvedPath: "/some/dir" } as {
+    resolvedPath: string;
+    error?: string;
+  },
   orphans: [
     { pid: 111, agent: "claude", busy: null },
     { pid: 222, agent: "codex", busy: true },
@@ -36,6 +42,7 @@ vi.mock("../../../src/core/projects/project-ops.js", () => ({
   ]),
   openRecentProjectBySid: vi.fn(async () => h.openResult),
   createProjectFromPath: vi.fn(async () => h.openPathResult),
+  resolveProjectPath: vi.fn(async () => h.resolvedProjectPath),
 }));
 vi.mock("../../../src/core/command/dispatch.js", () => ({
   performStart: vi.fn(async () => "running"),
@@ -72,13 +79,16 @@ vi.mock("../../../src/core/session/output.js", () => ({
   renderPeekPane: vi.fn((snap: string) => snap),
 }));
 vi.mock("../../../src/core/projects/sessionPathMap.js", () => ({
-  getPathBySession: vi.fn(() => undefined),
+  getPathBySession: vi.fn(() => null),
+  setPathForSession: vi.fn(),
 }));
 vi.mock("../../../src/core/tasks/daily-audit-service.js", () => ({
   runDailyTaskAuditServiceTick: vi.fn(async () => ({
     fired: true,
     scheduledAt: 1785399600000,
     failures: 1,
+    repairDispatch: "queued",
+    notificationStatus: "sent",
   })),
   dispatchDailyTaskRepair: vi.fn(),
 }));
@@ -89,9 +99,14 @@ function fakeDeps(
   prefix = "tmux_proj_",
 ): HandlerDeps {
   return {
-    bridge: { capturePaneColored: async (s: string) => `PANE for ${s}` },
+    bridge: {
+      capturePaneColored: async (s: string) => `PANE for ${s}`,
+      hasSession: vi.fn(async () => false),
+      createSession: vi.fn(async () => {}),
+    },
     config: {
       projectSessionPrefix: prefix,
+      cdAllowedDirs: [],
       claudeStartCommand: "claude",
       startCommands: [
         { label: "Claude", command: "claude", agent: "claude" },
@@ -124,6 +139,7 @@ function fakeDeps(
       })),
     },
     currentProject: { set: vi.fn(async () => {}) },
+    configResolver: { invalidate: vi.fn() },
   } as unknown as HandlerDeps;
 }
 
@@ -140,11 +156,13 @@ describe("control server op dispatch (real unix socket)", () => {
     process.env.TCB_STATE_DIR = dir;
     h.openResult = { status: "switched", sessionName: "sOpen" };
     h.openPathResult = { status: "created", sessionName: "sNew", projectPath: "/p" };
+    h.resolvedProjectPath = { resolvedPath: "/some/dir" };
     h.orphans = [
       { pid: 111, agent: "claude", busy: null },
       { pid: 222, agent: "codex", busy: true },
     ];
     h.adoptOutcome = { ok: true, body: "adopted proj", sessionName: "sAdopt" };
+    vi.mocked(getPathBySession).mockReturnValue(null);
   });
   afterEach(async () => {
     client?.close();
@@ -209,6 +227,8 @@ describe("control server op dispatch (real unix socket)", () => {
       fired: true,
       scheduledAt: 1785399600000,
       failures: 1,
+      repairDispatch: "queued",
+      notificationStatus: "sent",
     });
     expect(runDailyTaskAuditServiceTick).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -218,6 +238,7 @@ describe("control server op dispatch (real unix socket)", () => {
         notifications: expect.any(Object),
         loopConfigFile: "/tmp/loop.yml",
         dispatchRepair: expect.any(Function),
+        dispatchProjectRecovery: expect.any(Function),
       }),
     );
   });
@@ -300,6 +321,159 @@ describe("control server op dispatch (real unix socket)", () => {
       error: "not-allowed",
       resolvedPath: "/x",
     });
+  });
+
+  it("openWorker: creates an isolated session without switching current project", async () => {
+    const deps = fakeDeps();
+    const c = await connected(deps);
+
+    await expect(
+      c.openWorker("tmux_proj_loop-worker-api", "/some/dir", { agent: "codex" }),
+    ).resolves.toMatchObject({
+      status: "created",
+      session: "tmux_proj_loop-worker-api",
+      started: "running",
+      resolvedPath: "/some/dir",
+    });
+
+    expect(resolveProjectPath).toHaveBeenCalledWith("/some/dir", [join(dir, "loop-worktrees")]);
+    expect(deps.bridge.createSession).toHaveBeenCalledWith(
+      "tmux_proj_loop-worker-api",
+      "/some/dir",
+    );
+    expect(setPathForSession).toHaveBeenCalledWith("tmux_proj_loop-worker-api", "/some/dir");
+    expect(performStart).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "tmux_proj_loop-worker-api",
+      "codex",
+    );
+    expect(deps.configResolver.invalidate).toHaveBeenCalledWith("tmux_proj_loop-worker-api");
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: allows bot-owned loop worktrees outside user project roots", async () => {
+    const deps = fakeDeps();
+    (deps.config as { cdAllowedDirs: string[] }).cdAllowedDirs = ["/Users/me/projects"];
+    h.resolvedProjectPath = { resolvedPath: join(dir, "loop-worktrees", "api", "run") };
+    const c = await connected(deps);
+
+    await expect(
+      c.openWorker("tmux_proj_loop-worker-api", join(dir, "loop-worktrees", "api", "run"), {
+        agent: "codex",
+      }),
+    ).resolves.toMatchObject({
+      status: "created",
+      session: "tmux_proj_loop-worker-api",
+      resolvedPath: join(dir, "loop-worktrees", "api", "run"),
+    });
+
+    expect(resolveProjectPath).toHaveBeenCalledWith(join(dir, "loop-worktrees", "api", "run"), [
+      "/Users/me/projects",
+      join(dir, "loop-worktrees"),
+    ]);
+  });
+
+  it("openWorker: rejects a live worker mapped to another path", async () => {
+    const deps = fakeDeps();
+    (deps.bridge.hasSession as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    vi.mocked(getPathBySession).mockReturnValue("/other/dir");
+    const c = await connected(deps);
+
+    await expect(
+      c.openWorker("tmux_proj_loop-worker-api", "/some/dir", { agent: "codex" }),
+    ).resolves.toMatchObject({
+      status: "error",
+      message: "worker session tmux_proj_loop-worker-api is already mapped to /other/dir",
+    });
+
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).not.toHaveBeenCalled();
+    expect(performStart).not.toHaveBeenCalled();
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: switches a live worker already mapped to the requested path", async () => {
+    const deps = fakeDeps();
+    (deps.bridge.hasSession as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    vi.mocked(getPathBySession).mockReturnValue("/some/dir");
+    const c = await connected(deps);
+
+    await expect(c.openWorker("tmux_proj_loop-worker-api", "/some/dir")).resolves.toMatchObject({
+      status: "switched",
+      session: "tmux_proj_loop-worker-api",
+      started: "running",
+      resolvedPath: "/some/dir",
+    });
+
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).toHaveBeenCalledWith("tmux_proj_loop-worker-api", "/some/dir");
+    expect(performStart).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "tmux_proj_loop-worker-api",
+      undefined,
+    );
+    expect(deps.configResolver.invalidate).not.toHaveBeenCalled();
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: maps an unmapped live worker before switching it", async () => {
+    const deps = fakeDeps();
+    (deps.bridge.hasSession as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const c = await connected(deps);
+
+    await expect(
+      c.openWorker("tmux_proj_loop-worker-api", "/some/dir", { agent: "claude" }),
+    ).resolves.toMatchObject({
+      status: "switched",
+      session: "tmux_proj_loop-worker-api",
+      started: "running",
+      resolvedPath: "/some/dir",
+    });
+
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).toHaveBeenCalledWith("tmux_proj_loop-worker-api", "/some/dir");
+    expect(performStart).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "tmux_proj_loop-worker-api",
+      "claude",
+    );
+    expect(deps.configResolver.invalidate).toHaveBeenCalledWith("tmux_proj_loop-worker-api");
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: passes resolver rejections through without creating sessions", async () => {
+    const deps = fakeDeps();
+    h.resolvedProjectPath = { resolvedPath: "/denied", error: "not-allowed" };
+    const c = await connected(deps);
+
+    await expect(c.openWorker("tmux_proj_loop-worker-api", "/denied")).resolves.toEqual({
+      status: "invalid",
+      error: "not-allowed",
+      resolvedPath: "/denied",
+    });
+
+    expect(deps.bridge.hasSession).not.toHaveBeenCalled();
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).not.toHaveBeenCalled();
+    expect(performStart).not.toHaveBeenCalled();
+  });
+
+  it("openWorker: rejects non-worker session names before creating sessions", async () => {
+    const deps = fakeDeps();
+    const c = await connected(deps);
+
+    await expect(
+      c.openWorker("tmux_proj_-api", "/some/dir", { agent: "codex" }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      error: "invalid-worker-session",
+    });
+
+    expect(resolveProjectPath).not.toHaveBeenCalled();
+    expect(deps.bridge.createSession).not.toHaveBeenCalled();
+    expect(setPathForSession).not.toHaveBeenCalled();
+    expect(performStart).not.toHaveBeenCalled();
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
   });
 
   it("orphans lists adoptable processes; adopt runs the takeover", async () => {

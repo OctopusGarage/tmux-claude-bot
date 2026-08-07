@@ -16,6 +16,8 @@ import {
   performStart,
 } from "../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../src/core/command/queue.js";
+import { writeLoopSupervisorWorkOrderState } from "../src/core/loop/supervisor-state.js";
+import type { LoopWorkOrder } from "../src/core/loop/work-order.js";
 import { setPathForSession } from "../src/core/projects/sessionPathMap.js";
 import { fakeDeps } from "./adapters/lark/_fakes.js";
 
@@ -50,6 +52,59 @@ function deps(claudeOver: Record<string, unknown> = {}) {
       gracefulRestartWithContinue: vi.fn(async () => {}),
       ...claudeOver,
     } as never,
+  });
+}
+
+function writeTestWorkOrder(input: {
+  id: string;
+  projectPath: string;
+  sourceWorktree?: string;
+  worktreeIsolation?: "isolated" | "source";
+  taskKind?: NonNullable<LoopWorkOrder["task"]>["kind"];
+  supervisorSession?: string;
+}): void {
+  const workOrder = {
+    id: input.id,
+    scheduledAt: 1,
+    projectId: "api",
+    projectName: "api",
+    projectPath: input.projectPath,
+    ...(input.sourceWorktree !== undefined
+      ? {
+          executionIsolation: {
+            mode: "supervised-worker",
+            expectedWorktree: input.projectPath,
+            sourceWorktree: input.sourceWorktree,
+            worktreeIsolation: input.worktreeIsolation ?? "isolated",
+            preparedBy: "system-git-worktree",
+            contextReset: "compact",
+            cleanup: {
+              success: "release-worker",
+              failure: "retain-for-ttl",
+              retainFailureForHours: 72,
+            },
+          },
+        }
+      : {}),
+    task: { kind: input.taskKind ?? "architecture" },
+    agent: "codex",
+    goal: "test",
+    maxRounds: 1,
+    targetScore: 95,
+    runner: { kind: "agent-supervised" },
+    allowedActions: [],
+    blockedActions: [],
+    skills: { approved: [] },
+    preflight: { commands: [] },
+    verification: { commands: [] },
+    pullRequest: { enabled: false },
+    requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${input.id}]`,
+  } as unknown as LoopWorkOrder;
+  writeLoopSupervisorWorkOrderState({
+    workOrder,
+    supervisorSession: input.supervisorSession ?? "tmux_proj_loop-supervisor-1",
+    status: "in-flight",
+    now: Date.now(),
   });
 }
 
@@ -426,6 +481,84 @@ describe("executeMessage — control actions", () => {
     expect(d.bridge.sendKeys).not.toHaveBeenCalled();
   });
 
+  it("blocks ordinary text while the same project has active supervisor automation", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-conflict-"));
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-conflict-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      setPathForSession("proj-1", projectDir);
+      writeTestWorkOrder({ id: "run-1", projectPath: projectDir, taskKind: "bug-fix" });
+      const d = deps();
+
+      const out = await executeMessage(msg("text", { text: "please continue", origin: "user" }), d);
+
+      expect(out).toContain("项目正在执行自动化任务");
+      expect(out).toContain("bug-fix");
+      expect(out).toContain("run-1");
+      expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = oldStateDir;
+    }
+  });
+
+  it("allows ordinary text when active supervisor automation uses an isolated worktree", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-isolated-conflict-"));
+    const projectDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tcb-dispatch-isolated-conflict-project-"),
+    );
+    const isolatedDir = path.join(stateDir, "loop-worktrees", "api", "run-1");
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      setPathForSession("proj-1", projectDir);
+      writeTestWorkOrder({
+        id: "run-1",
+        projectPath: isolatedDir,
+        sourceWorktree: projectDir,
+        worktreeIsolation: "isolated",
+        taskKind: "bug-fix",
+      });
+      const d = deps();
+
+      const out = await executeMessage(msg("text", { text: "please continue", origin: "user" }), d);
+
+      expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
+      expect(d.bridge.sendKeys).toHaveBeenCalled();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = oldStateDir;
+    }
+  });
+
+  it("allows system text while the same project has active supervisor automation", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-dispatch-system-conflict-"));
+    const projectDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tcb-dispatch-system-conflict-project-"),
+    );
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      setPathForSession("proj-1", projectDir);
+      writeTestWorkOrder({ id: "run-1", projectPath: projectDir, taskKind: "architecture" });
+      const d = deps();
+
+      await executeMessage(msg("text", { text: "supervisor prompt", origin: "system" }), d);
+
+      expect(d.bridge.sendKeys).toHaveBeenCalledWith("supervisor prompt", "proj-1");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = oldStateDir;
+    }
+  });
+
   it("routes a stale dotted queued session name to its safe live alias", async () => {
     const unsafe = "tmux_proj_-Users-test-.alcove-workspaces-data-family";
     const safe = "tmux_proj_-Users-test-_alcove-workspaces-data-family";
@@ -596,9 +729,8 @@ describe("executeMessage — text action with history", () => {
     expect(out).toBe("fallback keyed reply");
   });
 
-  it("handles a text action with undefined text (length defaults to 0, no history match)", async () => {
-    // msg.text undefined exercises `msg.text?.length ?? 0` in the entry log and a
-    // null sent-text lookup; falls back to the pane snapshot.
+  it("handles a text action with undefined text without returning raw pane output", async () => {
+    // msg.text undefined exercises the entry log and a null sent-text lookup.
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
@@ -609,32 +741,39 @@ describe("executeMessage — text action with history", () => {
     const noText = msg("text");
     delete (noText as { text?: string }).text;
     const out = await executeMessage(noText, d);
-    expect(out).toBe("PANE_FOR_UNDEF");
+    expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
   });
 
-  it("falls back to the processed tmux pane when no history reply matches", async () => {
-    // No history file → getLatestAssistantReply returns null → pane output is used.
+  it("does not return raw pane output to chat when no history reply matches", async () => {
+    // No history file -> getLatestAssistantReply returns null; ordinary chat should not
+    // receive a raw pane snapshot because it may contain Codex UI or stale transcript text.
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
-        waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE_SNAPSHOT" })),
+        waitUntilDone: vi.fn(async () => ({
+          done: true,
+          output: "MCP / CLI\n-> runtime\n› Use /skills to list available skills",
+        })),
       } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "no matching prompt here xyz" }), d);
-    expect(out).toBe("PANE_SNAPSHOT"); // output.process is identity in the fake
+    expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
   });
 
-  it("reports empty output when the pane processes to nothing", async () => {
+  it("allows system-owned text to use pane output when no history reply matches", async () => {
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
-        waitUntilDone: vi.fn(async () => ({ done: true, output: "   " })),
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "SYSTEM_PANE_RESULT" })),
       } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
-    const out = await executeMessage(msg("text", { text: "another unmatched prompt abc" }), d);
-    expect(out).toBe("返回空内容 · 用 /peek 查看画面");
+    const out = await executeMessage(
+      msg("text", { text: "supervisor unmatched prompt abc", origin: "system" }),
+      d,
+    );
+    expect(out).toBe("SYSTEM_PANE_RESULT");
   });
 
   it("waits for the agent input surface before sending text", async () => {
@@ -664,6 +803,69 @@ describe("executeMessage — text action with history", () => {
     expect(d.agent.waitUntilInputReady).toHaveBeenCalledWith("proj-1");
   });
 
+  it("returns a user-facing not-ready message instead of leaking raw Codex readiness errors", async () => {
+    const d = liveFakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilInputReady: vi.fn(async () => {
+          throw new Error("Codex did not become ready in time");
+        }),
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "PANE" })),
+      } as never,
+      bridge: {
+        sendKeys: vi.fn(async () => {}),
+      } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    await expect(executeMessage(msg("text", { text: "build the feature" }), d)).resolves.toBe(
+      "Agent 暂时还没准备好接收输入，请稍后重试；如果持续出现，请重启该会话。",
+    );
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("preserves readiness failures for system-origin text after the retry horizon", async () => {
+    const d = liveFakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilInputReady: vi.fn(async () => {
+          throw new Error("Codex did not become ready in time");
+        }),
+      } as never,
+      config: { maxWaitDoneMs: 1, maxWaitDoneTotalMs: 5 } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    await expect(
+      executeMessage(msg("text", { text: "system work", origin: "system" }), d),
+    ).rejects.toThrow("Codex did not become ready in time");
+  });
+
+  it("retries input readiness for system-origin text within the long-task horizon", async () => {
+    const waitUntilInputReady = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Codex did not become ready in time"))
+      .mockRejectedValueOnce(new Error("Codex did not become ready in time"))
+      .mockResolvedValueOnce(undefined);
+    const d = liveFakeDeps({
+      agent: {
+        checkIfRunning: vi.fn(async () => true),
+        waitUntilInputReady,
+        waitUntilDone: vi.fn(async () => ({ done: true, output: "DONE" })),
+      } as never,
+      config: { maxWaitDoneMs: 1, maxWaitDoneTotalMs: 5_000 } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    await expect(
+      executeMessage(
+        msg("text", { text: "system work", origin: "system", maxWaitDoneTotalMs: 5_000 }),
+        d,
+      ),
+    ).resolves.toBe("DONE");
+    expect(waitUntilInputReady).toHaveBeenCalledTimes(3);
+  });
+
   it("keeps waiting across timeout rounds and notifies once, then resolves the real result", async () => {
     const waitUntilDone = vi
       .fn()
@@ -678,7 +880,7 @@ describe("executeMessage — text action with history", () => {
 
     const notices: string[] = [];
     const out = await executeMessage(
-      msg("text", { text: "long task xyz", notify: (t) => notices.push(t) }),
+      msg("text", { text: "long task xyz", origin: "system", notify: (t) => notices.push(t) }),
       d,
     );
 
@@ -686,6 +888,30 @@ describe("executeMessage — text action with history", () => {
     expect(waitUntilDone).toHaveBeenCalledTimes(3);
     expect(notices).toHaveLength(1); // one notice at the first timeout, not one per round
     expect(notices[0]).toContain("任务仍在进行中");
+  });
+
+  it("resolves a system-owned task when its done probe passes before the agent becomes idle", async () => {
+    const waitUntilDone = vi.fn(async () => ({
+      done: false,
+      output: "[LOOP_SUPERVISOR_DONE:wo-1]\nfinal summary written",
+    }));
+    const d = liveFakeDeps({
+      agent: { checkIfRunning: vi.fn(async () => true), waitUntilDone } as never,
+      config: { maxWaitDoneMs: 100, maxWaitDoneTotalMs: 1000 } as never,
+    });
+    (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
+
+    const out = await executeMessage(
+      msg("text", {
+        text: "supervised work",
+        origin: "system",
+        doneProbe: (output) => output.includes("[LOOP_SUPERVISOR_DONE:wo-1]"),
+      }),
+      d,
+    );
+
+    expect(out).toContain("[LOOP_SUPERVISOR_DONE:wo-1]");
+    expect(waitUntilDone).toHaveBeenCalledTimes(1);
   });
 
   it("gives up at the total-wait horizon with the still-running reply", async () => {
@@ -715,11 +941,14 @@ describe("executeMessage — text action with history", () => {
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
 
-    const out = await executeMessage(msg("text", { text: "quiet long task xyz" }), d);
+    const out = await executeMessage(
+      msg("text", { text: "quiet long task xyz", origin: "system" }),
+      d,
+    );
     expect(out).toBe("DONE_LATE");
   });
 
-  it("falls back to capturePane when waitUntilDone throws", async () => {
+  it("does not return capturePane fallback to chat when waitUntilDone throws", async () => {
     const d = liveFakeDeps({
       agent: {
         checkIfRunning: vi.fn(async () => true),
@@ -740,10 +969,10 @@ describe("executeMessage — text action with history", () => {
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "fallback pane test xyz" }), d);
-    expect(out).toBe("PANE_FALLBACK");
+    expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
   });
 
-  it("falls back to capturePane when waitUntilDone throws a non-Error value", async () => {
+  it("does not return capturePane fallback to chat when waitUntilDone throws a non-Error value", async () => {
     // Throwing a string (not an Error) exercises the `: err` branch of the
     // error-logging ternary; capturePane still salvages the pane.
     const d = liveFakeDeps({
@@ -766,7 +995,7 @@ describe("executeMessage — text action with history", () => {
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
     const out = await executeMessage(msg("text", { text: "non error throw xyz" }), d);
-    expect(out).toBe("PANE_AFTER_STRING_THROW");
+    expect(out).toBe("未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。");
   });
 
   it("rethrows a normalized error when both waitUntilDone and capturePane throw non-Errors", async () => {

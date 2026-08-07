@@ -101,6 +101,24 @@ type TickArgs = { file: string; json: boolean; now: number };
 type SkillSyncArgs = { file: string; json: boolean };
 type SkillRefreshArgs = { file: string; json: boolean; write: boolean };
 type RunArgs = { file: string; projectId: string; json: boolean };
+type LoopTargetKind = "project" | "workspace" | "repo";
+type TargetListArgs = { file: string; json: boolean };
+type TargetToggleArgs = {
+  file: string;
+  kind: LoopTargetKind;
+  id: string;
+  enabled: boolean;
+  json: boolean;
+};
+type LoopTargetSummary = {
+  kind: LoopTargetKind;
+  id: string;
+  name: string;
+  enabled: boolean;
+  scheduled: boolean;
+  scheduledJobs: string[];
+  schedule?: string;
+};
 
 function rejectManualRun(
   project: ReturnType<typeof parseLoopConfigYaml>["projects"][number],
@@ -179,6 +197,134 @@ function parseRunArgs(args: string[]): RunArgs | string {
     return `unknown loop run option "${arg}"`;
   }
   return { file, projectId, json };
+}
+
+function parseTargetListArgs(args: string[]): TargetListArgs | string {
+  const [, , file, ...rest] = args;
+  if (file === undefined) return "Usage: loop targets list <file> [--json]";
+  let json = false;
+  for (const arg of rest) {
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    return `unknown loop targets list option "${arg}"`;
+  }
+  return { file, json };
+}
+
+function parseTargetToggleArgs(args: string[], enabled: boolean): TargetToggleArgs | string {
+  const [, , file, kindValue, id, ...rest] = args;
+  if (file === undefined || kindValue === undefined || id === undefined) {
+    return "Usage: loop targets <enable|disable> <file> <project|workspace|repo> <id> [--json]";
+  }
+  if (kindValue !== "project" && kindValue !== "workspace" && kindValue !== "repo") {
+    return `unknown loop target kind "${kindValue}"`;
+  }
+  const kind = kindValue;
+  let json = false;
+  for (const arg of rest) {
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    return `unknown loop targets ${enabled ? "enable" : "disable"} option "${arg}"`;
+  }
+  return { file, kind, id, enabled, json };
+}
+
+function targetSummaries(config: ReturnType<typeof parseLoopConfigYaml>): LoopTargetSummary[] {
+  const validation = validateLoopConfig(stringify(config));
+  const projectJobs = new Map(
+    validation.projects.map((project) => [project.id, project.scheduledJobs] as const),
+  );
+  const workspaceJobs = new Map(
+    validation.workspaces.map((workspace) => [workspace.id, workspace.scheduledJobs] as const),
+  );
+  return [
+    ...config.projects.map((project): LoopTargetSummary => {
+      const scheduledJobs = projectJobs.get(project.id) ?? [];
+      return {
+        kind: "project",
+        id: project.id,
+        name: project.name,
+        enabled: project.enabled,
+        scheduled: scheduledJobs.length > 0,
+        scheduledJobs,
+        ...(project.schedule !== undefined ? { schedule: project.schedule } : {}),
+      };
+    }),
+    ...config.workspaces.map((workspace): LoopTargetSummary => {
+      const scheduledJobs = workspaceJobs.get(workspace.id) ?? [];
+      return {
+        kind: "workspace",
+        id: workspace.id,
+        name: workspace.name,
+        enabled: workspace.enabled,
+        scheduled: scheduledJobs.length > 0,
+        scheduledJobs,
+        ...(workspace.architecture.schedule !== undefined
+          ? { schedule: workspace.architecture.schedule }
+          : {}),
+      };
+    }),
+    ...config.prReview.repositories.map(
+      (repository): LoopTargetSummary => ({
+        kind: "repo",
+        id: repository.id,
+        name: repository.name,
+        enabled: repository.enabled,
+        scheduled: repository.enabled,
+        scheduledJobs: repository.enabled ? ["repository-pull-request-review"] : [],
+        schedule: repository.schedule,
+      }),
+    ),
+  ];
+}
+
+function renderLoopTargetsText(targets: LoopTargetSummary[]): string {
+  if (targets.length === 0) return "loop targets: none";
+  return [
+    `loop targets: ${targets.length}`,
+    ...targets.map((target) => {
+      const schedule = target.scheduled ? "scheduled" : "paused";
+      const enabled = target.enabled ? "enabled" : "disabled";
+      const jobs = target.scheduledJobs.length > 0 ? target.scheduledJobs.join(",") : "none";
+      return `- ${target.kind}:${target.id}: ${enabled} ${schedule} jobs=${jobs}`;
+    }),
+  ].join("\n");
+}
+
+function rawTargetList(doc: Record<string, unknown>, kind: LoopTargetKind): unknown[] {
+  if (kind === "project") return Array.isArray(doc.projects) ? doc.projects : [];
+  if (kind === "workspace") return Array.isArray(doc.workspaces) ? doc.workspaces : [];
+  const prReview =
+    typeof doc.prReview === "object" && doc.prReview !== null && !Array.isArray(doc.prReview)
+      ? (doc.prReview as Record<string, unknown>)
+      : {};
+  return Array.isArray(prReview.repositories) ? prReview.repositories : [];
+}
+
+function setLoopTargetEnabled(
+  text: string,
+  input: TargetToggleArgs,
+): { text: string; changed: boolean } {
+  const raw = parse(text) as Record<string, unknown> | null;
+  const doc = raw ?? {};
+  const targets = rawTargetList(doc, input.kind);
+  const target = targets.find(
+    (item): item is Record<string, unknown> =>
+      typeof item === "object" &&
+      item !== null &&
+      !Array.isArray(item) &&
+      (item as Record<string, unknown>).id === input.id,
+  );
+  if (target === undefined) throw new Error(`loop target not found: ${input.kind} "${input.id}"`);
+  const previous = target.enabled !== false;
+  target.enabled = input.enabled;
+  const nextText = stringify(doc);
+  parseLoopConfigYaml(nextText);
+  return { text: nextText, changed: previous !== input.enabled };
 }
 
 function runShellCommand(run: AgentSkillCommandRun | LoopRunCommandInvocation) {
@@ -283,8 +429,56 @@ export function runLoopCommand(args: string[]): LoopCommandResult {
             ? JSON.stringify(reports)
             : [
                 `loop reports: ${reports.length}`,
-                ...reports.map((r) => `- ${r.projectId}: ${r.status} ${r.runId}`),
+                ...reports.map(
+                  (r) =>
+                    `- ${r.projectId}: ${r.status} ${r.runId}${
+                      r.evalOutcome === undefined ? "" : ` eval=${r.evalOutcome.status}`
+                    }`,
+                ),
               ].join("\n"),
+      };
+    }
+    if (command === "targets") {
+      const action = args[1];
+      if (action === "list") {
+        const parsed = parseTargetListArgs(args);
+        if (typeof parsed === "string") return { exitCode: 1, stderr: parsed };
+        const config = parseLoopConfigYaml(readFileSync(parsed.file, "utf8"));
+        const targets = targetSummaries(config);
+        return {
+          exitCode: 0,
+          stdout: parsed.json ? JSON.stringify(targets) : renderLoopTargetsText(targets),
+        };
+      }
+      if (action === "enable" || action === "disable") {
+        const parsed = parseTargetToggleArgs(args, action === "enable");
+        if (typeof parsed === "string") return { exitCode: 1, stderr: parsed };
+        const text = readFileSync(parsed.file, "utf8");
+        const updated = setLoopTargetEnabled(text, parsed);
+        if (updated.changed) writeFileSync(parsed.file, updated.text);
+        const config = parseLoopConfigYaml(updated.text);
+        const target = targetSummaries(config).find(
+          (candidate) => candidate.kind === parsed.kind && candidate.id === parsed.id,
+        );
+        const result = {
+          kind: parsed.kind,
+          id: parsed.id,
+          enabled: parsed.enabled,
+          changed: updated.changed,
+          scheduled: target?.scheduled ?? false,
+          scheduledJobs: target?.scheduledJobs ?? [],
+        };
+        return {
+          exitCode: 0,
+          stdout: parsed.json
+            ? JSON.stringify(result)
+            : `loop target ${action}: ${parsed.kind}:${parsed.id} ${updated.changed ? "updated" : "unchanged"}`,
+        };
+      }
+      return {
+        exitCode: 1,
+        stderr:
+          "Usage: loop targets list <file> [--json] | loop targets <enable|disable> <file> <project|workspace|repo> <id> [--json]",
       };
     }
     if (command === "backlog") {
@@ -387,7 +581,7 @@ export function runLoopCommand(args: string[]): LoopCommandResult {
     return {
       exitCode: 1,
       stderr:
-        "Usage: loop validate <file> [--json] | loop tick <file> [--now <time>] [--json] | loop run <file> <projectId> [--json] | loop reports list [--json] | loop backlog list [--all] [--json] | loop backlog close <id> [--json] | loop skills list [--json] | loop skills sync <file> [--json] | loop skills refresh <file> [--write] [--json]",
+        "Usage: loop validate <file> [--json] | loop tick <file> [--now <time>] [--json] | loop run <file> <projectId> [--json] | loop reports list [--json] | loop targets list <file> [--json] | loop targets <enable|disable> <file> <project|workspace|repo> <id> [--json] | loop backlog list [--all] [--json] | loop backlog close <id> [--json] | loop skills list [--json] | loop skills sync <file> [--json] | loop skills refresh <file> [--write] [--json]",
     };
   } catch (err) {
     return {

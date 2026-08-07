@@ -2,7 +2,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { completeLoopSupervisorRun } from "../../src/core/loop/supervisor-completion.js";
+import {
+  classifyLoopSupervisorScheduleRetry,
+  completeLoopSupervisorRun,
+} from "../../src/core/loop/supervisor-completion.js";
+import { workOrderStateForResult } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -35,6 +39,81 @@ const workOrder = {
 } satisfies LoopWorkOrder;
 
 describe("completeLoopSupervisorRun", () => {
+  it("persists invalid supervisor output as a terminal failed state", () => {
+    expect(
+      workOrderStateForResult({
+        status: "invalid-output",
+        reason: "missing-final-marker",
+        output: "",
+      }),
+    ).toBe("failed");
+  });
+
+  it("classifies retryable supervisor dispatch delivery failures by retry kind", () => {
+    const retry = classifyLoopSupervisorScheduleRetry({
+      status: "dispatch-failed",
+      reason: "loop supervisor task queue is full",
+      output: "loop supervisor task queue is full",
+    });
+
+    expect(retry).toEqual({
+      retrySchedule: true,
+      kind: "supervisor-dispatch-unavailable",
+    });
+  });
+
+  it("classifies a worker that never consumes a queued prompt as retryable delivery", () => {
+    expect(
+      classifyLoopSupervisorScheduleRetry({
+        status: "dispatch-failed",
+        reason: "loop supervisor worker did not consume queued task before deadline",
+        output: "loop supervisor worker did not consume queued task before deadline",
+      }),
+    ).toEqual({
+      retrySchedule: true,
+      kind: "supervisor-dispatch-unavailable",
+    });
+  });
+
+  it("classifies model-capacity dispatch failures as retryable agent transient failures", () => {
+    const retry = classifyLoopSupervisorScheduleRetry({
+      status: "dispatch-failed",
+      reason: "Selected model is at capacity. Please try a different model.",
+      output: "Selected model is at capacity. Please try a different model.",
+    });
+
+    expect(retry).toEqual({
+      retrySchedule: true,
+      kind: "agent-transient-failure",
+    });
+  });
+
+  it("classifies invalid final output as an output-contract retry", () => {
+    const retry = classifyLoopSupervisorScheduleRetry({
+      status: "invalid-output",
+      reason: "invalid-summary",
+      output: "[LOOP_SUPERVISOR_DONE:wo-completion]\n{}",
+    });
+
+    expect(retry).toEqual({
+      retrySchedule: true,
+      kind: "supervisor-output-contract",
+    });
+  });
+
+  it("does not retry non-delivery dispatch failures", () => {
+    const retry = classifyLoopSupervisorScheduleRetry({
+      status: "dispatch-failed",
+      reason: "agent command exited 2",
+      output: "agent command exited 2",
+    });
+
+    expect(retry).toEqual({
+      retrySchedule: false,
+      kind: "not-retryable",
+    });
+  });
+
   it("returns retrySchedule for dispatch failures caused by unavailable supervisor delivery", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-supervisor-completion-"));
 

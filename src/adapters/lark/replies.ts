@@ -17,7 +17,7 @@ const MAX_SEND_ATTEMPTS = 3;
  * exhausted — re-retrying those here would just hammer a live rate limit. It
  * deliberately passes the transient ones below straight through, so THIS layer is
  * where they get a second chance:
- *  - `send_timeout`: the response timed out (the user-reported "偶尔超时");
+ *  - `send_timeout`: the response timed out;
  *  - `not_connected`: the WS was momentarily down — a short backoff may let the
  *    keepalive reconnect.
  * Everything else (`format_error` / `target_revoked` / `permission_denied` /

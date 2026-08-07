@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { listLoopReports } from "../../src/core/loop/report.js";
 import { reconcileLoopSupervisorWorkOrders } from "../../src/core/loop/service.js";
+import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
@@ -64,7 +65,13 @@ function workOrder(stateDir: string, projectPath: string): LoopWorkOrder {
     execution: { agent: true },
     recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: true },
-    pullRequestPolicy: { enabled: false, base: "main", switchBack: "main", autoMerge: false },
+    pullRequestPolicy: {
+      enabled: false,
+      base: "main",
+      switchBack: "main",
+      autoMerge: false,
+      mergeMethod: "squash",
+    },
     requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
     finalSummaryPath: join(stateDir, "loop-runs", "hub", runId, "supervisor-final-summary.json"),
   };
@@ -179,6 +186,159 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
+  it("fails and records a stale dispatching work order even when its lease is already gone", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = {
+      ...workOrder(stateDir, projectDir),
+      task: { kind: "test-coverage" },
+      finalSummaryPath: join(
+        stateDir,
+        "loop-runs",
+        "hub",
+        "1784196600000-hub",
+        "supervisor-final-summary.json",
+      ),
+    } as unknown as LoopWorkOrder;
+    const runDir = join(stateDir, "loop-runs", "hub", order.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "work-order.json"), `${JSON.stringify(order, null, 2)}\n`);
+    writeFileSync(
+      join(runDir, "work-order-state.json"),
+      `${JSON.stringify(
+        {
+          status: "dispatching",
+          projectId: "hub",
+          runId: order.id,
+          supervisorSession: "tmux_proj_loop-supervisor",
+          scheduledAt: order.scheduledAt,
+          updatedAt: 1_000,
+        },
+        null,
+      )}\n`,
+    );
+
+    const result = reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 1_000 + 12 * 60 * 60 * 1000 + 1,
+      runCommand: () => {
+        throw new Error("stale dispatching work orders must not run project commands");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 0, failed: 1 });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "failed"',
+    );
+    expect(new DailyTaskLedger().listAll()).toEqual([
+      expect.objectContaining({
+        taskId: "loop:hub:test-coverage:1784196600000",
+        status: "failed",
+        repairStatus: "pending",
+      }),
+    ]);
+  });
+
+  it("fails a dispatching work order after the short dispatch grace period", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = {
+      ...workOrder(stateDir, projectDir),
+      task: { kind: "security-maintenance" },
+    } as unknown as LoopWorkOrder;
+    const now = Date.now();
+    const dispatchStartedAt = now - 5 * 60 * 1000 - 1;
+    const runDir = join(stateDir, "loop-runs", "hub", order.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "work-order.json"), `${JSON.stringify(order, null, 2)}\n`);
+    writeFileSync(
+      join(runDir, "work-order-state.json"),
+      `${JSON.stringify(
+        {
+          status: "dispatching",
+          projectId: "hub",
+          runId: order.id,
+          supervisorSession: "tmux_proj_loop-supervisor-1",
+          scheduledAt: order.scheduledAt,
+          updatedAt: dispatchStartedAt,
+        },
+        null,
+      )}\n`,
+    );
+
+    const result = reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now,
+      runCommand: () => {
+        throw new Error("stale dispatching work orders must not run project commands");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "failed"',
+    );
+  });
+
+  it("does not recover a dispatching work order while its supervisor lease is active", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = {
+      ...workOrder(stateDir, projectDir),
+      task: { kind: "security-maintenance" },
+    } as unknown as LoopWorkOrder;
+    const now = Date.now();
+    const runDir = join(stateDir, "loop-runs", "hub", order.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "work-order.json"), `${JSON.stringify(order, null, 2)}\n`);
+    writeFileSync(
+      join(runDir, "work-order-state.json"),
+      `${JSON.stringify(
+        {
+          status: "dispatching",
+          projectId: "hub",
+          runId: order.id,
+          supervisorSession: "tmux_proj_loop-supervisor-1",
+          scheduledAt: order.scheduledAt,
+          updatedAt: now - 5 * 60 * 1000 - 1,
+        },
+        null,
+      )}\n`,
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: order.projectPath,
+          status: "active",
+          leasedAt: now - 5 * 60 * 1000,
+          updatedAt: now - 5 * 60 * 1000,
+        },
+      ],
+    });
+
+    const result = reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now,
+      runCommand: () => {
+        throw new Error("leased dispatching work orders must not be reconciled");
+      },
+    });
+
+    expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(JSON.parse(readFileSync(join(runDir, "work-order-state.json"), "utf8"))).toEqual(
+      expect.objectContaining({ status: "dispatching" }),
+    );
+  });
+
   it("runs the supervised PR gate when reconciling a completed work order", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
@@ -207,6 +367,7 @@ describe("loop supervisor work order reconciliation", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: false,
+        mergeMethod: "squash" as const,
       },
     } satisfies LoopWorkOrder;
     const runDir = writeUnfinishedRun(stateDir, order);
@@ -294,6 +455,7 @@ describe("loop supervisor work order reconciliation", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: true,
+        mergeMethod: "squash" as const,
       },
       requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:1784196600000-hub-opportunity-discovery]",
       finalSummaryPath: join(

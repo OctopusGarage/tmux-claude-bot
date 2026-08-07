@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { normalizeError } from "../../shared/utils/error.js";
+import { loopRunArtifactPath } from "../loop/artifacts.js";
 import type {
   OpportunityDiscoveryReport,
   OpportunityStatus,
@@ -15,7 +16,7 @@ type OpportunityIndex = Record<string, OpportunitySuggestion>;
 const STORE_FILE = "opportunities/index.json";
 
 export function opportunityReportPath(projectId: string, runId: string): string {
-  return join(appStateDir(), "loop-runs", projectId, runId, "opportunities.json");
+  return loopRunArtifactPath(projectId, runId, "opportunities");
 }
 
 export class OpportunityStore {

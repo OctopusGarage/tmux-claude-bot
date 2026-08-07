@@ -1,40 +1,14 @@
 import { UI_ICONS } from "./ui/icons.js";
 
-export type RetryPolicy = {
-  maxRetries: number;
-  baseDelayMs: number;
-  backoffFactor: number;
-  maxDelayMs: number;
-  jitter: boolean;
-};
-
-export type AutopilotRuntimeConfig = {
-  tickMs: number; // fallback loop interval; 0 = master off
-  idleGraceMs: number; // min idle before an idle-nudge
-  cooldownMs: number; // min gap between nudges
-  maxIterations: number; // nudges+recoveries per run before stop
-  maxWallClockMs: number; // per-run wall-clock budget
-  idlePromptText: string; // idle/recover resume nudge, e.g. "请继续完成当前任务"
-  apiErrorPromptText: string; // distinct, clearer retry prompt for API errors
-  maxRecoveryAttempts: number;
-  /** Retry policy for other-transient API errors (connection closed, terminated, etc.) */
-  retry: RetryPolicy;
-  /** Retry policy for server-busy/overload/rate-limit errors — slower, longer backoff. */
-  retryBusy: RetryPolicy;
-  goalsDir: string;
-  usagePausePct: number;
-  keepAliveDoneMarker: string; // sentinel a pure keep-alive task emits when fully done
-  keepAliveDonePrompt: string; // instruction appended to the keep-alive nudge asking for the marker
-  maxRounds: number; // upper bound on goal-cycle rounds (clamp at parse time)
-  betweenGoals: "none" | "compact" | "clear";
-};
-
 export type LarkConfig = {
   appId: string;
   appSecret: string;
   allowedOpenIds: Set<string>;
   domain: "feishu" | "lark";
 };
+
+export type RuntimeGuardianMode = "observe" | "fast-heal";
+export type WorktreeIsolationMode = "isolated" | "source" | "auto";
 
 /** Which coding agent a start command launches. Absent => "claude" (back-compat). */
 export type AgentKind = "claude" | "codex";
@@ -97,22 +71,34 @@ export type AppConfig = {
    * against live tmux; default 5 min, 0 disables. */
   runningSweepMs: number;
   /** Close idle project agents after this long without meaningful use; 0 disables. */
-  sessionIdleReaper: { tickMs: number; maxIdleMs: number };
+  sessionIdleReaper: { tickMs: number; maxIdleMs: number; loopWorkerMaxIdleMs: number };
   /** Run reboot recovery automatically on boot (idempotent); default true. */
   autoRecover: boolean;
   /** macOS: keep the Mac awake on AC power while the bot runs. Opt-in; works
    * for any launch path. */
   keepAwake: boolean;
   lark?: LarkConfig | undefined;
-  autopilot: AutopilotRuntimeConfig;
   scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
+  runtimeGuardian: {
+    enabled: boolean;
+    mode: RuntimeGuardianMode;
+    worktreeIsolation: WorktreeIsolationMode;
+    tickMs: number;
+    lookbackMs: number;
+    cooldownMs: number;
+    repoPath: string;
+    repairBranch: string;
+    maxFindingsPerTick: number;
+  };
   taskAudit: {
     enabled: boolean;
     schedule: string;
     tickMs: number;
     channel: "telegram" | "lark" | "both";
     autoRepair: boolean;
+    repoPath: string;
     repairBranch: string;
+    repairWorktreeIsolation: WorktreeIsolationMode;
   };
   loopEngineering: {
     configFile: string;
@@ -123,6 +109,7 @@ export type AppConfig = {
       agent: AgentKind;
       poolSize: number;
       resetBeforeWorkOrder: "none" | "compact" | "clear";
+      worktreeIsolation: WorktreeIsolationMode;
     };
   };
   homeOperator: { enabled: boolean; dir: string; agent: "claude" | "codex" };

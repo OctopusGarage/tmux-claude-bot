@@ -5,6 +5,7 @@ import type { NotificationRequest } from "../../core/notifications/gateway.js";
 import type { DailyTaskAuditServiceTickResult } from "../../core/tasks/daily-audit-service.js";
 import type { AgentKind } from "../../shared/types.js";
 import {
+  type ControlCallerProvenance,
   type ControlRequest,
   controlSocketCandidatePaths,
   createLineDecoder,
@@ -14,13 +15,14 @@ import {
   type ServerMessage,
 } from "./protocol.js";
 
-type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout };
 
 /** Distributive Omit: `Omit<Union, K>` keeps only keys common to all variants
  * (losing `session`/`text`/…); this preserves each variant's own fields. */
 type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 
 const RECONNECT_MS = 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 function connectSocket(paths = controlSocketCandidatePaths()): Promise<net.Socket> {
   const [path, ...rest] = paths;
@@ -52,6 +54,12 @@ export class ControlClient extends EventEmitter {
   private readonly pending = new Map<number, Pending>();
   private decode = createLineDecoder<ServerMessage>();
   private closing = false;
+  private readonly requestTimeoutMs: number;
+
+  constructor(opts: { requestTimeoutMs?: number } = {}) {
+    super();
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  }
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -70,7 +78,10 @@ export class ControlClient extends EventEmitter {
     conn.on("error", () => {}); // a `close` always follows; handle teardown there
     conn.on("close", () => {
       this.conn = null;
-      for (const p of this.pending.values()) p.reject(new Error("disconnected"));
+      for (const p of this.pending.values()) {
+        clearTimeout(p.timer);
+        p.reject(new Error("disconnected"));
+      }
       this.pending.clear();
       this.emit("disconnected");
       if (!this.closing) this.scheduleReconnect();
@@ -97,12 +108,27 @@ export class ControlClient extends EventEmitter {
         const p = this.pending.get(msg.id);
         if (!p) continue;
         this.pending.delete(msg.id);
+        clearTimeout(p.timer);
         if (msg.ok) p.resolve(msg.data);
         else p.reject(new Error(msg.error));
       } else {
         this.emit(msg.event, msg);
       }
     }
+  }
+
+  private callerProvenance(): ControlCallerProvenance {
+    let cwd: string | undefined;
+    try {
+      cwd = process.cwd();
+    } catch {
+      cwd = undefined;
+    }
+    return {
+      source: "control-client",
+      pid: process.pid,
+      ...(cwd !== undefined ? { cwd } : {}),
+    };
   }
 
   private req(payload: WithoutId<ControlRequest>): Promise<unknown> {
@@ -112,8 +138,15 @@ export class ControlClient extends EventEmitter {
         return;
       }
       const id = this.nextId++;
-      this.pending.set(id, { resolve, reject });
-      this.conn.write(encodeLine({ id, ...payload } as ControlRequest));
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new Error(`control request timed out after ${this.requestTimeoutMs}ms`));
+      }, this.requestTimeoutMs);
+      timer.unref();
+      this.pending.set(id, { resolve, reject, timer });
+      this.conn.write(
+        encodeLine({ id, caller: this.callerProvenance(), ...payload } as ControlRequest),
+      );
     });
   }
 
@@ -123,8 +156,17 @@ export class ControlClient extends EventEmitter {
   peek(session: string, lines: number): Promise<string> {
     return this.req({ op: "peek", session, lines }) as Promise<string>;
   }
-  send(session: string, text: string): Promise<{ status: string }> {
-    return this.req({ op: "send", session, text }) as Promise<{ status: string }>;
+  send(
+    session: string,
+    text: string,
+    opts: { callerSession?: string } = {},
+  ): Promise<{ status: string }> {
+    return this.req({
+      op: "send",
+      session,
+      text,
+      ...(opts.callerSession !== undefined ? { callerSession: opts.callerSession } : {}),
+    }) as Promise<{ status: string }>;
   }
   control(session: string, action: string): Promise<{ status: string }> {
     return this.req({ op: "control", session, action }) as Promise<{ status: string }>;
@@ -158,6 +200,27 @@ export class ControlClient extends EventEmitter {
     message?: string;
   }> {
     return this.req({ op: "openPath", path, ...opts }) as Promise<{
+      status: string;
+      session?: string;
+      started?: string;
+      error?: string;
+      resolvedPath?: string;
+      message?: string;
+    }>;
+  }
+  openWorker(
+    session: string,
+    path: string,
+    opts: { agent?: AgentKind } = {},
+  ): Promise<{
+    status: string;
+    session?: string;
+    started?: string;
+    error?: string;
+    resolvedPath?: string;
+    message?: string;
+  }> {
+    return this.req({ op: "openWorker", session, path, ...opts }) as Promise<{
       status: string;
       session?: string;
       started?: string;

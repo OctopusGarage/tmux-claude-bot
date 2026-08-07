@@ -202,19 +202,22 @@ else
   info "TCB_SKIP_SERVICE set - skipping service registration."
 fi
 
-# AI operating skill (Claude Code / Codex). Lets an agent drive the bot via the
-# tcb CLI in natural language. Opt out with TCB_SKIP_SKILL=1.
-if [ -z "${TCB_SKIP_SKILL:-}" ]; then
-  info "Installing AI operating skill (Claude Code / Codex)..."
-  node dist/cli.js skill install || info "Skill install skipped (non-fatal)."
+# Default AI tool surfaces live under the bot-owned Home Operator workspace;
+# this command also removes stale global skill copies. It does not mutate the
+# user's private Claude/Codex global config.
+if [ -z "${TCB_SKIP_AI_TOOLS:-}" ] && [ -z "${TCB_SKIP_MCP:-}" ]; then
+  info "Installing default AI tool surfaces..."
+  node dist/cli.js ai-tools install || info "AI tool surface install skipped (non-fatal)."
 else
-  info "TCB_SKIP_SKILL set - skipping AI skill install."
+  info "TCB_SKIP_AI_TOOLS/TCB_SKIP_MCP set - skipping AI tool surface install."
 fi
 
 info "Done. Installed at $PROJECT_DIR"
 info "Terminal UI:     tcb tui"
 info "Other commands (global - no cd needed; 'tmux-claude-bot' works too):"
 info "  Health check:  tcb doctor"
+info "  MCP profiles:  tcb mcp install"
+info "  Skills:        tcb skill status   (optional global copy: tcb skill install --scope global)"
 info "  Reconfigure:   tcb setup --reconfigure"
 info "  Add Feishu:    tcb setup:lark   (scan a QR; works with or instead of Telegram)"
 info "  Uninstall:     tcb service uninstall"

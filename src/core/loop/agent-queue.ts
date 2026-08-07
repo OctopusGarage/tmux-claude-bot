@@ -19,14 +19,23 @@ import type {
   LoopRunCommandResult,
 } from "./run.js";
 import type { SupervisorDispatchRequest } from "./supervised-runner.js";
+import {
+  leaseLoopSupervisorWorker,
+  readLoopSupervisorWorkerLeaseState,
+  releaseLoopSupervisorWorker,
+  writeLoopSupervisorWorkerLeaseState,
+} from "./supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "./supervisor-state.js";
 import {
   loopSupervisorControlRestore,
   restoredLoopSupervisorMessage,
 } from "./supervisor-work-restore.js";
-import type { LoopWorkOrder } from "./work-order.js";
+import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
 const log = createLogger("loop.agent-queue");
+const DEFAULT_WORKER_FAILURE_RETAIN_MS = 72 * 60 * 60 * 1000;
+const SUPERVISOR_WORKER_CONSUMPTION_TIMEOUT_MS = 30_000;
+const DEFERRED_SUPERVISOR_QUEUE_TIMEOUT_MS = 7_200_000;
 
 type QueueDeps = {
   bridge: {
@@ -205,6 +214,7 @@ async function enqueueLoopAgentPromptToSession(
   contextReset?: SupervisorDispatchRequest["contextReset"],
   signal?: AbortSignal,
   timeoutMs?: number,
+  deferLeaseUntilConsumption = false,
 ): Promise<LoopRunCommandResult> {
   if (signal?.aborted) {
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
@@ -220,14 +230,59 @@ async function enqueueLoopAgentPromptToSession(
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
 
+  let leaseAcquired = false;
+  let leaseUnavailableReason = "supervisor worker lease unavailable while dispatching";
+  const acquireLease = (): boolean => {
+    const lease = leaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      supervisorSession: sessionName,
+      workOrder,
+      now: Date.now(),
+      retainFailureForMs:
+        (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000,
+    });
+    writeLoopSupervisorWorkerLeaseState(lease.state);
+    if (lease.status === "unavailable") {
+      leaseUnavailableReason = lease.reason;
+      log.info("loop supervisor worker lease unavailable", {
+        session: sessionName,
+        data: { workOrderId: workOrder.id, projectId: workOrder.projectId, reason: lease.reason },
+      });
+      return false;
+    }
+    leaseAcquired = true;
+    log.info("loop supervisor worker leased", {
+      session: sessionName,
+      data: {
+        workOrderId: workOrder.id,
+        projectId: workOrder.projectId,
+        projectPath: workOrder.projectPath,
+      },
+    });
+    return true;
+  };
+  if (!deferLeaseUntilConsumption && !acquireLease()) {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: leaseUnavailableReason,
+    };
+  }
+
   const resetResult = await enqueueContextResetIfNeeded(deps, sessionName, contextReset);
-  if (resetResult !== null && resetResult.status !== 0) return resetResult;
+  if (resetResult !== null && resetResult.status !== 0) {
+    if (leaseAcquired) releaseSupervisorWorkerLease(workOrder, "failure");
+    return resetResult;
+  }
   if (signal?.aborted) {
+    if (leaseAcquired) releaseSupervisorWorkerLease(workOrder, "failure");
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
 
   return new Promise((resolve) => {
     const messageId = newMessageId();
+    let consumed = false;
+    let consumptionTimer: ReturnType<typeof setTimeout> | undefined;
     const abort = (): void => {
       // Cancellation can remove only not-yet-started queue items. In-flight
       // supervisor turns remain serialized by the per-session queue and must
@@ -235,8 +290,13 @@ async function enqueueLoopAgentPromptToSession(
       deps.queue.cancelQueued(sessionName, messageId, "loop supervisor task was cancelled");
     };
     signal?.addEventListener("abort", abort, { once: true });
+    const clearConsumptionTimer = (): void => {
+      if (consumptionTimer !== undefined) clearTimeout(consumptionTimer);
+    };
     const settle = (result: LoopRunCommandResult): void => {
       signal?.removeEventListener("abort", abort);
+      clearConsumptionTimer();
+      if (result.status !== 0 && leaseAcquired) releaseSupervisorWorkerLease(workOrder, "failure");
       resolve(result);
     };
     const verdict = deps.queue.enqueue({
@@ -249,14 +309,22 @@ async function enqueueLoopAgentPromptToSession(
       origin: "system",
       promptSource: "control",
       ...(timeoutMs !== undefined ? { maxWaitDoneTotalMs: timeoutMs } : {}),
+      doneProbe: (output) =>
+        output.includes(workOrder.requiredFinalMarker) ||
+        parseSupervisorFinalSummaryFile(workOrder).ok,
       controlRestore: loopSupervisorControlRestore(workOrder, sessionName, Date.now()),
-      started: () =>
+      started: () => {
+        if (deferLeaseUntilConsumption && !acquireLease()) return false;
+        consumed = true;
+        clearConsumptionTimer();
         writeLoopSupervisorWorkOrderState({
           workOrder,
           supervisorSession: sessionName,
           status: "in-flight",
           now: Date.now(),
-        }),
+        });
+        return true;
+      },
       resolve: (output) => settle({ status: 0, stdout: output, stderr: "" }),
       reject: (err) => settle({ status: 1, stdout: "", stderr: err.message }),
     });
@@ -275,7 +343,54 @@ async function enqueueLoopAgentPromptToSession(
         status: "queued",
         now: Date.now(),
       });
+      consumptionTimer = setTimeout(
+        () => {
+          if (consumed) return;
+          const cancelled = deps.queue.cancelQueued(
+            sessionName,
+            messageId,
+            "loop supervisor worker did not consume queued task before deadline",
+          );
+          if (!cancelled) {
+            settle({
+              status: 1,
+              stdout: "",
+              stderr: "loop supervisor worker did not consume queued task before deadline",
+            });
+          }
+        },
+        deferLeaseUntilConsumption
+          ? (timeoutMs ?? DEFERRED_SUPERVISOR_QUEUE_TIMEOUT_MS)
+          : SUPERVISOR_WORKER_CONSUMPTION_TIMEOUT_MS,
+      );
+      consumptionTimer.unref();
     }
+  });
+}
+
+function releaseSupervisorWorkerLease(
+  workOrder: LoopWorkOrder,
+  result: "success" | "failure",
+): void {
+  const retainFailureForMs =
+    (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000 ||
+    DEFAULT_WORKER_FAILURE_RETAIN_MS;
+  writeLoopSupervisorWorkerLeaseState(
+    releaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      workOrderId: workOrder.id,
+      result,
+      now: Date.now(),
+      retainFailureForMs,
+    }),
+  );
+  log.info("loop supervisor worker lease settled", {
+    data: {
+      workOrderId: workOrder.id,
+      projectId: workOrder.projectId,
+      result,
+      retainFailureForMs,
+    },
   });
 }
 
@@ -306,6 +421,7 @@ export function createLoopQueueAgentEvalRunner(
 
 export function createLoopSupervisorTaskRunner(
   deps: QueueDeps,
+  options: { deferLeaseUntilConsumption?: boolean } = {},
 ): (request: SupervisorDispatchRequest) => Promise<LoopRunCommandResult> {
   return (request) =>
     enqueueLoopAgentPromptToSession(
@@ -316,6 +432,7 @@ export function createLoopSupervisorTaskRunner(
       request.contextReset,
       request.signal,
       request.timeoutMs,
+      options.deferLeaseUntilConsumption ?? request.deferLeaseUntilConsumption ?? false,
     );
 }
 

@@ -30,6 +30,13 @@ export const ja: Messages = {
     "🌐 プロンプト翻訳の依存関係が準備できました · 翻訳モードを有効化できます",
   promptTranslateInstallFailed: (e) =>
     `🌐 インストール失敗 · ${e} · ホストで npm run translate:install を実行して詳細を確認してください`,
+  promptTranslateCommandUsage: (usage) => `使い方: /prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `プロンプト翻訳を利用できません: ${error}`,
+  promptTranslateDisabledFor: (source) => `${source} のプロンプト翻訳を無効化しました`,
+  promptTranslateStatusOff: (source) => `${source} のプロンプト翻訳: off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `${source} のプロンプト翻訳: argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `有効化しました。${line}`,
   voiceEmpty: "聞き取れませんでした · もう一度話すかテキストを送信してください",
   voiceUnsupported: "音声の文字起こしは Apple Silicon のみ対応",
   voiceNotInstalled: "音声未インストール（リポジトリで npm run whisper:install を実行）",
@@ -141,6 +148,8 @@ export const ja: Messages = {
       ? `✅ 引き継ぎ、セッションを再開しました: ${proj}`
       : `✅ 引き継ぎ、新規開始しました: ${proj}`,
   adoptFailed: "引き継ぎ失敗: プロセスを終了できないか、エージェントが起動しませんでした",
+  adoptAgentDidNotStart:
+    "引き継ぎ失敗: 元のプロセスは終了しましたが、管理対象セッションでエージェントが起動しませんでした。/peek で画面を確認し、シェルのプロンプトまたは起動コマンドを修正してから再試行してください。",
   adoptBusy:
     "対象のセッションのフォアグラウンドで既にプログラムが動作中です（別のエージェントなど）。元のプロセスには触れず中止しました。先にそちらを終了してから再度引き継いでください。",
   adoptProjectRunning:
@@ -154,11 +163,17 @@ export const ja: Messages = {
     "実行されていません · /resume で復元、または /start で新規開始してください",
   contentTruncated: "...(内容が長すぎるため省略しました)",
   agentEmptyOutput: "出力が空です · /peek で画面を確認",
+  agentReplyUnavailable:
+    "有効な Agent 返信を取得できませんでした · /peek で画面を確認し、必要なら再試行してください。",
   agentStarted: "✅ 起動しました",
   agentResumed: "🔄 前回のセッションを復元しました",
   agentResumeMissingState:
     "復元できる前回セッションの状態がありません。/start で新規開始してください。",
   agentAlreadyRunning: "✅ すでに実行中です（再起動は不要）",
+  agentInputNotReady:
+    "Agent is not ready to receive input yet. Try again shortly; restart this session if it keeps happening.",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `プロジェクトの自動化タスクが実行中のため、通常メッセージは一時的にブロックされています。\nタスク: ${taskKind}\nプロジェクト: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nタスク完了を待つか、確認/キャンセルしてから続行してください。`,
   agentStartedWith: (label) => `✅ 「${label}」で起動しました`,
   startPickerTitle: "🚀 起動方法を選択",
   startPickerPrompt: "複数の起動コマンドが設定されています。1つ選んでください:",
@@ -413,71 +428,57 @@ export const ja: Messages = {
   cmdBatch:
     "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",
   cmdAutopilot: "現在のセッション作業を Loop Supervisor に委任",
-  cmdOpportunity: "提案された改善機会を確認し、承認した作業を委任",
-  cmdGoals: "autopilot 目標プリセットを一覧表示",
+  cmdOpportunity: "提案された改善機会を確認して議論",
   cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "現在のセッション文脈を Loop Supervisor に委任し、実装、レビュー、検証、PR 処理、最終通知まで進めます。",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot を一時停止 [${session}]：${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot を停止 [${session}]：${reason}`,
-  autopilotNotifyUsage: (session, pct) =>
-    `🛑 autopilot 目標を一時停止 [${session}]：使用量が ${pct}% に到達`,
-  autopilotNotifyMaxIter: (session) => `⏹️ autopilot 目標を停止 [${session}]：最大反復回数に到達`,
-  autopilotNotifyWallClock: (session) => `⏹️ autopilot 目標を停止 [${session}]：時間上限に到達`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]：フェーズ完了の可能性 — /autopilot confirm で確認、/autopilot reject で続行`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ autopilot 目標完了 [${session}]：${goalId}（確認してください）`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ autopilot サイクル完了 [${session}]：${rounds} 周回完了（確認してください）`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ autopilot キープアライブ完了 [${session}]：完了マーカーを検出`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]：目標 ${goalId} を開始（${pos}/${total} · ${round}/${rounds} 周）`,
+    "現在のセッション文脈を Loop Supervisor に委任します。範囲が明確ならすぐ委任し、先にチェックリストと停止条件を確認したい場合は計画を確認してから進めます。",
   batchRunStarted: (planId, tasks) =>
     `🚀 バッチ実行を開始しました：プラン ${planId}、${tasks} 件のタスク`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ バッチプールを一時停止 [${agent}]：クォータ上限に達しました。再開予定：${resumeAt}`,
   batchRunComplete: (summary) => `✅ バッチ実行完了\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "グローバル保活をオン:すべてのアクティブなセッションを自動管理(個別に除外するには /autopilot off)"
-      : "グローバル保活をオフ",
-  autopilotStatus: (o) =>
-    `Autopilot：${o.enabled ? "オン" : "オフ"}（${o.pureKeepAlive ? "キープアライブ" : "目標駆動"}、介入 ${o.iterations} 回、persona=${o.persona}）${o.goal ? `（目標 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
   autopilotUsage: (raw) =>
-    `不明なサブコマンド「${raw}」。使い方：/autopilot [delegate [requirement]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} キープアライブ/目標を有効化`,
-  btnApDisable: "⏹ キープアライブ/目標を無効化",
+    `不明なサブコマンド「${raw}」。使い方：/autopilot [requirement] または /autopilot delegate [requirement]`,
+  autopilotPlanPreviewBody:
+    "委任前の計画プレビュー\n\nObjective: continue the current user-confirmed task from the live session and repository state until it is genuinely complete.\n\nChecklist: inspect live context, git status, recent commits, existing PRs, and prior verification; identify what remains; make only necessary changes; review the diff; run relevant verification and existing evals when justified.\n\nAcceptance: final summary records changes, verification, PR/merge result when applicable, final branch, clean worktree, and any real blocker with evidence.\n\nStop conditions: stop when complete, blocked by evidence, or the next step would exceed scope.\n\nNon-goals: do not expand scope, redo satisfactory work, install target dependencies for bot policy, or merge unless policy allows it.",
+  langUsage: "使い方: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "`/sessions <id-prefix>` で再開",
+  opportunityProjectFallback: "プロジェクト",
+  opportunityProjectCount: (n) => `${n} 件のプロジェクト`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} 件の提案\n議論を続けられます。実行する準備ができたら Autopilot に委任してください。`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} 件の提案\nまず議論し、範囲が明確になってから委任してください。`,
+  btnOpportunityContinueDiscuss: "議論を続ける",
+  btnOpportunityDiscussAll: "すべて議論",
+  btnOpportunityShow: "詳細",
+  btnOpportunityDiscuss: "議論する",
+  btnOpportunityDismiss: "スキップ",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `${n} 件の提案をスキップしました。`,
+  opportunitySkippedMissing: (n, ids) => `${n} 件の提案をスキップしました。見つからない ID: ${ids}`,
+  opportunityMixedProjects: "異なるプロジェクトの提案をまとめて議論することはできません。",
+  opportunityCannotOpenProject: (reason) => `議論用にプロジェクトを開けません: ${reason}`,
+  opportunityDiscussionStarted: (n) => `${n} 件の提案を議論中です。`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `このプロジェクトでは自動化タスクが実行中のため、議論を一時的に開始できません。現在のタスク完了後に再試行してください。\n\nTask: ${taskKind}\nRun: ${runId}\nSupervisor: ${supervisorSession}`,
+  opportunityQueueBusy:
+    "プロジェクト agent が処理中、またはキュー済みメッセージがあります。現在のタスク完了後に再試行してください。",
+  opportunityGitStatusUnknown: (reason) =>
+    `プロジェクトの git 状態を確認できないため、議論を一時的に開始できません。\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `プロジェクトの worktree がクリーンではないため、議論を一時的に開始できません。既存の変更を先に処理してください。\n\n${preview}`,
   btnApDelegate: "🚀 Supervisorで継続",
+  btnApDelegateNow: "🚀 すぐ委任",
+  btnApReviewPlan: "📋 計画を確認",
+  btnApConfirmDelegate: "✅ 委任を確認",
   btnApCancelDelegate: "⛔ 委任をキャンセル",
-  btnApPickGoals: "🎯 目標を選択",
-  btnApGlobalOn: "🌐 グローバル:オン",
-  btnApGlobalOff: "🌐 グローバル:オフ",
-  btnApStop: "⏹ 目標を停止",
-  btnApConfirm: "✅ 完了を確認",
-  btnApContinue: "▶️ 続行",
+  btnApQueue: `${UI_ICONS.tone.queue} キューを表示`,
   btnApBack: "↩︎ 戻る",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) => `▶️ 開始(${n} 個の目標 · ${rounds} 周)`,
-  apRoundsLabel: (rounds: number) => `周回数:${rounds}`,
-  goalTestCoverage: "テストカバレッジ向上",
-  goalFixTests: "テスト修正",
-  goalCodeReview: "コードレビュー",
-  goalAddFeature: "機能追加",
-  goalRefactorElegant: "エレガントにリファクタリング",
-  goalUiPolish: "UI を磨く",
-  goalImproveArchitecture: "アーキテクチャ品質向上",
-  goalHardenStandards: "規約とゲートを強化",
-  goalPolishGithub: "GitHub プロジェクトを整備",
-  goalSyncDocs: "ドキュメントとコードの整合",
-  autopilotGoalStarted: (id) => `目標を開始：${id}`,
-  autopilotUnknownGoal: (ids) => `不明な目標。利用可能：${ids}`,
-  goalsTitle: "🎯 目標プリセット",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Supervisor キュー`,
   noLogsContext:
     "現在のセッションがありません。プロジェクトを選択するか trace を指定してください（/logs <traceId>）。",
 

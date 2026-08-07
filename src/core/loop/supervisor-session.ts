@@ -12,6 +12,12 @@ import {
   loopSupervisorSessionNames,
 } from "../projects/operator.js";
 import { setPathForSession } from "../projects/sessionPathMap.js";
+import {
+  consumeExpiredRetainedSupervisorWorkerLeases,
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "./supervisor-pool.js";
+import { listUnfinishedLoopSupervisorWorkOrders } from "./supervisor-state.js";
 
 export { loopSupervisorSessionName, loopSupervisorSessionNames } from "../projects/operator.js";
 
@@ -100,6 +106,26 @@ export function provisionLoopSupervisorHome(dir: string): void {
   }
 }
 
+const LIVE_SUPERVISOR_WORK_ORDER_STATUSES = new Set([
+  "queued",
+  "dispatching",
+  "in-flight",
+  "running",
+  "needs-revision",
+]);
+
+export function staleLoopSupervisorSessions(
+  supervisorSessions: readonly string[],
+  activeWorkOrders: readonly { supervisorSession: string; status: string }[],
+): string[] {
+  const activeSessions = new Set(
+    activeWorkOrders
+      .filter((workOrder) => LIVE_SUPERVISOR_WORK_ORDER_STATUSES.has(workOrder.status))
+      .map((workOrder) => workOrder.supervisorSession),
+  );
+  return supervisorSessions.filter((session) => !activeSessions.has(session));
+}
+
 function resolveSupervisorStartCommand(config: HandlerDeps["config"]): string {
   const agentKind = config.loopEngineering.supervisor.agent;
   const match = config.startCommands.find((command) => command.agent === agentKind);
@@ -132,13 +158,21 @@ export async function startLoopSupervisor(
     loopSupervisorSessionName(deps.config.projectSessionPrefix);
   const dir = loopSupervisorDir(deps.config, name);
   try {
+    await cleanupExpiredRetainedSupervisorWorker(deps, name);
     provisionLoopSupervisorHome(dir);
     if (!(await deps.bridge.isPaneAlive(name))) {
       await deps.bridge.createSession(name, dir);
     }
     setPathForSession(name, dir);
     const start = await performStart(deps, name, resolveSupervisorStartCommand(deps.config));
-    await deps.agent.waitUntilReady(name);
+    try {
+      await deps.agent.waitUntilReady(name);
+    } catch (err) {
+      log.warn("loop supervisor session readiness check did not complete; dispatch will verify", {
+        err,
+        data: { session: name, dir },
+      });
+    }
     markSessionStopped(name);
     const alive = await deps.bridge.isPaneAlive(name);
     log.info("loop supervisor session ensured", { data: { session: name, dir, start, alive } });
@@ -146,6 +180,46 @@ export async function startLoopSupervisor(
   } catch (err) {
     log.error("failed to start loop supervisor session", { err });
     return false;
+  }
+}
+
+async function cleanupExpiredRetainedSupervisorWorker(
+  deps: HandlerDeps,
+  sessionName: string,
+): Promise<void> {
+  const consumed = consumeExpiredRetainedSupervisorWorkerLeases(
+    readLoopSupervisorWorkerLeaseState(),
+    Date.now(),
+  );
+  const expired = consumed.expired.filter((lease) => lease.workerSession === sessionName);
+  if (expired.length === 0) return;
+  writeLoopSupervisorWorkerLeaseState({
+    leases: [
+      ...consumed.state.leases,
+      ...consumed.expired.filter((lease) => lease.workerSession !== sessionName),
+    ],
+  });
+  for (const lease of expired) {
+    try {
+      await deps.bridge.killSession(lease.workerSession);
+      log.info("expired retained loop supervisor worker session killed", {
+        data: {
+          session: lease.workerSession,
+          workOrderId: lease.workOrderId,
+          projectId: lease.projectId,
+          retainUntil: lease.retainUntil,
+        },
+      });
+    } catch (err) {
+      log.warn("failed to kill expired retained loop supervisor worker session", {
+        err,
+        data: {
+          session: lease.workerSession,
+          workOrderId: lease.workOrderId,
+          projectId: lease.projectId,
+        },
+      });
+    }
   }
 }
 
@@ -157,6 +231,33 @@ export async function startLoopSupervisors(
   const sessions = loopSupervisorSessionNames(
     deps.config.projectSessionPrefix,
     deps.config.loopEngineering.supervisor.poolSize,
+  );
+  // A supervisor process can survive a bot restart after its WorkOrder has
+  // already been marked terminal. Release the in-memory/interactive turn
+  // before accepting new work; otherwise a fresh lease can look available
+  // while the pane is still consuming the previous prompt.
+  const staleSessions = staleLoopSupervisorSessions(
+    sessions,
+    listUnfinishedLoopSupervisorWorkOrders().map((record) => ({
+      supervisorSession: record.state.supervisorSession,
+      status: record.state.status,
+    })),
+  );
+  await Promise.all(
+    staleSessions.map(async (session) => {
+      if (!(await deps.bridge.isPaneAlive(session))) return;
+      try {
+        await deps.agent.interrupt(session);
+        log.info("interrupted stale loop supervisor session after restart", {
+          data: { session },
+        });
+      } catch (err) {
+        log.warn("failed to interrupt stale loop supervisor session after restart", {
+          err,
+          data: { session },
+        });
+      }
+    }),
   );
   const results = await Promise.all(
     sessions.map((session) => startLoopSupervisor(deps, performStart, session)),

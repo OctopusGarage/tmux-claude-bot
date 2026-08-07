@@ -1,7 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { appStateDir } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
+import { buildEvalReportFromSupervisorSummary } from "../eval/report.js";
+import { LOOP_RUN_ARTIFACTS, loopRunDir } from "./artifacts.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import type { LoopSupervisorFinalSummary, LoopWorkOrder } from "./work-order.js";
 
@@ -17,6 +18,9 @@ type LoopSupervisorReportRecord = {
   runId: string;
   markdownPath: string;
   summaryPath: string;
+  handoffJsonPath: string;
+  handoffMarkdownPath: string;
+  evalReportPath?: string;
 };
 
 type LoopSupervisorReportSummary = {
@@ -43,14 +47,45 @@ type LoopSupervisorReportSummary = {
     reason?: string;
     summary?: LoopSupervisorFinalSummary;
   };
+  evalReportPath?: string;
 };
 
-function reportsRoot(): string {
-  return join(appStateDir(), "loop-runs");
-}
+type LoopSupervisorHandoff = {
+  version: 1;
+  workOrderId: string;
+  runId: string;
+  generatedAt: number;
+  project: {
+    id: string;
+    name: string;
+    path: string;
+  };
+  status: LoopSupervisedRunResult["status"];
+  objective: {
+    goal: string;
+    taskKind: string;
+    targetScore: number;
+    maxRounds: number;
+  };
+  planning?: NonNullable<LoopWorkOrder["planning"]>;
+  progress: {
+    actionsTaken: string[];
+    commits: string[];
+    finalVerification: LoopSupervisorFinalSummary["finalVerification"] | "not-available";
+    planReview?: LoopSupervisorFinalSummary["planReview"];
+    reviewEvidence?: NonNullable<LoopSupervisorFinalSummary["reviewGate"]>["evidence"];
+    learning?: LoopSupervisorFinalSummary["learning"];
+  };
+  nextAgent: {
+    resumeFrom: string[];
+    nextSteps: string[];
+    stopWhen: string[];
+    risks: string[];
+  };
+};
 
 function reportDir(projectId: string, runId: string): string {
-  return join(reportsRoot(), projectId, runId);
+  return loopRunDir(projectId, runId);
 }
 
 function resultSummary(result: LoopSupervisedRunResult): LoopSupervisorFinalSummary | undefined {
@@ -59,6 +94,10 @@ function resultSummary(result: LoopSupervisedRunResult): LoopSupervisorFinalSumm
 
 function resultReason(result: LoopSupervisedRunResult): string | undefined {
   return "reason" in result ? result.reason : undefined;
+}
+
+function taskKind(workOrder: LoopWorkOrder): string {
+  return workOrder.task?.kind ?? "architecture";
 }
 
 function renderActions(summary: LoopSupervisorFinalSummary | undefined): string[] {
@@ -95,6 +134,13 @@ function renderMarkdown(input: LoopSupervisorReportInput): string {
 function buildSummary(input: LoopSupervisorReportInput): LoopSupervisorReportSummary {
   const reason = resultReason(input.result);
   const summary = resultSummary(input.result);
+  const evalReportPath =
+    summary !== undefined
+      ? join(
+          reportDir(input.workOrder.projectId, input.workOrder.id),
+          LOOP_RUN_ARTIFACTS.evalReport,
+        )
+      : undefined;
   const result: LoopSupervisorReportSummary["result"] = {
     status: input.result.status,
     output: input.result.output,
@@ -121,7 +167,165 @@ function buildSummary(input: LoopSupervisorReportInput): LoopSupervisorReportSum
       endedAt: input.endedAt,
     },
     result,
+    ...(evalReportPath !== undefined ? { evalReportPath } : {}),
   };
+}
+
+function buildHandoff(
+  input: LoopSupervisorReportInput,
+  paths: { markdownPath: string; summaryPath: string; evalReportPath?: string },
+): LoopSupervisorHandoff {
+  const summary = resultSummary(input.result);
+  const reason = resultReason(input.result);
+  const status = input.result.status;
+  const followUps = summary?.followUps ?? [];
+  const planning = input.workOrder.planning;
+  const risks = [
+    ...(summary?.planReview?.remainingRisks ?? []),
+    ...(status === "completed" ? [] : [reason ?? `supervisor result status is ${status}`]),
+  ];
+  const nextSteps =
+    followUps.length > 0
+      ? followUps
+      : status === "completed"
+        ? ["No follow-up was reported. Inspect system-gate.json before starting related work."]
+        : [
+            "Inspect supervisor output, system-gate.json, and work-order-state.json before retrying.",
+            "Retry only after the concrete blocker is resolved or the WorkOrder is narrowed.",
+          ];
+  const stopWhen = [
+    ...(planning?.stopConditions ?? []),
+    "Stop when system-gate.json accepts the run, or when a concrete blocker is proven with evidence.",
+    "Do not continue opportunistic optimization after acceptance criteria and verification are satisfied.",
+  ];
+
+  return {
+    version: 1,
+    workOrderId: input.workOrder.id,
+    runId: input.workOrder.id,
+    generatedAt: input.endedAt,
+    project: {
+      id: input.workOrder.projectId,
+      name: input.workOrder.projectName,
+      path: input.workOrder.projectPath,
+    },
+    status,
+    objective: {
+      goal: input.workOrder.goal,
+      taskKind: taskKind(input.workOrder),
+      targetScore: input.workOrder.targetScore,
+      maxRounds: input.workOrder.maxRounds,
+    },
+    ...(planning !== undefined ? { planning } : {}),
+    progress: {
+      actionsTaken: summary?.actionsTaken ?? [],
+      commits: summary?.commits ?? [],
+      finalVerification: summary?.finalVerification ?? "not-available",
+      ...(summary?.planReview !== undefined ? { planReview: summary.planReview } : {}),
+      ...(summary?.reviewGate?.evidence !== undefined
+        ? { reviewEvidence: summary.reviewGate.evidence }
+        : {}),
+      ...(summary?.learning !== undefined ? { learning: summary.learning } : {}),
+    },
+    nextAgent: {
+      resumeFrom: [
+        paths.summaryPath,
+        paths.markdownPath,
+        ...(paths.evalReportPath !== undefined ? [paths.evalReportPath] : []),
+        input.workOrder.finalSummaryPath ?? "supervisor-final-summary.json was not configured",
+        "system-gate.json",
+        "work-order-state.json",
+      ],
+      nextSteps,
+      stopWhen,
+      risks,
+    },
+  };
+}
+
+function renderList(items: readonly string[], empty: string): string[] {
+  if (items.length === 0) return [`- ${empty}`];
+  return items.map((item) => `- ${item}`);
+}
+
+function renderReviewEvidence(handoff: LoopSupervisorHandoff): string[] {
+  const evidence = handoff.progress.reviewEvidence ?? [];
+  if (evidence.length === 0) return ["- No structured review evidence was reported."];
+  return evidence.flatMap((item) => [
+    `- ${item.questionInvestigated}`,
+    `  - Conclusion: ${item.conclusion}`,
+    `  - Evidence: ${item.evidence.length > 0 ? item.evidence.join("; ") : "none reported"}`,
+    `  - Uncertainty: ${item.uncertainty}`,
+    `  - Recommended next step: ${item.recommendedNextStep}`,
+  ]);
+}
+
+function renderLearning(handoff: LoopSupervisorHandoff): string[] {
+  const learning = handoff.progress.learning;
+  if (learning === undefined) return ["- No structured learning candidates were reported."];
+  return [
+    ...learning.regressionCandidates.map((item) => `- Regression: ${item}`),
+    ...learning.capabilityEvalCandidates.map((item) => `- Capability eval: ${item}`),
+    ...learning.monitorOrTraceCandidates.map((item) => `- Monitor/trace: ${item}`),
+    ...learning.documentationCandidates.map((item) => `- Documentation: ${item}`),
+  ];
+}
+
+function renderHandoffMarkdown(handoff: LoopSupervisorHandoff): string {
+  return [
+    "# Loop WorkOrder Handoff",
+    "",
+    `- Work Order: ${handoff.workOrderId}`,
+    `- Project: ${handoff.project.name} (\`${handoff.project.id}\`)`,
+    `- Status: ${handoff.status}`,
+    `- Task Kind: ${handoff.objective.taskKind}`,
+    `- Generated: ${new Date(handoff.generatedAt).toISOString()}`,
+    "",
+    "## Objective",
+    "",
+    handoff.objective.goal,
+    "",
+    "## Acceptance Criteria",
+    "",
+    ...renderList(
+      handoff.planning?.acceptanceCriteria ?? [],
+      "No structured acceptance criteria were recorded.",
+    ),
+    "",
+    "## Progress",
+    "",
+    `- Final verification: ${handoff.progress.finalVerification}`,
+    ...renderList(handoff.progress.actionsTaken, "No actions were reported."),
+    "",
+    "## Commits",
+    "",
+    ...renderList(handoff.progress.commits, "No commits were reported."),
+    "",
+    "## Review Evidence",
+    "",
+    ...renderReviewEvidence(handoff),
+    "",
+    "## Learning",
+    "",
+    ...renderLearning(handoff),
+    "",
+    "## Next Steps",
+    "",
+    ...renderList(handoff.nextAgent.nextSteps, "No next step was reported."),
+    "",
+    "## Stop Conditions",
+    "",
+    ...renderList(handoff.nextAgent.stopWhen, "No stop condition was recorded."),
+    "",
+    "## Risks",
+    "",
+    ...renderList(handoff.nextAgent.risks, "No remaining risk was reported."),
+    "",
+    "## Resume From",
+    "",
+    ...renderList(handoff.nextAgent.resumeFrom, "No resume artifact was recorded."),
+    "",
+  ].join("\n");
 }
 
 export function writeLoopSupervisorReport(
@@ -131,11 +335,44 @@ export function writeLoopSupervisorReport(
   const dir = reportDir(input.workOrder.projectId, runId);
   mkdirSync(dir, { recursive: true });
 
-  const markdownPath = join(dir, "supervisor.md");
-  const summaryPath = join(dir, "supervisor-summary.json");
+  const markdownPath = join(dir, LOOP_RUN_ARTIFACTS.supervisorMarkdown);
+  const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.supervisorSummary);
+  const handoffJsonPath = join(dir, LOOP_RUN_ARTIFACTS.handoffJson);
+  const handoffMarkdownPath = join(dir, LOOP_RUN_ARTIFACTS.handoffMarkdown);
+  const summary = resultSummary(input.result);
+  const evalReportPath =
+    summary !== undefined ? join(dir, LOOP_RUN_ARTIFACTS.evalReport) : undefined;
+  const handoff = buildHandoff(input, {
+    markdownPath,
+    summaryPath,
+    ...(evalReportPath !== undefined ? { evalReportPath } : {}),
+  });
 
   writeFileAtomicSync(summaryPath, `${JSON.stringify(buildSummary(input), null, 2)}\n`);
+  if (summary !== undefined && evalReportPath !== undefined) {
+    writeFileAtomicSync(
+      evalReportPath,
+      `${JSON.stringify(
+        buildEvalReportFromSupervisorSummary({
+          workOrderId: input.workOrder.id,
+          taskId: taskKind(input.workOrder),
+          summary,
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+  }
   writeFileAtomicSync(markdownPath, renderMarkdown(input));
+  writeFileAtomicSync(handoffJsonPath, `${JSON.stringify(handoff, null, 2)}\n`);
+  writeFileAtomicSync(handoffMarkdownPath, renderHandoffMarkdown(handoff));
 
-  return { runId, markdownPath, summaryPath };
+  return {
+    runId,
+    markdownPath,
+    summaryPath,
+    handoffJsonPath,
+    handoffMarkdownPath,
+    ...(evalReportPath !== undefined ? { evalReportPath } : {}),
+  };
 }

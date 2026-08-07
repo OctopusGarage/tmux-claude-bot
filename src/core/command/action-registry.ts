@@ -431,8 +431,8 @@ const DIAGNOSTICS: readonly HelpRow[] = [
     {
       cmds: ["opportunity"],
       descKey: "cmdOpportunity",
-      argHint: " [list|show|discuss|delegate|dismiss|snooze <id>]",
-      telegramDescription: "Review and delegate proactive opportunity suggestions",
+      argHint: " [list|show|discuss|dismiss|snooze <id>]",
+      telegramDescription: "Review and discuss proactive opportunity suggestions",
     },
   ],
   [

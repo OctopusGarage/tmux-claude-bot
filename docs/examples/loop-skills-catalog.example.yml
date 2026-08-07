@@ -64,7 +64,7 @@ projects:
     agent: codex
     goal: Improve codebase quality in small, verified, reviewable slices.
     maxRounds: 1
-    targetScore: 90
+    targetScore: 95
     assessment:
       command: npm run loop-assess
     execution:

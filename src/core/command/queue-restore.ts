@@ -30,6 +30,10 @@ export function restorePersistedChannel(input: {
       carryover.push(persisted);
       continue;
     }
+    if (persisted.dispatched === true) {
+      skipped++;
+      continue;
+    }
     const message = input.restore(persisted);
     if (message === null) {
       skipped++;

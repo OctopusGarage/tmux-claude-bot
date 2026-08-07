@@ -1,6 +1,6 @@
 # tmux-claude-bot Bot Command Reference
 
-The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts`
+The authoritative command list is `BOT_COMMANDS` in `src/core/command/action-registry.ts`
 (registered to the Telegram menu at startup; the Lark help card mirrors it).
 `tests/docs-contract.test.ts` asserts every command below stays documented.
 
@@ -31,15 +31,15 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/action-registry.ts
 | `add_project` | Add a new project: `add_project <path>` creates it directly; with no path, opens a tap-to-navigate directory browser |
 | `new_free` | Create an independent session: `new_free [label]` opens a bare project session decoupled from any path, so multiple agents can run in the same directory |
 | `adopt` | Take over an unmanaged agent (Claude or Codex) |
-| `recover` | Recover all projects after a reboot: recreate each project session + relaunch its agent, resuming the conversation. Previews then confirms |
+| `recover` | Manually recover all rostered projects after a reboot: recreate each project session + relaunch its agent, resuming the conversation. Automatic boot recovery only resumes unfinished bot-dispatched prompts. Previews then confirms |
 | `status_install` | Install usage reporting (statusLine snapshot) for /status |
 | `queue_status` | Show message queue status |
 | `history` | Show recent conversation history (`/history N` for the Nth recent round) |
 | `inputs` | List your recent inputs (`/inputs N` for the last N) — tap one to fetch & edit it |
 | `sessions` | List resumable conversations for the current session's agent (tap one to resume) |
-| `logs` | Show recent WARN/ERROR logs for the current session; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
-| `autopilot` | Delegate the current confirmed work to the Loop Supervisor: `/autopilot [requirement]` or `/autopilot delegate [requirement]`. It drives implementation, review, tests, coverage review, configured PR/merge/switch-back gates, and final notification. The chat control panel exposes the same one-click Continue via supervisor action. |
-| `opportunity` | Review proactive Loop Engineering suggestions: `/opportunity [list\|show\|discuss\|delegate\|dismiss\|snooze <number\|id>]`; `discuss` opens project-agent discussion. After approval, use Autopilot's Continue via supervisor action so execution goes through the same active-delegation pipeline. Owner-only in private chat; Lark also works in a bound project group. |
+| `logs` | Show current-session WARN/ERROR logs from the last hour; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
+| `autopilot` | Delegate the current confirmed work to the Loop Supervisor: `/autopilot [requirement]` or `/autopilot delegate [requirement]`. It drives implementation, review, tests, coverage review, configured PR/merge/switch-back gates, and final notification. The chat control panel exposes **Delegate now**, **Review plan first** with **Confirm delegation**, and a supervisor queue view for active work; a queue view is shown only when all Supervisor sessions are occupied. Lark can cancel active-delegated queue items from that queue card. |
+| `opportunity` | Review proactive Loop Engineering suggestions: `/opportunity [list\|show\|discuss\|dismiss\|snooze <number\|id>]`; `discuss` opens project-agent discussion. Suggestion cards keep each item readable and offer per-item show/discuss/dismiss actions plus batch actions. After approval, use Autopilot's Continue via supervisor action so execution goes through the same active-delegation pipeline. Owner-only in private chat; Lark also works in a bound project group. |
 | `batch` | Batch scheduler status and control. `/batch` → current run status; `/batch start <planId>` → start a plan; `/batch pause\|resume\|stop` → control the active run; `/batch report` → summary. Owner-only (Lark: 1:1 chat only). |
 | `dashboard` | Show the global dashboard: every live session plus bot-level totals (version, uptime, queue depth). Owner-only (Lark: 1:1 chat only). |
 | `sysload` | Show machine load, thermal state, top CPU, and runaway/orphan shells (with a `kill -9` hint). Owner-only (Lark: 1:1 chat only). |
@@ -71,10 +71,15 @@ No typing needed: the help card's **🗂 Project groups** button opens a context
 The help card's **🧩 Parallel group** button (private chat) creates a *second* group on a recent project, bound to a fresh numbered independent session. This bypasses the one-workspace-one-group rule so the same directory can host multiple parallel agents, one per group.
 
 **Required Feishu app scopes** for group-binding:
-- `im:message.group_msg` — "获取群组中所有消息" (a *sensitive* scope) — receive **all** messages in a bound project group, enabling no-`@` typing. Without it the bot only receives `@`-mentions in groups (`im:message.group_at_msg:readonly`), so a bound group would require `@bot` on every message.
+- `im:message.group_msg` — receive **all** messages in a bound project group,
+  enabling no-`@` typing. This is a sensitive scope. Without it the bot only
+  receives `@`-mentions in groups (`im:message.group_at_msg:readonly`), so a
+  bound group would require `@bot` on every message.
 - `im:chat` — let `/newgroup` auto-create the bound private group. Optional: without it `/newgroup` fails gracefully and you use `/bind` instead.
 
-> Note: after adding a scope in 权限管理 you must publish a new version (版本管理与发布) for it to take effect. `im:message.group_msg` is a sensitive scope and may require an extra approval step.
+> Note: after adding a scope in the Feishu/Lark developer console, publish a new
+> app version for it to take effect. `im:message.group_msg` is a sensitive scope
+> and may require an extra approval step.
 
 ## Non-Command Special Handling
 
@@ -99,7 +104,9 @@ printf '%s\n' "line 1" "line 2" | tcb notify --title "Nightly report" --stdin
 ```
 
 `tcb notify` uses the existing local control socket, targets the configured owner
-recipient(s), and does not subscribe the caller to incoming chat messages.
+recipient(s), and does not subscribe the caller to incoming chat messages. Add
+`--session <session>` for project-bound Feishu/Lark group routing when a session
+is known.
 
 ## Local Scheduled Task Reporting
 

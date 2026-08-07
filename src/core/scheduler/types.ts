@@ -42,7 +42,7 @@ export type TaskState = {
   sessionName?: string;
   status: TaskStatus;
   attempt: number; // 0-based; bumped on retry
-  resuming?: boolean; // re-admit WITHOUT resetting the goal-cycle (post gate/quota)
+  resuming?: boolean; // re-admit after a gate/quota pause
   startedAt?: number;
   endedAt?: number;
   goalsCompleted: string[];

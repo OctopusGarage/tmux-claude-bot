@@ -1,14 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePath, sep } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
+import type { WorktreeIsolationMode } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { agentIsIdle } from "../command/agent-ready.js";
 import type { HandlerDeps } from "../deps.js";
+import { buildEvalReportFromSupervisorSummary } from "../eval/report.js";
 import type { NotificationGateway } from "../notifications/gateway.js";
 import { OpportunityStore, parseOpportunityDiscoveryReportFile } from "../opportunities/store.js";
 import { formatOpportunityDigest } from "../opportunities/view.js";
 import { sessionNameFromPath } from "../projects/sessionPathMap.js";
+import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import {
   createLoopQueueAgentEvalRunner,
@@ -16,13 +19,22 @@ import {
   createLoopSupervisorTaskRunner,
   restoreLoopControlQueue,
 } from "./agent-queue.js";
+import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 import { LoopBacklogStore } from "./backlog.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
 import {
-  recoverInvalidOutputFromFinalSummary,
+  cleanupLoopExecutionWorktree,
+  isBotOwnedLoopExecutionWorktree,
+  prepareLoopExecutionWorktrees,
+} from "./execution-worktree.js";
+import { repositoryPullRequestReviewDisposition } from "./final-summary-contract.js";
+import {
+  recoverInvalidOutputFromFinalSummaryAsync,
   supervisorFinalStatusToRunStatus,
 } from "./final-summary-recovery.js";
+import { githubCommandForAccount } from "./github-auth.js";
 import { writeLoopRunReport } from "./report.js";
+import { RepositoryReviewQueue } from "./repository-review-queue.js";
 import {
   type LoopGitInvocation,
   type LoopRunCommandInvocation,
@@ -32,20 +44,34 @@ import {
   runLoopProjectAsync,
 } from "./run.js";
 import { LoopSchedulerStore, runLoopSchedulerTick } from "./scheduler.js";
+import { parseSecurityRiskAssessment } from "./security-assessment.js";
 import {
   type LoopSupervisedRunResult,
   runLoopSupervisedProjectAsync,
   runLoopSupervisorRevisionAsync,
 } from "./supervised-runner.js";
 import { completeLoopSupervisorRun } from "./supervisor-completion.js";
-import { allocateLoopSupervisorBatches, type LoopSupervisorResetMode } from "./supervisor-pool.js";
+import {
+  allocateLoopSupervisorBatches,
+  type LoopSupervisorResetMode,
+  leaseLoopSupervisorWorker,
+  readLoopSupervisorWorkerLeaseState,
+  releaseLoopSupervisorWorker,
+  writeLoopSupervisorWorkerLeaseState,
+} from "./supervisor-pool.js";
 import { loopSupervisorSessionNames, startLoopSupervisor } from "./supervisor-session.js";
 import {
+  type LoopSupervisorWorkOrderStateStatus,
+  listAbandonedLoopSupervisorWorkOrders,
   listRecoverableFailedLoopSupervisorWorkOrders,
+  listRecoverableFinalSummaryLoopSupervisorWorkOrders,
+  listStaleDispatchingLoopSupervisorWorkOrders,
+  listTerminalLoopSupervisorWorkOrders,
   listUnfinishedLoopSupervisorWorkOrders,
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
 } from "./supervisor-state.js";
+import type { LoopTaskSchedulerJobKind } from "./task-family.js";
 import type { LoopWorkOrder } from "./work-order.js";
 import {
   buildLoopWorkOrder,
@@ -53,13 +79,47 @@ import {
   buildRepositoryPullRequestReviewWorkOrder,
   parseSupervisorFinalSummaryFile,
 } from "./work-order.js";
+import {
+  assessWorkspaceArchitecture,
+  parseArchitectureAssessment,
+} from "./workspace-assessment.js";
 
 const log = createLogger("loop.service");
 const DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS = 7_200_000;
 const DEFAULT_SUPERVISED_PR_CHECK_POLL_ATTEMPTS = 30;
 const DEFAULT_SUPERVISED_PR_CHECK_POLL_INTERVAL_SECONDS = 30;
 const DEFAULT_SUPERVISOR_REVISION_MAX_ATTEMPTS = 3;
+const DEFAULT_GITHUB_PERMISSION_CHECK_ATTEMPTS = 3;
+const REPOSITORY_REVIEW_QUEUE_LEASE_MS = 24 * 60 * 60 * 1000;
+const REPOSITORY_REVIEW_RETRY_BASE_MS = 15 * 60 * 1000;
+const REPOSITORY_REVIEW_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
+const REPOSITORY_REVIEW_MIN_TICK_MS = 10_000;
 const LOG_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const inFlightSupervisorSessions = new Set<string>();
+
+/**
+ * Reserve supervisor sessions synchronously before any asynchronous readiness
+ * checks. This prevents concurrent service ticks from selecting the same
+ * supervisor between their persisted-work checks and dispatch.
+ */
+export function reserveLoopSupervisorSessions(
+  sessions: readonly string[],
+  activeSessions: ReadonlySet<string>,
+  reservations: Set<string> = inFlightSupervisorSessions,
+): string[] {
+  const available = sessions.filter(
+    (session) => !activeSessions.has(session) && !reservations.has(session),
+  );
+  for (const session of available) reservations.add(session);
+  return available;
+}
+
+function releaseLoopSupervisorSessions(
+  sessions: readonly string[],
+  reservations: Set<string> = inFlightSupervisorSessions,
+): void {
+  for (const session of sessions) reservations.delete(session);
+}
 
 export type SupervisedSystemGateProject = Pick<LoopProjectConfig, "id" | "name" | "path"> & {
   commit: LoopWorkOrder["commitPolicy"];
@@ -113,6 +173,24 @@ function formatLogLocalTime(timestamp: number): string {
     second: "2-digit",
     hour12: false,
   }).format(new Date(timestamp));
+}
+
+function clearLoopRunTerminalArtifacts(workOrder: {
+  finalSummaryPath?: string;
+  opportunityReportPath?: string;
+}): void {
+  if (workOrder.finalSummaryPath === undefined) return;
+  const runDir = dirname(workOrder.finalSummaryPath);
+  for (const artifact of [
+    LOOP_RUN_ARTIFACTS.supervisorFinalSummary,
+    LOOP_RUN_ARTIFACTS.supervisorMarkdown,
+    LOOP_RUN_ARTIFACTS.systemGate,
+  ]) {
+    rmSync(join(runDir, artifact), { force: true });
+  }
+  if (workOrder.opportunityReportPath !== undefined) {
+    rmSync(workOrder.opportunityReportPath, { force: true });
+  }
 }
 
 function logRunResult(input: {
@@ -186,6 +264,7 @@ function logSupervisorRunResult(input: {
   projectName: string;
   result: LoopSupervisedRunResult;
   report: ReturnType<typeof completeLoopSupervisorRun>["report"];
+  gate: SupervisedSystemGateOutcome;
 }): void {
   log[input.result.status === "completed" ? "info" : "warn"](
     "loop engineering supervised project run complete",
@@ -199,6 +278,10 @@ function logSupervisorRunResult(input: {
         startedAt: new Date(input.startedAt).toISOString(),
         endedAt: new Date(input.endedAt).toISOString(),
         durationMs: input.endedAt - input.startedAt,
+        gateAccepted: input.gate.failures.length === 0,
+        gateEvidence: input.gate.evidence,
+        gateFailures: input.gate.failures,
+        recoverableGateFailures: supervisorRevisionFailures(input.gate.failures),
         reportPath: input.report.markdownPath,
         summaryPath: input.report.summaryPath,
       },
@@ -275,10 +358,16 @@ export async function runLoopServiceTickAsync(input: {
   notifications?: NotificationGateway;
   projectSessionPrefix?: string;
   resetSupervisorBeforeWorkOrder?: LoopSupervisorResetMode;
+  supervisorWorktreeIsolation?: WorktreeIsolationMode;
   ensureSupervisorSession?: (sessionName: string) => Promise<boolean>;
   isSupervisorSessionAvailable?: (sessionName: string) => Promise<boolean>;
   defaultSupervisorTimeoutMs?: number;
   supervisorRevisionMaxAttempts?: number;
+  cleanupCompletedWorkerSession?: (sessionName: string) => Promise<void>;
+  /** Run only the independent repository-review discovery/consumer. */
+  repositoryReviewOnly?: boolean;
+  /** Keep repository review out of the main Loop tick; production uses the independent consumer. */
+  skipRepositoryReview?: boolean;
 }): Promise<LoopServiceTickSummary> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const previousLastFired = input.schedulerStore.getLastFired();
@@ -292,6 +381,7 @@ export async function runLoopServiceTickAsync(input: {
   let failed = 0;
   const backlog = new LoopBacklogStore();
   const taskLedger = new DailyTaskLedger();
+  const repositoryReviewQueue = new RepositoryReviewQueue();
   const supervisorSessions =
     input.supervisorSessionNames ??
     (input.supervisorSessionName !== undefined ? [input.supervisorSessionName] : []);
@@ -366,7 +456,8 @@ export async function runLoopServiceTickAsync(input: {
   const runSupervisedDue = async (
     target: ResolvedDue,
     supervisorSession: string,
-  ): Promise<void> => {
+    checkpointScheduler = true,
+  ): Promise<LoopSupervisedRunResult["status"] | "manual-review"> => {
     const { due, project, repository, workspace } = target;
     const runner =
       project?.runner ??
@@ -376,6 +467,226 @@ export async function runLoopServiceTickAsync(input: {
         : undefined);
     if (runner?.kind !== "agent-supervised") {
       throw new Error(`loop target "${due.projectId}" is not agent-supervised`);
+    }
+
+    let preDispatchAssessment:
+      | { score: number; targetScore: number; decision: "run"; notes: string[] }
+      | undefined;
+    if (workspace !== undefined && due.jobKind === "workspace-architecture") {
+      const assessment = assessWorkspaceArchitecture({
+        targetScore: workspace.architecture.targetScore,
+        repositories: workspace.repositories,
+        exists: existsSync,
+        runGit:
+          input.runGit ?? (() => ({ status: 1, stdout: "", stderr: "git adapter unavailable" })),
+      });
+      if (assessment.decision === "skip") {
+        recordDueTargetWithoutDispatch(
+          target,
+          `workspace Architecture score ${assessment.score} reached target ${assessment.targetScore}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
+          "not-needed",
+        );
+        return "completed";
+      }
+      if (assessment.decision === "block" || assessment.score === null) {
+        recordDueTargetWithoutDispatch(
+          target,
+          `workspace Architecture pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
+          "blocked",
+        );
+        return "blocked";
+      }
+      preDispatchAssessment = {
+        score: assessment.score,
+        targetScore: assessment.targetScore,
+        decision: "run",
+        notes: assessment.notes,
+      };
+    } else if (workspace !== undefined && due.jobKind === "security-maintenance") {
+      const policy = workspace.securityMaintenance.riskAssessment ?? {
+        actionThreshold: 70,
+        criticalThreshold: 90,
+      };
+      const command = policy.command;
+      const assessment =
+        command === undefined
+          ? {
+              riskScore: null,
+              actionThreshold: policy.actionThreshold,
+              criticalThreshold: policy.criticalThreshold,
+              critical: false,
+              decision: "block" as const,
+              notes: [],
+              blockers: ["security risk assessment command is not configured"],
+            }
+          : (() => {
+              const commandResult = input.runCommand({
+                kind: "assessment",
+                command,
+                cwd: workspace.root,
+                env: {
+                  LOOP_PROJECT_ID: workspace.id,
+                  LOOP_PROJECT_NAME: workspace.name,
+                  LOOP_PROJECT_AGENT: workspace.agent,
+                  LOOP_PROJECT_GOAL: workspace.securityMaintenance.prompt ?? "",
+                  LOOP_PROJECT_PATH: workspace.root,
+                  LOOP_BOT_ROOT: process.cwd(),
+                  LOOP_SECURITY_ACTION_THRESHOLD: String(policy.actionThreshold),
+                  LOOP_SECURITY_CRITICAL_THRESHOLD: String(policy.criticalThreshold),
+                },
+              });
+              return parseSecurityRiskAssessment(
+                commandResult.status,
+                commandResult.stdout,
+                policy.actionThreshold,
+                policy.criticalThreshold,
+              );
+            })();
+      if (assessment.decision === "skip") {
+        recordDueTargetWithoutDispatch(
+          target,
+          `workspace Security Maintenance risk score ${assessment.riskScore} was below action threshold ${assessment.actionThreshold}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
+          "not-needed",
+        );
+        return "completed";
+      }
+      if (assessment.decision === "block" || assessment.riskScore === null) {
+        recordDueTargetWithoutDispatch(
+          target,
+          `workspace Security Maintenance pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
+          "blocked",
+        );
+        return "blocked";
+      }
+      preDispatchAssessment = {
+        score: assessment.riskScore,
+        targetScore: assessment.actionThreshold,
+        decision: "run",
+        notes: [
+          `security action threshold=${assessment.actionThreshold}`,
+          `critical threshold=${assessment.criticalThreshold}`,
+          ...assessment.notes,
+        ],
+      };
+    } else if (project !== undefined && due.jobKind === "architecture") {
+      const command = project.assessment.command;
+      const assessment =
+        command === undefined
+          ? {
+              score: null,
+              targetScore: project.targetScore,
+              decision: "block" as const,
+              notes: [],
+              blockers: ["project Architecture assessment command is not configured"],
+            }
+          : (() => {
+              const commandResult = input.runCommand({
+                kind: "assessment",
+                command,
+                cwd: project.path,
+                env: {
+                  LOOP_PROJECT_ID: project.id,
+                  LOOP_PROJECT_NAME: project.name,
+                  LOOP_PROJECT_AGENT: project.agent,
+                  LOOP_PROJECT_GOAL: project.goal,
+                  LOOP_PROJECT_PATH: project.path,
+                  LOOP_BOT_ROOT: process.cwd(),
+                  LOOP_PROJECT_TARGET_SCORE: String(project.targetScore),
+                  LOOP_PROJECT_MAX_ROUNDS: String(project.maxRounds),
+                },
+              });
+              return parseArchitectureAssessment(
+                commandResult.status,
+                commandResult.stdout,
+                project.targetScore,
+              );
+            })();
+      if (assessment.decision === "skip") {
+        recordDueTargetWithoutDispatch(
+          target,
+          `project Architecture score ${assessment.score} reached target ${assessment.targetScore}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
+          "not-needed",
+        );
+        return "completed";
+      }
+      if (assessment.decision === "block" || assessment.score === null) {
+        recordDueTargetWithoutDispatch(
+          target,
+          `project Architecture pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
+          "blocked",
+        );
+        return "blocked";
+      }
+      preDispatchAssessment = {
+        score: assessment.score,
+        targetScore: assessment.targetScore,
+        decision: "run",
+        notes: assessment.notes,
+      };
+    } else if (project !== undefined && due.jobKind === "security-maintenance") {
+      const policy = project.securityMaintenance.riskAssessment ?? {
+        actionThreshold: 70,
+        criticalThreshold: 90,
+      };
+      const command = policy.command;
+      const assessment =
+        command === undefined
+          ? {
+              riskScore: null,
+              actionThreshold: policy.actionThreshold,
+              criticalThreshold: policy.criticalThreshold,
+              critical: false,
+              decision: "block" as const,
+              notes: [],
+              blockers: ["security risk assessment command is not configured"],
+            }
+          : (() => {
+              const commandResult = input.runCommand({
+                kind: "assessment",
+                command,
+                cwd: project.path,
+                env: {
+                  LOOP_PROJECT_ID: project.id,
+                  LOOP_PROJECT_NAME: project.name,
+                  LOOP_PROJECT_AGENT: project.agent,
+                  LOOP_PROJECT_GOAL: project.goal,
+                  LOOP_SECURITY_ACTION_THRESHOLD: String(policy.actionThreshold),
+                  LOOP_SECURITY_CRITICAL_THRESHOLD: String(policy.criticalThreshold),
+                },
+              });
+              return parseSecurityRiskAssessment(
+                commandResult.status,
+                commandResult.stdout,
+                policy.actionThreshold,
+                policy.criticalThreshold,
+              );
+            })();
+      if (assessment.decision === "skip") {
+        recordDueTargetWithoutDispatch(
+          target,
+          `project Security Maintenance risk score ${assessment.riskScore} was below action threshold ${assessment.actionThreshold}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
+          "not-needed",
+        );
+        return "completed";
+      }
+      if (assessment.decision === "block" || assessment.riskScore === null) {
+        recordDueTargetWithoutDispatch(
+          target,
+          `project Security Maintenance pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
+          "blocked",
+        );
+        return "blocked";
+      }
+      preDispatchAssessment = {
+        score: assessment.riskScore,
+        targetScore: assessment.actionThreshold,
+        decision: "run",
+        notes: [
+          `security action threshold=${assessment.actionThreshold}`,
+          `critical threshold=${assessment.criticalThreshold}`,
+          ...assessment.notes,
+        ],
+      };
     }
     const { startedAt, runId, ledgerTaskId } = beginLedger(target);
     log.info("loop engineering supervised dispatch start", {
@@ -387,7 +698,7 @@ export async function runLoopServiceTickAsync(input: {
         resetBeforeWorkOrder: resetSupervisorBeforeWorkOrder,
       },
     });
-    const workOrder =
+    let workOrder =
       repository !== undefined
         ? buildRepositoryPullRequestReviewWorkOrder({
             config,
@@ -421,19 +732,51 @@ export async function runLoopServiceTickAsync(input: {
                     ? "harness-auto"
                     : due.jobKind === "opportunity-discovery"
                       ? "opportunity-discovery"
-                      : due.jobKind === "test-coverage"
-                        ? "test-coverage"
-                        : due.jobKind === "security-maintenance"
-                          ? "security-maintenance"
-                          : due.jobKind === "bug-fix"
-                            ? "bug-fix"
-                            : "architecture",
+                      : due.jobKind === "automation-governance-review"
+                        ? "automation-governance-review"
+                        : due.jobKind === "test-coverage"
+                          ? "test-coverage"
+                          : due.jobKind === "security-maintenance"
+                            ? "security-maintenance"
+                            : due.jobKind === "bug-fix"
+                              ? "bug-fix"
+                              : "architecture",
             });
+    if (preDispatchAssessment !== undefined) {
+      workOrder = { ...workOrder, preDispatchAssessment };
+    }
+    const preparationFailures: string[] = [];
+    workOrder = prepareLoopExecutionWorktrees({
+      workOrder,
+      ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
+      defaultMode: input.supervisorWorktreeIsolation ?? "isolated",
+      onPreparationFailure: (failure) => {
+        preparationFailures.push(
+          `${failure.repositoryId}: ${failure.reason} (${failure.sourceWorktree})`,
+        );
+      },
+    });
     if (workOrder.finalSummaryPath !== undefined) {
       mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
     }
     if (workOrder.opportunityReportPath !== undefined) {
       mkdirSync(dirname(workOrder.opportunityReportPath), { recursive: true });
+    }
+    clearLoopRunTerminalArtifacts(workOrder);
+    let supervisorReservationFailure: string | undefined;
+    if (preparationFailures.length === 0 && supervisorSession !== "unconfigured-loop-supervisor") {
+      const lease = leaseLoopSupervisorWorker({
+        state: readLoopSupervisorWorkerLeaseState(),
+        supervisorSession,
+        workOrder,
+        now: Date.now(),
+        retainFailureForMs:
+          (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000,
+      });
+      writeLoopSupervisorWorkerLeaseState(lease.state);
+      if (lease.status === "unavailable") {
+        supervisorReservationFailure = lease.reason;
+      }
     }
     writeLoopSupervisorWorkOrderState({
       workOrder,
@@ -441,8 +784,25 @@ export async function runLoopServiceTickAsync(input: {
       status: "dispatching",
       now: Date.now(),
     });
+    const supervisorContextReset =
+      due.jobKind === "repository-pull-request-review"
+        ? ("clear" as const)
+        : resetSupervisorBeforeWorkOrder;
     let result: LoopSupervisedRunResult;
-    if (supervisorSession === "unconfigured-loop-supervisor") {
+    if (preparationFailures.length > 0) {
+      const reason = `execution worktree isolation failed: ${preparationFailures.join("; ")}`;
+      result = {
+        status: "dispatch-failed",
+        reason,
+        output: reason,
+      };
+    } else if (supervisorReservationFailure !== undefined) {
+      result = {
+        status: "dispatch-failed",
+        reason: supervisorReservationFailure,
+        output: supervisorReservationFailure,
+      };
+    } else if (supervisorSession === "unconfigured-loop-supervisor") {
       result = {
         status: "dispatch-failed",
         reason: "missing loop supervisor session name",
@@ -471,7 +831,7 @@ export async function runLoopServiceTickAsync(input: {
           runner.timeoutMs ??
           input.defaultSupervisorTimeoutMs ??
           DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
-        resetBeforeWorkOrder: resetSupervisorBeforeWorkOrder,
+        resetBeforeWorkOrder: supervisorContextReset,
         dispatch: input.runSupervisorTask,
       });
       if (
@@ -495,13 +855,13 @@ export async function runLoopServiceTickAsync(input: {
               runner.timeoutMs ??
               input.defaultSupervisorTimeoutMs ??
               DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
-            resetBeforeWorkOrder: resetSupervisorBeforeWorkOrder,
+            resetBeforeWorkOrder: supervisorContextReset,
             dispatch: input.runSupervisorTask,
           });
         }
       }
     }
-    result = recoverInvalidOutputFromFinalSummary(workOrder, result);
+    result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
     let gate = runSupervisedSystemGateOutcome({
       project: systemGateProjectFromWorkOrder(workOrder),
       workOrder,
@@ -550,8 +910,9 @@ export async function runLoopServiceTickAsync(input: {
         attempt: revisionAttempt,
         maxAttempts: maxSupervisorRevisionAttempts,
         previousOutput: gate.result.output,
+        resetBeforeWorkOrder: supervisorContextReset,
       });
-      result = recoverInvalidOutputFromFinalSummary(workOrder, result);
+      result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
       gate = runSupervisedSystemGateOutcome({
         project: systemGateProjectFromWorkOrder(workOrder),
         workOrder,
@@ -562,6 +923,27 @@ export async function runLoopServiceTickAsync(input: {
       revisionFailures = supervisorRevisionFailures(gate.failures);
     }
     result = gate.result;
+    const reviewDisposition =
+      workOrder.task?.kind === "repository-pull-request-review" && "summary" in result
+        ? repositoryPullRequestReviewDisposition(result.summary)
+        : workOrder.task?.kind === "repository-pull-request-review"
+          ? "invalid"
+          : undefined;
+    if (
+      workOrder.task?.kind === "repository-pull-request-review" &&
+      result.status === "completed" &&
+      reviewDisposition !== "completed"
+    ) {
+      result = {
+        ...result,
+        status: "blocked",
+        summary: {
+          ...result.summary,
+          status: "blocked",
+          finalVerification: "unknown",
+        },
+      };
+    }
     const endedAt = Date.now();
     const completion = completeLoopSupervisorRun({
       workOrder,
@@ -571,6 +953,13 @@ export async function runLoopServiceTickAsync(input: {
       result,
       backlog,
     });
+    writeSupervisedSystemGateArtifact({
+      workOrder,
+      report: completion.report,
+      gate,
+      result,
+      writtenAt: endedAt,
+    });
     writeLoopSupervisorWorkOrderState({
       workOrder,
       supervisorSession,
@@ -578,10 +967,21 @@ export async function runLoopServiceTickAsync(input: {
       now: endedAt,
       resultStatus: result.status,
     });
-    if (completion.retrySchedule || result.status === "invalid-output") {
-      restoreLastFired(input.schedulerStore, previousLastFired, due.jobKey, due.scheduledAt);
-    } else {
-      input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
+    const isolatedCleanupFailed =
+      result.status === "completed" &&
+      input.runGit !== undefined &&
+      isPreparedIsolatedExecutionWorktree(workOrder) &&
+      !cleanupLoopExecutionWorktree({ worktree: workOrder.projectPath, runGit: input.runGit });
+    settleLoopSupervisorWorkerLease(workOrder, result, endedAt, isolatedCleanupFailed);
+    if (result.status === "completed") {
+      await cleanupCompletedWorkerSession(workOrder, input.cleanupCompletedWorkerSession);
+    }
+    if (checkpointScheduler) {
+      if (completion.retrySchedule || result.status === "invalid-output") {
+        restoreLastFired(input.schedulerStore, previousLastFired, due.jobKey, due.scheduledAt);
+      } else {
+        input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
+      }
     }
     if (result.status === "completed") {
       taskLedger.finish(ledgerTaskId, {
@@ -627,9 +1027,44 @@ export async function runLoopServiceTickAsync(input: {
       projectName: workOrder.projectName,
       result,
       report: completion.report,
+      gate,
     });
     ran++;
     if (result.status !== "completed") failed++;
+    if (
+      workOrder.task?.kind === "repository-pull-request-review" &&
+      result.status === "blocked" &&
+      reviewDisposition === "manual-review"
+    ) {
+      return "manual-review";
+    }
+    return result.status;
+  };
+
+  const cleanupCompletedWorkerSession = async (
+    workOrder: LoopWorkOrder,
+    cleanup: ((sessionName: string) => Promise<void>) | undefined,
+  ): Promise<void> => {
+    if (workOrder.workerSession === undefined || cleanup === undefined) return;
+    try {
+      await cleanup(workOrder.workerSession);
+      log.info("loop engineering completed worker session cleaned up", {
+        data: {
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          workerSession: workOrder.workerSession,
+        },
+      });
+    } catch (err) {
+      log.warn("failed to clean up completed loop worker session", {
+        err,
+        data: {
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          workerSession: workOrder.workerSession,
+        },
+      });
+    }
   };
 
   const runSystemDue = async (target: ResolvedDue): Promise<void> => {
@@ -676,60 +1111,214 @@ export async function runLoopServiceTickAsync(input: {
   const flushSupervisedBuffer = async (): Promise<void> => {
     if (supervisedBuffer.length === 0) return;
     const active = activeLoopSupervisorWork(input.configFile);
+    const reservedSupervisorSessions = reserveLoopSupervisorSessions(
+      supervisorSessions,
+      active.supervisorSessions,
+    );
     const availableSupervisorSessions =
-      supervisorSessions.length === 0
-        ? supervisorSessions
-        : supervisorSessions.filter((session) => !active.supervisorSessions.has(session));
-    const idleSupervisorSessions =
-      input.isSupervisorSessionAvailable === undefined
-        ? availableSupervisorSessions
-        : await asyncFilter(availableSupervisorSessions, input.isSupervisorSessionAvailable);
-    if (supervisorSessions.length > 0 && idleSupervisorSessions.length === 0) {
-      log.warn("loop engineering supervised dispatch skipped because supervisor pool is busy", {
-        data: {
-          pending: supervisedBuffer.map((target) => ({
-            projectId: target.due.projectId,
-            jobKey: target.due.jobKey,
-            jobKind: target.due.jobKind,
-          })),
-          activeSupervisorSessions: [...active.supervisorSessions],
-          unavailableSupervisorSessions: availableSupervisorSessions.filter(
-            (session) => !idleSupervisorSessions.includes(session),
-          ),
-        },
-      });
+      supervisorSessions.length === 0 ? supervisorSessions : reservedSupervisorSessions;
+    try {
+      const idleSupervisorSessions =
+        input.isSupervisorSessionAvailable === undefined
+          ? availableSupervisorSessions
+          : await asyncFilter(availableSupervisorSessions, input.isSupervisorSessionAvailable);
+      if (supervisorSessions.length > 0 && idleSupervisorSessions.length === 0) {
+        log.warn("loop engineering supervised dispatch skipped because supervisor pool is busy", {
+          data: {
+            pending: supervisedBuffer.map((target) => ({
+              projectId: target.due.projectId,
+              jobKey: target.due.jobKey,
+              jobKind: target.due.jobKind,
+            })),
+            activeSupervisorSessions: [...active.supervisorSessions],
+            unavailableSupervisorSessions: availableSupervisorSessions.filter(
+              (session) => !idleSupervisorSessions.includes(session),
+            ),
+          },
+        });
+        supervisedBuffer = [];
+        return;
+      }
+      const plan = planSupervisedDispatch(supervisedBuffer, active);
       supervisedBuffer = [];
-      return;
-    }
-    const plan = planSupervisedDispatch(supervisedBuffer, active);
-    supervisedBuffer = [];
-    for (const skipped of plan.skipped) {
-      skipDueTarget(skipped.target, skipped.reason);
-    }
-    if (plan.deferred.length > 0) {
-      log.info("loop engineering supervised targets deferred by conflict planner", {
-        data: {
-          deferred: plan.deferred.map((deferred) => ({
-            projectId: deferred.target.due.projectId,
-            jobKey: deferred.target.due.jobKey,
-            jobKind: deferred.target.due.jobKind,
-            reason: deferred.reason,
-            conflictsWith: deferred.conflictsWith,
-          })),
-        },
-      });
-    }
-    const readyTargets = plan.ready;
-    if (readyTargets.length === 0) return;
-    const batches = allocateLoopSupervisorBatches(readyTargets, idleSupervisorSessions);
-    for (const batch of batches) {
-      await Promise.all(
-        batch.map(({ item, supervisorSession }) => runSupervisedDue(item, supervisorSession)),
-      );
+      for (const skipped of plan.skipped) {
+        skipDueTarget(skipped.target, skipped.reason);
+      }
+      if (plan.deferred.length > 0) {
+        log.info("loop engineering supervised targets deferred by conflict planner", {
+          data: {
+            deferred: plan.deferred.map((deferred) => ({
+              projectId: deferred.target.due.projectId,
+              jobKey: deferred.target.due.jobKey,
+              jobKind: deferred.target.due.jobKind,
+              reason: deferred.reason,
+              conflictsWith: deferred.conflictsWith,
+            })),
+          },
+        });
+      }
+      const readyTargets = plan.ready;
+      if (readyTargets.length === 0) return;
+      const batches = allocateLoopSupervisorBatches(readyTargets, idleSupervisorSessions);
+      for (const batch of batches) {
+        await Promise.all(
+          batch.map(({ item, supervisorSession }) => runSupervisedDue(item, supervisorSession)),
+        );
+      }
+    } finally {
+      releaseLoopSupervisorSessions(reservedSupervisorSessions);
     }
   };
 
-  const skipDueTarget = (target: ResolvedDue, summary: string): void => {
+  const drainRepositoryReviewQueue = async (): Promise<void> => {
+    reconcileRepositoryReviewQueueWorkOrders(repositoryReviewQueue, Date.now());
+    const active = activeLoopSupervisorWork(input.configFile);
+    const reservedSupervisorSessions = reserveLoopSupervisorSessions(
+      supervisorSessions,
+      active.supervisorSessions,
+    );
+    try {
+      const idleSupervisorSessions =
+        input.isSupervisorSessionAvailable === undefined
+          ? reservedSupervisorSessions
+          : await asyncFilter(reservedSupervisorSessions, input.isSupervisorSessionAvailable);
+      if (idleSupervisorSessions.length === 0) {
+        const readyCount = repositoryReviewQueue.listReady(Date.now()).length;
+        log.info("loop engineering repository review queue waiting for supervisor capacity", {
+          data: {
+            readyCount,
+            activeSupervisorSessions: [...active.supervisorSessions],
+            reservedSupervisorSessions,
+            supervisorSessions,
+          },
+        });
+        return;
+      }
+
+      const now = Date.now();
+      const queueItems = repositoryReviewQueue.listReady(now, idleSupervisorSessions.length);
+      const targets = queueItems.flatMap((item) => {
+        const repository = config.prReview.repositories.find(
+          (candidate) => candidate.id === item.repositoryId,
+        );
+        if (repository === undefined) return [];
+        return [
+          {
+            item,
+            target: resolveDue({
+              projectId: repository.id,
+              name: repository.name,
+              jobKey: `pr-review:${repository.id}`,
+              jobKind: "repository-pull-request-review",
+              scheduledAt: item.scheduledAt,
+              effectiveAt: item.scheduledAt,
+              jitterMs: 0,
+              action: "would-run",
+            }),
+          },
+        ];
+      });
+      const plan = planSupervisedDispatch(
+        targets.map(({ target }) => target),
+        active,
+      );
+      if (plan.ready.length === 0) {
+        log.info("loop engineering repository review queue deferred by resource planner", {
+          data: {
+            queueItems: queueItems.map((item) => ({
+              id: item.id,
+              repositoryId: item.repositoryId,
+              status: item.status,
+            })),
+            deferred: plan.deferred.map((item) => ({
+              projectId: item.target.due.projectId,
+              reason: item.reason,
+              conflictsWith: item.conflictsWith,
+            })),
+          },
+        });
+        return;
+      }
+      const targetByKey = new Map(
+        targets.map(({ item, target }) => [`${target.due.projectId}:${item.scheduledAt}`, item]),
+      );
+      const batches = allocateLoopSupervisorBatches(plan.ready, idleSupervisorSessions);
+      for (const batch of batches) {
+        await Promise.all(
+          batch.map(async ({ item: target, supervisorSession }) => {
+            const queueItem = targetByKey.get(`${target.due.projectId}:${target.due.scheduledAt}`);
+            if (queueItem === undefined) return;
+            const owner = `${process.pid}:${supervisorSession}`;
+            const leased = repositoryReviewQueue.lease(
+              queueItem.id,
+              owner,
+              now,
+              REPOSITORY_REVIEW_QUEUE_LEASE_MS,
+            );
+            if (leased === null) return;
+            repositoryReviewQueue.markRunning(leased.id, owner, Date.now());
+            try {
+              const result = await runSupervisedDue(target, supervisorSession, false);
+              if (result === "completed") {
+                repositoryReviewQueue.complete(leased.id, owner, Date.now(), "completed");
+              } else if (result === "manual-review") {
+                repositoryReviewQueue.manualReview(
+                  leased.id,
+                  owner,
+                  Date.now(),
+                  "repository review recorded an explicit manual decision",
+                );
+              } else if (result === "blocked") {
+                const retryDelay = Math.min(
+                  REPOSITORY_REVIEW_RETRY_MAX_MS,
+                  REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
+                );
+                repositoryReviewQueue.retry(
+                  leased.id,
+                  owner,
+                  Date.now(),
+                  "repository review has retryable or incomplete decisions",
+                  Date.now() + retryDelay,
+                );
+              } else {
+                const retryDelay = Math.min(
+                  REPOSITORY_REVIEW_RETRY_MAX_MS,
+                  REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
+                );
+                repositoryReviewQueue.fail(
+                  leased.id,
+                  owner,
+                  Date.now(),
+                  `repository review supervisor result: ${result}`,
+                  Date.now() + retryDelay,
+                );
+              }
+            } catch (err) {
+              const retryDelay = Math.min(
+                REPOSITORY_REVIEW_RETRY_MAX_MS,
+                REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
+              );
+              repositoryReviewQueue.fail(
+                leased.id,
+                owner,
+                Date.now(),
+                err instanceof Error ? err.message : String(err),
+                Date.now() + retryDelay,
+              );
+            }
+          }),
+        );
+      }
+    } finally {
+      releaseLoopSupervisorSessions(reservedSupervisorSessions);
+    }
+  };
+
+  const recordDueTargetWithoutDispatch = (
+    target: ResolvedDue,
+    summary: string,
+    repairStatus: "not-needed" | "blocked",
+  ): void => {
     const endedAt = Date.now();
     const taskId = `loop:${target.due.jobKey}:${target.due.scheduledAt}`;
     taskLedger.expect({
@@ -738,20 +1327,32 @@ export async function runLoopServiceTickAsync(input: {
       name: `${target.due.projectId} ${target.due.jobKind}`,
       scheduledAt: target.due.scheduledAt,
     });
-    taskLedger.skip(taskId, { endedAt, summary });
+    if (repairStatus === "not-needed") {
+      taskLedger.skip(taskId, { endedAt, summary });
+    } else {
+      taskLedger.fail(taskId, { endedAt, error: summary, summary });
+      taskLedger.markRepairStatus(taskId, { repairStatus, updatedAt: endedAt, summary });
+    }
     input.schedulerStore.setLastFired(target.due.jobKey, target.due.scheduledAt);
-    log.info("loop engineering due target skipped by conflict planner", {
+    log.info("loop engineering due target completed without supervisor dispatch", {
       data: {
         projectId: target.due.projectId,
         jobKey: target.due.jobKey,
         jobKind: target.due.jobKind,
         scheduledAt: new Date(target.due.scheduledAt).toISOString(),
         summary,
+        repairStatus,
       },
     });
   };
 
+  const skipDueTarget = (target: ResolvedDue, summary: string): void =>
+    recordDueTargetWithoutDispatch(target, summary, "not-needed");
+
   for (const due of scheduler.dueProjects) {
+    const isRepositoryReview = due.jobKind === "repository-pull-request-review";
+    if (input.repositoryReviewOnly && !isRepositoryReview) continue;
+    if (!input.repositoryReviewOnly && input.skipRepositoryReview && isRepositoryReview) continue;
     const target = resolveDue(due);
     const runner = target.project?.runner ?? target.repository?.runner ?? target.workspace?.runner;
     if (runner?.kind === "agent-supervised") {
@@ -761,7 +1362,21 @@ export async function runLoopServiceTickAsync(input: {
     await flushSupervisedBuffer();
     await runSystemDue(target);
   }
-  await flushSupervisedBuffer();
+  if (!input.repositoryReviewOnly) {
+    await flushSupervisedBuffer();
+  } else {
+    for (const due of scheduler.dueProjects) {
+      if (due.jobKind !== "repository-pull-request-review") continue;
+      repositoryReviewQueue.enqueue({
+        repositoryId: due.projectId,
+        scheduledAt: due.scheduledAt,
+        priority: 1000,
+        now: Date.now(),
+      });
+      input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
+    }
+    await drainRepositoryReviewQueue();
+  }
 
   return {
     checked: scheduler.checked,
@@ -858,6 +1473,8 @@ async function notifyOpportunityDiscoveryResult(input: {
       estimatedComplexity: suggestion.estimatedComplexity,
       status: suggestion.status,
       value: suggestion.value,
+      problem: suggestion.problem,
+      recommendedApproach: suggestion.recommendedApproach,
     })),
   });
   log.info("loop opportunity discovery notification result", {
@@ -898,6 +1515,12 @@ function activeLoopSupervisorWork(configFile: string): {
     for (const resourcePath of resourcePathsForWorkOrder(record.workOrder)) {
       resourcePaths.add(resourcePath);
     }
+  }
+  for (const lease of readLoopSupervisorWorkerLeaseState().leases) {
+    if (lease.status !== "active") continue;
+    supervisorSessions.add(lease.workerSession);
+    projectPaths.add(lease.projectPath);
+    resourcePaths.add(resolvePath(lease.projectPath));
   }
   if (supervisorSessions.size > 0) {
     log.info("loop engineering active supervisor work detected", {
@@ -1057,10 +1680,18 @@ function resourcePathsForWorkOrder(workOrder: LoopWorkOrder): string[] {
   if (workOrder.workspace !== undefined) {
     return normalizeResourcePaths([
       workOrder.workspace.root,
-      ...workOrder.workspace.repositories.map((repository) => repository.path),
+      ...workOrder.workspace.repositories.flatMap((repository) => [
+        repository.path,
+        ...(repository.sourcePath === undefined ? [] : [repository.sourcePath]),
+      ]),
     ]);
   }
-  return normalizeResourcePaths([workOrder.projectPath]);
+  return normalizeResourcePaths([
+    workOrder.projectPath,
+    ...(workOrder.executionIsolation?.sourceWorktree === undefined
+      ? []
+      : [workOrder.executionIsolation.sourceWorktree]),
+  ]);
 }
 
 function normalizeResourcePaths(paths: readonly string[]): string[] {
@@ -1126,6 +1757,80 @@ function restoreLastFired(
   else store.setLastFired(jobKey, previous);
 }
 
+/* c8 ignore start -- filesystem-backed WorkOrder reconciliation is exercised by live service smoke tests. */
+function reconcileRepositoryReviewQueueWorkOrders(queue: RepositoryReviewQueue, now: number): void {
+  for (const record of listUnfinishedLoopSupervisorWorkOrders()) {
+    if (record.workOrder.task?.kind !== "repository-pull-request-review") continue;
+    const hasActiveWorkerLease = readLoopSupervisorWorkerLeaseState().leases.some(
+      (lease) =>
+        lease.status === "active" &&
+        lease.workOrderId === record.workOrder.id &&
+        lease.workerSession === record.state.supervisorSession,
+    );
+    const adopted = queue.adoptRunning(
+      record.workOrder.projectId,
+      record.workOrder.scheduledAt,
+      `${process.pid}:${record.state.supervisorSession}`,
+      now,
+      REPOSITORY_REVIEW_QUEUE_LEASE_MS,
+      hasActiveWorkerLease,
+    );
+    if (adopted === null) continue;
+    log.info("loop engineering repository review queue adopted active work order", {
+      data: {
+        workOrderId: record.workOrder.id,
+        repositoryId: record.workOrder.projectId,
+        queueItemId: adopted.id,
+        supervisorSession: record.state.supervisorSession,
+        status: adopted.status,
+      },
+    });
+  }
+  for (const record of listTerminalLoopSupervisorWorkOrders()) {
+    if (record.workOrder.task?.kind !== "repository-pull-request-review") continue;
+    const resultStatus =
+      record.state.resultStatus ?? terminalStateToResultStatus(record.state.status);
+    const queueItem = queue
+      .list({ all: true })
+      .find(
+        (item) =>
+          item.repositoryId === record.workOrder.projectId &&
+          item.scheduledAt === record.workOrder.scheduledAt,
+      );
+    const retryDelay =
+      queueItem === undefined
+        ? REPOSITORY_REVIEW_RETRY_BASE_MS
+        : Math.min(
+            REPOSITORY_REVIEW_RETRY_MAX_MS,
+            REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, queueItem.attempt - 1),
+          );
+    const settled =
+      resultStatus === "completed"
+        ? queue.completeOccurrence(
+            record.workOrder.projectId,
+            record.workOrder.scheduledAt,
+            now,
+            "completed",
+          )
+        : queue.retryOccurrence(
+            record.workOrder.projectId,
+            record.workOrder.scheduledAt,
+            now,
+            `recovered supervisor work order result: ${resultStatus}`,
+            now + retryDelay,
+          );
+    if (!settled) continue;
+    log.info("loop engineering repository review queue reconciled terminal work order", {
+      data: {
+        workOrderId: record.workOrder.id,
+        repositoryId: record.workOrder.projectId,
+        resultStatus,
+      },
+    });
+  }
+}
+/* c8 ignore stop */
+
 export function startLoopEngineering(
   deps: HandlerDeps,
   config: { configFile: string; tickMs: number },
@@ -1157,6 +1862,7 @@ export function startLoopEngineering(
   }
   const schedulerStore = new LoopSchedulerStore();
   let tickInFlight = false;
+  let repositoryReviewTickInFlight = false;
   const tick = async (): Promise<void> => {
     if (tickInFlight) {
       log.warn("loop engineering tick skipped because previous tick is still running");
@@ -1182,11 +1888,16 @@ export function startLoopEngineering(
         runAgentEval: createLoopQueueAgentEvalRunner(deps),
         runGit: runGitCommand,
         runSupervisorTask: createLoopSupervisorTaskRunner(deps),
+        cleanupCompletedWorkerSession: async (sessionName) => {
+          await deps.bridge.killSession(sessionName);
+          cleanupWorkerSessionRecords(sessionName);
+        },
         supervisorSessionNames: loopSupervisorSessionNames(
           deps.config.projectSessionPrefix,
           deps.config.loopEngineering.supervisor.poolSize,
         ),
         resetSupervisorBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
+        supervisorWorktreeIsolation: deps.config.loopEngineering.supervisor.worktreeIsolation,
         ...(deps.config.loopEngineering.supervisor.enabled
           ? {
               ensureSupervisorSession: async (sessionName) =>
@@ -1198,6 +1909,7 @@ export function startLoopEngineering(
         defaultSupervisorTimeoutMs: deps.config.maxWaitDoneTotalMs,
         notifications: deps.notifications,
         projectSessionPrefix: deps.config.projectSessionPrefix,
+        skipRepositoryReview: true,
       });
       log.info("loop engineering tick complete", { data: result });
     } catch (err) {
@@ -1206,10 +1918,59 @@ export function startLoopEngineering(
       tickInFlight = false;
     }
   };
+  const repositoryReviewTick = async (): Promise<void> => {
+    if (repositoryReviewTickInFlight) return;
+    repositoryReviewTickInFlight = true;
+    try {
+      await runLoopServiceTickAsync({
+        configFile: config.configFile,
+        now: Date.now(),
+        schedulerStore,
+        runCommand: runShellCommand,
+        runGit: runGitCommand,
+        runSupervisorTask: createLoopSupervisorTaskRunner(deps),
+        cleanupCompletedWorkerSession: async (sessionName) => {
+          await deps.bridge.killSession(sessionName);
+          cleanupWorkerSessionRecords(sessionName);
+        },
+        supervisorSessionNames: loopSupervisorSessionNames(
+          deps.config.projectSessionPrefix,
+          deps.config.loopEngineering.supervisor.poolSize,
+        ),
+        resetSupervisorBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
+        supervisorWorktreeIsolation: deps.config.loopEngineering.supervisor.worktreeIsolation,
+        ...(deps.config.loopEngineering.supervisor.enabled
+          ? {
+              ensureSupervisorSession: async (sessionName) =>
+                startLoopSupervisor(deps, undefined, sessionName),
+              isSupervisorSessionAvailable: async (sessionName) =>
+                supervisorSessionIsAvailable(deps, sessionName),
+            }
+          : {}),
+        defaultSupervisorTimeoutMs: deps.config.maxWaitDoneTotalMs,
+        notifications: deps.notifications,
+        projectSessionPrefix: deps.config.projectSessionPrefix,
+        repositoryReviewOnly: true,
+      });
+    } catch (err) {
+      log.error("repository PR review queue tick failed", { err });
+    } finally {
+      repositoryReviewTickInFlight = false;
+    }
+  };
   const timer = setInterval(() => void tick(), config.tickMs);
+  const repositoryReviewTimer = setInterval(
+    () => void repositoryReviewTick(),
+    Math.min(config.tickMs, REPOSITORY_REVIEW_MIN_TICK_MS),
+  );
   timer.unref();
+  repositoryReviewTimer.unref();
   void tick();
-  return () => clearInterval(timer);
+  void repositoryReviewTick();
+  return () => {
+    clearInterval(timer);
+    clearInterval(repositoryReviewTimer);
+  };
 }
 
 async function supervisorSessionIsAvailable(
@@ -1230,8 +1991,10 @@ export function reconcileLoopSupervisorWorkOrders(input: {
 }): { checked: number; recovered: number; failed: number } {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const unfinished = [
+    ...listRecoverableFinalSummaryLoopSupervisorWorkOrders(),
     ...listUnfinishedLoopSupervisorWorkOrders(),
     ...listRecoverableFailedLoopSupervisorWorkOrders(),
+    ...listStaleDispatchingLoopSupervisorWorkOrders(input.now),
   ];
   const schedulerStore = new LoopSchedulerStore();
   const taskLedger = new DailyTaskLedger();
@@ -1239,26 +2002,42 @@ export function reconcileLoopSupervisorWorkOrders(input: {
   let recovered = 0;
   let failed = 0;
 
-  for (const record of unfinished) {
+  for (const record of new Map(unfinished.map((entry) => [entry.workOrder.id, entry])).values()) {
     const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
-    if (!parsed.ok) continue;
+    const staleDispatching =
+      record.state.status === "dispatching" &&
+      !parsed.ok &&
+      !readLoopSupervisorWorkerLeaseState().leases.some(
+        (lease) => lease.status === "active" && lease.workOrderId === record.workOrder.id,
+      );
+    if (!parsed.ok && !staleDispatching) continue;
     const project = systemGateProjectForRecoveredWorkOrder(config, record.workOrder);
     checked++;
 
-    let result: LoopSupervisedRunResult = {
-      status: supervisorFinalStatusToRunStatus(parsed.summary.status),
-      summary: parsed.summary,
-      output: `recovered supervisor final summary from ${
-        record.workOrder.finalSummaryPath ?? "work order state"
-      }`,
-    };
-    result = runSupervisedSystemGates({
+    const recoveredResult: LoopSupervisedRunResult | undefined = staleDispatching
+      ? {
+          status: "dispatch-failed",
+          reason: "dispatch reservation expired before a supervisor worker lease was acquired",
+          output: "dispatch reservation expired before a supervisor worker lease was acquired",
+        }
+      : parsed.ok
+        ? {
+            status: supervisorFinalStatusToRunStatus(parsed.summary.status),
+            summary: parsed.summary,
+            output: `recovered supervisor final summary from ${
+              record.workOrder.finalSummaryPath ?? "work order state"
+            }`,
+          }
+        : undefined;
+    if (recoveredResult === undefined) continue;
+    const gate = runSupervisedSystemGateOutcome({
       project,
       workOrder: record.workOrder,
-      result,
+      result: recoveredResult,
       runCommand: input.runCommand,
       ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
     });
+    const result = gate.result;
 
     const completion = completeLoopSupervisorRun({
       workOrder: record.workOrder,
@@ -1267,6 +2046,13 @@ export function reconcileLoopSupervisorWorkOrders(input: {
       endedAt: input.now,
       result,
     });
+    writeSupervisedSystemGateArtifact({
+      workOrder: record.workOrder,
+      report: completion.report,
+      gate,
+      result,
+      writtenAt: input.now,
+    });
     writeLoopSupervisorWorkOrderState({
       workOrder: record.workOrder,
       supervisorSession: record.state.supervisorSession,
@@ -1274,6 +2060,7 @@ export function reconcileLoopSupervisorWorkOrders(input: {
       now: input.now,
       resultStatus: result.status,
     });
+    settleLoopSupervisorWorkerLease(record.workOrder, result, input.now);
     const jobKey = jobKeyForWorkOrder(record.workOrder);
     if (!completion.retrySchedule && result.status !== "invalid-output")
       schedulerStore.setLastFired(jobKey, record.workOrder.scheduledAt);
@@ -1304,7 +2091,219 @@ export function reconcileLoopSupervisorWorkOrders(input: {
     if (result.status !== "completed") failed++;
   }
 
+  const settledTerminalLeases = reconcileTerminalLoopSupervisorWorkerLeases(input.now);
+  if (settledTerminalLeases > 0) {
+    log.info("loop engineering terminal supervisor worker leases reconciled", {
+      data: { settled: settledTerminalLeases },
+    });
+  }
+  const abandonedWorkOrders = reconcileAbandonedLoopSupervisorWorkOrders(
+    input.now,
+    taskLedger,
+    schedulerStore,
+  );
+  checked += abandonedWorkOrders;
+  failed += abandonedWorkOrders;
+  if (abandonedWorkOrders > 0) {
+    log.info("loop engineering abandoned supervisor worker leases reconciled", {
+      data: { settled: abandonedWorkOrders },
+    });
+  }
+  if (input.runGit !== undefined) {
+    const terminalWorktrees = reconcileTerminalLoopSupervisorWorktrees({
+      now: input.now,
+      runGit: input.runGit,
+    });
+    if (terminalWorktrees > 0) {
+      log.info("loop engineering terminal supervisor worktrees reconciled", {
+        data: { removed: terminalWorktrees },
+      });
+    }
+    const expiredWorktrees = reconcileExpiredLoopSupervisorWorkerWorktrees({
+      now: input.now,
+      runGit: input.runGit,
+    });
+    if (expiredWorktrees > 0) {
+      log.info("loop engineering expired supervisor worktrees reconciled", {
+        data: { removed: expiredWorktrees },
+      });
+    }
+  }
+
   return { checked, recovered, failed };
+}
+
+function settleLoopSupervisorWorkerLease(
+  workOrder: LoopWorkOrder,
+  result: LoopSupervisedRunResult,
+  now: number,
+  cleanupFailed = false,
+): void {
+  settleLoopSupervisorWorkerLeaseForStatus(workOrder, result.status, now, cleanupFailed);
+}
+
+function reconcileTerminalLoopSupervisorWorkerLeases(now: number): number {
+  const activeLeasedWorkOrders = new Set(
+    readLoopSupervisorWorkerLeaseState()
+      .leases.filter((lease) => lease.status === "active")
+      .map((lease) => lease.workOrderId),
+  );
+  let settled = 0;
+  for (const record of listTerminalLoopSupervisorWorkOrders()) {
+    if (!activeLeasedWorkOrders.has(record.workOrder.id)) continue;
+    settleLoopSupervisorWorkerLeaseForStatus(
+      record.workOrder,
+      record.state.resultStatus ?? terminalStateToResultStatus(record.state.status),
+      now,
+    );
+    settled++;
+  }
+  return settled;
+}
+
+function reconcileAbandonedLoopSupervisorWorkOrders(
+  now: number,
+  taskLedger: DailyTaskLedger,
+  schedulerStore: LoopSchedulerStore,
+): number {
+  const activeLeasedWorkOrders = new Set(
+    readLoopSupervisorWorkerLeaseState()
+      .leases.filter((lease) => lease.status === "active")
+      .map((lease) => lease.workOrderId),
+  );
+  let settled = 0;
+  for (const record of listAbandonedLoopSupervisorWorkOrders()) {
+    writeLoopSupervisorWorkOrderState({
+      workOrder: record.workOrder,
+      supervisorSession: record.state.supervisorSession,
+      status: "failed",
+      now,
+      resultStatus: "invalid-output",
+      revisionReasons: ["supervisor work order can no longer progress"],
+    });
+    schedulerStore.setLastFired(jobKeyForWorkOrder(record.workOrder), record.workOrder.scheduledAt);
+    const jobKey = jobKeyForWorkOrder(record.workOrder);
+    const ledgerTaskId = `loop:${jobKey}:${record.workOrder.scheduledAt}`;
+    const existing = taskLedger.listAll().find((task) => task.taskId === ledgerTaskId);
+    if (existing === undefined) {
+      taskLedger.expect({
+        taskId: ledgerTaskId,
+        source: "loop-engineering",
+        name: `${record.workOrder.projectId} ${record.workOrder.task?.kind ?? "architecture"}`,
+        scheduledAt: record.workOrder.scheduledAt,
+      });
+      taskLedger.start(ledgerTaskId, record.state.updatedAt);
+    }
+    if (existing?.status !== "failed" && existing?.status !== "success") {
+      taskLedger.fail(ledgerTaskId, {
+        endedAt: now,
+        error: "supervisor work order can no longer progress",
+        summary: "Reconciled stale supervisor dispatch without an active worker lease.",
+        reportPath: record.runDir,
+      });
+    }
+    if (activeLeasedWorkOrders.has(record.workOrder.id)) {
+      settleLoopSupervisorWorkerLeaseForStatus(record.workOrder, "invalid-output", now);
+    }
+    settled++;
+  }
+  return settled;
+}
+
+function terminalStateToResultStatus(
+  status: LoopSupervisorWorkOrderStateStatus,
+): LoopSupervisedRunResult["status"] {
+  if (status === "completed") return "completed";
+  if (status === "cancelled") return "cancelled";
+  return "supervisor-failed";
+}
+
+function settleLoopSupervisorWorkerLeaseForStatus(
+  workOrder: LoopWorkOrder,
+  resultStatus: LoopSupervisedRunResult["status"],
+  now: number,
+  cleanupFailed = false,
+): void {
+  const retainFailureForMs =
+    (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000;
+  writeLoopSupervisorWorkerLeaseState(
+    releaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      workOrderId: workOrder.id,
+      result: resultStatus === "completed" && !cleanupFailed ? "success" : "failure",
+      now,
+      retainFailureForMs,
+    }),
+  );
+  log.info("loop engineering settled supervisor worker lease after system gate", {
+    data: {
+      workOrderId: workOrder.id,
+      projectId: workOrder.projectId,
+      resultStatus,
+      leaseResult: resultStatus === "completed" && !cleanupFailed ? "success" : "failure",
+    },
+  });
+}
+
+function isPreparedIsolatedExecutionWorktree(workOrder: LoopWorkOrder): boolean {
+  return (
+    workOrder.executionIsolation?.preparedBy === "system-git-worktree" &&
+    workOrder.executionIsolation.worktreeIsolation === "isolated" &&
+    isBotOwnedLoopExecutionWorktree(workOrder.projectPath)
+  );
+}
+
+function reconcileTerminalLoopSupervisorWorktrees(input: {
+  now: number;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): number {
+  let removed = 0;
+  for (const record of listTerminalLoopSupervisorWorkOrders()) {
+    if (!isPreparedIsolatedExecutionWorktree(record.workOrder)) continue;
+    const retainFailureForMs =
+      (record.workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000;
+    const eligibleAt =
+      record.state.status === "completed"
+        ? record.state.updatedAt
+        : record.state.updatedAt + retainFailureForMs;
+    if (eligibleAt > input.now) continue;
+    if (!existsSync(record.workOrder.projectPath)) continue;
+    if (
+      cleanupLoopExecutionWorktree({
+        worktree: record.workOrder.projectPath,
+        runGit: input.runGit,
+      })
+    ) {
+      removed++;
+    }
+  }
+  return removed;
+}
+
+function reconcileExpiredLoopSupervisorWorkerWorktrees(input: {
+  now: number;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): number {
+  const state = readLoopSupervisorWorkerLeaseState();
+  const expired = state.leases.filter(
+    (lease) => lease.status === "retained" && (lease.retainUntil ?? Infinity) <= input.now,
+  );
+  if (expired.length === 0) return 0;
+
+  let removed = 0;
+  const remaining = state.leases.filter((lease) => {
+    if (!expired.includes(lease)) return true;
+    if (!isBotOwnedLoopExecutionWorktree(lease.projectPath)) return true;
+    if (!cleanupLoopExecutionWorktree({ worktree: lease.projectPath, runGit: input.runGit })) {
+      return true;
+    }
+    removed++;
+    return false;
+  });
+  if (remaining.length !== state.leases.length) {
+    writeLoopSupervisorWorkerLeaseState({ leases: remaining });
+  }
+  return removed;
 }
 
 function systemGateProjectForRecoveredWorkOrder(
@@ -1347,22 +2346,54 @@ function jobKeyForWorkOrder(workOrder: LoopWorkOrder): string {
       ? `${workOrder.projectId}:opportunity-discovery`
       : `workspace:${workOrder.projectId}:opportunity-discovery`;
   }
+  if (workOrder.task?.kind === "automation-governance-review") {
+    return `${workOrder.projectId}:automation-governance-review`;
+  }
   return workOrder.projectId;
 }
 
-type SupervisedSystemGateOutcome = {
+export type SupervisedSystemGateOutcome = {
   result: LoopSupervisedRunResult;
   failures: string[];
+  evidence: string[];
 };
 
-function runSupervisedSystemGates(input: {
-  project: SupervisedSystemGateProject;
+export function writeSupervisedSystemGateArtifact(input: {
   workOrder: LoopWorkOrder;
+  report: ReturnType<typeof completeLoopSupervisorRun>["report"];
+  gate: SupervisedSystemGateOutcome;
   result: LoopSupervisedRunResult;
-  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
-  runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
-}): LoopSupervisedRunResult {
-  return runSupervisedSystemGateOutcome(input).result;
+  writtenAt: number;
+}): void {
+  const path = join(dirname(input.report.summaryPath), LOOP_RUN_ARTIFACTS.systemGate);
+  const evalReport =
+    "summary" in input.result
+      ? buildEvalReportFromSupervisorSummary({
+          workOrderId: input.workOrder.id,
+          taskId: input.workOrder.task?.kind ?? "architecture",
+          summary: input.result.summary,
+        })
+      : null;
+  writeFileSync(
+    path,
+    `${JSON.stringify(
+      {
+        workOrderId: input.workOrder.id,
+        projectId: input.workOrder.projectId,
+        resultStatus: input.result.status,
+        accepted: input.result.status === "completed" && input.gate.failures.length === 0,
+        supervisorReviewGate:
+          "summary" in input.result ? (input.result.summary.reviewGate ?? null) : null,
+        evalReport,
+        evidence: input.gate.evidence,
+        failures: input.gate.failures,
+        recoverableFailures: supervisorRevisionFailures(input.gate.failures),
+        writtenAt: input.writtenAt,
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 export function runSupervisedSystemGateOutcome(input: {
@@ -1372,14 +2403,51 @@ export function runSupervisedSystemGateOutcome(input: {
   runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): SupervisedSystemGateOutcome {
-  if (input.result.status !== "completed") return { result: input.result, failures: [] };
+  if (input.result.status !== "completed") {
+    return {
+      result: input.result,
+      failures: [],
+      evidence: [`supervisor result was ${input.result.status}; system acceptance gate skipped`],
+    };
+  }
 
   const failures: string[] = [];
+  const evidence: string[] = [];
+  const evalReport = buildEvalReportFromSupervisorSummary({
+    workOrderId: input.workOrder.id,
+    taskId: input.workOrder.task?.kind ?? "architecture",
+    summary: input.result.summary,
+  });
+  evidence.push(`eval outcome=${evalReport.outcome.status}`);
+  if (evalReport.outcome.status !== "passed") {
+    failures.push(
+      `eval outcome is ${evalReport.outcome.status}${
+        evalReport.outcome.reason === undefined ? "" : `: ${evalReport.outcome.reason}`
+      }`,
+    );
+  }
+  const reviewGate = input.result.summary.reviewGate;
+  if (reviewGate === undefined) {
+    evidence.push("supervisor reviewGate not reported; deterministic system gates still enforced");
+  } else {
+    evidence.push(
+      `supervisor reviewGate decision=${reviewGate.decision}, aiReview=${reviewGate.aiReview}`,
+    );
+    if (reviewGate.decision !== "pass") {
+      failures.push(`supervisor reviewGate decision is ${reviewGate.decision}`);
+    }
+  }
   const discoveryOnlyTask = input.workOrder.task?.kind === "opportunity-discovery";
   const requiresGitGate =
     !discoveryOnlyTask && (input.project.commit.enabled || input.project.pullRequest.enabled);
+  const sourceWorktree = input.workOrder.executionIsolation?.sourceWorktree;
   if (input.workOrder.workspace !== undefined && input.runGit !== undefined) {
     failures.push(...workspaceRepositoryGate(input.workOrder.workspace, input.runGit));
+    if (failures.length === 0) {
+      evidence.push(
+        `workspace repositories clean and switched back (${input.workOrder.workspace.repositories.length})`,
+      );
+    }
   }
   if (requiresGitGate && input.runGit === undefined) {
     failures.push("missing git adapter for supervised system gate");
@@ -1389,28 +2457,37 @@ export function runSupervisedSystemGateOutcome(input: {
       failures.push(`git status failed: ${status.stderr || status.stdout || "unknown error"}`);
     } else if (status.stdout.trim().length > 0) {
       failures.push(`worktree is dirty after supervisor completion: ${status.stdout.trim()}`);
+    } else {
+      evidence.push("target worktree clean");
     }
+    failures.push(...isolatedExecutionBranchGate(input.project, input.workOrder, input.runGit));
 
     if (input.project.pullRequest.enabled) {
-      const branch = input.runGit({ cwd: input.project.path, args: ["branch", "--show-current"] });
-      if (branch.status !== 0) {
-        failures.push(
-          `git branch check failed: ${branch.stderr || branch.stdout || "unknown error"}`,
-        );
-      } else if (branch.stdout.trim() !== input.project.pullRequest.switchBack) {
-        failures.push(
-          `project branch is "${branch.stdout.trim()}", expected "${input.project.pullRequest.switchBack}"`,
+      failures.push(
+        ...switchBackWorktreeGate({
+          path: sourceWorktree ?? input.project.path,
+          expectedBranch: input.project.pullRequest.switchBack,
+          isolated: sourceWorktree !== undefined,
+          runGit: input.runGit,
+        }),
+      );
+      if (failures.length === 0) {
+        evidence.push(
+          sourceWorktree === undefined
+            ? `target branch switched back to ${input.project.pullRequest.switchBack}`
+            : `source worktree remained clean on ${input.project.pullRequest.switchBack}`,
         );
       }
 
       if (
         failures.length === 0 &&
-        input.workOrder.task?.kind === "repository-pull-request-review" &&
+        (input.workOrder.task?.kind === "pull-request-review" ||
+          input.workOrder.task?.kind === "repository-pull-request-review") &&
         input.project.pullRequest.autoMerge
       ) {
         failures.push(
           ...syncSwitchBackBranch({
-            project: input.project,
+            project: syncBackProjectForWorkOrder(input.project, input.workOrder),
             runGit: input.runGit,
           }),
         );
@@ -1474,6 +2551,7 @@ export function runSupervisedSystemGateOutcome(input: {
         if (pr.status !== 0) {
           failures.push(`PR lookup failed: ${pr.stderr || pr.stdout || "unknown error"}`);
         } else {
+          evidence.push("GitHub account permission gate passed");
           let prLookup = pr;
           let prGate = supervisedPullRequestGate({
             stdout: pr.stdout,
@@ -1533,30 +2611,45 @@ export function runSupervisedSystemGateOutcome(input: {
             });
           }
           failures.push(...prGate.failures, ...pendingCheckFailures(prGate.pendingChecks));
+          if (prGate.failures.length === 0 && prGate.pendingChecks.length === 0) {
+            evidence.push("PR commit, body, mergeability, and status-check gate passed");
+          }
           if (
             failures.length === 0 &&
             input.project.pullRequest.autoMerge &&
             input.runGit !== undefined
           ) {
-            failures.push(
-              ...runSupervisedAutoMerge({
-                project: input.project,
-                commitBranch,
-                prState: prGate.state,
-                runCommand: input.runCommand,
-                runGit: input.runGit,
-              }),
-            );
+            const autoMergeFailures = runSupervisedAutoMerge({
+              project: syncBackProjectForWorkOrder(input.project, input.workOrder),
+              commitBranch,
+              prState: prGate.state,
+              runCommand: input.runCommand,
+              runGit: input.runGit,
+            });
+            failures.push(...autoMergeFailures);
+            if (autoMergeFailures.length === 0) {
+              evidence.push("auto-merge and switch-back gate passed");
+            }
           }
         }
       }
     }
   }
 
-  if (failures.length === 0) return { result: input.result, failures: [] };
+  if (discoveryOnlyTask) evidence.push("discovery-only task; mutating git and PR gates skipped");
+  if (!requiresGitGate) evidence.push("no mutating git or PR gate required");
+  if (
+    requiresLoopCreatedPullRequestGate &&
+    input.project.pullRequest.enabled &&
+    supervisorCommitRefs.length === 0
+  ) {
+    evidence.push("PR gate skipped because supervisor reported no commits");
+  }
+
+  if (failures.length === 0) return { result: input.result, failures: [], evidence };
   const reason = `supervised system gate failed: ${failures.join("; ")}`;
   log.warn("loop engineering supervised system gate failed", {
-    data: { projectId: input.project.id, projectName: input.project.name, failures },
+    data: { projectId: input.project.id, projectName: input.project.name, failures, evidence },
   });
   return {
     result: {
@@ -1570,6 +2663,7 @@ export function runSupervisedSystemGateOutcome(input: {
       output: [input.result.output, reason].filter(Boolean).join("\n"),
     },
     failures,
+    evidence,
   };
 }
 
@@ -1592,16 +2686,7 @@ function isRecoverableSupervisorGateFailure(failure: string): boolean {
 function runIdForDueProject(
   scheduledAt: number,
   projectId: string,
-  jobKind:
-    | "architecture"
-    | "workspace-architecture"
-    | "bug-fix"
-    | "test-coverage"
-    | "security-maintenance"
-    | "harness-auto"
-    | "opportunity-discovery"
-    | "pull-request-review"
-    | "repository-pull-request-review",
+  jobKind: LoopTaskSchedulerJobKind,
   jobKey: string,
 ): string {
   const workspaceJob = jobKey.startsWith("workspace:");
@@ -1624,22 +2709,15 @@ function runIdForDueProject(
   if (jobKind === "harness-auto") return `${scheduledAt}-${projectId}-harness-auto`;
   if (jobKind === "opportunity-discovery")
     return `${scheduledAt}-${projectId}-opportunity-discovery`;
+  if (jobKind === "automation-governance-review")
+    return `${scheduledAt}-${projectId}-automation-governance-review`;
   if (jobKind === "repository-pull-request-review")
     return `${scheduledAt}-${projectId}-repo-pr-review`;
   return `${scheduledAt}-${projectId}-pr-review`;
 }
 
 function workspaceJobKind(
-  jobKind:
-    | "architecture"
-    | "workspace-architecture"
-    | "bug-fix"
-    | "test-coverage"
-    | "security-maintenance"
-    | "harness-auto"
-    | "opportunity-discovery"
-    | "pull-request-review"
-    | "repository-pull-request-review",
+  jobKind: LoopTaskSchedulerJobKind,
 ):
   | "workspace-architecture"
   | "bug-fix"
@@ -1692,6 +2770,17 @@ function workspaceRepositoryGate(
     if (status.stdout.trim().length > 0) {
       failures.push(`${repository.id} worktree is dirty: ${status.stdout.trim()}`);
     }
+    if (repository.sourcePath !== undefined) {
+      failures.push(
+        ...switchBackWorktreeGate({
+          path: repository.sourcePath,
+          expectedBranch: repository.pullRequest.switchBack,
+          isolated: true,
+          runGit,
+        }).map((failure) => `${repository.id} ${failure}`),
+      );
+      continue;
+    }
     const branch = runGit({ cwd: repository.path, args: ["branch", "--show-current"] });
     if (branch.status !== 0) {
       failures.push(
@@ -1710,6 +2799,75 @@ function workspaceRepositoryGate(
   return failures;
 }
 
+function isolatedExecutionBranchGate(
+  project: SupervisedSystemGateProject,
+  workOrder: LoopWorkOrder,
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
+): string[] {
+  if (
+    workOrder.executionIsolation?.sourceWorktree === undefined ||
+    workOrder.commitPolicy.branch === undefined
+  ) {
+    return [];
+  }
+  const branch = runGit({ cwd: project.path, args: ["branch", "--show-current"] });
+  if (branch.status !== 0) {
+    return [
+      `isolated worktree branch check failed: ${branch.stderr || branch.stdout || "unknown error"}`,
+    ];
+  }
+  const actualBranch = branch.stdout.trim();
+  if (actualBranch !== workOrder.commitPolicy.branch) {
+    return [
+      `isolated worktree is on "${actualBranch || "detached HEAD"}", expected WorkOrder branch "${workOrder.commitPolicy.branch}"`,
+    ];
+  }
+  return [];
+}
+
+function switchBackWorktreeGate(input: {
+  path: string;
+  expectedBranch: string;
+  isolated: boolean;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): string[] {
+  const failures: string[] = [];
+  if (input.isolated) {
+    const status = input.runGit({ cwd: input.path, args: ["status", "--porcelain"] });
+    if (status.status !== 0) {
+      failures.push(
+        `source git status failed: ${status.stderr || status.stdout || "unknown error"}`,
+      );
+    } else if (status.stdout.trim().length > 0) {
+      failures.push(
+        `source worktree is dirty after supervisor completion: ${status.stdout.trim()}`,
+      );
+    }
+  }
+
+  const branch = input.runGit({ cwd: input.path, args: ["branch", "--show-current"] });
+  if (branch.status !== 0) {
+    failures.push(
+      `${input.isolated ? "source" : "target"} git branch check failed: ${
+        branch.stderr || branch.stdout || "unknown error"
+      }`,
+    );
+  } else if (branch.stdout.trim() !== input.expectedBranch) {
+    failures.push(
+      `${input.isolated ? "source" : "target"} branch is "${branch.stdout.trim()}", expected "${input.expectedBranch}"`,
+    );
+  }
+  return failures;
+}
+
+function syncBackProjectForWorkOrder(
+  project: SupervisedSystemGateProject,
+  workOrder: LoopWorkOrder,
+): SupervisedSystemGateProject {
+  const sourceWorktree = workOrder.executionIsolation?.sourceWorktree;
+  return sourceWorktree === undefined ? project : { ...project, path: sourceWorktree };
+}
+
 export function systemGateProjectFromWorkOrder(
   workOrder: LoopWorkOrder,
 ): SupervisedSystemGateProject {
@@ -1723,6 +2881,7 @@ export function systemGateProjectFromWorkOrder(
       base: "main",
       switchBack: "main",
       autoMerge: false,
+      mergeMethod: "squash",
     },
   };
 }
@@ -1780,8 +2939,12 @@ function supervisedPullRequestGate(input: {
   if (state !== "OPEN" && state !== "MERGED") {
     failures.push(`PR state is ${String(pr.state)}`);
   }
-  if (pr.mergeable === "CONFLICTING") {
-    failures.push("PR is not mergeable: CONFLICTING");
+  if (state !== "MERGED" && pr.mergeable !== "MERGEABLE") {
+    failures.push(
+      pr.mergeable === "CONFLICTING"
+        ? "PR is not mergeable: CONFLICTING"
+        : `PR mergeability is ${String(pr.mergeable)}`,
+    );
   }
   if (state !== "MERGED" && Array.isArray(pr.statusCheckRollup)) {
     for (const check of pr.statusCheckRollup) {
@@ -2115,8 +3278,7 @@ function runSupervisedAutoMerge(input: {
         ghCommandPrefix(input.project),
         "pr merge",
         shellQuoteLocal(input.commitBranch),
-        "--squash",
-        "--delete-branch",
+        mergeMethodFlag(input.project.pullRequest.mergeMethod),
       ].join(" "),
       cwd: input.project.path,
       env: {},
@@ -2127,35 +3289,29 @@ function runSupervisedAutoMerge(input: {
     }
   }
 
-  for (const args of [
-    ["switch", input.project.pullRequest.switchBack],
-    ["pull", "--ff-only", "origin", input.project.pullRequest.switchBack],
-  ]) {
-    const result = input.runGit({ cwd: input.project.path, args });
-    if (result.status !== 0) {
-      failures.push(
-        `git ${args.join(" ")} failed: ${result.stderr || result.stdout || "unknown error"}`,
-      );
-      return failures;
-    }
-  }
-  return failures;
+  return syncSwitchBackBranch(input);
+}
+
+function mergeMethodFlag(method: "squash" | "merge" | "rebase" | undefined): string {
+  return `--${method ?? "squash"}`;
 }
 
 function syncSwitchBackBranch(input: {
   project: SupervisedSystemGateProject;
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): string[] {
-  const result = input.runGit({
-    cwd: input.project.path,
-    args: ["pull", "--ff-only", "origin", input.project.pullRequest.switchBack],
-  });
-  if (result.status === 0) return [];
-  return [
-    `git pull --ff-only origin ${input.project.pullRequest.switchBack} failed: ${
-      result.stderr || result.stdout || "unknown error"
-    }`,
-  ];
+  const branch = input.project.pullRequest.switchBack;
+  for (const args of [
+    ["fetch", "origin", branch],
+    ["switch", branch],
+    ["merge", "--ff-only", "FETCH_HEAD"],
+  ]) {
+    const result = input.runGit({ cwd: input.project.path, args });
+    if (result.status !== 0) {
+      return [`git ${args.join(" ")} failed: ${result.stderr || result.stdout || "unknown error"}`];
+    }
+  }
+  return [];
 }
 
 function runGithubAccountPermissionGate(input: {
@@ -2164,29 +3320,57 @@ function runGithubAccountPermissionGate(input: {
 }): string[] {
   const account = input.project.pullRequest.githubAccount;
   if (account === undefined) return [];
-  const result = input.runCommand({
-    kind: "pr",
-    command: `${ghCommandPrefix(input.project)} repo view --json viewerPermission`,
-    cwd: input.project.path,
-    env: {},
-  });
-  if (result.status !== 0) {
-    return [
-      `GitHub account ${account} permission check failed: ${
-        result.stderr || result.stdout || "unknown error"
-      }`,
-    ];
+  const command = `${ghCommandPrefix(input.project)} repo view --json viewerPermission`;
+  const attempts = positiveIntegerEnv(
+    "TCB_LOOP_GITHUB_PERMISSION_CHECK_ATTEMPTS",
+    DEFAULT_GITHUB_PERMISSION_CHECK_ATTEMPTS,
+  );
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = input.runCommand({
+      kind: "pr",
+      command,
+      cwd: input.project.path,
+      env: {},
+    });
+    if (result.status === 0) {
+      const permission = parseViewerPermission(result.stdout);
+      if (permission === null) {
+        return [`GitHub account ${account} permission check returned invalid JSON`];
+      }
+      if (!["WRITE", "MAINTAIN", "ADMIN"].includes(permission)) {
+        return [
+          `GitHub account ${account} has ${permission} permission; WRITE, MAINTAIN, or ADMIN is required`,
+        ];
+      }
+      return [];
+    }
+
+    const detail = result.stderr || result.stdout || "unknown error";
+    if (attempt === attempts || !isTransientGithubPermissionFailure(detail)) {
+      return [`GitHub account ${account} permission check failed: ${detail}`];
+    }
+    log.warn("loop engineering GitHub permission check transient failure; retrying", {
+      data: { projectId: input.project.id, projectName: input.project.name, account, attempt },
+    });
   }
-  const permission = parseViewerPermission(result.stdout);
-  if (permission === null) {
-    return [`GitHub account ${account} permission check returned invalid JSON`];
-  }
-  if (!["WRITE", "MAINTAIN", "ADMIN"].includes(permission)) {
-    return [
-      `GitHub account ${account} has ${permission} permission; WRITE, MAINTAIN, or ADMIN is required`,
-    ];
-  }
-  return [];
+  return [`GitHub account ${account} permission check failed: unknown error`];
+}
+
+function isTransientGithubPermissionFailure(detail: string): boolean {
+  const text = detail.toLowerCase();
+  return [
+    "tls handshake timeout",
+    "i/o timeout",
+    "timed out",
+    "connection reset",
+    "connection refused",
+    "temporary failure in name resolution",
+    "could not resolve host",
+    "network is unreachable",
+    "bad gateway",
+    "service unavailable",
+    "too many requests",
+  ].some((marker) => text.includes(marker));
 }
 
 function parseViewerPermission(stdout: string): string | null {
@@ -2203,7 +3387,7 @@ function parseViewerPermission(stdout: string): string | null {
 function ghCommandPrefix(project: SupervisedSystemGateProject): string {
   const account = project.pullRequest.githubAccount;
   if (account === undefined) return "gh";
-  return `GH_TOKEN="$(gh auth token --user ${shellQuoteLocal(account)})" gh`;
+  return githubCommandForAccount(account, "").trimEnd();
 }
 
 function shellQuoteLocal(value: string): string {

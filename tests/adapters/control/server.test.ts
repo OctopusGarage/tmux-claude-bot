@@ -1,10 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import type { Server } from "node:net";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlClient } from "../../../src/adapters/control/client.js";
-import { startControlServer } from "../../../src/adapters/control/server.js";
+import {
+  type ControlRequest,
+  controlSocketPath,
+  createLineDecoder,
+} from "../../../src/adapters/control/protocol.js";
+import { hardenControlSocket, startControlServer } from "../../../src/adapters/control/server.js";
 import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
@@ -80,6 +86,60 @@ describe("control server ↔ client (real unix socket)", () => {
     });
   });
 
+  it("binds the control socket owner-only even with a permissive umask", async () => {
+    const previousUmask = process.umask(0);
+    try {
+      const { deps } = fakeDeps();
+      server = startControlServer(deps);
+      await new Promise((r) => setTimeout(r, 60));
+
+      expect(statSync(controlSocketPath()).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
+  it("sends caller provenance on control client requests", async () => {
+    const received = new Promise<ControlRequest>((resolve) => {
+      server = net.createServer((socket) => {
+        socket.setEncoding("utf8");
+        const decode = createLineDecoder<ControlRequest>();
+        socket.on("data", (chunk: string) => {
+          const [msg] = decode(chunk);
+          if (msg === undefined) return;
+          resolve(msg);
+          socket.write(`${JSON.stringify({ id: msg.id, ok: true, data: {} })}\n`);
+        });
+      });
+    });
+    server.listen(controlSocketPath());
+    await new Promise((r) => setTimeout(r, 20));
+
+    client = new ControlClient();
+    await client.connect();
+    await client.snapshot();
+
+    expect(await received).toMatchObject({
+      op: "snapshot",
+      caller: {
+        source: "control-client",
+        cwd: process.cwd(),
+        pid: process.pid,
+      },
+    });
+  });
+
+  it("closes the control server when socket permission hardening fails", () => {
+    const close = vi.fn();
+
+    expect(
+      hardenControlSocket(join(dir, "missing.sock"), {
+        close,
+      } as unknown as Pick<Server, "close">),
+    ).toBe(false);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back to a nested state/control.sock when the client env points at the app home", async () => {
     const appHome = mkdtempSync(join(tmpdir(), "tcb-ctl-home-"));
     const nestedState = join(appHome, "state");
@@ -111,6 +171,26 @@ describe("control server ↔ client (real unix socket)", () => {
     expect(enqueued[0]).toMatchObject({ sessionName: "sessC", action: "restart", text: "" });
   });
 
+  it("marks sends from a loop supervisor session as system-origin control work", async () => {
+    const { deps, enqueued } = fakeDeps();
+    server = startControlServer(deps);
+    await new Promise((r) => setTimeout(r, 60));
+    client = new ControlClient();
+    await client.connect();
+
+    const ack = await client.send("sessB", "supervisor prompt", {
+      callerSession: "tmux_proj_loop-supervisor-1",
+    });
+
+    expect(ack.status).toBe("queued");
+    expect(enqueued[0]).toMatchObject({
+      sessionName: "sessB",
+      action: "text",
+      text: "supervisor prompt",
+      origin: "system",
+    });
+  });
+
   it("auto-reconnects when the connection drops (server still up)", async () => {
     const { deps } = fakeDeps();
     server = startControlServer(deps);
@@ -132,4 +212,20 @@ describe("control server ↔ client (real unix socket)", () => {
     // The client transparently works again on the new connection.
     expect(await client.peek("after", 5)).toContain("PANE for after");
   }, 8000);
+
+  it("times out a request when the socket stays open but never replies", async () => {
+    const sockets: net.Socket[] = [];
+    server = net.createServer();
+    server.on("connection", (socket) => {
+      sockets.push(socket);
+    });
+    server.listen(join(dir, "control.sock"));
+    await new Promise((r) => server.once("listening", r));
+
+    client = new ControlClient({ requestTimeoutMs: 20 });
+    await client.connect();
+
+    await expect(client.peek("silent", 5)).rejects.toThrow("control request timed out after 20ms");
+    for (const socket of sockets) socket.destroy();
+  });
 });

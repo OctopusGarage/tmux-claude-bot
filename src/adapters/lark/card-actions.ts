@@ -7,11 +7,14 @@ import {
   composeAdoptOutcome,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
+import { findProjectAutomationConflictForSession } from "../../core/automation/project-conflicts.js";
+import { AUTOPILOT_ACTIONS } from "../../core/autopilot/action-registry.js";
 import {
   cancelActiveDelegatedTask,
+  cancelActiveDelegatedTaskByRunId,
   formatActiveDelegateCancel,
   formatActiveDelegateStart,
-  hasActiveDelegatedTaskForSession,
+  listActiveDelegateQueue,
   parseDelegateRequirement,
   startActiveDelegatedTask,
 } from "../../core/autopilot/delegated-task.js";
@@ -20,12 +23,10 @@ import { performRestart, performStart } from "../../core/command/dispatch.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { isUiLang, messages, resolveUiLang, setUiLang } from "../../core/i18n/index.js";
 import type { ForeignAction } from "../../core/infra/status-install.js";
-import { runOpportunityCommand } from "../../core/opportunities/command.js";
 import { OpportunityStore } from "../../core/opportunities/store.js";
 import {
   formatOpportunityAgentDiscussionPrompt,
   formatOpportunityBatchAgentDiscussionPrompt,
-  formatOpportunityBatchDelegateRequirement,
 } from "../../core/opportunities/view.js";
 import {
   type BrowseAction,
@@ -78,6 +79,8 @@ import {
   actionConfirmationCard,
   adoptConfirmCard,
   adoptDoneCard,
+  autopilotPlanCard,
+  autopilotQueueCard,
   browseCard,
   helpCard,
   langCard,
@@ -140,6 +143,7 @@ type CardValue =
       s?: string;
       id?: string;
       ids?: string[];
+      runId?: string;
       /** prompts: short-id for pget; tag short-id for pfilter/ppage; page number for ppage. */
       tagSid?: string;
       page?: number;
@@ -226,7 +230,11 @@ async function handlePromptTranslate({ channel, evt, value }: CardCtx): Promise<
   }
   const result = await applyPromptTranslateCommand("lark", arg);
   if (!result.ok) {
-    await sendText(channel, evt.chatId, formatPromptTranslateCommandResult(result));
+    await sendText(
+      channel,
+      evt.chatId,
+      formatPromptTranslateCommandResult(result, messages("lark")),
+    );
     return;
   }
   await sendPromptTranslatePicker(channel, evt.chatId);
@@ -568,6 +576,15 @@ async function handleApDelegate(ctx: CardCtx): Promise<void> {
   if (requirement === null) return;
   const result = await startActiveDelegatedTask(ctx.deps, { session, requirement });
   await sendText(ctx.channel, ctx.evt.chatId, formatActiveDelegateStart(result));
+  if (result.status === "blocked" && result.showQueue) {
+    await sendCard(ctx.channel, ctx.evt.chatId, autopilotQueueCard(listActiveDelegateQueue()));
+  }
+}
+
+async function handleApPlan(ctx: CardCtx): Promise<void> {
+  const session = await apSession(ctx);
+  if (!session) return;
+  await sendCard(ctx.channel, ctx.evt.chatId, autopilotPlanCard(session));
 }
 
 async function handleApCancelDelegate(ctx: CardCtx): Promise<void> {
@@ -575,6 +592,18 @@ async function handleApCancelDelegate(ctx: CardCtx): Promise<void> {
   if (!session) return;
   const result = await cancelActiveDelegatedTask(ctx.deps, { session });
   await sendText(ctx.channel, ctx.evt.chatId, formatActiveDelegateCancel(result));
+}
+
+async function handleApQueue(ctx: CardCtx): Promise<void> {
+  await sendCard(ctx.channel, ctx.evt.chatId, autopilotQueueCard(listActiveDelegateQueue()));
+}
+
+async function handleApCancelRun(ctx: CardCtx): Promise<void> {
+  const runId = ctx.value?.runId;
+  if (typeof runId !== "string" || runId.trim().length === 0) return;
+  const result = await cancelActiveDelegatedTaskByRunId(ctx.deps, { runId: runId.trim() });
+  await sendText(ctx.channel, ctx.evt.chatId, formatActiveDelegateCancel(result));
+  await sendCard(ctx.channel, ctx.evt.chatId, autopilotQueueCard(listActiveDelegateQueue()));
 }
 
 function opportunityId(ctx: CardCtx): string | null {
@@ -615,6 +644,8 @@ function opportunityNotificationRows(
     estimatedComplexity: suggestion.estimatedComplexity,
     status: suggestion.status,
     value: suggestion.value,
+    problem: suggestion.problem,
+    recommendedApproach: suggestion.recommendedApproach,
   }));
 }
 
@@ -623,13 +654,22 @@ function opportunityDiscussionBlockReason(
   session: string,
   projectPath: string,
 ): string | null {
+  const m = messages("lark");
+  const conflict = findProjectAutomationConflictForSession(session);
+  if (conflict !== null) {
+    return m.opportunityAutomationConflict(
+      conflict.taskKind,
+      conflict.runId,
+      conflict.supervisorSession,
+    );
+  }
+
   if (
     deps.queue.isSessionProcessing(session) ||
     deps.queue.getCurrentSessionMessage(session) !== undefined ||
-    deps.queue.getSessionQueue(session).length > 0 ||
-    hasActiveDelegatedTaskForSession(session)
+    deps.queue.getSessionQueue(session).length > 0
   ) {
-    return "项目 agent 当前正在处理任务或已有排队消息，暂时不能参与讨论。请等当前任务完成后再试。";
+    return m.opportunityQueueBusy;
   }
 
   const status = spawnSync("git", ["status", "--short"], {
@@ -638,12 +678,12 @@ function opportunityDiscussionBlockReason(
   });
   if (status.status !== 0) {
     const reason = [status.stderr, status.stdout].filter(Boolean).join("\n").trim();
-    return `无法确认项目 git 状态，暂时不能参与讨论。\n${reason || "git status --short failed"}`;
+    return m.opportunityGitStatusUnknown(reason || "git status --short failed");
   }
   const dirty = status.stdout.trim();
   if (dirty.length > 0) {
     const preview = dirty.split(/\r?\n/).slice(0, 12).join("\n");
-    return `项目工作区不干净，暂时不能参与讨论。请先处理现有改动后再试。\n\n${preview}`;
+    return m.opportunityDirtyWorktree(preview);
   }
   return null;
 }
@@ -653,7 +693,7 @@ async function handleOpportunityShow(ctx: CardCtx): Promise<void> {
   if (id === null) return;
   const suggestion = new OpportunityStore().get(id);
   if (suggestion === null) {
-    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${id}`);
+    await sendText(ctx.channel, ctx.evt.chatId, messages("lark").opportunityNotFound(id));
     return;
   }
   await sendCard(
@@ -672,7 +712,7 @@ async function handleOpportunityDiscuss(ctx: CardCtx): Promise<void> {
   const store = new OpportunityStore();
   const suggestion = store.get(id);
   if (suggestion === null) {
-    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${id}`);
+    await sendText(ctx.channel, ctx.evt.chatId, messages("lark").opportunityNotFound(id));
     return;
   }
   const opened = await createProjectFromPath(
@@ -683,7 +723,11 @@ async function handleOpportunityDiscuss(ctx: CardCtx): Promise<void> {
   if (opened.status !== "created" && opened.status !== "switched") {
     const reason =
       opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
-    await sendText(ctx.channel, ctx.evt.chatId, `Cannot open project for discussion: ${reason}`);
+    await sendText(
+      ctx.channel,
+      ctx.evt.chatId,
+      messages("lark").opportunityCannotOpenProject(reason),
+    );
     return;
   }
   const blocked = opportunityDiscussionBlockReason(
@@ -726,24 +770,10 @@ async function handleOpportunityDismiss(ctx: CardCtx): Promise<void> {
   await sendText(
     ctx.channel,
     ctx.evt.chatId,
-    updated === null ? `Opportunity not found: ${id}` : `Skipped opportunity ${id}.`,
+    updated === null
+      ? messages("lark").opportunityNotFound(id)
+      : messages("lark").opportunitySkipped(1),
   );
-}
-
-async function handleOpportunityDelegate(ctx: CardCtx): Promise<void> {
-  const id = opportunityId(ctx);
-  if (id === null) return;
-  const suggestion = new OpportunityStore().get(id);
-  if (suggestion === null) {
-    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${id}`);
-    return;
-  }
-  const result = await runOpportunityCommand(
-    ctx.deps,
-    chatScope("lark", ctx.evt.chatId),
-    `delegate ${id}`,
-  );
-  await sendText(ctx.channel, ctx.evt.chatId, result.body);
 }
 
 async function handleOpportunityDiscussAll(ctx: CardCtx): Promise<void> {
@@ -751,17 +781,17 @@ async function handleOpportunityDiscussAll(ctx: CardCtx): Promise<void> {
   if (ids.length === 0) return;
   const { suggestions, missing } = loadOpportunities(ids);
   if (missing.length > 0 || suggestions.length === 0) {
-    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${missing.join(", ")}`);
+    await sendText(
+      ctx.channel,
+      ctx.evt.chatId,
+      messages("lark").opportunityNotFound(missing.join(", ")),
+    );
     return;
   }
   const first = suggestions[0];
   if (first === undefined) return;
   if (suggestions.some((suggestion) => suggestion.projectPath !== first.projectPath)) {
-    await sendText(
-      ctx.channel,
-      ctx.evt.chatId,
-      "Cannot discuss mixed-project opportunities together.",
-    );
+    await sendText(ctx.channel, ctx.evt.chatId, messages("lark").opportunityMixedProjects);
     return;
   }
   const opened = await createProjectFromPath(
@@ -772,7 +802,11 @@ async function handleOpportunityDiscussAll(ctx: CardCtx): Promise<void> {
   if (opened.status !== "created" && opened.status !== "switched") {
     const reason =
       opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
-    await sendText(ctx.channel, ctx.evt.chatId, `Cannot open project for discussion: ${reason}`);
+    await sendText(
+      ctx.channel,
+      ctx.evt.chatId,
+      messages("lark").opportunityCannotOpenProject(reason),
+    );
     return;
   }
   const blocked = opportunityDiscussionBlockReason(
@@ -826,63 +860,8 @@ async function handleOpportunityDismissAll(ctx: CardCtx): Promise<void> {
     ctx.channel,
     ctx.evt.chatId,
     missing.length > 0
-      ? `Skipped ${skipped} opportunities. Missing: ${missing.join(", ")}`
-      : `Skipped ${skipped} opportunities.`,
-  );
-}
-
-async function handleOpportunityDelegateAll(ctx: CardCtx): Promise<void> {
-  const ids = opportunityIds(ctx);
-  if (ids.length === 0) return;
-  const { suggestions, missing } = loadOpportunities(ids);
-  if (missing.length > 0 || suggestions.length === 0) {
-    await sendText(ctx.channel, ctx.evt.chatId, `Opportunity not found: ${missing.join(", ")}`);
-    return;
-  }
-  const first = suggestions[0];
-  if (first === undefined) return;
-  if (suggestions.some((suggestion) => suggestion.projectPath !== first.projectPath)) {
-    await sendText(
-      ctx.channel,
-      ctx.evt.chatId,
-      "Cannot delegate mixed-project opportunities together.",
-    );
-    return;
-  }
-  const opened = await createProjectFromPath(
-    ctx.deps,
-    chatScope("lark", ctx.evt.chatId),
-    first.projectPath,
-  );
-  if (opened.status !== "created" && opened.status !== "switched") {
-    const reason =
-      opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
-    await sendText(ctx.channel, ctx.evt.chatId, `Cannot open project for delegation: ${reason}`);
-    return;
-  }
-  const result = await startActiveDelegatedTask(ctx.deps, {
-    session: opened.sessionName,
-    requirement: formatOpportunityBatchDelegateRequirement(suggestions),
-    opportunityIds: suggestions.map((suggestion) => suggestion.id),
-  });
-  if (result.status !== "queued") {
-    await sendText(ctx.channel, ctx.evt.chatId, `Delegate blocked: ${result.reason}`);
-    return;
-  }
-  const store = new OpportunityStore();
-  for (const suggestion of suggestions) {
-    store.updateStatus(suggestion.id, "delegated", Date.now(), { delegatedRunId: result.runId });
-  }
-  await sendText(
-    ctx.channel,
-    ctx.evt.chatId,
-    [
-      `Delegated ${suggestions.length} opportunities as one batch.`,
-      `runId: ${result.runId}`,
-      `project: ${result.projectId}`,
-      `supervisor: ${result.supervisorSession}`,
-      ...(result.reportDir !== null ? [`report: ${result.reportDir}`] : []),
-    ].join("\n"),
+      ? messages("lark").opportunitySkippedMissing(skipped, missing.join(", "))
+      : messages("lark").opportunitySkipped(skipped),
   );
 }
 
@@ -979,16 +958,18 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
   inputredo: handleInputRedo,
   qcancel: handleQueueCancel,
   // --- Supervisor delegation ---
-  ap_delegate: handleApDelegate,
-  ap_cancel_delegate: handleApCancelDelegate,
+  [AUTOPILOT_ACTIONS.delegate.larkCmd]: handleApDelegate,
+  [AUTOPILOT_ACTIONS["review-plan"].larkCmd]: handleApPlan,
+  [AUTOPILOT_ACTIONS["confirm-delegate"].larkCmd]: handleApDelegate,
+  [AUTOPILOT_ACTIONS["cancel-delegate"].larkCmd]: handleApCancelDelegate,
+  ap_queue: handleApQueue,
+  ap_cancel_run: handleApCancelRun,
   // --- Opportunity discovery proposal cards ---
   oppshow: handleOpportunityShow,
   oppdiscuss: handleOpportunityDiscuss,
   oppdismiss: handleOpportunityDismiss,
-  oppdelegate: handleOpportunityDelegate,
   oppdiscussall: handleOpportunityDiscussAll,
   oppdismissall: handleOpportunityDismissAll,
-  oppdelegateall: handleOpportunityDelegateAll,
   // --- Prompt library (mirrors Telegram pp/pf/pn callbacks) ---
   pget: async ({ channel, deps, evt, value, chatKind }) => {
     if (chatKind !== "p2p") return;

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { DoctorProbes } from "../src/core/infra/doctor.js";
-import { renderDoctorReport, runDoctorChecks } from "../src/core/infra/doctor.js";
+import {
+  countBotProcessRoots,
+  renderDoctorReport,
+  runDoctorChecks,
+} from "../src/core/infra/doctor.js";
 
 const VALID_TOKEN = `123456789:${"a".repeat(35)}`;
 
@@ -26,6 +30,122 @@ describe("runDoctorChecks", () => {
     expect(report.checks.some((c) => c.status === "bad")).toBe(false);
     expect(report.checks.some((c) => c.text.includes("Telegram configured"))).toBe(true);
     expect(report.checks.some((c) => c.text.includes("exactly one bot process"))).toBe(true);
+    expect(report.checks.some((c) => c.text.includes("Home Operator skill installed"))).toBe(true);
+    expect(report.checks.some((c) => c.text.includes("MCP profiles installed"))).toBe(true);
+    expect(report.checks.some((c) => c.text.includes("AI tool role surfaces complete"))).toBe(true);
+    expect(
+      report.checks.some((c) => c.text.includes("recommended task capabilities missing")),
+    ).toBe(true);
+  });
+
+  it("reports task capability dependencies as installed when approved skills are recorded", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        agentSkills: () => [
+          {
+            skillId: "code-review",
+            sourceUrl: "https://github.com/mattpocock/skills",
+            sourcePath: "skills/engineering/code-review",
+            ref: "0000000000000000000000000000000000000002",
+            checksum: "sha256:code-review",
+            platforms: ["claude", "codex"],
+            tags: ["review", "quality"],
+            trustLevel: "approved",
+            risk: "low",
+            updatePolicy: "notify",
+            status: "installed",
+            installedAt: 1,
+          },
+          {
+            skillId: "improve-codebase-architecture",
+            sourceUrl: "https://github.com/mattpocock/skills",
+            sourcePath: "skills/engineering/improve-codebase-architecture",
+            ref: "0000000000000000000000000000000000000001",
+            checksum: "sha256:architecture",
+            platforms: ["claude", "codex"],
+            tags: ["architecture", "refactor"],
+            trustLevel: "approved",
+            risk: "medium",
+            updatePolicy: "notify",
+            status: "installed",
+            installedAt: 1,
+          },
+          {
+            skillId: "tdd",
+            sourceUrl: "https://github.com/mattpocock/skills",
+            sourcePath: "skills/engineering/tdd",
+            ref: "0000000000000000000000000000000000000003",
+            checksum: "sha256:tdd",
+            platforms: ["claude", "codex"],
+            tags: ["tests", "quality"],
+            trustLevel: "approved",
+            risk: "low",
+            updatePolicy: "notify",
+            status: "installed",
+            installedAt: 1,
+          },
+        ],
+      }),
+    );
+
+    expect(report.failures).toBe(0);
+    expect(
+      report.checks.some((c) => c.text.includes("task capability dependencies installed")),
+    ).toBe(true);
+  });
+
+  it("reports MCP profiles as optional when none are installed", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        fileExists: (path) => path.includes("/.claude/") || path.includes("/.codex/"),
+      }),
+    );
+    expect(report.failures).toBe(0);
+    expect(
+      report.checks.some(
+        (c) => c.status === "info" && c.text.includes("MCP profiles not installed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags missing Home Operator skill files", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({ fileExists: (path) => path.includes("/mcp/") }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "bad" && c.text.includes("Home Operator skill missing"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags partially installed Home Operator skill files", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        fileExists: (path) => path.includes("/mcp/") || path.includes("/.claude/"),
+      }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "bad" && c.text.includes("Home Operator skill partially installed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags partially installed MCP profiles", async () => {
+    const report = await runDoctorChecks(
+      healthyProbes({
+        fileExists: (path) =>
+          path.includes("/.claude/") ||
+          path.includes("/.codex/") ||
+          path.endsWith("mcp/observer.json"),
+      }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "bad" && c.text.includes("MCP profiles partially installed"),
+      ),
+    ).toBe(true);
   });
 
   it("fails with a setup hint when .env is missing", async () => {
@@ -203,6 +323,37 @@ describe("runDoctorChecks", () => {
           c.text.includes("prompt translation: lark argos ja->en python is missing"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("countBotProcessRoots", () => {
+  it("counts a tsx parent/child dev process pair as one bot instance", () => {
+    expect(
+      countBotProcessRoots(`
+        15005 32940 node /repo/tmux-claude-bot/node_modules/.bin/tsx src/index.ts
+        15006 15005 node --import /repo/tmux-claude-bot/node_modules/tsx/dist/loader.mjs src/index.ts
+      `),
+    ).toBe(1);
+  });
+
+  it("counts independent managed and dev roots separately", () => {
+    expect(
+      countBotProcessRoots(`
+        15005 32940 node /repo/tmux-claude-bot/node_modules/.bin/tsx src/index.ts
+        15006 15005 node --import /repo/tmux-claude-bot/node_modules/tsx/dist/loader.mjs src/index.ts
+        21000 1 node /Users/me/.tmux-claude-bot/dist/cli.js run
+      `),
+    ).toBe(2);
+  });
+
+  it("ignores the installed doctor CLI process itself", () => {
+    expect(
+      countBotProcessRoots(`
+        15005 32940 node /repo/tmux-claude-bot/node_modules/.bin/tsx src/index.ts
+        15006 15005 node --import /repo/tmux-claude-bot/node_modules/tsx/dist/loader.mjs src/index.ts
+        21000 1 node /Users/me/.tmux-claude-bot/dist/cli.js doctor
+      `),
+    ).toBe(1);
   });
 });
 

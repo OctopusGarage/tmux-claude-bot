@@ -53,6 +53,37 @@ describe("runLoopSchedulerTick", () => {
     expect(lastFired).toEqual({});
   });
 
+  it("skips disabled projects with scheduled task families", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "agent: codex",
+        [
+          "agent: codex",
+          "    enabled: false",
+          "    bugFix:",
+          "      enabled: true",
+          '      schedule: "5 10 * * *"',
+          "    runner:",
+          "      kind: agent-supervised",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(1);
+    expect(summary.dueProjects).not.toContainEqual(
+      expect.objectContaining({
+        projectId: "due",
+      }),
+    );
+  });
+
   it("does not repeat projects whose anchor is already current", () => {
     const config = parseLoopConfigYaml(configText);
     const now = Date.parse("2026-07-16T10:10:00Z");
@@ -159,6 +190,43 @@ describe("runLoopSchedulerTick", () => {
       jobKey: "due:pull-request-review",
       jobKind: "pull-request-review",
       scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+    });
+  });
+
+  it("schedules automation governance review jobs independently from architecture jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: npm run assess",
+        [
+          "assessment:",
+          "      command: npm run assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    automationGovernanceReview:",
+          "      enabled: true",
+          '      schedule: "35 2 * * *"',
+          "      branch: loop/due/automation-governance-review",
+          "      targetScore: 90",
+          "      allowRepairPr: true",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T02:40:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T02:40:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:automation-governance-review",
+      jobKind: "automation-governance-review",
+      scheduledAt: Date.parse("2026-07-16T02:35:00Z"),
     });
   });
 
@@ -451,6 +519,37 @@ prReview:
     );
   });
 
+  it("skips disabled repository-wide pull request review jobs", () => {
+    const config = parseLoopConfigYaml(`${configText}
+prReview:
+  repositories:
+    - id: janitor
+      name: PR Janitor
+      path: /repo/janitor
+      repo: OctopusGarage/janitor
+      agent: codex
+      enabled: false
+      schedule: "30 11 * * *"
+      base: dev
+      autoMerge: true
+`);
+    const now = Date.parse("2026-07-16T11:35:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(2);
+    expect(summary.dueProjects).not.toContainEqual(
+      expect.objectContaining({
+        projectId: "janitor",
+        jobKind: "repository-pull-request-review",
+      }),
+    );
+  });
+
   it("schedules workspace architecture jobs as one multi-repository target", () => {
     const config = parseLoopConfigYaml(`${configText}
 workspaces:
@@ -492,6 +591,45 @@ workspaces:
         jobKey: "workspace:geo:architecture",
         jobKind: "workspace-architecture",
         scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+      }),
+    );
+  });
+
+  it("skips disabled workspaces with scheduled task families", () => {
+    const config = parseLoopConfigYaml(`${configText}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    enabled: false
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+    architecture:
+      enabled: true
+      schedule: "30 11 * * *"
+      goal: Improve frontend/backend architecture together.
+`);
+    const now = Date.parse("2026-07-16T11:35:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(2);
+    expect(summary.dueProjects).not.toContainEqual(
+      expect.objectContaining({
+        projectId: "geo",
+        jobKind: "workspace-architecture",
       }),
     );
   });

@@ -5,8 +5,16 @@ import {
   skillAgentSchema,
   skillCatalogEntrySchema,
 } from "../skills/schema.js";
+import {
+  type LoopScheduledJobKind,
+  projectScheduledJobKinds,
+  workspaceScheduledJobKinds,
+} from "./task-family.js";
 
 const agentSchema = skillAgentSchema;
+const worktreeIsolationSchema = z.enum(["isolated", "source", "auto"]);
+const cleanupPolicySchema = z.enum(["conservative", "balanced", "aggressive"]);
+const pullRequestMergeMethodSchema = z.enum(["squash", "merge", "rebase"]);
 const actionSchema = z.enum([
   "tests",
   "docs",
@@ -72,10 +80,17 @@ const pullRequestReviewSchema = z
     lookbackHours: z.number().int().positive().default(36),
     consecutivePasses: z.number().int().positive().default(2),
     autoMerge: z.boolean().default(false),
+    mergeMethod: pullRequestMergeMethodSchema.default("squash"),
     prompt: z.string().min(1).optional(),
   })
   .strict()
-  .default({ enabled: false, lookbackHours: 36, consecutivePasses: 2, autoMerge: false });
+  .default({
+    enabled: false,
+    lookbackHours: 36,
+    consecutivePasses: 2,
+    autoMerge: false,
+    mergeMethod: "squash",
+  });
 
 const bugFixSchema = z
   .object({
@@ -86,6 +101,7 @@ const bugFixSchema = z
     maxRounds: z.number().int().positive().default(3),
     maxBugsPerRound: z.number().int().positive().default(2),
     requireRegressionTest: z.boolean().default(true),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
   })
   .strict()
@@ -109,6 +125,7 @@ const testCoverageSchema = z
     allowSmokeTests: z.boolean().default(true),
     allowE2ETests: z.boolean().default(true),
     allowAiEvalTests: z.boolean().default(true),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
   })
   .strict()
@@ -130,9 +147,22 @@ const securityMaintenanceSchema = z
     scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
     branch: z.string().min(1).optional(),
     maxRounds: z.number().int().positive().default(3),
+    riskAssessment: z
+      .object({
+        command: z.string().min(1).optional(),
+        actionThreshold: z.number().int().min(0).max(100).default(70),
+        criticalThreshold: z.number().int().min(0).max(100).default(90),
+      })
+      .strict()
+      .refine(
+        (assessment) => assessment.criticalThreshold >= assessment.actionThreshold,
+        "criticalThreshold must be greater than or equal to actionThreshold",
+      )
+      .optional(),
     allowDependencyUpdates: z.boolean().default(true),
     allowConfigHardening: z.boolean().default(true),
     allowStaticAnalysisFixes: z.boolean().default(true),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
   })
   .strict()
@@ -182,6 +212,7 @@ const harnessAutoSchema = z
       })
       .strict()
       .default({ healthScoreAtLeast: 95, noConfirmedIssues: true }),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
   })
   .strict()
@@ -233,6 +264,27 @@ const opportunityDiscoverySchema = z
     requireEvidence: true,
   });
 
+const automationGovernanceReviewSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().min(1).optional(),
+    scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
+    branch: z.string().min(1).optional(),
+    targetScore: z.number().int().min(0).max(100).default(90),
+    maxFindings: z.number().int().min(1).max(10).default(5),
+    allowRepairPr: z.boolean().default(false),
+    requireAiEval: z.boolean().default(true),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({
+    enabled: false,
+    targetScore: 90,
+    maxFindings: 5,
+    allowRepairPr: false,
+    requireAiEval: true,
+  });
+
 const repositoryPullRequestReviewSchema = z
   .object({
     id: z.string().min(1),
@@ -240,6 +292,7 @@ const repositoryPullRequestReviewSchema = z
     path: z.string().min(1),
     repo: z.string().min(1),
     agent: agentSchema,
+    enabled: z.boolean().default(true),
     schedule: z.string().min(1),
     scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
     base: z.string().min(1).optional(),
@@ -248,6 +301,7 @@ const repositoryPullRequestReviewSchema = z
     lookbackHours: z.number().int().positive().default(72),
     consecutivePasses: z.number().int().positive().default(2),
     autoMerge: z.boolean().default(false),
+    mergeMethod: pullRequestMergeMethodSchema.default("squash"),
     repair: z
       .object({
         enabled: z.boolean().default(true),
@@ -257,6 +311,7 @@ const repositoryPullRequestReviewSchema = z
       .strict()
       .default({ enabled: true, maxAttempts: 1 }),
     prompt: z.string().min(1).optional(),
+    worktreeIsolation: worktreeIsolationSchema.optional(),
     runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
   })
   .strict()
@@ -272,16 +327,24 @@ const workspaceRepositorySchema = z
     path: z.string().min(1),
     role: z.string().min(1),
     agent: agentSchema.optional(),
+    worktreeIsolation: worktreeIsolationSchema.optional(),
     pullRequest: z
       .object({
         enabled: z.boolean().default(false),
         base: z.string().min(1).default("main"),
         switchBack: z.string().min(1).default("main"),
         autoMerge: z.boolean().default(false),
+        mergeMethod: pullRequestMergeMethodSchema.default("squash"),
         githubAccount: z.string().min(1).optional(),
       })
       .strict()
-      .default({ enabled: false, base: "main", switchBack: "main", autoMerge: false }),
+      .default({
+        enabled: false,
+        base: "main",
+        switchBack: "main",
+        autoMerge: false,
+        mergeMethod: "squash",
+      }),
   })
   .strict();
 
@@ -293,6 +356,7 @@ const workspaceArchitectureSchema = z
     goal: z.string().min(1),
     maxRounds: z.number().int().positive().default(3),
     targetScore: z.number().int().min(0).max(100).default(95),
+    cleanupPolicy: cleanupPolicySchema.optional(),
     prompt: z.string().min(1).optional(),
     runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
   })
@@ -304,7 +368,10 @@ const workspaceSchema = z
     name: z.string().min(1),
     root: z.string().min(1),
     agent: agentSchema,
+    enabled: z.boolean().default(true),
     runner: runnerSchema.default({ kind: "agent-supervised", requireConfirmation: false }),
+    worktreeIsolation: worktreeIsolationSchema.optional(),
+    cleanupPolicy: cleanupPolicySchema.default("conservative"),
     repositories: z.array(workspaceRepositorySchema).min(2),
     architecture: workspaceArchitectureSchema,
     bugFix: bugFixSchema,
@@ -326,6 +393,9 @@ const projectSchema = z
     name: z.string().min(1),
     path: z.string().min(1),
     agent: agentSchema,
+    enabled: z.boolean().default(true),
+    worktreeIsolation: worktreeIsolationSchema.optional(),
+    cleanupPolicy: cleanupPolicySchema.default("conservative"),
     schedule: z.string().min(1).optional(),
     scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
     goal: z.string().min(1),
@@ -360,15 +430,23 @@ const projectSchema = z
         base: z.string().min(1).default("main"),
         switchBack: z.string().min(1).default("main"),
         autoMerge: z.boolean().default(false),
+        mergeMethod: pullRequestMergeMethodSchema.default("squash"),
         githubAccount: z.string().min(1).optional(),
       })
       .strict()
-      .default({ enabled: false, base: "main", switchBack: "main", autoMerge: false }),
+      .default({
+        enabled: false,
+        base: "main",
+        switchBack: "main",
+        autoMerge: false,
+        mergeMethod: "squash",
+      }),
     bugFix: bugFixSchema,
     testCoverage: testCoverageSchema,
     securityMaintenance: securityMaintenanceSchema,
     harnessAuto: harnessAutoSchema,
     opportunityDiscovery: opportunityDiscoverySchema,
+    automationGovernanceReview: automationGovernanceReviewSchema,
     pullRequestReview: pullRequestReviewSchema,
     allowedActions: z.array(actionSchema).default([]),
     blockedActions: z.array(actionSchema).default([]),
@@ -396,6 +474,7 @@ const loopConfigSchema = z
             securityMaintenanceMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             harnessAutoMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             opportunityDiscoveryMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            automationGovernanceReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             pullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
             repositoryPullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
           })
@@ -409,6 +488,7 @@ const loopConfigSchema = z
             securityMaintenanceMaxDelayMinutes: 0,
             harnessAutoMaxDelayMinutes: 0,
             opportunityDiscoveryMaxDelayMinutes: 0,
+            automationGovernanceReviewMaxDelayMinutes: 0,
             pullRequestReviewMaxDelayMinutes: 0,
             repositoryPullRequestReviewMaxDelayMinutes: 0,
           }),
@@ -424,6 +504,7 @@ const loopConfigSchema = z
           securityMaintenanceMaxDelayMinutes: 0,
           harnessAutoMaxDelayMinutes: 0,
           opportunityDiscoveryMaxDelayMinutes: 0,
+          automationGovernanceReviewMaxDelayMinutes: 0,
           pullRequestReviewMaxDelayMinutes: 0,
           repositoryPullRequestReviewMaxDelayMinutes: 0,
         },
@@ -458,15 +539,6 @@ export type LoopValidationIssue = {
   message: string;
   projectId?: string;
 };
-
-type LoopScheduledJobKind =
-  | "architecture"
-  | "bug-fix"
-  | "test-coverage"
-  | "security-maintenance"
-  | "harness-auto"
-  | "opportunity-discovery"
-  | "pull-request-review";
 
 export type LoopProjectValidationSummary = {
   id: string;
@@ -612,6 +684,18 @@ function ensurePhaseOneBoundaries(config: LoopConfig): void {
         errors.push(`projects.${index}.opportunityDiscovery requires runner.kind=agent-supervised`);
       }
     }
+    if (project.automationGovernanceReview.enabled) {
+      if (project.automationGovernanceReview.schedule === undefined) {
+        errors.push(
+          `projects.${index}.automationGovernanceReview.schedule is required when enabled`,
+        );
+      }
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(
+          `projects.${index}.automationGovernanceReview requires runner.kind=agent-supervised`,
+        );
+      }
+    }
     const minScore = project.eval?.minScore;
     if (minScore !== undefined && minScore < project.targetScore) {
       errors.push(`projects.${index}.eval.minScore must be >= targetScore`);
@@ -719,55 +803,11 @@ function workspaceIssues(_workspace: LoopWorkspaceConfig): LoopValidationIssue[]
 }
 
 function scheduledProjectJobs(project: LoopProjectConfig): LoopScheduledJobKind[] {
-  return [
-    ...(project.schedule !== undefined ? (["architecture"] as const) : []),
-    ...(project.bugFix.enabled && project.bugFix.schedule !== undefined
-      ? (["bug-fix"] as const)
-      : []),
-    ...(project.testCoverage.enabled && project.testCoverage.schedule !== undefined
-      ? (["test-coverage"] as const)
-      : []),
-    ...(project.securityMaintenance.enabled && project.securityMaintenance.schedule !== undefined
-      ? (["security-maintenance"] as const)
-      : []),
-    ...(project.harnessAuto.enabled && project.harnessAuto.schedule !== undefined
-      ? (["harness-auto"] as const)
-      : []),
-    ...(project.opportunityDiscovery.enabled && project.opportunityDiscovery.schedule !== undefined
-      ? (["opportunity-discovery"] as const)
-      : []),
-    ...(project.pullRequestReview.enabled && project.pullRequestReview.schedule !== undefined
-      ? (["pull-request-review"] as const)
-      : []),
-  ];
+  return projectScheduledJobKinds(project);
 }
 
 function scheduledWorkspaceJobs(workspace: LoopWorkspaceConfig): LoopScheduledJobKind[] {
-  return [
-    ...(workspace.architecture.enabled && workspace.architecture.schedule !== undefined
-      ? (["architecture"] as const)
-      : []),
-    ...(workspace.bugFix.enabled && workspace.bugFix.schedule !== undefined
-      ? (["bug-fix"] as const)
-      : []),
-    ...(workspace.testCoverage.enabled && workspace.testCoverage.schedule !== undefined
-      ? (["test-coverage"] as const)
-      : []),
-    ...(workspace.securityMaintenance.enabled &&
-    workspace.securityMaintenance.schedule !== undefined
-      ? (["security-maintenance"] as const)
-      : []),
-    ...(workspace.harnessAuto.enabled && workspace.harnessAuto.schedule !== undefined
-      ? (["harness-auto"] as const)
-      : []),
-    ...(workspace.opportunityDiscovery.enabled &&
-    workspace.opportunityDiscovery.schedule !== undefined
-      ? (["opportunity-discovery"] as const)
-      : []),
-    ...(workspace.pullRequestReview.enabled && workspace.pullRequestReview.schedule !== undefined
-      ? (["pull-request-review"] as const)
-      : []),
-  ];
+  return workspaceScheduledJobKinds(workspace);
 }
 
 export function validateLoopConfig(text: string): LoopValidationSummary {

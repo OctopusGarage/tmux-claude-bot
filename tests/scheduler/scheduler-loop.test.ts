@@ -1,9 +1,8 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { AutopilotNotice } from "../../src/core/autopilot/notifier.js";
-import { type AutopilotState, defaultState } from "../../src/core/autopilot/types.js";
 import { schedulerTick, type TickCtx } from "../../src/core/scheduler/scheduler-loop.js";
 import type { Plan, PoolState, Run } from "../../src/core/scheduler/types.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
@@ -15,14 +14,6 @@ afterEach(() => {
   else process.env.TCB_STATE_DIR = originalStateDir;
 });
 
-function fakeAutopilot() {
-  const map = new Map<string, AutopilotState>();
-  return {
-    map,
-    get: (s: string) => map.get(s) ?? defaultState(),
-    set: (s: string, st: AutopilotState) => void map.set(s, st),
-  };
-}
 const plan: Plan = {
   id: "p",
   name: "n",
@@ -40,7 +31,6 @@ function ctx(over: Partial<TickCtx>): TickCtx {
     run: undefined,
     pools: { claude: { paused: false } } as Record<string, PoolState>,
     lastFired: {},
-    autopilot: fakeAutopilot(),
     resolveSession: (t) => t.project,
     readUsage: async () => null,
     isGated: () => false,
@@ -164,11 +154,8 @@ describe("schedulerTick", () => {
       ],
     };
     const saved: { run: Run | undefined } = { run: undefined };
-    const ap = fakeAutopilot();
-    const seedSpy = vi.spyOn(ap, "set");
     const c = ctx({
       run,
-      autopilot: ap,
       save: (r, _pools) => {
         saved.run = r;
       },
@@ -176,8 +163,6 @@ describe("schedulerTick", () => {
     await schedulerTick(c);
     // The queued task must remain queued — not promoted to running
     expect(saved.run?.tasks[0]?.status).toBe("queued");
-    // Autopilot must NOT be seeded/enabled for the task
-    expect(seedSpy).not.toHaveBeenCalled();
   });
 
   it("pauses the pool when usage is at the quota threshold", async () => {
@@ -202,12 +187,9 @@ describe("schedulerTick", () => {
       ],
     };
     let savedPools: Record<string, PoolState> = {};
-    const ap = fakeAutopilot();
-    ap.set("/a", { ...ap.get("/a"), enabled: true }); // pre-seed as enabled
     const c = ctx({
       run,
       plans: [plan],
-      autopilot: ap,
       readUsage: async () => ({
         sessionId: "x",
         contextPct: null,
@@ -223,7 +205,6 @@ describe("schedulerTick", () => {
     });
     await schedulerTick(c);
     expect(savedPools.claude?.paused).toBe(true);
-    expect(ap.get("/a").enabled).toBe(false); // autopilot must be disabled so quota is not burned
   });
 
   // Bug #1 (restart): a paused-quota run whose pool state is restored from the store
@@ -330,52 +311,6 @@ describe("schedulerTick", () => {
     expect(saveCount).toBe(2);
     // The second tick saw the pools saved by the first (no stale overwrite).
     expect(firstPoolsSeenBySecond).toEqual(currentPools);
-  });
-
-  // Bug #6 (viaScheduler cleared): a done task whose session has viaScheduler=true
-  // must have viaScheduler cleared to false after schedulerTick.
-  it("clears viaScheduler on a session when its task reaches a terminal state", async () => {
-    const ap = fakeAutopilot();
-    ap.set("/a", { ...defaultState(), viaScheduler: true, enabled: false });
-
-    const run: Run = {
-      runId: "r-done",
-      planId: "p",
-      startedAt: 0,
-      status: "running",
-      tasks: [
-        {
-          project: "/a",
-          agent: "claude",
-          goals: ["fix-tests"],
-          rounds: 1,
-          retries: 0,
-          priority: 0,
-          status: "done",
-          attempt: 0,
-          goalsCompleted: ["fix-tests"],
-          sessionName: "/a",
-        },
-        {
-          project: "/b",
-          agent: "claude",
-          goals: ["fix-tests"],
-          rounds: 1,
-          retries: 0,
-          priority: 0,
-          status: "done",
-          attempt: 0,
-          goalsCompleted: ["fix-tests"],
-          sessionName: "/b",
-        },
-      ],
-    };
-    const c = ctx({ run, autopilot: ap });
-    await schedulerTick(c);
-    // viaScheduler must be cleared for the done session
-    expect(ap.get("/a").viaScheduler).toBe(false);
-    // /b had no viaScheduler set — must remain falsy (defaultState gives undefined)
-    expect(ap.get("/b").viaScheduler).toBeFalsy();
   });
 
   // Bug #5 (cron catch-up): when a run completes, lastFired must be advanced to ctx.now
@@ -548,37 +483,5 @@ describe("schedulerTick", () => {
     await schedulerTick(c); // same runId → no re-broadcast
     expect(broadcasts.filter((n) => n.kind === "batchRunStarted")).toHaveLength(1);
     expect(broadcasts[0]).toMatchObject({ kind: "batchRunStarted", runId: "r-announce" });
-  });
-
-  // Bug #6 idempotence: a tick with an already-cleared viaScheduler does NOT re-write.
-  it("does not re-write viaScheduler=false when it is already false", async () => {
-    const ap = fakeAutopilot();
-    ap.set("/a", { ...defaultState(), viaScheduler: false, enabled: false });
-    const setSpy = vi.spyOn(ap, "set");
-
-    const run: Run = {
-      runId: "r-already-clear",
-      planId: "p",
-      startedAt: 0,
-      status: "running",
-      tasks: [
-        {
-          project: "/a",
-          agent: "claude",
-          goals: [],
-          rounds: 1,
-          retries: 0,
-          priority: 0,
-          status: "done",
-          attempt: 0,
-          goalsCompleted: [],
-          sessionName: "/a",
-        },
-      ],
-    };
-    const c = ctx({ run, autopilot: ap });
-    await schedulerTick(c);
-    // The guard `st.viaScheduler === true` must prevent the write-back.
-    expect(setSpy).not.toHaveBeenCalledWith("/a", expect.objectContaining({ viaScheduler: false }));
   });
 });

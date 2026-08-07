@@ -9,11 +9,13 @@ import {
   composeAdoptOutcome,
   findAdoptableOrphans,
 } from "../../core/agents/takeover-service.js";
+import { findProjectAutomationConflictForSession } from "../../core/automation/project-conflicts.js";
 import {
   cancelActiveDelegatedTask,
   formatActiveDelegateCancel,
+  formatActiveDelegateQueue,
   formatActiveDelegateStart,
-  hasActiveDelegatedTaskForSession,
+  listActiveDelegateQueue,
   parseDelegateRequirement,
   startActiveDelegatedTask,
 } from "../../core/autopilot/delegated-task.js";
@@ -67,6 +69,8 @@ import {
   buildActionConfirmationKeyboard,
   buildAdoptConfirmKeyboard,
   buildAdoptDoneKeyboard,
+  buildAutopilotPlanKeyboard,
+  buildAutopilotQueueKeyboard,
   buildBrowseKeyboard,
   buildControlKeyboard,
   buildExpandedControlKeyboard,
@@ -145,13 +149,32 @@ export async function handleCallbackQuery(
       }
       return;
     }
-    // Autopilot now means supervisor-backed delegation only. The old
-    // keep-alive/goal-cycle callbacks are intentionally not handled here.
-    if (parsed.kind === "apDelegate" || parsed.kind === "apCancelDelegate") {
+    // Autopilot now means supervisor-backed delegation only.
+    if (
+      parsed.kind === "apDelegate" ||
+      parsed.kind === "apConfirmDelegate" ||
+      parsed.kind === "apPlan" ||
+      parsed.kind === "apCancelDelegate" ||
+      parsed.kind === "apQueue"
+    ) {
       await safeAnswerCallback(ctx);
       const session = await resolveAliveSessionByShortId(deps, parsed.sid);
       if (!session) return;
-      if (parsed.kind === "apDelegate") {
+      if (parsed.kind === "apPlan") {
+        await reply(ctx, "info", messages("telegram").autopilotTitle, {
+          session,
+          body: messages("telegram").autopilotPlanPreviewBody,
+          replyTarget,
+          replyMarkup: buildAutopilotPlanKeyboard(parsed.sid),
+        });
+      } else if (parsed.kind === "apQueue") {
+        await reply(ctx, "view", messages("telegram").autopilotQueueTitle, {
+          session,
+          body: formatActiveDelegateQueue(listActiveDelegateQueue()),
+          replyTarget,
+          replyMarkup: buildAutopilotQueueKeyboard(parsed.sid),
+        });
+      } else if (parsed.kind === "apDelegate" || parsed.kind === "apConfirmDelegate") {
         const requirement = parseDelegateRequirement("delegate");
         if (requirement === null) return;
         const result = await startActiveDelegatedTask(deps, { session, requirement });
@@ -163,6 +186,9 @@ export async function handleCallbackQuery(
             session,
             body: formatActiveDelegateStart(result),
             replyTarget,
+            ...(result.status === "blocked" && result.showQueue
+              ? { replyMarkup: buildAutopilotQueueKeyboard(parsed.sid) }
+              : {}),
           },
         );
       } else {
@@ -187,8 +213,8 @@ export async function handleCallbackQuery(
       }
       return;
     }
-    if (parsed.kind === "apBack" || parsed.kind === "apConfirm" || parsed.kind === "apContinue") {
-      await safeAnswerCallback(ctx, "旧 Autopilot 保活/目标入口已下线");
+    if (parsed.kind === "apBack") {
+      await safeAnswerCallback(ctx);
       return;
     }
     if (parsed.kind === "opportunityDiscussAll" || parsed.kind === "opportunityDismissAll") {
@@ -246,14 +272,14 @@ export async function handleCallbackQuery(
       return;
     }
     // Cancel a still-waiting queued message via the ❌ on its "queued" ack. The
-    // reject closure (see executor) posts the localized "已取消" confirmation, so
+    // reject closure (see executor) posts the localized cancellation confirmation, so
     // here we only toast + drop the now-stale button.
     if (parsed.kind === "qcancel") {
       const m = messages("telegram");
       const session = await resolveAliveSessionByShortId(deps, parsed.sid);
       const cancelled =
         session !== null && deps.queue.cancelQueued(session, parsed.msgId, m.queueItemCancelled);
-      // The reject closure already posts the "已取消" reply on success; on false the
+      // The reject closure already posts the cancellation reply on success; on false the
       // item is gone (dispatched / deduped phantom) — toast that, don't imply success.
       await safeAnswerCallback(ctx, cancelled ? m.queueItemCancelled : m.queueItemGone);
       try {
@@ -345,7 +371,7 @@ export async function handleCallbackQuery(
     if (parsed.kind === "prompttranslatemenu") {
       await safeAnswerCallback(ctx);
       const current = promptTranslateStatus("telegram");
-      await reply(ctx, "info", formatPromptTranslateCommandResult(current), {
+      await reply(ctx, "info", formatPromptTranslateCommandResult(current, messages("telegram")), {
         replyTarget,
         replyMarkup: buildPromptTranslateKeyboard(),
       });
@@ -359,8 +385,8 @@ export async function handleCallbackQuery(
         ctx,
         result.ok ? "info" : "err",
         result.ok
-          ? formatPromptTranslateCommandResult(current)
-          : formatPromptTranslateCommandResult(result),
+          ? formatPromptTranslateCommandResult(current, messages("telegram"))
+          : formatPromptTranslateCommandResult(result, messages("telegram")),
         {
           replyTarget,
           replyMarkup: buildPromptTranslateKeyboard(),
@@ -748,9 +774,10 @@ async function handleOpportunityCallback(
 ): Promise<void> {
   const store = new OpportunityStore();
   const resolved = resolveOpportunityTokens(store, parsed.tokens);
+  const m = messages("telegram");
   if (resolved.missing.length > 0 || resolved.suggestions.length === 0) {
-    await safeAnswerCallback(ctx, "Opportunity not found");
-    await reply(ctx, "err", `Opportunity not found: ${resolved.missing.join(", ")}`, {
+    await safeAnswerCallback(ctx, m.opportunityNotFound(resolved.missing.join(", ")));
+    await reply(ctx, "err", m.opportunityNotFound(resolved.missing.join(", ")), {
       replyTarget,
     });
     return;
@@ -761,8 +788,8 @@ async function handleOpportunityCallback(
     for (const suggestion of resolved.suggestions) {
       if (store.updateStatus(suggestion.id, "dismissed") !== null) skipped++;
     }
-    await safeAnswerCallback(ctx, "Skipped");
-    await reply(ctx, "ok", `Skipped ${skipped} opportunities.`, { replyTarget });
+    await safeAnswerCallback(ctx, m.opportunitySkipped(skipped));
+    await reply(ctx, "ok", m.opportunitySkipped(skipped), { replyTarget });
     try {
       await timeApi("editMessageReplyMarkup", () => ctx.editMessageReplyMarkup());
     } catch {
@@ -774,8 +801,8 @@ async function handleOpportunityCallback(
   const first = resolved.suggestions[0];
   if (first === undefined) return;
   if (resolved.suggestions.some((suggestion) => suggestion.projectPath !== first.projectPath)) {
-    await safeAnswerCallback(ctx, "Mixed projects are not supported");
-    await reply(ctx, "err", "Cannot discuss mixed-project opportunities together.", {
+    await safeAnswerCallback(ctx, m.opportunityMixedProjects);
+    await reply(ctx, "err", m.opportunityMixedProjects, {
       replyTarget,
     });
     return;
@@ -784,20 +811,20 @@ async function handleOpportunityCallback(
   if (opened.status !== "created" && opened.status !== "switched") {
     const reason =
       opened.status === "invalid" ? `${opened.error}: ${opened.resolvedPath}` : opened.message;
-    await safeAnswerCallback(ctx, "Cannot open project");
-    await reply(ctx, "err", `Cannot open project for discussion: ${reason}`, { replyTarget });
+    await safeAnswerCallback(ctx, m.opportunityCannotOpenProject(reason));
+    await reply(ctx, "err", m.opportunityCannotOpenProject(reason), { replyTarget });
     return;
   }
   const blocked = opportunityDiscussionBlockReason(deps, opened.sessionName, opened.projectPath);
   if (blocked !== null) {
-    await safeAnswerCallback(ctx, "Blocked");
+    await safeAnswerCallback(ctx, blocked);
     await reply(ctx, "warn", blocked, { replyTarget });
     return;
   }
 
   for (const suggestion of resolved.suggestions) store.updateStatus(suggestion.id, "discussing");
-  await safeAnswerCallback(ctx, "Discussion started");
-  await reply(ctx, "info", `Discussing ${resolved.suggestions.length} opportunities.`, {
+  await safeAnswerCallback(ctx, m.opportunityDiscussionStarted(resolved.suggestions.length));
+  await reply(ctx, "info", m.opportunityDiscussionStarted(resolved.suggestions.length), {
     session: opened.sessionName,
     replyTarget,
     replyMarkup: buildOpportunityNotificationKeyboard(
@@ -848,13 +875,22 @@ function opportunityDiscussionBlockReason(
   session: string,
   projectPath: string,
 ): string | null {
+  const m = messages("telegram");
+  const conflict = findProjectAutomationConflictForSession(session);
+  if (conflict !== null) {
+    return m.opportunityAutomationConflict(
+      conflict.taskKind,
+      conflict.runId,
+      conflict.supervisorSession,
+    );
+  }
+
   if (
     deps.queue.isSessionProcessing(session) ||
     deps.queue.getCurrentSessionMessage(session) !== undefined ||
-    deps.queue.getSessionQueue(session).length > 0 ||
-    hasActiveDelegatedTaskForSession(session)
+    deps.queue.getSessionQueue(session).length > 0
   ) {
-    return "项目 agent 当前正在处理任务或已有排队消息，暂时不能参与讨论。请等当前任务完成后再试。";
+    return m.opportunityQueueBusy;
   }
 
   const status = spawnSync("git", ["status", "--short"], {
@@ -863,12 +899,12 @@ function opportunityDiscussionBlockReason(
   });
   if (status.status !== 0) {
     const reason = [status.stderr, status.stdout].filter(Boolean).join("\n").trim();
-    return `无法确认项目 git 状态，暂时不能参与讨论。\n${reason || "git status --short failed"}`;
+    return m.opportunityGitStatusUnknown(reason || "git status --short failed");
   }
   const dirty = status.stdout.trim();
   if (dirty.length > 0) {
     const preview = dirty.split(/\r?\n/).slice(0, 12).join("\n");
-    return `项目工作区不干净，暂时不能参与讨论。请先处理现有改动后再试。\n\n${preview}`;
+    return m.opportunityDirtyWorktree(preview);
   }
   return null;
 }

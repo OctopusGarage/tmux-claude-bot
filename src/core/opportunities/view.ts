@@ -17,9 +17,9 @@ export function formatOpportunityDigest(digest: OpportunityNotificationDigest): 
     "/opportunity list",
     "/opportunity show <number|id>",
     "/opportunity discuss <number|id>",
-    "/opportunity delegate <number|id>",
     "/opportunity dismiss <number|id>",
     "/opportunity snooze <number|id>",
+    "After discussion: use Autopilot / Continue via supervisor for confirmed work",
   );
   return lines.join("\n").trimEnd();
 }
@@ -67,8 +67,8 @@ export function formatOpportunityDetail(suggestion: OpportunitySuggestion): stri
     "Non-goals:",
     ...asBullets(suggestion.nonGoals),
     "",
-    "Delegate:",
-    `/opportunity delegate ${suggestion.id}`,
+    "Next step:",
+    "Discuss the scope first, then use Autopilot / Continue via supervisor for confirmed work.",
   ].join("\n");
 }
 
@@ -82,8 +82,8 @@ export function formatOpportunityDiscussionPrompt(suggestion: OpportunitySuggest
     "- acceptable implementation risk",
     "- verification expectations",
     "",
-    "When the scope is clear, use:",
-    `/opportunity delegate ${suggestion.id}`,
+    "When the scope is clear:",
+    "Use Autopilot / Continue via supervisor for confirmed work.",
   ].join("\n");
 }
 
@@ -125,7 +125,32 @@ export function formatOpportunityAgentDiscussionPrompt(suggestion: OpportunitySu
     "- Do not implement yet.",
     "- Discuss scope, expected behavior, non-goals, risks, and verification with the owner.",
     "- Ask concise clarifying questions if needed.",
-    `- When the owner confirms the scope, they can use /opportunity delegate ${suggestion.id} or the Feishu card button to hand implementation to the Loop Supervisor.`,
+    "- When the owner confirms the scope, they can use Autopilot / Continue via supervisor to hand implementation to the Loop Supervisor.",
+    "",
+    "Delegation brief draft:",
+    `objective: ${suggestion.delegateRequirement}`,
+    "currentAssessment: proposed opportunity; confirm owner intent and inspect repository evidence before editing",
+    "currentScore: not-applicable",
+    "targetScore: not-applicable",
+    "taskChecklist:",
+    `- Confirm the accepted scope for ${suggestion.id}: ${suggestion.title}`,
+    `- Implement the smallest coherent change: ${suggestion.recommendedApproach}`,
+    "- Review the diff for regressions and scope creep",
+    "acceptanceCriteria:",
+    ...asBullets(suggestion.acceptanceCriteria),
+    "stopConditions:",
+    "- Owner does not confirm the scope or materially changes the objective",
+    "- Repository evidence shows the opportunity is already solved or no longer relevant",
+    "- Verification cannot be completed with reliable local or CI gates",
+    "nonGoals:",
+    ...asBullets(suggestion.nonGoals),
+    "riskReview:",
+    ...asBullets(suggestion.risks),
+    "verificationPlan:",
+    "- Run the relevant project tests, type/lint checks, smoke checks, or CI gates for the touched behavior",
+    "- Record planReview before final completion",
+    "",
+    "Use this draft to form the Autopilot / Continue via supervisor delegationBrief; tighten it during discussion instead of expanding scope during execution.",
   ].join("\n");
 }
 
@@ -161,36 +186,31 @@ export function formatOpportunityBatchAgentDiscussionPrompt(
     "- Recommend whether to implement all together, drop any item, or split only if there is a real engineering reason.",
     "- Ask concise clarifying questions if needed.",
     "- When the owner confirms the combined scope, they can use the Feishu card button to hand the combined implementation to the Loop Supervisor.",
-  ].join("\n");
-}
-
-export function formatOpportunityBatchDelegateRequirement(
-  suggestions: OpportunitySuggestion[],
-): string {
-  const projectName = suggestions[0]?.projectName ?? "project";
-  return [
-    `Implement the owner-approved opportunity batch for ${projectName}.`,
     "",
-    "Scope:",
-    ...suggestions.flatMap((suggestion, index) => [
-      "",
-      `${index + 1}. ${suggestion.id}: ${suggestion.title}`,
-      "Requirement:",
-      suggestion.delegateRequirement,
-      "Acceptance criteria:",
-      ...asBullets(suggestion.acceptanceCriteria),
-      "Non-goals:",
-      ...asBullets(suggestion.nonGoals),
-      "Risks to check:",
-      ...asBullets(suggestion.risks),
-    ]),
-    "",
-    "Batch requirements:",
-    "- Treat these opportunities as one coordinated implementation.",
-    "- Reconfirm overlap and sequencing before editing.",
-    "- Keep the change scoped to the approved opportunities; do not add unrelated product scope.",
-    "- Complete implementation through review, relevant tests, coverage review for touched risk paths, and any justified existing deterministic or agent-backed eval.",
-    "- Produce one coherent final summary and one PR when repository policy requires a PR.",
+    "Combined delegation brief draft:",
+    `objective: Resolve the owner-confirmed subset of ${suggestions.length} proposed opportunit${suggestions.length === 1 ? "y" : "ies"} for ${projectName}.`,
+    "currentAssessment: proposed opportunity batch; confirm overlap, sequencing, and repository evidence before editing",
+    "currentScore: not-applicable",
+    "targetScore: not-applicable",
+    "taskChecklist:",
+    ...suggestions.map(
+      (suggestion) => `- Confirm and sequence ${suggestion.id}: ${suggestion.title}`,
+    ),
+    "- Implement only the accepted combined scope",
+    "- Review the diff for regressions, duplicated work, and scope creep",
+    "acceptanceCriteria:",
+    ...asBullets(uniqueFlatMap(suggestions, (suggestion) => suggestion.acceptanceCriteria)),
+    "stopConditions:",
+    "- The opportunities do not share a coherent implementation path; split the work before delegation",
+    "- Owner confirmation leaves material ambiguity about scope, sequencing, or verification",
+    "- Verification cannot be completed with reliable local or CI gates",
+    "nonGoals:",
+    ...asBullets(uniqueFlatMap(suggestions, (suggestion) => suggestion.nonGoals)),
+    "riskReview:",
+    ...asBullets(uniqueFlatMap(suggestions, (suggestion) => suggestion.risks)),
+    "verificationPlan:",
+    "- Run the relevant project tests, type/lint checks, smoke checks, or CI gates for the touched behavior",
+    "- Record planReview before final completion",
   ].join("\n");
 }
 
@@ -206,4 +226,18 @@ function formatOpportunitySummary(suggestion: OpportunitySuggestion, ordinal?: n
 
 function asBullets(values: string[]): string[] {
   return values.length > 0 ? values.map((value) => `- ${value}`) : ["- none"];
+}
+
+function uniqueFlatMap(
+  suggestions: OpportunitySuggestion[],
+  select: (suggestion: OpportunitySuggestion) => string[],
+): string[] {
+  return [
+    ...new Set(
+      suggestions
+        .flatMap(select)
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ];
 }

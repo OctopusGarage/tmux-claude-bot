@@ -24,6 +24,7 @@ export type LogFilter = {
   component?: string;
   levelMin?: LogRecord["level"];
   grep?: string;
+  runId?: string;
   since?: number; // epoch ms; keep records with ts >= since
   n?: number; // keep the last n after filtering
 };
@@ -40,6 +41,7 @@ export function filterRecords(records: LogRecord[], f: LogFilter): LogRecord[] {
     if (f.component && !(r.component ?? "").startsWith(f.component)) return false;
     if (f.levelMin && ORDER[r.level] < ORDER[f.levelMin]) return false;
     if (f.since !== undefined && Date.parse(r.ts) < f.since) return false;
+    if (f.runId && !JSON.stringify(r).includes(f.runId)) return false;
     if (grep && !JSON.stringify(r).toLowerCase().includes(grep)) return false;
     return true;
   });
@@ -85,16 +87,21 @@ export function queryLogs(filter: LogFilter, days = 1): LogRecord[] {
   return filterRecords(readRecords(days), filter);
 }
 
-export function argsToFilter(o: {
-  session?: string;
-  trace?: string;
-  chat?: string;
-  channel?: "telegram" | "lark";
-  component?: string;
-  level?: string;
-  grep?: string;
-  n?: string;
-}): LogFilter {
+export function argsToFilter(
+  o: {
+    session?: string;
+    trace?: string;
+    chat?: string;
+    channel?: "telegram" | "lark";
+    component?: string;
+    level?: string;
+    grep?: string;
+    runId?: string;
+    since?: string;
+    n?: string;
+  },
+  now = Date.now(),
+): LogFilter {
   const f: LogFilter = {};
   if (o.session) f.session = o.session;
   if (o.trace) f.trace = o.trace;
@@ -111,6 +118,8 @@ export function argsToFilter(o: {
     f.levelMin = lvl as LogRecord["level"];
   }
   if (o.grep) f.grep = o.grep;
+  if (o.runId) f.runId = o.runId;
+  if (o.since) f.since = parseSince(o.since, now);
   if (o.n) {
     // A non-numeric/zero/negative N must not silently disable the cap (NaN makes
     // `out.length > f.n` false, dumping every record). Reject it.
@@ -120,4 +129,21 @@ export function argsToFilter(o: {
     f.n = n;
   }
   return f;
+}
+
+function parseSince(value: string, now: number): number {
+  const trimmed = value.trim();
+  const relative = /^(\d+)([mhd])$/.exec(trimmed);
+  if (relative !== null) {
+    const amount = Number.parseInt(relative[1] ?? "", 10);
+    const unit = relative[2];
+    const multiplier = unit === "m" ? 60_000 : unit === "h" ? 3_600_000 : 86_400_000;
+    return now - amount * multiplier;
+  }
+  if (/^\d+$/.test(trimmed)) return Number.parseInt(trimmed, 10);
+  const parsed = Date.parse(trimmed);
+  if (!Number.isNaN(parsed)) return parsed;
+  throw new Error(
+    `invalid --since "${value}" (expected ISO time, epoch ms, or relative 30m|2h|1d)`,
+  );
 }

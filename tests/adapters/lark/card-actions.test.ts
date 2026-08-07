@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { CardActionEvent } from "@larksuiteoapi/node-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.js";
+import { writeLoopSupervisorWorkOrderState } from "../../../src/core/loop/supervisor-state.js";
+import type { LoopWorkOrder } from "../../../src/core/loop/work-order.js";
 import { OpportunityStore } from "../../../src/core/opportunities/store.js";
 import { bindGroup, getBinding, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { appendRecentProject } from "../../../src/core/projects/recentProjects.js";
@@ -41,6 +43,34 @@ function evt(value: unknown, over: Partial<CardActionEvent> = {}): CardActionEve
     action: { value, tag: "button" },
     ...over,
   } as CardActionEvent;
+}
+
+function writeTestWorkOrder(input: { id: string; projectPath: string }): void {
+  writeLoopSupervisorWorkOrderState({
+    workOrder: {
+      id: input.id,
+      scheduledAt: 1,
+      projectId: "api",
+      projectName: "api",
+      projectPath: input.projectPath,
+      task: { kind: "architecture" },
+      agent: "codex",
+      goal: "test",
+      maxRounds: 1,
+      targetScore: 95,
+      runner: { kind: "agent-supervised" },
+      allowedActions: [],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [] },
+      verification: { commands: [] },
+      pullRequest: { enabled: false },
+      requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${input.id}]`,
+    } as unknown as LoopWorkOrder,
+    supervisorSession: "tmux_proj_loop-supervisor-1",
+    status: "in-flight",
+    now: Date.now(),
+  });
 }
 
 function initGitProject(projectDir: string): void {
@@ -91,6 +121,19 @@ describe("makeCardActionHandler", () => {
     // Must NOT falsely confirm a cancellation; say the item is no longer queued.
     expect(channel.texts().some((t) => t.includes("不在队列"))).toBe(true);
     expect(channel.texts().some((t) => t.includes("已取消"))).toBe(false);
+  });
+
+  it("ap_plan sends a confirmation card without queueing delegation", async () => {
+    const enqueue = vi.fn(() => "queued" as const);
+    const channel = fakeChannel();
+    const deps = fakeDeps({ queue: { enqueue } });
+
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "ap_plan", s: "tmux_proj_api" }));
+
+    const cards = JSON.stringify(channel.cards());
+    expect(cards).toContain("托管前计划预览");
+    expect(cards).toContain("ap_confirm_delegate");
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("dangerous control button asks for confirmation before enqueueing", async () => {
@@ -196,8 +239,8 @@ describe("makeCardActionHandler", () => {
   });
 
   // peek/listalive/recent render cards; current/queuestatus render text. history
-  // renders a card only when the session has a path mapping (otherwise a "缺少路径"
-  // text hint) — covered separately in views.test.ts, so it's excluded here.
+  // renders a card only when the session has a path mapping; otherwise it renders
+  // a localized text hint. views.test.ts covers that branch, so it is excluded here.
   it.each([
     ["peek", "card"],
     ["listalive", "card"],
@@ -281,6 +324,7 @@ describe("makeCardActionHandler", () => {
               agent: "codex",
               poolSize: 1,
               resetBeforeWorkOrder: "compact",
+              worktreeIsolation: "isolated",
             },
           },
         },
@@ -357,6 +401,70 @@ describe("makeCardActionHandler", () => {
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
 
       expect(channel.texts().join("\n")).toContain("项目 agent 当前正在处理任务");
+      expect(deps.queue.enqueued).toHaveLength(0);
+      expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
+  });
+
+  it("oppdiscuss blocks when the target project has active supervisor automation", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-automation-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-automation-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      writeTestWorkOrder({ id: "run-automation-1", projectPath: projectDir });
+      const [suggestion] = new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "api",
+          projectName: "api",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["docs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Add explain command",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Users need manual log inspection.",
+              whyNow: "Opportunity discovery found repeated support friction.",
+              value: "Faster support.",
+              evidence: ["support logs mention missing context"],
+              recommendedApproach: "Discuss a read-only explain command.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Scope can grow"],
+              nonGoals: ["Do not implement during discussion"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add the explain command after owner approval.",
+            },
+          ],
+        },
+        projectPath: projectDir,
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      if (suggestion === undefined) throw new Error("expected suggestion");
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        config: { cdAllowedDirs: [projectDir] },
+        bridge: { hasSession: vi.fn(async () => true) },
+      });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
+
+      const text = channel.texts().join("\n");
+      expect(text).toContain("项目正在执行自动化任务");
+      expect(text).toContain("run-automation-1");
       expect(deps.queue.enqueued).toHaveLength(0);
       expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
     } finally {
@@ -653,8 +761,8 @@ describe("makeCardActionHandler", () => {
     const deps = fakeDeps();
     const handler = makeCardActionHandler(channel, deps);
 
-    // No recent lines match → replies the "未找到短 id" message; that's enough to
-    // prove the addrecent branch was taken.
+    // No recent lines match, so the localized short-id-not-found reply proves the
+    // addrecent branch was taken.
     await handler(evt({ cmd: "addrecent", sid: "nomatch" }));
 
     expect(channel.texts().some((t) => t.includes("未找到短 id"))).toBe(true);

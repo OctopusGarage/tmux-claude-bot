@@ -2,7 +2,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runLoopSupervisedProjectAsync } from "../../src/core/loop/supervised-runner.js";
+import {
+  runLoopSupervisedProjectAsync,
+  runLoopSupervisorRevisionAsync,
+} from "../../src/core/loop/supervised-runner.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
 const defaultFinalSummaryPath = join(
@@ -85,6 +88,40 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
   });
 
+  it("retries supervisor dispatch when the model provider is temporarily at capacity", async () => {
+    let attempts = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "Selected model is at capacity. Please try a different model.",
+          };
+        }
+        return {
+          status: 0,
+          stdout:
+            '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":["retried after provider capacity"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}',
+          stderr: "",
+        };
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result).toMatchObject({
+      status: "completed",
+      summary: {
+        actionsTaken: ["retried after provider capacity"],
+        finalVerification: "passed",
+      },
+    });
+  });
+
   it("returns timeout and aborts dispatch when dispatch does not finish before the deadline", async () => {
     let signal: AbortSignal | undefined;
     const result = await runLoopSupervisedProjectAsync({
@@ -148,6 +185,26 @@ describe("runLoopSupervisedProjectAsync", () => {
       status: "dispatch-failed",
       reason: "send failed",
       output: "send failed",
+    });
+  });
+
+  it("retries thrown supervisor model-capacity failures before failing the run", async () => {
+    let attempts = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: () => {
+        attempts += 1;
+        throw new Error("Selected model is at capacity. Please try a different model.");
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "Selected model is at capacity. Please try a different model.",
+      output: "Selected model is at capacity. Please try a different model.",
     });
   });
 
@@ -352,6 +409,46 @@ describe("runLoopSupervisedProjectAsync", () => {
       status: "dispatch-failed",
       reason: "command timed out",
       output: "command timed out",
+    });
+  });
+});
+
+describe("runLoopSupervisorRevisionAsync", () => {
+  it("uses the shared finalization fallback when revision output is missing the final marker", async () => {
+    const prompts: string[] = [];
+    const result = await runLoopSupervisorRevisionAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      failures: ["system gate rejected the final summary"],
+      attempt: 1,
+      maxAttempts: 2,
+      previousOutput: "previous supervisor output",
+      dispatch: async (request) => {
+        prompts.push(request.prompt);
+        expect(request.session).toBe("tmux_proj_loop-supervisor");
+        expect(request.timeoutMs).toBe(1000);
+        if (prompts.length === 1) {
+          expect(request.prompt).toContain("system gate rejected the final summary");
+          return { status: 0, stdout: "revision repaired state but omitted marker", stderr: "" };
+        }
+        expect(request.prompt).toContain("revision repaired state but omitted marker");
+        return {
+          status: 0,
+          stdout:
+            '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":["finalized revision"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}',
+          stderr: "",
+        };
+      },
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(result).toMatchObject({
+      status: "completed",
+      summary: {
+        actionsTaken: ["finalized revision"],
+        finalVerification: "passed",
+      },
     });
   });
 });

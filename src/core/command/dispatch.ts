@@ -8,9 +8,11 @@ import { SHELL_RC_FILES } from "../../shared/shell-rc.js";
 import type { AgentKind } from "../../shared/types.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { sleep } from "../../shared/utils/sleep.js";
 import { getAgentRuntimeRecord, recordAgentLaunch } from "../agents/agent-runtime-records.js";
 import { buildAgentStatusReport, readAgentLatestReply } from "../agents/read.js";
 import { CODEX_SKIP_PERMS, SKIP_PERMS } from "../agents/resume-command.js";
+import { findProjectAutomationConflictForSession } from "../automation/project-conflicts.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { getPathBySession, resolveLiveSessionName } from "../projects/sessionPathMap.js";
@@ -262,7 +264,38 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
 
   switch (msg.action) {
     case "text": {
-      await deps.agent.waitUntilInputReady(session);
+      if (msg.origin !== "system") {
+        const conflict = findProjectAutomationConflictForSession(session);
+        if (conflict !== null) {
+          log.warn("text rejected: project automation conflict", {
+            data: {
+              session,
+              projectPath: conflict.projectPath,
+              projectId: conflict.projectId,
+              runId: conflict.runId,
+              taskKind: conflict.taskKind,
+              status: conflict.status,
+              supervisorSession: conflict.supervisorSession,
+            },
+          });
+          return m.projectAutomationBusy(
+            conflict.taskKind,
+            conflict.projectId,
+            conflict.runId,
+            conflict.supervisorSession,
+          );
+        }
+      }
+      try {
+        await waitUntilInputReadyForMessage(msg, deps, session);
+      } catch (err) {
+        if (msg.origin === "system") throw err;
+        log.warn("text rejected: agent input surface not ready", {
+          err,
+          data: { session, action: msg.action, channel: msg.channel },
+        });
+        return m.agentInputNotReady;
+      }
       const promptText = text;
       log.info(`sending keys session=${session}`);
       await deps.bridge.sendKeys(promptText, session);
@@ -273,13 +306,16 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       // provided a notify channel) and waiting continues — so long tasks resolve
       // with their real result instead of a partial snapshot, and nothing gets
       // typed into a still-busy pane. Past the horizon, give up with partials.
-      let rawResult: string;
+      let rawResult: string | undefined;
       try {
         let round = await deps.agent.waitUntilDone(session);
         let waitedMs = deps.config.maxWaitDoneMs;
         const maxWaitDoneTotalMs = msg.maxWaitDoneTotalMs ?? deps.config.maxWaitDoneTotalMs;
         let noticed = false;
-        while (!round.done && waitedMs < maxWaitDoneTotalMs) {
+        if (msg.doneProbe?.(round.output)) {
+          rawResult = round.output;
+        }
+        while (rawResult === undefined && !round.done && waitedMs < maxWaitDoneTotalMs) {
           if (!noticed) {
             msg.notify?.(m.taskStillRunningNotice);
             noticed = true;
@@ -287,12 +323,15 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
           log.info(`still running session=${session} waited=${waitedMs}ms, continuing to wait`);
           round = await deps.agent.waitUntilDone(session);
           waitedMs += deps.config.maxWaitDoneMs;
+          if (msg.doneProbe?.(round.output)) {
+            rawResult = round.output;
+          }
         }
-        if (!round.done) {
+        if (rawResult === undefined && !round.done) {
           log.warn(`gave up waiting session=${session} after ${waitedMs}ms`);
           return m.taskStillRunning(deps.output.process(round.output));
         }
-        rawResult = round.output;
+        rawResult ??= round.output;
       } catch (err) {
         log.error(`waitUntilDone failed: ${err instanceof Error ? err.message : err}`);
         try {
@@ -326,6 +365,12 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         return historyReply;
       }
 
+      if (msg.origin !== "system") {
+        log.warn(`no history reply; suppressing pane output session=${session}`, {
+          data: { rawLen: rawResult.length, channel: msg.channel },
+        });
+        return m.agentReplyUnavailable;
+      }
       log.info(
         `no history reply, using pane output session=${session} raw_len=${rawResult.length}`,
       );
@@ -424,6 +469,54 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       throw new Error(`Unknown action: ${_exhaustive}`);
     }
   }
+}
+
+async function waitUntilInputReadyForMessage(
+  msg: QueuedMessage,
+  deps: HandlerDeps,
+  session: string,
+): Promise<void> {
+  if (msg.origin !== "system") {
+    await deps.agent.waitUntilInputReady(session);
+    return;
+  }
+  const maxWaitMs =
+    msg.maxWaitDoneTotalMs ??
+    (deps.config as { maxWaitDoneTotalMs?: number }).maxWaitDoneTotalMs ??
+    0;
+  if (maxWaitMs <= 0) {
+    await deps.agent.waitUntilInputReady(session);
+    return;
+  }
+  const deadline = Date.now() + maxWaitMs;
+  const retryDelayMs =
+    Number.isFinite(deps.config.maxWaitDoneMs) && deps.config.maxWaitDoneMs > 0
+      ? deps.config.maxWaitDoneMs
+      : 1000;
+  let attempts = 0;
+  let lastError: unknown = new Error("agent input surface not ready before retry deadline");
+  while (Date.now() < deadline) {
+    attempts++;
+    try {
+      await deps.agent.waitUntilInputReady(session);
+      if (attempts > 1) {
+        log.info(
+          `system prompt input surface became ready session=${session} attempts=${attempts}`,
+        );
+      }
+      return;
+    } catch (err) {
+      lastError = err;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      log.warn(`system prompt input surface not ready; retrying session=${session}`, {
+        err,
+        data: { attempts, remainingMs },
+      });
+      await sleep(Math.min(retryDelayMs, remainingMs));
+    }
+  }
+  throw normalizeError(lastError);
 }
 
 function queuedMessageText(msg: QueuedMessage): string {

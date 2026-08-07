@@ -1,18 +1,18 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { appStateDir } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
+import { LOOP_RUN_ARTIFACTS, loopRunDir, loopRunsRoot } from "./artifacts.js";
 import { type LoopReportRecord, listLoopReportRecords } from "./report-catalog.js";
 import type { LoopRunSummary } from "./run.js";
 
 export type { LoopReportRecord };
 
 function reportsRoot(): string {
-  return join(appStateDir(), "loop-runs");
+  return loopRunsRoot();
 }
 
 function reportDir(projectId: string, runId: string): string {
-  return join(reportsRoot(), projectId, runId);
+  return loopRunDir(projectId, runId);
 }
 
 function renderMarkdown(
@@ -76,8 +76,8 @@ export function writeLoopRunReport(
   const runId = opts.runId ?? `${opts.startedAt}-${summary.projectId}`;
   const dir = reportDir(summary.projectId, runId);
   mkdirSync(dir, { recursive: true });
-  const markdownPath = join(dir, "report.md");
-  const summaryPath = join(dir, "summary.json");
+  const markdownPath = join(dir, LOOP_RUN_ARTIFACTS.commandMarkdown);
+  const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.commandSummary);
   const record: LoopReportRecord = {
     runId,
     projectId: summary.projectId,

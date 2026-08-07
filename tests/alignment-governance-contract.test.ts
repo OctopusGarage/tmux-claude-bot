@@ -1,0 +1,136 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  LOOP_TASK_FAMILY_GOVERNANCE,
+  LOOP_WORK_ORDER_TASK_KINDS,
+} from "../src/core/loop/task-family.js";
+import { NOTIFICATION_SOURCE_CATALOG } from "../src/core/notifications/gateway.js";
+
+const root = path.resolve(__dirname, "..");
+const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf8");
+const walkFiles = (rel: string): string[] => {
+  const abs = path.join(root, rel);
+  if (!fs.existsSync(abs)) return [];
+  return fs.readdirSync(abs, { withFileTypes: true }).flatMap((entry) => {
+    const child = path.join(rel, entry.name);
+    if (entry.isDirectory()) return walkFiles(child);
+    return entry.isFile() ? [child] : [];
+  });
+};
+
+const alignmentDocs = [
+  "docs/automation-alignment.md",
+  "docs/automation-capability-matrix.md",
+  "docs/intelligent-automation.md",
+  "docs/prompt-governance.md",
+] as const;
+
+const alignmentDocText = alignmentDocs.map(read).join("\n");
+
+describe("alignment governance contract", () => {
+  it("documents every WorkOrder task family in the automation alignment layer", () => {
+    for (const kind of LOOP_WORK_ORDER_TASK_KINDS) {
+      expect(alignmentDocText, `missing ${kind} in alignment docs`).toContain(kind);
+    }
+  });
+
+  it("keeps code-changing WorkOrder families bounded by explicit governance metadata", () => {
+    for (const kind of LOOP_WORK_ORDER_TASK_KINDS) {
+      const policy = LOOP_TASK_FAMILY_GOVERNANCE[kind];
+      expect(policy.stopRule.trim(), `${kind} must have a concrete stop rule`).not.toBe("");
+      expect(policy.defaultWorktreeIsolation, `${kind} must declare isolation`).toMatch(
+        /^(source-allowed-read-only|isolated|policy-controlled)$/,
+      );
+
+      if (policy.actionScope !== "read-only") {
+        expect(policy.promptId, `${kind} must be tied to a governed prompt`).toMatch(/\S/);
+      }
+
+      if (policy.requiresAiEval) {
+        expect(policy.requiresPlanning, `${kind} AI eval must be preceded by planning`).toBe(true);
+      }
+
+      if (policy.actionScope === "pr-creation") {
+        expect(
+          policy.stopRule,
+          `${kind} PR-creation policy must explicitly forbid auto-merge`,
+        ).toMatch(/never auto-merge|must not auto-merge/i);
+      }
+    }
+  });
+
+  it("documents every bot-owned notification source in capability or automation docs", () => {
+    for (const source of NOTIFICATION_SOURCE_CATALOG) {
+      expect(alignmentDocText, `missing notification source ${source}`).toContain(source);
+    }
+  });
+
+  it("keeps important architecture modules present in the alignment contract", () => {
+    const requiredModules = [
+      "Operator surfaces",
+      "Control and routing",
+      "Session runtime",
+      "Project, session, and group model",
+      "Intent modules",
+      "WorkOrder and system gate",
+      "Prompt governance",
+      "Capability dependency registry",
+      "Input enhancement",
+      "Evidence and observability",
+      "Authorization and security policy",
+      "State and configuration",
+      "Deployment and lifecycle",
+      "Localization and copy governance",
+      "Quality and release gates",
+    ];
+
+    const alignment = read("docs/automation-alignment.md");
+    for (const module of requiredModules) {
+      expect(alignment, `missing module alignment row: ${module}`).toContain(`| ${module} |`);
+    }
+  });
+
+  it("keeps voice and prompt translation visible in architecture and capability docs", () => {
+    const architecture = [
+      read("docs/intelligent-automation-architecture.md"),
+      read("docs/intelligent-automation-ascii-architecture.md"),
+      read("docs/automation-alignment.md"),
+      read("docs/automation-capability-matrix.md"),
+    ].join("\n");
+
+    for (const anchor of [
+      "Input enhancement",
+      "Voice transcription",
+      "Prompt translation",
+      "voice_install",
+      "voice_lang",
+      "prompt_translate",
+      "translate_install",
+    ]) {
+      expect(architecture, `missing input-enhancement architecture anchor: ${anchor}`).toContain(
+        anchor,
+      );
+    }
+  });
+
+  it("keeps live operator configuration out of source and maintained docs", () => {
+    const checkedFiles = [
+      ...walkFiles("src").filter((file) => file.endsWith(".ts")),
+      ...walkFiles("tests").filter((file) => file.endsWith(".ts")),
+      ...walkFiles("docs").filter((file) => file.endsWith(".md")),
+      "README.md",
+      ".env.example",
+    ];
+    const forbidden = [/\/Users\/kingsonwu\b/, /\bgithubAccount:\s*(Kingson4Wu|miao2016)\b/];
+
+    for (const file of checkedFiles) {
+      const content = read(file);
+      for (const pattern of forbidden) {
+        expect(content, `${file} must not contain live operator config ${pattern}`).not.toMatch(
+          pattern,
+        );
+      }
+    }
+  });
+});

@@ -84,6 +84,7 @@ projects:
       enabled: true
       base: main
       switchBack: main
+      githubAccount: example-owner
     allowedActions: [tests, docs, small-refactor]
     blockedActions: [direct-model-api, dependency-upgrade, broad-rewrite]
 `;
@@ -647,7 +648,7 @@ describe("runLoopProject", () => {
             passed: true,
             score: 95,
             findings: ["dirty recovery was verified before publishing"],
-            suggestedBotImprovements: [],
+            suggestedBotImprovements: ["Surface dirty recovery runs in the dashboard."],
           }),
           stderr: "",
         };
@@ -667,6 +668,9 @@ describe("runLoopProject", () => {
     });
 
     expect(summary.status).toBe("passed");
+    expect(summary.suggestedBotImprovements).toEqual([
+      "Surface dirty recovery runs in the dashboard.",
+    ]);
     expect(summary.rounds).toEqual([
       expect.objectContaining({
         findingId: "dirty-worktree-recovery",

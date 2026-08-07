@@ -1,8 +1,18 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  formatActiveDelegateCompletion,
+  formatActiveDelegateStart,
+  reconcileAndResumeActiveDelegatedTasksAfterRestart,
+  resumeQueuedActiveDelegatedTasks,
+} from "../../src/core/autopilot/delegated-task.js";
 import type { HandlerDeps } from "../../src/core/deps.js";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
 import {
   listUnfinishedLoopSupervisorWorkOrders,
   writeLoopSupervisorWorkOrderState,
@@ -38,6 +48,7 @@ function config(poolSize: number): AppConfig {
         dir: join(process.env.TCB_STATE_DIR ?? tmpdir(), "supervisors"),
         poolSize,
         resetBeforeWorkOrder: "compact",
+        worktreeIsolation: "isolated",
       },
     },
   } as unknown as AppConfig;
@@ -70,6 +81,7 @@ function workOrder(input: {
     agent: "codex",
     scheduledAt: 1,
     requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${input.id}]`,
+    task: { kind: "active-delegated-task" },
     finalSummaryPath: input.finalSummaryPath,
   } as unknown as LoopWorkOrder;
 }
@@ -78,6 +90,178 @@ describe("active delegated task supervisor pool", () => {
   beforeEach(() => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-delegate-pool-"));
     startLoopSupervisor.mockReset();
+  });
+
+  it("marks infrastructure blocks as not queueable", () => {
+    expect(
+      formatActiveDelegateStart({
+        status: "blocked",
+        reason: "execution worktree isolation failed",
+        showQueue: false,
+      }),
+    ).toBe("Autopilot delegate blocked: execution worktree isolation failed");
+  });
+
+  it("distinguishes completed work from a failed system acceptance gate", () => {
+    expect(
+      formatActiveDelegateCompletion({
+        resultStatus: "supervisor-failed",
+        gateFailures: ["source worktree is dirty after supervisor completion"],
+      }),
+    ).toEqual({
+      level: "warning",
+      title: "Delegated task completed; system acceptance failed",
+      summary:
+        "Supervisor completed the delegated task, but the system acceptance gate failed: source worktree is dirty after supervisor completion.",
+    });
+  });
+
+  it("keeps genuine supervisor failures distinct from acceptance failures", () => {
+    expect(
+      formatActiveDelegateCompletion({
+        resultStatus: "supervisor-failed",
+        gateFailures: [],
+      }),
+    ).toEqual({
+      level: "error",
+      title: "Delegated task supervisor-failed",
+      summary: "Active delegated task did not complete successfully.",
+    });
+  });
+
+  it("resumes queued active delegations after a process restart", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));
+    const order = workOrder({ id: "queued-after-restart", projectPath: projectDir });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "queued",
+      now: Date.now(),
+    });
+    const d = deps(1);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.queue = {
+      cancelQueued: vi.fn(),
+      enqueue: vi.fn(() => false),
+    } as unknown as HandlerDeps["queue"];
+
+    expect(resumeQueuedActiveDelegatedTasks(d)).toBe(1);
+  });
+
+  it("reconciles an active lease whose worker disappeared during restart", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-orphan-"));
+    const order = workOrder({ id: "orphaned-after-restart", projectPath: projectDir });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-worker-orphaned",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const d = deps(1);
+    d.bridge = { hasSession: vi.fn(async () => false) } as unknown as HandlerDeps["bridge"];
+
+    vi.useFakeTimers();
+    const reconciliation = reconcileAndResumeActiveDelegatedTasksAfterRestart(d);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(await reconciliation).toBe(0);
+    vi.useRealTimers();
+    expect(
+      listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
+    ).toBe(false);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("retained");
+  });
+
+  it("does not classify a worker as orphaned during agent startup", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-startup-"));
+    const order = workOrder({ id: "starting-after-restart", projectPath: projectDir });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-worker-starting",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const d = deps(1);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.configResolver = {
+      isCodexRunning: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
+    } as unknown as HandlerDeps["configResolver"];
+
+    expect(await reconcileAndResumeActiveDelegatedTasksAfterRestart(d)).toBe(0);
+    expect(
+      listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
+    ).toBe(true);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
+  });
+
+  it("waits for a worker session that is created late during startup", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-late-session-"));
+    const order = workOrder({ id: "late-session-after-restart", projectPath: projectDir });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-worker-late-session",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const d = deps(1);
+    let sessionChecks = 0;
+    d.bridge = {
+      hasSession: vi.fn(async () => {
+        sessionChecks += 1;
+        return sessionChecks > 2;
+      }),
+    } as unknown as HandlerDeps["bridge"];
+    d.configResolver = {
+      isCodexRunning: vi.fn().mockResolvedValue(true),
+    } as unknown as HandlerDeps["configResolver"];
+
+    vi.useFakeTimers();
+    const reconciliation = reconcileAndResumeActiveDelegatedTasksAfterRestart(d);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await reconciliation).toBe(0);
+    vi.useRealTimers();
+    expect(
+      listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
+    ).toBe(true);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
   });
 
   afterEach(() => {
@@ -106,6 +290,307 @@ describe("active delegated task supervisor pool", () => {
       "tmux_proj_loop-supervisor-1",
       "tmux_proj_loop-supervisor-2",
     ]);
+  });
+
+  it("does not treat retained worker leases as active supervisor work", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));
+    setPathForSession("tmux_proj_project", projectDir);
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: "previous-failed-run",
+          projectId: "geo-backend",
+          projectPath: "/repo/geo-backend",
+          status: "retained",
+          leasedAt: 1000,
+          updatedAt: 2000,
+          retainUntil: Date.now() + 60_000,
+        },
+      ],
+    });
+    startLoopSupervisor.mockResolvedValueOnce(true);
+
+    const result = await startActiveDelegatedTask(deps(2), {
+      session: "tmux_proj_project",
+      requirement: "fix the confirmed issue",
+    });
+
+    expect(result).toMatchObject({
+      status: "queued",
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+    });
+    expect(startLoopSupervisor.mock.calls.map((call) => call[2])).toEqual([
+      "tmux_proj_loop-supervisor-1",
+    ]);
+  });
+
+  it("reserves supervisor workers before dispatch so concurrent delegation uses separate sessions", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const firstProjectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-first-"));
+    const secondProjectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-second-"));
+    setPathForSession("tmux_proj_first", firstProjectDir);
+    setPathForSession("tmux_proj_second", secondProjectDir);
+    startLoopSupervisor.mockResolvedValue(true);
+    const d = deps(2);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.queue = {
+      cancelQueued: vi.fn(),
+      enqueue: vi.fn(() => "queued"),
+    } as unknown as HandlerDeps["queue"];
+
+    const [first, second] = await Promise.all([
+      startActiveDelegatedTask(d, {
+        session: "tmux_proj_first",
+        requirement: "read-only review gate smoke",
+      }),
+      startActiveDelegatedTask(d, {
+        session: "tmux_proj_second",
+        requirement: "read-only review gate smoke",
+      }),
+    ]);
+
+    expect(first).toMatchObject({
+      status: "queued",
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+    });
+    expect(second).toMatchObject({
+      status: "queued",
+      supervisorSession: "tmux_proj_loop-supervisor-2",
+    });
+    expect(
+      readLoopSupervisorWorkerLeaseState()
+        .leases.filter((lease) => lease.status === "active")
+        .map((lease) => lease.workerSession)
+        .sort(),
+    ).toEqual(["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"]);
+  });
+
+  it("blocks a concurrent delegation for the same project during startup", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-shared-"));
+    setPathForSession("tmux_proj_shared_a", projectDir);
+    setPathForSession("tmux_proj_shared_b", projectDir);
+    startLoopSupervisor.mockResolvedValue(true);
+    const d = deps(2);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.queue = {
+      cancelQueued: vi.fn(),
+      enqueue: vi.fn(() => "queued"),
+    } as unknown as HandlerDeps["queue"];
+
+    const [first, second] = await Promise.all([
+      startActiveDelegatedTask(d, {
+        session: "tmux_proj_shared_a",
+        requirement: "repair the shared project",
+      }),
+      startActiveDelegatedTask(d, {
+        session: "tmux_proj_shared_b",
+        requirement: "repair the shared project again",
+      }),
+    ]);
+
+    expect([first.status, second.status].sort()).toEqual(["blocked", "queued"]);
+    expect([first, second].find((result) => result.status === "blocked")).toMatchObject({
+      reason: expect.stringContaining("being started"),
+      showQueue: true,
+    });
+  });
+
+  it("writes gate evidence and releases the supervisor lease after active delegation succeeds", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));
+    setPathForSession("tmux_proj_project", projectDir);
+    startLoopSupervisor.mockResolvedValueOnce(true);
+    const notify = vi.fn(async () => ({ status: "sent", deliveries: [] }));
+    const d = deps(1);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.notifications = { notify } as unknown as HandlerDeps["notifications"];
+    d.queue = {
+      cancelQueued: vi.fn(),
+      enqueue: vi.fn((message: any) => {
+        if (message.action !== "text") {
+          message.resolve("compacted");
+          return "queued";
+        }
+        const marker = message.text.match(/\[LOOP_SUPERVISOR_DONE:([^\]]+)\]/)?.[1];
+        if (marker === undefined) throw new Error("missing final marker in prompt");
+        message.started?.();
+        queueMicrotask(() =>
+          message.resolve(
+            [
+              `[LOOP_SUPERVISOR_DONE:${marker}]`,
+              JSON.stringify({
+                status: "completed",
+                projectId: "project",
+                actionsTaken: ["checked and completed"],
+                delegatedTasks: [],
+                finalVerification: "passed",
+                reviewGate: {
+                  preMutationReview: ["reviewed bounded requirement before work"],
+                  postMutationReview: ["verified no unintended changes"],
+                  aiReview: "not-applicable",
+                  deterministicGates: [
+                    {
+                      name: "no mutating git or PR gate required",
+                      result: "skipped",
+                    },
+                  ],
+                  decision: "pass",
+                  notes: [],
+                },
+                planReview: {
+                  checklistCompleted: true,
+                  targetScoreMet: "not-applicable",
+                  stopConditionReached: false,
+                  overOptimizationAvoided: true,
+                  verificationCompleted: true,
+                  remainingRisks: [],
+                },
+                commits: [],
+                followUps: [],
+              }),
+            ].join("\n"),
+          ),
+        );
+        return "queued";
+      }),
+    } as unknown as HandlerDeps["queue"];
+
+    const result = await startActiveDelegatedTask(d, {
+      session: "tmux_proj_project",
+      requirement: "finish the confirmed task",
+    });
+
+    expect(result).toMatchObject({
+      status: "queued",
+      supervisorSession: "tmux_proj_loop-supervisor",
+    });
+    if (result.status !== "queued" || result.reportDir === null) throw new Error("expected queued");
+    await waitForFile(join(result.reportDir, "system-gate.json"));
+
+    expect(JSON.parse(readFileSync(join(result.reportDir, "system-gate.json"), "utf8"))).toEqual(
+      expect.objectContaining({
+        workOrderId: result.runId,
+        projectId: result.projectId,
+        resultStatus: "completed",
+        accepted: true,
+        evidence: expect.arrayContaining(["no mutating git or PR gate required"]),
+        failures: [],
+      }),
+    );
+    expect(
+      JSON.parse(
+        readFileSync(join(process.env.TCB_STATE_DIR ?? "", "scheduled_task_ledger.json"), "utf8"),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        [`autopilot:${result.runId}`]: expect.objectContaining({
+          taskId: `autopilot:${result.runId}`,
+          source: "autopilot-delegate",
+          status: "success",
+          repairStatus: "not-needed",
+        }),
+      }),
+    );
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+  });
+
+  it("recovers active delegation when a valid final summary file lands after output capture settles", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));
+    setPathForSession("tmux_proj_project", projectDir);
+    startLoopSupervisor.mockResolvedValueOnce(true);
+    const notify = vi.fn(async () => ({ status: "sent", deliveries: [] }));
+    const d = deps(1);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.notifications = { notify } as unknown as HandlerDeps["notifications"];
+    d.queue = {
+      cancelQueued: vi.fn(),
+      enqueue: vi.fn((message: any) => {
+        if (message.action !== "text") {
+          message.resolve("compacted");
+          return "queued";
+        }
+        const summaryPathMatch = message.text.match(
+          /Write the strict JSON final summary to '([^']+)'/,
+        );
+        if (summaryPathMatch?.[1] === undefined) throw new Error("missing summary path");
+        message.started?.();
+        queueMicrotask(() => {
+          message.resolve("supervisor output ended before final marker was captured");
+          setTimeout(() => {
+            mkdirSync(dirname(summaryPathMatch[1]), { recursive: true });
+            writeFileSync(
+              summaryPathMatch[1],
+              `${JSON.stringify({
+                status: "completed",
+                projectId: "project",
+                actionsTaken: ["late final summary recovered"],
+                delegatedTasks: [],
+                finalVerification: "passed",
+                reviewGate: {
+                  preMutationReview: ["bounded no-op task"],
+                  postMutationReview: ["no diff"],
+                  aiReview: "not-applicable",
+                  deterministicGates: [],
+                  decision: "pass",
+                  notes: [],
+                },
+                planReview: {
+                  checklistCompleted: true,
+                  targetScoreMet: "not-applicable",
+                  stopConditionReached: false,
+                  overOptimizationAvoided: true,
+                  verificationCompleted: true,
+                  remainingRisks: [],
+                },
+                commits: [],
+                followUps: [],
+              })}\n`,
+            );
+          }, 1200);
+        });
+        return "queued";
+      }),
+    } as unknown as HandlerDeps["queue"];
+
+    const result = await startActiveDelegatedTask(d, {
+      session: "tmux_proj_project",
+      requirement: "finish the confirmed task",
+    });
+
+    expect(result).toMatchObject({
+      status: "queued",
+      supervisorSession: "tmux_proj_loop-supervisor",
+    });
+    if (result.status !== "queued" || result.reportDir === null) throw new Error("expected queued");
+    await waitForFile(join(result.reportDir, "system-gate.json"), 3000);
+
+    expect(JSON.parse(readFileSync(join(result.reportDir, "system-gate.json"), "utf8"))).toEqual(
+      expect.objectContaining({
+        workOrderId: result.runId,
+        projectId: result.projectId,
+        resultStatus: "completed",
+        accepted: true,
+        failures: [],
+      }),
+    );
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "info",
+        title: "Delegated task completed",
+      }),
+    );
+    expect(
+      JSON.parse(readFileSync(join(result.reportDir, "work-order-state.json"), "utf8")),
+    ).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        resultStatus: "completed",
+      }),
+    );
   });
 
   it("keeps recoverable failed supervisor work orders reserved during allocation", async () => {
@@ -238,6 +723,42 @@ describe("active delegated task supervisor pool", () => {
     expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
   });
 
+  it("does not keep unfinished work orders reserved after a valid final summary arrives", () => {
+    const staleProjectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-finished-summary-"));
+    const summaryDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "finished-summary",
+      "finished-summary",
+    );
+    const finalSummaryPath = join(summaryDir, "supervisor-final-summary.json");
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder({
+        id: "finished-summary",
+        projectPath: staleProjectDir,
+        finalSummaryPath,
+      }),
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    mkdirSync(summaryDir, { recursive: true });
+    writeFileSync(
+      finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "finished-summary",
+        actionsTaken: ["late summary arrived"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+  });
+
   it("does not keep unfinished work orders reserved after an invalid final summary grace period", () => {
     const staleProjectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-stale-invalid-"));
     const summaryDir = join(
@@ -263,3 +784,12 @@ describe("active delegated task supervisor pool", () => {
     expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
   });
 });
+
+async function waitForFile(path: string, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${path}`);
+}

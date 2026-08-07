@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/shared/config.js";
 
@@ -36,6 +38,7 @@ describe("loop supervisor config", () => {
       agent: "codex",
       poolSize: 1,
       resetBeforeWorkOrder: "clear",
+      worktreeIsolation: "isolated",
     });
   });
 
@@ -57,6 +60,7 @@ describe("loop supervisor config", () => {
       LOOP_SUPERVISOR_AGENT: "claude",
       LOOP_SUPERVISOR_POOL_SIZE: "3",
       LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER: "compact",
+      LOOP_SUPERVISOR_WORKTREE_ISOLATION: "source",
     } as NodeJS.ProcessEnv);
     expect(c.loopEngineering.supervisor).toEqual({
       enabled: true,
@@ -64,6 +68,34 @@ describe("loop supervisor config", () => {
       agent: "claude",
       poolSize: 3,
       resetBeforeWorkOrder: "compact",
+      worktreeIsolation: "source",
     });
+  });
+
+  it("gives an explicit TCB_ENV_FILE precedence over inherited supervisor settings", () => {
+    const dir = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "tcb-config-test-"));
+    const envFile = join(dir, ".env");
+    const previousEnvFile = process.env.TCB_ENV_FILE;
+    const previousPoolSize = process.env.LOOP_SUPERVISOR_POOL_SIZE;
+    writeFileSync(
+      envFile,
+      [
+        "TELEGRAM_BOT_TOKEN=t",
+        "TELEGRAM_OWNER_ID=1",
+        "LOOP_SUPERVISOR_ENABLED=true",
+        "LOOP_SUPERVISOR_POOL_SIZE=5",
+      ].join("\n"),
+    );
+    process.env.TCB_ENV_FILE = envFile;
+    process.env.LOOP_SUPERVISOR_POOL_SIZE = "3";
+    try {
+      expect(loadConfig().loopEngineering.supervisor.poolSize).toBe(5);
+    } finally {
+      if (previousEnvFile === undefined) delete process.env.TCB_ENV_FILE;
+      else process.env.TCB_ENV_FILE = previousEnvFile;
+      if (previousPoolSize === undefined) delete process.env.LOOP_SUPERVISOR_POOL_SIZE;
+      else process.env.LOOP_SUPERVISOR_POOL_SIZE = previousPoolSize;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

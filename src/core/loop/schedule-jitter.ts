@@ -1,15 +1,7 @@
 import type { LoopConfig } from "./config.js";
+import type { LoopTaskSchedulerJobKind } from "./task-family.js";
 
-export type LoopJitterJobKind =
-  | "architecture"
-  | "workspace-architecture"
-  | "bug-fix"
-  | "test-coverage"
-  | "security-maintenance"
-  | "harness-auto"
-  | "opportunity-discovery"
-  | "pull-request-review"
-  | "repository-pull-request-review";
+export type LoopJitterJobKind = LoopTaskSchedulerJobKind;
 
 export function loopScheduleJitterMs(input: {
   config: LoopConfig;
@@ -47,6 +39,8 @@ function defaultJitterMinutes(jobKind: LoopJitterJobKind, config: LoopConfig): n
   if (jobKind === "security-maintenance") return jitter.securityMaintenanceMaxDelayMinutes;
   if (jobKind === "harness-auto") return jitter.harnessAutoMaxDelayMinutes;
   if (jobKind === "opportunity-discovery") return jitter.opportunityDiscoveryMaxDelayMinutes;
+  if (jobKind === "automation-governance-review")
+    return jitter.automationGovernanceReviewMaxDelayMinutes;
   if (jobKind === "bug-fix") return jitter.bugFixMaxDelayMinutes;
   if (jobKind === "pull-request-review") return jitter.pullRequestReviewMaxDelayMinutes;
   return jitter.repositoryPullRequestReviewMaxDelayMinutes;

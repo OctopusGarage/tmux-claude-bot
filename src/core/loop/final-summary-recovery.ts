@@ -23,6 +23,9 @@ type SupervisorRunResult =
       output: string;
     };
 
+export const FINAL_SUMMARY_RECOVERY_TIMEOUT_MS = 2000;
+export const FINAL_SUMMARY_RECOVERY_INTERVAL_MS = 100;
+
 export function supervisorFinalStatusToRunStatus(
   status: LoopSupervisorFinalSummary["status"],
 ): SupervisorRunStatus {
@@ -48,4 +51,20 @@ export function recoverInvalidOutputFromFinalSummary(
       .filter(Boolean)
       .join("\n"),
   };
+}
+
+export async function recoverInvalidOutputFromFinalSummaryAsync(
+  workOrder: LoopWorkOrder,
+  result: SupervisorRunResult,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<SupervisorRunResult> {
+  if (result.status !== "invalid-output") return result;
+  const deadline = Date.now() + (options.timeoutMs ?? FINAL_SUMMARY_RECOVERY_TIMEOUT_MS);
+  const intervalMs = options.intervalMs ?? FINAL_SUMMARY_RECOVERY_INTERVAL_MS;
+  let recovered = recoverInvalidOutputFromFinalSummary(workOrder, result);
+  while (recovered.status === "invalid-output" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    recovered = recoverInvalidOutputFromFinalSummary(workOrder, result);
+  }
+  return recovered;
 }

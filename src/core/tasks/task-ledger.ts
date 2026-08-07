@@ -1,13 +1,18 @@
+import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 
-export type ScheduledTaskSource =
-  | "loop-engineering"
-  | "batch-scheduler"
-  | "article-monitor"
-  | "radar-monitor"
-  | "external-monitor"
-  | "launchd"
-  | "daily-audit";
+export const SCHEDULED_TASK_SOURCES = [
+  "loop-engineering",
+  "batch-scheduler",
+  "article-monitor",
+  "radar-monitor",
+  "external-monitor",
+  "launchd",
+  "daily-audit",
+  "autopilot-delegate",
+] as const;
+
+export type ScheduledTaskSource = (typeof SCHEDULED_TASK_SOURCES)[number];
 
 export type ScheduledTaskStatus =
   | "expected"
@@ -19,6 +24,7 @@ export type ScheduledTaskStatus =
   | "skipped";
 
 export type ScheduledTaskFailureKind =
+  | "agent-capacity"
   | "dirty-worktree"
   | "external-ci"
   | "github-permission"
@@ -204,6 +210,54 @@ export class DailyTaskLedger {
     return record;
   }
 
+  reconcileTerminalStatuses(now: number): number {
+    let updated = 0;
+    for (const [taskId, record] of this.store.sortedEntries()) {
+      if (!["success", "skipped"].includes(record.status)) continue;
+      if (record.repairStatus === "not-needed") continue;
+      this.store.set(taskId, {
+        ...record,
+        repairStatus: "not-needed",
+        summary: appendSummary(
+          record.summary,
+          "Normalized terminal task state: successful or skipped task needs no repair.",
+        ),
+        updatedAt: now,
+      });
+      updated++;
+    }
+    return updated;
+  }
+
+  reconcileStaleRunning(
+    now: number,
+    input: { timeoutMs?: number; sources?: ScheduledTaskSource[] } = {},
+  ): number {
+    const timeoutMs = input.timeoutMs ?? RUNNING_TIMEOUT_MS;
+    const sources = input.sources === undefined ? null : new Set(input.sources);
+    let updated = 0;
+    for (const [taskId, record] of this.store.sortedEntries()) {
+      if (record.status !== "running") continue;
+      if (sources !== null && !sources.has(record.source)) continue;
+      if (now - record.updatedAt < timeoutMs) continue;
+      this.store.set(taskId, {
+        ...record,
+        status: "running-timeout",
+        endedAt: now,
+        error: `Task execution exceeded the ${Math.round(timeoutMs / 60_000)} minute recovery timeout.`,
+        failureKind: "agent-timeout",
+        repairStatus: "pending",
+        summary: appendSummary(
+          record.summary,
+          "Reconciled stale running task after its execution owner disappeared.",
+        ),
+        updatedAt: now,
+      });
+      updated++;
+    }
+    return updated;
+  }
+
   reconcileSupersededFailures(): number {
     let updated = 0;
     const successes = this.store
@@ -215,6 +269,13 @@ export class DailyTaskLedger {
       updated += this.supersedeEarlierFailures(success);
     }
     return updated;
+  }
+
+  listAll(): ScheduledTaskRecord[] {
+    return this.store
+      .sortedEntries()
+      .map(([, record]) => record)
+      .sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
   }
 
   listForWindow(window: TaskWindow): ScheduledTaskRecord[] {
@@ -252,6 +313,9 @@ export function classifyTaskFailure(
   summary: string | undefined,
 ): ScheduledTaskFailureKind {
   const text = `${error ?? ""}\n${summary ?? ""}`.toLowerCase();
+  const transient = classifyAgentTransientFailure(text);
+  if (transient?.kind === "model-capacity" || transient?.kind === "rate-limit")
+    return "agent-capacity";
   if (text.includes("dirty") || text.includes("worktree is dirty")) return "dirty-worktree";
   if (text.includes("github account") || text.includes("must be a collaborator"))
     return "github-permission";

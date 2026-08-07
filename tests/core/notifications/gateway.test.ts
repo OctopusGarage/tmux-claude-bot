@@ -1,10 +1,11 @@
+import { homedir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 
 describe("NotificationGateway", () => {
   it("sends a formatted notification to every registered channel by default", async () => {
     const gateway = new NotificationGateway();
-    const telegram = vi.fn(async () => {});
+    const telegram = vi.fn(async (_message: string) => {});
     const lark = vi.fn(async () => {});
     gateway.register("telegram", telegram);
     gateway.register("lark", lark);
@@ -52,7 +53,13 @@ describe("NotificationGateway", () => {
       status: "partial",
       deliveries: [
         { channel: "telegram", ok: true },
-        { channel: "lark", ok: false, error: "lark down" },
+        {
+          channel: "lark",
+          ok: false,
+          error: "lark down",
+          messageSent: false,
+          failedStage: "message",
+        },
       ],
     });
   });
@@ -78,12 +85,38 @@ describe("NotificationGateway", () => {
     expect(larkMessage.length).toBeGreaterThan(5000);
   });
 
+  it("shortens home paths in notification text before sending", async () => {
+    const gateway = new NotificationGateway();
+    const telegram = vi.fn(async (_message: string) => {});
+    gateway.register("telegram", telegram);
+
+    await gateway.notify({
+      channel: "telegram",
+      title: "Daily audit",
+      body: `report: ${homedir()}/.tmux-claude-bot/state/report.md`,
+    });
+
+    expect(telegram).toHaveBeenCalledWith(
+      expect.stringContaining("report: ~/.tmux-claude-bot/state/report.md"),
+      expect.anything(),
+    );
+    expect(telegram.mock.calls[0]?.[0]).not.toContain(homedir());
+  });
+
   it("fails a requested channel that has no registered sender", async () => {
     const gateway = new NotificationGateway();
 
     await expect(gateway.notify({ channel: "telegram", title: "Hello" })).resolves.toEqual({
       status: "failed",
-      deliveries: [{ channel: "telegram", ok: false, error: "no sender registered" }],
+      deliveries: [
+        {
+          channel: "telegram",
+          ok: false,
+          error: "no sender registered",
+          messageSent: false,
+          failedStage: "sender-missing",
+        },
+      ],
     });
   });
 
@@ -92,7 +125,15 @@ describe("NotificationGateway", () => {
 
     await expect(gateway.notify({ title: "Hello" })).resolves.toEqual({
       status: "failed",
-      deliveries: [{ channel: "telegram", ok: false, error: "no sender registered" }],
+      deliveries: [
+        {
+          channel: "telegram",
+          ok: false,
+          error: "no sender registered",
+          messageSent: false,
+          failedStage: "sender-missing",
+        },
+      ],
     });
   });
 
@@ -123,8 +164,18 @@ describe("NotificationGateway", () => {
       "ℹ️ Radar ready",
       expect.objectContaining({ title: "Radar ready" }),
     );
-    expect(attach).toHaveBeenCalledWith("/tmp/report.md", "file", "Markdown report");
-    expect(attach).toHaveBeenCalledWith("/tmp/report.html", "file", undefined);
+    expect(attach).toHaveBeenCalledWith(
+      "/tmp/report.md",
+      "file",
+      "Markdown report",
+      expect.objectContaining({ title: "Radar ready" }),
+    );
+    expect(attach).toHaveBeenCalledWith(
+      "/tmp/report.html",
+      "file",
+      undefined,
+      expect.objectContaining({ title: "Radar ready" }),
+    );
   });
 
   it("sends attachments to both Telegram and Lark when channel is both", async () => {
@@ -162,8 +213,18 @@ describe("NotificationGateway", () => {
       "ℹ️ Radar ready",
       expect.objectContaining({ channel: "both", title: "Radar ready" }),
     );
-    expect(telegramAttach).toHaveBeenCalledWith("/tmp/report.html", "file", "HTML report");
-    expect(larkAttach).toHaveBeenCalledWith("/tmp/report.html", "file", "HTML report");
+    expect(telegramAttach).toHaveBeenCalledWith(
+      "/tmp/report.html",
+      "file",
+      "HTML report",
+      expect.objectContaining({ channel: "both", title: "Radar ready" }),
+    );
+    expect(larkAttach).toHaveBeenCalledWith(
+      "/tmp/report.html",
+      "file",
+      "HTML report",
+      expect.objectContaining({ channel: "both", title: "Radar ready" }),
+    );
   });
 
   it("reports a partial delivery when text succeeds but an attachment upload fails", async () => {
@@ -190,7 +251,15 @@ describe("NotificationGateway", () => {
       ),
     ).resolves.toEqual({
       status: "partial",
-      deliveries: [{ channel: "lark", ok: false, error: "upload failed" }],
+      deliveries: [
+        {
+          channel: "lark",
+          ok: false,
+          error: "upload failed",
+          messageSent: true,
+          failedStage: "attachment",
+        },
+      ],
     });
   });
 
@@ -210,7 +279,15 @@ describe("NotificationGateway", () => {
       ),
     ).resolves.toEqual({
       status: "partial",
-      deliveries: [{ channel: "telegram", ok: false, error: "no attachment sender registered" }],
+      deliveries: [
+        {
+          channel: "telegram",
+          ok: false,
+          error: "no attachment sender registered",
+          messageSent: true,
+          failedStage: "attachment-sender-missing",
+        },
+      ],
     });
     expect(telegram).toHaveBeenCalledWith(
       "ℹ️ Radar ready",
@@ -236,7 +313,15 @@ describe("NotificationGateway", () => {
       ),
     ).resolves.toEqual({
       status: "partial",
-      deliveries: [{ channel: "telegram", ok: false, error: "file not found: missing.html" }],
+      deliveries: [
+        {
+          channel: "telegram",
+          ok: false,
+          error: "file not found: missing.html",
+          messageSent: true,
+          failedStage: "attachment-validation",
+        },
+      ],
     });
     expect(telegram).toHaveBeenCalledTimes(1);
     expect(attach).not.toHaveBeenCalled();

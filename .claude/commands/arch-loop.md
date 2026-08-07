@@ -1,16 +1,18 @@
 ---
-description: Strict architecture deepening loop — rescan, score, improve, and stop at the target
-argument-hint: "[target=88] [max_rounds=3] [dry-run|score-only|focus:<area>]"
+description: Compatibility entry for the architecture health loop
+argument-hint: "[target=95] [max_rounds=3] [dry-run|score-only|focus:<area>]"
 allowed-tools: Task, Read, Write, Edit, Bash, Workflow
 ---
 
-Run the strict architecture deepening loop for this repo.
+Run the architecture health loop for this repo as a local/manual compatibility
+workflow. Scheduled and delegated architecture work must use the Loop Engineering
+WorkOrder path described in `docs/intelligent-automation.md`.
 
 Arguments: `$ARGUMENTS`
 
 Defaults:
 
-- target score: `88`
+- target score: `95`
 - max rounds: `3`
 - mode: strict implementation loop
 
@@ -26,13 +28,14 @@ workflow file is missing, stop and report that the command cannot run.
 
 ## Hard Rules
 
-1. Read `CLAUDE.md`, `CONTEXT.md`, `workflows/architecture-deepening-loop.md`,
+1. Read `CLAUDE.md`, `CONTEXT.md`, `docs/intelligent-automation.md`,
+   `docs/automation-alignment.md`, `workflows/architecture-deepening-loop.md`,
    and relevant ADRs before scoring or editing.
 2. Do not reuse the previous candidate pool. Start from a fresh scan of the
    current worktree.
 3. Run `$improve-codebase-architecture` strictly enough to produce a fresh
-   baseline: explore the current repo, write/open the HTML report in the OS temp
-   directory, and identify current deepening candidates.
+   baseline. Read the generated report yourself; do not open it in a browser
+   unless the user explicitly asks.
 4. First output a baseline score with the rubric from the workflow:
    - Module depth: 25
    - Locality: 25

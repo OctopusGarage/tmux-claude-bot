@@ -71,7 +71,6 @@ vi.mock("../../../src/adapters/telegram/prompt-lifecycle.js", () => ({
 }));
 vi.mock("../../../src/adapters/telegram/executor.js", () => ({
   handleQueuedCommand: vi.fn(async () => {}),
-  createRestoredMessage: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------

@@ -30,6 +30,13 @@ export const es: Messages = {
     "🌐 Las dependencias de traducción de prompts están listas · ya puedes activar el modo",
   promptTranslateInstallFailed: (e) =>
     `🌐 Falló la instalación · ${e} · ejecuta npm run translate:install en el host para más detalle`,
+  promptTranslateCommandUsage: (usage) => `Uso: /prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `Traducción de prompts no disponible: ${error}`,
+  promptTranslateDisabledFor: (source) => `Traducción de prompts desactivada para ${source}`,
+  promptTranslateStatusOff: (source) => `Traducción de prompts para ${source}: off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `Traducción de prompts para ${source}: argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `Activada. ${line}`,
   voiceEmpty: "No te entendí · repítelo o envía texto",
   voiceUnsupported: "La transcripción de voz requiere Apple Silicon",
   voiceNotInstalled: "Voz no instalada (ejecuta `npm run whisper:install` en el repo)",
@@ -141,6 +148,8 @@ export const es: Messages = {
       ? `✅ Adoptado y sesión reanudada: ${proj}`
       : `✅ Adoptado e iniciado de nuevo: ${proj}`,
   adoptFailed: "Fallo al adoptar: el proceso no terminó o el agente no se inició",
+  adoptAgentDidNotStart:
+    "Fallo al adoptar: el proceso original terminó, pero el agente no se inició en la sesión gestionada. Usa /peek para revisar el panel, corrige el prompt de shell o el comando de inicio y vuelve a intentarlo.",
   adoptBusy:
     "La sesión destino ya tiene un programa en primer plano (otro agente u otra cosa). Se canceló sin tocar el original — sal de ahí primero y vuelve a adoptar.",
   adoptProjectRunning:
@@ -154,11 +163,17 @@ export const es: Messages = {
     "No está en ejecución — usa /resume para restaurarlo, o /start para iniciar uno nuevo",
   contentTruncated: "...(contenido demasiado largo, truncado)",
   agentEmptyOutput: "No devolvió nada · /peek para ver el panel",
+  agentReplyUnavailable:
+    "No se capturó una respuesta válida del agente · usa /peek para revisar el panel y vuelve a intentar si hace falta.",
   agentStarted: "✅ Iniciado",
   agentResumed: "🔄 Sesión anterior reanudada",
   agentResumeMissingState:
     "No hay estado de sesión anterior para reanudar — usa /start para crear una nueva.",
   agentAlreadyRunning: "✅ Ya está en ejecución",
+  agentInputNotReady:
+    "The agent is not ready to receive input yet. Try again shortly; restart this session if it keeps happening.",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `Hay una automatización del proyecto en ejecución; los mensajes normales quedan bloqueados por ahora.\nTarea: ${taskKind}\nProyecto: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nEspera a que termine, o revísala/cancélala antes de continuar.`,
   agentStartedWith: (label) => `✅ Iniciado con «${label}»`,
   startPickerTitle: "🚀 Elige cómo iniciar",
   startPickerPrompt: "Hay varios comandos de inicio configurados — elige uno:",
@@ -415,74 +430,57 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   cmdBatch:
     "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",
   cmdAutopilot: "Delegar el trabajo de la sesión actual al Loop Supervisor",
-  cmdOpportunity: "Revisar oportunidades propuestas y delegar el trabajo aprobado",
-  cmdGoals: "Listar presets de objetivos de autopilot",
+  cmdOpportunity: "Revisar y discutir oportunidades propuestas",
   cmdSysload: "Ver carga, temperatura y procesos descontrolados",
   sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "Delega el contexto de la sesión actual al Loop Supervisor para implementar, revisar, verificar, gestionar PRs y notificar el resultado final.",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot en pausa [${session}]: ${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot detenido [${session}]: ${reason}`,
-  autopilotNotifyUsage: (session, pct) =>
-    `🛑 objetivo de autopilot en pausa [${session}]: el uso alcanzó el umbral del ${pct}%`,
-  autopilotNotifyMaxIter: (session) =>
-    `⏹️ objetivo de autopilot detenido [${session}]: máximo de iteraciones alcanzado`,
-  autopilotNotifyWallClock: (session) =>
-    `⏹️ objetivo de autopilot detenido [${session}]: presupuesto de tiempo agotado`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]: la fase parece completa — confirma con /autopilot confirm o continúa con /autopilot reject`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ objetivo de autopilot completado [${session}]: ${goalId} (confirma por favor)`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ ciclo de autopilot completado [${session}]: ${rounds} ronda(s) (confirma)`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ tarea keep-alive de autopilot completada [${session}]: marcador de fin detectado`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]: objetivo ${goalId} (${pos}/${total} · ronda ${round}/${rounds})`,
+    "Delega el contexto de la sesión actual al Loop Supervisor. Empieza directamente cuando el alcance esté claro, o revisa primero el plan si quieres ver la lista, criterios y condiciones de parada.",
   batchRunStarted: (planId, tasks) =>
     `🚀 Ejecución de lote iniciada: plan ${planId}, ${tasks} tarea(s)`,
   batchPoolPaused: (agent, resumeAt) =>
     `⏸ Pool de lote pausado [${agent}]: cuota alcanzada, reanudación en ${resumeAt}`,
   batchRunComplete: (summary) => `✅ Ejecución de lote completada\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "Mantener activo global ACTIVADO: todas las sesiones activas se gestionan (usa /autopilot off para excluir una)"
-      : "Mantener activo global DESACTIVADO",
-  autopilotStatus: (o) =>
-    `Autopilot: ${o.enabled ? "activado" : "desactivado"} (${o.pureKeepAlive ? "mantener activo" : "por objetivo"}, ${o.iterations} intervenciones, persona=${o.persona})${o.goal ? ` (objetivo ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
   autopilotUsage: (raw) =>
-    `Subcomando desconocido «${raw}». Uso: /autopilot [delegate [requisito]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} Activar keep-alive/objetivos`,
-  btnApDisable: "⏹ Desactivar keep-alive/objetivos",
+    `Subcomando desconocido «${raw}». Uso: /autopilot [requisito] o /autopilot delegate [requisito]`,
+  autopilotPlanPreviewBody:
+    "Vista previa del plan de delegación\n\nObjetivo: continuar la tarea confirmada por el usuario desde la sesión y el repositorio actuales hasta completarla de verdad.\n\nLista: revisar contexto vivo, estado de git, commits recientes, PRs existentes y verificación previa; identificar lo pendiente; cambiar solo lo necesario; revisar el diff; ejecutar verificación relevante y evals existentes cuando proceda.\n\nAceptación: el resumen final registra cambios, verificación, PR/merge si aplica, rama final, worktree limpio y cualquier bloqueo real con evidencia.\n\nParada: terminar cuando la tarea esté completa, haya un bloqueo probado, o seguir exceda el alcance.\n\nNo objetivos: no ampliar alcance, rehacer trabajo ya satisfactorio, instalar dependencias del proyecto solo por política del bot, ni fusionar salvo que la política lo permita.",
+  langUsage: "Uso: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "Usa `/sessions <prefijo-id>` para reanudar",
+  opportunityProjectFallback: "Proyecto",
+  opportunityProjectCount: (n) => `${n} proyectos`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} sugerencia(s)\nPuedes seguir discutiendo; cuando quieras ejecutar, delega con Autopilot.`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} sugerencia(s)\nDiscute primero y delega cuando el alcance esté claro.`,
+  btnOpportunityContinueDiscuss: "Seguir discutiendo",
+  btnOpportunityDiscussAll: "Discutir todo",
+  btnOpportunityShow: "Detalles",
+  btnOpportunityDiscuss: "Discutir",
+  btnOpportunityDismiss: "Omitir",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `${n} sugerencia(s) omitida(s).`,
+  opportunitySkippedMissing: (n, ids) => `${n} sugerencia(s) omitida(s). Faltan: ${ids}`,
+  opportunityMixedProjects: "No se pueden discutir juntas oportunidades de proyectos distintos.",
+  opportunityCannotOpenProject: (reason) => `No se pudo abrir el proyecto para discutir: ${reason}`,
+  opportunityDiscussionStarted: (n) => `Discutiendo ${n} sugerencia(s).`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `Este proyecto está ejecutando una tarea de automatización, así que la discusión está bloqueada temporalmente. Inténtalo cuando termine.\n\nTarea: ${taskKind}\nRun: ${runId}\nSupervisor: ${supervisorSession}`,
+  opportunityQueueBusy:
+    "El agent del proyecto está procesando trabajo o tiene mensajes en cola, así que la discusión está bloqueada temporalmente. Inténtalo cuando termine la tarea actual.",
+  opportunityGitStatusUnknown: (reason) =>
+    `No se pudo confirmar el estado git del proyecto, así que la discusión está bloqueada temporalmente.\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `El worktree del proyecto tiene cambios sin resolver, así que la discusión está bloqueada temporalmente. Resuelve esos cambios primero.\n\n${preview}`,
   btnApDelegate: "🚀 Continuar con supervisor",
+  btnApDelegateNow: "🚀 Delegar ahora",
+  btnApReviewPlan: "📋 Revisar plan",
+  btnApConfirmDelegate: "✅ Confirmar delegación",
   btnApCancelDelegate: "⛔ Cancelar delegación",
-  btnApPickGoals: "🎯 Elegir objetivos",
-  btnApGlobalOn: "🌐 Global: sí",
-  btnApGlobalOff: "🌐 Global: no",
-  btnApStop: "⏹ Detener objetivo",
-  btnApConfirm: "✅ Confirmar",
-  btnApContinue: "▶️ Continuar",
+  btnApQueue: `${UI_ICONS.tone.queue} Ver cola`,
   btnApBack: "↩︎ Volver",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) =>
-    `▶️ Iniciar (${n} objetivo(s) · ${rounds} ronda(s))`,
-  apRoundsLabel: (rounds: number) => `Rondas: ${rounds}`,
-  goalTestCoverage: "Aumentar cobertura de pruebas",
-  goalFixTests: "Reparar pruebas",
-  goalCodeReview: "Revisión de código",
-  goalAddFeature: "Añadir función",
-  goalRefactorElegant: "Refactorizar con elegancia",
-  goalUiPolish: "Pulir interfaz",
-  goalImproveArchitecture: "Mejorar la arquitectura",
-  goalHardenStandards: "Reforzar estándares y controles",
-  goalPolishGithub: "Pulir la presencia en GitHub",
-  goalSyncDocs: "Alinear la documentación con el código",
-  autopilotGoalStarted: (id) => `Objetivo iniciado: ${id}`,
-  autopilotUnknownGoal: (ids) => `Objetivo desconocido. Disponibles: ${ids}`,
-  goalsTitle: "🎯 Objetivos predefinidos",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Cola del supervisor`,
   noLogsContext:
     "No hay sesión actual. Selecciona un proyecto o especifica un trace (/logs <traceId>).",
 

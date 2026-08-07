@@ -33,26 +33,35 @@ export function controlSocketCandidatePaths(): string[] {
   return nested && nested !== primary ? [primary, nested] : [primary];
 }
 
+export type ControlCallerProvenance = {
+  cwd?: string;
+  pid?: number;
+  source?: "control-client";
+};
+
 /** Client → server. `id` correlates the synchronous response; a `send` is acked
  * immediately and its eventual reply arrives as a `reply` event. */
-export type ControlRequest =
-  | { id: number; op: "snapshot" }
-  | { id: number; op: "peek"; session: string; lines?: number }
-  | { id: number; op: "send"; session: string; text: string }
-  | { id: number; op: "control"; session: string; action: string }
-  | { id: number; op: "projects" }
-  | { id: number; op: "open"; sid: string; agent?: AgentKind }
-  | { id: number; op: "openPath"; path: string; agent?: AgentKind }
-  | { id: number; op: "orphans" }
-  | { id: number; op: "adopt"; pid: number }
-  | { id: number; op: "recover" }
-  | { id: number; op: "logs"; session: string }
-  | { id: number; op: "sysload" }
-  | { id: number; op: "inputs"; session: string }
-  | { id: number; op: "promptTranslate"; arg: string }
-  | { id: number; op: "taskAudit"; now?: number; force?: boolean }
+export type ControlRequest = {
+  id: number;
+  caller?: ControlCallerProvenance;
+} & (
+  | { op: "snapshot" }
+  | { op: "peek"; session: string; lines?: number }
+  | { op: "send"; session: string; text: string; callerSession?: string }
+  | { op: "control"; session: string; action: string }
+  | { op: "projects" }
+  | { op: "open"; sid: string; agent?: AgentKind }
+  | { op: "openPath"; path: string; agent?: AgentKind }
+  | { op: "openWorker"; session: string; path: string; agent?: AgentKind }
+  | { op: "orphans" }
+  | { op: "adopt"; pid: number }
+  | { op: "recover" }
+  | { op: "logs"; session: string }
+  | { op: "sysload" }
+  | { op: "inputs"; session: string }
+  | { op: "promptTranslate"; arg: string }
+  | { op: "taskAudit"; now?: number; force?: boolean }
   | {
-      id: number;
       op: "notify";
       title: string;
       body?: string;
@@ -63,8 +72,9 @@ export type ControlRequest =
       attachments?: { path: string; caption?: string }[];
       opportunities?: NotificationOpportunity[];
     }
-  | { id: number; op: "autopilot"; session: string; verb: string }
-  | { id: number; op: "sendAttachment"; session: string; filePath: string; caption?: string };
+  | { op: "autopilot"; session: string; verb: string }
+  | { op: "sendAttachment"; session: string; filePath: string; caption?: string }
+);
 
 export type ControlResponse =
   | { id: number; ok: true; data: unknown }
@@ -84,8 +94,7 @@ export type ControlEvent =
   | { event: "activity" }
   | { event: "reply"; session: string; output: string }
   | { event: "notify"; session: string; text: string }
-  | { event: "error"; session: string; error: string }
-  | { event: "autopilot"; session: string; kind: string };
+  | { event: "error"; session: string; error: string };
 
 export type ServerMessage = ControlResponse | ControlEvent;
 

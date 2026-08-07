@@ -174,7 +174,7 @@ describe("composeAdoptOutcome", () => {
 
   it("maps other failures to the generic failed message", () => {
     const out = composeAdoptOutcome(
-      { ok: false, sessionName: "tcb-x", resumed: false, reason: "agent_did_not_start" },
+      { ok: false, sessionName: "tcb-x", resumed: false, reason: "process_would_not_die" },
       "telegram",
     );
     expect(out.body).toBe(m.adoptFailed);
@@ -273,6 +273,24 @@ describe("adoptOrphan", () => {
     await adoptOrphan(77, ctx());
     const { getAgentKind } = await import("../../src/core/agents/agentKindMap.js");
     expect(getAgentKind("tcb-fail")).toBe("claude"); // default — nothing recorded
+  });
+
+  it("reports agent startup failures with a pane-inspection hint", () => {
+    const outcome = composeAdoptOutcome(
+      {
+        ok: false,
+        sessionName: "tcb-fail",
+        resumed: true,
+        reason: "agent_did_not_start",
+      },
+      "telegram:1",
+    );
+
+    expect(outcome).toEqual({
+      ok: false,
+      body: messages("telegram").adoptAgentDidNotStart,
+      sessionName: "tcb-fail",
+    });
   });
 
   it("isTargetBusy: false when no session exists", async () => {

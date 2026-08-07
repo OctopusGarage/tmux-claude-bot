@@ -18,6 +18,16 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
 git pull --ff-only origin main
 
+if [ -z "${TCB_RELEASE_SKIP_VERIFY:-}" ]; then
+  npm run verify:local
+  git diff --quiet && git diff --cached --quiet || {
+    echo "local verification changed the working tree; inspect before releasing" >&2
+    exit 1
+  }
+else
+  echo "TCB_RELEASE_SKIP_VERIFY set - skipping npm run verify:local"
+fi
+
 # npm version bumps package.json + package-lock.json, commits, and tags vX.Y.Z.
 NEW_TAG="$(npm version "$BUMP" -m "release: v%s")"
 echo "Created $NEW_TAG"

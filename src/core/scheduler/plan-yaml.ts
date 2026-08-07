@@ -1,6 +1,5 @@
 import { parse, stringify } from "yaml";
 import { z } from "zod";
-import { getGoal } from "../autopilot/goals/catalog.js";
 import type { Plan } from "./types.js";
 
 const agentSchema = z.enum(["claude", "codex"]);
@@ -59,13 +58,7 @@ export function parsePlanYaml(text: string): Plan {
       `invalid plan: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
     );
   }
-  const plan = parsed.data as Plan;
-  for (const p of plan.projects) {
-    for (const g of p.goals) {
-      if (!getGoal(g)) throw new Error(`unknown goal id "${g}" in project ${p.path}`);
-    }
-  }
-  return plan;
+  return parsed.data as Plan;
 }
 
 export function planToYaml(plan: Plan): string {

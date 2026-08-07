@@ -47,13 +47,15 @@ export function restoredLoopSupervisorMessage(
     transform: persisted.transform,
     traceId: persisted.traceId,
     controlRestore: persisted.controlRestore,
-    started: () =>
+    started: () => {
       writeLoopSupervisorWorkOrderState({
         workOrder: restore.workOrder,
         supervisorSession: restore.supervisorSession,
         status: "in-flight",
         now: opts.now?.() ?? Date.now(),
-      }),
+      });
+      return undefined;
+    },
     resolve: (output) => completeRestoredSupervisorWork(restore, output, opts.now),
     reject: (err) => failRestoredSupervisorWork(restore, err, opts.now),
   };

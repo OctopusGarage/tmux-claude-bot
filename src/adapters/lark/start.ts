@@ -5,12 +5,10 @@ import {
   type LarkChannelOptions,
   LoggerLevel,
 } from "@larksuiteoapi/node-sdk";
-import { restorePersistedChannel } from "../../core/command/queue-restore.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { makeCardActionHandler } from "./card-actions.js";
-import { createLarkRestoredMessage } from "./executor.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
 import { registerLarkNotifications } from "./notifications.js";
@@ -79,17 +77,9 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
   channel.on("message", makeMessageHandler(channel, deps));
   channel.on("cardAction", makeCardActionHandler(channel, deps));
 
-  // Restore this channel's persisted backlog so a bot restart doesn't drop
-  // queued Lark messages (parity with Telegram). Each adapter restores + drops
-  // ONLY its own channel, so a Telegram+Lark deployment loses neither side.
-  const restored = restorePersistedChannel({
-    channel: "lark",
-    loadPersisted: () => deps.queue.loadPersisted(),
-    enqueue: (message) => deps.queue.enqueue(message),
-    keepPersistedCarryover: (messages) => deps.queue.keepPersistedCarryover(messages),
-    restore: (message) => createLarkRestoredMessage(message, channel),
-  });
-  if (restored.restored > 0) log.info("queue restored", { channel: "lark", data: restored });
+  // Chat prompts are intentionally not restored across bot restarts. Replaying a
+  // recovered user message can duplicate input that was already typed into the
+  // agent pane before the process stopped.
   // App-level WS watchdog — catches half-open sockets after laptop sleep /
   // network flaps that the SDK's own reconnect loop can miss. Ticks are
   // no-ops until connect() initializes the WS client.

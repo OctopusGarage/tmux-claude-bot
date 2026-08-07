@@ -33,6 +33,15 @@ const workOrder = {
   recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
   commitPolicy: { enabled: false, perRound: true },
   requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:wo-1]",
+  planning: {
+    required: true,
+    source: "active-delegation",
+    requireOwnerConfirmation: false,
+    rubric: ["Plan before editing", "Verify before completion"],
+    acceptanceCriteria: ["Focused tests pass", "A final handoff is auditable"],
+    stopConditions: ["Verification cannot run"],
+    nonGoals: ["No unrelated cleanup"],
+  },
 } satisfies LoopWorkOrder;
 
 describe("writeLoopSupervisorReport", () => {
@@ -53,6 +62,36 @@ describe("writeLoopSupervisorReport", () => {
           actionsTaken: ["ran focused tests", "committed scoped changes"],
           delegatedTasks: [{ projectId: "datavibe-docs", status: "completed" }],
           finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["confirmed the requested handoff behavior was bounded"],
+            postMutationReview: ["reviewed generated handoff artifacts"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "focused tests",
+                command: "npm test tests/loop/supervisor-report.test.ts",
+                result: "passed",
+                evidence: "handoff artifact assertions passed",
+              },
+            ],
+            decision: "pass",
+            notes: [],
+            evidence: [
+              {
+                questionInvestigated: "Can the next supervisor resume without chat context?",
+                conclusion: "The handoff lists the relevant artifacts and next step.",
+                evidence: ["handoff.json", "handoff.md"],
+                uncertainty: "System gate output is written later by the service.",
+                recommendedNextStep: "Inspect system-gate.json before related work.",
+              },
+            ],
+          },
+          learning: {
+            regressionCandidates: ["Handoff artifacts should preserve review evidence."],
+            capabilityEvalCandidates: ["No capability eval needed for this artifact-only run."],
+            monitorOrTraceCandidates: ["No monitor needed."],
+            documentationCandidates: ["Keep docs aligned with handoff fields."],
+          },
           commits: ["abc123"],
           followUps: [],
         },
@@ -74,6 +113,27 @@ describe("writeLoopSupervisorReport", () => {
         "datavibe",
         "wo-1",
         "supervisor-summary.json",
+      ),
+      handoffJsonPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "datavibe",
+        "wo-1",
+        "handoff.json",
+      ),
+      handoffMarkdownPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "datavibe",
+        "wo-1",
+        "handoff.md",
+      ),
+      evalReportPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "datavibe",
+        "wo-1",
+        "eval-report.json",
       ),
     });
 
@@ -113,7 +173,108 @@ describe("writeLoopSupervisorReport", () => {
           commits: ["abc123"],
         },
       },
+      evalReportPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "datavibe",
+        "wo-1",
+        "eval-report.json",
+      ),
     });
+
+    expect(JSON.parse(await readFile(report.evalReportPath ?? "", "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      taskId: "architecture",
+      source: {
+        kind: "work-order-final-summary",
+        workOrderId: "wo-1",
+        projectId: "datavibe",
+      },
+      executionBoundary: "worker-internal",
+      outcome: {
+        status: "passed",
+        finalVerification: "passed",
+        reviewDecision: "pass",
+      },
+      evidence: [
+        {
+          questionInvestigated: "Can the next supervisor resume without chat context?",
+          conclusion: "The handoff lists the relevant artifacts and next step.",
+        },
+      ],
+      deterministicGates: [
+        {
+          name: "focused tests",
+          result: "passed",
+          command: "npm test tests/loop/supervisor-report.test.ts",
+        },
+      ],
+      learningCandidates: {
+        regression: ["Handoff artifacts should preserve review evidence."],
+      },
+    });
+
+    expect(JSON.parse(await readFile(report.handoffJsonPath, "utf8"))).toMatchObject({
+      version: 1,
+      workOrderId: "wo-1",
+      status: "completed",
+      objective: {
+        goal: "Improve architecture.",
+        taskKind: "architecture",
+        targetScore: 90,
+        maxRounds: 3,
+      },
+      planning: {
+        acceptanceCriteria: ["Focused tests pass", "A final handoff is auditable"],
+        stopConditions: ["Verification cannot run"],
+      },
+      progress: {
+        actionsTaken: ["ran focused tests", "committed scoped changes"],
+        commits: ["abc123"],
+        finalVerification: "passed",
+        reviewEvidence: [
+          {
+            questionInvestigated: "Can the next supervisor resume without chat context?",
+            conclusion: "The handoff lists the relevant artifacts and next step.",
+            evidence: ["handoff.json", "handoff.md"],
+            uncertainty: "System gate output is written later by the service.",
+            recommendedNextStep: "Inspect system-gate.json before related work.",
+          },
+        ],
+        learning: {
+          regressionCandidates: ["Handoff artifacts should preserve review evidence."],
+          capabilityEvalCandidates: ["No capability eval needed for this artifact-only run."],
+          monitorOrTraceCandidates: ["No monitor needed."],
+          documentationCandidates: ["Keep docs aligned with handoff fields."],
+        },
+      },
+      nextAgent: {
+        nextSteps: [
+          "No follow-up was reported. Inspect system-gate.json before starting related work.",
+        ],
+        resumeFrom: [
+          report.summaryPath,
+          report.markdownPath,
+          report.evalReportPath,
+          "supervisor-final-summary.json was not configured",
+          "system-gate.json",
+          "work-order-state.json",
+        ],
+      },
+    });
+
+    const handoffMarkdown = await readFile(report.handoffMarkdownPath, "utf8");
+    expect(handoffMarkdown).toContain("# Loop WorkOrder Handoff");
+    expect(handoffMarkdown).toContain("## Acceptance Criteria");
+    expect(handoffMarkdown).toContain("- Focused tests pass");
+    expect(handoffMarkdown).toContain("## Stop Conditions");
+    expect(handoffMarkdown).toContain("- Verification cannot run");
+    expect(handoffMarkdown).toContain("## Review Evidence");
+    expect(handoffMarkdown).toContain("- Can the next supervisor resume without chat context?");
+    expect(handoffMarkdown).toContain("## Learning");
+    expect(handoffMarkdown).toContain(
+      "- Regression: Handoff artifacts should preserve review evidence.",
+    );
   });
 
   it("writes dispatch failure reports when no final summary is available", async () => {
@@ -149,6 +310,21 @@ describe("writeLoopSupervisorReport", () => {
         status: "dispatch-failed",
         reason: "queue full",
         output: "partial output\nqueue full",
+      },
+    });
+    expect(report.evalReportPath).toBeUndefined();
+
+    expect(JSON.parse(await readFile(report.handoffJsonPath, "utf8"))).toMatchObject({
+      status: "dispatch-failed",
+      progress: {
+        finalVerification: "not-available",
+      },
+      nextAgent: {
+        nextSteps: [
+          "Inspect supervisor output, system-gate.json, and work-order-state.json before retrying.",
+          "Retry only after the concrete blocker is resolved or the WorkOrder is narrowed.",
+        ],
+        risks: ["queue full"],
       },
     });
   });

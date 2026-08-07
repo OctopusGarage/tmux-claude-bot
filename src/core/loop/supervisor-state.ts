@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { appStateDir } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
+import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath, loopRunDir, loopRunsRoot } from "./artifacts.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
+import { readLoopSupervisorWorkerLeaseState } from "./supervisor-pool.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
 export type LoopSupervisorWorkOrderStateStatus =
@@ -42,24 +43,25 @@ const RECOVERABLE_FAILED_RESULTS = new Set<LoopSupervisedRunResult["status"]>([
   "dispatch-timeout",
   "invalid-output",
 ]);
+export const STALE_DISPATCHING_WORK_ORDER_MS = 5 * 60 * 1000;
 const STALE_UNFINISHED_RESERVATION_MS = 12 * 60 * 60 * 1000;
 const INVALID_FINAL_SUMMARY_GRACE_MS = 5 * 60 * 1000;
 
 function reportsRoot(): string {
-  return join(appStateDir(), "loop-runs");
+  return loopRunsRoot();
 }
 
 function runDirForWorkOrder(workOrder: LoopWorkOrder): string {
   if (workOrder.finalSummaryPath !== undefined) return dirname(workOrder.finalSummaryPath);
-  return join(reportsRoot(), workOrder.projectId, workOrder.id);
+  return loopRunDir(workOrder.projectId, workOrder.id);
 }
 
 function workOrderPath(runDir: string): string {
-  return join(runDir, "work-order.json");
+  return join(runDir, LOOP_RUN_ARTIFACTS.workOrder);
 }
 
 function statePath(runDir: string): string {
-  return join(runDir, "work-order-state.json");
+  return join(runDir, LOOP_RUN_ARTIFACTS.workOrderState);
 }
 
 export function writeLoopSupervisorWorkOrderState(input: {
@@ -91,7 +93,6 @@ export function writeLoopSupervisorWorkOrderState(input: {
 export function workOrderStateForResult(
   result: LoopSupervisedRunResult,
 ): LoopSupervisorWorkOrderStateStatus {
-  if (result.status === "invalid-output") return "in-flight";
   if (result.status === "cancelled") return "cancelled";
   return result.status === "completed" ? "completed" : "failed";
 }
@@ -190,10 +191,45 @@ export function listRecoverableFailedLoopSupervisorWorkOrders(): UnfinishedLoopS
   );
 }
 
-function hasFinalSummaryFileForState(state: LoopSupervisorWorkOrderState): boolean {
-  return existsSync(
-    join(reportsRoot(), state.projectId, state.runId, "supervisor-final-summary.json"),
+export function listRecoverableFinalSummaryLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  return listLoopSupervisorWorkOrders(
+    (state, workOrder) =>
+      !TERMINAL_STATES.has(state.status) && parseSupervisorFinalSummaryFile(workOrder).ok,
   );
+}
+
+export function listAbandonedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  return listLoopSupervisorWorkOrders(
+    (state, workOrder) =>
+      !TERMINAL_STATES.has(state.status) &&
+      !unfinishedWorkOrderCanStillProgress(state, workOrder, Date.now()),
+  );
+}
+
+export function listStaleDispatchingLoopSupervisorWorkOrders(
+  now = Date.now(),
+): UnfinishedLoopSupervisorWorkOrder[] {
+  const activeLeaseIds = new Set(
+    readLoopSupervisorWorkerLeaseState()
+      .leases.filter((lease) => lease.status === "active")
+      .map((lease) => lease.workOrderId),
+  );
+  return listLoopSupervisorWorkOrders(
+    (state, workOrder) =>
+      state.status === "dispatching" &&
+      !activeLeaseIds.has(workOrder.id) &&
+      !hasFinalSummaryFileForState(state) &&
+      now - state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS &&
+      now - state.updatedAt <= STALE_UNFINISHED_RESERVATION_MS,
+  );
+}
+
+export function listTerminalLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  return listLoopSupervisorWorkOrders((state) => TERMINAL_STATES.has(state.status));
+}
+
+function hasFinalSummaryFileForState(state: LoopSupervisorWorkOrderState): boolean {
+  return existsSync(loopRunArtifactPath(state.projectId, state.runId, "supervisorFinalSummary"));
 }
 
 function isStaleUnfinishedState(state: LoopSupervisorWorkOrderState, now: number): boolean {
@@ -207,7 +243,7 @@ function unfinishedWorkOrderCanStillProgress(
 ): boolean {
   const finalSummaryExists = hasFinalSummaryFileForState(state);
   if (!finalSummaryExists) return !isStaleUnfinishedState(state, now);
-  if (parseSupervisorFinalSummaryFile(workOrder).ok) return true;
+  if (parseSupervisorFinalSummaryFile(workOrder).ok) return false;
   return now - state.updatedAt <= INVALID_FINAL_SUMMARY_GRACE_MS;
 }
 

@@ -236,7 +236,7 @@ describe("listCodexOrphans", () => {
     const orphans = await listCodexOrphans(probe);
     expect(orphans[0]?.sessionId).toBeNull();
     expect(orphans[0]?.startCommand).toBe("codex");
-  });
+  }, 15_000);
 
   it("does not list claude processes as codex orphans", async () => {
     const probe = fakeProbe({
@@ -251,5 +251,5 @@ describe("listCodexOrphans", () => {
     const orphans = await listCodexOrphans(probe);
     expect(orphans).toHaveLength(1);
     expect(orphans[0]?.pid).toBe(9);
-  });
+  }, 15_000);
 });

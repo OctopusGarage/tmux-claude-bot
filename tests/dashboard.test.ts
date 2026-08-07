@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { projectPathToHistoryDir } from "../src/core/agents/claude/claude-history.js";
-import { AutopilotStore } from "../src/core/autopilot/state-store.js";
 import type { SessionRow } from "../src/core/dashboard/dashboard.js";
 import { buildDashboard } from "../src/core/dashboard/dashboard.js";
 import { setFreeProject } from "../src/core/projects/free-projects.js";
@@ -236,26 +235,6 @@ describe("buildDashboard", () => {
     expect(snap.sessions).toHaveLength(2); // both rows present despite sess_a throwing
     expect(row(snap.sessions, "sess_a").kind).toBe("claude"); // degraded default
     expect(row(snap.sessions, "sess_b").kind).toBe("codex");
-  });
-
-  it("populates the autopilot field and autopilotCount for an enabled session", async () => {
-    // Set autopilot state for sess_a via a real store against the tmpdir.
-    const store = new AutopilotStore();
-    store.set("sess_a", {
-      enabled: true,
-      pureKeepAlive: true,
-      persona: "conservative",
-      iterations: 3,
-      apiRetries: 0,
-      recoveries: 0,
-    });
-
-    const snap = await buildDashboard(fakeDeps(), { paneDiffMs: 0 });
-    const a = row(snap.sessions, "sess_a");
-    expect(a.autopilot).toEqual({ enabled: true, pureKeepAlive: true, iterations: 3 });
-    expect(snap.global.autopilotCount).toBe(1);
-    // sess_b has no enabled autopilot → no field
-    expect(row(snap.sessions, "sess_b").autopilot).toBeUndefined();
   });
 
   it("excludes operator row from sessionCount/runningCount/busyCount", async () => {

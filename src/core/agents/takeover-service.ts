@@ -113,6 +113,7 @@ export function composeAdoptOutcome(result: TakeoverResult | null, scope: string
     if (result.reason === "target_session_busy") body = m.adoptBusy;
     else if (result.reason === "project_agent_running") body = m.adoptProjectRunning;
     else if (result.reason === "free_project_limit") body = m.freeProjectLimit(FREE_PROJECT_LIMIT);
+    else if (result.reason === "agent_did_not_start") body = m.adoptAgentDidNotStart;
     return { ok: false, body, sessionName: result.sessionName };
   }
   const path = getPathBySession(result.sessionName);

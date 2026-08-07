@@ -39,7 +39,7 @@ describe("promptsCard", () => {
     const card = JSON.stringify(
       promptsCard(items, tags, { page: 0, totalPages: 1, tagFilter: "review" }),
     );
-    // (c) clear-filter button present (✖ 全部 or ppage+empty tagSid)
+    // (c) clear-filter button is present via ppage+empty tagSid.
     expect(card).toContain("✖");
   });
 });

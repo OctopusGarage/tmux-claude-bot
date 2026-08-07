@@ -145,21 +145,24 @@ describe("loadConfig (real schema)", () => {
     expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).sessionIdleReaper).toEqual({
       tickMs: 3_600_000,
       maxIdleMs: 259_200_000,
+      loopWorkerMaxIdleMs: 21_600_000,
     });
     expect(
       loadConfig({
         TELEGRAM_BOT_TOKEN: "t",
         SESSION_IDLE_REAPER_TICK_MS: "",
         SESSION_IDLE_REAPER_MAX_IDLE_MS: "",
+        SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS: "",
       }).sessionIdleReaper,
-    ).toEqual({ tickMs: 3_600_000, maxIdleMs: 259_200_000 });
+    ).toEqual({ tickMs: 3_600_000, maxIdleMs: 259_200_000, loopWorkerMaxIdleMs: 21_600_000 });
     expect(
       loadConfig({
         TELEGRAM_BOT_TOKEN: "t",
         SESSION_IDLE_REAPER_TICK_MS: "0",
         SESSION_IDLE_REAPER_MAX_IDLE_MS: "0",
+        SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS: "0",
       }).sessionIdleReaper,
-    ).toEqual({ tickMs: 0, maxIdleMs: 0 });
+    ).toEqual({ tickMs: 0, maxIdleMs: 0, loopWorkerMaxIdleMs: 0 });
   });
 
   it("a non-empty but non-numeric env var still throws (a real typo)", () => {

@@ -1,17 +1,13 @@
 // Regression tests for the four confirmed bugs from the re-review pass.
 //
-// Bug #1: notifier applyNotice lost-update (drainNotices serializes application)
-// Bug #2: /batch stop orphans sessions + leaves agents running (stopRun releases)
-// Bug #3: dead session for running task hangs forever (liveness pass in tick)
-// Bug #4: pools/run desync strands paused-quota tasks on restart (reconcilePools)
+// Bug #1: /batch stop clears the active run
+// Bug #2: dead session for running task hangs forever (liveness pass in tick)
+// Bug #3: pools/run desync strands paused-quota tasks on restart (reconcilePools)
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { AutopilotNotice } from "../../src/core/autopilot/notifier.js";
-import { AutopilotStore } from "../../src/core/autopilot/state-store.js";
-import { type AutopilotState, defaultState } from "../../src/core/autopilot/types.js";
 import { stopRun } from "../../src/core/scheduler/controls.js";
 import {
   derivePools,
@@ -24,15 +20,6 @@ import type { Plan, PoolState, Run, TaskState } from "../../src/core/scheduler/t
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-function fakeAutopilot() {
-  const map = new Map<string, AutopilotState>();
-  return {
-    map,
-    get: (s: string) => map.get(s) ?? defaultState(),
-    set: (s: string, st: AutopilotState) => void map.set(s, st),
-  };
-}
 
 const plan: Plan = {
   id: "p",
@@ -51,7 +38,6 @@ function baseCtx(over: Partial<TickCtx> = {}): TickCtx {
     run: undefined,
     pools: {},
     lastFired: {},
-    autopilot: fakeAutopilot(),
     resolveSession: (t) => t.sessionName ?? t.project,
     readUsage: async () => null,
     isGated: () => false,
@@ -93,79 +79,12 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Bug #1 — notifier applyNotice lost-update
+// Bug #1 — /batch stop clears the active run
 // ---------------------------------------------------------------------------
 
-describe("Bug #1: drainNotices applies enqueued notices before processing", () => {
-  it("a 'complete' notice in the queue causes the run to finish (batchRunComplete fired)", async () => {
-    // A single running task + a "complete" notice already in the queue. The tick
-    // must drain the notice, mark the task done, detect all-terminal, and fire
-    // batchRunComplete. Without drainNotices the notice would be ignored and the
-    // task would stay running forever.
-    const run: Run = {
-      runId: "r1",
-      planId: "p",
-      startedAt: 0,
-      status: "running",
-      tasks: [runningTask("/a", "sess_a")],
-    };
-
-    const noticeQueue: AutopilotNotice[] = [{ kind: "complete", session: "sess_a", goalId: "g1" }];
-    const broadcasts: AutopilotNotice[] = [];
-
-    const ctx = baseCtx({
-      run,
-      drainNotices: () => noticeQueue.splice(0),
-      notify: (n) => broadcasts.push(n),
-    });
-
-    await schedulerTick(ctx);
-
-    // The run reached all-terminal → batchRunComplete was broadcast.
-    const complete = broadcasts.filter((n) => n.kind === "batchRunComplete");
-    expect(complete).toHaveLength(1);
-    expect(complete[0]).toMatchObject({ kind: "batchRunComplete", runId: "r1" });
-  });
-
-  it("notice NOT in drainNotices (no drainNotices provided) → task stays running", async () => {
-    // Confirms the baseline: without drainNotices the notice has no effect,
-    // so the task stays running and no batchRunComplete is fired.
-    const run: Run = {
-      runId: "r1b",
-      planId: "p",
-      startedAt: 0,
-      status: "running",
-      tasks: [runningTask("/a", "sess_a")],
-    };
-
-    const broadcasts: AutopilotNotice[] = [];
-    let savedRun: Run | undefined;
-
-    const ctx = baseCtx({
-      run,
-      // No drainNotices — the old behaviour.
-      notify: (n) => broadcasts.push(n),
-      save: (r) => {
-        savedRun = r;
-      },
-    });
-
-    await schedulerTick(ctx);
-
-    // No batchRunComplete — task is still running.
-    expect(broadcasts.filter((n) => n.kind === "batchRunComplete")).toHaveLength(0);
-    expect(savedRun?.tasks[0]?.status).toBe("running");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Bug #2 — /batch stop orphans sessions + leaves agents running
-// ---------------------------------------------------------------------------
-
-describe("Bug #2: stopRun releases non-terminal sessions", () => {
-  it("running task session is disabled and viaScheduler cleared after stopRun", () => {
+describe("Bug #1: stopRun clears active batch state", () => {
+  it("clears a running active run", () => {
     const store = new SchedulerStore();
-    const autopilot = new AutopilotStore();
 
     const run: Run = {
       runId: "r-stop",
@@ -176,29 +95,14 @@ describe("Bug #2: stopRun releases non-terminal sessions", () => {
     };
     store.setActiveRun(run);
 
-    // Mark the session as scheduler-enrolled and enabled.
-    autopilot.set("proj_1", {
-      enabled: true,
-      pureKeepAlive: false,
-      persona: "conservative",
-      iterations: 0,
-      apiRetries: 0,
-      recoveries: 0,
-      viaScheduler: true,
-    });
+    stopRun(store);
 
-    stopRun(store, autopilot);
-
-    const after = autopilot.get("proj_1");
-    expect(after.enabled).toBe(false);
-    expect(after.viaScheduler).toBe(false);
     // getActiveRun returns undefined after null is stored (JsonMapStore behaviour).
     expect(store.getActiveRun()).toBeFalsy();
   });
 
-  it("terminal tasks are NOT touched by stopRun", () => {
+  it("clears a terminal active run", () => {
     const store = new SchedulerStore();
-    const autopilot = new AutopilotStore();
 
     const run: Run = {
       runId: "r-terminal",
@@ -221,22 +125,9 @@ describe("Bug #2: stopRun releases non-terminal sessions", () => {
       ],
     };
     store.setActiveRun(run);
-    autopilot.set("proj_done", {
-      enabled: true,
-      pureKeepAlive: false,
-      persona: "conservative",
-      iterations: 0,
-      apiRetries: 0,
-      recoveries: 0,
-      viaScheduler: true,
-    });
 
-    stopRun(store, autopilot);
+    stopRun(store);
 
-    // Terminal session must be untouched.
-    const after = autopilot.get("proj_done");
-    expect(after.enabled).toBe(true);
-    expect(after.viaScheduler).toBe(true);
     expect(store.getActiveRun()).toBeFalsy();
   });
 
@@ -249,10 +140,10 @@ describe("Bug #2: stopRun releases non-terminal sessions", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bug #3 — dead session for a running task hangs forever
+// Bug #2 — dead session for a running task hangs forever
 // ---------------------------------------------------------------------------
 
-describe("Bug #3: dead session for running task is failed/retried, not left running", () => {
+describe("Bug #2: dead session for running task is failed/retried, not left running", () => {
   it("task with dead session and no retries → failed after tick", async () => {
     // Two tasks: one dead, one live. The dead one must be failed; the live one untouched.
     const run: Run = {
@@ -356,7 +247,7 @@ describe("Bug #3: dead session for running task is failed/retried, not left runn
 });
 
 // ---------------------------------------------------------------------------
-// Bug #1/#9 — pool-paused DERIVED from the run every tick (no stale paused flag)
+// Bug #3/#9 — pool-paused DERIVED from the run every tick (no stale paused flag)
 // ---------------------------------------------------------------------------
 
 const NOW = 1_000_000;
@@ -376,7 +267,7 @@ function pausedQuotaTask(project: string): TaskState {
   };
 }
 
-describe("Bug #1/#9: derivePools derives pool-paused purely from the run", () => {
+describe("Bug #3/#9: derivePools derives pool-paused purely from the run", () => {
   it("paused-quota claude task → {claude:{paused:true,resumeAt:preserved}}", () => {
     const RESUME_AT = 9_999_999;
     const run: Run = {
@@ -427,7 +318,7 @@ describe("Bug #1/#9: derivePools derives pool-paused purely from the run", () =>
 // Integration: a tick whose run has no paused-quota task but whose ctx.pools still
 // shows claude paused (stale flag from a prior run) must ADMIT a queued claude task
 // and the saved pools must no longer mark claude paused.
-describe("Bug #1/#9: stale paused pool does not block the next run's tasks", () => {
+describe("Bug #3/#9: stale paused pool does not block the next run's tasks", () => {
   it("queued claude task is admitted despite a stale paused pool entry", async () => {
     const run: Run = {
       runId: "r-next",
@@ -463,116 +354,5 @@ describe("Bug #1/#9: stale paused pool does not block the next run's tasks", () 
     await schedulerTick(c);
     expect(savedRun?.tasks[0]?.status).toBe("running"); // admitted, not blocked
     expect(savedPools.claude?.paused).toBeFalsy(); // stale flag cleared
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Bug #5 — viaScheduler cleared on a session still used by a non-terminal task
-// ---------------------------------------------------------------------------
-
-describe("Bug #5: viaScheduler not cleared while another task on the same session is non-terminal", () => {
-  it("shared session: one done + one running → viaScheduler stays true after tick", async () => {
-    // Two tasks sharing the same sessionName, one terminal (done) and one still
-    // running. The done task's iteration of the clearing loop must NOT clear
-    // viaScheduler because the running task still needs the guard.
-    const sharedSession = "shared_sess";
-    const run: Run = {
-      runId: "r5",
-      planId: "p",
-      startedAt: 0,
-      status: "running",
-      tasks: [
-        {
-          project: "/a",
-          agent: "claude" as const,
-          goals: ["go"],
-          rounds: 1,
-          retries: 0,
-          priority: 0,
-          status: "done" as const,
-          attempt: 0,
-          goalsCompleted: ["go"],
-          sessionName: sharedSession,
-        },
-        {
-          project: "/b",
-          agent: "claude" as const,
-          goals: ["go"],
-          rounds: 1,
-          retries: 0,
-          priority: 0,
-          status: "running" as const,
-          attempt: 0,
-          goalsCompleted: [],
-          sessionName: sharedSession,
-        },
-      ],
-    };
-
-    const autopilot = fakeAutopilot();
-    autopilot.set(sharedSession, { ...autopilot.get(sharedSession), viaScheduler: true });
-
-    await schedulerTick(
-      baseCtx({
-        run,
-        autopilot,
-      }),
-    );
-
-    // The running task still holds the session — viaScheduler must NOT be cleared.
-    expect(autopilot.get(sharedSession).viaScheduler).toBe(true);
-  });
-
-  it("single terminal task on session → viaScheduler IS cleared", async () => {
-    // Baseline: when only ONE task uses the session and it's terminal, clearing works.
-    const session = "solo_sess";
-    const run: Run = {
-      runId: "r5b",
-      planId: "p",
-      startedAt: 0,
-      status: "running",
-      tasks: [
-        {
-          project: "/a",
-          agent: "claude" as const,
-          goals: ["go"],
-          rounds: 1,
-          retries: 0,
-          priority: 0,
-          status: "done" as const,
-          attempt: 0,
-          goalsCompleted: ["go"],
-          sessionName: session,
-        },
-        {
-          // Second task on a DIFFERENT session — must not affect the first.
-          project: "/b",
-          agent: "claude" as const,
-          goals: ["go"],
-          rounds: 1,
-          retries: 0,
-          priority: 0,
-          status: "running" as const,
-          attempt: 0,
-          goalsCompleted: [],
-          sessionName: "other_sess",
-        },
-      ],
-    };
-
-    const autopilot = fakeAutopilot();
-    autopilot.set(session, { ...autopilot.get(session), viaScheduler: true });
-
-    await schedulerTick(
-      baseCtx({
-        run,
-        autopilot,
-      }),
-    );
-
-    // Only solo_sess's task is terminal and no other task shares it → cleared.
-    expect(autopilot.get(session).viaScheduler).toBe(false);
-    // other_sess's running task must be unaffected.
-    expect(autopilot.get("other_sess").viaScheduler).not.toBe(false);
   });
 });
