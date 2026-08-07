@@ -458,6 +458,7 @@ function repositoryPullRequestRepairPolicy(
     task.repair.prompt !== undefined
       ? `- Additional repair instruction: ${task.repair.prompt}`
       : "",
+    "- Mandatory policy: Draft status and same-repository merge conflicts are active review states, not automatic human blockers; repair bounded conflicts and run `gh pr ready <number>` when appropriate. Only an actual ownership, permission, product, migration, security-design, or other human decision boundary may remain manual-review.",
   ].filter(Boolean);
 }
 

@@ -1154,6 +1154,57 @@ prReview:
     expect(prompt).not.toContain("must not create a new PR branch or commit code changes");
   });
 
+  it("keeps the mandatory draft and conflict policy after a legacy repair override", () => {
+    const reviewConfig = parseLoopConfigYaml(`
+projects:
+  - id: placeholder
+    name: Placeholder
+    path: /repo/placeholder
+    agent: codex
+    goal: Keep placeholder architecture healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run assess
+prReview:
+  repositories:
+    - id: legacy-review
+      name: Legacy review
+      path: /repo/legacy-review
+      repo: example/legacy-review
+      agent: codex
+      schedule: "0 2 * * *"
+      switchBack: main
+      githubAccount: example-owner
+      lookbackHours: 72
+      consecutivePasses: 2
+      autoMerge: true
+      mergeMethod: squash
+      repair:
+        enabled: true
+        maxAttempts: 1
+        prompt: Do not repair fork PRs, drafts, conflicts, broad refactors, or changes needing product/security design judgment.
+`);
+    const repository = reviewConfig.prReview.repositories[0];
+    if (repository === undefined) throw new Error("expected repository review config");
+
+    const workOrder = buildRepositoryPullRequestReviewWorkOrder({
+      config: reviewConfig,
+      repository,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-legacy-review-repo-pr-review",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(prompt).toContain(
+      "Mandatory policy: Draft status and same-repository merge conflicts are active review states, not automatic human blockers",
+    );
+    expect(prompt).toContain(
+      "repair bounded conflicts and run `gh pr ready <number>` when appropriate",
+    );
+  });
+
   it("renders a workspace architecture prompt for coordinated multi-repository work", () => {
     const workspaceConfig = parseLoopConfigYaml(`
 projects:
