@@ -4071,6 +4071,8 @@ prReview:
     });
     const expectedWorktree = join(stateDir, "loop-worktrees", "hub", "1784196600000-hub");
     const gitCommands: Array<{ cwd: string; args: string[] }> = [];
+    let executionWorktreePrepared = false;
+    let executionBranch = "loop/hub/architecture/1784196600000-hub";
 
     const result = await runLoopServiceTickAsync({
       configFile: file,
@@ -4085,12 +4087,22 @@ prReview:
           return { status: 0, stdout: `${projectDir}\n`, stderr: "" };
         }
         if (invocation.cwd === expectedWorktree && command === "rev-parse --show-toplevel") {
-          return { status: 1, stdout: "", stderr: "not a git repository" };
+          return executionWorktreePrepared
+            ? { status: 0, stdout: `${expectedWorktree}\n`, stderr: "" }
+            : { status: 1, stdout: "", stderr: "not a git repository" };
         }
         if (
           invocation.cwd === projectDir &&
-          command === `worktree add --detach ${expectedWorktree} HEAD`
+          command === `worktree add --detach ${expectedWorktree} origin/dev`
         ) {
+          executionWorktreePrepared = true;
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (
+          invocation.cwd === expectedWorktree &&
+          command === "switch loop/hub/architecture/1784196600000-hub"
+        ) {
+          executionBranch = "loop/hub/architecture/1784196600000-hub";
           return { status: 0, stdout: "", stderr: "" };
         }
         if (command === "status --porcelain") {
@@ -4099,10 +4111,7 @@ prReview:
         if (command === "branch --show-current") {
           return {
             status: 0,
-            stdout:
-              invocation.cwd === expectedWorktree
-                ? "loop/hub/architecture/1784196600000-hub\n"
-                : "dev\n",
+            stdout: invocation.cwd === expectedWorktree ? `${executionBranch}\n` : "dev\n",
             stderr: "",
           };
         }
@@ -4120,6 +4129,7 @@ prReview:
         expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-hub-");
         expect(request.prompt).toContain(`'${expectedWorktree}' --agent codex`);
         expect(request.prompt).toContain(`git -C '${expectedWorktree}' switch --detach origin/dev`);
+        executionBranch = "dev";
         const marker = finalMarkerFromPrompt(request.prompt);
         return {
           status: 0,
@@ -4137,6 +4147,10 @@ prReview:
       args: ["worktree", "add", "--detach", expectedWorktree, "origin/dev"],
     });
     expect(gitCommands).toContainEqual({ cwd: expectedWorktree, args: ["status", "--porcelain"] });
+    expect(gitCommands).toContainEqual({
+      cwd: expectedWorktree,
+      args: ["switch", "loop/hub/architecture/1784196600000-hub"],
+    });
     expect(gitCommands).toContainEqual({ cwd: projectDir, args: ["branch", "--show-current"] });
   });
 
