@@ -32,8 +32,8 @@ import {
   reconcileProjectRecoveryArtifacts,
   runProjectRecoveryPass,
 } from "./project-recovery-service.js";
-import { RepairCoordinator } from "./repair-coordinator.js";
 import { dispatchRecoveryQueue } from "./recovery-admission.js";
+import { RepairCoordinator } from "./repair-coordinator.js";
 import {
   discoverLaunchdScheduledTasks,
   discoverLoopEngineeringScheduledTasks,
@@ -291,29 +291,31 @@ async function dispatchRepairQueue(input: {
       claimed.flatMap((queueRecord) =>
         queueRecord.linkedTaskIds.flatMap((taskId) => {
           const record = input.ledger.listAll().find((candidate) => candidate.taskId === taskId);
-          return record === undefined || record.status === "expected" ? [] : [record as TaskAuditItem];
+          return record === undefined || record.status === "expected"
+            ? []
+            : [record as TaskAuditItem];
         }),
       ),
     dispatch: async (items) =>
       input.input.dispatchRepair?.({
-      repoPath: input.repoPath,
-      repairBranch: input.input.config.repairBranch,
-      items: [...items],
+        repoPath: input.repoPath,
+        repairBranch: input.input.config.repairBranch,
+        items: [...items],
       }),
     onQueued: (claimed, result) => {
       for (const record of claimed) {
         if (result?.runId !== undefined)
           input.coordinator.linkTaskIds(record.id, [`autopilot:${result.runId}`], input.input.now);
         for (const taskId of record.linkedTaskIds) {
-        input.ledger.markRepairStatus(taskId, {
-          repairStatus: "running",
-          updatedAt: input.input.now,
-          summary: appendRepairSummary(
-            input.ledger.listAll().find((candidate) => candidate.taskId === taskId)?.summary,
-            "Repair Coordinator delegated this item.",
-          ),
-        });
-      }
+          input.ledger.markRepairStatus(taskId, {
+            repairStatus: "running",
+            updatedAt: input.input.now,
+            summary: appendRepairSummary(
+              input.ledger.listAll().find((candidate) => candidate.taskId === taskId)?.summary,
+              "Repair Coordinator delegated this item.",
+            ),
+          });
+        }
       }
     },
   });
@@ -321,7 +323,7 @@ async function dispatchRepairQueue(input: {
     ? "not-needed"
     : admission.detail === "dispatch failed"
       ? "failed"
-    : `${admission.disposition} - ${admission.detail}`;
+      : `${admission.disposition} - ${admission.detail}`;
 }
 
 function reopenStaleRepairStatuses(ledger: DailyTaskLedger, now: number): number {

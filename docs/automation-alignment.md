@@ -79,6 +79,11 @@ to a target or external boundary, it must persist a structured repair
 disposition; Runtime Guardian must never infer terminal ownership from log or
 failure wording. Legacy artifacts without that disposition remain repairable
 until a current flow classifies them.
+Recovery admission is the shared lifecycle module for bot-owned repair queues:
+adapters may discover and render findings, but claim, immediate deferral,
+retry-backoff, and queue terminalization must not be reimplemented by an
+adapter. Shared automation notification intent owns severity and content facts;
+Telegram and Lark remain the only channel-rendering adapters.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
 same task before dispatch; project recovery wins over an accidental bot-owned
 import for the same task.

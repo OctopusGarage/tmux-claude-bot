@@ -109,7 +109,12 @@ export async function dispatchRecoveryQueue<T>(input: {
   const items = input.resolve(claimed);
   if (items.length === 0) {
     for (const record of claimed) input.coordinator.markTerminal(record.id, "blocked", input.now);
-    return { disposition: "blocked", admitted: 0, claimed: claimed.length, detail: "no ledger evidence" };
+    return {
+      disposition: "blocked",
+      admitted: 0,
+      claimed: claimed.length,
+      detail: "no ledger evidence",
+    };
   }
   try {
     const result = await input.dispatch(items);
@@ -119,14 +124,30 @@ export async function dispatchRecoveryQueue<T>(input: {
         if (deferred) input.coordinator.releaseToQueue(record.id, input.now);
         else input.coordinator.releaseForRetry(record.id, input.now);
       }
-      return { disposition: deferred ? "deferred" : "blocked", admitted: items.length, claimed: claimed.length, detail: result.detail };
+      return {
+        disposition: deferred ? "deferred" : "blocked",
+        admitted: items.length,
+        claimed: claimed.length,
+        detail: result.detail,
+      };
     }
-    for (const record of claimed) input.coordinator.markRunning(record.id, input.leaseId, input.now);
+    for (const record of claimed)
+      input.coordinator.markRunning(record.id, input.leaseId, input.now);
     input.onQueued(claimed, result?.status === "queued" ? result : undefined);
-    return { disposition: "queued", admitted: items.length, claimed: claimed.length, detail: result?.detail ?? "queued" };
+    return {
+      disposition: "queued",
+      admitted: items.length,
+      claimed: claimed.length,
+      detail: result?.detail ?? "queued",
+    };
   } catch {
     for (const record of claimed) input.coordinator.releaseForRetry(record.id, input.now);
-    return { disposition: "blocked", admitted: items.length, claimed: claimed.length, detail: "dispatch failed" };
+    return {
+      disposition: "blocked",
+      admitted: items.length,
+      claimed: claimed.length,
+      detail: "dispatch failed",
+    };
   }
 }
 
