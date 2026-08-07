@@ -33,6 +33,7 @@ import {
   runProjectRecoveryPass,
 } from "./project-recovery-service.js";
 import { RepairCoordinator } from "./repair-coordinator.js";
+import { dispatchRecoveryQueue } from "./recovery-admission.js";
 import {
   discoverLaunchdScheduledTasks,
   discoverLoopEngineeringScheduledTasks,
@@ -276,7 +277,8 @@ async function dispatchRepairQueue(input: {
 }): Promise<string> {
   if (input.input.dispatchRepair === undefined) return "unavailable";
   const leaseId = `daily-audit-repair:${input.input.now}`;
-  const claimed = input.coordinator.claimDue({
+  const admission = await dispatchRecoveryQueue({
+    coordinator: input.coordinator,
     now: input.input.now,
     leaseId,
     limit: 8,
@@ -285,43 +287,24 @@ async function dispatchRepairQueue(input: {
     // generic repair dispatcher claim them creates a second recovery loop that
     // can redispatch the same historical delegation after it already finished.
     excludeSources: ["runtime-guardian", "project-recovery"],
-  });
-  if (claimed.length === 0) return "not-needed";
-  const records = input.ledger.listAll();
-  const items = claimed.flatMap((queueRecord) =>
-    queueRecord.linkedTaskIds.flatMap((taskId) => {
-      const record = records.find((candidate) => candidate.taskId === taskId);
-      return record === undefined || record.status === "expected" ? [] : [record as TaskAuditItem];
-    }),
-  );
-  if (items.length === 0) {
-    for (const record of claimed) {
-      // Retrying a record that cannot resolve to any ledger item can never
-      // produce a valid WorkOrder; preserve it as an auditable blocker.
-      input.coordinator.markTerminal(record.id, "blocked", input.input.now);
-    }
-    return "blocked - queue records have no ledger evidence";
-  }
-  try {
-    const result = await input.input.dispatchRepair({
+    resolve: (claimed) =>
+      claimed.flatMap((queueRecord) =>
+        queueRecord.linkedTaskIds.flatMap((taskId) => {
+          const record = input.ledger.listAll().find((candidate) => candidate.taskId === taskId);
+          return record === undefined || record.status === "expected" ? [] : [record as TaskAuditItem];
+        }),
+      ),
+    dispatch: async (items) =>
+      input.input.dispatchRepair?.({
       repoPath: input.repoPath,
       repairBranch: input.input.config.repairBranch,
-      items,
-    });
-    if (result?.status === "blocked") {
+      items: [...items],
+      }),
+    onQueued: (claimed, result) => {
       for (const record of claimed) {
-        if (isImmediateRepairDeferral(result.detail))
-          input.coordinator.releaseToQueue(record.id, input.input.now);
-        else input.coordinator.releaseForRetry(record.id, input.input.now);
-      }
-      return `blocked - ${result.detail}`;
-    }
-    for (const record of claimed) {
-      if (result?.runId !== undefined) {
-        input.coordinator.linkTaskIds(record.id, [`autopilot:${result.runId}`], input.input.now);
-      }
-      input.coordinator.markRunning(record.id, leaseId, input.input.now);
-      for (const taskId of record.linkedTaskIds) {
+        if (result?.runId !== undefined)
+          input.coordinator.linkTaskIds(record.id, [`autopilot:${result.runId}`], input.input.now);
+        for (const taskId of record.linkedTaskIds) {
         input.ledger.markRepairStatus(taskId, {
           repairStatus: "running",
           updatedAt: input.input.now,
@@ -331,17 +314,14 @@ async function dispatchRepairQueue(input: {
           ),
         });
       }
-    }
-    return result?.detail === undefined ? "queued" : `queued - ${result.detail}`;
-  } catch (err) {
-    for (const record of claimed) input.coordinator.releaseForRetry(record.id, input.input.now);
-    log.warn("repair coordinator dispatch failed", { err });
-    return "failed";
-  }
-}
-
-function isImmediateRepairDeferral(detail: string): boolean {
-  return /(capacity|active automation|queue full|supervisor.*busy|no available)/i.test(detail);
+      }
+    },
+  });
+  return admission.disposition === "not-needed"
+    ? "not-needed"
+    : admission.detail === "dispatch failed"
+      ? "failed"
+    : `${admission.disposition} - ${admission.detail}`;
 }
 
 function reopenStaleRepairStatuses(ledger: DailyTaskLedger, now: number): number {

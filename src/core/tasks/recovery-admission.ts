@@ -12,7 +12,7 @@ export type RecoveryFinding = {
 };
 
 export type RecoveryAdmissionDispatchResult =
-  | { status: "queued"; detail: string }
+  | { status: "queued"; detail: string; runId?: string }
   | { status: "blocked"; detail: string };
 
 export type RecoveryAdmissionResult = {
@@ -81,6 +81,53 @@ export async function admitRecoveryFindings(input: {
     claimed: claimed.length,
     detail: dispatch.detail,
   };
+}
+
+export async function dispatchRecoveryQueue<T>(input: {
+  coordinator: RepairCoordinator;
+  now: number;
+  leaseId: string;
+  projectId: string;
+  limit: number;
+  excludeSources?: readonly string[];
+  resolve: (records: readonly RepairQueueRecord[]) => T[];
+  dispatch: (items: readonly T[]) => Promise<RecoveryAdmissionDispatchResult | undefined>;
+  onQueued: (
+    records: readonly RepairQueueRecord[],
+    result: Extract<RecoveryAdmissionDispatchResult, { status: "queued" }> | undefined,
+  ) => void;
+}): Promise<RecoveryAdmissionResult> {
+  const claimed = input.coordinator.claimDue({
+    now: input.now,
+    leaseId: input.leaseId,
+    limit: input.limit,
+    projectId: input.projectId,
+    ...(input.excludeSources === undefined ? {} : { excludeSources: input.excludeSources }),
+  });
+  if (claimed.length === 0)
+    return { disposition: "not-needed", admitted: 0, claimed: 0, detail: "no due findings" };
+  const items = input.resolve(claimed);
+  if (items.length === 0) {
+    for (const record of claimed) input.coordinator.markTerminal(record.id, "blocked", input.now);
+    return { disposition: "blocked", admitted: 0, claimed: claimed.length, detail: "no ledger evidence" };
+  }
+  try {
+    const result = await input.dispatch(items);
+    if (result?.status === "blocked") {
+      const deferred = isImmediateDeferral(result.detail);
+      for (const record of claimed) {
+        if (deferred) input.coordinator.releaseToQueue(record.id, input.now);
+        else input.coordinator.releaseForRetry(record.id, input.now);
+      }
+      return { disposition: deferred ? "deferred" : "blocked", admitted: items.length, claimed: claimed.length, detail: result.detail };
+    }
+    for (const record of claimed) input.coordinator.markRunning(record.id, input.leaseId, input.now);
+    input.onQueued(claimed, result?.status === "queued" ? result : undefined);
+    return { disposition: "queued", admitted: items.length, claimed: claimed.length, detail: result?.detail ?? "queued" };
+  } catch {
+    for (const record of claimed) input.coordinator.releaseForRetry(record.id, input.now);
+    return { disposition: "blocked", admitted: items.length, claimed: claimed.length, detail: "dispatch failed" };
+  }
 }
 
 function isImmediateDeferral(detail: string): boolean {
