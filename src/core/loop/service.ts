@@ -32,6 +32,7 @@ import {
   recoverInvalidOutputFromFinalSummaryAsync,
   supervisorFinalStatusToRunStatus,
 } from "./final-summary-recovery.js";
+import { githubCommandForAccount } from "./github-auth.js";
 import { writeLoopRunReport } from "./report.js";
 import { RepositoryReviewQueue } from "./repository-review-queue.js";
 import {
@@ -3216,7 +3217,7 @@ function parseViewerPermission(stdout: string): string | null {
 function ghCommandPrefix(project: SupervisedSystemGateProject): string {
   const account = project.pullRequest.githubAccount;
   if (account === undefined) return "gh";
-  return `GH_TOKEN="$(gh auth token --user ${shellQuoteLocal(account)})" gh`;
+  return githubCommandForAccount(account, "").trimEnd();
 }
 
 function shellQuoteLocal(value: string): string {

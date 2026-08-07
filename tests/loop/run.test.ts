@@ -84,6 +84,7 @@ projects:
       enabled: true
       base: main
       switchBack: main
+      githubAccount: example-owner
     allowedActions: [tests, docs, small-refactor]
     blockedActions: [direct-model-api, dependency-upgrade, broad-rewrite]
 `;

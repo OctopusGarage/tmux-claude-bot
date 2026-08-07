@@ -1,5 +1,6 @@
 import type { ApprovedSkill } from "../skills/schema.js";
 import type { LoopConfig, LoopProjectConfig } from "./config.js";
+import { githubCommandForAccount } from "./github-auth.js";
 
 export type LoopRunCommandKind =
   | "preflight"
@@ -1110,7 +1111,7 @@ function runPullRequestPublish(input: {
     evalResult: input.evalResult,
   });
   const prCommand = [
-    "gh pr create",
+    githubCommandForAccount(input.project.pullRequest.githubAccount, "pr create"),
     "--base",
     shellQuote(input.project.pullRequest.base),
     "--head",

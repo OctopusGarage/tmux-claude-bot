@@ -1554,7 +1554,9 @@ prReview:
             number: 17,
             repository: "OctopusGarage/mesh-talk",
             outcome: "manual-review",
-            evidence: ["synthetic project is not openable"],
+            evidence: [
+              "synthetic project requires a repository ownership decision before recreation",
+            ],
             nextStep: "owner must decide whether to recreate the repository",
           },
         ],

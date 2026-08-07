@@ -417,7 +417,7 @@ function repositoryPullRequestReviewPolicy(workOrder: LoopWorkOrder): string[] {
     "- In actionsTaken, record the open PR count and each in-scope PR number/base/head/decision. If any PR is out of scope, record the explicit reason.",
     '- In the final JSON, include pullRequestDecisions with one entry for every in-scope PR. Each entry must contain number, repository, outcome, evidence, and nextStep. Outcomes are only "merged", "closed", "retry", or "manual-review".',
     '- Use "closed" only for a clearly duplicate, obsolete, non-actionable, or invalid PR, and include exactly one reason from that allowlist plus evidence. Draft, conflict, age, or failed checks alone are never close reasons.',
-    '- Use "retry" for pending checks, transient CI/network/worker failures, bounded repair still needed, or incomplete review evidence. Use "manual-review" only for a concrete ownership, permission, product, migration, security-design, or other human decision boundary, with the exact next step.',
+    '- Use "retry" for pending checks, transient CI/network/worker failures, bounded repair still needed, or incomplete review evidence. Use "manual-review" only for a concrete ownership, permission, product, migration, security-design, or other human decision boundary, with the exact next step. Generic architecture/design review, diff size, conflict count, Draft state, or a request for an owner to inspect ordinary code is not a human boundary and must remain retryable.',
     `- Prioritize PRs created or updated within the last ${task.lookbackHours} hours, but inspect every open PR before finalizing; age, Draft state, or conflict state is not a reason to omit a decision.`,
     `- Run two independent review passes for each candidate PR. Merge only when ${task.consecutivePasses} consecutive passes find no bug, CI, mergeability, data loss, security, migration, dependency, deployment, or user-visible regression risk.`,
     "- Do not nitpick style, naming, wording, formatting, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
@@ -458,7 +458,7 @@ function repositoryPullRequestRepairPolicy(
     task.repair.prompt !== undefined
       ? `- Additional repair instruction: ${task.repair.prompt}`
       : "",
-    "- Mandatory policy: Draft status and same-repository merge conflicts are active review states, not automatic human blockers; repair bounded conflicts and run `gh pr ready <number>` when appropriate. Only an actual ownership, permission, product, migration, security-design, or other human decision boundary may remain manual-review.",
+    "- Mandatory policy: Draft status and same-repository merge conflicts are active review states, not automatic human blockers; repair bounded conflicts and run `gh pr ready <number>` when appropriate. Only an actual ownership, permission, product, migration, security-design, or other human decision boundary may remain manual-review. The orchestration contract downgrades unsupported generic manual-review claims back to retry.",
   ].filter(Boolean);
 }
 

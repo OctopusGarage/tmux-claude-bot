@@ -108,8 +108,13 @@ Repository PR review queue records additionally expose `manual-review` as a
 terminal status distinct from retryable `retry-wait`. The queue may complete
 only after all structured PR decisions are terminal (`merged` or allowlisted
 `closed`), or retain the item as `manual-review` when every unresolved decision
-explicitly requires an owner. Missing or malformed PR decisions are
-orchestration failures and return to retry, never to a false completed state.
+explicitly requires an owner at a concrete ownership, permission, product,
+migration, security-design, legal, or compliance boundary. Generic architecture
+or design review, diff size, Draft state, merge conflicts, and ordinary code
+repair are not human boundaries: the contract downgrades those claims to
+`retry`, returning the item to the shared repair queue. Missing or malformed PR
+decisions are orchestration failures and return to retry, never to a false
+completed state.
 
 Security Maintenance assessments use the same deterministic contract everywhere:
 the configured command must emit a JSON object with numeric `riskScore` from

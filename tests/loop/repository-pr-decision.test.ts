@@ -198,6 +198,30 @@ describe("repository PR decision contract", () => {
     );
   });
 
+  it("downgrades generic architecture review to retry instead of a human terminal", () => {
+    const result = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-architecture-review]${JSON.stringify(
+        summary({
+          status: "blocked",
+          pullRequestDecisions: [
+            {
+              number: 85,
+              repository: "OctopusGarage/tmux-claude-bot",
+              outcome: "manual-review",
+              evidence: [
+                "A large architectural extraction requires human architectural/design review.",
+              ],
+              nextStep: "The owner must review the architecture before conflict repair.",
+            },
+          ],
+        }),
+      )}`,
+      "run-architecture-review",
+    );
+
+    expect(result.ok && repositoryPullRequestReviewDisposition(result.summary)).toBe("retry");
+  });
+
   it("treats an empty decision set as a valid no-PR completion and missing decisions as invalid", () => {
     const empty = parseSupervisorFinalSummary(
       `[LOOP_SUPERVISOR_DONE:run-5]${JSON.stringify(summary({ pullRequestDecisions: [] }))}`,

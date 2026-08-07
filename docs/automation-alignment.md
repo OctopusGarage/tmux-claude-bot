@@ -80,9 +80,11 @@ import for the same task.
 Repository PR review alignment invariant: every repository-wide review WorkOrder
 must persist one structured decision per in-scope PR. Only `merged` and
 evidence-backed allowlisted `closed` decisions complete the queue item; retryable
-decisions return to the shared queue, while explicit `manual-review` decisions
-remain terminal and visible for owner action. Draft, conflict, age, pending CI,
-and temporary worker failures must never silently complete or close a PR.
+decisions return to the shared queue. `manual-review` remains terminal only when
+its evidence names a concrete ownership, permission, product, migration,
+security-design, legal, or compliance boundary; generic architecture/design
+review, Draft, conflict, age, pending CI, and temporary worker failures are
+normalized to retry and must never silently complete or close a PR.
 Architecture alignment invariant: every project and workspace Architecture
 schedule must run its deterministic score assessment before creating a
 WorkOrder. The configured target is normally 95; a score at or above target is
@@ -202,6 +204,12 @@ feature, review this matrix in the same slice:
 | Worktree/session isolation | Source path validation, isolated/source/auto policy, supervisor session, worker session, lease cleanup, ordinary chat blocking, logs/artifacts, tests. |
 | AI/eval behavior | Agent-backed/control-surface path only, no direct model-provider SDK/API calls, deterministic fallback, transient agent failure classification/retry boundaries, review/eval evidence, prompt governance metadata, docs/tests. |
 | Governed system prompt | Prompt registry metadata, task-family coverage, allowed-action scope, stop condition, active-agent-only boundary, deterministic contract tests, `docs/prompt-governance.md`. |
+
+GitHub account binding is mandatory for enabled project, workspace-repository,
+and repository-wide PR automation. Managed command construction refuses to
+create a bare `gh` command when `githubAccount` is absent, so a read-only
+operation cannot mask an account mismatch until a later push, merge, or close
+operation fails.
 
 ## Module Alignment Matrix
 

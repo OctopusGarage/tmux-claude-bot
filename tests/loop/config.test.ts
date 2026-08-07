@@ -857,6 +857,7 @@ workspaces:
           "      enabled: true",
           "      base: main",
           "      switchBack: main",
+          "      githubAccount: example-owner",
           "    pullRequestReview:",
           "      enabled: true",
           '      schedule: "30 9 * * *"',

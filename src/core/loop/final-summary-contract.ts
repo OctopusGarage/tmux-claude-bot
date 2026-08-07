@@ -55,6 +55,16 @@ const PULL_REQUEST_OUTCOMES = new Set<LoopSupervisorPullRequestDecisionOutcome>(
   "manual-review",
 ]);
 const PULL_REQUEST_CLOSE_REASONS = new Set(["duplicate", "obsolete", "non-actionable", "invalid"]);
+const MANUAL_REVIEW_BOUNDARY_PATTERNS = [
+  /\b(?:access|permission|maintainer|ownership)\b/i,
+  /\bprotected branch\b/i,
+  /\bexternal fork\b/i,
+  /\bproduct (?:decision|requirement|direction)\b/i,
+  /\b(?:data )?migration\b/i,
+  /\bsecurity[- ]design\b/i,
+  /\bsecurity (?:decision|exception|waiver)\b/i,
+  /\b(?:legal|compliance)\b/i,
+];
 
 export type RepositoryPullRequestReviewDisposition =
   | "completed"
@@ -257,6 +267,17 @@ export function repositoryPullRequestReviewDisposition(
 ): RepositoryPullRequestReviewDisposition {
   const decisions = summary.pullRequestDecisions;
   if (decisions === undefined) return "invalid";
+  // A generic architecture/design review is not a human decision boundary. It
+  // must return to the repair queue so the next worker can continue the bounded
+  // conflict resolution or produce concrete evidence for a real owner blocker.
+  if (
+    decisions.some(
+      (decision) =>
+        decision.outcome === "manual-review" && !hasManualReviewBoundaryEvidence(decision),
+    )
+  ) {
+    return "retry";
+  }
   if (decisions.some((decision) => decision.outcome === "retry")) return "retry";
   if (decisions.some((decision) => decision.outcome === "manual-review")) {
     return "manual-review";
@@ -266,6 +287,11 @@ export function repositoryPullRequestReviewDisposition(
   )
     ? "completed"
     : "invalid";
+}
+
+function hasManualReviewBoundaryEvidence(decision: LoopSupervisorPullRequestDecision): boolean {
+  const text = [...decision.evidence, decision.nextStep].join(" ");
+  return MANUAL_REVIEW_BOUNDARY_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDecision[] | null {
