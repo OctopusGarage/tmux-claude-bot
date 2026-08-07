@@ -144,7 +144,9 @@ export class RepositoryReviewQueue {
     owner: string,
     now: number,
     leaseMs: number,
+    hasActiveWorkerLease: boolean,
   ): RepositoryReviewQueueItem | null {
+    if (!hasActiveWorkerLease) return null;
     const id = queueId(repositoryId, scheduledAt);
     const existing = this.items.get(id);
     if (existing?.status === "running" && existing.leaseOwner === owner) return existing;

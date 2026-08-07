@@ -102,6 +102,9 @@ ledger evidence.
 Dispatching reservations without an active worker lease must be reconciled after
 the short dispatch grace period; active leases must prevent that recovery, and
 the recovery must not run target-project commands.
+Repository-review queue recovery may label an occurrence `running` only when
+its WorkOrder id and supervisor session match an active worker lease; a
+`dispatching` file alone is never a capacity reservation.
 Safe project-recovery dispatch deferrals remain immediately claimable in the
 Repair Coordinator queue; they must not be delayed until the original cron
 schedule fires again.

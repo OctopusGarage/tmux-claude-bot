@@ -54,6 +54,7 @@ import { completeLoopSupervisorRun } from "./supervisor-completion.js";
 import {
   allocateLoopSupervisorBatches,
   type LoopSupervisorResetMode,
+  leaseLoopSupervisorWorker,
   readLoopSupervisorWorkerLeaseState,
   releaseLoopSupervisorWorker,
   writeLoopSupervisorWorkerLeaseState,
@@ -762,6 +763,21 @@ export async function runLoopServiceTickAsync(input: {
       mkdirSync(dirname(workOrder.opportunityReportPath), { recursive: true });
     }
     clearLoopRunTerminalArtifacts(workOrder);
+    let supervisorReservationFailure: string | undefined;
+    if (preparationFailures.length === 0 && supervisorSession !== "unconfigured-loop-supervisor") {
+      const lease = leaseLoopSupervisorWorker({
+        state: readLoopSupervisorWorkerLeaseState(),
+        supervisorSession,
+        workOrder,
+        now: Date.now(),
+        retainFailureForMs:
+          (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000,
+      });
+      writeLoopSupervisorWorkerLeaseState(lease.state);
+      if (lease.status === "unavailable") {
+        supervisorReservationFailure = lease.reason;
+      }
+    }
     writeLoopSupervisorWorkOrderState({
       workOrder,
       supervisorSession,
@@ -779,6 +795,12 @@ export async function runLoopServiceTickAsync(input: {
         status: "dispatch-failed",
         reason,
         output: reason,
+      };
+    } else if (supervisorReservationFailure !== undefined) {
+      result = {
+        status: "dispatch-failed",
+        reason: supervisorReservationFailure,
+        output: supervisorReservationFailure,
       };
     } else if (supervisorSession === "unconfigured-loop-supervisor") {
       result = {
@@ -1494,6 +1516,12 @@ function activeLoopSupervisorWork(configFile: string): {
       resourcePaths.add(resourcePath);
     }
   }
+  for (const lease of readLoopSupervisorWorkerLeaseState().leases) {
+    if (lease.status !== "active") continue;
+    supervisorSessions.add(lease.workerSession);
+    projectPaths.add(lease.projectPath);
+    resourcePaths.add(resolvePath(lease.projectPath));
+  }
   if (supervisorSessions.size > 0) {
     log.info("loop engineering active supervisor work detected", {
       data: {
@@ -1733,12 +1761,19 @@ function restoreLastFired(
 function reconcileRepositoryReviewQueueWorkOrders(queue: RepositoryReviewQueue, now: number): void {
   for (const record of listUnfinishedLoopSupervisorWorkOrders()) {
     if (record.workOrder.task?.kind !== "repository-pull-request-review") continue;
+    const hasActiveWorkerLease = readLoopSupervisorWorkerLeaseState().leases.some(
+      (lease) =>
+        lease.status === "active" &&
+        lease.workOrderId === record.workOrder.id &&
+        lease.workerSession === record.state.supervisorSession,
+    );
     const adopted = queue.adoptRunning(
       record.workOrder.projectId,
       record.workOrder.scheduledAt,
       `${process.pid}:${record.state.supervisorSession}`,
       now,
       REPOSITORY_REVIEW_QUEUE_LEASE_MS,
+      hasActiveWorkerLease,
     );
     if (adopted === null) continue;
     log.info("loop engineering repository review queue adopted active work order", {

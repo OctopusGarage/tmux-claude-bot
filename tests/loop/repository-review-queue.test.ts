@@ -141,6 +141,7 @@ describe("repository review queue", () => {
         `${process.pid}:tmux_proj_loop-supervisor-4`,
         200,
         1_000,
+        true,
       ),
     ).toMatchObject({
       id: created.id,
@@ -149,6 +150,25 @@ describe("repository review queue", () => {
       attempt: 1,
     });
     expect(store.listReady(200)).toEqual([]);
+  });
+
+  it("does not mark a recovered occurrence running without its matching active worker lease", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "unleased-restart" }));
+
+    expect(
+      store.adoptRunning(
+        "unleased-restart",
+        100,
+        `${process.pid}:tmux_proj_loop-supervisor-4`,
+        200,
+        1_000,
+        false,
+      ),
+    ).toBeNull();
+    expect(store.listReady(200)).toEqual([
+      expect.objectContaining({ id: created.id, status: "pending" }),
+    ]);
   });
 
   it("requeues an occurrence when its supervisor work order ended in a retryable failure", () => {

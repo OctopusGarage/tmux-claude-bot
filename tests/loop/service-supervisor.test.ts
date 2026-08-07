@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
+import { RepositoryReviewQueue } from "../../src/core/loop/repository-review-queue.js";
 import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
@@ -133,6 +134,151 @@ function finalMarkerFromPrompt(prompt: string): string {
 }
 
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("keeps a repository review pending when every configured supervisor has an active lease", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: fluent-frame-all-prs
+      name: Fluent Frame PRs
+      path: ${projectDir}
+      repo: OctopusGarage/fluent-frame
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`,
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "active-other-work",
+          projectId: "other",
+          projectPath: "/repo/other",
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_000,
+        },
+      ],
+    });
+    let dispatched = false;
+
+    await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository review should not run system commands");
+      },
+      runGit: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask: async () => {
+        dispatched = true;
+        return { status: 1, stdout: "", stderr: "must not dispatch" };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+      repositoryReviewOnly: true,
+    });
+
+    expect(dispatched).toBe(false);
+    expect(new RepositoryReviewQueue().list()).toEqual([
+      expect.objectContaining({ repositoryId: "fluent-frame-all-prs", status: "pending" }),
+    ]);
+  });
+
+  it("holds the supervisor worker lease before dispatching a repository review", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: fluent-frame-all-prs
+      name: Fluent Frame PRs
+      path: ${projectDir}
+      repo: OctopusGarage/fluent-frame
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`,
+    );
+
+    let leaseWasHeld = false;
+    await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository review should not run system commands");
+      },
+      runGit: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask: async (request) => {
+        leaseWasHeld = readLoopSupervisorWorkerLeaseState().leases.some(
+          (lease) =>
+            lease.workerSession === "tmux_proj_loop-supervisor" &&
+            lease.workOrderId === request.workOrder.id &&
+            lease.status === "active",
+        );
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: "fluent-frame-all-prs",
+            actionsTaken: ["reviewed pull requests"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+            pullRequestDecisions: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+    expect(leaseWasHeld).toBe(true);
+  });
+
   it("does not reuse a supervisor reserved by a concurrent service tick", () => {
     const reservations = new Set(["tmux_proj_loop-supervisor-1"]);
 
@@ -4026,6 +4172,127 @@ prReview:
       await vi.advanceTimersByTimeAsync(1000);
       expect(enqueue).toHaveBeenCalledTimes(0);
 
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reconciles a repository review final summary on the repository queue tick", async () => {
+    vi.useFakeTimers();
+    try {
+      const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-repository-reconcile-state-"));
+      process.env.TCB_STATE_DIR = stateDir;
+      const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repository-reconcile-project-"));
+      const configFile = writeRepositoryPrReviewConfig({
+        repoOne: projectDir,
+        repoTwo: projectDir,
+      });
+      const runId = "1786111988758-repo-one-prs-repo-pr-review";
+      const workOrder = {
+        id: runId,
+        scheduledAt: 1_786_111_988_758,
+        projectId: "repo-one-prs",
+        projectName: "Repo One PRs",
+        projectPath: projectDir,
+        task: {
+          kind: "repository-pull-request-review",
+          repo: "OctopusGarage/repo-one",
+          lookbackHours: 72,
+          consecutivePasses: 2,
+          autoMerge: true,
+          mergeMethod: "squash",
+          repair: { enabled: true, maxAttempts: 1 },
+        },
+        agent: "codex",
+        goal: "Review PRs.",
+        maxRounds: 1,
+        targetScore: 100,
+        runner: { kind: "agent-supervised", requireConfirmation: false },
+        allowedActions: ["tests"],
+        blockedActions: [],
+        skills: { approved: [] },
+        preflight: { commands: [], repair: { agent: false } },
+        assessment: { command: "true" },
+        execution: { agent: true },
+        recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+        commitPolicy: { enabled: false, perRound: false },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+        requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
+        finalSummaryPath: join(
+          stateDir,
+          "loop-runs",
+          "repo-one-prs",
+          runId,
+          "supervisor-final-summary.json",
+        ),
+      } satisfies LoopWorkOrder;
+      writeLoopSupervisorWorkOrderState({
+        workOrder,
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+        status: "in-flight",
+        now: 1_000,
+      });
+      const stop = startLoopEngineering(
+        {
+          config: {
+            projectSessionPrefix: "tmux_proj_",
+            maxWaitDoneTotalMs: 60_000,
+            loopEngineering: {
+              configFile,
+              tickMs: 60_000,
+              supervisor: { enabled: false, dir: "", agent: "codex" },
+            },
+          },
+          bridge: { hasSession: vi.fn(async () => true) },
+          queue: {
+            enqueue: vi.fn(() => "queued" as const),
+            cancelQueued: vi.fn(() => false),
+            loadPersisted: vi.fn(() => []),
+            keepPersistedCarryover: vi.fn(),
+          },
+        } as never,
+        { configFile, tickMs: 60_000 },
+      );
+
+      await vi.advanceTimersByTimeAsync(1);
+
+      writeFileSync(
+        workOrder.finalSummaryPath,
+        `${JSON.stringify({
+          status: "blocked",
+          projectId: "repo-one-prs",
+          actionsTaken: ["CI is retryable"],
+          delegatedTasks: [],
+          finalVerification: "failed",
+          commits: [],
+          followUps: ["Retry after CI recovers"],
+          pullRequestDecisions: [
+            {
+              number: 1,
+              repository: "OctopusGarage/repo-one",
+              outcome: "retry",
+              evidence: ["CI pending"],
+              nextStep: "Retry later",
+            },
+          ],
+        })}\n`,
+      );
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(
+        readFileSync(
+          join(stateDir, "loop-runs", "repo-one-prs", runId, "work-order-state.json"),
+          "utf8",
+        ),
+      ).toContain('"status": "failed"');
       stop();
     } finally {
       vi.useRealTimers();

@@ -797,6 +797,14 @@ reuse the normal WorkOrder, system gate, final-summary, merge, and cleanup path.
 Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`, and
 `blocked`; expired leases return to `pending`, transient supervisor failures use
 bounded backoff, and a service restart does not lose an uncompleted review.
+Before a repository-review WorkOrder enters `dispatching`, it must hold the
+matching active supervisor-worker lease. Recovery may mark a queue occurrence
+`running` only when that same lease remains active; an unleased dispatch
+reservation is not evidence of execution and remains eligible for the normal
+stale-dispatch recovery path.
+Supervisor capacity and project-conflict planning must include active worker
+leases even when their WorkOrder artifact has already become terminal, so no
+new review can select a supervisor that is still executing another task.
 This prevents an unrelated long WorkOrder from starving repository PR review.
 
 ## Daily Task Audit And Auto Repair
