@@ -450,11 +450,19 @@ function terminalSystemGateFailureFinding(
   const failures = Array.isArray(parsed.failures)
     ? parsed.failures.filter((failure): failure is string => typeof failure === "string")
     : [];
+  const structuredFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
+  const structuredDisposition = structuredFindings
+    .map((finding) => (isRecord(finding) ? finding.repairDisposition : undefined))
+    .find(
+      (disposition): disposition is RuntimeGuardianRepairDisposition =>
+        disposition === "bot-repairable" || disposition === "target-or-external-blocker",
+    );
   const repairDisposition =
-    parsed.repairDisposition === "bot-repairable" ||
+    structuredDisposition ??
+    (parsed.repairDisposition === "bot-repairable" ||
     parsed.repairDisposition === "target-or-external-blocker"
       ? parsed.repairDisposition
-      : undefined;
+      : undefined);
   return {
     kind: "terminal-system-gate-failure",
     severity: "high",

@@ -995,7 +995,15 @@ describe("runtime guardian", () => {
           "source worktree is dirty after supervisor completion",
           "GitHub account permission check timed out",
         ],
-        repairDisposition: "target-or-external-blocker",
+        findings: [
+          {
+            code: "worktree-dirty",
+            repairDisposition: "target-or-external-blocker",
+            retry: "manual",
+            evidence: ["source checkout contains uncommitted changes"],
+            display: "source worktree requires owner cleanup",
+          },
+        ],
         evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
       })}\n`,
     );
