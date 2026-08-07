@@ -6,11 +6,7 @@ import {
   loopScheduleJitterMaxMs,
   loopScheduleJitterMs,
 } from "./schedule-jitter.js";
-import {
-  type LoopScheduledJob,
-  projectScheduledJobs,
-  workspaceScheduledJobs,
-} from "./task-family.js";
+import { type LoopScheduledJob, loopScheduledJobs } from "./task-family.js";
 
 const FIRST_TICK_LOOKBACK_MS = 10 * 60_000;
 
@@ -175,21 +171,7 @@ export function runLoopSchedulerTick(input: LoopTickInput): LoopTickSummary {
 }
 
 function scheduledJobs(config: LoopConfig): LoopScheduledJob[] {
-  return [
-    ...config.projects.flatMap(projectScheduledJobs),
-    ...config.prReview.repositories
-      .filter((repository) => repository.enabled)
-      .map((repository) => ({
-        project: repository,
-        jobKey: `pr-review:${repository.id}`,
-        jobKind: "repository-pull-request-review" as const,
-        schedule: repository.schedule,
-        ...(repository.scheduleJitterMinutes !== undefined
-          ? { scheduleJitterMinutes: repository.scheduleJitterMinutes }
-          : {}),
-      })),
-    ...config.workspaces.flatMap(workspaceScheduledJobs),
-  ];
+  return loopScheduledJobs(config);
 }
 
 function scheduleJitterMs(job: LoopScheduledJob, config: LoopConfig, scheduledAt: number): number {

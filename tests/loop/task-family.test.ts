@@ -3,6 +3,7 @@ import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import {
   LOOP_TASK_FAMILY_GOVERNANCE,
   LOOP_WORK_ORDER_TASK_KINDS,
+  loopScheduledJobs,
   loopTaskFamilyGovernance,
   projectScheduledJobKinds,
   projectScheduledJobs,
@@ -116,6 +117,16 @@ workspaces:
       enabled: true
       schedule: "55 3 * * *"
       scheduleJitterMinutes: 16
+prReview:
+  repositories:
+    - id: hub-all-prs
+      name: Hub all PRs
+      path: /repo/hub
+      repo: OctopusGarage/hub
+      agent: codex
+      schedule: "58 2 * * *"
+      scheduleJitterMinutes: 11
+      switchBack: dev
 `;
 
 describe("loop task family registry", () => {
@@ -287,6 +298,22 @@ describe("loop task family registry", () => {
         schedule: "55 3 * * *",
         scheduleJitterMinutes: 16,
       },
+    ]);
+  });
+
+  it("derives every project and workspace schedule from the Task Family module", () => {
+    const config = parseLoopConfigYaml(allScheduledConfig);
+
+    expect(loopScheduledJobs(config)).toEqual([
+      ...config.projects.flatMap(projectScheduledJobs),
+      {
+        project: config.prReview.repositories[0],
+        jobKey: "pr-review:hub-all-prs",
+        jobKind: "repository-pull-request-review",
+        schedule: "58 2 * * *",
+        scheduleJitterMinutes: 11,
+      },
+      ...config.workspaces.flatMap(workspaceScheduledJobs),
     ]);
   });
 });

@@ -85,7 +85,9 @@ retry-backoff, and queue terminalization must not be reimplemented by an
 adapter. Shared automation notification intent owns severity and content facts;
 Telegram and Lark remain the only channel-rendering adapters.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
-through this module; neither may directly claim, retry, terminalize, or mark a repair running.
+through this module; neither may directly claim, retry, or mark a repair running
+during admission and dispatch. Runtime Guardian may still reconcile an existing
+record to a terminal outcome from authoritative later artifacts.
 Known target-project and external blockers are admitted there as durable terminal
 records without invoking a bot repair.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
@@ -105,6 +107,9 @@ WorkOrder. The configured target is normally 95; a score at or above target is
 a terminal no-op, while an invalid assessment or unsafe repository state blocks
 dispatch without repository mutation. The score, target, notes, and decision
 must remain visible in the WorkOrder or task ledger evidence.
+Task Family is the single scheduled-job read model for Loop Engineering. The
+scheduler and Daily Task Audit discovery must consume it rather than reconstruct
+project, workspace, or repository task policy, job keys, or job kinds.
 Security alignment invariant: every project Security Maintenance schedule must
 run its configured deterministic risk assessment before creating a WorkOrder.
 The default action threshold is 70 and the default critical threshold is 90;
