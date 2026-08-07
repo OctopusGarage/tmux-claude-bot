@@ -361,7 +361,7 @@ function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
   const targetScoreMet = parseTargetScoreMet(value.targetScoreMet);
   const stopConditionReached = parseBoolean(value.stopConditionReached);
   const overOptimizationAvoided = parseBoolean(value.overOptimizationAvoided);
-  const verificationCompleted = parseBoolean(value.verificationCompleted);
+  const verificationCompleted = parseVerificationCompleted(value.verificationCompleted);
   const remainingRisks = parseStringArrayOrSingleton(value.remainingRisks);
   if (
     checklistCompleted === null ||
@@ -385,6 +385,13 @@ function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
 
 function parseBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function parseVerificationCompleted(value: unknown): boolean | null {
+  const booleanValue = parseBoolean(value);
+  if (booleanValue !== null) return booleanValue;
+  if (typeof value !== "string") return null;
+  return /\b(?:skipped|not[- ]run)\b/i.test(value) ? false : null;
 }
 
 function parseChecklistCompleted(value: unknown): boolean | null {
