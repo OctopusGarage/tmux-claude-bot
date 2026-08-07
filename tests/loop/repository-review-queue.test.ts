@@ -66,4 +66,21 @@ describe("repository review queue", () => {
       lastError: "requires owner decision",
     });
   });
+
+  it("keeps retryable review work claimable and records explicit manual review separately", () => {
+    const store = queue();
+    const retry = store.enqueue(item({ repositoryId: "retryable" }));
+    store.lease(retry.id, "worker", 100, 50);
+    expect(store.retry(retry.id, "worker", 110, "checks still running", 200)).toBe(true);
+    expect(store.listReady(199)).toHaveLength(0);
+    expect(store.listReady(200)).toHaveLength(1);
+
+    const manual = store.enqueue(item({ repositoryId: "manual", scheduledAt: 101 }));
+    store.lease(manual.id, "worker", 101, 50);
+    expect(store.manualReview(manual.id, "worker", 102, "migration decision required")).toBe(true);
+    expect(store.list({ all: true }).find((entry) => entry.id === manual.id)).toMatchObject({
+      status: "manual-review",
+      lastError: "migration decision required",
+    });
+  });
 });

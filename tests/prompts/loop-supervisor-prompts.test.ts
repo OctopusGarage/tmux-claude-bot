@@ -222,4 +222,35 @@ prReview:
     expect(revision).toContain("reviewGate.decision is missing");
     expect(revision).toContain(workOrder.requiredFinalMarker);
   });
+
+  it("requires structured outcomes for every repository PR review decision", () => {
+    const reviewConfig = parseLoopConfigYaml(`
+prReview:
+  repositories:
+    - id: app
+      name: App
+      repo: OctopusGarage/app
+      path: /repo/app
+      agent: codex
+      schedule: "0 9 * * *"
+      base: dev
+      autoMerge: true
+`);
+    const repository = reviewConfig.prReview.repositories[0];
+    if (repository === undefined) throw new Error("expected repository review config");
+    const workOrder = buildRepositoryPullRequestReviewWorkOrder({
+      config: reviewConfig,
+      repository,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-app-pr-review-contract",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(prompt).toContain("pullRequestDecisions");
+    expect(prompt).toContain("duplicate, obsolete, non-actionable, or invalid");
+    expect(prompt).toContain('Use "retry"');
+    expect(prompt).toContain('Use "manual-review"');
+    expect(prompt).toContain("only when every pullRequestDecisions entry is merged");
+  });
 });

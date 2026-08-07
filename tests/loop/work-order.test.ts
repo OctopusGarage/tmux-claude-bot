@@ -1116,7 +1116,9 @@ prReview:
     );
     expect(prompt).not.toContain("--base dev --limit 100");
     expect(prompt).toContain("open PR count and each in-scope PR number/base/head/decision");
-    expect(prompt).toContain('final status must be "blocked" or "failed", not "completed"');
+    expect(prompt).toContain(
+      'Final status must be "completed" only when every pullRequestDecisions entry is merged',
+    );
     expect(prompt).toContain("inspect every open PR before finalizing");
     expect(prompt).toContain("Run two independent review passes");
     expect(prompt).toContain(

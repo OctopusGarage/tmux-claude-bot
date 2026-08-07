@@ -27,6 +27,7 @@ import {
   isBotOwnedLoopExecutionWorktree,
   prepareLoopExecutionWorktrees,
 } from "./execution-worktree.js";
+import { repositoryPullRequestReviewDisposition } from "./final-summary-contract.js";
 import {
   recoverInvalidOutputFromFinalSummaryAsync,
   supervisorFinalStatusToRunStatus,
@@ -428,7 +429,7 @@ export async function runLoopServiceTickAsync(input: {
     target: ResolvedDue,
     supervisorSession: string,
     checkpointScheduler = true,
-  ): Promise<LoopSupervisedRunResult["status"]> => {
+  ): Promise<LoopSupervisedRunResult["status"] | "manual-review"> => {
     const { due, project, repository, workspace } = target;
     const runner =
       project?.runner ??
@@ -868,6 +869,27 @@ export async function runLoopServiceTickAsync(input: {
       revisionFailures = supervisorRevisionFailures(gate.failures);
     }
     result = gate.result;
+    const reviewDisposition =
+      workOrder.task?.kind === "repository-pull-request-review" && "summary" in result
+        ? repositoryPullRequestReviewDisposition(result.summary)
+        : workOrder.task?.kind === "repository-pull-request-review"
+          ? "invalid"
+          : undefined;
+    if (
+      workOrder.task?.kind === "repository-pull-request-review" &&
+      result.status === "completed" &&
+      reviewDisposition !== "completed"
+    ) {
+      result = {
+        ...result,
+        status: "blocked",
+        summary: {
+          ...result.summary,
+          status: "blocked",
+          finalVerification: "unknown",
+        },
+      };
+    }
     const endedAt = Date.now();
     const completion = completeLoopSupervisorRun({
       workOrder,
@@ -955,6 +977,13 @@ export async function runLoopServiceTickAsync(input: {
     });
     ran++;
     if (result.status !== "completed") failed++;
+    if (
+      workOrder.task?.kind === "repository-pull-request-review" &&
+      result.status === "blocked" &&
+      reviewDisposition === "manual-review"
+    ) {
+      return "manual-review";
+    }
     return result.status;
   };
 
@@ -1142,8 +1171,25 @@ export async function runLoopServiceTickAsync(input: {
             const result = await runSupervisedDue(target, supervisorSession, false);
             if (result === "completed") {
               repositoryReviewQueue.complete(leased.id, owner, Date.now(), "completed");
+            } else if (result === "manual-review") {
+              repositoryReviewQueue.manualReview(
+                leased.id,
+                owner,
+                Date.now(),
+                "repository review recorded an explicit manual decision",
+              );
             } else if (result === "blocked") {
-              repositoryReviewQueue.complete(leased.id, owner, Date.now(), "blocked");
+              const retryDelay = Math.min(
+                REPOSITORY_REVIEW_RETRY_MAX_MS,
+                REPOSITORY_REVIEW_RETRY_BASE_MS * 2 ** Math.max(0, leased.attempt - 1),
+              );
+              repositoryReviewQueue.retry(
+                leased.id,
+                owner,
+                Date.now(),
+                "repository review has retryable or incomplete decisions",
+                Date.now() + retryDelay,
+              );
             } else {
               const retryDelay = Math.min(
                 REPOSITORY_REVIEW_RETRY_MAX_MS,

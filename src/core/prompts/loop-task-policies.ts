@@ -415,6 +415,9 @@ function repositoryPullRequestReviewPolicy(workOrder: LoopWorkOrder): string[] {
     `- Review every open pull request in ${task.repo} for ${scope}.`,
     `- At the start and immediately before final summary, list open PRs with: ${listCommand}.`,
     "- In actionsTaken, record the open PR count and each in-scope PR number/base/head/decision. If any PR is out of scope, record the explicit reason.",
+    '- In the final JSON, include pullRequestDecisions with one entry for every in-scope PR. Each entry must contain number, repository, outcome, evidence, and nextStep. Outcomes are only "merged", "closed", "retry", or "manual-review".',
+    '- Use "closed" only for a clearly duplicate, obsolete, non-actionable, or invalid PR, and include exactly one reason from that allowlist plus evidence. Draft, conflict, age, or failed checks alone are never close reasons.',
+    '- Use "retry" for pending checks, transient CI/network/worker failures, bounded repair still needed, or incomplete review evidence. Use "manual-review" only for a concrete ownership, permission, product, migration, security-design, or other human decision boundary, with the exact next step.',
     `- Prioritize PRs created or updated within the last ${task.lookbackHours} hours, but inspect every open PR before finalizing; age, Draft state, or conflict state is not a reason to omit a decision.`,
     `- Run two independent review passes for each candidate PR. Merge only when ${task.consecutivePasses} consecutive passes find no bug, CI, mergeability, data loss, security, migration, dependency, deployment, or user-visible regression risk.`,
     "- Do not nitpick style, naming, wording, formatting, or harmless refactors. Focus on whether the PR introduced a real bug or operational risk.",
@@ -429,7 +432,7 @@ function repositoryPullRequestReviewPolicy(workOrder: LoopWorkOrder): string[] {
       ? `- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI using ${mergeMethodFlag(task.mergeMethod)}, then sync the local switch-back branch.`
       : "- Do not merge automatically; report the review decision only.",
     task.autoMerge
-      ? '- Final status must be "completed" only when every in-scope PR was merged or explicitly closed with an evidence-backed reason. If any in-scope PR remains open because of a fixable blocker, conflict, draft, failed/pending check, or unattempted repair, final status must be "blocked" or "failed", not "completed".'
+      ? '- Final status must be "completed" only when every pullRequestDecisions entry is merged or explicitly closed with an evidence-backed allowlisted reason. If any entry is retry or manual-review, do not claim completed; retryable entries are requeued by the service and manual-review entries are retained for the owner.'
       : '- Final status may be "completed" only after every in-scope open PR has a recorded review decision.',
     task.prompt !== undefined ? `- Additional review instruction: ${task.prompt}` : "",
   ].filter(Boolean);

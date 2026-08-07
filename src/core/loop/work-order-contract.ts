@@ -5,12 +5,34 @@ import type { LoopSupervisorPlanReview, LoopWorkOrderPlanning } from "./planning
 
 export type SupervisorFinalStatus = "completed" | "failed" | "blocked" | "timeout" | "cancelled";
 
+export type LoopSupervisorPullRequestDecisionOutcome =
+  | "merged"
+  | "closed"
+  | "retry"
+  | "manual-review";
+
+export type LoopSupervisorPullRequestCloseReason =
+  | "duplicate"
+  | "obsolete"
+  | "non-actionable"
+  | "invalid";
+
+export type LoopSupervisorPullRequestDecision = {
+  number: number;
+  repository: string;
+  outcome: LoopSupervisorPullRequestDecisionOutcome;
+  reason?: LoopSupervisorPullRequestCloseReason;
+  evidence: string[];
+  nextStep: string;
+};
+
 export type LoopSupervisorFinalSummary = {
   status: SupervisorFinalStatus;
   projectId: string;
   actionsTaken: string[];
   delegatedTasks: Array<{ projectId: string; status: string } | string>;
   finalVerification: "passed" | "failed" | "not-run" | "unknown";
+  pullRequestDecisions?: LoopSupervisorPullRequestDecision[];
   reviewGate?: LoopSupervisorReviewGate;
   planReview?: LoopSupervisorPlanReview;
   learning?: LoopSupervisorLearning;

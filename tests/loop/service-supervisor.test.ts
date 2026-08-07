@@ -948,6 +948,7 @@ prReview:
             finalVerification: "passed",
             commits: ["No merge needed"],
             followUps: [],
+            pullRequestDecisions: [],
           })}`,
           stderr: "",
         };
@@ -1426,6 +1427,7 @@ workspaces:
             finalVerification: "passed",
             commits: [],
             followUps: [],
+            pullRequestDecisions: [],
           })}`,
           stderr: "",
         };
@@ -1473,6 +1475,7 @@ workspaces:
             finalVerification: "passed",
             commits: [],
             followUps: [],
+            pullRequestDecisions: [],
           })}`,
           stderr: "",
         };
@@ -1546,6 +1549,15 @@ prReview:
         finalVerification: "not-run",
         commits: [],
         followUps: [],
+        pullRequestDecisions: [
+          {
+            number: 17,
+            repository: "OctopusGarage/mesh-talk",
+            outcome: "manual-review",
+            evidence: ["synthetic project is not openable"],
+            nextStep: "owner must decide whether to recreate the repository",
+          },
+        ],
       })}\n`,
     );
     const ledgerTaskId = `loop:pr-review:mesh-talk-all-prs:${scheduledAt}`;
@@ -1935,6 +1947,23 @@ prReview:
             finalVerification: "passed",
             commits: ["PR #24 merged into dev at abc123"],
             followUps: ["PR #23 remains conflicted"],
+            pullRequestDecisions: [
+              {
+                number: 24,
+                repository: "OctopusGarage/net-auto-switch",
+                outcome: "merged",
+                evidence: ["required checks passed"],
+                nextStep: "none",
+              },
+              {
+                number: 23,
+                repository: "OctopusGarage/net-auto-switch",
+                outcome: "closed",
+                reason: "obsolete",
+                evidence: ["conflict is superseded by the merged replacement"],
+                nextStep: "none",
+              },
+            ],
           })}`,
           stderr: "",
         };
@@ -2029,6 +2058,15 @@ prReview:
             finalVerification: "passed",
             commits: ["PR #17 merged into dev"],
             followUps: [],
+            pullRequestDecisions: [
+              {
+                number: 17,
+                repository: "OctopusGarage/mesh-talk",
+                outcome: "merged",
+                evidence: ["required checks passed"],
+                nextStep: "none",
+              },
+            ],
           })}`,
           stderr: "",
         };

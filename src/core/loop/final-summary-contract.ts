@@ -3,6 +3,8 @@ import type { LoopSupervisorPlanReview } from "./planning.js";
 import type {
   LoopSupervisorFinalSummary,
   LoopSupervisorLearning,
+  LoopSupervisorPullRequestDecision,
+  LoopSupervisorPullRequestDecisionOutcome,
   LoopSupervisorReviewEvidence,
   LoopSupervisorReviewGate,
   LoopSupervisorReviewGateDeterministicGateObject,
@@ -46,6 +48,20 @@ const REVIEW_GATE_DETERMINISTIC_GATE_RESULTS = new Set<
   LoopSupervisorReviewGateDeterministicGateObject["result"]
 >(["passed", "failed", "skipped", "not-run"]);
 
+const PULL_REQUEST_OUTCOMES = new Set<LoopSupervisorPullRequestDecisionOutcome>([
+  "merged",
+  "closed",
+  "retry",
+  "manual-review",
+]);
+const PULL_REQUEST_CLOSE_REASONS = new Set(["duplicate", "obsolete", "non-actionable", "invalid"]);
+
+export type RepositoryPullRequestReviewDisposition =
+  | "completed"
+  | "retry"
+  | "manual-review"
+  | "invalid";
+
 export function finalMarkerForWorkOrder(workOrderId: string): string {
   return `[LOOP_SUPERVISOR_DONE:${workOrderId}]`;
 }
@@ -74,6 +90,11 @@ export function validateSupervisorFinalSummaryForWorkOrder(
 ): boolean {
   if (workOrder.planning?.required === true && summary.planReview === undefined) {
     return false;
+  }
+  if (workOrder.task?.kind === "repository-pull-request-review") {
+    const disposition = repositoryPullRequestReviewDisposition(summary);
+    if (disposition === "invalid") return false;
+    if (summary.status === "completed" && disposition !== "completed") return false;
   }
   return true;
 }
@@ -149,6 +170,10 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
   const learning = value.learning === undefined ? undefined : parseLearning(value.learning);
   const commits = parseStringArray(value.commits);
   const followUps = parseStringArray(value.followUps);
+  const pullRequestDecisions =
+    value.pullRequestDecisions === undefined
+      ? undefined
+      : parsePullRequestDecisions(value.pullRequestDecisions);
 
   if (
     status === null ||
@@ -160,7 +185,8 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
     planReview === null ||
     learning === null ||
     commits === null ||
-    followUps === null
+    followUps === null ||
+    pullRequestDecisions === null
   ) {
     return null;
   }
@@ -176,7 +202,63 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
     ...(learning !== undefined ? { learning } : {}),
     commits,
     followUps,
+    ...(pullRequestDecisions !== undefined ? { pullRequestDecisions } : {}),
   };
+}
+
+export function repositoryPullRequestReviewDisposition(
+  summary: LoopSupervisorFinalSummary,
+): RepositoryPullRequestReviewDisposition {
+  const decisions = summary.pullRequestDecisions;
+  if (decisions === undefined) return "invalid";
+  if (decisions.some((decision) => decision.outcome === "retry")) return "retry";
+  if (decisions.some((decision) => decision.outcome === "manual-review")) {
+    return "manual-review";
+  }
+  return decisions.every(
+    (decision) => decision.outcome === "merged" || decision.outcome === "closed",
+  )
+    ? "completed"
+    : "invalid";
+}
+
+function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDecision[] | null {
+  if (!Array.isArray(value)) return null;
+  const decisions: LoopSupervisorPullRequestDecision[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || !Number.isInteger(item.number) || (item.number as number) < 1)
+      return null;
+    if (typeof item.repository !== "string" || item.repository.trim() === "") return null;
+    if (
+      typeof item.outcome !== "string" ||
+      !PULL_REQUEST_OUTCOMES.has(item.outcome as LoopSupervisorPullRequestDecisionOutcome)
+    ) {
+      return null;
+    }
+    const outcome = item.outcome as LoopSupervisorPullRequestDecisionOutcome;
+    const reason = item.reason;
+    if (outcome === "closed") {
+      if (typeof reason !== "string" || !PULL_REQUEST_CLOSE_REASONS.has(reason)) return null;
+    } else if (reason !== undefined && typeof reason !== "string") {
+      return null;
+    }
+    const evidence = parseStringArray(item.evidence);
+    const nextStep = typeof item.nextStep === "string" ? item.nextStep.trim() : "";
+    if (evidence === null || nextStep === "") return null;
+    if ((outcome === "retry" || outcome === "manual-review") && evidence.length === 0) {
+      return null;
+    }
+    const decision: LoopSupervisorPullRequestDecision = {
+      number: item.number as number,
+      repository: item.repository.trim(),
+      outcome,
+      evidence,
+      nextStep,
+    };
+    if (typeof reason === "string") decision.reason = reason as NonNullable<typeof decision.reason>;
+    decisions.push(decision);
+  }
+  return decisions;
 }
 
 function parseLearning(value: unknown): LoopSupervisorLearning | null {

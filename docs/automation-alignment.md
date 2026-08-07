@@ -77,6 +77,12 @@ repair-queue state only from an authoritative passing supervisor final summary.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
 same task before dispatch; project recovery wins over an accidental bot-owned
 import for the same task.
+Repository PR review alignment invariant: every repository-wide review WorkOrder
+must persist one structured decision per in-scope PR. Only `merged` and
+evidence-backed allowlisted `closed` decisions complete the queue item; retryable
+decisions return to the shared queue, while explicit `manual-review` decisions
+remain terminal and visible for owner action. Draft, conflict, age, pending CI,
+and temporary worker failures must never silently complete or close a PR.
 Architecture alignment invariant: every project and workspace Architecture
 schedule must run its deterministic score assessment before creating a
 WorkOrder. The configured target is normally 95; a score at or above target is

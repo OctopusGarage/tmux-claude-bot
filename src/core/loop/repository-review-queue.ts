@@ -7,7 +7,8 @@ export type RepositoryReviewQueueStatus =
   | "running"
   | "retry-wait"
   | "completed"
-  | "blocked";
+  | "blocked"
+  | "manual-review";
 
 export type RepositoryReviewQueueItem = {
   id: string;
@@ -142,11 +143,19 @@ export class RepositoryReviewQueue {
     return true;
   }
 
+  retry(id: string, owner: string, now: number, error: string, nextAttemptAt: number): boolean {
+    return this.fail(id, owner, now, error, nextAttemptAt);
+  }
+
+  manualReview(id: string, owner: string, now: number, reason: string): boolean {
+    return this.complete(id, owner, now, "manual-review", reason);
+  }
+
   complete(
     id: string,
     owner: string,
     now: number,
-    status: "completed" | "blocked",
+    status: "completed" | "blocked" | "manual-review",
     error?: string,
   ): boolean {
     const item = this.items.get(id);
@@ -193,5 +202,5 @@ export class RepositoryReviewQueue {
 }
 
 function isTerminal(status: RepositoryReviewQueueStatus): boolean {
-  return status === "completed" || status === "blocked";
+  return status === "completed" || status === "blocked" || status === "manual-review";
 }

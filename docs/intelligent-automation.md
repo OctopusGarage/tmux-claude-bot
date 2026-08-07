@@ -42,6 +42,13 @@ outcome is terminal, reconciliation closes the queue as blocked with the
 uncertainty preserved for human review instead of retrying indefinitely.
 Queue records that resolve to no ledger evidence are likewise terminalized as
 blocked; an agent cannot safely repair an unidentifiable task.
+Repository-wide PR review has a narrower decision contract: every in-scope PR
+must be recorded as `merged`, `closed`, `retry`, or `manual-review`. `retry`
+remains claimable through the review queue and backoff path; `manual-review` is
+the explicit human terminal state. A PR may be closed automatically only with
+an evidence-backed `duplicate`, `obsolete`, `non-actionable`, or `invalid`
+reason. Draft, conflict, age, pending checks, and ordinary repair failures are
+not close reasons by themselves.
 An open project-recovery lease linked only to terminal WorkOrders is released
 before the next admission pass when no live WorkOrder remains; an unknown live
 recovery is still deferred to preserve the one-project mutation invariant.
@@ -96,6 +103,13 @@ means a newer or higher-priority linked repair owns the same task, and
 `not-reproducible` means the original evidence could not be reproduced after
 the prescribed verification. Daily Audit and Runtime Guardian must reconcile
 these outcomes with the linked ledger task ids before declaring a repair clean.
+
+Repository PR review queue records additionally expose `manual-review` as a
+terminal status distinct from retryable `retry-wait`. The queue may complete
+only after all structured PR decisions are terminal (`merged` or allowlisted
+`closed`), or retain the item as `manual-review` when every unresolved decision
+explicitly requires an owner. Missing or malformed PR decisions are
+orchestration failures and return to retry, never to a false completed state.
 
 Security Maintenance assessments use the same deterministic contract everywhere:
 the configured command must emit a JSON object with numeric `riskScore` from
