@@ -288,7 +288,7 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
     } else if (reason !== undefined && typeof reason !== "string") {
       return null;
     }
-    const evidence = parseStringArray(item.evidence);
+    const evidence = parseStringArrayOrSingleton(item.evidence);
     const nextStep = typeof item.nextStep === "string" ? item.nextStep.trim() : "";
     if (evidence === null || nextStep === "") return null;
     if ((outcome === "retry" || outcome === "manual-review") && evidence.length === 0) {

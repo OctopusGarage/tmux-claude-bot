@@ -107,6 +107,33 @@ describe("repository PR decision contract", () => {
     if (result.ok) expect(repositoryPullRequestReviewDisposition(result.summary)).toBe("completed");
   });
 
+  it("normalizes a single evidence string in a supervisor decision", () => {
+    const result = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-evidence]${JSON.stringify(
+        summary({
+          status: "blocked",
+          pullRequestDecisions: [
+            {
+              number: 19,
+              repository: "OctopusGarage/repo",
+              outcome: "retry",
+              evidence: "required checks are still pending",
+              nextStep: "poll checks again",
+            },
+          ],
+        }),
+      )}`,
+      "run-evidence",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.pullRequestDecisions?.[0]?.evidence).toEqual([
+        "required checks are still pending",
+      ]);
+    }
+  });
+
   it("rejects a close decision outside the allowlist", () => {
     const result = parseSupervisorFinalSummary(
       `[LOOP_SUPERVISOR_DONE:run-2]${JSON.stringify(
