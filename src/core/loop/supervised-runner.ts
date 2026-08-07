@@ -4,6 +4,7 @@ import {
   buildLoopSupervisorPrompt,
   buildLoopSupervisorRevisionPrompt,
 } from "../prompts/loop-supervisor.js";
+import { recoverNonTerminalPullRequestDecisions } from "./final-summary-contract.js";
 import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
 import {
   type LoopSupervisorFinalSummary,
@@ -244,13 +245,14 @@ function parseDispatchOutput(
   if (!parsed.ok) {
     return { status: "invalid-output", reason: parsed.reason, output };
   }
-  if (!validateSupervisorFinalSummaryForWorkOrder(workOrder, parsed.summary)) {
+  const summary = recoverNonTerminalPullRequestDecisions(workOrder, parsed.summary);
+  if (!validateSupervisorFinalSummaryForWorkOrder(workOrder, summary)) {
     return { status: "invalid-output", reason: "invalid-summary", output };
   }
 
   return {
-    status: supervisorFinalStatusToRunStatus(parsed.summary.status),
-    summary: parsed.summary,
+    status: supervisorFinalStatusToRunStatus(summary.status),
+    summary,
     output,
   };
 }

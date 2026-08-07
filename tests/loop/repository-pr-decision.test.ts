@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   parseSupervisorFinalSummary,
+  recoverNonTerminalPullRequestDecisions,
   repositoryPullRequestReviewDisposition,
 } from "../../src/core/loop/final-summary-contract.js";
+import type {
+  LoopSupervisorFinalSummary,
+  LoopWorkOrder,
+} from "../../src/core/loop/work-order-contract.js";
 
 function summary(overrides: Record<string, unknown> = {}) {
   return {
@@ -27,6 +32,57 @@ function summary(overrides: Record<string, unknown> = {}) {
 }
 
 describe("repository PR decision contract", () => {
+  it("recovers explicit non-terminal decisions omitted from the JSON array", () => {
+    const workOrder = {
+      task: { kind: "repository-pull-request-review", repo: "YS-Insight/geo-backend" },
+    } as LoopWorkOrder;
+    const input = {
+      ...summary({
+        status: "blocked",
+        pullRequestDecisions: undefined,
+        actionsTaken: [
+          "PR #16 reviewed; decision=retry because GitHub remains UNSTABLE",
+          "PR #19 reviewed; decision=manual-review because mergeability is CONFLICTING",
+        ],
+        followUps: ["Retry PR #16 after checks settle"],
+      }),
+    } as unknown as LoopSupervisorFinalSummary;
+
+    const recovered = recoverNonTerminalPullRequestDecisions(workOrder, input);
+
+    expect(recovered.pullRequestDecisions).toEqual([
+      {
+        number: 16,
+        repository: "YS-Insight/geo-backend",
+        outcome: "retry",
+        evidence: ["PR #16 reviewed; decision=retry because GitHub remains UNSTABLE"],
+        nextStep: "Retry PR #16 after checks settle",
+      },
+      {
+        number: 19,
+        repository: "YS-Insight/geo-backend",
+        outcome: "manual-review",
+        evidence: ["PR #19 reviewed; decision=manual-review because mergeability is CONFLICTING"],
+        nextStep: "re-evaluate this pull request on the next retry",
+      },
+    ]);
+    expect(repositoryPullRequestReviewDisposition(recovered)).toBe("retry");
+  });
+
+  it("never infers terminal outcomes from action text", () => {
+    const workOrder = {
+      task: { kind: "repository-pull-request-review", repo: "YS-Insight/geo-backend" },
+    } as LoopWorkOrder;
+    const input = {
+      ...summary({
+        pullRequestDecisions: undefined,
+        actionsTaken: ["PR #16 reviewed; decision=merged after checks passed"],
+      }),
+    } as unknown as LoopSupervisorFinalSummary;
+
+    expect(recoverNonTerminalPullRequestDecisions(workOrder, input)).toBe(input);
+  });
+
   it("parses terminal merge and close decisions", () => {
     const result = parseSupervisorFinalSummary(
       `[LOOP_SUPERVISOR_DONE:run-1]${JSON.stringify(

@@ -74,7 +74,11 @@ export function parseSupervisorFinalSummaryFile(
   }
   try {
     const parsed = JSON.parse(readFileSync(workOrder.finalSummaryPath, "utf8")) as unknown;
-    const summary = parseSummaryObject(parsed);
+    const parsedSummary = parseSummaryObject(parsed);
+    const summary =
+      parsedSummary === null
+        ? null
+        : recoverNonTerminalPullRequestDecisions(workOrder, parsedSummary);
     if (summary === null || !validateSupervisorFinalSummaryForWorkOrder(workOrder, summary)) {
       return { ok: false, reason: "invalid-summary" };
     }
@@ -97,6 +101,48 @@ export function validateSupervisorFinalSummaryForWorkOrder(
     if (summary.status === "completed" && disposition !== "completed") return false;
   }
   return true;
+}
+
+/**
+ * Recover non-terminal PR decisions when a supervisor wrote explicit decision
+ * lines but omitted the structured array. Terminal outcomes are never inferred
+ * from prose.
+ */
+export function recoverNonTerminalPullRequestDecisions(
+  workOrder: LoopWorkOrder,
+  summary: LoopSupervisorFinalSummary,
+): LoopSupervisorFinalSummary {
+  if (
+    workOrder.task?.kind !== "repository-pull-request-review" ||
+    summary.pullRequestDecisions !== undefined
+  ) {
+    return summary;
+  }
+  const repository = workOrder.task.repo;
+
+  const decisions = summary.actionsTaken
+    .map((action) => {
+      const match = action.match(
+        /\bPR\s*#(\d+)\b[\s\S]*?\bdecision\s*=\s*(retry|manual-review)\b/i,
+      );
+      if (match === null) return undefined;
+      const number = Number(match[1]);
+      const outcome = match[2]?.toLowerCase() as "retry" | "manual-review" | undefined;
+      if (!Number.isInteger(number) || outcome === undefined) return undefined;
+      const followUp = summary.followUps.find((item) => item.includes(`#${number}`));
+      return {
+        number,
+        repository,
+        outcome,
+        evidence: [action],
+        nextStep: followUp ?? "re-evaluate this pull request on the next retry",
+      };
+    })
+    .filter((decision): decision is NonNullable<typeof decision> => decision !== undefined);
+
+  const uniqueNumbers = new Set(decisions.map((decision) => decision.number));
+  if (decisions.length === 0 || uniqueNumbers.size !== decisions.length) return summary;
+  return { ...summary, pullRequestDecisions: decisions };
 }
 
 export function parseSupervisorFinalSummary(
