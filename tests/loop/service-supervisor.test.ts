@@ -3239,7 +3239,7 @@ prReview:
     expect(prCommands).toEqual([
       "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh repo view --json viewerPermission",
       "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr view 'loop/hub/architecture/1784196600000-hub' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
-      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge 'loop/hub/architecture/1784196600000-hub' --merge --delete-branch",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge 'loop/hub/architecture/1784196600000-hub' --merge",
     ]);
     expect(gitCommands).toEqual([
       ["status", "--porcelain"],
