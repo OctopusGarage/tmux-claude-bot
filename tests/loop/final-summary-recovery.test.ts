@@ -103,4 +103,54 @@ describe("final summary recovery", () => {
       summary: { planReview: { checklistCompleted: true } },
     });
   });
+
+  it("recovers a blocked legacy summary with explanatory review fields", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["confirmed the historical PR is already merged"],
+        delegatedTasks: [{ projectId: "tmux-claude-bot", status: "blocked" }],
+        finalVerification: "failed",
+        reviewGate: {
+          preMutationReview: ["reviewed the persisted evidence"],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "block",
+          notes: "the required PR is already merged",
+        },
+        planReview: {
+          checklistCompleted: true,
+          targetScoreMet: "not-applicable: recovery is evidence bounded",
+          stopConditionReached: true,
+          overOptimizationAvoided: true,
+          verificationCompleted: "historical verification was skipped",
+          remainingRisks: ["owner authorization is required"],
+        },
+        commits: [],
+        followUps: ["do not manufacture a replacement report"],
+      })}\n`,
+    );
+
+    const recovered = recoverInvalidOutputFromFinalSummary(
+      { ...workOrder(summaryPath), planning: { required: true } } as LoopWorkOrder,
+      {
+        status: "invalid-output",
+        reason: "invalid-summary",
+        output: "legacy supervisor summary was persisted",
+      },
+    );
+
+    expect(recovered).toMatchObject({
+      status: "blocked",
+      summary: {
+        reviewGate: { notes: ["the required PR is already merged"] },
+        planReview: { verificationCompleted: false },
+      },
+    });
+  });
 });
