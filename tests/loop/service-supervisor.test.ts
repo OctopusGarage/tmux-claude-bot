@@ -954,7 +954,7 @@ prReview:
         };
       },
       supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
-      resetSupervisorBeforeWorkOrder: "clear",
+      resetSupervisorBeforeWorkOrder: "compact",
     });
 
     expect(result).toMatchObject({ ran: 2, failed: 0 });

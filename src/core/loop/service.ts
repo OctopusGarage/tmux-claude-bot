@@ -741,6 +741,10 @@ export async function runLoopServiceTickAsync(input: {
       status: "dispatching",
       now: Date.now(),
     });
+    const supervisorContextReset =
+      due.jobKind === "repository-pull-request-review"
+        ? ("clear" as const)
+        : resetSupervisorBeforeWorkOrder;
     let result: LoopSupervisedRunResult;
     if (preparationFailures.length > 0) {
       const reason = `execution worktree isolation failed: ${preparationFailures.join("; ")}`;
@@ -778,7 +782,7 @@ export async function runLoopServiceTickAsync(input: {
           runner.timeoutMs ??
           input.defaultSupervisorTimeoutMs ??
           DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
-        resetBeforeWorkOrder: resetSupervisorBeforeWorkOrder,
+        resetBeforeWorkOrder: supervisorContextReset,
         dispatch: input.runSupervisorTask,
       });
       if (
@@ -802,7 +806,7 @@ export async function runLoopServiceTickAsync(input: {
               runner.timeoutMs ??
               input.defaultSupervisorTimeoutMs ??
               DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
-            resetBeforeWorkOrder: resetSupervisorBeforeWorkOrder,
+            resetBeforeWorkOrder: supervisorContextReset,
             dispatch: input.runSupervisorTask,
           });
         }
@@ -857,6 +861,7 @@ export async function runLoopServiceTickAsync(input: {
         attempt: revisionAttempt,
         maxAttempts: maxSupervisorRevisionAttempts,
         previousOutput: gate.result.output,
+        resetBeforeWorkOrder: supervisorContextReset,
       });
       result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
       gate = runSupervisedSystemGateOutcome({
