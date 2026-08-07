@@ -316,6 +316,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         sourceWorktree: repo,
         reason: "isolated execution worktree could not be prepared",
         detail: "worktree add failed",
+        repairDisposition: "bot-repairable",
       },
     ]);
   });
@@ -340,6 +341,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         sourceWorktree: repo,
         reason: "isolated execution worktree could not be prepared",
         detail: "source worktree is dirty: M src/index.ts",
+        repairDisposition: "target-or-external-blocker",
       },
     ]);
   });
@@ -368,6 +370,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         sourceWorktree: repo,
         reason: "isolated execution worktree could not be prepared",
         detail: "fatal: repository not found",
+        repairDisposition: "bot-repairable",
       },
     ]);
   });
@@ -392,6 +395,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         sourceWorktree: repo,
         reason: "isolated execution worktree could not be prepared",
         detail: "source worktree is dirty: M src/index.ts",
+        repairDisposition: "target-or-external-blocker",
       },
     ]);
   });
@@ -416,6 +420,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         sourceWorktree: repo,
         reason: "isolated execution worktree could not be prepared",
         detail: "fatal: not a repository",
+        repairDisposition: "bot-repairable",
       },
     ]);
   });
@@ -473,6 +478,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         repositoryId: "repo",
         sourceWorktree: repo,
         reason: "source execution worktree could not be prepared",
+        repairDisposition: "bot-repairable",
       },
     ]);
   });

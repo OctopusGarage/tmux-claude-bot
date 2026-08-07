@@ -570,6 +570,7 @@ prReview:
       status: "dispatch-failed" as const,
       reason: "worker was already leased",
       output: "worker was already leased",
+      repairDisposition: "bot-repairable" as const,
     };
     writeSupervisedSystemGateArtifact({
       workOrder: {
@@ -591,6 +592,7 @@ prReview:
     expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
       resultStatus: "dispatch-failed",
       accepted: false,
+      repairDisposition: "bot-repairable",
     });
   });
 

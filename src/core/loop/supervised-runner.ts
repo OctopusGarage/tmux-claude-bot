@@ -30,7 +30,9 @@ export type SupervisorDispatchResult = {
   stderr: string;
 };
 
-export type LoopSupervisedRunResult =
+export type LoopRepairDisposition = "bot-repairable" | "target-or-external-blocker";
+
+export type LoopSupervisedRunResult = (
   | {
       status: "completed";
       summary: LoopSupervisorFinalSummary;
@@ -50,7 +52,11 @@ export type LoopSupervisedRunResult =
       status: "dispatch-failed" | "dispatch-timeout" | "invalid-output";
       reason: string;
       output: string;
-    };
+    }
+) & {
+  /** Machine-readable ownership for a failure produced by bot infrastructure. */
+  repairDisposition?: LoopRepairDisposition;
+};
 
 export type LoopSupervisedRunnerInput = {
   workOrder: LoopWorkOrder;

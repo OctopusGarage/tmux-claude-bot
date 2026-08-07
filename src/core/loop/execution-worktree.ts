@@ -41,6 +41,7 @@ export function prepareLoopExecutionWorktrees(input: {
         repositoryId: input.workOrder.projectId,
         sourceWorktree: input.workOrder.projectPath,
         reason: "source execution worktree could not be prepared",
+        repairDisposition: "bot-repairable",
       });
     }
   }
@@ -55,6 +56,7 @@ export function prepareLoopExecutionWorktrees(input: {
           repositoryId: input.workOrder.projectId,
           sourceWorktree: input.workOrder.projectPath,
           reason: "isolated execution worktree could not be prepared",
+          repairDisposition: "bot-repairable",
         })
       : input.workOrder;
   }
@@ -64,6 +66,9 @@ export function prepareLoopExecutionWorktrees(input: {
       sourceWorktree: input.workOrder.projectPath,
       reason: "isolated execution worktree could not be prepared",
       detail: prepared.detail,
+      repairDisposition: prepared.detail.startsWith("source worktree is dirty:")
+        ? "target-or-external-blocker"
+        : "bot-repairable",
     });
   }
   return withLoopExecutionWorktree(input.workOrder, prepared.executionWorktree);
@@ -127,6 +132,7 @@ export type LoopExecutionWorktreePreparationFailure = {
   sourceWorktree: string;
   reason: string;
   detail?: string;
+  repairDisposition: "bot-repairable" | "target-or-external-blocker";
 };
 
 function prepareWorkspaceExecutionWorktrees(
@@ -169,6 +175,7 @@ function prepareWorkspaceExecutionWorktrees(
           repositoryId: repository.id,
           sourceWorktree: repository.path,
           reason: "source execution worktree could not be prepared",
+          repairDisposition: "bot-repairable",
         });
         return {
           id: repository.id,
@@ -194,6 +201,9 @@ function prepareWorkspaceExecutionWorktrees(
           sourceWorktree: repository.path,
           reason: "isolated execution worktree could not be prepared",
           ...(prepared === null ? {} : { detail: prepared.detail }),
+          repairDisposition: prepared?.detail.startsWith("source worktree is dirty:")
+            ? "target-or-external-blocker"
+            : "bot-repairable",
         });
       }
       return { id: repository.id, path: repository.path };

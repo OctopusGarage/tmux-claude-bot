@@ -78,7 +78,7 @@ describe("runtime guardian", () => {
     else process.env.TCB_STATE_DIR = originalStateDir;
   });
 
-  it("terminalizes target and external blockers instead of retrying bot repair forever", () => {
+  it("terminalizes explicitly classified target and external blockers instead of retrying bot repair forever", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const target = coordinator.enqueue({
       projectId: "alcove",
@@ -108,17 +108,39 @@ describe("runtime guardian", () => {
       findings: [
         finding({
           runId: "run-dirty",
-          evidence: ["source worktree is dirty after supervisor completion"],
+          repairDisposition: "target-or-external-blocker",
+          evidence: ["the source checkout cannot be changed by this repair"],
         }),
         finding({
           runId: "run-tls",
-          evidence: ["GitHub account permission check failed: TLS handshake timeout"],
+          repairDisposition: "target-or-external-blocker",
+          evidence: ["the remote service is unavailable"],
         }),
       ],
     });
 
     expect(reconciled).toBe(2);
     expect(coordinator.list().map((record) => record.status)).toEqual(["blocked", "blocked"]);
+  });
+
+  it("does not infer a terminal blocker from legacy failure wording", async () => {
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [
+        finding({
+          kind: "terminal-system-gate-failure",
+          evidence: ["source worktree is dirty after supervisor completion"],
+        }),
+      ],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(dispatchRepair).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ repairDispatch: "queued" });
   });
 
   it("does not dispatch target-project or external findings as bot self-repair", async () => {
@@ -128,6 +150,7 @@ describe("runtime guardian", () => {
       config: runtimeConfig(),
       discover: () => [
         finding({
+          repairDisposition: "target-or-external-blocker",
           evidence: [
             "isolated worktree is on dev, expected WorkOrder branch loop/alcove/architecture",
           ],
@@ -209,7 +232,10 @@ describe("runtime guardian", () => {
         repairBranch: "dev",
         mode: "fast-heal",
         findings: [
-          finding({ evidence: ["GitHub account permission check failed: TLS handshake timeout"] }),
+          finding({
+            repairDisposition: "target-or-external-blocker",
+            evidence: ["GitHub account permission check failed: TLS handshake timeout"],
+          }),
         ],
       },
     );
@@ -969,6 +995,7 @@ describe("runtime guardian", () => {
           "source worktree is dirty after supervisor completion",
           "GitHub account permission check timed out",
         ],
+        repairDisposition: "target-or-external-blocker",
         evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
       })}\n`,
     );
@@ -985,6 +1012,7 @@ describe("runtime guardian", () => {
         kind: "terminal-system-gate-failure",
         severity: "high",
         runId: "run-system-gate-failed",
+        repairDisposition: "target-or-external-blocker",
         evidence: expect.arrayContaining([
           "system gate rejected terminal work-order: run-system-gate-failed",
           expect.stringContaining("source worktree is dirty"),

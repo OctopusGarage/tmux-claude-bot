@@ -74,6 +74,11 @@ Recovery alignment invariant: Daily Task Audit and Runtime Guardian must treat
 worker-consumption timeout as retryable delivery, deduplicate project recovery
 by project identity while an active recovery exists, and reconcile ledger plus
 repair-queue state only from an authoritative passing supervisor final summary.
+When a system gate or execution-isolation producer knows that a finding belongs
+to a target or external boundary, it must persist a structured repair
+disposition; Runtime Guardian must never infer terminal ownership from log or
+failure wording. Legacy artifacts without that disposition remain repairable
+until a current flow classifies them.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
 same task before dispatch; project recovery wins over an accidental bot-owned
 import for the same task.

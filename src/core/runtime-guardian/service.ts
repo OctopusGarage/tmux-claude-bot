@@ -39,6 +39,8 @@ export type RuntimeGuardianFindingKind =
   | "stale-dispatching-work-order"
   | "read-only-smoke-preflight-blocked";
 
+export type RuntimeGuardianRepairDisposition = "bot-repairable" | "target-or-external-blocker";
+
 export type RuntimeGuardianFinding = {
   kind: RuntimeGuardianFindingKind;
   severity: "medium" | "high";
@@ -46,6 +48,11 @@ export type RuntimeGuardianFinding = {
   projectId: string;
   projectPath: string;
   evidence: string[];
+  /**
+   * A machine-readable disposition supplied by the producing gate. Absence
+   * means a legacy artifact whose wording must not decide queue behavior.
+   */
+  repairDisposition?: RuntimeGuardianRepairDisposition;
   runDir?: string;
 };
 
@@ -443,6 +450,11 @@ function terminalSystemGateFailureFinding(
   const failures = Array.isArray(parsed.failures)
     ? parsed.failures.filter((failure): failure is string => typeof failure === "string")
     : [];
+  const repairDisposition =
+    parsed.repairDisposition === "bot-repairable" ||
+    parsed.repairDisposition === "target-or-external-blocker"
+      ? parsed.repairDisposition
+      : undefined;
   return {
     kind: "terminal-system-gate-failure",
     severity: "high",
@@ -458,6 +470,7 @@ function terminalSystemGateFailureFinding(
         : ["system-gate.json recorded accepted=false without failure details"]),
       `system gate evidence exists: ${gatePath}`,
     ],
+    ...(repairDisposition === undefined ? {} : { repairDisposition }),
   };
 }
 
@@ -752,10 +765,7 @@ export async function dispatchRuntimeGuardianRepair(
 }
 
 function isTargetOrExternalBlocker(finding: RuntimeGuardianFinding): boolean {
-  const evidence = finding.evidence.join(" ").toLowerCase();
-  return /(source worktree is dirty|isolated worktree is on|github account .*permission|tls handshake|billing|spending limit|external (service|ci)|runner .*unavailable)/.test(
-    evidence,
-  );
+  return finding.repairDisposition === "target-or-external-blocker";
 }
 
 function isQueueTerminal(status: string): boolean {

@@ -25,6 +25,7 @@ import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml }
 import {
   cleanupLoopExecutionWorktree,
   isBotOwnedLoopExecutionWorktree,
+  type LoopExecutionWorktreePreparationFailure,
   prepareLoopExecutionWorktrees,
 } from "./execution-worktree.js";
 import { repositoryPullRequestReviewDisposition } from "./final-summary-contract.js";
@@ -745,16 +746,12 @@ export async function runLoopServiceTickAsync(input: {
     if (preDispatchAssessment !== undefined) {
       workOrder = { ...workOrder, preDispatchAssessment };
     }
-    const preparationFailures: string[] = [];
+    const preparationFailures: LoopExecutionWorktreePreparationFailure[] = [];
     workOrder = prepareLoopExecutionWorktrees({
       workOrder,
       ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
       defaultMode: input.supervisorWorktreeIsolation ?? "isolated",
-      onPreparationFailure: (failure) => {
-        preparationFailures.push(
-          `${failure.repositoryId}: ${failure.reason} (${failure.sourceWorktree})`,
-        );
-      },
+      onPreparationFailure: (failure) => preparationFailures.push(failure),
     });
     if (workOrder.finalSummaryPath !== undefined) {
       mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
@@ -790,11 +787,18 @@ export async function runLoopServiceTickAsync(input: {
         : resetSupervisorBeforeWorkOrder;
     let result: LoopSupervisedRunResult;
     if (preparationFailures.length > 0) {
-      const reason = `execution worktree isolation failed: ${preparationFailures.join("; ")}`;
+      const reason = `execution worktree isolation failed: ${preparationFailures
+        .map((failure) => `${failure.repositoryId}: ${failure.reason} (${failure.sourceWorktree})`)
+        .join("; ")}`;
       result = {
         status: "dispatch-failed",
         reason,
         output: reason,
+        repairDisposition: preparationFailures.some(
+          (failure) => failure.repairDisposition === "target-or-external-blocker",
+        )
+          ? "target-or-external-blocker"
+          : "bot-repairable",
       };
     } else if (supervisorReservationFailure !== undefined) {
       result = {
@@ -2387,6 +2391,9 @@ export function writeSupervisedSystemGateArtifact(input: {
         evalReport,
         evidence: input.gate.evidence,
         failures: input.gate.failures,
+        ...(input.gate.result.repairDisposition === undefined
+          ? {}
+          : { repairDisposition: input.gate.result.repairDisposition }),
         recoverableFailures: supervisorRevisionFailures(input.gate.failures),
         writtenAt: input.writtenAt,
       },
