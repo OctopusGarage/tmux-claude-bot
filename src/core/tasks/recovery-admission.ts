@@ -9,6 +9,8 @@ export type RecoveryFinding = {
   taskId: string;
   summary?: string;
   priority: number;
+  /** A known ownership boundary that must remain auditable but never dispatch. */
+  terminalStatus?: "blocked";
 };
 
 export type RecoveryAdmissionDispatchResult =
@@ -35,21 +37,32 @@ export async function admitRecoveryFindings(input: {
   if (input.findings.length === 0)
     return { disposition: "not-needed", admitted: 0, claimed: 0, detail: "no findings" };
 
+  const terminalFindings = input.findings.filter(
+    (finding): finding is RecoveryFinding & { terminalStatus: "blocked" } =>
+      finding.terminalStatus !== undefined,
+  );
+  for (const finding of terminalFindings) {
+    const record = findRecordForFinding(input.coordinator, finding);
+    if (record !== undefined)
+      input.coordinator.markTerminal(record.id, finding.terminalStatus, input.now);
+  }
+  const dispatchableFindings = input.findings.filter(
+    (finding) => finding.terminalStatus === undefined,
+  );
+  if (dispatchableFindings.length === 0) {
+    return {
+      disposition: "blocked",
+      admitted: input.findings.length,
+      claimed: 0,
+      detail: "terminal blocked findings recorded; no bot self-repair dispatched",
+    };
+  }
+
   const claimed = input.coordinator.claimIds(
-    input.findings
-      .map(
-        (finding) =>
-          input.coordinator
-            .list()
-            .find(
-              (record) =>
-                record.projectId === finding.projectId &&
-                record.taskFamily === finding.taskFamily &&
-                record.fingerprint === finding.fingerprint,
-            )?.id,
-      )
+    dispatchableFindings
+      .map((finding) => findRecordForFinding(input.coordinator, finding)?.id)
       .filter((id): id is string => id !== undefined),
-    { now: input.now, leaseId: input.leaseId, limit: input.findings.length },
+    { now: input.now, leaseId: input.leaseId, limit: dispatchableFindings.length },
   );
   if (claimed.length === 0)
     return {
@@ -81,6 +94,20 @@ export async function admitRecoveryFindings(input: {
     claimed: claimed.length,
     detail: dispatch.detail,
   };
+}
+
+function findRecordForFinding(
+  coordinator: RepairCoordinator,
+  finding: RecoveryFinding,
+): RepairQueueRecord | undefined {
+  return coordinator
+    .list()
+    .find(
+      (record) =>
+        record.projectId === finding.projectId &&
+        record.taskFamily === finding.taskFamily &&
+        record.fingerprint === finding.fingerprint,
+    );
 }
 
 export async function dispatchRecoveryQueue<T>(input: {

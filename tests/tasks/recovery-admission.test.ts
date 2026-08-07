@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   admitRecoveryFindings,
+  dispatchRecoveryQueue,
   type RecoveryFinding,
 } from "../../src/core/tasks/recovery-admission.js";
 import {
@@ -55,5 +56,81 @@ describe("recovery admission", () => {
     expect(coordinator.list()).toEqual([
       expect.objectContaining({ status: "pending", attempt: 0, nextAttemptAt: 1_000 }),
     ]);
+  });
+
+  it("returns a normal blocked admission to backoff retry", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const result = await admitRecoveryFindings({
+      findings: [finding()],
+      coordinator,
+      now: 1_000,
+      leaseId: "admission:1",
+      dispatch: async () => ({ status: "blocked", detail: "repair failed" }),
+    });
+    expect(result.disposition).toBe("blocked");
+    expect(coordinator.list()[0]).toMatchObject({ status: "retry-wait", attempt: 1 });
+  });
+
+  it("does nothing for an empty admission", async () => {
+    const result = await admitRecoveryFindings({
+      findings: [],
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      now: 1,
+      leaseId: "x",
+      dispatch: async () => ({ status: "queued", detail: "unused" }),
+    });
+    expect(result).toMatchObject({ disposition: "not-needed", admitted: 0 });
+  });
+
+  it("records known external blockers as a durable terminal state without dispatching", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, detail: "unused" }));
+    const result = await admitRecoveryFindings({
+      findings: [finding({ terminalStatus: "blocked" })],
+      coordinator,
+      now: 1_000,
+      leaseId: "admission:1",
+      dispatch,
+    });
+
+    expect(result).toMatchObject({ disposition: "blocked", admitted: 1, claimed: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(coordinator.list()).toEqual([expect.objectContaining({ status: "blocked" })]);
+  });
+
+  it("terminalizes a queue claim without resolvable ledger items", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    coordinator.enqueue({ ...finding(), now: 1 });
+    const result = await dispatchRecoveryQueue({
+      coordinator,
+      now: 2,
+      leaseId: "x",
+      projectId: "bot",
+      limit: 1,
+      resolve: () => [],
+      dispatch: async () => ({ status: "queued", detail: "unused" }),
+      onQueued: () => {},
+    });
+    expect(result).toMatchObject({ disposition: "blocked", detail: "no ledger evidence" });
+    expect(coordinator.list()[0]).toMatchObject({ status: "blocked" });
+  });
+
+  it("returns a dispatch exception to retry wait", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    coordinator.enqueue({ ...finding(), now: 1 });
+    const result = await dispatchRecoveryQueue({
+      coordinator,
+      now: 2,
+      leaseId: "x",
+      projectId: "bot",
+      limit: 1,
+      resolve: () => ["item"],
+      dispatch: async () => {
+        throw new Error("offline");
+      },
+      onQueued: () => {},
+    });
+    expect(result).toMatchObject({ disposition: "blocked", detail: "dispatch failed" });
+    expect(coordinator.list()[0]).toMatchObject({ status: "retry-wait" });
   });
 });

@@ -241,7 +241,7 @@ describe("runtime guardian", () => {
     );
     expect(result).toEqual({
       status: "blocked",
-      detail: "findings are target or external blockers; no bot self-repair dispatched",
+      detail: "terminal blocked findings recorded; no bot self-repair dispatched",
     });
   });
 

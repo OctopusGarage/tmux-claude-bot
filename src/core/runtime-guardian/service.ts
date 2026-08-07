@@ -717,18 +717,9 @@ export async function dispatchRuntimeGuardianRepair(
   setPathForSession(session, request.repoPath);
   const now = Date.now();
   const coordinator = new RepairCoordinator();
-  const repairableFindings = request.findings.filter(
-    (finding) => !isTargetOrExternalBlocker(finding),
-  );
-  if (repairableFindings.length === 0) {
-    return {
-      status: "blocked",
-      detail: "findings are target or external blockers; no bot self-repair dispatched",
-    };
-  }
   let delegated: Awaited<ReturnType<typeof startActiveDelegatedTask>> | undefined;
   const admission = await admitRecoveryFindings({
-    findings: repairableFindings.map((finding) => ({
+    findings: request.findings.map((finding) => ({
       projectId: finding.projectId,
       projectPath: finding.projectPath,
       source: "runtime-guardian",
@@ -737,6 +728,7 @@ export async function dispatchRuntimeGuardianRepair(
       taskId: finding.runId,
       summary: finding.evidence.join("; "),
       priority: finding.severity === "high" ? 100 : 50,
+      ...(isTargetOrExternalBlocker(finding) ? { terminalStatus: "blocked" as const } : {}),
     })),
     coordinator,
     now,
