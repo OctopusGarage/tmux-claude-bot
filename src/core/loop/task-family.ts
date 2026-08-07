@@ -1,4 +1,5 @@
 import type { TaskCapabilityDependency } from "../capabilities/types.js";
+import type { LoopConfig } from "./config.js";
 
 export const LOOP_SCHEDULED_JOB_KINDS = [
   "architecture",
@@ -474,6 +475,29 @@ export function workspaceScheduledJobs<Workspace extends LoopWorkspaceLike>(
     if (!policy.enabled) return [];
     return [scheduledJob(workspace, family.jobKey(workspace), family.jobKind, policy)];
   });
+}
+
+/**
+ * The complete scheduled-job read model shared by the scheduler and task
+ * discovery. Task-family policy, keys, and kinds must not be reconstructed by
+ * either caller.
+ */
+export function loopScheduledJobs(config: LoopConfig): LoopScheduledJob[] {
+  return [
+    ...config.projects.flatMap(projectScheduledJobs),
+    ...config.prReview.repositories
+      .filter((repository) => repository.enabled)
+      .map((repository) => ({
+        project: repository,
+        jobKey: `pr-review:${repository.id}`,
+        jobKind: "repository-pull-request-review" as const,
+        schedule: repository.schedule,
+        ...(repository.scheduleJitterMinutes !== undefined
+          ? { scheduleJitterMinutes: repository.scheduleJitterMinutes }
+          : {}),
+      })),
+    ...config.workspaces.flatMap(workspaceScheduledJobs),
+  ];
 }
 
 function scheduledJob<Project extends ScheduledEntity>(

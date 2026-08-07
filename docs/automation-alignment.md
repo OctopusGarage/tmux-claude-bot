@@ -107,6 +107,9 @@ WorkOrder. The configured target is normally 95; a score at or above target is
 a terminal no-op, while an invalid assessment or unsafe repository state blocks
 dispatch without repository mutation. The score, target, notes, and decision
 must remain visible in the WorkOrder or task ledger evidence.
+Task Family is the single scheduled-job read model for Loop Engineering. The
+scheduler and Daily Task Audit discovery must consume it rather than reconstruct
+project, workspace, or repository task policy, job keys, or job kinds.
 Security alignment invariant: every project Security Maintenance schedule must
 run its configured deterministic risk assessment before creating a WorkOrder.
 The default action threshold is 70 and the default critical threshold is 90;
