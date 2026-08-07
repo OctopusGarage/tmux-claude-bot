@@ -153,4 +153,43 @@ describe("final summary recovery", () => {
       },
     });
   });
+
+  it("recovers a completed legacy summary with an explanatory stop condition", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["verified the existing repair is sufficient"],
+        delegatedTasks: [{ projectId: "tmux-claude-bot", status: "completed" }],
+        finalVerification: "passed",
+        planReview: {
+          checklistCompleted: true,
+          targetScoreMet: true,
+          stopConditionReached: "existing repair is sufficient; a duplicate change is unnecessary",
+          overOptimizationAvoided: true,
+          verificationCompleted: true,
+          remainingRisks: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    const recovered = recoverInvalidOutputFromFinalSummary(
+      { ...workOrder(summaryPath), planning: { required: true } } as LoopWorkOrder,
+      {
+        status: "invalid-output",
+        reason: "invalid-summary",
+        output: "legacy supervisor summary was persisted",
+      },
+    );
+
+    expect(recovered).toMatchObject({
+      status: "completed",
+      summary: { planReview: { stopConditionReached: true } },
+    });
+  });
 });

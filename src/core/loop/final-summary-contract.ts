@@ -359,7 +359,7 @@ function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
   if (!isRecord(value)) return null;
   const checklistCompleted = parseChecklistCompleted(value.checklistCompleted);
   const targetScoreMet = parseTargetScoreMet(value.targetScoreMet);
-  const stopConditionReached = parseBoolean(value.stopConditionReached);
+  const stopConditionReached = parseStopConditionReached(value.stopConditionReached);
   const overOptimizationAvoided = parseBoolean(value.overOptimizationAvoided);
   const verificationCompleted = parseVerificationCompleted(value.verificationCompleted);
   const remainingRisks = parseStringArrayOrSingleton(value.remainingRisks);
@@ -385,6 +385,12 @@ function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
 
 function parseBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function parseStopConditionReached(value: unknown): boolean | null {
+  const booleanValue = parseBoolean(value);
+  if (booleanValue !== null) return booleanValue;
+  return typeof value === "string" && value.trim() !== "" ? true : null;
 }
 
 function parseVerificationCompleted(value: unknown): boolean | null {
