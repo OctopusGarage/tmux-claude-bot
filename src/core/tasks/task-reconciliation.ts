@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   listRecoverableFinalSummaryLoopSupervisorWorkOrders,
@@ -49,8 +49,12 @@ export async function reconcileAutopilotDelegatedTasks(
 
     const summary = parseSupervisorFinalSummaryFile(terminal.workOrder);
     const gatePath = join(terminal.runDir, "system-gate.json");
-    const recoveredSuccessfully =
-      summary.ok && summary.summary.status === "completed" && existsSync(gatePath);
+    const gate = readAcceptedSystemGate(
+      gatePath,
+      terminal.workOrder.id,
+      terminal.workOrder.projectId,
+    );
+    const recoveredSuccessfully = summary.ok && summary.summary.status === "completed" && gate.ok;
     if (recoveredSuccessfully) {
       ledger.finish(task.taskId, {
         endedAt: now,
@@ -68,8 +72,8 @@ export async function reconcileAutopilotDelegatedTasks(
     } else {
       const reason = !summary.ok
         ? `invalid or missing final summary (${summary.reason})`
-        : !existsSync(gatePath)
-          ? `missing system gate (${gatePath})`
+        : !gate.ok
+          ? gate.reason
           : `terminal summary status=${summary.summary.status}`;
       ledger.fail(task.taskId, {
         endedAt: now,
@@ -98,6 +102,37 @@ export async function reconcileAutopilotDelegatedTasks(
   }
 
   return result;
+}
+
+function readAcceptedSystemGate(
+  path: string,
+  workOrderId: string,
+  projectId: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (!existsSync(path)) return { ok: false, reason: `missing system gate (${path})` };
+  try {
+    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return { ok: false, reason: `invalid system gate (${path})` };
+    }
+    const gate = value as Partial<{
+      accepted: boolean;
+      resultStatus: string;
+      workOrderId: string;
+      projectId: string;
+    }>;
+    if (
+      gate.accepted !== true ||
+      gate.resultStatus !== "completed" ||
+      gate.workOrderId !== workOrderId ||
+      gate.projectId !== projectId
+    ) {
+      return { ok: false, reason: `rejected or mismatched system gate (${path})` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: `invalid system gate (${path})` };
+  }
 }
 
 function reconcileDelegatedRepairQueue(input: {
