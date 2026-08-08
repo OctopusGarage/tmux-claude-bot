@@ -2317,8 +2317,10 @@ function systemGateProjectForRecoveredWorkOrder(
   const configuredProject = config.projects.find(
     (candidate) => candidate.id === workOrder.projectId,
   );
-  if (configuredProject !== undefined) return configuredProject;
-  return systemGateProjectFromWorkOrder(workOrder);
+  return {
+    ...systemGateProjectFromWorkOrder(workOrder),
+    ...(configuredProject === undefined ? {} : { name: configuredProject.name }),
+  };
 }
 
 function jobKeyForWorkOrder(workOrder: LoopWorkOrder): string {
@@ -2584,10 +2586,12 @@ export function runSupervisedSystemGateOutcome(input: {
         } else {
           evidence.push("GitHub account permission gate passed");
           let prLookup = pr;
+          const allowMergedPrSubset = supervisorSummaryReferencesMultiplePrs(input.result.summary);
           let prGate = supervisedPullRequestGate({
             stdout: pr.stdout,
             expectedCommits: supervisorCommits,
             projectPath: input.project.path,
+            allowMergedPrSubset,
             ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
           });
           if (prGate.generatedNoise) {
@@ -2623,6 +2627,7 @@ export function runSupervisedSystemGateOutcome(input: {
                   stdout: prLookup.stdout,
                   expectedCommits: supervisorCommits,
                   projectPath: input.project.path,
+                  allowMergedPrSubset,
                   ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
                 });
               }
@@ -2637,6 +2642,7 @@ export function runSupervisedSystemGateOutcome(input: {
               project: input.project,
               commitBranch,
               expectedCommits: supervisorCommits,
+              allowMergedPrSubset,
               runCommand: input.runCommand,
               ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
             });
@@ -2933,6 +2939,7 @@ function supervisedPullRequestGate(input: {
   stdout: string;
   expectedCommits: string[];
   projectPath: string;
+  allowMergedPrSubset?: boolean;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): { failures: string[]; pendingChecks: string[]; state: string | null; generatedNoise: boolean } {
   let parsed: unknown;
@@ -2996,12 +3003,19 @@ function supervisedPullRequestGate(input: {
   }
 
   const mergeCommit = parsePrMergeCommitOid(pr.mergeCommit);
-  const expectedCommits = input.expectedCommits
+  let expectedCommits = input.expectedCommits
     .map(normalizeSupervisorCommitId)
     .filter((commit): commit is string => commit !== null)
     .filter((commit) => mergeCommit === null || !commitIdsMatch(commit, mergeCommit));
+  const prCommits = parsePrCommitOids(pr.commits);
+  if (state === "MERGED" && input.allowMergedPrSubset && expectedCommits.length > 0) {
+    const currentPrExpectedCommits = expectedCommits.filter((expected) =>
+      prCommits.some((actual) => commitIdsMatch(expected, actual)),
+    );
+    if (currentPrExpectedCommits.length > 0) expectedCommits = currentPrExpectedCommits;
+  }
   if (expectedCommits.length > 0) {
-    failures.push(...validatePrCommitHygiene(expectedCommits, parsePrCommitOids(pr.commits)));
+    failures.push(...validatePrCommitHygiene(expectedCommits, prCommits));
     if (input.runGit === undefined) {
       failures.push("missing git adapter for supervised PR file hygiene gate");
     } else {
@@ -3022,6 +3036,7 @@ function waitForSupervisedPrChecks(input: {
   project: SupervisedSystemGateProject;
   commitBranch: string;
   expectedCommits: string[];
+  allowMergedPrSubset?: boolean;
   runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): ReturnType<typeof supervisedPullRequestGate> {
@@ -3089,6 +3104,9 @@ function waitForSupervisedPrChecks(input: {
       stdout: lookup.stdout,
       expectedCommits: input.expectedCommits,
       projectPath: input.project.path,
+      ...(input.allowMergedPrSubset === undefined
+        ? {}
+        : { allowMergedPrSubset: input.allowMergedPrSubset }),
       ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
     });
     if (gate.failures.length > 0 || gate.pendingChecks.length === 0) return gate;
@@ -3099,6 +3117,22 @@ function waitForSupervisedPrChecks(input: {
 
 function pendingCheckFailures(pendingChecks: string[]): string[] {
   return pendingChecks.map((check) => `${check} after waiting for completion`);
+}
+
+function supervisorSummaryReferencesMultiplePrs(
+  summary: Extract<LoopSupervisedRunResult, { status: "completed" }>["summary"],
+): boolean {
+  const text = JSON.stringify(summary);
+  const refs = new Set<string>();
+  for (const match of text.matchAll(/\bPR\s*#(\d+)\b/gi)) {
+    const ref = match[1];
+    if (ref !== undefined) refs.add(ref);
+  }
+  for (const match of text.matchAll(/\/pull\/(\d+)\b/gi)) {
+    const ref = match[1];
+    if (ref !== undefined) refs.add(ref);
+  }
+  return refs.size > 1;
 }
 
 function supervisedPrCheckPollAttempts(): number {
