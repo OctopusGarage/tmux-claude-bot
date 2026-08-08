@@ -27,7 +27,6 @@ import {
   isBotOwnedLoopExecutionWorktree,
   type LoopExecutionWorktreePreparationFailure,
   prepareLoopExecutionWorktrees,
-  restoreLoopExecutionWorktreeBranch,
 } from "./execution-worktree.js";
 import { repositoryPullRequestReviewDisposition } from "./final-summary-contract.js";
 import {
@@ -2484,12 +2483,6 @@ export function runSupervisedSystemGateOutcome(input: {
   if (requiresGitGate && input.runGit === undefined) {
     failures.push("missing git adapter for supervised system gate");
   } else if (requiresGitGate && input.runGit !== undefined) {
-    failures.push(
-      ...restoreLoopExecutionWorktreeBranch({
-        workOrder: input.workOrder,
-        runGit: input.runGit,
-      }),
-    );
     const status = input.runGit({ cwd: input.project.path, args: ["status", "--porcelain"] });
     if (status.status !== 0) {
       failures.push(`git status failed: ${status.stderr || status.stdout || "unknown error"}`);

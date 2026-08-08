@@ -127,47 +127,6 @@ export function isBotOwnedLoopExecutionWorktree(worktree: string): boolean {
   return resolved !== root && resolved.startsWith(`${root}/`);
 }
 
-/**
- * Return a retained system-prepared isolated worktree to its WorkOrder branch
- * before terminal acceptance. Source and legacy worktrees are intentionally
- * excluded: only a system-prepared bot-owned isolated worktree with a
- * separately recorded source path can be switched.
- */
-export function restoreLoopExecutionWorktreeBranch(input: {
-  workOrder: LoopWorkOrder;
-  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
-}): string[] {
-  const isolation = input.workOrder.executionIsolation;
-  const branch = input.workOrder.commitPolicy.branch;
-  if (
-    isolation === undefined ||
-    isolation.preparedBy !== "system-git-worktree" ||
-    isolation.worktreeIsolation !== "isolated" ||
-    isolation.sourceWorktree === undefined ||
-    branch === undefined ||
-    resolvePath(isolation.expectedWorktree) !== resolvePath(input.workOrder.projectPath) ||
-    !isBotOwnedLoopExecutionWorktree(input.workOrder.projectPath)
-  ) {
-    return [];
-  }
-
-  const worktree = resolvePath(input.workOrder.projectPath);
-  const topLevel = input.runGit({ cwd: worktree, args: ["rev-parse", "--show-toplevel"] });
-  if (topLevel.status !== 0 || resolvePath(topLevel.stdout.trim()) !== worktree) {
-    return [
-      `isolated worktree branch restore refused: git toplevel is not the expected bot-owned worktree (${topLevel.stderr || topLevel.stdout || "git rev-parse failed"})`,
-    ];
-  }
-
-  const restored = input.runGit({ cwd: worktree, args: ["switch", branch] });
-  if (restored.status !== 0) {
-    return [
-      `isolated worktree branch restore failed: ${restored.stderr || restored.stdout || `git switch ${branch} failed`}`,
-    ];
-  }
-  return [];
-}
-
 export type LoopExecutionWorktreePreparationFailure = {
   repositoryId: string;
   sourceWorktree: string;
