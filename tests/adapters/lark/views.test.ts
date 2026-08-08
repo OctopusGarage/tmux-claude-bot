@@ -878,6 +878,21 @@ describe("sendDoctor / sendDashboard", () => {
 });
 
 describe("sendLogs", () => {
+  let origLogDir: string | undefined;
+  let logDir: string;
+
+  beforeEach(() => {
+    origLogDir = process.env.TCB_LOG_DIR;
+    logDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "lark-logs-"));
+    process.env.TCB_LOG_DIR = logDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+    if (origLogDir === undefined) delete process.env.TCB_LOG_DIR;
+    else process.env.TCB_LOG_DIR = origLogDir;
+  });
+
   it("replies the no-context hint when there is no session and no arg", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ session: null });
