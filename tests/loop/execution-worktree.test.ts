@@ -305,6 +305,58 @@ describe("prepareLoopExecutionWorktrees", () => {
     });
   });
 
+  it("resets a reused isolated worktree onto the WorkOrder branch before dispatch", () => {
+    const repo = makeRepo();
+    const calls: LoopGitInvocation[] = [];
+    const failures: unknown[] = [];
+    const executionWorktree = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-worktrees",
+      "repo",
+      "run-1",
+    );
+    mkdirSync(executionWorktree, { recursive: true });
+
+    const prepared = prepareLoopExecutionWorktrees({
+      workOrder: {
+        ...workOrder(repo),
+        commitPolicy: { enabled: true, perRound: false, branch: "loop/repo/run-1" },
+      },
+      runGit: (invocation) => {
+        calls.push(invocation);
+        const command = invocation.args.join(" ");
+        if (command === "rev-parse --show-toplevel") {
+          if (invocation.cwd === repo) return { status: 0, stdout: `${repo}\n`, stderr: "" };
+          if (invocation.cwd === executionWorktree) {
+            return { status: 0, stdout: `${executionWorktree}\n`, stderr: "" };
+          }
+        }
+        if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (command === "fetch origin main") return { status: 0, stdout: "", stderr: "" };
+        if (command === "switch loop/repo/run-1") {
+          return { status: 128, stdout: "", stderr: "fatal: invalid reference: loop/repo/run-1" };
+        }
+        if (command === "switch -C loop/repo/run-1 origin/main") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${command}`);
+      },
+      defaultMode: "isolated",
+      onPreparationFailure: (failure) => failures.push(failure),
+    });
+
+    expect(prepared.projectPath).toBe(executionWorktree);
+    expect(failures).toEqual([]);
+    expect(calls).toContainEqual({
+      cwd: executionWorktree,
+      args: ["switch", "-C", "loop/repo/run-1", "origin/main"],
+    });
+    expect(calls).not.toContainEqual({
+      cwd: executionWorktree,
+      args: ["switch", "loop/repo/run-1"],
+    });
+  });
+
   it("uses a verified local branch when remote fetch is unavailable", () => {
     const repo = makeRepo();
     const calls: LoopGitInvocation[] = [];

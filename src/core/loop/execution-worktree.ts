@@ -350,7 +350,7 @@ function prepareGitExecutionWorktree(input: {
     existingTopLevel.stdout.trim().length > 0 &&
     resolvePath(existingTopLevel.stdout.trim()) === resolvePath(executionWorktree)
   ) {
-    const branchFailure = prepareIsolatedExecutionBranch(input, executionWorktree, base.ref, false);
+    const branchFailure = prepareIsolatedExecutionBranch(input, executionWorktree, base.ref);
     if (branchFailure !== null) return { detail: branchFailure };
     log.info("loop reusing existing isolated execution worktree", {
       data: { ...loggableInput(input), executionWorktree },
