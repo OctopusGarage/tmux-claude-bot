@@ -451,6 +451,14 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain(
       "Never checkout, rebase, or merge the configured base or switch-back branch from this isolated worktree",
     );
+    expect(prompt).toContain("git -C '/state/loop-worktree/datavibe/run' fetch origin dev");
+    expect(prompt).toContain(
+      "git -C '/state/loop-worktree/datavibe/run' switch loop/datavibe/active-delegate/1752643800000-datavibe-active-delegate",
+    );
+    expect(prompt).not.toContain("git -C '/state/loop-worktree/datavibe/run' switch dev");
+    expect(prompt).not.toContain(
+      "git -C '/state/loop-worktree/datavibe/run' pull --rebase origin dev",
+    );
     expect(prompt).toContain("the bot system owns source branch switch-back after acceptance");
   });
 
