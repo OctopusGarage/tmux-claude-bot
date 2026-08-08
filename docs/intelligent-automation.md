@@ -682,6 +682,12 @@ existing PRs, reports, and prior verification output.
 Autopilot is not cron. It should reuse the Loop Supervisor WorkOrder path and the
 same system gates as scheduled jobs.
 
+When an active delegation runs in a system-prepared isolated worktree, its base
+sync fetches the configured base but keeps the worker on its configured
+WorkOrder branch. It must never switch, rebase, or merge the shared base or
+switch-back branch from that isolated worktree; the source worktree owns those
+operations.
+
 Before substantive execution, active delegation must form a task advancement
 contract from the user requirement, current session context, and repository
 evidence. The contract is recorded as a concise `delegationBrief` in the

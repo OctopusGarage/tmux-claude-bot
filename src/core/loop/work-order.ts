@@ -1000,6 +1000,7 @@ function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
         workOrder.projectPath,
         baseBranch,
         isolation,
+        workOrder.commitPolicy.branch,
       )}.`;
     }
     return [
