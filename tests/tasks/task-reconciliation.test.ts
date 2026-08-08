@@ -60,7 +60,17 @@ function arrangeTerminalRun(
     order.finalSummaryPath ?? join(runDir, "supervisor-final-summary.json"),
     status === "failed" ? "failed" : "completed",
   );
-  if (withGate) writeFileSync(join(runDir, "system-gate.json"), "{}\n");
+  if (withGate) {
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        workOrderId: runId,
+        projectId: order.projectId,
+        resultStatus: "completed",
+        accepted: true,
+      })}\n`,
+    );
+  }
   return runId;
 }
 
@@ -110,6 +120,39 @@ describe("autopilot delegated task reconciliation", () => {
 
   it("fails, rather than leaving running, when the terminal run has no system gate", async () => {
     const runId = arrangeTerminalRun("failed", false);
+    startLedger(runId);
+
+    const result = await reconcileAutopilotDelegatedTasks({ now: 3 });
+
+    expect(result.finished).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(
+      new DailyTaskLedger().listAll().find((item) => item.taskId === `autopilot:${runId}`),
+    ).toMatchObject({ status: "failed", repairStatus: "pending" });
+  });
+
+  it("fails, rather than closing a repair, when the system gate rejected a completed summary", async () => {
+    const runId = arrangeTerminalRun("completed", true);
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({ accepted: false, resultStatus: "blocked", failures: ["gate rejected"] })}\n`,
+    );
+    startLedger(runId);
+
+    const result = await reconcileAutopilotDelegatedTasks({ now: 3 });
+
+    expect(result.finished).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(
+      new DailyTaskLedger().listAll().find((item) => item.taskId === `autopilot:${runId}`),
+    ).toMatchObject({ status: "failed", repairStatus: "pending" });
+  });
+
+  it("fails, rather than closing a repair, when the system gate is malformed", async () => {
+    const runId = arrangeTerminalRun("completed", true);
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+    writeFileSync(join(runDir, "system-gate.json"), "{}\n");
     startLedger(runId);
 
     const result = await reconcileAutopilotDelegatedTasks({ now: 3 });
