@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   cleanupLoopExecutionWorktree,
   prepareLoopExecutionWorktrees,
-  restoreLoopExecutionWorktreeBranch,
 } from "../../src/core/loop/execution-worktree.js";
 import type { LoopGitInvocation, LoopRunCommandResult } from "../../src/core/loop/run.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
@@ -76,82 +75,6 @@ function workOrder(
 }
 
 describe("loop execution worktrees", () => {
-  it("restores only a prepared bot-owned isolated worktree to its WorkOrder branch", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-restore-state-"));
-    process.env.TCB_STATE_DIR = stateDir;
-    const worktree = join(stateDir, "loop-worktrees", "hub", "run-1");
-    mkdirSync(worktree, { recursive: true });
-    const calls: LoopGitInvocation[] = [];
-    const baseWorkOrder = workOrder(worktree);
-    if (baseWorkOrder.executionIsolation === undefined) throw new Error("expected isolation");
-    const order = {
-      ...baseWorkOrder,
-      commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
-      executionIsolation: {
-        ...baseWorkOrder.executionIsolation,
-        expectedWorktree: worktree,
-        sourceWorktree: "/source/hub",
-        worktreeIsolation: "isolated" as const,
-        preparedBy: "system-git-worktree" as const,
-      },
-    } satisfies LoopWorkOrder;
-
-    expect(
-      restoreLoopExecutionWorktreeBranch({
-        workOrder: order,
-        runGit: (invocation) => {
-          calls.push(invocation);
-          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
-            return { status: 0, stdout: `${worktree}\n`, stderr: "" };
-          }
-          return { status: 0, stdout: "", stderr: "" };
-        },
-      }),
-    ).toEqual([]);
-    expect(calls).toEqual([
-      { cwd: worktree, args: ["rev-parse", "--show-toplevel"] },
-      { cwd: worktree, args: ["switch", "loop/hub/run-1"] },
-    ]);
-  });
-
-  it("does not restore a source or unprepared worktree", () => {
-    const repo = makeRepo();
-    const runGit = () => {
-      throw new Error("source worktree must not be switched");
-    };
-
-    expect(restoreLoopExecutionWorktreeBranch({ workOrder: workOrder(repo), runGit })).toEqual([]);
-  });
-
-  it("refuses a prepared worktree when its persisted expected path differs", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-restore-state-"));
-    process.env.TCB_STATE_DIR = stateDir;
-    const worktree = join(stateDir, "loop-worktrees", "hub", "run-1");
-    mkdirSync(worktree, { recursive: true });
-    const baseWorkOrder = workOrder(worktree);
-    if (baseWorkOrder.executionIsolation === undefined) throw new Error("expected isolation");
-    const order = {
-      ...baseWorkOrder,
-      commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
-      executionIsolation: {
-        ...baseWorkOrder.executionIsolation,
-        expectedWorktree: join(stateDir, "loop-worktrees", "hub", "other-run"),
-        sourceWorktree: "/source/hub",
-        worktreeIsolation: "isolated" as const,
-        preparedBy: "system-git-worktree" as const,
-      },
-    } satisfies LoopWorkOrder;
-
-    expect(
-      restoreLoopExecutionWorktreeBranch({
-        workOrder: order,
-        runGit: () => {
-          throw new Error("mismatched worktree must not be touched");
-        },
-      }),
-    ).toEqual([]);
-  });
-
   it("removes only an expired bot-owned isolated worktree", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
     process.env.TCB_STATE_DIR = stateDir;

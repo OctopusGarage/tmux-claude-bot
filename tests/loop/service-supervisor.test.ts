@@ -4128,8 +4128,12 @@ prReview:
         expect(request.prompt).toContain(`Original project worktree: ${projectDir}`);
         expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-hub-");
         expect(request.prompt).toContain(`'${expectedWorktree}' --agent codex`);
-        expect(request.prompt).toContain(`git -C '${expectedWorktree}' switch --detach origin/dev`);
-        executionBranch = "dev";
+        expect(request.prompt).toContain(
+          `git -C '${expectedWorktree}' switch loop/hub/architecture/1784196600000-hub`,
+        );
+        expect(request.prompt).not.toContain(
+          `git -C '${expectedWorktree}' switch --detach origin/dev`,
+        );
         const marker = finalMarkerFromPrompt(request.prompt);
         return {
           status: 0,
@@ -4147,7 +4151,7 @@ prReview:
       args: ["worktree", "add", "--detach", expectedWorktree, "origin/dev"],
     });
     expect(gitCommands).toContainEqual({ cwd: expectedWorktree, args: ["status", "--porcelain"] });
-    expect(gitCommands).toContainEqual({
+    expect(gitCommands).not.toContainEqual({
       cwd: expectedWorktree,
       args: ["switch", "loop/hub/architecture/1784196600000-hub"],
     });
