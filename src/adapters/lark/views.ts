@@ -10,7 +10,12 @@ import { buildDashboard } from "../../core/dashboard/dashboard.js";
 import { formatDashboardForChat } from "../../core/dashboard/dashboard-view.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
-import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
+import {
+  type DoctorProbes,
+  defaultProbes,
+  renderDoctorReport,
+  runDoctorChecks,
+} from "../../core/infra/doctor.js";
 import { type ForeignAction, runStatusInstall } from "../../core/infra/status-install.js";
 import {
   defaultSystemLoadProbes,
@@ -104,8 +109,12 @@ export async function sendLangPicker(channel: LarkChannel, chatId: string): Prom
 }
 
 /** Run the install health checks and send the redacted report. */
-export async function sendDoctor(channel: LarkChannel, chatId: string): Promise<void> {
-  const report = await runDoctorChecks(defaultProbes());
+export async function sendDoctor(
+  channel: LarkChannel,
+  chatId: string,
+  probes: DoctorProbes = defaultProbes(),
+): Promise<void> {
+  const report = await runDoctorChecks(probes);
   await sendText(channel, chatId, renderDoctorReport(report, { redacted: true }));
 }
 

@@ -9,14 +9,15 @@ import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
   reconcileLoopSupervisorWorkOrders,
-  reserveLoopSupervisorSessions,
   runLoopServiceTickAsync,
   runSupervisedSystemGateOutcome,
   startLoopEngineering,
   writeSupervisedSystemGateArtifact,
 } from "../../src/core/loop/service.js";
+import { readActiveLoopSupervisorResources } from "../../src/core/loop/supervisor-active-resources.js";
 import {
   readLoopSupervisorWorkerLeaseState,
+  reserveLoopSupervisorSessions,
   writeLoopSupervisorWorkerLeaseState,
 } from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
@@ -134,6 +135,28 @@ function finalMarkerFromPrompt(prompt: string): string {
 }
 
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("reads active worker leases as supervisor capacity reservations", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-active-resources-"));
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "active-work",
+          projectId: "hub",
+          projectPath: "/repo/hub",
+          status: "active",
+          leasedAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    const active = readActiveLoopSupervisorResources();
+
+    expect(active.supervisorSessions).toEqual(new Set(["tmux_proj_loop-supervisor"]));
+    expect(active.resourcePaths).toEqual(new Set(["/repo/hub"]));
+  });
+
   it("keeps a repository review pending when every configured supervisor has an active lease", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));

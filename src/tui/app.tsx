@@ -14,7 +14,17 @@ import {
   DISABLE_BRACKETED_PASTE,
   ENABLE_BRACKETED_PASTE,
 } from "./composer.js";
-import { confirmDangerousControl, dangerousControlPrompt } from "./danger-confirmation.js";
+import { confirmDangerousControl } from "./danger-confirmation.js";
+import {
+  controlIntent,
+  controlOutcome,
+  controlServerEvent,
+  type InteractionEffect,
+  type InteractionResult,
+  initialInteractionState,
+  projectOpenIntent,
+  promptSendIntent,
+} from "./interaction.js";
 
 const PEEK_LINES = 80;
 
@@ -110,11 +120,7 @@ export function App({
   const refreshTimer = useRef<NodeJS.Timeout | null>(null);
 
   const [apSel, setApSel] = useState(0);
-  const [pendingDanger, setPendingDanger] = useState<{
-    action: string;
-    session: string;
-    label: string;
-  } | null>(null);
+  const [interaction, setInteraction] = useState(initialInteractionState);
 
   const selected = rows[Math.min(sel, Math.max(0, rows.length - 1))];
   // Keep both panes within the terminal (the 2-line fleet summary + status line +
@@ -174,12 +180,15 @@ export function App({
       }, 400);
     };
     const onReply = (m: { session: string; output: string }): void =>
-      setStatus(`✓ ${m.session.slice(-18)}: ${m.output.replace(/\s+/g, " ").slice(0, 60)}`);
-    const onNotify = (m: { text: string }): void => setStatus(`… ${m.text.slice(0, 70)}`);
-    const onError = (m: { error: string }): void => setStatus(`✗ ${m.error.slice(0, 70)}`);
-    const onDisc = (): void => setStatus("⚠ bot disconnected — reconnecting…");
+      setStatus(controlServerEvent(interaction, { kind: "reply", ...m }).state.status);
+    const onNotify = (m: { text: string }): void =>
+      setStatus(controlServerEvent(interaction, { kind: "notify", ...m }).state.status);
+    const onError = (m: { error: string }): void =>
+      setStatus(controlServerEvent(interaction, { kind: "error", ...m }).state.status);
+    const onDisc = (): void =>
+      setStatus(controlServerEvent(interaction, { kind: "disconnected" }).state.status);
     const onReconn = (): void => {
-      setStatus("reconnected");
+      setStatus(controlServerEvent(interaction, { kind: "reconnected" }).state.status);
       void loadSnapshot();
     };
     client.on("activity", onActivity);
@@ -196,7 +205,7 @@ export function App({
       client.off("disconnected", onDisc);
       client.off("reconnected", onReconn);
     };
-  }, [client, loadSnapshot, loadPeek, selected?.session]);
+  }, [client, interaction, loadSnapshot, loadPeek, selected?.session]);
 
   // Periodic refresh so the top fleet summary + busy timers stay live even when no
   // server activity event fires. Self-scheduling (not setInterval) so a slow
@@ -267,25 +276,39 @@ export function App({
   const move = (d: number): void => setSel((i) => Math.max(0, Math.min(rows.length - 1, i + d)));
   const fail = (err: unknown): void => setStatus(`✗ ${err instanceof Error ? err.message : err}`);
 
-  const performControl = async (session: string, action: string, label: string): Promise<void> => {
-    setStatus(`→ ${action} → ${label}`);
+  const executeInteractionEffect = async (effect: InteractionEffect): Promise<void> => {
     try {
-      await client.control(session, action);
+      if (effect.kind === "control") {
+        await client.control(effect.session, effect.action);
+      } else if (effect.kind === "send") {
+        await client.send(effect.session, effect.text);
+      } else {
+        const opened = await client.open(effect.sid);
+        setStatus(
+          `open ${effect.label}: ${opened.status}${opened.started ? ` (${opened.started})` : ""}`,
+        );
+        void loadSnapshot();
+      }
     } catch (err) {
       fail(err);
     }
   };
 
-  const doControl = async (action: string): Promise<void> => {
+  const applyInteraction = (result: InteractionResult): void => {
+    setInteraction(result.state);
+    setStatus(result.state.status);
+    if (result.effect !== undefined) void executeInteractionEffect(result.effect);
+  };
+
+  const doControl = (action: string): void => {
     if (!selected) return;
-    const label = shortLabel(selected);
-    const prompt = dangerousControlPrompt(action, label);
-    if (prompt) {
-      setPendingDanger({ action, session: selected.session, label });
-      setStatus(prompt);
-      return;
-    }
-    await performControl(selected.session, action, label);
+    applyInteraction(
+      controlIntent(interaction, {
+        action,
+        session: selected.session,
+        label: shortLabel(selected),
+      }),
+    );
   };
 
   const exitComposer = (): void => {
@@ -294,16 +317,16 @@ export function App({
     setCursor(0);
     setMode("list");
   };
-  const sendPrompt = async (text: string): Promise<void> => {
+  const sendPrompt = (text: string): void => {
     exitComposer();
-    const t = text.trim();
-    if (!t || !selected) return;
-    setStatus(`→ sent to ${shortLabel(selected)}`);
-    try {
-      await client.send(selected.session, t);
-    } catch (err) {
-      fail(err);
-    }
+    if (!selected) return;
+    applyInteraction(
+      promptSendIntent(interaction, {
+        session: selected.session,
+        label: shortLabel(selected),
+        text,
+      }),
+    );
   };
 
   const openProjects = async (): Promise<void> => {
@@ -325,16 +348,9 @@ export function App({
       fail(err);
     }
   };
-  const doOpen = async (p: Project): Promise<void> => {
+  const doOpen = (p: Project): void => {
     setMode("list");
-    setStatus(`opening ${p.label}…`);
-    try {
-      const r = await client.open(p.sid);
-      setStatus(`open ${p.label}: ${r.status}${r.started ? ` (${r.started})` : ""}`);
-      void loadSnapshot();
-    } catch (err) {
-      fail(err);
-    }
+    applyInteraction(projectOpenIntent(interaction, p));
   };
   const showText = async (
     m: "logs" | "sysload",
@@ -386,16 +402,10 @@ export function App({
 
   useInput(
     (ch, key) => {
-      if (pendingDanger) {
+      if (interaction.pendingDanger) {
         const result = key.escape ? "cancel" : confirmDangerousControl(ch);
         if (result === "pending") return;
-        const { action, session, label } = pendingDanger;
-        setPendingDanger(null);
-        if (result === "cancel") {
-          setStatus(`cancelled ${action}`);
-          return;
-        }
-        void performControl(session, action, label);
+        applyInteraction(controlOutcome(interaction, result));
         return;
       }
       if (mode === "help") {

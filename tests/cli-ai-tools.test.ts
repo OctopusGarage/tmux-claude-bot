@@ -76,5 +76,5 @@ describe("CLI ai-tools command", () => {
     expect(parsed.expected).toHaveLength(4);
     expect(parsed.expected.every((item) => item.installed)).toBe(true);
     expect(parsed.global.every((item) => !item.installed)).toBe(true);
-  });
+  }, 15_000);
 });

@@ -25,6 +25,15 @@ describe("config and automation commands", () => {
     else process.env.TCB_STATE_DIR = previousStateDir;
   });
 
+  it("exposes config and automation commands through separate domain modules", async () => {
+    const configModule = await import("../src/core/config/config-command.js");
+    const automationModule = await import("../src/core/config/automation-command.js");
+    const compatibilityModule = await import("../src/core/config/command.js");
+
+    expect(compatibilityModule.runConfigCommand).toBe(configModule.runConfigCommand);
+    expect(compatibilityModule.runAutomationCommand).toBe(automationModule.runAutomationCommand);
+  });
+
   it("lists personal config with secrets redacted and rejects unsafe generic writes", async () => {
     const dir = join(tmpdir(), `tcb-config-command-test-${Date.now()}`);
     process.env.TCB_STATE_DIR = dir;

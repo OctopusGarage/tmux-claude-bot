@@ -184,6 +184,10 @@ remaining linked outcomes are terminal, the queue is closed as blocked rather
 than retried forever, preserving the missing-evidence review state.
 A queue record with no resolvable ledger evidence is also closed as blocked
 because dispatching it cannot construct an auditable repair request.
+When Daily Task Audit discovers a Loop final-summary artifact from a nearby
+report path, reconciliation must preserve that exact artifact path as the
+authoritative evidence source instead of re-deriving only the standard filename
+from the directory.
 When a linked delegated recovery reaches a terminal failure, reconciliation must
 release its project-recovery lease and return the original and delegated records
 to pending in the same audit pass; lease expiry is not a recovery mechanism.

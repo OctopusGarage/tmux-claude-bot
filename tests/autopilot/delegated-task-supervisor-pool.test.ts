@@ -3,8 +3,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  formatActiveDelegateCancel,
   formatActiveDelegateCompletion,
+  formatActiveDelegateQueue,
   formatActiveDelegateStart,
+  parseDelegateRequirement,
   reconcileAndResumeActiveDelegatedTasksAfterRestart,
   resumeQueuedActiveDelegatedTasks,
 } from "../../src/core/autopilot/delegated-task.js";
@@ -100,6 +103,139 @@ describe("active delegated task supervisor pool", () => {
         showQueue: false,
       }),
     ).toBe("Autopilot delegate blocked: execution worktree isolation failed");
+  });
+
+  it("parses and formats active delegation command results", () => {
+    expect(parseDelegateRequirement("not delegate this")).toBeNull();
+    expect(parseDelegateRequirement(" delegate   ")).toContain(
+      "Continue the current user-confirmed task",
+    );
+    expect(parseDelegateRequirement("delegate fix the failing release gate")).toBe(
+      "fix the failing release gate",
+    );
+    expect(
+      formatActiveDelegateStart({
+        status: "queued",
+        runId: "run-1",
+        projectId: "api",
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+        reportDir: "/tmp/report",
+      }),
+    ).toContain("report: /tmp/report");
+    expect(
+      formatActiveDelegateStart({
+        status: "queued",
+        runId: "run-2",
+        projectId: "api",
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+        reportDir: null,
+      }),
+    ).not.toContain("report:");
+    expect(
+      formatActiveDelegateCancel({
+        status: "not-found",
+        reason: "no active delegated work",
+      }),
+    ).toBe("No active delegated task: no active delegated work");
+    expect(
+      formatActiveDelegateCancel({
+        status: "cancelled",
+        runId: "run-1",
+        projectId: "api",
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+      }),
+    ).toContain("Autopilot delegate cancellation requested.");
+  });
+
+  it("formats active supervisor queue items with singular/plural and cancellable state", () => {
+    expect(formatActiveDelegateQueue([])).toBe("No active loop supervisor work.");
+    expect(
+      formatActiveDelegateQueue([
+        {
+          runId: "run-1",
+          projectId: "api",
+          taskKind: "active-delegated-task",
+          status: "queued",
+          supervisorSession: "tmux_proj_loop-supervisor-1",
+          updatedAt: Date.parse("2026-08-09T00:00:00.000Z"),
+          runDir: "/tmp/run-1",
+          cancellable: true,
+        },
+      ]),
+    ).toContain("Loop supervisor queue: 1 active work item\n");
+    expect(
+      formatActiveDelegateQueue([
+        {
+          runId: "run-1",
+          projectId: "api",
+          taskKind: "active-delegated-task",
+          status: "queued",
+          supervisorSession: "tmux_proj_loop-supervisor-1",
+          updatedAt: Date.parse("2026-08-09T00:00:00.000Z"),
+          runDir: "/tmp/run-1",
+          cancellable: true,
+        },
+        {
+          runId: "run-2",
+          projectId: "worker",
+          taskKind: "architecture",
+          status: "in-flight",
+          supervisorSession: "tmux_proj_loop-supervisor-2",
+          updatedAt: Date.parse("2026-08-09T00:01:00.000Z"),
+          runDir: "/tmp/run-2",
+          cancellable: false,
+        },
+      ]),
+    ).toContain("Loop supervisor queue: 2 active work items");
+  });
+
+  it("blocks active delegation when the supervisor is disabled", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const d = deps(1);
+    d.config.loopEngineering.supervisor.enabled = false;
+
+    await expect(
+      startActiveDelegatedTask(d, {
+        session: "tmux_proj_project",
+        requirement: "finish the confirmed task",
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: "loop supervisor is disabled; set LOOP_SUPERVISOR_ENABLED=true",
+      showQueue: false,
+    });
+  });
+
+  it("blocks active delegation when the session has no recorded project path", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_missing",
+        requirement: "finish the confirmed task",
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: 'no project path is recorded for session "tmux_proj_missing"',
+      showQueue: false,
+    });
+  });
+
+  it("blocks active delegation when no loop supervisor sessions are configured", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-no-supervisors-"));
+    setPathForSession("tmux_proj_project", projectDir);
+
+    await expect(
+      startActiveDelegatedTask(deps(0), {
+        session: "tmux_proj_project",
+        requirement: "finish the confirmed task",
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: "failed to ensure queued loop supervisor session tmux_proj_loop-supervisor",
+      showQueue: true,
+    });
   });
 
   it("distinguishes completed work from a failed system acceptance gate", () => {

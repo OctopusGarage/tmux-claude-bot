@@ -1,12 +1,4 @@
 import { statSync } from "node:fs";
-import { join } from "node:path";
-import { setAgentKind } from "../../core/agents/agentKindMap.js";
-import { orphanBusyState, orphanLabel } from "../../core/agents/takeover.js";
-import {
-  adoptOrphan,
-  composeAdoptOutcome,
-  findAdoptableOrphans,
-} from "../../core/agents/takeover-service.js";
 import { validateAttachment } from "../../core/attachments/classify.js";
 import {
   cancelActiveDelegatedTask,
@@ -15,43 +7,16 @@ import {
   parseDelegateRequirement,
   startActiveDelegatedTask,
 } from "../../core/autopilot/delegated-task.js";
-import { performStart } from "../../core/command/dispatch.js";
 import { newMessageId } from "../../core/command/enqueue.js";
-import { buildDashboard } from "../../core/dashboard/dashboard.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
-import {
-  defaultSystemLoadProbes,
-  gatherSystemLoad,
-  renderSystemLoad,
-} from "../../core/infra/system-load.js";
-import { queryLogs } from "../../core/logs/log-query.js";
-import { formatLogsForChat, logsArgToFilter } from "../../core/logs/logs-view.js";
-import {
-  isLoopSupervisorSessionName,
-  isLoopWorkerSessionName,
-  isOperator,
-} from "../../core/projects/operator.js";
+import { isLoopSupervisorSessionName, isOperator } from "../../core/projects/operator.js";
 import { isOperatorHomePath } from "../../core/projects/operator-home.js";
-import {
-  createProjectFromPath,
-  openRecentProjectBySid,
-  recentProjectButtons,
-  resolveProjectPath,
-} from "../../core/projects/project-ops.js";
 import { resolveReplyTarget } from "../../core/projects/session-reply-target.js";
-import { getPathBySession, setPathForSession } from "../../core/projects/sessionPathMap.js";
-import {
-  applyPromptTranslateCommand,
-  formatPromptTranslateCommandResult,
-} from "../../core/read/prompt-translation.js";
-import { getRecentInputs } from "../../core/read/recent-inputs.js";
 import {
   prepareUserPromptDelivery,
   userPromptQueueFields,
 } from "../../core/read/user-prompt-intake.js";
-import { recoverProjects } from "../../core/recovery/recover.js";
-import { renderPeekPane } from "../../core/session/output.js";
 import {
   dispatchDailyTaskRepair,
   runDailyTaskAuditServiceTick,
@@ -60,17 +25,13 @@ import {
   createProjectRecoveryDelegator,
   dispatchProjectRecovery,
 } from "../../core/tasks/project-recovery-dispatch.js";
-import { appStateDir } from "../../shared/state-dir.js";
-import type { AgentKind } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import type { ControlCallerProvenance, ControlRequest, ServerMessage } from "./protocol.js";
+import { createControlDiagnosticsHandlers } from "./operations-diagnostics.js";
+import { createControlProjectSessionHandlers } from "./operations-project-sessions.js";
+import type { ControlOperationHandler, ControlOperationHandlers } from "./operations-types.js";
+import type { ControlRequest, ServerMessage } from "./protocol.js";
 
 const log = createLogger("control.operations");
-
-// Scope key for the control transport's "current project" (used only to mark the
-// active project + as the open/switch scope; the TUI always acts on an explicit
-// session, so this never affects routing).
-const CONTROL_SCOPE = "control";
 
 export const controlOperationNames = [
   "snapshot",
@@ -94,55 +55,13 @@ export const controlOperationNames = [
   "sendAttachment",
 ] as const satisfies readonly ControlRequest["op"][];
 
-export type ControlOperationContext = {
-  send: (msg: ServerMessage) => void;
-  ok: (data: unknown) => void;
-  fail: (error: string) => void;
-  caller?: ControlCallerProvenance;
-  isOperatorHomeCaller: boolean;
-};
-
-export type ControlOperationHandler<Request extends ControlRequest = ControlRequest> = (
-  req: Request,
-  ctx: ControlOperationContext,
-) => Promise<void>;
-
-export type ControlOperationHandlers = {
-  [Op in ControlRequest["op"]]: ControlOperationHandler<Extract<ControlRequest, { op: Op }>>;
-};
-
-function commandForAgent(deps: HandlerDeps, agent: AgentKind | undefined): string | undefined {
-  if (agent === undefined) return undefined;
-  return (
-    deps.config.startCommands.find((command) => command.agent === agent)?.command ??
-    (agent === "claude" ? deps.config.claudeStartCommand : undefined)
-  );
-}
-
-async function performStartForRequestedAgent(
-  deps: HandlerDeps,
-  sessionName: string,
-  agent: AgentKind | undefined,
-): Promise<"started" | "already-running"> {
-  const command = commandForAgent(deps, agent);
-  if (agent !== undefined && command === undefined) {
-    throw new Error(`no start command is configured for agent: ${agent}`);
-  }
-  return await performStart(deps, sessionName, command);
-}
-
 export function createControlOperationHandlers(
   deps: HandlerDeps,
   send: (msg: ServerMessage) => void,
 ): ControlOperationHandlers {
   return {
-    snapshot: async (_req, { ok }) => {
-      ok(await buildDashboard(deps));
-    },
-    peek: async (req, { ok }) => {
-      const snapshot = await deps.bridge.capturePaneColored(req.session, req.lines);
-      ok(renderPeekPane(snapshot, deps.output));
-    },
+    ...createControlDiagnosticsHandlers(deps),
+    ...createControlProjectSessionHandlers(deps),
     send: async (req, { ok, fail }) => {
       if (isOperator(req.session, deps.config.projectSessionPrefix)) {
         fail("cannot send to the operator session");
@@ -158,118 +77,6 @@ export function createControlOperationHandlers(
     },
     control: async (req, { ok, fail }) => {
       await enqueueControl(deps, req.session, req.action, "", send, ok, fail);
-    },
-    projects: async (_req, { ok }) => {
-      ok(await recentProjectButtons(deps, CONTROL_SCOPE));
-    },
-    open: async (req, { ok }) => {
-      const res = await openRecentProjectBySid(deps, CONTROL_SCOPE, req.sid);
-      if (res.status === "created" || res.status === "switched") {
-        const started = await performStartForRequestedAgent(deps, res.sessionName, req.agent);
-        ok({ status: res.status, session: res.sessionName, started });
-      } else {
-        ok(res);
-      }
-    },
-    openPath: async (req, { ok }) => {
-      const res = await createProjectFromPath(deps, CONTROL_SCOPE, req.path);
-      if (res.status === "created" || res.status === "switched") {
-        const started = await performStartForRequestedAgent(deps, res.sessionName, req.agent);
-        ok({ status: res.status, session: res.sessionName, started });
-      } else {
-        ok(res);
-      }
-    },
-    openWorker: async (req, { ok }) => {
-      if (!isLoopWorkerSessionName(req.session, deps.config.projectSessionPrefix)) {
-        ok({
-          status: "invalid",
-          error: "invalid-worker-session",
-          message: `worker session must match ${deps.config.projectSessionPrefix}loop-worker-*`,
-        });
-        return;
-      }
-      const workerAllowedDirs = [
-        ...deps.config.cdAllowedDirs,
-        join(appStateDir(), "loop-worktrees"),
-      ];
-      const resolved = await resolveProjectPath(req.path, workerAllowedDirs);
-      if (resolved.error !== undefined) {
-        ok({ status: "invalid", error: resolved.error, resolvedPath: resolved.resolvedPath });
-        return;
-      }
-      const mapped = getPathBySession(req.session);
-      const live = await deps.bridge.hasSession(req.session);
-      if (live && mapped !== null && mapped !== resolved.resolvedPath) {
-        ok({
-          status: "error",
-          message: `worker session ${req.session} is already mapped to ${mapped}`,
-        });
-        return;
-      }
-      if (!live) await deps.bridge.createSession(req.session, resolved.resolvedPath);
-      setPathForSession(req.session, resolved.resolvedPath);
-      if (req.agent !== undefined) {
-        setAgentKind(req.session, req.agent);
-        deps.configResolver.invalidate(req.session);
-      }
-      const started = await performStartForRequestedAgent(deps, req.session, req.agent);
-      ok({
-        status: live ? "switched" : "created",
-        session: req.session,
-        started,
-        resolvedPath: resolved.resolvedPath,
-      });
-    },
-    orphans: async (_req, { ok }) => {
-      const orphans = await findAdoptableOrphans();
-      ok(
-        orphans.map((o) => ({
-          pid: o.pid,
-          agent: o.agent,
-          busy: orphanBusyState(o),
-          label: orphanLabel(o),
-        })),
-      );
-    },
-    adopt: async (req, { ok }) => {
-      const result = await adoptOrphan(req.pid, {
-        bridge: deps.bridge,
-        configResolver: deps.configResolver,
-        projectSessionPrefix: deps.config.projectSessionPrefix,
-        warmupMs: deps.config.sessionWarmupMs,
-      });
-      const outcome = composeAdoptOutcome(result, CONTROL_SCOPE);
-      if (outcome.ok) await deps.currentProject.set(CONTROL_SCOPE, outcome.sessionName);
-      ok({
-        ok: outcome.ok,
-        body: outcome.body,
-        ...(outcome.ok ? { session: outcome.sessionName } : {}),
-      });
-    },
-    recover: async (_req, { ok }) => {
-      const r = await recoverProjects(deps);
-      ok({
-        launched: r.launched.length,
-        shellOnly: r.shellOnly.length,
-        alreadyAlive: r.alreadyAlive.length,
-      });
-    },
-    logs: async (req, { ok }) => {
-      const filter = logsArgToFilter(undefined, req.session);
-      ok(filter ? formatLogsForChat(queryLogs(filter), { maxChars: 3500 }) : "no session");
-    },
-    sysload: async (_req, { ok }) => {
-      ok(renderSystemLoad(await gatherSystemLoad(defaultSystemLoadProbes())));
-    },
-    inputs: async (req, { ok }) => {
-      ok(
-        await getRecentInputs(deps, req.session, getPathBySession(req.session) ?? req.session, 12),
-      );
-    },
-    promptTranslate: async (req, { ok }) => {
-      const status = await applyPromptTranslateCommand("control", req.arg);
-      ok({ body: formatPromptTranslateCommandResult(status), status });
     },
     taskAudit: async (req, { ok }) => {
       ok(

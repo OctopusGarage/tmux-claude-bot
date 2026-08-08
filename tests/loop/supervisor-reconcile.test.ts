@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { listLoopReports } from "../../src/core/loop/report.js";
 import { reconcileLoopSupervisorWorkOrders } from "../../src/core/loop/service.js";
 import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
+import { readLoopSupervisorWorkOrderRegistry } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
@@ -140,6 +141,10 @@ describe("loop supervisor work order reconciliation", () => {
     const configFile = writeConfig(projectDir);
     const order = workOrder(stateDir, projectDir);
     const runDir = writeUnfinishedRun(stateDir, order);
+
+    expect(readLoopSupervisorWorkOrderRegistry(2_000).recoverableFinalSummary).toEqual([
+      expect.objectContaining({ workOrder: expect.objectContaining({ id: order.id }) }),
+    ]);
 
     const result = reconcileLoopSupervisorWorkOrders({
       configFile,

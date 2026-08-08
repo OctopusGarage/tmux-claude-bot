@@ -1225,4 +1225,164 @@ describe("runLoopProject", () => {
     expect(agentPrompts[1]).toContain("verification failed");
     expect(verificationAttempts).toBe(2);
   });
+
+  it("skips unsafe or unverifiable findings before handing work to an agent", () => {
+    const config = parseLoopConfigYaml(configText);
+
+    const summary = runLoopProject({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              score: 50,
+              findings: [
+                {
+                  id: "blocked-action",
+                  title: "Upgrade every dependency",
+                  action: "dependency-upgrade",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["package.json"],
+                  verificationCommands: ["npm test"],
+                },
+                {
+                  id: "low-confidence",
+                  title: "Maybe change parser shape",
+                  action: "tests",
+                  confidence: 0.7,
+                  autofixSafety: "safe",
+                  affectedFiles: ["tests/parser.test.ts"],
+                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                },
+                {
+                  id: "unsafe-autofix",
+                  title: "Rewrite scheduler internals",
+                  action: "small-refactor",
+                  confidence: "high",
+                  autofixSafety: "risky",
+                  affectedFiles: ["src/core/scheduler"],
+                  verificationCommands: ["npm test -- tests/scheduler"],
+                },
+                {
+                  id: "missing-files",
+                  title: "Clarify docs",
+                  action: "docs",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: [],
+                },
+                {
+                  id: "missing-verification",
+                  title: "Change runtime code without gates",
+                  action: "small-refactor",
+                  confidence: "strong",
+                  autofixSafety: "guarded",
+                  affectedFiles: ["src/core/loop/run.ts"],
+                  verificationCommands: [],
+                },
+                {
+                  id: "docs-ok",
+                  title: "Document loop run policy",
+                  action: "docs",
+                  confidence: "safe",
+                  autofixSafety: "low-risk",
+                  affectedFiles: ["docs/automation-alignment.md"],
+                },
+                {
+                  id: "max-rounds",
+                  title: "Add focused run tests",
+                  action: "tests",
+                  confidence: 0.95,
+                  autofixSafety: "low",
+                  affectedFiles: ["tests/loop/run.test.ts"],
+                  verificationCommands: ["npm test -- tests/loop/run.test.ts"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: JSON.stringify({ passed: true, score: 96 }), stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({
+        findingId: "blocked-action",
+        reason: "blocked action: dependency-upgrade",
+      }),
+      expect.objectContaining({
+        findingId: "low-confidence",
+        reason: "confidence is not high enough",
+      }),
+      expect.objectContaining({
+        findingId: "unsafe-autofix",
+        reason: "autofix safety is not safe enough",
+      }),
+      expect.objectContaining({ findingId: "missing-files", reason: "affectedFiles is required" }),
+      expect.objectContaining({
+        findingId: "missing-verification",
+        reason: "verificationCommands is required",
+      }),
+      expect.objectContaining({ findingId: "max-rounds", reason: "maxRounds limit reached" }),
+      expect.objectContaining({ findingId: "docs-ok", reason: "execution.agent is false" }),
+    ]);
+    expect(summary.commands.map((command) => command.kind)).toEqual(["assessment", "eval"]);
+  });
+
+  it("requires an active-agent eval adapter for agent-backed evaluation", () => {
+    const config = parseLoopConfigYaml(agentEvalConfigText);
+
+    expect(() =>
+      runLoopProject({
+        config,
+        projectId: "hub",
+        runCommand: () => ({
+          status: 0,
+          stdout: JSON.stringify({ score: 50, findings: [], suggestedBotImprovements: [] }),
+          stderr: "",
+        }),
+      }),
+    ).toThrow(/requires an active-agent eval adapter/);
+  });
+
+  it("requires execution and git adapters before running selected agent work", () => {
+    const config = parseLoopConfigYaml(executableConfigText);
+    const selectedFinding = JSON.stringify({
+      score: 50,
+      findings: [
+        {
+          id: "f1",
+          title: "Add focused run tests",
+          action: "tests",
+          confidence: "high",
+          autofixSafety: "safe",
+          affectedFiles: ["tests/loop/run.test.ts"],
+          prompt: "Add focused run tests.",
+          verificationCommands: ["npm test -- tests/loop/run.test.ts"],
+        },
+      ],
+    });
+
+    expect(() =>
+      runLoopProject({
+        config,
+        projectId: "hub",
+        runCommand: () => ({ status: 0, stdout: selectedFinding, stderr: "" }),
+      }),
+    ).toThrow(/requires an active-agent execution adapter/);
+
+    expect(() =>
+      runLoopProject({
+        config,
+        projectId: "hub",
+        runCommand: () => ({ status: 0, stdout: selectedFinding, stderr: "" }),
+        runAgentTask: () => ({ status: 0, stdout: "agent done", stderr: "" }),
+      }),
+    ).toThrow(/requires a git adapter when commit.enabled is true/);
+  });
 });

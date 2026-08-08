@@ -1,8 +1,14 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  finalMarkerForWorkOrder,
   parseSupervisorFinalSummary,
+  parseSupervisorFinalSummaryFile,
   recoverNonTerminalPullRequestDecisions,
   repositoryPullRequestReviewDisposition,
+  validateSupervisorFinalSummaryForWorkOrder,
 } from "../../src/core/loop/final-summary-contract.js";
 import type {
   LoopSupervisorFinalSummary,
@@ -32,6 +38,361 @@ function summary(overrides: Record<string, unknown> = {}) {
 }
 
 describe("repository PR decision contract", () => {
+  it("builds the required supervisor final marker for a work order", () => {
+    expect(finalMarkerForWorkOrder("work-order-42")).toBe("[LOOP_SUPERVISOR_DONE:work-order-42]");
+  });
+
+  it("parses the final summary after the last matching marker", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        `[LOOP_SUPERVISOR_DONE:run-last]${JSON.stringify({ status: "unknown" })}`,
+        "intermediate retry output",
+        `[LOOP_SUPERVISOR_DONE:run-last]${JSON.stringify(
+          summary({ actionsTaken: [{ merged: { pr: 1, result: "complete" } }] }),
+        )}`,
+      ].join("\n"),
+      "run-last",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.actionsTaken).toEqual(["merged: pr=1; result=complete"]);
+    }
+  });
+
+  it("reports missing and malformed supervisor final summaries distinctly", () => {
+    expect(parseSupervisorFinalSummary("no completion marker", "run-missing")).toEqual({
+      ok: false,
+      reason: "missing-final-marker",
+    });
+    expect(
+      parseSupervisorFinalSummary("[LOOP_SUPERVISOR_DONE:run-empty] no json", "run-empty"),
+    ).toEqual({
+      ok: false,
+      reason: "invalid-summary",
+    });
+    expect(parseSupervisorFinalSummary("[LOOP_SUPERVISOR_DONE:run-bad]{", "run-bad")).toEqual({
+      ok: false,
+      reason: "invalid-summary",
+    });
+  });
+
+  it("normalizes legacy supervisor summary fields without weakening the contract", () => {
+    const result = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-legacy]${JSON.stringify(
+        summary({
+          status: "complete",
+          actionsTaken: [
+            {
+              audit: {
+                files: ["src/core/loop/final-summary-contract.ts"],
+                changed: false,
+              },
+            },
+          ],
+          delegatedTasks: [
+            "checked current worktree",
+            { projectId: "repo-prs", status: "completed" },
+            { round: 2, task: "verify local", result: "passed" },
+            { result: "reported final state" },
+          ],
+          finalVerification: { command: "npm run verify:local", result: "passed" },
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: ["reviewed diff"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              "npm test",
+              {
+                name: "verify local",
+                command: "npm run verify:local",
+                evidence: "exit 0",
+                result: "passed",
+              },
+            ],
+            decision: "pass",
+            notes: { reviewer: "codex", result: "accepted" },
+            evidence: [
+              {
+                questionInvestigated: "Does the summary preserve durable evidence?",
+                conclusion: "yes",
+                evidence: "contract test",
+                uncertainty: "low",
+                recommendedNextStep: "keep parser strict",
+              },
+            ],
+          },
+          planReview: {
+            checklistCompleted: ["scope reviewed"],
+            targetScoreMet: "not-applicable: parsing-only contract",
+            stopConditionReached: "coverage slice complete",
+            overOptimizationAvoided: true,
+            verificationCompleted: "not-run",
+            remainingRisks: "none",
+          },
+          learning: {
+            regressionCandidates: [],
+            capabilityEvalCandidates: [],
+            monitorOrTraceCandidates: [],
+            documentationCandidates: ["document final marker contract"],
+          },
+        }),
+      )}`,
+      "run-legacy",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.status).toBe("completed");
+      expect(result.summary.actionsTaken).toEqual([
+        "audit: files=src/core/loop/final-summary-contract.ts; changed=false",
+      ]);
+      expect(result.summary.delegatedTasks).toEqual([
+        "checked current worktree",
+        { projectId: "repo-prs", status: "completed" },
+        "Round 2: verify local Result: passed",
+        "Delegated task Result: reported final state",
+      ]);
+      expect(result.summary.finalVerification).toBe("passed");
+      expect(result.summary.reviewGate?.notes).toEqual(["reviewer=codex; result=accepted"]);
+      expect(result.summary.reviewGate?.deterministicGates).toEqual([
+        "npm test",
+        {
+          name: "verify local",
+          command: "npm run verify:local",
+          evidence: "exit 0",
+          result: "passed",
+        },
+      ]);
+      expect(result.summary.reviewGate?.evidence?.[0]?.evidence).toEqual(["contract test"]);
+      expect(result.summary.planReview).toMatchObject({
+        checklistCompleted: true,
+        targetScoreMet: "not-applicable",
+        stopConditionReached: true,
+        verificationCompleted: false,
+        remainingRisks: ["none"],
+      });
+      expect(result.summary.learning?.documentationCandidates).toEqual([
+        "document final marker contract",
+      ]);
+    }
+  });
+
+  it("extracts the first balanced JSON summary after the marker without being confused by string braces", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "supervisor preface",
+        `[LOOP_SUPERVISOR_DONE:run-json] ${JSON.stringify(
+          summary({
+            actionsTaken: [
+              'inspected object text {"not":"a boundary"} and escaped quote \\" safely',
+            ],
+            followUps: ["keep trailing objects out of the parsed summary"],
+          }),
+        )} {"ignored": true}`,
+      ].join("\n"),
+      "run-json",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.actionsTaken[0]).toContain('{"not":"a boundary"}');
+      expect(result.summary.followUps).toEqual(["keep trailing objects out of the parsed summary"]);
+    }
+  });
+
+  it("derives final verification from structured legacy objects according to terminal status", () => {
+    const completed = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-completed]${JSON.stringify(
+        summary({ status: "completed", finalVerification: { command: "verify", exitCode: 0 } }),
+      )}`,
+      "run-completed",
+    );
+    const failed = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-failed]${JSON.stringify(
+        summary({ status: "failed", finalVerification: { command: "verify", exitCode: 1 } }),
+      )}`,
+      "run-failed",
+    );
+    const blocked = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-blocked]${JSON.stringify(
+        summary({ status: "blocked", finalVerification: { command: "verify", exitCode: null } }),
+      )}`,
+      "run-blocked",
+    );
+
+    expect(completed.ok && completed.summary.finalVerification).toBe("passed");
+    expect(failed.ok && failed.summary.finalVerification).toBe("failed");
+    expect(blocked.ok && blocked.summary.finalVerification).toBe("unknown");
+  });
+
+  it("normalizes multi-field legacy action records into deterministic evidence strings", () => {
+    const result = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-actions]${JSON.stringify(
+        summary({
+          actionsTaken: [
+            {
+              changed: true,
+              files: ["src/core/loop/final-summary-contract.ts", "tests/loop"],
+              notes: null,
+            },
+          ],
+        }),
+      )}`,
+      "run-actions",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.actionsTaken).toEqual([
+        "changed=true; files=src/core/loop/final-summary-contract.ts, tests/loop; notes=null",
+      ]);
+    }
+  });
+
+  it("rejects malformed optional review, plan, learning, and delegation sections", () => {
+    const invalidSummaries = [
+      summary({ delegatedTasks: [{ projectId: "repo-prs", status: "" }] }),
+      summary({
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "skipped",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+      }),
+      summary({
+        planReview: {
+          checklistCompleted: [],
+          targetScoreMet: "unknown",
+          stopConditionReached: "",
+          overOptimizationAvoided: true,
+          verificationCompleted: "done",
+          remainingRisks: [],
+        },
+      }),
+      summary({
+        learning: {
+          regressionCandidates: [],
+          capabilityEvalCandidates: [],
+          monitorOrTraceCandidates: [],
+          documentationCandidates: [42],
+        },
+      }),
+    ];
+
+    for (const [index, invalidSummary] of invalidSummaries.entries()) {
+      expect(
+        parseSupervisorFinalSummary(
+          `[LOOP_SUPERVISOR_DONE:run-invalid-${index}]${JSON.stringify(invalidSummary)}`,
+          `run-invalid-${index}`,
+        ),
+      ).toEqual({ ok: false, reason: "invalid-summary" });
+    }
+  });
+
+  it("parses valid file summaries and rejects absent or invalid summary files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-"));
+    const validPath = join(dir, "valid.json");
+    const invalidPath = join(dir, "invalid.json");
+    writeFileSync(validPath, JSON.stringify(summary()), "utf8");
+    writeFileSync(invalidPath, "{", "utf8");
+
+    expect(
+      parseSupervisorFinalSummaryFile({ finalSummaryPath: validPath } as LoopWorkOrder),
+    ).toEqual({
+      ok: true,
+      summary: summary(),
+    });
+    expect(
+      parseSupervisorFinalSummaryFile({ finalSummaryPath: invalidPath } as LoopWorkOrder),
+    ).toEqual({
+      ok: false,
+      reason: "invalid-summary",
+    });
+    expect(
+      parseSupervisorFinalSummaryFile({
+        finalSummaryPath: join(dir, "missing.json"),
+      } as LoopWorkOrder),
+    ).toEqual({
+      ok: false,
+      reason: "missing-final-marker",
+    });
+    expect(parseSupervisorFinalSummaryFile({} as LoopWorkOrder)).toEqual({
+      ok: false,
+      reason: "missing-final-marker",
+    });
+  });
+
+  it("requires plan review evidence when a work order required planning", () => {
+    const workOrder = { planning: { required: true } } as LoopWorkOrder;
+
+    expect(
+      validateSupervisorFinalSummaryForWorkOrder(
+        workOrder,
+        summary() as LoopSupervisorFinalSummary,
+      ),
+    ).toBe(false);
+    expect(
+      validateSupervisorFinalSummaryForWorkOrder(
+        workOrder,
+        summary({
+          planReview: {
+            checklistCompleted: true,
+            targetScoreMet: "not-applicable",
+            stopConditionReached: false,
+            overOptimizationAvoided: true,
+            verificationCompleted: true,
+            remainingRisks: [],
+          },
+        }) as LoopSupervisorFinalSummary,
+      ),
+    ).toBe(true);
+  });
+
+  it("prevents repository PR review work orders from completing with retry-only decisions", () => {
+    const workOrder = {
+      task: { kind: "repository-pull-request-review", repo: "OctopusGarage/repo" },
+    } as LoopWorkOrder;
+    const retrySummary = summary({
+      status: "completed",
+      pullRequestDecisions: [
+        {
+          number: 1,
+          repository: "OctopusGarage/repo",
+          outcome: "retry",
+          evidence: ["required checks are still pending"],
+          nextStep: "retry after checks finish",
+        },
+      ],
+    }) as LoopSupervisorFinalSummary;
+    const blockedRetrySummary = {
+      ...retrySummary,
+      status: "blocked",
+    } as LoopSupervisorFinalSummary;
+
+    expect(validateSupervisorFinalSummaryForWorkOrder(workOrder, retrySummary)).toBe(false);
+    expect(validateSupervisorFinalSummaryForWorkOrder(workOrder, blockedRetrySummary)).toBe(true);
+  });
+
+  it("does not recover omitted PR decisions when action lines are ambiguous", () => {
+    const workOrder = {
+      task: { kind: "repository-pull-request-review", repo: "YS-Insight/geo-backend" },
+    } as LoopWorkOrder;
+    const input = summary({
+      status: "blocked",
+      pullRequestDecisions: undefined,
+      actionsTaken: [
+        "PR #16 reviewed; decision=retry because checks are still running",
+        "PR #16 reviewed; decision=manual-review because ownership is unclear",
+      ],
+    }) as unknown as LoopSupervisorFinalSummary;
+
+    expect(recoverNonTerminalPullRequestDecisions(workOrder, input)).toBe(input);
+  });
+
   it("recovers explicit non-terminal decisions omitted from the JSON array", () => {
     const workOrder = {
       task: { kind: "repository-pull-request-review", repo: "YS-Insight/geo-backend" },
@@ -154,6 +515,88 @@ describe("repository PR decision contract", () => {
     );
 
     expect(result).toMatchObject({ ok: false, reason: "invalid-summary" });
+  });
+
+  it("rejects malformed pull request decision records at each contract boundary", () => {
+    const invalidDecisions = [
+      "not-an-array",
+      [null],
+      [
+        {
+          number: 0,
+          repository: "OctopusGarage/repo",
+          outcome: "retry",
+          evidence: ["x"],
+          nextStep: "y",
+        },
+      ],
+      [{ number: 1, repository: "", outcome: "retry", evidence: ["x"], nextStep: "y" }],
+      [
+        {
+          number: 1,
+          repository: "OctopusGarage/repo",
+          outcome: "unknown",
+          evidence: ["x"],
+          nextStep: "y",
+        },
+      ],
+      [
+        {
+          number: 1,
+          repository: "OctopusGarage/repo",
+          outcome: "merged",
+          reason: 42,
+          evidence: ["checks passed"],
+          nextStep: "none",
+        },
+      ],
+      [
+        {
+          number: 1,
+          repository: "OctopusGarage/repo",
+          outcome: "closed",
+          evidence: ["stale"],
+          nextStep: "none",
+        },
+      ],
+      [
+        {
+          number: 1,
+          repository: "OctopusGarage/repo",
+          outcome: "manual-review",
+          evidence: [],
+          nextStep: "ask owner",
+        },
+      ],
+    ];
+
+    for (const [index, pullRequestDecisions] of invalidDecisions.entries()) {
+      expect(
+        parseSupervisorFinalSummary(
+          `[LOOP_SUPERVISOR_DONE:run-invalid-pr-${index}]${JSON.stringify(
+            summary({ pullRequestDecisions }),
+          )}`,
+          `run-invalid-pr-${index}`,
+        ),
+      ).toMatchObject({ ok: false, reason: "invalid-summary" });
+    }
+  });
+
+  it("classifies structurally impossible decision outcomes as invalid at the disposition boundary", () => {
+    expect(
+      repositoryPullRequestReviewDisposition({
+        ...(summary() as LoopSupervisorFinalSummary),
+        pullRequestDecisions: [
+          {
+            number: 1,
+            repository: "OctopusGarage/repo",
+            outcome: "approved" as never,
+            evidence: ["not a terminal contract outcome"],
+            nextStep: "none",
+          },
+        ],
+      }),
+    ).toBe("invalid");
   });
 
   it("classifies retry and manual review as non-completed dispositions", () => {
