@@ -211,7 +211,13 @@ const DIAGNOSTICS: readonly HelpRow[] = [
       telegramDescription: "Show the global dashboard",
     },
   ],
-  [{ cmds: ["sysload"], descKey: "cmdSysload", telegramDescription: "Show machine load" }],
+  [
+    {
+      cmds: ["sysload"],
+      descKey: "cmdSysload",
+      telegramDescription: "Show machine load and Resource Guardian",
+    },
+  ],
   [
     {
       cmds: ["logs"],

@@ -410,7 +410,7 @@ export const yue: Messages = {
   cmdBatch: "批次排程器：查看狀態或控制批次運行（start/pause/resume/stop/report）",
   cmdAutopilot: "將目前工作階段交畀 Loop Supervisor 託管推進",
   cmdOpportunity: "睇同討論主動機會建議",
-  cmdSysload: "查看本機負載/發熱/失控進程",
+  cmdSysload: "睇本機負載、發熱、失控進程同資源守護狀態",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,

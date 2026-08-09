@@ -82,6 +82,11 @@ for the configured inspection TTL, then the next service reconciliation removes
 the isolated worktree and releases the lease. Source worktrees are never removed;
 the cleanup helper verifies both the state-owned path boundary and Git toplevel
 before issuing `git worktree remove --force`.
+If a bot-owned isolated worktree has a missing worktree directory before normal
+cleanup, absence is not cleanup proof. Terminal reconciliation uses the
+WorkOrder's verified source repository to remove only that exact stale Git
+worktree registration, then releases the matching worker lease. It never
+guesses another repository and never removes a source worktree.
 
 ## State And Outcome Vocabulary
 

@@ -107,6 +107,21 @@ describe("alignment governance contract", () => {
     );
   });
 
+  it("keeps Resource Guardian in both end-to-end architecture views", () => {
+    const architecture = read("docs/intelligent-automation-architecture.md");
+    const ascii = read("docs/intelligent-automation-ascii-architecture.md");
+
+    expect(architecture).toContain("| Resource Guardian |");
+    expect(architecture).toMatch(/Resource Guardian[\s\S]*host resource pressure/i);
+    expect(architecture).toContain("admission before durable reservation");
+    expect(architecture).toMatch(/Resource Guardian[\s\S]*Runtime Guardian/);
+    expect(ascii).toContain("RESOURCE GUARDIAN");
+    expect(ascii).toContain("background admission open");
+    expect(ascii).toContain("background admission closed");
+    expect(ascii).toContain("tcb resource status / incidents / mode / profile");
+    expect(architecture).not.toContain("default target is\nArchitecture before allocating");
+  });
+
   it("keeps important architecture modules present in the alignment contract", () => {
     const requiredModules = [
       "Operator surfaces",
@@ -152,6 +167,45 @@ describe("alignment governance contract", () => {
       expect(architecture, `missing input-enhancement architecture anchor: ${anchor}`).toContain(
         anchor,
       );
+    }
+  });
+
+  it("documents the TUI controls that are already reachable in production", () => {
+    const matrix = read("docs/automation-capability-matrix.md");
+    const promptTranslation = matrix
+      .split("\n")
+      .find((line) => line.startsWith("| Prompt translation |"));
+    const resourceGuardian = matrix
+      .split("\n")
+      .find((line) => line.startsWith("| Resource Guardian |"));
+    const tui = read("docs/tui.md");
+
+    expect(promptTranslation).toBeDefined();
+    expect(promptTranslation?.split(/(?<!\\)\|/)[5]).toContain("`T`");
+    expect(promptTranslation?.split(/(?<!\\)\|/)[2]).toContain("tcb prompt-translate");
+    expect(resourceGuardian).toBeDefined();
+    expect(resourceGuardian?.split(/(?<!\\)\|/)[5]).toContain("Resource Guardian");
+    expect(tui).toContain("| `Enter` | refresh the peek |");
+    expect(tui).toContain("| `?` | show the full keymap |");
+    expect(tui).toMatch(/\| `m` \|[^\n]*Resource Guardian/);
+    expect(read("src/tui/app.tsx")).toContain("machine load + Resource Guardian (sysload)");
+  });
+
+  it("keeps the Home Operator skill aligned with Resource Guardian inspection", () => {
+    const skill = read("skills/tcb-home-operator/SKILL.md");
+
+    expect(skill).toContain("tcb resource status");
+    expect(skill).toContain("tcb resource incidents --limit 20");
+  });
+
+  it("keeps missing-worktree registration recovery in business and maintenance truth", () => {
+    const automation = read("docs/intelligent-automation.md");
+    const maintenance = read("docs/agent-maintenance-guidelines.md");
+
+    for (const doc of [automation, maintenance]) {
+      expect(doc).toContain("missing worktree directory");
+      expect(doc).toMatch(/exact stale Git\s+worktree registration/);
+      expect(doc).toMatch(/verified\s+source repository/);
     }
   });
 

@@ -8,8 +8,9 @@ description: Use when the user wants to run, check on, or steer a background cod
 tmux-claude-bot runs coding agents (Claude Code / Codex) inside managed sessions on
 this machine — one per project, several in parallel. You drive it through the **`tcb`
 CLI**. The bot must be running; if a command says it can't reach the control socket,
-tell the user to start it (`tcb service start`). You are the **operator**, a separate
-process — not one of the managed sessions.
+inspect it with `tcb service status`; use `tcb service resume` when it is paused or
+`tcb service restart` when it needs a clean restart. You are the **operator**, a
+separate process — not one of the managed sessions.
 
 ## Start from docs, then use the CLI
 
@@ -34,7 +35,8 @@ prompts.
 - **Start / switch a project** — `tcb open <project>` (works for stopped projects too).
 - **Control keys** — `tcb control <project> <esc|enter|interrupt|restart|clear|compact|up|down|tab>`.
 - **Status / health** — `tcb dashboard` (all sessions), `tcb sysload` (machine load /
-  heat / runaway processes), `tcb doctor` (install health).
+  heat / runaway processes / Resource Guardian), `tcb resource status` and
+  `tcb resource incidents --limit 20` (Guardian detail), `tcb doctor` (install health).
 - **Delegate clarified work** — `tcb autopilot <project> [requirement]`. Use this
   after the user has clarified a task and wants the supervisor to finish
   implementation, review, tests/evals when justified, PR policy, and final
@@ -58,7 +60,8 @@ matches; pick the right one or ask the user.
 - "Start / switch to <project>" → `tcb open <project>`.
 - "Stop what it's doing / interrupt it" → `tcb control <project> esc`.
 - "Show me what it's doing" → `tcb peek <project>`.
-- "Is the machine ok / why is it slow?" → `tcb sysload`.
+- "Is the machine ok / why is it slow?" → `tcb sysload`; use
+  `tcb resource status` and `tcb resource incidents --limit 20` for Guardian evidence.
 - Not sure which project they mean → `tcb projects`, then pick the unique match or ask.
 
 ## Good habits

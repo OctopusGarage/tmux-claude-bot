@@ -19,6 +19,7 @@ import { registerResourceCommands } from "./cli/resource-commands.js";
 import { createResourceGuardianStore } from "./core/resource-guardian/store.js";
 import { SCHEDULED_TASK_SOURCES } from "./core/tasks/task-ledger.js";
 import { appStateDir } from "./shared/state-dir.js";
+import { tildeifyHome } from "./shared/utils/path.js";
 import { appVersion } from "./shared/version.js";
 
 // Operational logs mirror to stdout only for the bot itself (the `run` command,
@@ -107,7 +108,7 @@ registerCapabilityCommands(program);
 
 program
   .command("install")
-  .description(`provision the managed service (launchd/systemd) into ${MANAGED_DIR}`)
+  .description(`provision the managed service (launchd/systemd) into ${tildeifyHome(MANAGED_DIR)}`)
   .action(() => {
     // Materialize the prebuilt package into the stable managed dir and register
     // the service, so `npm i -g … && tmux-claude-bot install` stands up the same
@@ -192,7 +193,9 @@ program
 
 program
   .command("sysload")
-  .description("show machine load, thermal state, top CPU, and runaway/orphan shells")
+  .description(
+    "show machine load, thermal state, top CPU, runaway/orphan shells, and Resource Guardian",
+  )
   .action(async () => {
     const { gatherSystemLoad, renderSystemLoad, defaultSystemLoadProbes } = await import(
       "./core/infra/system-load.js"

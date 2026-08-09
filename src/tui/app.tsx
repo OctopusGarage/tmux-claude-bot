@@ -48,7 +48,7 @@ const HELP: [string, string][] = [
   ["i", "compose a prompt — Enter sends, Alt+Enter / paste = multi-line"],
   ["p", "refresh peek"],
   ["l", "logs (WARN+) for this session"],
-  ["m", "machine load (sysload)"],
+  ["m", "machine load + Resource Guardian (sysload)"],
   ["u", "recent inputs → Enter re-runs"],
   ["c", "controls (interrupt/clear/compact/…)"],
   ["e / x / r", "esc / enter / restart"],
@@ -493,7 +493,8 @@ export function App({
         void showText("logs", `Logs · ${shortLabel(selected)}`, () =>
           client.logs(selected.session),
         );
-      else if (ch === "m") void showText("sysload", "System load", () => client.sysload());
+      else if (ch === "m")
+        void showText("sysload", "System load · Resource Guardian", () => client.sysload());
       else if (ch === "u") void openInputs();
       else if (ch === "p" || key.return) void loadPeek(selected?.session);
       else if (ch === "e") void doControl("esc");

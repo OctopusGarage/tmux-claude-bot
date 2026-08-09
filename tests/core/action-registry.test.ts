@@ -117,6 +117,13 @@ describe("BOT_COMMANDS", () => {
     const commands = BOT_COMMANDS.map((c) => c.command);
     expect(new Set(commands).size).toBe(commands.length);
   });
+
+  it("advertises Resource Guardian through the existing sysload command", () => {
+    expect(BOT_COMMANDS.find((item) => item.command === "sysload")?.description).toContain(
+      "Resource Guardian",
+    );
+    expect(buildHelpBody("telegram", "telegram")).toContain("资源守护");
+  });
 });
 
 describe("canonical control rows", () => {

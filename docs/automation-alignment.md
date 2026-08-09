@@ -266,7 +266,7 @@ feature, review this matrix in the same slice:
 | --- | --- |
 | Chat command | `BOT_COMMANDS`, Telegram handler, Lark command/card action, help text, `docs/commands.md`, i18n catalogs, command tests. |
 | Control button/card action | Shared action registry when available, Telegram keyboard/callback parser, Lark card/action parser, TUI when applicable, dangerous-action confirmation, parity tests. |
-| CLI command | `src/cli.ts`, control protocol/client/server if socket-backed, `docs/manual.md`, `docs/agents/usage-guide.md`, CLI tests. |
+| CLI command | `src/cli.ts` composition plus `src/cli/*-commands.ts` family registrars, control protocol/client/server if socket-backed, `docs/cli-reference.md`, `docs/manual.md`, `docs/agents/usage-guide.md`, CLI tests. |
 | User personal configuration | Safe operator command surface such as `tcb config ...`, `tcb automation ...`, setup/dedicated commands for credentials, redacted reads, allowlisted non-secret writes, `.env.example`, `docs/manual.md`, `docs/agents/usage-guide.md`, and config/CLI tests. |
 | MCP tool or AI tool surface | Role namespace, capability class, typed response contract, control/CLI backing path, actual enforcement layer for role/scope/permission, `docs/ai-tool-surface-governance.md`, docs/tests. |
 | External skill/tool dependency | Curated capability catalog, task-family dependency metadata, approved skill registry, install/update/status CLI, doctor check, prompt fallback wording, `docs/agents/skills.md`, docs/tests. |

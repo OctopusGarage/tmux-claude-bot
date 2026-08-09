@@ -2,7 +2,8 @@
 
 This reference tracks the maintained `tcb ...` command surface. The user manual
 explains workflows; this file exists so subcommands and options do not drift
-silently from `src/cli.ts`.
+silently from the `src/cli.ts` composition root or its `src/cli/*-commands.ts`
+family registrars.
 
 ## Top-Level Commands
 
@@ -13,6 +14,7 @@ silently from `src/cli.ts`.
 - `tcb config`
 - `tcb automation`
 - `tcb resource`
+- `tcb capabilities`
 - `tcb install`
 - `tcb service`
 - `tcb dashboard`
@@ -32,6 +34,7 @@ silently from `src/cli.ts`.
 - `tcb control`
 - `tcb attach`
 - `tcb skill`
+- `tcb ai-tools`
 - `tcb mcp`
 - `tcb recover`
 - `tcb logs`
@@ -110,6 +113,7 @@ silently from `src/cli.ts`.
 - `--command`
 - `--component`
 - `--days`
+- `--default`
 - `--dir`
 - `--dry-run`
 - `--ended-at`
@@ -141,6 +145,7 @@ silently from `src/cli.ts`.
 - `--status`
 - `--stdin`
 - `--summary`
+- `--task`
 - `--timeout`
 - `--title`
 - `--to`

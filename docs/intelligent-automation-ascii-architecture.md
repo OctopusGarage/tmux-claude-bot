@@ -26,6 +26,7 @@ OPERATOR SURFACES
 
  System triggers
  - scheduler tick
+ - Resource Guardian
  - Daily Task Audit
  - Runtime Guardian
  - PR review schedules
@@ -40,6 +41,7 @@ CONTROL + BOT SERVICE
  - starts adapters
  - starts control socket
  - starts schedulers
+ - starts Resource Guardian before notification-driven background services
  - manages project/session state
  - resolves localized UI copy
  - writes logs, ledger, reports
@@ -51,7 +53,7 @@ CONTROL + BOT SERVICE
 CONTROL / ROUTING                 NOTIFICATIONS                 DIAGNOSTICS
 --------------------------------------------------------------------------------
  core command dispatch             NotificationGateway           dashboard
- per-session queue                 Telegram sender               sysload
+ per-session queue                 Telegram sender               sysload + Resource Guardian view
  current project pointer           Feishu/Lark sender             logs
  project/session catalog           project-bound Lark routing     doctor
  local unix control socket          attachments                   task report
@@ -104,6 +106,10 @@ ORCHESTRATION
  All lanes share the same session, queue, runtime, localization, notification,
  evidence, and governance primitives. New automation should deepen this shared
  pipeline rather than inventing a side path.
+
+ Background lanes must check Resource Guardian admission before durable
+ reservation. A closed circuit blocks new background ownership while leaving
+ read-only diagnostics and explicit operator recovery controls available.
 
 
 ORDINARY INTERACTIVE WORK
@@ -277,10 +283,44 @@ STATE, LOGS, AND EVIDENCE
  Used by:
  - dashboard
  - logs
+ - Resource Guardian
  - Daily Task Audit
  - Runtime Guardian
  - human debugging
  - follow-up repair WorkOrders
+
+
+================================================================================
+RESOURCE GUARDIAN
+--------------------------------------------------------------------------------
+
+ host CPU/load sampling + typed sampling health
+        |
+        v
+ sustained pressure policy + durable incident evidence
+        |
+        +-- healthy / observe -> background admission open
+        |
+        +-- degraded / protect -> background admission closed
+                                   |
+                                   v
+                  revalidate bot-owned process ownership
+                                   |
+                  bounded cooperative cancellation / signal
+                                   |
+                     stable recovery window
+                                   |
+                                   v
+                 global Repair Coordinator
+                 -> at most one repair WorkOrder
+
+ Operator controls:
+ - tcb resource status / incidents / mode / profile
+ - sysload includes Resource Guardian context
+
+ Resource Guardian owns host-pressure admission and bounded emergency action.
+ Runtime Guardian below owns durable runtime-artifact healing; it must obey the
+ Resource Guardian circuit before reserving background work.
 
 
 ================================================================================
@@ -334,6 +374,7 @@ CONFIGURATION, STATE, AND LOCAL TRUTH
  - project/session mappings and current-project pointers
  - Telegram / Feishu / Lark binding state
  - voice transcription and prompt translation settings
+ - Resource Guardian current state, operator overrides, and incidents
  - operator home directory when not explicitly configured
 
  Rules:

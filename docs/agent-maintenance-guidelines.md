@@ -79,6 +79,13 @@ repository backup material. Incident retention is bounded to the newest 50
 records and 10 MiB; pruning oldest evidence is intentional. Keep
 `state/resource-guardian/` ignored by source and state-repository backups.
 
+For Loop cleanup, a missing worktree directory is not proof that Git metadata
+was removed. Terminal reconciliation must resolve the WorkOrder's verified
+source repository and remove only the exact stale Git worktree registration
+recorded for that WorkOrder. If the source repository or registration cannot be
+verified, retain the evidence and fail closed instead of guessing. Source
+worktrees are never cleanup targets.
+
 ## Logging And Artifacts
 
 Long-running workflows must be diagnosable from persisted logs and artifacts
