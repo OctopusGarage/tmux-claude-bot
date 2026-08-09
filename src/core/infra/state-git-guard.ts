@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 export type StateGitGuardResult = {
   gitRepository: boolean;
   removedHooksPath: string | null;
+  contaminatedInstallRootGitRepository?: boolean;
+  removedInstallRootHooksPath?: string | null;
 };
 
 function gitConfigGet(cwd: string, key: string): string | null {
@@ -20,18 +22,51 @@ function gitConfigGet(cwd: string, key: string): string | null {
 }
 
 export function disableStateRepositoryHooks(stateDir: string): StateGitGuardResult {
-  if (!existsSync(join(stateDir, ".git"))) {
-    return { gitRepository: false, removedHooksPath: null };
+  const result: StateGitGuardResult = { gitRepository: false, removedHooksPath: null };
+
+  if (existsSync(join(stateDir, ".git"))) {
+    result.gitRepository = true;
+    result.removedHooksPath = unsetHooksPath(stateDir);
   }
 
-  const hooksPath = gitConfigGet(stateDir, "core.hooksPath");
+  const installRoot = dirname(stateDir);
+  if (basename(stateDir) === "state" && contaminatedInstallRootStateRepository(installRoot)) {
+    result.contaminatedInstallRootGitRepository = true;
+    result.removedInstallRootHooksPath = unsetHooksPath(installRoot);
+  }
+
+  return result;
+}
+
+function unsetHooksPath(cwd: string): string | null {
+  const hooksPath = gitConfigGet(cwd, "core.hooksPath");
   if (hooksPath === null) {
-    return { gitRepository: true, removedHooksPath: null };
+    return null;
   }
 
   execFileSync("git", ["config", "--unset", "core.hooksPath"], {
-    cwd: stateDir,
+    cwd,
     stdio: "ignore",
   });
-  return { gitRepository: true, removedHooksPath: hooksPath };
+  return hooksPath;
+}
+
+function gitTracksPath(cwd: string, path: string): boolean {
+  try {
+    execFileSync("git", ["ls-files", "--error-unmatch", path], {
+      cwd,
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function contaminatedInstallRootStateRepository(installRoot: string): boolean {
+  if (!existsSync(join(installRoot, ".git"))) return false;
+  const tracksState = gitTracksPath(installRoot, "state/loop_backlog.json");
+  const tracksSource =
+    gitTracksPath(installRoot, "src/cli.ts") || gitTracksPath(installRoot, "package.json");
+  return tracksState && tracksSource;
 }
