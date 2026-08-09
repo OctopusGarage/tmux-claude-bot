@@ -257,11 +257,11 @@ function parseDispatchOutput(
   const fileParsed = parseSupervisorFinalSummaryFile(workOrder);
   const parsed = fileParsed.ok ? fileParsed : parseSupervisorFinalSummary(output, workOrder.id);
   if (!parsed.ok) {
-    return { status: "invalid-output", reason: parsed.reason, output };
+    return invalidSupervisorOutput(parsed.reason, output);
   }
   const summary = recoverNonTerminalPullRequestDecisions(workOrder, parsed.summary);
   if (!validateSupervisorFinalSummaryForWorkOrder(workOrder, summary)) {
-    return { status: "invalid-output", reason: "invalid-summary", output };
+    return invalidSupervisorOutput("invalid-summary", output);
   }
 
   return {
@@ -269,6 +269,10 @@ function parseDispatchOutput(
     summary,
     output,
   };
+}
+
+function invalidSupervisorOutput(reason: string, output: string): LoopSupervisedRunResult {
+  return { status: "invalid-output", reason, output, repairDisposition: "bot-repairable" };
 }
 
 function joinOutput(result: SupervisorDispatchResult): string {
