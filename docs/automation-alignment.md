@@ -200,6 +200,9 @@ later gate artifacts. Terminal WorkOrders must release their worker session
 regardless of success, failure, timeout, or cancellation. Successful runs remove
 bot-owned isolated execution worktrees immediately; failed/timeout/cancelled
 runs retain those worktrees only until the configured retention TTL expires.
+If an isolated worktree directory disappears before normal cleanup, terminal
+reconciliation must use the WorkOrder's verified source repository to remove its
+exact stale Git worktree registration; a missing directory is not cleanup proof.
 Worker leases whose bot-owned worktree disappeared are stale and must be
 released during reconciliation. Source worktrees are never removed. The
 invariant is enforced by coordinator/runtime/worktree tests rather than

@@ -3,6 +3,7 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import {
   cleanupLoopExecutionWorktree,
+  createLoopExecutionWorktreeCleanup,
   isBotOwnedLoopExecutionWorktree,
 } from "./execution-worktree.js";
 import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
@@ -236,6 +237,7 @@ function reconcileTerminalLoopSupervisorWorktrees(input: {
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): number {
   let removed = 0;
+  const cleanupWorktree = createLoopExecutionWorktreeCleanup(input.runGit);
   for (const record of listTerminalLoopSupervisorWorkOrders()) {
     if (!isPreparedIsolatedExecutionWorktree(record.workOrder)) continue;
     const retainFailureForMs =
@@ -244,9 +246,14 @@ function reconcileTerminalLoopSupervisorWorktrees(input: {
       record.state.status === "completed"
         ? record.state.updatedAt
         : record.state.updatedAt + retainFailureForMs;
-    if (eligibleAt > input.now || !existsSync(record.workOrder.projectPath)) continue;
+    if (eligibleAt > input.now) continue;
     if (
-      cleanupLoopExecutionWorktree({ worktree: record.workOrder.projectPath, runGit: input.runGit })
+      cleanupWorktree({
+        worktree: record.workOrder.projectPath,
+        ...(record.workOrder.executionIsolation?.sourceWorktree === undefined
+          ? {}
+          : { sourceWorktree: record.workOrder.executionIsolation.sourceWorktree }),
+      }) === "removed"
     ) {
       removed++;
     }

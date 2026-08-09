@@ -2420,13 +2420,17 @@ projects:
         runGit: (invocation) => {
           gitCalls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
           if (invocation.args[0] === "rev-parse") {
-            return { status: 0, stdout: `${worktree}\n`, stderr: "" };
+            return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return { status: 0, stdout: `worktree ${projectDir}\n`, stderr: "" };
           }
           return { status: 0, stdout: "", stderr: "" };
         },
       });
     await reconcile();
     rmSync(worktree, { recursive: true, force: true });
+    await reconcile();
     await reconcile();
 
     expect(gitCalls).toEqual([

@@ -115,18 +115,69 @@ describe("loop execution worktrees", () => {
     ).toBe(false);
   });
 
-  it("treats an already removed bot worktree as cleaned", () => {
+  it("removes a missing bot worktree's stale Git registration from its source repository", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
     process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = join(stateDir, "source");
+    mkdirSync(sourceWorktree, { recursive: true });
+    const worktree = join(stateDir, "loop-worktrees", "hub", "already-removed");
+    const calls: string[] = [];
 
     expect(
       cleanupLoopExecutionWorktree({
-        worktree: join(stateDir, "loop-worktrees", "hub", "already-removed"),
-        runGit: () => {
-          throw new Error("git must not run for a missing worktree");
+        worktree,
+        sourceWorktree,
+        runGit: (invocation) => {
+          calls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
+          if (invocation.args[0] === "rev-parse") {
+            return { status: 0, stdout: `${sourceWorktree}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return {
+              status: 0,
+              stdout: `worktree ${sourceWorktree}\n\nworktree ${worktree}\nprunable gitdir file points to non-existent location\n`,
+              stderr: "",
+            };
+          }
+          return { status: 0, stdout: "", stderr: "" };
         },
       }),
     ).toBe(true);
+    expect(calls).toEqual([
+      `${sourceWorktree}:rev-parse --show-toplevel`,
+      `${sourceWorktree}:worktree list --porcelain`,
+      `${sourceWorktree}:worktree remove --force ${worktree}`,
+    ]);
+  });
+
+  it("treats a missing unregistered bot worktree as already reconciled", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = join(stateDir, "source");
+    mkdirSync(sourceWorktree, { recursive: true });
+    const worktree = join(stateDir, "loop-worktrees", "hub", "already-pruned");
+    const calls: string[] = [];
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        sourceWorktree,
+        runGit: (invocation) => {
+          calls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
+          if (invocation.args[0] === "rev-parse") {
+            return { status: 0, stdout: `${sourceWorktree}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return { status: 0, stdout: `worktree ${sourceWorktree}\n`, stderr: "" };
+          }
+          throw new Error("an absent registration must not be removed again");
+        },
+      }),
+    ).toBe(true);
+    expect(calls).toEqual([
+      `${sourceWorktree}:rev-parse --show-toplevel`,
+      `${sourceWorktree}:worktree list --porcelain`,
+    ]);
   });
 
   it("keeps the lease eligible for retry when git validation or removal fails", () => {
