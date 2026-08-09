@@ -3,7 +3,6 @@ import { basename, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { CODEX_SKIP_PERMS, SKIP_PERMS } from "../agents/resume-command.js";
-import { markSessionStopped } from "../agents/runningSessions.js";
 import { performStart as defaultPerformStart } from "../command/dispatch.js";
 import type { HandlerDeps } from "../deps.js";
 import {
@@ -173,7 +172,6 @@ export async function startLoopSupervisor(
         data: { session: name, dir },
       });
     }
-    markSessionStopped(name);
     const alive = await deps.bridge.isPaneAlive(name);
     log.info("loop supervisor session ensured", { data: { session: name, dir, start, alive } });
     return alive;

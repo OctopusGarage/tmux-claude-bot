@@ -142,7 +142,7 @@ describe("loop supervisor session", () => {
     expect(performStart).not.toHaveBeenCalled();
   });
 
-  it("starts the configured supervisor session and removes it from recovery", async () => {
+  it("starts the configured supervisor session and keeps it eligible for system prompts", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-supervisor-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const createSession = vi.fn(async () => true);
@@ -183,7 +183,7 @@ describe("loop supervisor session", () => {
     expect(waitUntilReady).toHaveBeenCalledWith(session);
     expect(performStart.mock.calls[0]?.[2]).toContain("--yolo");
     expect(getPathBySession(session)).toBe(expectedDir);
-    expect(allRunningSessions()).not.toContain(session);
+    expect(allRunningSessions()).toContain(session);
     rmSync(stateDir, { recursive: true, force: true });
   });
 
