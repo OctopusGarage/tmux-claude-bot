@@ -43,6 +43,50 @@ describe("Loop WorkOrder settlement", () => {
     ).toBe("loop:project:security-maintenance:123");
   });
 
+  it("uses workspace job keys for recovered workspace task-family WorkOrders", () => {
+    const workspaceWorkOrder = (task: NonNullable<LoopWorkOrder["task"]>): LoopWorkOrder =>
+      workOrder({
+        task,
+        workspace: { root: "/repo/workspace", repositories: [] },
+      } as Partial<LoopWorkOrder>);
+
+    expect(
+      loopWorkOrderJobKey(
+        workspaceWorkOrder({
+          kind: "bug-fix",
+          maxRounds: 1,
+          maxBugsPerRound: 1,
+          requireRegressionTest: true,
+        }),
+      ),
+    ).toBe("workspace:project:bug-fix");
+    expect(
+      loopWorkOrderJobKey(
+        workspaceWorkOrder({
+          kind: "test-coverage",
+          targetCoverage: 80,
+          maxRounds: 1,
+          requireMeaningfulTests: true,
+          allowIntegrationTests: true,
+          allowSmokeTests: true,
+          allowE2ETests: true,
+          allowAiEvalTests: false,
+        }),
+      ),
+    ).toBe("workspace:project:test-coverage");
+    expect(
+      loopLedgerTaskId(
+        workspaceWorkOrder({
+          kind: "pull-request-review",
+          lookbackHours: 24,
+          consecutivePasses: 1,
+          autoMerge: false,
+          mergeMethod: "squash",
+        }),
+      ),
+    ).toBe("loop:workspace:project:pull-request-review:123");
+  });
+
   it("retains failures and settles only clean completion as success", () => {
     expect(workerLeaseOutcome("completed", false)).toBe("success");
     expect(workerLeaseOutcome("completed", true)).toBe("failure");

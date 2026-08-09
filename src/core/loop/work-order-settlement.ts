@@ -7,12 +7,14 @@ export function loopWorkOrderJobKey(workOrder: LoopWorkOrder): string {
     return `pr-review:${workOrder.projectId}`;
   if (workOrder.task?.kind === "workspace-architecture")
     return `workspace:${workOrder.projectId}:architecture`;
+  const workspacePrefix = workOrder.workspace === undefined ? "" : "workspace:";
   if (workOrder.task?.kind === "pull-request-review")
-    return `${workOrder.projectId}:pull-request-review`;
-  if (workOrder.task?.kind === "bug-fix") return `${workOrder.projectId}:bug-fix`;
-  if (workOrder.task?.kind === "test-coverage") return `${workOrder.projectId}:test-coverage`;
+    return `${workspacePrefix}${workOrder.projectId}:pull-request-review`;
+  if (workOrder.task?.kind === "bug-fix") return `${workspacePrefix}${workOrder.projectId}:bug-fix`;
+  if (workOrder.task?.kind === "test-coverage")
+    return `${workspacePrefix}${workOrder.projectId}:test-coverage`;
   if (workOrder.task?.kind === "security-maintenance")
-    return `${workOrder.projectId}:security-maintenance`;
+    return `${workspacePrefix}${workOrder.projectId}:security-maintenance`;
   if (workOrder.task?.kind === "harness-auto") {
     return workOrder.workspace === undefined
       ? `${workOrder.projectId}:harness-auto`

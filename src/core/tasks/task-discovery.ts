@@ -160,6 +160,7 @@ function taskKindFromName(value: string | undefined): LoopDiscoveredJobKind {
   if (value === "security-maintenance") return "security-maintenance";
   if (value === "harness-auto") return "harness-auto";
   if (value === "opportunity-discovery") return "opportunity-discovery";
+  if (value === "automation-governance-review") return "automation-governance-review";
   if (value === "pull-request-review") return "pull-request-review";
   if (value === "repository-pull-request-review") return "repository-pull-request-review";
   if (value === "workspace-architecture") return "workspace-architecture";
@@ -489,6 +490,8 @@ function loopRunSuffix(projectId: string, jobKind: LoopDiscoveredJobKind, jobKey
   if (jobKind === "test-coverage") return `-${projectId}-test-coverage`;
   if (jobKind === "security-maintenance") return `-${projectId}-security-maintenance`;
   if (jobKind === "harness-auto") return `-${projectId}-harness-auto`;
+  if (jobKind === "automation-governance-review")
+    return `-${projectId}-automation-governance-review`;
   if (jobKind === "repository-pull-request-review") return `-${projectId}-repo-pr-review`;
   return `-${projectId}-pr-review`;
 }
