@@ -192,7 +192,8 @@ function isIncidentAction(value: unknown): value is ResourceIncidentAction {
     (value.kind === "transition" ||
       value.kind === "notification" ||
       value.kind === "sampling-degraded" ||
-      value.kind === "overlap-skipped") &&
+      value.kind === "overlap-skipped" ||
+      value.kind === "resource-action") &&
     isFiniteNumber(value.at) &&
     (value.outcome === "recorded" ||
       value.outcome === "sent" ||
@@ -200,6 +201,15 @@ function isIncidentAction(value: unknown): value is ResourceIncidentAction {
       value.outcome === "failed" ||
       value.outcome === "skipped") &&
     typeof value.reason === "string" &&
+    (value.target === undefined ||
+      (isRecord(value.target) &&
+        isFiniteNumber(value.target.pid) &&
+        Number.isInteger(value.target.pid) &&
+        value.target.pid > 0 &&
+        typeof value.target.startedAt === "string" &&
+        typeof value.target.workOrderId === "string" &&
+        (value.target.session === undefined || typeof value.target.session === "string") &&
+        (value.target.leaseId === undefined || typeof value.target.leaseId === "string"))) &&
     (value.count === undefined ||
       (isFiniteNumber(value.count) && Number.isInteger(value.count) && value.count >= 0))
   );
@@ -323,9 +333,7 @@ function legacySamplingHealth(): ResourceSamplingHealth {
 
 function normalizeCurrent(value: unknown): ResourceGuardianCurrentState | null {
   if (isCurrent(value)) return value;
-  if (!isCurrent(value, true) || !isRecord(value.view) || value.view.sampling !== undefined) {
-    return null;
-  }
+  if (!isCurrent(value, true)) return null;
   return {
     circuit: value.circuit,
     view: {

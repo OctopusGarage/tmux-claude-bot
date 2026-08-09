@@ -230,9 +230,15 @@ export async function cancelActiveDelegatedTask(
   };
 }
 
+export function delegatedTaskCancellationReason(
+  reason: "user" | "resource-pressure" = "user",
+): string {
+  return reason === "resource-pressure" ? "cancelled by resource pressure" : "cancelled by user";
+}
+
 export async function cancelActiveDelegatedTaskByRunId(
   deps: HandlerDeps,
-  input: { runId: string },
+  input: { runId: string; reason?: "user" | "resource-pressure" },
 ): Promise<ActiveDelegatedTaskCancelResult> {
   const active =
     listUnfinishedLoopSupervisorWorkOrders().find(
@@ -250,14 +256,15 @@ export async function cancelActiveDelegatedTaskByRunId(
   const controller =
     activeDelegatedTasks.get(active.workOrder.projectPath) ??
     activeDelegatedTasks.get(resolve(active.workOrder.projectPath));
-  controller?.controller.abort("cancelled by user");
+  const cancellationReason = delegatedTaskCancellationReason(input.reason);
+  controller?.controller.abort(cancellationReason);
   writeLoopSupervisorWorkOrderState({
     workOrder: active.workOrder,
     supervisorSession: active.state.supervisorSession,
     status: "cancelled",
     now: Date.now(),
     resultStatus: "cancelled",
-    revisionReasons: ["cancelled by user"],
+    revisionReasons: [cancellationReason],
   });
   await interruptSupervisor(deps, active.state.supervisorSession);
   return {

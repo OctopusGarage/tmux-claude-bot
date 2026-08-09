@@ -18,6 +18,16 @@ export type ResourceProcess = {
   cwd?: string;
 };
 
+export type ProcessOwnership = {
+  classification: "external" | "unknown" | "bot-active" | "bot-terminal" | "bot-stale";
+  strong: boolean;
+  process: ResourceProcess;
+  session?: string;
+  workOrderId?: string;
+  leaseId?: string;
+  evidence: string[];
+};
+
 export type DeepResourceSnapshot = {
   capturedAt: number;
   thermal: ThermalPressure;
@@ -117,10 +127,18 @@ export type ResourceIncidentTransition = {
 };
 
 export type ResourceIncidentAction = {
-  kind: "transition" | "notification" | "sampling-degraded" | "overlap-skipped";
+  kind: "transition" | "notification" | "sampling-degraded" | "overlap-skipped" | "resource-action";
   at: number;
   outcome: "recorded" | "sent" | "partial" | "failed" | "skipped";
   reason: string;
+  /** Identity proof recorded before a protect-mode destructive action. */
+  target?: {
+    pid: number;
+    startedAt: string;
+    workOrderId: string;
+    session?: string;
+    leaseId?: string;
+  };
   count?: number;
 };
 

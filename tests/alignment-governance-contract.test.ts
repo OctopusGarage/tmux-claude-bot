@@ -78,6 +78,8 @@ describe("alignment governance contract", () => {
       "admission before reservation",
       "active delegated task admission",
       "Task 6 active",
+      "Task 7 ownership proof",
+      "Task 8 may reduce only revalidated bot-owned emergency load",
       "Loop Engineering gates each due target",
       "Batch Scheduler gates each",
       "default disabled",

@@ -33,10 +33,18 @@ export type ResourceSamplingDegradedEvent = {
   circuit: ResourceCircuitAdmission;
 };
 
+export type ResourceActionFailedEvent = {
+  kind: "resource.action-failed";
+  incidentId: string | null;
+  circuit: ResourceCircuitAdmission;
+  reason: string;
+};
+
 export type NotificationEvent =
   | LongTaskFinishedEvent
   | ResourcePressureTransitionEvent
-  | ResourceSamplingDegradedEvent;
+  | ResourceSamplingDegradedEvent
+  | ResourceActionFailedEvent;
 
 export function notificationRequestForEvent(
   event: NotificationEvent,
@@ -47,7 +55,23 @@ export function notificationRequestForEvent(
   if (event.kind === "resource.sampling-degraded") {
     return resourceSamplingDegradedRequest(event);
   }
+  if (event.kind === "resource.action-failed") return resourceActionFailedRequest(event);
   return longTaskFinishedRequest(event);
+}
+
+function resourceActionFailedRequest(
+  event: ResourceActionFailedEvent,
+): Omit<NotificationRequest, "channel"> {
+  return {
+    level: "error",
+    source: "resource-guardian",
+    title: "Resource action failed",
+    body: [
+      `incident: ${event.incidentId ?? "none"}`,
+      `circuit: ${event.circuit}`,
+      `reason: ${event.reason}`,
+    ].join("\n"),
+  };
 }
 
 function resourceSamplingDegradedRequest(

@@ -1,6 +1,11 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
 import { homedir } from "node:os";
+import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { HandlerDeps } from "../../src/core/deps.js";
 import { notificationRequestForEvent } from "../../src/core/notifications/events.js";
+import { createProductionResourceActionController } from "../../src/core/resource-guardian/action-controller.js";
 import {
   createResourceGuardianCoordinator,
   type ResourceGuardianTickRuntime,
@@ -12,6 +17,7 @@ import type {
   ResourceGuardianCurrentState,
   ResourceGuardianStore,
 } from "../../src/core/resource-guardian/store.js";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
 import type {
   ResourceCircuitState,
   ResourceGuardianOperatorState,
@@ -150,6 +156,341 @@ class MemoryStore implements ResourceGuardianStore {
 const sent = { status: "sent" as const, deliveries: [] };
 
 describe("resource guardian coordinator", () => {
+  it("composes the production action controller from fresh injected supervisor evidence", async () => {
+    const readRegistry = vi.fn(
+      () =>
+        ({
+          records: [
+            {
+              workOrder: {
+                id: "wo-1",
+                workerSession: "worker-1",
+                task: { kind: "active-delegated-task" },
+              },
+              state: { supervisorSession: "supervisor-1", status: "in-flight" },
+            },
+          ],
+        }) as unknown as ReturnType<
+          typeof import("../../src/core/loop/supervisor-state.js").readLoopSupervisorWorkOrderRegistry
+        >,
+    );
+    const cancel = vi.fn(async () => ({
+      status: "cancelled" as const,
+      runId: "wo-1",
+      projectId: "p",
+      supervisorSession: "supervisor-1",
+    }));
+    const controller = createProductionResourceActionController({} as HandlerDeps, {
+      processProbe: async () => ({
+        capturedAt: 1,
+        thermal: "normal",
+        processes: [
+          {
+            pid: 10,
+            ppid: 1,
+            pgid: 10,
+            startedAt: "2026-08-09T00:00:00.000Z",
+            cpuPct: 90,
+            rssKb: 1,
+            command: "node worker",
+          },
+        ],
+      }),
+      panePid: async () => 10,
+      introspector: { cwdOf: async () => null },
+      readRegistry,
+      readLeaseState: () => ({
+        leases: [
+          {
+            workOrderId: "wo-1",
+            workerSession: "supervisor-1",
+            projectId: "p",
+            projectPath: "/synthetic",
+            status: "active",
+            leasedAt: 0,
+            updatedAt: 0,
+          },
+        ],
+      }),
+      reconcile: async () => {},
+      cancel,
+      wait: async () => {},
+      signal: async () => {},
+    });
+
+    const plan = await controller.prepare({
+      now: 1,
+      pressure: "emergency",
+      circuit: "background-closed",
+      incidentId: "incident",
+    });
+    await controller.execute(plan);
+
+    expect(plan).toMatchObject({ kind: "reduce-load", candidate: { workOrderId: "wo-1" } });
+    expect(cancel).toHaveBeenCalledWith("wo-1");
+    expect(readRegistry).toHaveBeenCalledTimes(2);
+  });
+
+  it("records an observe-mode emergency proposal without executing process effects", async () => {
+    const store = new MemoryStore();
+    const prepare = vi.fn(async () => ({ kind: "none" as const }));
+    const execute = vi.fn(async () => ({
+      outcome: "completed" as const,
+      reason: "should not run",
+    }));
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "observe" }),
+      store,
+      sample: async (now) => sample(now, 100),
+      notify: async () => sent,
+      actionController: { prepare, execute },
+    });
+
+    for (let now = 0; now <= 180_000; now += 15_000) await coordinator.run(now);
+
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+    expect(store.listIncidents()[0]?.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "resource-action",
+          outcome: "skipped",
+          reason: "proposed: no safe candidate",
+        }),
+      ]),
+    );
+  });
+
+  it("does not let an observe proposal delay a protect-mode emergency action in process or after restart", async () => {
+    const store = new MemoryStore();
+    const guardianConfig = config({ mode: "observe" });
+    const execute = vi.fn(async () => ({ outcome: "completed" as const, reason: "safe" }));
+    const coordinator = createResourceGuardianCoordinator({
+      config: guardianConfig,
+      store,
+      sample: async (now) => sample(now, 100),
+      notify: async () => sent,
+      actionController: { prepare: async () => ({ kind: "none" }), execute },
+    });
+    for (let now = 0; now <= 180_000; now += 15_000) await coordinator.run(now);
+    expect(coordinator.runtime.lastEmergencyActionAt).toBeUndefined();
+
+    guardianConfig.mode = "protect";
+    await coordinator.run(195_000);
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    const restartStore = new MemoryStore();
+    const restartConfig = config({ mode: "observe" });
+    const beforeRestart = createResourceGuardianCoordinator({
+      config: restartConfig,
+      store: restartStore,
+      sample: async (now) => sample(now, 100),
+      notify: async () => sent,
+      actionController: {
+        prepare: async () => ({ kind: "none" }),
+        execute: async () => ({ outcome: "completed", reason: "must not run" }),
+      },
+    });
+    for (let now = 0; now <= 180_000; now += 15_000) await beforeRestart.run(now);
+    restartConfig.mode = "protect";
+    const restartedExecute = vi.fn(async () => ({ outcome: "completed" as const, reason: "safe" }));
+    const restarted = createResourceGuardianCoordinator({
+      config: restartConfig,
+      store: restartStore,
+      sample: async (now) => sample(now, 100),
+      notify: async () => sent,
+      actionController: { prepare: async () => ({ kind: "none" }), execute: restartedExecute },
+    });
+    await restarted.run(196_000);
+    expect(restartedExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists action intent before protect-mode execution and records its outcome", async () => {
+    const store = new MemoryStore();
+    const notify = vi.fn(async () => sent);
+    const plan = {
+      kind: "reduce-load" as const,
+      candidate: {
+        classification: "bot-terminal" as const,
+        strong: true,
+        process: {
+          pid: 44,
+          ppid: 1,
+          pgid: 44,
+          startedAt: "2026-08-09T00:00:00.000Z",
+          cpuPct: 80,
+          rssKb: 1,
+          command: "node private-worker",
+          cwd: "/Users/tester/private",
+        },
+        session: "worker-44",
+        workOrderId: "wo-44",
+        leaseId: "wo-44:supervisor-1",
+        evidence: ["durable"],
+      },
+    };
+    const execute = vi.fn(async () => {
+      expect(store.operations.at(-1)).toBe("incident");
+      return {
+        outcome: "failed" as const,
+        reason: "TERM rejected token=top-secret https://alice:pw@example.test/private",
+      };
+    });
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "protect" }),
+      store,
+      sample: async (now) => sample(now, 100),
+      notify,
+      actionController: { prepare: async () => plan, execute },
+    });
+
+    for (let now = 0; now <= 180_000; now += 15_000) await coordinator.run(now);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(store.listIncidents()[0]?.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "resource-action",
+          outcome: "recorded",
+          reason: "intent: reduce-load",
+          target: {
+            pid: 44,
+            startedAt: "2026-08-09T00:00:00.000Z",
+            workOrderId: "wo-44",
+            session: "worker-44",
+            leaseId: "wo-44:supervisor-1",
+          },
+        }),
+        expect.objectContaining({
+          kind: "resource-action",
+          outcome: "failed",
+          reason: expect.not.stringContaining("top-secret"),
+        }),
+      ]),
+    );
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.not.stringContaining("top-secret") }),
+    );
+  });
+
+  it("fails closed when durable action intent cannot be persisted", async () => {
+    const store = new MemoryStore();
+    const execute = vi.fn(async () => ({ outcome: "completed" as const, reason: "must not run" }));
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "protect" }),
+      store,
+      sample: async (now) => sample(now, 100),
+      notify: async () => sent,
+      actionController: {
+        prepare: async () => {
+          store.failIncidentWrites = true;
+          return { kind: "none" };
+        },
+        execute,
+      },
+    });
+
+    for (let now = 0; now <= 180_000; now += 15_000) await coordinator.run(now);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(store.current.circuit).toMatchObject({ admission: "background-closed" });
+  });
+
+  it("fails closed when the filesystem incident store rejects an action intent", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "resource-guardian-action-intent-"));
+    try {
+      const store = createResourceGuardianStore({ rootDir: root, now: () => 0 });
+      const execute = vi.fn(async () => ({
+        outcome: "completed" as const,
+        reason: "must not run",
+      }));
+      const coordinator = createResourceGuardianCoordinator({
+        config: config({ mode: "protect" }),
+        store,
+        sample: async (now) => sample(now, 100),
+        notify: async () => sent,
+        incidentId: () => "intent-store-failure",
+        actionController: {
+          prepare: async () => {
+            fs.rmSync(store.paths.incidents, { recursive: true, force: true });
+            fs.writeFileSync(store.paths.incidents, "not a directory");
+            return { kind: "none" };
+          },
+          execute,
+        },
+      });
+
+      for (let now = 0; now <= 180_000; now += 15_000) await coordinator.run(now);
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(store.readCurrent().circuit).toMatchObject({ admission: "background-closed" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the injected emergency action only after durable closure and rate limits repeats", async () => {
+    const store = new MemoryStore();
+    const execute = vi.fn(async () => {
+      expect(store.current.circuit.admission).toBe("background-closed");
+      return { outcome: "completed" as const, reason: "reduced bot load" };
+    });
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "protect" }),
+      store,
+      sample: async (now) => sample(now, 100),
+      notify: async () => sent,
+      actionController: { prepare: async () => ({ kind: "none" }), execute },
+    });
+
+    for (let now = 0; now <= 180_000; now += 15_000) await coordinator.run(now);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await coordinator.run(195_000);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await coordinator.run(210_000);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores a filesystem-backed emergency action limit after restart", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "resource-guardian-action-restart-"));
+    try {
+      const store = createResourceGuardianStore({ rootDir: root, now: () => 0 });
+      const firstExecute = vi.fn(async () => ({
+        outcome: "completed" as const,
+        reason: "no safe candidate",
+      }));
+      const first = createResourceGuardianCoordinator({
+        config: config({ mode: "protect" }),
+        store,
+        sample: async (now) => sample(now, 100),
+        notify: async () => sent,
+        incidentId: () => "restart-action",
+        actionController: { prepare: async () => ({ kind: "none" }), execute: firstExecute },
+      });
+      for (let now = 0; now <= 180_000; now += 15_000) await first.run(now);
+      expect(firstExecute).toHaveBeenCalledTimes(1);
+
+      const afterRestart = vi.fn(async () => ({
+        outcome: "completed" as const,
+        reason: "no safe candidate",
+      }));
+      const restarted = createResourceGuardianCoordinator({
+        config: config({ mode: "protect" }),
+        store,
+        sample: async (now) => sample(now, 100),
+        notify: async () => sent,
+        incidentId: () => "restart-action",
+        actionController: { prepare: async () => ({ kind: "none" }), execute: afterRestart },
+      });
+      await restarted.run(195_000);
+      expect(afterRestart).not.toHaveBeenCalled();
+      await restarted.run(210_000);
+      expect(afterRestart).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("closes the authoritative circuit before best-effort incident evidence", async () => {
     const store = new MemoryStore();
     let now = 0;

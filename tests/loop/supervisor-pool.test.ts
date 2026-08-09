@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   allocateLoopSupervisorBatches,
   consumeExpiredRetainedSupervisorWorkerLeases,
+  isLoopSupervisorWorkerLeaseExpired,
   leaseLoopSupervisorWorker,
   releaseLoopSupervisorWorker,
 } from "../../src/core/loop/supervisor-pool.js";
@@ -35,6 +36,11 @@ describe("loop supervisor worker leases", () => {
     projectId: "app",
     projectPath: "/repo/app",
   };
+
+  it("treats retained leases without retainUntil as expired", () => {
+    expect(isLoopSupervisorWorkerLeaseExpired({ status: "retained" }, 100)).toBe(true);
+    expect(isLoopSupervisorWorkerLeaseExpired({ status: "active" }, 100)).toBe(false);
+  });
 
   it("leases one available supervisor worker and blocks conflicting reuse", () => {
     const first = leaseLoopSupervisorWorker({

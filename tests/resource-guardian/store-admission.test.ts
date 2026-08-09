@@ -282,6 +282,36 @@ describe("resource guardian durable store", () => {
     );
   });
 
+  it("round-trips durable resource action intent and outcome evidence", () => {
+    const store = createResourceGuardianStore({ rootDir: tempRoot(), now: clock });
+    const record = incident("resource-action", clock());
+    record.actions.push(
+      {
+        kind: "resource-action",
+        at: clock(),
+        outcome: "recorded",
+        reason: "intent: reduce-load",
+        target: {
+          pid: 42,
+          startedAt: "2026-08-09T00:00:00.000Z",
+          workOrderId: "work-42",
+          session: "loop-worker-42",
+          leaseId: "work-42:loop-supervisor-1",
+        },
+      },
+      {
+        kind: "resource-action",
+        at: clock() + 1,
+        outcome: "skipped",
+        reason: "proposed: reduce-load",
+      },
+    );
+
+    store.writeIncident(record);
+
+    expect(store.listIncidents()).toContainEqual(record);
+  });
+
   it("prunes oldest incident records by end/start time and id while ignoring irrelevant entries", () => {
     const store = createResourceGuardianStore({ rootDir: tempRoot(), now: clock });
     fs.mkdirSync(store.paths.incidents, { recursive: true });

@@ -46,6 +46,23 @@ describe("notification event contracts", () => {
     expect(request.body).toContain("action: protect mode closed background admission");
   });
 
+  it("renders resource action failures without pretending they are pressure transitions", () => {
+    const request = notificationRequestForEvent({
+      kind: "resource.action-failed",
+      incidentId: "resource-44",
+      circuit: "background-closed",
+      reason: "TERM rejected",
+    });
+
+    expect(request).toMatchObject({
+      level: "error",
+      source: "resource-guardian",
+      title: "Resource action failed",
+    });
+    expect(request.body).toContain("incident: resource-44");
+    expect(request.body).toContain("reason: TERM rejected");
+  });
+
   it("renders long task completion with task identity and latest assistant evidence", () => {
     const request = notificationRequestForEvent({
       kind: "long-task.finished",

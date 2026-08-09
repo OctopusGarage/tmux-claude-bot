@@ -881,6 +881,33 @@ evidence, directly invoke a model API, or materialize a WorkOrder. Later
 Resource Guardian repair, when added, must reuse the supervised WorkOrder path
 only after stable recovery.
 
+Task 7 adds a read-only ownership resolver for deep process samples. Strong
+bot attribution requires an exact `pid` plus process-start identity, a verified
+ancestor path from a bot pane or recorded bot launch, and either a durable
+WorkOrder-linked launch or a consistent pane/WorkOrder/lease reservation. A
+process name, command, pane path, or cwd is never sufficient:
+automation-looking processes without that evidence remain unknown. The resolver
+records no signal, cancellation, cleanup, or repair action outside an emergency
+protect-mode pass. Task 8 first durably closes background admission and
+reconciles terminal supervisor resources, cooperatively cancels a single
+bot-active delegated task, then resamples and revalidates ownership before TERM
+or KILL. Observe, elevated, critical, degraded sampling, external, unknown,
+changed-instance, and still-active processes never receive a signal.
+The deep snapshot validates pane ids before and after collection and records an
+unknown attribution when they change. `ps` start times are only second-granular
+on supported platforms, so exact identity remains conservative and Task 8 must
+revalidate immediately before any future action; command text is never process
+identity.
+Task 8 persists its protect-mode action intent before reconciliation, cooperative
+cancellation, or signaling, and records the eventual outcome for restart-safe
+rate limiting. In observe mode it records a proposed action from the same fresh
+ownership evidence but performs no process effects. Resource action failures are
+separate notifications and never reopen or otherwise change admission.
+The intent records the revalidated PID/start identity and durable WorkOrder
+correlation only, never command text, cwd, or an absolute path. Observe proposals
+do not consume protect-mode rate-limit state, so a later protect transition may
+act immediately from fresh ownership evidence.
+
 ## Runtime Guardian
 
 Runtime Guardian owns durable runtime artifact correctness and may enqueue

@@ -53,6 +53,14 @@ export type LoopSupervisorWorkerLeaseWorkOrder = {
   projectPath: string;
 };
 
+/** Retained leases without an expiry are stale by the same boundary everywhere. */
+export function isLoopSupervisorWorkerLeaseExpired(
+  lease: Pick<LoopSupervisorWorkerLease, "status" | "retainUntil">,
+  now: number,
+): boolean {
+  return lease.status === "retained" && (lease.retainUntil ?? 0) <= now;
+}
+
 function leaseStatePath(): string {
   return join(appStateDir(), "loop-supervisor-worker-leases.json");
 }
@@ -192,9 +200,7 @@ export function pruneExpiredRetainedLeases(
   now: number,
 ): LoopSupervisorWorkerLeaseState {
   return {
-    leases: state.leases.filter(
-      (lease) => lease.status === "active" || (lease.retainUntil ?? 0) > now,
-    ),
+    leases: state.leases.filter((lease) => !isLoopSupervisorWorkerLeaseExpired(lease, now)),
   };
 }
 
@@ -207,7 +213,7 @@ export function consumeExpiredRetainedSupervisorWorkerLeases(
 } {
   const expired: LoopSupervisorWorkerLease[] = [];
   const leases = state.leases.filter((lease) => {
-    if (lease.status !== "retained" || (lease.retainUntil ?? 0) > now) return true;
+    if (!isLoopSupervisorWorkerLeaseExpired(lease, now)) return true;
     expired.push(lease);
     return false;
   });

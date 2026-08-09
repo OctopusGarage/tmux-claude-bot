@@ -7,6 +7,11 @@ import { tildeifyHome } from "../../shared/utils/path.js";
 import type { HandlerDeps } from "../deps.js";
 import { notificationRequestForEvent } from "../notifications/events.js";
 import type { NotificationRequest, NotificationResult } from "../notifications/gateway.js";
+import {
+  createProductionResourceActionController,
+  type ResourceActionController,
+} from "./action-controller.js";
+import { type ResourceActionPlan, sanitizeResourceActionReason } from "./actions.js";
 import { advancePressureState, initialPressureMemory } from "./pressure-policy.js";
 import { createResourceSampler, defaultLightweightProbe } from "./sampler.js";
 import {
@@ -43,6 +48,7 @@ export type ResourceGuardianTickRuntime = {
   memory?: PressureMemory;
   incident?: ResourceIncident | null;
   overlapSkippedCount?: number;
+  lastEmergencyActionAt?: number;
 };
 
 export type ResourceGuardianTickResult =
@@ -80,6 +86,7 @@ export type ResourceGuardianCoordinatorOptions = {
   staleHoldMs?: number;
   runtime?: ResourceGuardianTickRuntime;
   isActive?: () => boolean;
+  actionController?: ResourceActionController;
 };
 
 export type ResourceGuardianCoordinator = {
@@ -256,6 +263,143 @@ export async function runResourceGuardianTick(
       incidentPersisted = writeIncidentBestEffort(input.store, nextIncident);
     }
 
+    if (
+      input.actionController !== undefined &&
+      pressure === "emergency" &&
+      (mode === "observe" || circuit === "background-closed") &&
+      (mode === "observe"
+        ? pressureChanged
+        : pressureChanged ||
+          runtime.lastEmergencyActionAt === undefined ||
+          freshSample.capturedAt - runtime.lastEmergencyActionAt >= 30_000)
+    ) {
+      if (mode === "protect") runtime.lastEmergencyActionAt = freshSample.capturedAt;
+      let prepared: ResourceActionPlan = { kind: "none" };
+      let preparationFailure: string | undefined;
+      try {
+        prepared = await input.actionController.prepare({
+          now: freshSample.capturedAt,
+          pressure,
+          circuit,
+          incidentId,
+        });
+      } catch (error) {
+        preparationFailure = sanitizeResourceActionReason(
+          `action preparation failed: ${String(error)}`,
+        );
+        if (nextIncident) {
+          nextIncident.actions.push({
+            kind: "resource-action",
+            at: freshSample.capturedAt,
+            outcome: "failed",
+            reason: preparationFailure,
+          });
+          if (writeIncidentBestEffort(input.store, nextIncident)) runtime.incident = nextIncident;
+        }
+      }
+      const planReason = prepared.kind === "reduce-load" ? "reduce-load" : "no safe candidate";
+      if (preparationFailure !== undefined) {
+        const notifiedIncident = await notifyResourceActionFailed({
+          notify: input.notify,
+          store: input.store,
+          incident: nextIncident,
+          at: freshSample.capturedAt,
+          incidentId,
+          circuit,
+          reason: preparationFailure,
+        });
+        if (notifiedIncident) {
+          nextIncident = notifiedIncident;
+          runtime.incident = notifiedIncident;
+        }
+      } else if (mode === "observe") {
+        const action = { outcome: "skipped" as const, reason: `proposed: ${planReason}` };
+        if (nextIncident) {
+          nextIncident.actions.push({
+            kind: "resource-action",
+            at: freshSample.capturedAt,
+            outcome: "skipped",
+            reason: action.reason,
+          });
+          if (writeIncidentBestEffort(input.store, nextIncident)) runtime.incident = nextIncident;
+        }
+      } else {
+        let intentPersisted = false;
+        if (nextIncident) {
+          const target = actionTarget(prepared);
+          nextIncident.actions.push({
+            kind: "resource-action",
+            at: freshSample.capturedAt,
+            outcome: "recorded",
+            reason: `intent: ${planReason}`,
+            ...(target === undefined ? {} : { target }),
+          });
+          intentPersisted = writeIncidentBestEffort(input.store, nextIncident);
+        }
+        if (intentPersisted) runtime.incident = nextIncident;
+        if (!intentPersisted) {
+          const failureReason =
+            "resource action intent was not durably persisted; refusing effects";
+          const notifiedIncident = await notifyResourceActionFailed({
+            notify: input.notify,
+            store: input.store,
+            incident: nextIncident,
+            at: freshSample.capturedAt,
+            incidentId,
+            circuit,
+            reason: failureReason,
+          });
+          if (notifiedIncident) {
+            nextIncident = notifiedIncident;
+            runtime.incident = notifiedIncident;
+          }
+        } else {
+          let action: { outcome: "skipped" | "completed" | "failed"; reason: string } = {
+            outcome: "failed",
+            reason: "resource action execution failed",
+          };
+          try {
+            action = await input.actionController.execute(prepared);
+          } catch (error) {
+            action = {
+              outcome: "failed",
+              reason: sanitizeResourceActionReason(`action execution failed: ${String(error)}`),
+            };
+          }
+          const actionReason = sanitizeResourceActionReason(action.reason);
+          if (nextIncident) {
+            nextIncident.actions.push({
+              kind: "resource-action",
+              at: freshSample.capturedAt,
+              outcome:
+                action.outcome === "completed"
+                  ? "recorded"
+                  : action.outcome === "skipped"
+                    ? "skipped"
+                    : "failed",
+              reason: actionReason,
+            });
+            if (writeIncidentBestEffort(input.store, nextIncident)) runtime.incident = nextIncident;
+          }
+          if (action.outcome === "failed") {
+            const notifiedIncident = await notifyResourceActionFailed({
+              notify: input.notify,
+              store: input.store,
+              incident: nextIncident,
+              at: freshSample.capturedAt,
+              incidentId,
+              circuit,
+              reason: actionReason,
+            });
+            if (notifiedIncident) {
+              nextIncident = notifiedIncident;
+              runtime.incident = notifiedIncident;
+            }
+          }
+        }
+      }
+    }
+
     runtime.memory = nextMemory;
     runtime.overlapSkippedCount = 0;
     if (pressure === "healthy") runtime.incident = null;
@@ -303,6 +447,18 @@ function initializeRuntime(
       }
     : memory;
   runtime.incident = restoreIncident(current, store);
+  const lastEmergencyActionAt = runtime.incident?.actions
+    .filter(
+      (action) =>
+        action.kind === "resource-action" &&
+        action.outcome === "recorded" &&
+        action.reason.startsWith("intent:"),
+    )
+    .reduce<number | undefined>(
+      (latest, action) => Math.max(latest ?? action.at, action.at),
+      undefined,
+    );
+  if (lastEmergencyActionAt !== undefined) runtime.lastEmergencyActionAt = lastEmergencyActionAt;
   runtime.overlapSkippedCount = 0;
   runtime.initialized = true;
 }
@@ -541,6 +697,38 @@ async function notifySamplingDegraded(input: {
   return writeIncidentBestEffort(input.store, nextIncident) ? nextIncident : null;
 }
 
+async function notifyResourceActionFailed(input: {
+  notify: ResourceNotifyFn;
+  store: ResourceGuardianStore;
+  incident: ResourceIncident | null;
+  at: number;
+  incidentId: string | null;
+  circuit: ResourceCircuitAdmission;
+  reason: string;
+}): Promise<ResourceIncident | null> {
+  let outcome: ResourceIncidentAction["outcome"] = "failed";
+  const safeReason = sanitizeResourceActionReason(input.reason);
+  let reason = safeReason;
+  try {
+    const result = await input.notify(
+      notificationRequestForEvent({
+        kind: "resource.action-failed",
+        incidentId: input.incidentId,
+        circuit: input.circuit,
+        reason: safeReason,
+      }),
+    );
+    outcome = result.status;
+    reason = `${safeReason}; notification ${result.status}`;
+  } catch (error) {
+    reason = `${safeReason}; notification failed: ${sanitizeResourceActionReason(error)}`;
+  }
+  if (!input.incident) return null;
+  const nextIncident = structuredClone(input.incident);
+  nextIncident.actions.push({ kind: "notification", at: input.at, outcome, reason });
+  return writeIncidentBestEffort(input.store, nextIncident) ? nextIncident : null;
+}
+
 function isActive(input: { isActive?: () => boolean }): boolean {
   return input.isActive?.() ?? true;
 }
@@ -586,6 +774,18 @@ function safeErrorMessage(error: unknown): string {
   return tildeifyHome(redactSecrets(genericRedacted)).slice(0, 500);
 }
 
+function actionTarget(plan: ResourceActionPlan): ResourceIncidentAction["target"] | undefined {
+  if (plan.kind === "none" || plan.candidate.workOrderId === undefined) return undefined;
+  const { process, workOrderId, session, leaseId } = plan.candidate;
+  return {
+    pid: process.pid,
+    startedAt: process.startedAt,
+    workOrderId,
+    ...(session === undefined ? {} : { session }),
+    ...(leaseId === undefined ? {} : { leaseId }),
+  };
+}
+
 function admissionFor(
   mode: ResourceGuardianMode,
   pressure: PressureState,
@@ -627,10 +827,11 @@ export type StartResourceGuardianOptions = {
   staleHoldMs?: number;
   setInterval?: (tick: () => void, delayMs: number) => TimerHandle;
   clearInterval?: (timer: TimerHandle) => void;
+  actionController?: ResourceGuardianCoordinatorOptions["actionController"];
 };
 
 export function startResourceGuardian(
-  deps: Pick<HandlerDeps, "config" | "notifications">,
+  deps: HandlerDeps,
   options: StartResourceGuardianOptions = {},
 ): () => void {
   const config = deps.config.resourceGuardian;
@@ -640,6 +841,8 @@ export function startResourceGuardian(
   }
 
   const now = options.now ?? Date.now;
+  const actionController =
+    options.actionController ?? createProductionResourceActionController(deps);
   const store = options.store ?? createResourceGuardianStore({ stateDir: appStateDir(), now });
   const sampler = createResourceSampler(defaultLightweightProbe(), async () => ({
     capturedAt: now(),
@@ -655,6 +858,7 @@ export function startResourceGuardian(
     notify: (request) => deps.notifications.notify(request),
     ...(options.incidentId ? { incidentId: options.incidentId } : {}),
     ...(options.staleHoldMs === undefined ? {} : { staleHoldMs: options.staleHoldMs }),
+    actionController,
   });
   let stopped = false;
   let generation = 0;
