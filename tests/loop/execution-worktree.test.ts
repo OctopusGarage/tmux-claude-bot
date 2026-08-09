@@ -813,7 +813,7 @@ describe("prepareLoopExecutionWorktrees", () => {
         }
         if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
         if (command === "fetch origin main") return { status: 0, stdout: "", stderr: "" };
-        if (command === "switch loop/repo/run-1") {
+        if (command === "switch -C loop/repo/run-1 origin/main") {
           return { status: 1, stdout: "", stderr: "branch not found" };
         }
         return { status: 0, stdout: "", stderr: "" };
@@ -825,7 +825,7 @@ describe("prepareLoopExecutionWorktrees", () => {
     expect(prepared.projectPath).toBe(repo);
     expect(calls).toContainEqual({
       cwd: executionWorktree,
-      args: ["switch", "loop/repo/run-1"],
+      args: ["switch", "-C", "loop/repo/run-1", "origin/main"],
     });
     expect(calls.map((call) => call.args.slice(0, 3).join(" "))).not.toContain(
       "worktree add --detach",

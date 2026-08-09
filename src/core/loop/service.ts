@@ -343,6 +343,7 @@ export async function runLoopServiceTickAsync(input: {
   defaultSupervisorTimeoutMs?: number;
   supervisorRevisionMaxAttempts?: number;
   cleanupCompletedWorkerSession?: (sessionName: string) => Promise<void>;
+  workerSessionExists?: (sessionName: string) => Promise<boolean>;
   /** Run only the independent repository-review discovery/consumer. */
   repositoryReviewOnly?: boolean;
   /** Keep repository review out of the main Loop tick; production uses the independent consumer. */
@@ -722,9 +723,7 @@ export async function runLoopServiceTickAsync(input: {
       isPreparedIsolatedExecutionWorktree(workOrder) &&
       !cleanupLoopExecutionWorktree({ worktree: workOrder.projectPath, runGit: input.runGit });
     settleLoopSupervisorWorkerLease(workOrder, result, endedAt, isolatedCleanupFailed);
-    if (result.status === "completed") {
-      await cleanupCompletedWorkerSession(workOrder, input.cleanupCompletedWorkerSession);
-    }
+    await cleanupCompletedWorkerSession(workOrder, input.cleanupCompletedWorkerSession);
     if (checkpointScheduler) {
       if (completion.retrySchedule || result.status === "invalid-output") {
         restoreLastFired(input.schedulerStore, previousLastFired, due.jobKey, due.scheduledAt);
@@ -797,7 +796,7 @@ export async function runLoopServiceTickAsync(input: {
     if (workOrder.workerSession === undefined || cleanup === undefined) return;
     try {
       await cleanup(workOrder.workerSession);
-      log.info("loop engineering completed worker session cleaned up", {
+      log.info("loop engineering terminal worker session cleaned up", {
         data: {
           workOrderId: workOrder.id,
           projectId: workOrder.projectId,
@@ -805,7 +804,7 @@ export async function runLoopServiceTickAsync(input: {
         },
       });
     } catch (err) {
-      log.warn("failed to clean up completed loop worker session", {
+      log.warn("failed to clean up terminal loop worker session", {
         err,
         data: {
           workOrderId: workOrder.id,
@@ -1387,15 +1386,23 @@ export function startLoopEngineering(
       cronInterpretation: "utc",
     },
   });
-  const reconciled = reconcileLoopSupervisorWorkOrders({
+  void reconcileLoopSupervisorWorkOrders({
     configFile: config.configFile,
     now: Date.now(),
     runCommand: runShellCommand,
     runGit: runGitCommand,
-  });
-  if (reconciled.checked > 0) {
-    log.info("loop engineering supervisor work order reconcile complete", { data: reconciled });
-  }
+    cleanupCompletedWorkerSession: async (sessionName) => {
+      await deps.bridge.killSession(sessionName);
+      cleanupWorkerSessionRecords(sessionName);
+    },
+    workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
+  })
+    .then((reconciled) => {
+      if (reconciled.checked > 0) {
+        log.info("loop engineering supervisor work order reconcile complete", { data: reconciled });
+      }
+    })
+    .catch((err) => log.error("loop engineering supervisor work order reconcile failed", { err }));
   const schedulerStore = new LoopSchedulerStore();
   let tickInFlight = false;
   let repositoryReviewTickInFlight = false;
@@ -1406,11 +1413,16 @@ export function startLoopEngineering(
     }
     tickInFlight = true;
     try {
-      const reconciled = reconcileLoopSupervisorWorkOrders({
+      const reconciled = await reconcileLoopSupervisorWorkOrders({
         configFile: config.configFile,
         now: Date.now(),
         runCommand: runShellCommand,
         runGit: runGitCommand,
+        cleanupCompletedWorkerSession: async (sessionName) => {
+          await deps.bridge.killSession(sessionName);
+          cleanupWorkerSessionRecords(sessionName);
+        },
+        workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
       });
       if (reconciled.checked > 0) {
         log.info("loop engineering supervisor work order reconcile complete", { data: reconciled });
@@ -1428,6 +1440,7 @@ export function startLoopEngineering(
           await deps.bridge.killSession(sessionName);
           cleanupWorkerSessionRecords(sessionName);
         },
+        workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
         supervisorSessionNames: loopSupervisorSessionNames(
           deps.config.projectSessionPrefix,
           deps.config.loopEngineering.supervisor.poolSize,
@@ -1469,6 +1482,7 @@ export function startLoopEngineering(
           await deps.bridge.killSession(sessionName);
           cleanupWorkerSessionRecords(sessionName);
         },
+        workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
         supervisorSessionNames: loopSupervisorSessionNames(
           deps.config.projectSessionPrefix,
           deps.config.loopEngineering.supervisor.poolSize,
@@ -1519,12 +1533,14 @@ async function supervisorSessionIsAvailable(
   return agentIsIdle(deps, sessionName);
 }
 
-export function reconcileLoopSupervisorWorkOrders(input: {
+export async function reconcileLoopSupervisorWorkOrders(input: {
   configFile: string;
   now: number;
   runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
-}): { checked: number; recovered: number; failed: number } {
+  cleanupCompletedWorkerSession?: (sessionName: string) => Promise<void>;
+  workerSessionExists?: (sessionName: string) => Promise<boolean>;
+}): Promise<{ checked: number; recovered: number; failed: number }> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const registry = readLoopSupervisorWorkOrderRegistry(input.now);
   const unfinished = [
@@ -1613,9 +1629,15 @@ export function reconcileLoopSupervisorWorkOrders(input: {
     if (result.status !== "completed") failed++;
   }
 
-  const resources = reconcileTerminalSupervisorResources({
+  const resources = await reconcileTerminalSupervisorResources({
     now: input.now,
     ...(input.runGit === undefined ? {} : { runGit: input.runGit }),
+    ...(input.cleanupCompletedWorkerSession === undefined
+      ? {}
+      : { cleanupWorkerSession: input.cleanupCompletedWorkerSession }),
+    ...(input.workerSessionExists === undefined
+      ? {}
+      : { workerSessionExists: input.workerSessionExists }),
   });
   checked += resources.abandonedWorkOrders;
   failed += resources.abandonedWorkOrders;

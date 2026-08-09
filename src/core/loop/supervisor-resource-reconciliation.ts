@@ -30,20 +30,34 @@ export type SupervisorResourceReconciliation = {
   abandonedWorkOrders: number;
   removedTerminalWorktrees: number;
   removedExpiredWorktrees: number;
+  removedStaleLeases: number;
+  cleanedTerminalWorkerSessions: number;
 };
 
-export function reconcileTerminalSupervisorResources(input: {
+export async function reconcileTerminalSupervisorResources(input: {
   now: number;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
-}): SupervisorResourceReconciliation {
+  cleanupWorkerSession?: (sessionName: string) => Promise<void> | void;
+  workerSessionExists?: (sessionName: string) => Promise<boolean> | boolean;
+}): Promise<SupervisorResourceReconciliation> {
   const schedulerStore = new LoopSchedulerStore();
   const taskLedger = new DailyTaskLedger();
+  const removedStaleLeases = reconcileStaleLoopSupervisorWorkerLeases();
   const settledTerminalLeases = reconcileTerminalLoopSupervisorWorkerLeases(input.now);
   const abandonedWorkOrders = reconcileAbandonedLoopSupervisorWorkOrders(
     input.now,
     taskLedger,
     schedulerStore,
   );
+  const cleanedTerminalWorkerSessions =
+    input.cleanupWorkerSession === undefined
+      ? 0
+      : await reconcileTerminalLoopSupervisorWorkerSessions({
+          cleanupWorkerSession: input.cleanupWorkerSession,
+          ...(input.workerSessionExists === undefined
+            ? {}
+            : { workerSessionExists: input.workerSessionExists }),
+        });
   const removedTerminalWorktrees =
     input.runGit === undefined
       ? 0
@@ -58,9 +72,19 @@ export function reconcileTerminalSupervisorResources(input: {
       data: { settled: settledTerminalLeases },
     });
   }
+  if (removedStaleLeases > 0) {
+    log.info("loop engineering stale supervisor worker leases removed", {
+      data: { removed: removedStaleLeases },
+    });
+  }
   if (abandonedWorkOrders > 0) {
     log.info("loop engineering abandoned supervisor worker leases reconciled", {
       data: { settled: abandonedWorkOrders },
+    });
+  }
+  if (cleanedTerminalWorkerSessions > 0) {
+    log.info("loop engineering terminal worker sessions cleaned up", {
+      data: { cleaned: cleanedTerminalWorkerSessions },
     });
   }
   if (removedTerminalWorktrees > 0) {
@@ -78,7 +102,46 @@ export function reconcileTerminalSupervisorResources(input: {
     abandonedWorkOrders,
     removedTerminalWorktrees,
     removedExpiredWorktrees,
+    removedStaleLeases,
+    cleanedTerminalWorkerSessions,
   };
+}
+
+function reconcileStaleLoopSupervisorWorkerLeases(): number {
+  const state = readLoopSupervisorWorkerLeaseState();
+  const remaining = state.leases.filter(
+    (lease) => !isBotOwnedLoopExecutionWorktree(lease.projectPath) || existsSync(lease.projectPath),
+  );
+  const removed = state.leases.length - remaining.length;
+  if (removed > 0) writeLoopSupervisorWorkerLeaseState({ leases: remaining });
+  return removed;
+}
+
+async function reconcileTerminalLoopSupervisorWorkerSessions(input: {
+  cleanupWorkerSession: (sessionName: string) => Promise<void> | void;
+  workerSessionExists?: (sessionName: string) => Promise<boolean> | boolean;
+}): Promise<number> {
+  const sessions = new Set<string>();
+  for (const record of listTerminalLoopSupervisorWorkOrders()) {
+    const workerSession = record.workOrder.workerSession;
+    if (workerSession !== undefined) sessions.add(workerSession);
+  }
+  let cleaned = 0;
+  for (const session of sessions) {
+    try {
+      if (input.workerSessionExists !== undefined && !(await input.workerSessionExists(session))) {
+        continue;
+      }
+      await input.cleanupWorkerSession(session);
+      cleaned++;
+    } catch (err) {
+      log.warn("failed to clean up terminal loop worker session", {
+        err,
+        data: { session },
+      });
+    }
+  }
+  return cleaned;
 }
 
 function reconcileTerminalLoopSupervisorWorkerLeases(now: number): number {

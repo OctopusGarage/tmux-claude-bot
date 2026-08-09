@@ -15,6 +15,7 @@ import { executeMessage } from "./core/command/dispatch.js";
 import { MessageQueue } from "./core/command/queue.js";
 import { defaultQueueObserver } from "./core/command/queue-observer.js";
 import type { HandlerDeps } from "./core/deps.js";
+import { disableStateRepositoryHooks } from "./core/infra/state-git-guard.js";
 import { migrateLegacyStateDir } from "./core/infra/state-migration.js";
 import { NotificationGateway } from "./core/notifications/gateway.js";
 import { OwnerActivityTracker } from "./core/notifications/owner-activity.js";
@@ -72,6 +73,7 @@ export function bootstrap(): HandlerDeps {
   // Relocate any legacy root-level state into the state/ subdir BEFORE loadConfig
   // reads .env from it — closes the deploy-wipe that erased group_bindings.json.
   migrateLegacyStateDir();
+  disableStateRepositoryHooks(appStateDir());
   const config = loadConfig();
   const { currentProject } = createProjectManager(appStateDir());
 

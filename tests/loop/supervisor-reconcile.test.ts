@@ -134,7 +134,7 @@ function writeRecoverableFailedRun(stateDir: string, order: LoopWorkOrder): stri
 }
 
 describe("loop supervisor work order reconciliation", () => {
-  it("completes an in-flight work order from the final summary file after a bot restart", () => {
+  it("completes an in-flight work order from the final summary file after a bot restart", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -146,7 +146,7 @@ describe("loop supervisor work order reconciliation", () => {
       expect.objectContaining({ workOrder: expect.objectContaining({ id: order.id }) }),
     ]);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {
@@ -169,7 +169,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("recovers a dispatch-failed work order when the supervisor final summary arrives late", () => {
+  it("recovers a dispatch-failed work order when the supervisor final summary arrives late", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -177,7 +177,7 @@ describe("loop supervisor work order reconciliation", () => {
     const order = workOrder(stateDir, projectDir);
     const runDir = writeRecoverableFailedRun(stateDir, order);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {
@@ -191,7 +191,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("fails and records a stale dispatching work order even when its lease is already gone", () => {
+  it("fails and records a stale dispatching work order even when its lease is already gone", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -225,7 +225,7 @@ describe("loop supervisor work order reconciliation", () => {
       )}\n`,
     );
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 1_000 + 12 * 60 * 60 * 1000 + 1,
       runCommand: () => {
@@ -246,7 +246,7 @@ describe("loop supervisor work order reconciliation", () => {
     ]);
   });
 
-  it("fails a dispatching work order after the short dispatch grace period", () => {
+  it("fails a dispatching work order after the short dispatch grace period", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -275,7 +275,7 @@ describe("loop supervisor work order reconciliation", () => {
       )}\n`,
     );
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now,
       runCommand: () => {
@@ -289,7 +289,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("does not recover a dispatching work order while its supervisor lease is active", () => {
+  it("does not recover a dispatching work order while its supervisor lease is active", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -330,7 +330,7 @@ describe("loop supervisor work order reconciliation", () => {
       ],
     });
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now,
       runCommand: () => {
@@ -344,7 +344,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("runs the supervised PR gate when reconciling a completed work order", () => {
+  it("runs the supervised PR gate when reconciling a completed work order", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -378,7 +378,7 @@ describe("loop supervisor work order reconciliation", () => {
     const runDir = writeUnfinishedRun(stateDir, order);
     const prCommands: string[] = [];
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: (invocation) => {
@@ -419,7 +419,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("reconciles opportunity discovery work orders without PR gates", () => {
+  it("reconciles opportunity discovery work orders without PR gates", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -490,7 +490,7 @@ describe("loop supervisor work order reconciliation", () => {
       })}\n`,
     );
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {
@@ -507,7 +507,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("reconciles bug-fix work orders with the bug-fix scheduler key", () => {
+  it("reconciles bug-fix work orders with the bug-fix scheduler key", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -541,7 +541,7 @@ describe("loop supervisor work order reconciliation", () => {
     } satisfies LoopWorkOrder;
     writeUnfinishedRun(stateDir, order);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {
@@ -559,7 +559,7 @@ describe("loop supervisor work order reconciliation", () => {
     ]);
   });
 
-  it("reconciles harness-auto work orders with the harness-auto scheduler key", () => {
+  it("reconciles harness-auto work orders with the harness-auto scheduler key", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -597,7 +597,7 @@ describe("loop supervisor work order reconciliation", () => {
     } satisfies LoopWorkOrder;
     writeUnfinishedRun(stateDir, order);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {

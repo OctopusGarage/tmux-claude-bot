@@ -809,15 +809,15 @@ async function finishActiveDelegatedTask(
     });
   }
   settleActiveDelegatedSupervisorLease(workOrder, result, endedAt);
-  if (result.status === "completed" && workOrder.workerSession !== undefined) {
+  if (workOrder.workerSession !== undefined) {
     try {
       await deps.bridge.killSession(workOrder.workerSession);
       cleanupWorkerSessionRecords(workOrder.workerSession);
-      log.info("active delegated task completed worker session cleaned up", {
+      log.info("active delegated task terminal worker session cleaned up", {
         data: { runId: workOrder.id, workerSession: workOrder.workerSession },
       });
     } catch (err) {
-      log.warn("failed to clean up completed active delegated worker session", {
+      log.warn("failed to clean up terminal active delegated worker session", {
         err,
         data: { runId: workOrder.id, workerSession: workOrder.workerSession },
       });

@@ -369,7 +369,7 @@ describe("Loop task policy prompt lines", () => {
     expectLine(lines, "Do not add or run AI eval work");
     expectLine(lines, "branch from main, use loop/repo/run-1");
     expectLine(lines, "allow auto-merge with --merge only after all gates pass");
-    expectLine(lines, "switch the local worktree back to dev");
+    expectLine(lines, "the bot system owns source branch switch-back for dev");
   });
 
   it("captures active delegated task optional gates without inventing a project PR policy", () => {

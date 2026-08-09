@@ -196,10 +196,12 @@ boundary; a configured project whose name merely shares the bot identifier
 prefix must remain under project recovery ownership.
 Runtime Guardian must also classify target-project and external blockers as
 terminal blocked findings, and reconcile stale invalid-output queue records from
-later gate artifacts. Terminal WorkOrders must release their worker session and
-remove bot-owned isolated execution worktrees: successful runs clean them up
-immediately, while failed/timeout/cancelled runs clean them up automatically when
-the configured retention TTL expires. Source worktrees are never removed. The
+later gate artifacts. Terminal WorkOrders must release their worker session
+regardless of success, failure, timeout, or cancellation. Successful runs remove
+bot-owned isolated execution worktrees immediately; failed/timeout/cancelled
+runs retain those worktrees only until the configured retention TTL expires.
+Worker leases whose bot-owned worktree disappeared are stale and must be
+released during reconciliation. Source worktrees are never removed. The
 invariant is enforced by coordinator/runtime/worktree tests rather than
 notification wording alone.
 
