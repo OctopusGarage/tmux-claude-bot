@@ -313,6 +313,18 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     );
     if (!recoverySucceeded && (!recoveryFailed || originals.length === 0)) continue;
     result.checked++;
+    if (recoverySucceeded) {
+      for (const original of originals) {
+        input.updateRepairStatus(
+          original.taskId,
+          "fixed",
+          "Closed from the authoritative successful project recovery delegation.",
+        );
+      }
+      input.coordinator.markTerminal(queueRecord.id, "fixed", input.now);
+      result.fixed++;
+      continue;
+    }
     if (recoveryFailed) {
       for (const recovery of linked.filter(
         (record) =>
@@ -335,17 +347,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
         );
       }
       input.coordinator.releaseToQueue(queueRecord.id, input.now);
-      continue;
     }
-    for (const original of originals) {
-      input.updateRepairStatus(
-        original.taskId,
-        "fixed",
-        "Closed from the authoritative successful project recovery delegation.",
-      );
-    }
-    input.coordinator.markTerminal(queueRecord.id, "fixed", input.now);
-    result.fixed++;
   }
   for (const record of input.records) {
     if (
