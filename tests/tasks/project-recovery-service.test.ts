@@ -653,6 +653,72 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
+  it("closes the original task when a later recovery succeeds after an earlier failed attempt", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+    const queueRecord = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "project-recovery",
+      taskFamily: "alcove active delegated task",
+      fingerprint: "invalid-summary",
+      taskId: "autopilot:original",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queueRecord.id, ["autopilot:failed-recovery"], 1_001);
+    coordinator.linkTaskIds(queueRecord.id, ["autopilot:successful-recovery"], 1_002);
+    coordinator.claimIds([queueRecord.id], { now: 1_003, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queueRecord.id, "recovery", 1_004);
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:original",
+          source: "autopilot-delegate",
+          name: "alcove active delegated task",
+          scheduledAt: 1,
+          status: "failed",
+          repairStatus: "running",
+          updatedAt: 1_004,
+        },
+        {
+          taskId: "autopilot:failed-recovery",
+          source: "autopilot-delegate",
+          name: "alcove active delegated task",
+          scheduledAt: 1_005,
+          status: "failed",
+          repairStatus: "pending",
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:successful-recovery",
+          source: "autopilot-delegate",
+          name: "alcove active delegated task",
+          scheduledAt: 1_006,
+          status: "success",
+          repairStatus: "not-needed",
+          updatedAt: 1_999,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:original",
+      "fixed",
+      expect.stringContaining("project recovery delegation"),
+    );
+    expect(updateRepairStatus).not.toHaveBeenCalledWith(
+      "autopilot:original",
+      "pending",
+      expect.any(String),
+    );
+    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
   it("keeps external waits pending without dispatching them", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();
