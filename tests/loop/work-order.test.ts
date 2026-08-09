@@ -455,6 +455,9 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain(
       "git -C '/state/loop-worktree/datavibe/run' switch loop/datavibe/active-delegate/1752643800000-datavibe-active-delegate",
     );
+    expect(prompt).not.toContain(
+      "then switch the local worktree back to dev and rebase it onto origin/dev",
+    );
     expect(prompt).not.toContain("git -C '/state/loop-worktree/datavibe/run' switch dev");
     expect(prompt).not.toContain(
       "git -C '/state/loop-worktree/datavibe/run' pull --rebase origin dev",
