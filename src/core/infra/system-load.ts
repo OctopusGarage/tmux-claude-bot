@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { cpus, loadavg } from "node:os";
 import { promisify } from "node:util";
+import type { CpuTotals } from "./system-metrics.js";
+import { hostCpuBusyPct, hostCpuTotals } from "./system-metrics.js";
 
 const run = promisify(execFile);
 
@@ -22,11 +24,15 @@ export interface SystemLoadReport {
   /** Orphaned shells (PPID 1, no tty) burning CPU — the "dead terminal left a
    * busy-looping shell" case; safe to kill. */
   orphans: ProcLine[];
+  /** Aggregate host CPU busy percentage, when the caller supplies a baseline. */
+  hostCpuPct?: number;
 }
 
 export interface SystemLoadProbes {
   loadAvg(): readonly [number, number, number];
   cpuCount(): number;
+  /** Aggregate CPU time counters used only when an explicit baseline is supplied. */
+  cpuTotals?(): CpuTotals;
   /** `pmset -g therm` (macOS); empty string when unavailable. */
   thermalRaw(): Promise<string>;
   /** `top` second-sample stdout (macOS); empty string when unavailable. */
@@ -94,9 +100,11 @@ export function parseThermal(stdout: string): string {
 export async function gatherSystemLoad(
   probes: SystemLoadProbes,
   topLimit = 8,
+  previousCpuTotals?: CpuTotals,
 ): Promise<SystemLoadReport> {
   const [one, five, fifteen] = probes.loadAvg();
   const cores = probes.cpuCount();
+  const currentCpuTotals = previousCpuTotals && probes.cpuTotals ? probes.cpuTotals() : undefined;
   const [thermalRaw, topRaw, psRaw] = await Promise.all([
     probes.thermalRaw(),
     probes.topRaw(topLimit),
@@ -109,6 +117,9 @@ export async function gatherSystemLoad(
     thermal: parseThermal(thermalRaw),
     top: parseTop(topRaw).slice(0, topLimit),
     orphans: parseOrphanShells(psRaw),
+    ...(currentCpuTotals && previousCpuTotals
+      ? { hostCpuPct: hostCpuBusyPct(previousCpuTotals, currentCpuTotals) }
+      : {}),
   };
 }
 
@@ -156,6 +167,7 @@ export function defaultSystemLoadProbes(): SystemLoadProbes {
   return {
     loadAvg: () => loadavg() as [number, number, number],
     cpuCount: () => cpus().length,
+    cpuTotals: hostCpuTotals,
     thermalRaw: () => safe("pmset", ["-g", "therm"]),
     topRaw: (limit) =>
       safe("top", ["-l", "2", "-o", "cpu", "-n", String(limit), "-stats", "pid,cpu,time,command"]),

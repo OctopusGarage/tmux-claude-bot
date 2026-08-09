@@ -75,6 +75,17 @@ describe("gatherSystemLoad + renderSystemLoad", () => {
     expect(r.top.length).toBeGreaterThan(0);
   });
 
+  it("adds host CPU busy percentage only when given a CPU baseline", async () => {
+    const r = await gatherSystemLoad(
+      { ...probes, cpuTotals: () => ({ idle: 120, total: 500 }) },
+      8,
+      { idle: 100, total: 400 },
+    );
+
+    expect(r.hostCpuPct).toBe(80);
+    expect(await gatherSystemLoad(probes)).not.toHaveProperty("hostCpuPct");
+  });
+
   it("renders orphans with a kill hint, and the load/thermal lines", async () => {
     const out = renderSystemLoad(await gatherSystemLoad(probes));
     expect(out).toContain("Load: 4.00 / 5.00 / 6.00  (8 cores, 1-min ≈ 50%)");
