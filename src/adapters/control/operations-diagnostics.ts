@@ -13,7 +13,9 @@ import {
   formatPromptTranslateCommandResult,
 } from "../../core/read/prompt-translation.js";
 import { getRecentInputs } from "../../core/read/recent-inputs.js";
+import { createResourceGuardianStore } from "../../core/resource-guardian/store.js";
 import { renderPeekPane } from "../../core/session/output.js";
+import { appStateDir } from "../../shared/state-dir.js";
 import type { ControlOperationHandler } from "./operations-types.js";
 
 /** Read-only Project Session and diagnostics handlers for the Control adapter. */
@@ -44,7 +46,12 @@ export function createControlDiagnosticsHandlers(deps: HandlerDeps): {
       ok(filter ? formatLogsForChat(queryLogs(filter), { maxChars: 3500 }) : "no session");
     },
     sysload: async (_req, { ok }) => {
-      ok(renderSystemLoad(await gatherSystemLoad(defaultSystemLoadProbes())));
+      ok(
+        renderSystemLoad(
+          await gatherSystemLoad(defaultSystemLoadProbes()),
+          createResourceGuardianStore({ stateDir: appStateDir() }).readCurrentReadOnly().view,
+        ),
+      );
     },
     inputs: async (req, { ok }) => {
       ok(

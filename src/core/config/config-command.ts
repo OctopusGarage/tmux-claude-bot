@@ -42,6 +42,8 @@ const CONFIG_SETTABLE_KEYS = new Set([
   "RUNTIME_GUARDIAN_ENABLED",
   "RUNTIME_GUARDIAN_TICK_MS",
   "BATCH_SCHEDULER_TICK_MS",
+  "RESOURCE_GUARDIAN_ENABLED",
+  "RESOURCE_GUARDIAN_TICK_MS",
 ]);
 
 function readEnvMap(): Map<string, string> {
@@ -97,6 +99,22 @@ function normalizeBoolean(value: string): string {
   return value;
 }
 
+function normalizeSettableValue(key: string, value: string): string | { error: string } {
+  if (key === "RESOURCE_GUARDIAN_ENABLED") {
+    const normalized = normalizeBoolean(value);
+    return normalized === "true" || normalized === "false"
+      ? normalized
+      : { error: `${key} must be true or false` };
+  }
+  if (key === "RESOURCE_GUARDIAN_TICK_MS") {
+    const normalized = Number(value.trim());
+    return value.trim() !== "" && Number.isSafeInteger(normalized) && normalized >= 0
+      ? String(normalized)
+      : { error: `${key} must be a non-negative integer` };
+  }
+  return normalizeBoolean(value);
+}
+
 export function runConfigCommand(args: string[]): CommandResult {
   const [action, key, value, ...rest] = args;
   try {
@@ -134,7 +152,11 @@ export function runConfigCommand(args: string[]): CommandResult {
         };
       }
       const env = readEnvMap();
-      const normalized = normalizeBoolean(value);
+      const normalizedResult = normalizeSettableValue(key, value);
+      if (typeof normalizedResult !== "string") {
+        return { exitCode: 1, stderr: normalizedResult.error };
+      }
+      const normalized = normalizedResult;
       const changed = env.get(key) !== normalized;
       if (changed) writeEnvValues({ [key]: normalized });
       const result = { key, value: normalized, changed };

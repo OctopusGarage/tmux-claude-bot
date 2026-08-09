@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
   gatherSystemLoad,
@@ -99,5 +100,34 @@ describe("gatherSystemLoad + renderSystemLoad", () => {
     );
     expect(out).toContain("Runaway/orphan shells: none");
     expect(out).not.toContain("kill -9");
+  });
+
+  it("renders optional Resource Guardian context without exposing an absent incident", async () => {
+    const out = renderSystemLoad(await gatherSystemLoad(probes), {
+      enabled: true,
+      mode: "protect",
+      profile: "balanced",
+      pressure: "critical",
+      circuit: "background-closed",
+      incidentId: null,
+      reason: `${homedir()}/work token=super-secret`,
+      attribution: "bot-owned",
+      latestSample: null,
+      stableSince: null,
+      sampling: {
+        degraded: false,
+        consecutiveFailures: 0,
+        lastFailureAt: null,
+        lastError: null,
+        notifiedPhase: null,
+        overlapSkippedTicks: 0,
+      },
+    });
+    expect(out).toContain("Resource Guardian: critical · background closed");
+    expect(out).toContain("Reason: ~/work token=<redacted>");
+    expect(out).not.toContain(homedir());
+    expect(out).not.toContain("super-secret");
+    expect(out).toContain("Attribution: bot-owned");
+    expect(out).not.toContain("Incident: null");
   });
 });

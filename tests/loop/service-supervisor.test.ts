@@ -160,6 +160,7 @@ function resourceClosedState() {
       reason: "critical host pressure",
       attribution: "unknown" as const,
       latestSample: null,
+      stableSince: null,
       sampling: {
         degraded: false,
         consecutiveFailures: 0,

@@ -878,8 +878,12 @@ documentation, and tests. It is an observer/protector: observe mode
 records evidence and always leaves the circuit open, while protect mode records
 the closure that consumers honor. It does not create process ownership from CPU
 evidence, directly invoke a model API, or materialize a WorkOrder. Later
-Resource Guardian repair, when added, must reuse the supervised WorkOrder path
-only after stable recovery.
+Resource Guardian repair reuses the supervised WorkOrder path only after ten
+minutes of durable healthy recovery. It selects only the most recent ended,
+bot-owned incident with failed deterministic-cleanup evidence, persists a
+repair intent before delegation, and shares the global Repair Coordinator's
+one-at-a-time fingerprint, cooldown, and retry boundaries. A pressure relapse,
+external/unknown attribution, or missing durable evidence blocks repair.
 
 Task 7 adds a read-only ownership resolver for deep process samples. Strong
 bot attribution requires an exact `pid` plus process-start identity, a verified
@@ -907,6 +911,20 @@ The intent records the revalidated PID/start identity and durable WorkOrder
 correlation only, never command text, cwd, or an absolute path. Observe proposals
 do not consume protect-mode rate-limit state, so a later protect transition may
 act immediately from fresh ownership evidence.
+
+Task 10 provides the safe local operator surface: `tcb resource status`,
+`tcb resource incidents`, `tcb resource mode observe|protect`, and
+`tcb resource profile balanced|conservative`. Status and incident history are
+read-only (with bounded, secret-free JSON when requested); presentation tildeifies
+home-relative paths. Generic configuration may change only the Guardian enable
+and tick settings. Mode and profile use their dedicated commands, persist the
+environment file atomically, and write a matching live operator override with
+a durable recovery journal. Before reading the live override, every Guardian
+tick completes an update whose environment value committed, or discards an
+intent whose environment value did not change. Protect mode refuses to activate
+until the Guardian is enabled and running. The existing `sysload` diagnostic in
+the CLI, control client, Telegram, and Lark displays the current Guardian state;
+it adds no chat command, protocol action, or button.
 
 ## Runtime Guardian
 

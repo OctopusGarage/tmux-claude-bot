@@ -4,15 +4,24 @@ import { appStateDir } from "../../shared/state-dir.js";
 import type { AppConfig } from "../../shared/types.js";
 import { createLogger, redactSecrets } from "../../shared/utils/logger.js";
 import { tildeifyHome } from "../../shared/utils/path.js";
+import { readConfigEnvironment } from "../config/env-store.js";
 import type { HandlerDeps } from "../deps.js";
 import { notificationRequestForEvent } from "../notifications/events.js";
 import type { NotificationRequest, NotificationResult } from "../notifications/gateway.js";
+import { RepairCoordinator } from "../tasks/repair-coordinator.js";
 import {
   createProductionResourceActionController,
   type ResourceActionController,
 } from "./action-controller.js";
 import { type ResourceActionPlan, sanitizeResourceActionReason } from "./actions.js";
+import { recoverResourceGuardianOperatorUpdate } from "./operator-update.js";
 import { advancePressureState, initialPressureMemory } from "./pressure-policy.js";
+import {
+  createProductionResourceRepairDispatcher,
+  dispatchStableResourceRepair,
+  type ResourceGuardianRepairDispatch,
+  recordResourceRepairDispatchFailure,
+} from "./repair.js";
 import { createResourceSampler, defaultLightweightProbe } from "./sampler.js";
 import {
   createResourceGuardianStore,
@@ -54,7 +63,7 @@ export type ResourceGuardianTickRuntime = {
 export type ResourceGuardianTickResult =
   | {
       fired: false;
-      reason: "disabled" | "in-progress" | "stopped";
+      reason: "disabled" | "in-progress" | "stopped" | "operator-update-failed";
       pressure?: undefined;
       circuit?: undefined;
       incidentId?: undefined;
@@ -87,6 +96,13 @@ export type ResourceGuardianCoordinatorOptions = {
   runtime?: ResourceGuardianTickRuntime;
   isActive?: () => boolean;
   actionController?: ResourceActionController;
+  repairDispatcher?: (
+    incident: ResourceIncident,
+    now: number,
+    persistIntent?: (queueId: string) => Promise<void>,
+  ) => Promise<ResourceGuardianRepairDispatch>;
+  repairCoordinator?: RepairCoordinator;
+  recoverOperatorUpdate?: () => void;
 };
 
 export type ResourceGuardianCoordinator = {
@@ -137,6 +153,14 @@ export async function runResourceGuardianTick(
     initializeRuntime(runtime, current, input.store, input.now);
     if (runtime.incident === null && current.circuit.incidentId) {
       runtime.incident = restoreIncident(current, input.store);
+    }
+    try {
+      input.recoverOperatorUpdate?.();
+    } catch (error) {
+      log.warn("resource guardian operator update recovery failed", {
+        err: safeErrorMessage(error),
+      });
+      return { fired: false, reason: "operator-update-failed" };
     }
     const operator = input.store.readOperator();
     const mode = operator?.mode ?? input.config.mode;
@@ -228,6 +252,11 @@ export async function runResourceGuardianTick(
     const sampling = healthySampling(
       current.view.sampling.overlapSkippedTicks + overlapSkippedCount,
     );
+    const stableSince = stableSinceFor({
+      pressure,
+      previous: current.view.stableSince ?? null,
+      now: freshSample.capturedAt,
+    });
     const nextCurrent: ResourceGuardianCurrentState = {
       circuit: {
         schemaVersion: 1,
@@ -249,6 +278,7 @@ export async function runResourceGuardianTick(
         reason,
         attribution: "unknown",
         latestSample: freshSample,
+        stableSince,
         sampling,
       },
     };
@@ -327,6 +357,7 @@ export async function runResourceGuardianTick(
         let intentPersisted = false;
         if (nextIncident) {
           const target = actionTarget(prepared);
+          if (target !== undefined) nextIncident.attribution = "bot-owned";
           nextIncident.actions.push({
             kind: "resource-action",
             at: freshSample.capturedAt,
@@ -371,6 +402,7 @@ export async function runResourceGuardianTick(
             nextIncident.actions.push({
               kind: "resource-action",
               at: freshSample.capturedAt,
+              phase: "deterministic-cleanup",
               outcome:
                 action.outcome === "completed"
                   ? "recorded"
@@ -397,6 +429,30 @@ export async function runResourceGuardianTick(
             }
           }
         }
+      }
+    }
+
+    if (input.repairDispatcher !== undefined) {
+      try {
+        await dispatchStableResourceRepair({
+          now: freshSample.capturedAt,
+          pressure,
+          circuit,
+          stableSince,
+          store: input.store,
+          dispatch: input.repairDispatcher,
+          ...(input.repairCoordinator === undefined
+            ? {}
+            : { coordinator: input.repairCoordinator }),
+        });
+      } catch (error) {
+        const reason = `repair dispatch failed: ${safeErrorMessage(error)}`;
+        log.warn("resource guardian repair dispatch failed", { data: { reason } });
+        recordResourceRepairDispatchFailure({
+          now: freshSample.capturedAt,
+          reason,
+          store: input.store,
+        });
       }
     }
 
@@ -575,6 +631,7 @@ async function handleSampleFailure(input: {
       circuit,
       incidentId: nextIncident?.id ?? input.current.view.incidentId,
       reason,
+      stableSince: null,
       sampling,
     },
   };
@@ -750,6 +807,16 @@ function healthySampling(overlapSkippedTicks: number): ResourceSamplingHealth {
   };
 }
 
+function stableSinceFor(input: {
+  pressure: PressureState;
+  previous: number | null;
+  now: number;
+}): number | null {
+  if (input.pressure !== "healthy") return null;
+  if (input.previous !== null && input.previous > input.now) return null;
+  return input.previous ?? input.now;
+}
+
 function writeIncidentBestEffort(
   store: ResourceGuardianStore,
   incident: ResourceIncident,
@@ -828,6 +895,9 @@ export type StartResourceGuardianOptions = {
   setInterval?: (tick: () => void, delayMs: number) => TimerHandle;
   clearInterval?: (timer: TimerHandle) => void;
   actionController?: ResourceGuardianCoordinatorOptions["actionController"];
+  repairDispatcher?: ResourceGuardianCoordinatorOptions["repairDispatcher"];
+  repairCoordinator?: RepairCoordinator;
+  recoverOperatorUpdate?: () => void;
 };
 
 export function startResourceGuardian(
@@ -843,6 +913,12 @@ export function startResourceGuardian(
   const now = options.now ?? Date.now;
   const actionController =
     options.actionController ?? createProductionResourceActionController(deps);
+  const repairCoordinator = options.repairCoordinator ?? new RepairCoordinator();
+  const repairDispatcher =
+    options.repairDispatcher ??
+    (deps.config.runtimeGuardian === undefined
+      ? undefined
+      : createProductionResourceRepairDispatcher(deps, { coordinator: repairCoordinator }));
   const store = options.store ?? createResourceGuardianStore({ stateDir: appStateDir(), now });
   const sampler = createResourceSampler(defaultLightweightProbe(), async () => ({
     capturedAt: now(),
@@ -859,6 +935,17 @@ export function startResourceGuardian(
     ...(options.incidentId ? { incidentId: options.incidentId } : {}),
     ...(options.staleHoldMs === undefined ? {} : { staleHoldMs: options.staleHoldMs }),
     actionController,
+    ...(repairDispatcher === undefined ? {} : { repairDispatcher }),
+    repairCoordinator,
+    recoverOperatorUpdate:
+      options.recoverOperatorUpdate ??
+      (() => {
+        const outcome = recoverResourceGuardianOperatorUpdate({
+          store,
+          readEnvironment: readConfigEnvironment,
+        });
+        if (outcome === "busy") throw new Error("Resource Guardian operator update is in progress");
+      }),
   });
   let stopped = false;
   let generation = 0;

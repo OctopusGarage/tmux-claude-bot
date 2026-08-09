@@ -42,7 +42,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/command/action-reg
 | `opportunity` | Review proactive Loop Engineering suggestions: `/opportunity [list\|show\|discuss\|dismiss\|snooze <number\|id>]`; `discuss` opens project-agent discussion. Suggestion cards keep each item readable and offer per-item show/discuss/dismiss actions plus batch actions. After approval, use Autopilot's Continue via supervisor action so execution goes through the same active-delegation pipeline. Owner-only in private chat; Lark also works in a bound project group. |
 | `batch` | Batch scheduler status and control. `/batch` → current run status; `/batch start <planId>` → start a plan; `/batch pause\|resume\|stop` → control the active run; `/batch report` → summary. Owner-only (Lark: 1:1 chat only). |
 | `dashboard` | Show the global dashboard: every live session plus bot-level totals (version, uptime, queue depth). Owner-only (Lark: 1:1 chat only). |
-| `sysload` | Show machine load, thermal state, top CPU, and runaway/orphan shells (with a `kill -9` hint). Owner-only (Lark: 1:1 chat only). |
+| `sysload` | Show machine load, thermal state, top CPU, runaway/orphan shells (with a `kill -9` hint), and the current Resource Guardian state. Owner-only (Lark: 1:1 chat only). Guardian control remains the local `tcb resource` CLI surface; no chat button is added. |
 | `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |
 | `voice_install` | Install voice transcription (Apple Silicon) |
 | `voice_lang` | Set voice recognition language (zh/en/yue/ja/es/auto) |

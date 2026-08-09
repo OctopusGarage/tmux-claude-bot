@@ -35,6 +35,7 @@ import {
 import { loopSupervisorSessionNames, startLoopSupervisor } from "../loop/supervisor-session.js";
 import {
   listUnfinishedLoopSupervisorWorkOrders,
+  readLoopSupervisorWorkOrderRegistry,
   type UnfinishedLoopSupervisorWorkOrder,
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
@@ -284,6 +285,8 @@ export async function startActiveDelegatedTask(
     worktreeIsolation?: LoopWorktreeIsolationMode;
     resourceTrigger?: "operator" | "background" | "resource-repair";
     resourceForce?: boolean;
+    /** Internal durable idempotency identity for Resource Guardian repair only. */
+    trustedRunId?: string;
   },
 ): Promise<ActiveDelegatedTaskStartResult> {
   if (!deps.config.loopEngineering.supervisor.enabled) {
@@ -316,6 +319,36 @@ export async function startActiveDelegatedTask(
       reason: `no project path is recorded for session "${input.session}"`,
       showQueue: false,
     };
+  }
+
+  if (input.trustedRunId !== undefined) {
+    if (
+      input.resourceTrigger !== "resource-repair" ||
+      !/^resource-repair-[A-Za-z0-9_-]+$/.test(input.trustedRunId)
+    ) {
+      return {
+        status: "blocked",
+        reason: "invalid trusted resource repair run id",
+        showQueue: false,
+      };
+    }
+    const existing = readLoopSupervisorWorkOrderRegistry().records.find(
+      (record) =>
+        record.workOrder.id === input.trustedRunId &&
+        record.workOrder.task?.kind === "active-delegated-task" &&
+        resolve(record.workOrder.projectPath) === resolve(projectPath),
+    );
+    if (existing !== undefined) {
+      return {
+        status: "queued",
+        runId: existing.workOrder.id,
+        projectId: existing.workOrder.projectId,
+        supervisorSession: existing.state.supervisorSession,
+        reportDir:
+          existing.workOrder.finalSummaryPath?.replace(/\/supervisor-final-summary\.json$/, "") ??
+          null,
+      };
+    }
   }
 
   const reservationKey = resolve(projectPath);
@@ -359,7 +392,7 @@ export async function startActiveDelegatedTask(
       deps.config.loopEngineering.supervisor.agent;
     const now = Date.now();
     const projectId = projectIdForSession(input.session, projectPath);
-    const runId = `${now}-${projectId}-active-delegate`;
+    const runId = input.trustedRunId ?? `${now}-${projectId}-active-delegate`;
     const projectPolicy = findLoopProjectPolicy(deps, projectPath);
     let workOrder = buildActiveDelegatedTaskWorkOrder({
       session: input.session,

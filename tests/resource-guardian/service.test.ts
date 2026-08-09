@@ -25,6 +25,10 @@ import type {
   ResourceIncident,
   ResourceSample,
 } from "../../src/core/resource-guardian/types.js";
+import {
+  InMemoryRepairQueueStore,
+  RepairCoordinator,
+} from "../../src/core/tasks/repair-coordinator.js";
 import type { AppConfig } from "../../src/shared/types.js";
 
 const minute = 60_000;
@@ -56,6 +60,7 @@ function initialCurrent(
     mode?: ResourceGuardianView["mode"];
     reason?: string;
     latestSample?: ResourceSample | null;
+    stableSince?: number | null;
   } = {},
 ): ResourceGuardianCurrentRead {
   const pressure = overrides.pressure ?? "healthy";
@@ -85,6 +90,7 @@ function initialCurrent(
       reason,
       attribution: "unknown",
       latestSample: overrides.latestSample ?? null,
+      stableSince: overrides.stableSince ?? null,
       sampling: {
         degraded: false,
         consecutiveFailures: 0,
@@ -156,6 +162,217 @@ class MemoryStore implements ResourceGuardianStore {
 const sent = { status: "sent" as const, deliveries: [] };
 
 describe("resource guardian coordinator", () => {
+  it("persists the healthy recovery anchor, clears it on relapse, and fails closed on clock rollback", async () => {
+    const store = new MemoryStore(initialCurrent({ mode: "protect" }));
+    let cpu = 40;
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "protect" }),
+      store,
+      sample: async (now) => sample(now, cpu),
+      notify: async () => sent,
+    });
+
+    await coordinator.run(1_000);
+    await coordinator.run(2_000);
+    expect(store.current.view.stableSince).toBe(1_000);
+
+    cpu = 85;
+    for (let now = 3_000; now <= 63_000; now += 15_000) await coordinator.run(now);
+    expect(store.current.view.stableSince).toBeNull();
+
+    cpu = 40;
+    await coordinator.run(78_000);
+    expect(store.current.view.stableSince).toBe(78_000);
+
+    store.current.view.stableSince = 100_000;
+    await coordinator.run(90_000);
+    expect(store.current.view.stableSince).toBeNull();
+  });
+
+  it("dispatches only the latest durably ended bot-owned unresolved cleanup incident after the stable window", async () => {
+    const store = new MemoryStore(initialCurrent({ mode: "protect", stableSince: 0 }));
+    const eligible: ResourceIncident = {
+      schemaVersion: 1,
+      id: "ended-bot",
+      fingerprint: "bot-fingerprint",
+      attribution: "bot-owned",
+      startedAt: 10,
+      endedAt: 20,
+      pressure: "critical",
+      samples: [],
+      transitions: [],
+      actions: [
+        {
+          kind: "resource-action",
+          at: 19,
+          phase: "deterministic-cleanup",
+          outcome: "failed",
+          reason: "cleanup did not fully resolve the incident",
+        },
+      ],
+    };
+    store.incidents.set(eligible.id, eligible);
+    const dispatch = vi.fn(async (_incident, _now, persistIntent) => {
+      await persistIntent?.("repair-1");
+      return {
+        status: "queued" as const,
+        detail: "queued",
+        queueId: "repair-1",
+        workOrderId: "run-1",
+      };
+    });
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "protect" }),
+      store,
+      sample: async (now) => sample(now, 40),
+      notify: async () => sent,
+      repairDispatcher: dispatch,
+    });
+
+    await coordinator.run(600_000);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ended-bot" }),
+      600_000,
+      expect.any(Function),
+    );
+    expect(store.listIncidents().find((incident) => incident.id === "ended-bot")).toMatchObject({
+      repairWorkOrderId: "run-1",
+    });
+    expect(store.listIncidents().find((incident) => incident.id === "ended-bot")?.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "repair-intent" }),
+        expect.objectContaining({ phase: "repair-dispatch" }),
+      ]),
+    );
+  });
+
+  it("recovers a post-start repair work order from the durable queue after restart without delegating again", async () => {
+    const store = new MemoryStore(initialCurrent({ mode: "protect", stableSince: 0 }));
+    const incident: ResourceIncident = {
+      schemaVersion: 1,
+      id: "ended-repair",
+      fingerprint: "repair-fingerprint",
+      attribution: "bot-owned",
+      startedAt: 1,
+      endedAt: 2,
+      pressure: "critical",
+      samples: [],
+      transitions: [],
+      actions: [
+        {
+          kind: "resource-action",
+          at: 1,
+          phase: "deterministic-cleanup",
+          outcome: "failed",
+          reason: "cleanup did not fully resolve the incident",
+        },
+      ],
+    };
+    store.incidents.set(incident.id, incident);
+    const repairCoordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = repairCoordinator.enqueue({
+      projectId: "bot",
+      projectPath: "/bot",
+      source: "resource-guardian",
+      taskFamily: "resource-guardian-stable-recovery",
+      fingerprint: incident.fingerprint,
+      taskId: incident.id,
+      now: 3,
+    });
+    repairCoordinator.claimIds([queued.id], { now: 3, leaseId: "lease", limit: 1 });
+    repairCoordinator.markRunning(queued.id, "lease", 3);
+    repairCoordinator.attachWorkOrder(queued.id, "run-after-write-failure", 3);
+    const dispatch = vi.fn();
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "protect" }),
+      store,
+      sample: async (now) => sample(now, 40),
+      notify: async () => sent,
+      repairCoordinator,
+      repairDispatcher: dispatch,
+    });
+
+    await coordinator.run(600_000);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(store.listIncidents().find((entry) => entry.id === incident.id)).toMatchObject({
+      repairWorkOrderId: "run-after-write-failure",
+    });
+  });
+
+  it("contains repair dispatch failures so a healthy transition still persists and notifies", async () => {
+    const store = new MemoryStore(
+      initialCurrent({
+        mode: "protect",
+        pressure: "recovering",
+        admission: "background-closed",
+        stableSince: 0,
+      }),
+    );
+    store.incidents.set("ended-failed-cleanup", {
+      schemaVersion: 1,
+      id: "ended-failed-cleanup",
+      fingerprint: "failed-cleanup",
+      attribution: "bot-owned",
+      startedAt: 1,
+      endedAt: 2,
+      pressure: "critical",
+      samples: [],
+      transitions: [],
+      actions: [
+        {
+          kind: "resource-action",
+          phase: "deterministic-cleanup",
+          at: 1,
+          outcome: "failed",
+          reason: "cleanup failed",
+        },
+      ],
+    });
+    const notify = vi.fn(async () => sent);
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "protect" }),
+      store,
+      sample: async (now) => sample(now, 40),
+      notify,
+      runtime: {
+        initialized: true,
+        memory: {
+          pressure: "recovering",
+          stateSince: 0,
+          elevatedSince: null,
+          criticalSince: null,
+          emergencySince: null,
+          thermalSince: null,
+          recoverySince: 0,
+        },
+      },
+      repairDispatcher: async () => {
+        throw new Error("token=do-not-record dispatcher failed");
+      },
+    });
+
+    const result = await coordinator.run(600_000);
+
+    expect(result).toMatchObject({ fired: true, pressure: "healthy", circuit: "open" });
+    expect(store.current).toMatchObject({
+      view: { pressure: "healthy", circuit: "open" },
+      circuit: { pressure: "healthy", admission: "open" },
+    });
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "resource-guardian",
+        title: "Resource pressure: recovering → healthy",
+      }),
+    );
+    expect(
+      store.listIncidents().find((incident) => incident.id === "ended-failed-cleanup")?.actions,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "repair-dispatch", outcome: "failed" }),
+      ]),
+    );
+  });
+
   it("composes the production action controller from fresh injected supervisor evidence", async () => {
     const readRegistry = vi.fn(
       () =>
@@ -633,6 +850,27 @@ describe("resource guardian coordinator", () => {
     expect(store.incidentWrites).toBe(0);
     expect(store.operatorReads).toBe(0);
     expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before sampling when a pending operator update cannot be recovered", async () => {
+    const store = new MemoryStore();
+    const takeSample = vi.fn(async () => sample(0, 10));
+
+    await expect(
+      runResourceGuardianTick({
+        now: 0,
+        config: config(),
+        store,
+        sample: takeSample,
+        notify: async () => sent,
+        recoverOperatorUpdate: () => {
+          throw new Error("operator journal unavailable");
+        },
+      }),
+    ).resolves.toEqual({ fired: false, reason: "operator-update-failed" });
+    expect(takeSample).not.toHaveBeenCalled();
+    expect(store.operatorReads).toBe(0);
+    expect(store.writes).toBe(0);
   });
 
   it("honors sustained pressure in observe mode while keeping the circuit open", async () => {
@@ -1230,6 +1468,7 @@ describe("resource guardian coordinator", () => {
       incidentId: () => "unused",
       setInterval: setIntervalFn,
       clearInterval: clearIntervalFn,
+      recoverOperatorUpdate: () => {},
     });
     await Promise.resolve();
     expect(takeSample).toHaveBeenCalledTimes(1);
@@ -1268,6 +1507,7 @@ describe("resource guardian coordinator", () => {
           return { id: 2 } as unknown as NodeJS.Timeout;
         }) as NonNullable<StartResourceGuardianTestOptions["setInterval"]>,
         clearInterval: () => {},
+        recoverOperatorUpdate: () => {},
       },
     );
 
@@ -1301,6 +1541,7 @@ describe("resource guardian coordinator", () => {
           return { id: 3 } as unknown as NodeJS.Timeout;
         }) as NonNullable<StartResourceGuardianTestOptions["setInterval"]>,
         clearInterval: () => {},
+        recoverOperatorUpdate: () => {},
       },
     );
     await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(1));

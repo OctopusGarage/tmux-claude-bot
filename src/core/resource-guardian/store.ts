@@ -136,7 +136,11 @@ function isSamplingHealth(value: unknown): value is ResourceSamplingHealth {
   );
 }
 
-function isView(value: unknown, allowLegacySampling = false): value is ResourceGuardianView {
+function isView(
+  value: unknown,
+  allowLegacySampling = false,
+  allowLegacyStableSince = false,
+): value is ResourceGuardianView {
   if (!isRecord(value)) return false;
   return (
     typeof value.enabled === "boolean" &&
@@ -152,6 +156,9 @@ function isView(value: unknown, allowLegacySampling = false): value is ResourceG
       value.attribution === "external" ||
       value.attribution === "unknown") &&
     (value.latestSample === null || isSample(value.latestSample)) &&
+    (value.stableSince === null ||
+      isFiniteNumber(value.stableSince) ||
+      (allowLegacyStableSince && value.stableSince === undefined)) &&
     (isSamplingHealth(value.sampling) || (allowLegacySampling && value.sampling === undefined))
   );
 }
@@ -159,8 +166,13 @@ function isView(value: unknown, allowLegacySampling = false): value is ResourceG
 function isCurrent(
   value: unknown,
   allowLegacySampling = false,
+  allowLegacyStableSince = false,
 ): value is ResourceGuardianCurrentState {
-  if (!isRecord(value) || !isCircuit(value.circuit) || !isView(value.view, allowLegacySampling))
+  if (
+    !isRecord(value) ||
+    !isCircuit(value.circuit) ||
+    !isView(value.view, allowLegacySampling, allowLegacyStableSince)
+  )
     return false;
   return (
     value.circuit.pressure === value.view.pressure &&
@@ -314,6 +326,7 @@ function fallbackCurrent(now: number, hasInvalidState: boolean): ResourceGuardia
       reason,
       attribution: "unknown",
       latestSample: null,
+      stableSince: null,
       sampling: legacySamplingHealth(),
     },
     degraded: true,
@@ -333,12 +346,14 @@ function legacySamplingHealth(): ResourceSamplingHealth {
 
 function normalizeCurrent(value: unknown): ResourceGuardianCurrentState | null {
   if (isCurrent(value)) return value;
-  if (!isCurrent(value, true)) return null;
+  if (!isCurrent(value, true, true)) return null;
+  const legacyView = value.view as Partial<ResourceGuardianView>;
   return {
     circuit: value.circuit,
     view: {
-      ...(value.view as Omit<ResourceGuardianView, "sampling">),
-      sampling: legacySamplingHealth(),
+      ...(legacyView as Omit<ResourceGuardianView, "sampling" | "stableSince">),
+      stableSince: legacyView.stableSince ?? null,
+      sampling: legacyView.sampling ?? legacySamplingHealth(),
     },
   };
 }

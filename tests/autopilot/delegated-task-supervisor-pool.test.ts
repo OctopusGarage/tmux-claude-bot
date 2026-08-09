@@ -124,6 +124,7 @@ function writeResourceCircuit(
       reason,
       attribution: "unknown",
       latestSample: null,
+      stableSince: null,
       sampling: {
         degraded: false,
         consecutiveFailures: 0,
@@ -251,6 +252,81 @@ describe("active delegated task supervisor pool", () => {
       reason: "loop supervisor is disabled; set LOOP_SUPERVISOR_ENABLED=true",
       showQueue: false,
     });
+  });
+
+  it("reuses a trusted Resource Guardian repair run id without creating another WorkOrder", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-resource-repair-"));
+    const runId = "resource-repair-repair-100-1";
+    setPathForSession("tmux_proj_project", projectDir);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder({
+        id: runId,
+        projectPath: projectDir,
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+      }),
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "queued",
+      now: 1,
+    });
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_project",
+        requirement: "repair only the durable resource failure",
+        resourceTrigger: "resource-repair",
+        trustedRunId: runId,
+      }),
+    ).resolves.toMatchObject({
+      status: "queued",
+      runId,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+    });
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
+  });
+
+  it("accepts a trusted run id only for resource-repair triggers", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-resource-repair-trigger-"));
+    setPathForSession("tmux_proj_project", projectDir);
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_project",
+        requirement: "repair only the durable resource failure",
+        trustedRunId: "resource-repair-repair-100-1",
+      }),
+    ).resolves.toMatchObject({
+      status: "blocked",
+      reason: "invalid trusted resource repair run id",
+    });
+  });
+
+  it("reuses a terminal trusted repair WorkOrder instead of launching a duplicate", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-terminal-resource-repair-"));
+    const runId = "resource-repair-repair-100-1";
+    setPathForSession("tmux_proj_project", projectDir);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder({
+        id: runId,
+        projectPath: projectDir,
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+      }),
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "completed",
+      now: 1,
+    });
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_project",
+        requirement: "repair only the durable resource failure",
+        resourceTrigger: "resource-repair",
+        trustedRunId: runId,
+      }),
+    ).resolves.toMatchObject({ status: "queued", runId });
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
   });
 
   it("defers closed background delegation before session lookup or durable side effects", async () => {

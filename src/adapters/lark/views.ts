@@ -49,7 +49,9 @@ import {
   aliveCount,
   recoverPreviewList,
 } from "../../core/recovery/recover-view.js";
+import { createResourceGuardianStore } from "../../core/resource-guardian/store.js";
 import { DEFAULT_PEEK_LINES, renderPeekPaneChunks } from "../../core/session/output.js";
+import { appStateDir } from "../../shared/state-dir.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
   browseCard,
@@ -369,7 +371,14 @@ export async function sendSysload(channel: LarkChannel, chatId: string): Promise
   await sendCard(
     channel,
     chatId,
-    viewCard(messages("lark").sysloadTitle, renderSystemLoad(report), isProjectGroup(chatId)),
+    viewCard(
+      messages("lark").sysloadTitle,
+      renderSystemLoad(
+        report,
+        createResourceGuardianStore({ stateDir: appStateDir() }).readCurrentReadOnly().view,
+      ),
+      isProjectGroup(chatId),
+    ),
   );
 }
 

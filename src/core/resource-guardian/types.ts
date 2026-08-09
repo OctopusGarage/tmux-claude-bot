@@ -131,6 +131,8 @@ export type ResourceIncidentAction = {
   at: number;
   outcome: "recorded" | "sent" | "partial" | "failed" | "skipped";
   reason: string;
+  /** Explicit lifecycle phase; legacy unphased action evidence never authorizes repair. */
+  phase?: "deterministic-cleanup" | "repair-intent" | "repair-dispatch";
   /** Identity proof recorded before a protect-mode destructive action. */
   target?: {
     pid: number;
@@ -167,6 +169,8 @@ export type ResourceGuardianView = {
   attribution: ResourceIncident["attribution"];
   latestSample: ResourceSample | null;
   sampling: ResourceSamplingHealth;
+  /** Durable healthy-window anchor for stable recovery; null outside healthy pressure. */
+  stableSince: number | null;
 };
 
 export type ResourceGuardianOperatorState = {

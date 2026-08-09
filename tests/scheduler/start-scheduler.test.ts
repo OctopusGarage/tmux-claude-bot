@@ -94,6 +94,7 @@ describe("startScheduler", () => {
         reason: "critical host pressure",
         attribution: "unknown",
         latestSample: null,
+        stableSince: null,
         sampling: {
           degraded: false,
           consecutiveFailures: 0,

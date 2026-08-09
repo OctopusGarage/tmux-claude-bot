@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { cpus, loadavg } from "node:os";
 import { promisify } from "node:util";
+import { sanitizeResourceGuardianText } from "../resource-guardian/presentation.js";
+import type { ResourceGuardianView } from "../resource-guardian/types.js";
 import type { CpuTotals } from "./system-metrics.js";
 import { hostCpuBusyPct, hostCpuTotals } from "./system-metrics.js";
 
@@ -126,7 +128,7 @@ export async function gatherSystemLoad(
 const fix = (n: number): string => n.toFixed(2);
 
 /** Plain text + emoji — reads cleanly in a terminal AND in a chat message. */
-export function renderSystemLoad(r: SystemLoadReport): string {
+export function renderSystemLoad(r: SystemLoadReport, guardian?: ResourceGuardianView): string {
   const lines: string[] = [];
   lines.push(
     `Load: ${fix(r.load.one)} / ${fix(r.load.five)} / ${fix(r.load.fifteen)}  (${r.cores} cores, 1-min ≈ ${r.loadPct}%)`,
@@ -151,6 +153,13 @@ export function renderSystemLoad(r: SystemLoadReport): string {
     }
   } else {
     lines.push("Runaway/orphan shells: none ✅");
+  }
+  if (guardian !== undefined) {
+    lines.push("");
+    lines.push(`Resource Guardian: ${guardian.pressure} · ${guardian.circuit.replace("-", " ")}`);
+    if (guardian.incidentId !== null) lines.push(`Incident: ${guardian.incidentId}`);
+    lines.push(`Reason: ${sanitizeResourceGuardianText(guardian.reason)}`);
+    lines.push(`Attribution: ${guardian.attribution}`);
   }
   return lines.join("\n");
 }

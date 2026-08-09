@@ -73,6 +73,21 @@ describe("config and automation commands", () => {
       changed: true,
     });
     expect(readFileSync(join(dir, ".env"), "utf8")).toContain("UI_LANG=en");
+
+    expect(runConfigCommand(["set", "RESOURCE_GUARDIAN_ENABLED", "true"]).exitCode).toBe(0);
+    expect(runConfigCommand(["set", "RESOURCE_GUARDIAN_TICK_MS", "60000"]).exitCode).toBe(0);
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("RESOURCE_GUARDIAN_ENABLED=true");
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("RESOURCE_GUARDIAN_TICK_MS=60000");
+    expect(runConfigCommand(["set", "RESOURCE_GUARDIAN_ENABLED", "maybe"])).toMatchObject({
+      exitCode: 1,
+    });
+    expect(runConfigCommand(["set", "RESOURCE_GUARDIAN_TICK_MS", "-1"])).toMatchObject({
+      exitCode: 1,
+    });
+    expect(runConfigCommand(["set", "RESOURCE_GUARDIAN_TICK_MS", "1.5"])).toMatchObject({
+      exitCode: 1,
+    });
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("RESOURCE_GUARDIAN_TICK_MS=60000");
   });
 
   it("handles config get, text output, missing entries, and usage errors", async () => {

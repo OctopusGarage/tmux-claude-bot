@@ -51,6 +51,7 @@ function view(overrides: Partial<ResourceGuardianView> = {}): ResourceGuardianVi
     reason: "steady",
     attribution: "unknown",
     latestSample: null,
+    stableSince: null,
     sampling: {
       degraded: false,
       consecutiveFailures: 0,
@@ -145,6 +146,33 @@ describe("resource guardian durable store", () => {
         },
       },
     });
+  });
+
+  it("migrates legacy stable recovery state without weakening its modern sampling health", () => {
+    const store = createResourceGuardianStore({ rootDir: tempRoot(), now: clock });
+    const { stableSince: _stableSince, ...legacyView } = view({ stableSince: 123 });
+    fs.mkdirSync(path.dirname(store.paths.state), { recursive: true });
+    fs.writeFileSync(store.paths.state, JSON.stringify({ circuit: circuit(), view: legacyView }));
+
+    expect(store.readCurrent()).toMatchObject({
+      degraded: false,
+      view: {
+        stableSince: null,
+        sampling: { degraded: false },
+      },
+    });
+  });
+
+  it("rejects a newly written current state that omits required stable recovery state", () => {
+    const store = createResourceGuardianStore({ rootDir: tempRoot(), now: clock });
+    const { stableSince: _stableSince, ...missingStableSince } = view();
+
+    expect(() =>
+      store.writeCurrent({
+        circuit: circuit(),
+        view: missingStableSince as ResourceGuardianView,
+      }),
+    ).toThrow("Invalid resource guardian current state");
   });
 
   it("re-reads an externally replaced circuit for every admission", () => {

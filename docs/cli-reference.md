@@ -12,6 +12,7 @@ silently from `src/cli.ts`.
 - `tcb doctor`
 - `tcb config`
 - `tcb automation`
+- `tcb resource`
 - `tcb install`
 - `tcb service`
 - `tcb dashboard`
@@ -53,6 +54,10 @@ silently from `src/cli.ts`.
 - `tcb automation status`
 - `tcb automation pause <loop|task-audit|runtime-guardian|batch>`
 - `tcb automation resume <loop|task-audit|runtime-guardian|batch>`
+- `tcb resource status`
+- `tcb resource incidents`
+- `tcb resource mode <observe|protect>`
+- `tcb resource profile <balanced|conservative>`
 - `tcb batch load <file>`
 - `tcb batch export <id> [file]`
 - `tcb batch start [id]`
@@ -115,6 +120,7 @@ silently from `src/cli.ts`.
 - `--id`
 - `--json`
 - `--level`
+- `--limit`
 - `--lines`
 - `--name`
 - `--n`
@@ -153,6 +159,10 @@ silently from `src/cli.ts`.
 - `tcb automation ...` is the supported top-level control for high-cost
   background loops. `pause` records the previous tick/enabled values in state so
   `resume` can restore the prior cadence instead of guessing a default.
+- `tcb resource status|incidents` is the read-only Resource Guardian diagnostic
+  surface. Mode/profile use their dedicated commands; generic config accepts
+  only the Guardian enabled/tick keys, and protect requires an enabled running
+  Guardian.
 - `tcb loop run` is for deterministic command-backed/manual runs; managed
   agent-supervised WorkOrders are driven by the scheduler and Loop Supervisor.
 - `tcb loop targets ...` is the supported way to inspect, pause, and resume

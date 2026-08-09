@@ -15,7 +15,10 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerCapabilityCommands } from "./cli/capability-commands.js";
 import { registerConfigurationCommands } from "./cli/configuration-commands.js";
+import { registerResourceCommands } from "./cli/resource-commands.js";
+import { createResourceGuardianStore } from "./core/resource-guardian/store.js";
 import { SCHEDULED_TASK_SOURCES } from "./core/tasks/task-ledger.js";
+import { appStateDir } from "./shared/state-dir.js";
 import { appVersion } from "./shared/version.js";
 
 // Operational logs mirror to stdout only for the bot itself (the `run` command,
@@ -97,6 +100,8 @@ program
   });
 
 registerConfigurationCommands(program);
+
+registerResourceCommands(program);
 
 registerCapabilityCommands(program);
 
@@ -193,7 +198,10 @@ program
       "./core/infra/system-load.js"
     );
     process.stdout.write(
-      `${renderSystemLoad(await gatherSystemLoad(defaultSystemLoadProbes()))}\n`,
+      `${renderSystemLoad(
+        await gatherSystemLoad(defaultSystemLoadProbes()),
+        createResourceGuardianStore({ stateDir: appStateDir() }).readCurrentReadOnly().view,
+      )}\n`,
     );
   });
 

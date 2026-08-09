@@ -45,6 +45,11 @@ describe("governed prompt command", () => {
           id: "loop.policy.test-coverage",
           actionScope: "pr-create",
         }),
+        expect.objectContaining({
+          id: "repair.resource-guardian",
+          actionScope: "commit",
+          owner: "src/core/resource-guardian/repair.ts",
+        }),
       ]),
     );
     expect(JSON.parse(show.stdout)).toMatchObject({
@@ -85,6 +90,7 @@ describe("governed prompt command", () => {
     const finalization = runGovernedPromptsCommand(["render", "loop.supervisor.finalization"]);
     const revision = runGovernedPromptsCommand(["render", "loop.supervisor.revision"]);
     const runtimeRepair = runGovernedPromptsCommand(["render", "repair.runtime-guardian"]);
+    const resourceRepair = runGovernedPromptsCommand(["render", "repair.resource-guardian"]);
     const repositoryReview = runGovernedPromptsCommand([
       "render",
       "loop.policy.repository-pull-request-review",
@@ -102,6 +108,7 @@ describe("governed prompt command", () => {
       finalization,
       revision,
       runtimeRepair,
+      resourceRepair,
       repositoryReview,
       repositoryRepair,
       delegatedTask,
@@ -112,6 +119,7 @@ describe("governed prompt command", () => {
       finalization.exitCode !== 0 ||
       revision.exitCode !== 0 ||
       runtimeRepair.exitCode !== 0 ||
+      resourceRepair.exitCode !== 0 ||
       repositoryReview.exitCode !== 0 ||
       repositoryRepair.exitCode !== 0 ||
       delegatedTask.exitCode !== 0
@@ -121,6 +129,8 @@ describe("governed prompt command", () => {
     expect(finalization.stdout).toContain("previous output without final marker");
     expect(revision.stdout).toContain("reviewGate.decision is missing");
     expect(runtimeRepair.stdout).toContain("Runtime Guardian (fast-heal)");
+    expect(resourceRepair.stdout).toContain("Resource Guardian stable-recovery repair.");
+    expect(resourceRepair.stdout).toContain("Do not create or open a PR");
     expect(repositoryReview.stdout).toContain("repository-pull-request-review");
     expect(repositoryRepair.stdout).toContain("repository-pr-repair");
     expect(delegatedTask.stdout).toContain("active-delegated-task");
