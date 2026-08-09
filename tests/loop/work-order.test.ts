@@ -463,6 +463,13 @@ describe("loop supervisor work order", () => {
       "git -C '/state/loop-worktree/datavibe/run' pull --rebase origin dev",
     );
     expect(prompt).toContain("the bot system owns source branch switch-back after acceptance");
+    expect(prompt).toContain(
+      "git -C '/state/loop-worktree/datavibe/run' switch loop/datavibe/active-delegate/1752643800000-datavibe-active-delegate",
+    );
+    expect(prompt).not.toContain("git -C '/state/loop-worktree/datavibe/run' switch dev");
+    expect(prompt).not.toContain(
+      "git -C '/state/loop-worktree/datavibe/run' pull --rebase origin dev",
+    );
   });
 
   it("keeps non-dependency preflight for explicit read-only smoke active delegations", () => {
