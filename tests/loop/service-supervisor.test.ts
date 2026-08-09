@@ -684,7 +684,7 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
-  it("rejects an isolated worker that checked out the shared switch-back branch", async () => {
+  it("rejects a dirty isolated worker that checked out the shared switch-back branch", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
         id: "hub",
@@ -750,7 +750,7 @@ prReview:
           return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
         }
         if (invocation.args.join(" ") === "status --porcelain") {
-          return { status: 0, stdout: "", stderr: "" };
+          return { status: 0, stdout: "M src/index.ts\n", stderr: "" };
         }
         if (invocation.args.join(" ") === "branch --show-current") {
           return { status: 0, stdout: "dev\n", stderr: "" };
@@ -760,9 +760,105 @@ prReview:
     });
 
     expect(outcome.failures).toContain(
+      "worktree is dirty after supervisor completion: M src/index.ts",
+    );
+    expect(outcome.failures).toContain(
       'isolated worktree is on "dev", expected WorkOrder branch "loop/hub/run-1"',
     );
     expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("restores a clean isolated worker to the WorkOrder branch before accepting completion", async () => {
+    const invocations: string[] = [];
+    let currentBranch = "dev";
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-isolated",
+        commit: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequest: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-isolated",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-isolated",
+          sourceWorktree: "/tmp/hub",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+        },
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        invocations.push(`${invocation.cwd}: ${invocation.args.join(" ")}`);
+        if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          if (invocation.cwd === "/tmp/hub") {
+            return { status: 0, stdout: "dev\n", stderr: "" };
+          }
+          return { status: 0, stdout: `${currentBranch}\n`, stderr: "" };
+        }
+        if (invocation.args.join(" ") === "switch loop/hub/run-1") {
+          currentBranch = "loop/hub/run-1";
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.result.status).toBe("completed");
+    expect(outcome.evidence).toContain(
+      "restored isolated worktree to WorkOrder branch loop/hub/run-1",
+    );
+    expect(invocations).toContain("/tmp/hub-isolated: switch loop/hub/run-1");
   });
 
   it("marks system gate artifacts unaccepted when the supervisor result is not completed", async () => {

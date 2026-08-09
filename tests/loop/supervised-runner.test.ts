@@ -229,6 +229,26 @@ describe("runLoopSupervisedProjectAsync", () => {
     expect(prompts[1]).toContain("did not include a parseable final summary");
   });
 
+  it("classifies agent not-running output as dispatch readiness failure", async () => {
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => ({
+        status: 0,
+        stdout: "未运行，请使用 /resume 恢复，或 /start 新建",
+        stderr: "",
+      }),
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "no live loop supervisor session",
+      output: "未运行，请使用 /resume 恢复，或 /start 新建",
+      repairDisposition: "bot-repairable",
+    });
+  });
+
   it("asks the supervisor to finalize once when the first output misses the final marker", async () => {
     const prompts: string[] = [];
     const result = await runLoopSupervisedProjectAsync({

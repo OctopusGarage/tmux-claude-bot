@@ -1897,12 +1897,19 @@ export function runSupervisedSystemGateOutcome(input: {
     failures.push("missing git adapter for supervised system gate");
   } else if (requiresGitGate && input.runGit !== undefined) {
     const status = input.runGit({ cwd: input.project.path, args: ["status", "--porcelain"] });
+    let targetWorktreeClean = false;
     if (status.status !== 0) {
       failures.push(`git status failed: ${status.stderr || status.stdout || "unknown error"}`);
     } else if (status.stdout.trim().length > 0) {
       failures.push(`worktree is dirty after supervisor completion: ${status.stdout.trim()}`);
     } else {
+      targetWorktreeClean = true;
       evidence.push("target worktree clean");
+    }
+    if (targetWorktreeClean) {
+      const restored = restoreIsolatedExecutionBranch(input.project, input.workOrder, input.runGit);
+      failures.push(...restored.failures);
+      evidence.push(...restored.evidence);
     }
     failures.push(...isolatedExecutionBranchGate(input.project, input.workOrder, input.runGit));
 
@@ -2245,6 +2252,45 @@ function workspaceRepositoryGate(
     }
   }
   return failures;
+}
+
+function restoreIsolatedExecutionBranch(
+  project: SupervisedSystemGateProject,
+  workOrder: LoopWorkOrder,
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
+): { failures: string[]; evidence: string[] } {
+  if (
+    workOrder.executionIsolation?.sourceWorktree === undefined ||
+    workOrder.commitPolicy.branch === undefined
+  ) {
+    return { failures: [], evidence: [] };
+  }
+  const branch = runGit({ cwd: project.path, args: ["branch", "--show-current"] });
+  if (branch.status !== 0) {
+    return {
+      failures: [
+        `isolated worktree branch check failed: ${branch.stderr || branch.stdout || "unknown error"}`,
+      ],
+      evidence: [],
+    };
+  }
+  const actualBranch = branch.stdout.trim();
+  if (actualBranch === workOrder.commitPolicy.branch) return { failures: [], evidence: [] };
+  const switched = runGit({ cwd: project.path, args: ["switch", workOrder.commitPolicy.branch] });
+  if (switched.status !== 0) {
+    return {
+      failures: [
+        `isolated worktree branch restore failed: ${
+          switched.stderr || switched.stdout || "unknown error"
+        }`,
+      ],
+      evidence: [],
+    };
+  }
+  return {
+    failures: [],
+    evidence: [`restored isolated worktree to WorkOrder branch ${workOrder.commitPolicy.branch}`],
+  };
 }
 
 function isolatedExecutionBranchGate(
