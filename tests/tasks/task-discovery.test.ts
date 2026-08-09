@@ -1114,6 +1114,64 @@ workspaces:
     ]);
   });
 
+  it("discovers completed automation-governance-review run artifacts", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-governance-artifact-"));
+    const configFile = join(root, "loop.yml");
+    const loopRunsDir = join(root, "loop-runs");
+    const scheduledAt = Date.parse("2026-07-28T02:35:00Z");
+    const runId = `${scheduledAt}-geo-backend-automation-governance-review`;
+    mkdirSync(join(loopRunsDir, "geo-backend", runId), { recursive: true });
+    writeFileSync(
+      join(loopRunsDir, "geo-backend", runId, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["Automation governance review completed without required repairs."],
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: geo-backend
+    name: Geo Backend
+    path: /tmp/geo-backend
+    agent: codex
+    goal: Improve architecture
+    maxRounds: 3
+    targetScore: 95
+    assessment:
+      command: "true"
+    runner:
+      kind: agent-supervised
+    automationGovernanceReview:
+      enabled: true
+      schedule: "35 2 * * *"
+      branch: loop/geo-backend/automation-governance-review
+      targetScore: 90
+      allowRepairPr: true
+`,
+      "utf8",
+    );
+
+    const records = discoverLoopEngineeringScheduledTasks({
+      configFile,
+      loopRunsDir,
+      window: singaporeDayWindow("2026-07-28"),
+      now: Date.parse("2026-07-29T02:00:00Z"),
+    });
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        taskId: `loop:geo-backend:automation-governance-review:${scheduledAt}`,
+        source: "loop-engineering",
+        name: "geo-backend automation-governance-review",
+        status: "success",
+        summary: "Automation governance review completed without required repairs.",
+      }),
+    ]);
+  });
+
   it("does not report a jitter-delayed loop job before its effective audit window", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-jitter-"));
     const configFile = join(root, "loop.yml");
