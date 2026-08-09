@@ -31,6 +31,7 @@ tmux-claude-bot service
         +-- ledger, reports, logs, notifications
         +-- localization and copy catalogs
         +-- input enhancement for voice and prompt translation
+        +-- Resource Guardian host-pressure admission circuit
         +-- Daily Task Audit and Runtime Guardian
 ```
 
@@ -62,6 +63,7 @@ All intelligent automation should use one pipeline:
 trigger
   -> resolve intent
   -> check conflicts and queue state
+  -> check Resource Guardian admission before durable reservation
   -> sync configured base branch
   -> run preflight
   -> materialize WorkOrder
@@ -94,6 +96,7 @@ system gate.
 | Opportunity Discovery | Read-only proposal generation and owner discussion entry points. | Implementation, branches, commits, PRs, or merge decisions. |
 | PR review | Loop-created PR review or repository-wide open-PR processing. | Broad redesign or product judgment. |
 | Daily Task Audit | Retrospective task audit, final owner summary, and evidence-led self-repair dispatch. | General target-project maintenance. |
+| Resource Guardian | Host resource pressure sampling, sustained incident policy, background admission circuit, bounded bot-owned emergency action, and stable-recovery repair admission. | General scheduling, target-project repair, or process ownership inferred from names, commands, or paths. |
 | Runtime Guardian | Near-real-time self-healing for tmux-claude-bot runtime artifacts. | Target-project code maintenance. |
 | Notification gateway | Channel selection, project-bound Lark routing, delivery evidence, attachments. | Per-adapter business-specific bypasses. |
 | System gate | Final acceptance for output format, git state, PR, CI, mergeability, branch switch-back, and notification evidence. | AI judgment or product decisions. |
@@ -116,11 +119,11 @@ same-repository issues before merging.
 
 Workspace tasks are generic multi-repository WorkOrders, not architecture-only
 jobs. The internal `workspace-architecture` name is a compatibility job kind,
-and its scheduler performs the same deterministic score-first gate as project
-Architecture before allocating a supervisor or worker. The default target is
-95; a target-reaching score records a no-op and an invalid cross-repository
-assessment records a blocked terminal outcome without editing repositories.
-not the workspace capability boundary.
+not the workspace capability boundary. Its scheduler performs the same
+deterministic score-first gate as project Architecture before allocating a
+supervisor or worker. The default target is 95; a target-reaching score records
+a no-op and an invalid cross-repository assessment records a blocked terminal
+outcome without editing repositories.
 
 ## Isolation And Conflict Control
 
@@ -218,6 +221,28 @@ localization layer instead of being duplicated inside adapters.
 `tests/core/i18n.test.ts` is the mechanical guardrail: every `UI_LANGS` language
 must have the same chat catalog keys and setup catalog keys, and every rendered
 entry must be non-empty.
+
+## Resource Safety And Runtime Healing
+
+Resource Guardian protects the host from sustained CPU and load pressure. It
+samples typed evidence, opens or closes the background admission circuit, and
+must run its admission check before durable reservation by Loop Engineering,
+Batch Scheduler, Daily Task Audit, Runtime Guardian, or other background work.
+In protect mode it may reduce only revalidated bot-owned emergency load; it
+must not infer ownership from process names, commands, or paths alone. After a
+stable recovery window it may dispatch at most one governed repair WorkOrder
+through the global Repair Coordinator.
+
+Runtime Guardian has a separate responsibility: it inspects durable runtime
+artifacts such as terminal WorkOrders, system-gate evidence, and worker leases,
+then schedules bounded self-repair when those artifacts are inconsistent. It
+must obey the Resource Guardian circuit rather than act as a competing host
+pressure controller.
+
+Operators inspect these boundaries through `tcb resource status`,
+`tcb resource incidents`, `tcb resource mode`, `tcb resource profile`, and the
+Resource Guardian context rendered by `sysload`. State remains canonical under
+the configured state directory; user-facing paths must remain home-relative.
 
 ## GitHub Identity
 

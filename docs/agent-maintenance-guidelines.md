@@ -68,6 +68,24 @@ the current home directory to `~` using the shared `tildeifyHome` or
 `tildeifyHomeDeep` boundary. Never expose personal absolute paths. Keep
 canonical absolute paths only in internal logic, state, logs, and artifacts.
 
+Resource Guardian's current view, incidents, and operator override are durable
+state under `TCB_STATE_DIR/resource-guardian`; do not hand-edit them. Inspect
+them with `tcb resource status` or bounded `tcb resource incidents`. Change only
+the allowlisted enabled/tick values through `tcb config set`, and use the
+dedicated `tcb resource mode` and `tcb resource profile` commands for live
+operator control. Their pending journal is internal recovery evidence and must
+not be edited or removed while an update is in progress. State directories remain private runtime data, not source or
+repository backup material. Incident retention is bounded to the newest 50
+records and 10 MiB; pruning oldest evidence is intentional. Keep
+`state/resource-guardian/` ignored by source and state-repository backups.
+
+For Loop cleanup, a missing worktree directory is not proof that Git metadata
+was removed. Terminal reconciliation must resolve the WorkOrder's verified
+source repository and remove only the exact stale Git worktree registration
+recorded for that WorkOrder. If the source repository or registration cannot be
+verified, retain the evidence and fail closed instead of guessing. Source
+worktrees are never cleanup targets.
+
 ## Logging And Artifacts
 
 Long-running workflows must be diagnosable from persisted logs and artifacts

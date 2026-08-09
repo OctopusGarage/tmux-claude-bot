@@ -728,6 +728,7 @@ describe("runDailyTaskAuditServiceTick", () => {
       expect.objectContaining({
         session: expect.stringMatching(/^tmux_proj_/),
         requirement: expect.stringContaining("Daily scheduled task audit repair."),
+        resourceTrigger: "background",
       }),
     );
   });

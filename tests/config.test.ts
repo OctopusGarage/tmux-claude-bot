@@ -116,6 +116,55 @@ describe("loadScriptConfig without args", () => {
 });
 
 describe("loadConfig (real schema)", () => {
+  it("keeps resource guardian disabled in observe mode by default", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).resourceGuardian).toEqual({
+      enabled: false,
+      mode: "observe",
+      profile: "balanced",
+      tickMs: 15_000,
+    });
+  });
+
+  it("parses strict resource guardian configuration", () => {
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        RESOURCE_GUARDIAN_ENABLED: "true",
+        RESOURCE_GUARDIAN_MODE: "protect",
+        RESOURCE_GUARDIAN_PROFILE: "conservative",
+        RESOURCE_GUARDIAN_TICK_MS: "0",
+      }).resourceGuardian,
+    ).toEqual({ enabled: true, mode: "protect", profile: "conservative", tickMs: 0 });
+    expect(
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_ENABLED: "false" }).resourceGuardian
+        .enabled,
+    ).toBe(false);
+
+    for (const invalid of ["bogus", "1", "0", "yes", "TRUE"]) {
+      expect(
+        () =>
+          loadConfig({
+            TELEGRAM_BOT_TOKEN: "t",
+            RESOURCE_GUARDIAN_ENABLED: invalid,
+          }),
+        `RESOURCE_GUARDIAN_ENABLED=${invalid} must be rejected`,
+      ).toThrow();
+    }
+
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_MODE: "unsafe" }),
+    ).toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_PROFILE: "aggressive" }),
+    ).toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_TICK_MS: "Infinity" }),
+    ).toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_TICK_MS: "-1" }),
+    ).toThrow();
+  });
+
   it("a blank/invalid LARK_DOMAIN falls back to feishu instead of crashing", () => {
     // A stray `LARK_DOMAIN=` line must not take down a Telegram-only install.
     expect(() =>

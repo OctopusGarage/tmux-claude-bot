@@ -15,6 +15,7 @@ export const NOTIFICATION_SOURCE_CATALOG = [
   "long-task-monitor",
   "loop-engineering",
   "opportunity-discovery",
+  "resource-guardian",
   "runtime-guardian",
   "tmux-claude-bot",
 ] as const;

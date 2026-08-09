@@ -23,6 +23,7 @@ Governed prompts include:
 | Loop task policies | `src/core/prompts/loop-task-policies.ts`, `src/core/loop/task-family.ts` | Task-family policy fragments and governance metadata for architecture, bug-fix, test-coverage, security-maintenance, harness-auto, opportunity-discovery, automation-governance-review, PR review, repository PR review, and active delegation. |
 | Daily Task Audit repair | `src/core/tasks/task-repair.ts` | Scheduled task audit repair prompt for tmux-claude-bot task scheduling/reporting failures. |
 | Runtime Guardian repair | `src/core/runtime-guardian/service.ts` | Near-real-time runtime repair prompt for confirmed tmux-claude-bot runtime artifacts. |
+| Resource Guardian repair | `src/core/resource-guardian/repair.ts` | Stable-recovery-only repair prompt for durably ended, bot-owned resource incidents; it is restricted to the configured bot repository and never a target project. |
 | Legacy Loop runner prompts | `src/core/loop/run.ts` | Command-backed Loop eval, agent task, preflight repair, dirty-worktree recovery, verification recovery, and post-commit recovery prompts. |
 | Opportunity discussion | `src/core/opportunities/view.ts` | Discussion prompts for proposed opportunities before implementation. |
 | Repo workflows | `.claude/workflows/`, `.claude/commands/`, `.agents/skills/` | Operator-triggered audit and architecture-loop workflows. |
@@ -55,6 +56,7 @@ automation prompts unless they become repo-owned automation instructions.
 | PR review | Yes | Repair policy-controlled | Repair policy-controlled | Existing PR only | Policy-controlled by PR review config |
 | Daily Task Audit repair | Yes | Only tmux-claude-bot task/audit/dispatch logic | Yes | Supervisor-controlled | Supervisor-controlled |
 | Runtime Guardian repair | Yes | Only tmux-claude-bot runtime/orchestration logic | Yes | Supervisor-controlled | Supervisor-controlled |
+| Resource Guardian repair | Yes | Only tmux-claude-bot resource-guardian/orchestration logic after stable recovery | Yes | No | No |
 | Opportunity discussion | Yes | No | No | No | No |
 
 When a task has `Policy-controlled` permissions, the WorkOrder, config, system

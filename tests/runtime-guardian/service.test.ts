@@ -3,17 +3,19 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
+import type { RuntimeGuardianFinding } from "../../src/core/runtime-guardian/findings.js";
+import { discoverRuntimeGuardianFindings as discoverRuntimeGuardianArtifacts } from "../../src/core/runtime-guardian/inspector.js";
+import { reconcileRuntimeGuardianQueue } from "../../src/core/runtime-guardian/queue-reconciliation.js";
 import {
   buildRuntimeGuardianRepairPrompt,
   checkRuntimeGuardianRepairReadiness,
   discoverRuntimeGuardianFindings,
   dispatchRuntimeGuardianRepair,
-  type RuntimeGuardianFinding,
   RuntimeGuardianStore,
-  reconcileRuntimeGuardianQueue,
   runRuntimeGuardianTick,
 } from "../../src/core/runtime-guardian/service.js";
 import {
@@ -22,6 +24,17 @@ import {
 } from "../../src/core/tasks/repair-coordinator.js";
 import { loadConfig } from "../../src/shared/config.js";
 import type { AppConfig } from "../../src/shared/types.js";
+
+vi.mock("../../src/core/autopilot/delegated-task.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/core/autopilot/delegated-task.js")>()),
+  startActiveDelegatedTask: vi.fn(async () => ({
+    status: "queued",
+    runId: "runtime-repair-run-1",
+    projectId: "tmux-claude-bot",
+    supervisorSession: "tmux_proj_loop-supervisor",
+    reportDir: "/tmp/runtime-repair-report",
+  })),
+}));
 
 const originalStateDir = process.env.TCB_STATE_DIR;
 
@@ -76,6 +89,10 @@ describe("runtime guardian", () => {
     if (stateDir !== undefined) rmSync(stateDir, { recursive: true, force: true });
     if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
     else process.env.TCB_STATE_DIR = originalStateDir;
+  });
+
+  it("keeps Runtime Guardian artifact discovery owned by the inspector module", () => {
+    expect(discoverRuntimeGuardianFindings).toBe(discoverRuntimeGuardianArtifacts);
   });
 
   it("terminalizes explicitly classified target and external blockers instead of retrying bot repair forever", () => {
@@ -262,6 +279,30 @@ describe("runtime guardian", () => {
     expect(result).toEqual({ status: "blocked", detail: "loop supervisor is disabled" });
   });
 
+  it("marks Runtime Guardian repairs as background delegation", async () => {
+    const result = await dispatchRuntimeGuardianRepair(
+      {
+        config: {
+          loopEngineering: { supervisor: { enabled: true } },
+          projectSessionPrefix: "tmux_proj_",
+          runtimeGuardian: runtimeConfig(),
+        },
+      } as never,
+      {
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        mode: "fast-heal",
+        findings: [finding()],
+      },
+    );
+
+    expect(result).toEqual({ status: "queued", detail: expect.any(String) });
+    expect(startActiveDelegatedTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ resourceTrigger: "background" }),
+    );
+  });
+
   it("keeps explicitly isolated guardian repairs isolated", async () => {
     const dispatchRepair = vi.fn(async () => ({
       status: "queued" as const,
@@ -357,6 +398,90 @@ describe("runtime guardian", () => {
     });
     expect(result).toEqual({ fired: false, reason: "no-findings" });
     expect(dispatchRepair).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile or discover findings when runtime guardian is disabled", async () => {
+    const discover = vi.fn(() => [finding()]);
+    const reconcile = vi.fn();
+
+    const disabled = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ enabled: false }),
+      discover,
+      reconcile,
+    });
+    const tickZero = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ tickMs: 0 }),
+      discover,
+      reconcile,
+    });
+
+    expect(disabled).toEqual({ fired: false, reason: "disabled" });
+    expect(tickZero).toEqual({ fired: false, reason: "disabled" });
+    expect(discover).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("reports unavailable repair dispatch without marking the repository attempt cooldown", async () => {
+    const store = new RuntimeGuardianStore();
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [finding({ runId: "needs-dispatch" })],
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toMatchObject({
+      fired: true,
+      repairDispatch: "unavailable",
+      detail: "repair dispatch is unavailable",
+    });
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBeUndefined();
+  });
+
+  it("surfaces blocked, default-detail, and thrown repair delegation outcomes", async () => {
+    const blocked = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      discover: () => [finding({ runId: "blocked-dispatch" })],
+      dispatchRepair: async () => ({ status: "blocked", detail: "queue paused" }),
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+    const defaultDetail = await runRuntimeGuardianTick({
+      now: 20_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot-default" }),
+      discover: () => [finding({ runId: "default-detail" })],
+      dispatchRepair: async () => undefined,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+    const failed = await runRuntimeGuardianTick({
+      now: 30_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot-failed" }),
+      discover: () => [finding({ runId: "failed-dispatch" })],
+      dispatchRepair: async () => {
+        throw new Error("transport down");
+      },
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(blocked).toMatchObject({
+      fired: true,
+      repairDispatch: "blocked",
+      detail: "queue paused",
+    });
+    expect(defaultDetail).toMatchObject({
+      fired: true,
+      repairDispatch: "queued",
+      detail: "queued",
+    });
+    expect(failed).toMatchObject({
+      fired: true,
+      repairDispatch: "failed",
+      detail: "transport down",
+    });
   });
 
   it("discovers a stale bot-owned dispatching work order without a supervisor lease", () => {

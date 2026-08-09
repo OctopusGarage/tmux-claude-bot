@@ -11,6 +11,43 @@ type RuntimeGuardianRepairFinding = {
   runDir?: string;
 };
 
+export function buildResourceGuardianRepairPrompt(input: {
+  repoPath: string;
+  repairBranch: string;
+  incident: { id: string; fingerprint: string; evidence: readonly string[] };
+}): string {
+  return [
+    "Resource Guardian stable-recovery repair.",
+    `Repository: ${input.repoPath}`,
+    `Repair branch: ${input.repairBranch}`,
+    `Incident: ${input.incident.id}`,
+    `Fingerprint: ${input.incident.fingerprint}`,
+    "",
+    "Scope and safety:",
+    "- Work only in this tmux-claude-bot repository; never edit a target project.",
+    "- Confirm `git -C <configured-repository> rev-parse --show-toplevel` before mutation.",
+    "- Re-check the bounded incident evidence before editing and make no change unless the bot caused a reproducible issue.",
+    "- Use the active Claude Code / Codex agent surface only; never add model-provider SDKs, keys, or HTTP clients.",
+    "- Do not create or open a PR.",
+    "- Stop when the evidence does not prove a bot-owned reproducible defect; do not optimize, refactor, or broaden scope speculatively.",
+    "- Commit only a verified, narrow repair; preserve unrelated work and do not amend or rewrite unrelated history.",
+    "",
+    "Required loop: Explore -> Plan -> Code -> Verify -> Review -> Record.",
+    "- Explore the evidence and relevant deterministic contracts first.",
+    "- Record a pre-mutation reviewGate with the confirmed failure, reachability, evidence, and bounded scope before changing code.",
+    "- Plan the smallest repair with a clear stop condition.",
+    "- Code only a confirmed bot-owned defect and preserve unrelated work.",
+    "- Run npm run verify:local after changes.",
+    "- Review the diff and record a post-mutation reviewGate with regression, evaluation, monitoring, and documentation follow-up candidates.",
+    "- On failure, add a focused regression/eval/monitor/documentation candidate or record why none is justified.",
+    "",
+    "Incident evidence:",
+    JSON.stringify(input.incident.evidence.slice(0, 20), null, 2),
+    "",
+    "source=resource-guardian",
+  ].join("\n");
+}
+
 export function buildProjectRecoveryPrompt(input: {
   projectId: string;
   projectPath: string;

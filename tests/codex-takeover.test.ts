@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ProcRow } from "../src/core/agents/agent-config-resolver.js";
 import { isCodexProcess } from "../src/core/agents/codex/codex-process.js";
@@ -167,6 +170,15 @@ function fakeProbe(over: Partial<TakeoverProbe>): TakeoverProbe {
   };
 }
 
+async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "tcb-codex-home-"));
+  try {
+    return await fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 describe("listCodexOrphans", () => {
   it("bails (empty) when tmux can't be queried (panePids null)", async () => {
     const probe = fakeProbe({
@@ -210,32 +222,33 @@ describe("listCodexOrphans", () => {
   });
 
   it("falls back to default ~/.codex when CODEX_HOME is absent", async () => {
-    const home = process.env.HOME ?? "/home/u";
     const probe = fakeProbe({
       snapshot: async () => [{ pid: 7, ppid: 1, command: "codex" }] as ProcRow[],
       tmuxPanePids: async () => [],
       cwdOf: async () => "/home/u/proj",
       readProcEnv: async () => "",
       readShellRc: async () => "",
-      openSessionFile: async () => null,
+      openSessionFile: async () => "open-session",
     });
     const orphans = await listCodexOrphans(probe);
     expect(orphans).toHaveLength(1);
-    expect(orphans[0]?.configRoot).toBe(`${home}/.codex`);
+    expect(orphans[0]?.configRoot).toBe(`${homedir()}/.codex`);
   }, 15_000);
 
-  it("uses null sessionId and bare codex command when nothing is open and no rollout on disk", async () => {
-    const probe = fakeProbe({
-      snapshot: async () => [{ pid: 7, ppid: 1, command: "codex" }] as ProcRow[],
-      tmuxPanePids: async () => [],
-      cwdOf: async () => "/home/u/proj",
-      readProcEnv: async () => "",
-      readShellRc: async () => "",
-      openSessionFile: async () => null,
+  it("uses null sessionId and preserves explicit CODEX_HOME when no rollout exists", async () => {
+    await withTempDir(async (codexHome) => {
+      const probe = fakeProbe({
+        snapshot: async () => [{ pid: 7, ppid: 1, command: "codex" }] as ProcRow[],
+        tmuxPanePids: async () => [],
+        cwdOf: async () => "/home/u/proj",
+        readProcEnv: async () => `CODEX_HOME=${codexHome}`,
+        readShellRc: async () => "",
+        openSessionFile: async () => null,
+      });
+      const orphans = await listCodexOrphans(probe);
+      expect(orphans[0]?.sessionId).toBeNull();
+      expect(orphans[0]?.startCommand).toBe(`CODEX_HOME=${codexHome} codex`);
     });
-    const orphans = await listCodexOrphans(probe);
-    expect(orphans[0]?.sessionId).toBeNull();
-    expect(orphans[0]?.startCommand).toBe("codex");
   }, 15_000);
 
   it("does not list claude processes as codex orphans", async () => {

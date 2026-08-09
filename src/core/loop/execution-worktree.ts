@@ -82,19 +82,98 @@ export function prepareLoopExecutionWorktrees(input: {
  * a stale lease can never turn into a destructive command against a configured
  * source repository.
  */
-export function cleanupLoopExecutionWorktree(input: {
+type LoopExecutionWorktreeCleanupInput = {
   worktree: string;
-  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
-}): boolean {
+  sourceWorktree?: string;
+};
+
+type MissingWorktreeRegistrations = Map<string, Set<string> | null>;
+type LoopExecutionWorktreeCleanupResult = "removed" | "already-clean" | "failed";
+
+// Derived optimization only: a restart revalidates Git, and a recreated path
+// clears its entry before any cleanup decision.
+const reconciledMissingWorktrees = new Set<string>();
+
+/** Reuse one verified worktree registry snapshot across a reconciliation pass. */
+export function createLoopExecutionWorktreeCleanup(
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
+): (input: LoopExecutionWorktreeCleanupInput) => LoopExecutionWorktreeCleanupResult {
+  const registrations = new Map<string, Set<string> | null>();
+  return (input) => cleanupLoopExecutionWorktreeWithRegistrations(input, runGit, registrations);
+}
+
+export function cleanupLoopExecutionWorktree(
+  input: LoopExecutionWorktreeCleanupInput & {
+    runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  },
+): boolean {
+  return (
+    cleanupLoopExecutionWorktreeWithRegistrations(
+      input,
+      input.runGit,
+      new Map<string, Set<string> | null>(),
+    ) !== "failed"
+  );
+}
+
+function cleanupLoopExecutionWorktreeWithRegistrations(
+  input: LoopExecutionWorktreeCleanupInput,
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
+  registrations: MissingWorktreeRegistrations,
+): LoopExecutionWorktreeCleanupResult {
   const worktree = resolvePath(input.worktree);
   if (!isBotOwnedLoopExecutionWorktree(worktree)) {
     log.warn("loop refused to remove worktree outside bot-owned state", {
       data: { worktree },
     });
-    return false;
+    return "failed";
   }
-  if (!existsSync(worktree)) return true;
-  const topLevel = input.runGit({ cwd: worktree, args: ["rev-parse", "--show-toplevel"] });
+  if (!existsSync(worktree)) {
+    if (reconciledMissingWorktrees.has(worktree)) return "already-clean";
+    if (input.sourceWorktree === undefined) {
+      log.warn("loop cannot reconcile missing worktree without its source repository", {
+        data: { worktree },
+      });
+      return "failed";
+    }
+    const sourceWorktree = resolvePath(input.sourceWorktree);
+    const registered = readMissingWorktreeRegistrations({
+      worktree,
+      sourceWorktree,
+      runGit,
+      registrations,
+    });
+    if (registered === null) return "failed";
+    if (!registered.has(worktree)) {
+      reconciledMissingWorktrees.add(worktree);
+      log.info("loop missing worktree registration is already reconciled", {
+        data: { worktree, sourceWorktree },
+      });
+      return "already-clean";
+    }
+    const removed = runGit({
+      cwd: sourceWorktree,
+      args: ["worktree", "remove", "--force", worktree],
+    });
+    if (removed.status !== 0) {
+      log.warn("loop failed to remove missing worktree registration", {
+        data: {
+          worktree,
+          sourceWorktree,
+          reason: removed.stderr || removed.stdout || "git worktree remove failed",
+        },
+      });
+      return "failed";
+    }
+    registered.delete(worktree);
+    reconciledMissingWorktrees.add(worktree);
+    log.info("loop removed missing worktree registration", {
+      data: { worktree, sourceWorktree },
+    });
+    return "removed";
+  }
+  reconciledMissingWorktrees.delete(worktree);
+  const topLevel = runGit({ cwd: worktree, args: ["rev-parse", "--show-toplevel"] });
   if (topLevel.status !== 0 || resolvePath(topLevel.stdout.trim()) !== worktree) {
     log.warn("loop refused to remove path that is not the expected git worktree", {
       data: {
@@ -102,9 +181,9 @@ export function cleanupLoopExecutionWorktree(input: {
         reason: topLevel.stderr || topLevel.stdout || "git toplevel verification failed",
       },
     });
-    return false;
+    return "failed";
   }
-  const removed = input.runGit({
+  const removed = runGit({
     cwd: worktree,
     args: ["worktree", "remove", "--force", worktree],
   });
@@ -115,10 +194,67 @@ export function cleanupLoopExecutionWorktree(input: {
         reason: removed.stderr || removed.stdout || "git worktree remove failed",
       },
     });
-    return false;
+    return "failed";
   }
+  reconciledMissingWorktrees.add(worktree);
   log.info("loop removed expired isolated worktree", { data: { worktree } });
-  return true;
+  return "removed";
+}
+
+function readMissingWorktreeRegistrations(input: {
+  worktree: string;
+  sourceWorktree: string;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  registrations: MissingWorktreeRegistrations;
+}): Set<string> | null {
+  if (input.registrations.has(input.sourceWorktree)) {
+    return input.registrations.get(input.sourceWorktree) ?? null;
+  }
+  const sourceTopLevel = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["rev-parse", "--show-toplevel"],
+  });
+  if (
+    sourceTopLevel.status !== 0 ||
+    sourceTopLevel.stdout.trim().length === 0 ||
+    resolvePath(sourceTopLevel.stdout.trim()) !== input.sourceWorktree
+  ) {
+    log.warn("loop refused to reconcile missing worktree from an unverified source repository", {
+      data: {
+        worktree: input.worktree,
+        sourceWorktree: input.sourceWorktree,
+        reason:
+          sourceTopLevel.stderr ||
+          sourceTopLevel.stdout ||
+          "source git toplevel verification failed",
+      },
+    });
+    input.registrations.set(input.sourceWorktree, null);
+    return null;
+  }
+  const listed = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["worktree", "list", "--porcelain"],
+  });
+  if (listed.status !== 0) {
+    log.warn("loop failed to inspect missing worktree registration", {
+      data: {
+        worktree: input.worktree,
+        sourceWorktree: input.sourceWorktree,
+        reason: listed.stderr || listed.stdout || "git worktree list failed",
+      },
+    });
+    input.registrations.set(input.sourceWorktree, null);
+    return null;
+  }
+  const registered = new Set(
+    listed.stdout
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => resolvePath(line.slice("worktree ".length))),
+  );
+  input.registrations.set(input.sourceWorktree, registered);
+  return registered;
 }
 
 export function isBotOwnedLoopExecutionWorktree(worktree: string): boolean {
@@ -350,7 +486,7 @@ function prepareGitExecutionWorktree(input: {
     existingTopLevel.stdout.trim().length > 0 &&
     resolvePath(existingTopLevel.stdout.trim()) === resolvePath(executionWorktree)
   ) {
-    const branchFailure = prepareIsolatedExecutionBranch(input, executionWorktree, base.ref, false);
+    const branchFailure = prepareIsolatedExecutionBranch(input, executionWorktree, base.ref);
     if (branchFailure !== null) return { detail: branchFailure };
     log.info("loop reusing existing isolated execution worktree", {
       data: { ...loggableInput(input), executionWorktree },

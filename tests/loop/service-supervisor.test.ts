@@ -9,23 +9,28 @@ import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
   reconcileLoopSupervisorWorkOrders,
-  reserveLoopSupervisorSessions,
   runLoopServiceTickAsync,
   runSupervisedSystemGateOutcome,
   startLoopEngineering,
   writeSupervisedSystemGateArtifact,
 } from "../../src/core/loop/service.js";
+import { readActiveLoopSupervisorResources } from "../../src/core/loop/supervisor-active-resources.js";
 import {
   readLoopSupervisorWorkerLeaseState,
+  reserveLoopSupervisorSessions,
   writeLoopSupervisorWorkerLeaseState,
 } from "../../src/core/loop/supervisor-pool.js";
-import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
+import {
+  listUnfinishedLoopSupervisorWorkOrders,
+  writeLoopSupervisorWorkOrderState,
+} from "../../src/core/loop/supervisor-state.js";
 import {
   buildRepositoryPullRequestReviewWorkOrder,
   type LoopWorkOrder,
 } from "../../src/core/loop/work-order.js";
 import { NotificationGateway } from "../../src/core/notifications/gateway.js";
 import { sessionNameFromPath } from "../../src/core/projects/sessionPathMap.js";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -133,7 +138,109 @@ function finalMarkerFromPrompt(prompt: string): string {
   return marker;
 }
 
+function resourceClosedState() {
+  return {
+    circuit: {
+      schemaVersion: 1 as const,
+      pressure: "critical" as const,
+      incidentId: "incident-resource-closed",
+      admission: "background-closed" as const,
+      reason: "critical host pressure",
+      changedAt: 1000,
+      lastSampleAt: 1000,
+      owner: "resource-guardian" as const,
+    },
+    view: {
+      enabled: true,
+      mode: "protect" as const,
+      profile: "balanced" as const,
+      pressure: "critical" as const,
+      circuit: "background-closed" as const,
+      incidentId: "incident-resource-closed",
+      reason: "critical host pressure",
+      attribution: "unknown" as const,
+      latestSample: null,
+      stableSince: null,
+      sampling: {
+        degraded: false,
+        consecutiveFailures: 0,
+        lastFailureAt: null,
+        lastError: null,
+        notifiedPhase: null,
+        overlapSkippedTicks: 0,
+      },
+    },
+  };
+}
+
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("defers a due supervised target before any ledger, lease, WorkOrder, or scheduler reservation", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-state-"));
+    const stateDir = process.env.TCB_STATE_DIR;
+    const resourceStore = createResourceGuardianStore({ stateDir });
+    resourceStore.writeCurrent(resourceClosedState());
+    const schedulerStore = new LoopSchedulerStore();
+    const runSupervisorTask = vi.fn();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    const result = await runLoopServiceTickAsync({
+      configFile: writeLoopConfig({
+        projectPath: mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-project-")),
+        runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      }),
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ checked: 1, due: 1, ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(schedulerStore.getLastFired()).toEqual({});
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+
+    const retry = await runLoopServiceTickAsync({
+      configFile: writeLoopConfig({
+        projectPath: mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-retry-project-")),
+        runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      }),
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+    expect(retry).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(schedulerStore.getLastFired()).toEqual({});
+  });
+
+  it("reads active worker leases as supervisor capacity reservations", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-active-resources-"));
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "active-work",
+          projectId: "hub",
+          projectPath: "/repo/hub",
+          status: "active",
+          leasedAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    const active = readActiveLoopSupervisorResources();
+
+    expect(active.supervisorSessions).toEqual(new Set(["tmux_proj_loop-supervisor"]));
+    expect(active.resourcePaths).toEqual(new Set(["/repo/hub"]));
+  });
+
   it("keeps a repository review pending when every configured supervisor has an active lease", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
@@ -279,7 +386,101 @@ prReview:
     expect(leaseWasHeld).toBe(true);
   });
 
-  it("does not reuse a supervisor reserved by a concurrent service tick", () => {
+  it("keeps a ready repository review claimable when Resource Guardian closes admission", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-repository-resource-gated-"));
+    const stateDir = process.env.TCB_STATE_DIR;
+    const resourceStore = createResourceGuardianStore({ stateDir });
+    resourceStore.writeCurrent(resourceClosedState());
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repository-resource-project-"));
+    const configFile = join(projectDir, "loop.yml");
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: fluent-frame-all-prs
+      name: Fluent Frame PRs
+      path: ${projectDir}
+      repo: OctopusGarage/fluent-frame
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`,
+    );
+    const queue = new RepositoryReviewQueue();
+    queue.enqueue({
+      repositoryId: "fluent-frame-all-prs",
+      scheduledAt: now,
+      priority: 1000,
+      now,
+    });
+    const runSupervisorTask = vi.fn(async (request) => {
+      const marker = finalMarkerFromPrompt(request.prompt);
+      return {
+        status: 0,
+        stdout: `${marker}\n${JSON.stringify({
+          status: "completed",
+          projectId: "fluent-frame-all-prs",
+          actionsTaken: ["reviewed pull requests"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+          pullRequestDecisions: [],
+        })}`,
+        stderr: "",
+      };
+    });
+    const input = {
+      configFile,
+      now,
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository review should not run system commands");
+      },
+      runGit: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+      repositoryReviewOnly: true,
+    };
+
+    await runLoopServiceTickAsync(input);
+
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({ status: "pending", attempt: 0 }),
+    ]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+
+    const closed = resourceClosedState();
+    resourceStore.writeCurrent({
+      circuit: { ...closed.circuit, admission: "open" },
+      view: { ...closed.view, circuit: "open" },
+    });
+    await runLoopServiceTickAsync(input);
+
+    expect(runSupervisorTask).toHaveBeenCalled();
+  });
+
+  it("does not reuse a supervisor reserved by a concurrent service tick", async () => {
     const reservations = new Set(["tmux_proj_loop-supervisor-1"]);
 
     expect(
@@ -294,7 +495,7 @@ prReview:
     );
   });
 
-  it("returns explicit system gate evidence for accepted report-only work", () => {
+  it("returns explicit system gate evidence for accepted report-only work", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
         id: "hub",
@@ -349,7 +550,7 @@ prReview:
     expect(outcome.evidence).toContain("no mutating git or PR gate required");
   });
 
-  it("rejects completed supervisor results when the review gate blocks", () => {
+  it("rejects completed supervisor results when the review gate blocks", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
         id: "hub",
@@ -412,7 +613,7 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
-  it("rejects completed supervisor results when eval outcome fails", () => {
+  it("rejects completed supervisor results when eval outcome fails", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
         id: "hub",
@@ -483,7 +684,7 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
-  it("rejects an isolated worker that checked out the shared switch-back branch", () => {
+  it("rejects an isolated worker that checked out the shared switch-back branch", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
         id: "hub",
@@ -564,7 +765,7 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
-  it("marks system gate artifacts unaccepted when the supervisor result is not completed", () => {
+  it("marks system gate artifacts unaccepted when the supervisor result is not completed", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
     const result = {
       status: "dispatch-failed" as const,
@@ -605,7 +806,7 @@ prReview:
     });
   });
 
-  it("writes eval outcome into system gate artifacts when final summary exists", () => {
+  it("writes eval outcome into system gate artifacts when final summary exists", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
     const result = {
       status: "completed" as const,
@@ -860,6 +1061,71 @@ prReview:
       "tmux_proj_loop-worker-hub-1784211600000-hub-test-coverage",
     );
     expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+  });
+
+  it("cleans supervised worker sessions when terminal work orders fail", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-test-coverage-"));
+    const configFile = writeLoopConfig({
+      projectPath: projectDir,
+      schedule: "0 0 * * *",
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      projectExtra: [
+        "    testCoverage:",
+        "      enabled: true",
+        '      schedule: "20 14 * * *"',
+        "      targetCoverage: 80",
+      ].join("\n"),
+    });
+    const cleanupCompletedWorkerSession = vi.fn(async () => {});
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T14:25:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runGit: (invocation) => {
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (command === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        if (
+          command === "fetch origin main" ||
+          command === "switch main" ||
+          command === "pull --rebase origin main"
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        writeLoopSupervisorWorkerLeaseState({
+          leases: [
+            {
+              workerSession: request.session,
+              workOrderId: request.workOrder.id,
+              projectId: request.workOrder.projectId,
+              projectPath: request.workOrder.projectPath,
+              status: "active",
+              leasedAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          ],
+        });
+        return { status: 1, stdout: "", stderr: "worker failed" };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
+      projectSessionPrefix: "tmux_proj_",
+      cleanupCompletedWorkerSession,
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(cleanupCompletedWorkerSession).toHaveBeenCalledWith(
+      "tmux_proj_loop-worker-hub-1784211600000-hub-test-coverage",
+    );
   });
 
   it("dispatches one workspace architecture work order and gates every repository", async () => {
@@ -1662,7 +1928,7 @@ workspaces:
     expect(sessions).toEqual(["tmux_proj_loop-supervisor-2", "tmux_proj_loop-supervisor-2"]);
   });
 
-  it("recovers interrupted repository PR review work orders from their final summary", () => {
+  it("recovers interrupted repository PR review work orders from their final summary", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
     const configText = `
@@ -1745,7 +2011,7 @@ prReview:
     });
     ledger.start(ledgerTaskId, scheduledAt + 1_000);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: scheduledAt + 2_000,
       runCommand: () => {
@@ -1764,7 +2030,7 @@ prReview:
     });
   });
 
-  it("reconciles active worker leases left behind by terminal completed work orders", () => {
+  it("reconciles active worker leases left behind by terminal completed work orders", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
     const configText = `
@@ -1828,7 +2094,7 @@ prReview:
       ],
     });
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: scheduledAt + 2_000,
       runCommand: () => {
@@ -1840,7 +2106,7 @@ prReview:
     expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
   });
 
-  it("reconciles active worker leases left behind by abandoned invalid-output work orders", () => {
+  it("reconciles active worker leases left behind by abandoned invalid-output work orders", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
     const configFile = join(projectDir, "loop.yml");
@@ -1912,7 +2178,7 @@ projects:
       ],
     });
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: scheduledAt + 10 * 60 * 1000,
       runCommand: () => {
@@ -1929,7 +2195,129 @@ projects:
     ]);
   });
 
-  it("removes expired retained isolated worktrees and releases their leases", () => {
+  it("recovers isolated WorkOrders using the persisted worker path for branch gates", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceDir = mkdtempSync(join(tmpdir(), "tcb-loop-source-project-"));
+    const workerDir = join(stateDir, "loop-worktrees", "hub", "1784196600000-hub");
+    mkdirSync(workerDir, { recursive: true });
+    const configFile = writeLoopConfig({
+      projectPath: sourceDir,
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/run-1",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+      ].join("\n"),
+    });
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const runDir = join(stateDir, "loop-runs", "hub", "1784196600000-hub");
+    const workOrder = {
+      id: "1784196600000-hub",
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: workerDir,
+      agent: "codex",
+      scheduledAt,
+      task: { kind: "architecture" },
+      goal: "Repair delegated work.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", timeoutMs: 1000, requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: false,
+        mergeMethod: "squash",
+      },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: workerDir,
+        sourceWorktree: sourceDir,
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        preparedBy: "system-git-worktree",
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:1784196600000-hub]",
+      finalSummaryPath: join(runDir, "supervisor-final-summary.json"),
+    } satisfies LoopWorkOrder;
+    mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: scheduledAt,
+    });
+    writeFileSync(
+      workOrder.finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["verified delegated repair"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: ["isolated worker stayed on the WorkOrder branch"],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 10 * 60 * 1000,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        const args = invocation.args.join(" ");
+        if (args === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (args === "branch --show-current" && invocation.cwd === workerDir) {
+          return { status: 0, stdout: "loop/hub/run-1\n", stderr: "" };
+        }
+        if (args === "branch --show-current" && invocation.cwd === sourceDir) {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (args === "rev-parse --show-toplevel" && invocation.cwd === workerDir) {
+          return { status: 0, stdout: `${workerDir}\n`, stderr: "" };
+        }
+        if (args === `worktree remove --force ${workerDir}` && invocation.cwd === workerDir) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git invocation: ${invocation.cwd} ${args}`);
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(JSON.parse(readFileSync(join(runDir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "completed",
+      accepted: true,
+    });
+  });
+
+  it("removes expired retained isolated worktrees and releases their leases", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-expired-worktree-repo-"));
@@ -1952,7 +2340,7 @@ projects:
       ],
     });
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 4_000,
       runCommand: () => {
@@ -1975,7 +2363,7 @@ projects:
     expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
   });
 
-  it("cleans terminal isolated worktrees even when the lease record is already gone", () => {
+  it("cleans terminal isolated worktrees even when the lease record is already gone", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-terminal-worktree-repo-"));
@@ -2032,14 +2420,18 @@ projects:
         runGit: (invocation) => {
           gitCalls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
           if (invocation.args[0] === "rev-parse") {
-            return { status: 0, stdout: `${worktree}\n`, stderr: "" };
+            return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return { status: 0, stdout: `worktree ${projectDir}\n`, stderr: "" };
           }
           return { status: 0, stdout: "", stderr: "" };
         },
       });
-    reconcile();
+    await reconcile();
     rmSync(worktree, { recursive: true, force: true });
-    reconcile();
+    await reconcile();
+    await reconcile();
 
     expect(gitCalls).toEqual([
       `${worktree}:rev-parse --show-toplevel`,
@@ -3632,6 +4024,101 @@ prReview:
         return {
           status: 0,
           stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["merged PR"],"delegatedTasks":[],"finalVerification":"passed","commits":["d1774c1 refactor: centralize routine schedule planning","ecdbef2 refactor: centralize radar report selection","5a2ba86 Refactor Alcove architecture slices (#11)","PR #15 opened and green: https://github.com/acme/hub/pull/15"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+  });
+
+  it("does not compare a merged branch PR against commits from earlier PRs in the same WorkOrder", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+      ].join("\n"),
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/18",
+            state: "MERGED",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [],
+            body: "## Summary\n- Refine cache identity.",
+            files: [{ path: "src/cache.ts" }],
+            commits: [{ oid: "d11f61b2222222222222222222222222222222222" }],
+            mergeCommit: { oid: "5688bc7c2de48aa880f2a8f59e22dc53bf73adeb" },
+          }),
+          stderr: "",
+        },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only d11f61b") {
+          return { status: 0, stdout: "src/cache.ts\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: "hub",
+            actionsTaken: [
+              "PR #17 was reviewed, CI-clean, and squash-merged into dev.",
+              "PR #18 was reviewed, CI-clean, and squash-merged into dev.",
+            ],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: [],
+              postMutationReview: ["reviewed both merged PRs"],
+              aiReview: "passed",
+              deterministicGates: [
+                {
+                  name: "PR-17-CI-and-mergeability",
+                  result: "passed",
+                  evidence: "state MERGED, squash commit 7f035bf6dd18f8a0b06f01f99a8630fb0e771685.",
+                },
+                {
+                  name: "PR-18-CI-and-mergeability",
+                  result: "passed",
+                  evidence: "state MERGED, squash commit 5688bc7c2de48aa880f2a8f59e22dc53bf73adeb.",
+                },
+              ],
+              decision: "pass",
+              notes: [],
+            },
+            commits: [
+              "be9649d fix: log non-cacheable queue fallbacks",
+              "d11f61b refactor: centralize cache identity checks",
+            ],
+            followUps: [],
+          })}`,
           stderr: "",
         };
       },

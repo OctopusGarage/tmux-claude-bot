@@ -5,6 +5,28 @@ import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 
 export type LoopSupervisorResetMode = "none" | "compact" | "clear";
 
+const inFlightSupervisorSessions = new Set<string>();
+
+/** Reserve idle supervisors before asynchronous readiness checks select them again. */
+export function reserveLoopSupervisorSessions(
+  sessions: readonly string[],
+  activeSessions: ReadonlySet<string>,
+  reservations: Set<string> = inFlightSupervisorSessions,
+): string[] {
+  const available = sessions.filter(
+    (session) => !activeSessions.has(session) && !reservations.has(session),
+  );
+  for (const session of available) reservations.add(session);
+  return available;
+}
+
+export function releaseLoopSupervisorSessions(
+  sessions: readonly string[],
+  reservations: Set<string> = inFlightSupervisorSessions,
+): void {
+  for (const session of sessions) reservations.delete(session);
+}
+
 export type LoopSupervisorBatchItem<T> = {
   item: T;
   supervisorSession: string;
@@ -30,6 +52,14 @@ export type LoopSupervisorWorkerLeaseWorkOrder = {
   projectId: string;
   projectPath: string;
 };
+
+/** Retained leases without an expiry are stale by the same boundary everywhere. */
+export function isLoopSupervisorWorkerLeaseExpired(
+  lease: Pick<LoopSupervisorWorkerLease, "status" | "retainUntil">,
+  now: number,
+): boolean {
+  return lease.status === "retained" && (lease.retainUntil ?? 0) <= now;
+}
 
 function leaseStatePath(): string {
   return join(appStateDir(), "loop-supervisor-worker-leases.json");
@@ -170,9 +200,7 @@ export function pruneExpiredRetainedLeases(
   now: number,
 ): LoopSupervisorWorkerLeaseState {
   return {
-    leases: state.leases.filter(
-      (lease) => lease.status === "active" || (lease.retainUntil ?? 0) > now,
-    ),
+    leases: state.leases.filter((lease) => !isLoopSupervisorWorkerLeaseExpired(lease, now)),
   };
 }
 
@@ -185,7 +213,7 @@ export function consumeExpiredRetainedSupervisorWorkerLeases(
 } {
   const expired: LoopSupervisorWorkerLease[] = [];
   const leases = state.leases.filter((lease) => {
-    if (lease.status !== "retained" || (lease.retainUntil ?? 0) > now) return true;
+    if (!isLoopSupervisorWorkerLeaseExpired(lease, now)) return true;
     expired.push(lease);
     return false;
   });

@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { copyToClipboard } from "../src/core/platform/clipboard.js";
 
-function deps(opts: { platform: string; env?: Record<string, string>; tools?: string[] }) {
+function deps(opts: {
+  platform: string;
+  env?: Record<string, string>;
+  tools?: string[];
+  failRunFor?: string[];
+}) {
   const tools = new Set(opts.tools ?? []);
+  const failingTools = new Set(opts.failRunFor ?? []);
   const calls: { cmd: string; args: string[]; input: string }[] = [];
   return {
     calls,
     runWith: async (cmd: string, args: string[], input: string) => {
       if (!tools.has(cmd)) throw new Error(`not found: ${cmd}`);
       calls.push({ cmd, args, input });
+      if (failingTools.has(cmd)) throw new Error(`failed: ${cmd}`);
     },
     onPath: async (cmd: string) => tools.has(cmd),
     platform: opts.platform,
@@ -54,5 +61,25 @@ describe("copyToClipboard", () => {
     const d = deps({ platform: "linux", env: {}, tools: [] });
     expect(await copyToClipboard("hi", d)).toBe(false);
     expect(d.calls).toHaveLength(0);
+  });
+
+  it("does not invoke display-bound Linux tools when their display is unavailable", async () => {
+    const d = deps({ platform: "linux", env: {}, tools: ["wl-copy", "xclip", "xsel"] });
+
+    expect(await copyToClipboard("hi", d)).toBe(true);
+
+    expect(d.calls).toEqual([{ cmd: "xsel", args: ["--clipboard", "--input"], input: "hi" }]);
+  });
+
+  it("returns false when the selected clipboard tool fails", async () => {
+    const d = deps({
+      platform: "linux",
+      env: { WAYLAND_DISPLAY: "wayland-0" },
+      tools: ["wl-copy", "xsel"],
+      failRunFor: ["wl-copy"],
+    });
+
+    expect(await copyToClipboard("hi", d)).toBe(false);
+    expect(d.calls.map((call) => call.cmd)).toEqual(["wl-copy"]);
   });
 });

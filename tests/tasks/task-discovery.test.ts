@@ -92,6 +92,34 @@ describe("discoverLaunchdScheduledTasks", () => {
     });
   });
 
+  it("marks a launchd task successful when only stdout changed in the audited window", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-launchd-discovery-"));
+    const launchAgents = join(root, "LaunchAgents");
+    const logs = join(root, "logs");
+    mkdirSync(launchAgents);
+    mkdirSync(logs);
+    const outPath = join(logs, "daily.out.log");
+    writeFileSync(outPath, "2026-07-27T03:00:00Z OK\n");
+    writeFileSync(
+      join(launchAgents, "com.example.daily.plist"),
+      plist({ label: "com.example.daily", stdout: outPath }),
+    );
+
+    const records = discoverLaunchdScheduledTasks({
+      dirs: [launchAgents],
+      window: singaporeDayWindow("2026-07-27"),
+      now: Date.parse("2026-07-28T02:00:00Z"),
+      fileTime: () => Date.parse("2026-07-27T03:01:00Z"),
+    });
+
+    expect(records[0]).toMatchObject({
+      status: "success",
+      summary: expect.stringContaining("stdout log changed"),
+      reportPath: outPath,
+      repairStatus: "not-needed",
+    });
+  });
+
   it("uses launchctl last exit code as active evidence when logs are absent", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-launchd-discovery-"));
     const launchAgents = join(root, "LaunchAgents");
@@ -119,6 +147,72 @@ describe("discoverLaunchdScheduledTasks", () => {
       status: "failed",
       error: "launchctl last exit code 2",
     });
+  });
+
+  it("keeps a launchd task expected when log evidence is outside the audited window and launchctl has no exit code", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-launchd-discovery-outside-window-"));
+    const launchAgents = join(root, "LaunchAgents");
+    const logs = join(root, "logs");
+    mkdirSync(launchAgents);
+    mkdirSync(logs);
+    const outPath = join(logs, "daily.out.log");
+    const errPath = join(logs, "daily.err.log");
+    writeFileSync(outPath, "old success\n");
+    writeFileSync(errPath, "old failure\n");
+    writeFileSync(
+      join(launchAgents, "com.example.daily.plist"),
+      plist({ label: "com.example.daily", stdout: outPath, stderr: errPath }),
+    );
+
+    const records = discoverLaunchdScheduledTasks({
+      dirs: [launchAgents],
+      window: singaporeDayWindow("2026-07-27"),
+      now: Date.parse("2026-07-28T02:00:00Z"),
+      fileTime: (path) =>
+        path === outPath || path === errPath ? Date.parse("2026-07-26T03:01:00Z") : null,
+      launchctlState: () => "runs = 42\nstate = waiting\n",
+    });
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        taskId: "launchd:com.example.daily:2026-07-27 SGT",
+        status: "expected",
+        summary: "launchd scheduled task discovered; no explicit task report was recorded",
+      }),
+    ]);
+  });
+
+  it("filters launchd labels and returns discovered records in stable task id order", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-launchd-discovery-"));
+    const missingDir = join(root, "MissingLaunchAgents");
+    const launchAgents = join(root, "LaunchAgents");
+    mkdirSync(launchAgents);
+    writeFileSync(join(launchAgents, "README.txt"), "not a plist", "utf8");
+    writeFileSync(join(launchAgents, "broken.plist"), "<plist><dict></dict></plist>", "utf8");
+    writeFileSync(
+      join(launchAgents, "com.example.zeta.plist"),
+      plist({ label: "com.example.zeta" }),
+    );
+    writeFileSync(
+      join(launchAgents, "com.example.alpha.plist"),
+      plist({ label: "com.example.alpha" }),
+    );
+    writeFileSync(
+      join(launchAgents, "com.example.skip.plist"),
+      plist({ label: "com.example.skip" }),
+    );
+
+    const records = discoverLaunchdScheduledTasks({
+      dirs: [missingDir, launchAgents],
+      window: singaporeDayWindow("2026-07-27"),
+      now: Date.parse("2026-07-28T02:00:00Z"),
+      includeLabel: (label) => label !== "com.example.skip",
+    });
+
+    expect(records.map((record) => record.taskId)).toEqual([
+      "launchd:com.example.alpha:2026-07-27 SGT",
+      "launchd:com.example.zeta:2026-07-27 SGT",
+    ]);
   });
 
   it("does not treat RunAtLoad-only services as scheduled task executions", () => {
@@ -242,6 +336,54 @@ describe("mergeDiscoveredTaskRecords", () => {
         updatedAt: scheduledAt + 3000,
       }),
     ]);
+  });
+
+  it("does not copy closed repair state onto non-repairable discovered loop success", () => {
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "failed",
+      repairStatus: "fixed",
+      error: "original failure",
+      updatedAt: scheduledAt + 1000,
+    };
+    const discovered: ScheduledTaskRecord = {
+      taskId: ledgerRecord.taskId,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "success",
+      repairStatus: "not-needed",
+      summary: "Rediscovered final summary completed.",
+      updatedAt: scheduledAt + 2000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([discovered]);
+  });
+
+  it("uses discovered loop repair evidence when the ledger repair state is still open", () => {
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "failed",
+      error: "original failure",
+      updatedAt: scheduledAt + 1000,
+    };
+    const discovered: ScheduledTaskRecord = {
+      ...ledgerRecord,
+      error: "rediscovered failure",
+      repairStatus: "pending",
+      summary: "Rediscovered failed artifact.",
+      updatedAt: scheduledAt + 2000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([discovered]);
   });
 
   it("preserves closed loop repair status when reconciling a failed final summary artifact", () => {
@@ -421,6 +563,69 @@ describe("mergeDiscoveredTaskRecords", () => {
     ]);
   });
 
+  it("uses default system-gate rejection text when no failure details were persisted", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-system-gate-default-"));
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runDir = join(root, "loop-runs", "geo-backend", `${scheduledAt}-geo-backend-bug-fix`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({ status: "completed", actionsTaken: ["Finished before gate rejection."] }),
+      "utf8",
+    );
+    writeFileSync(join(runDir, "system-gate.json"), JSON.stringify({ accepted: false }), "utf8");
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "running",
+      repairStatus: "running",
+      reportPath: join(runDir, "supervisor.md"),
+      updatedAt: scheduledAt + 1000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [])).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        error: "supervised system gate rejected the run",
+        summary: "System gate rejected a completed supervisor run.",
+        reportPath: join(runDir, "system-gate.json"),
+      }),
+    ]);
+  });
+
+  it("finds a final summary by replacing a supervisor report filename", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-report-replace-"));
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runDir = join(root, "loop-runs", "geo-backend", `${scheduledAt}-geo-backend-bug-fix`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "custom-supervisor.json"), "old report", "utf8");
+    writeFileSync(
+      join(runDir, "custom-supervisor-final-summary.json"),
+      JSON.stringify({ status: "completed", actionsTaken: ["Recovered through report rewrite."] }),
+      "utf8",
+    );
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "failed",
+      reportPath: join(runDir, "custom-supervisor.json"),
+      repairStatus: "running",
+      updatedAt: scheduledAt + 1000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [])).toEqual([
+      expect.objectContaining({
+        status: "success",
+        summary: "Recovered through report rewrite.",
+        reportPath: join(runDir, "custom-supervisor-final-summary.json"),
+      }),
+    ]);
+  });
+
   it("reconciles stale running loop ledger records from the state loop-runs directory", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-state-artifact-"));
     process.env.TCB_STATE_DIR = root;
@@ -493,6 +698,20 @@ describe("mergeDiscoveredTaskRecords", () => {
 });
 
 describe("discoverLoopEngineeringScheduledTasks", () => {
+  it("returns no loop tasks for missing, blank, or invalid config input", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-invalid-"));
+    const invalidConfigFile = join(root, "invalid.yml");
+    writeFileSync(invalidConfigFile, "projects: [", "utf8");
+    const window = singaporeDayWindow("2026-07-28");
+    const now = Date.parse("2026-07-29T02:00:00Z");
+
+    expect(discoverLoopEngineeringScheduledTasks({ window, now })).toEqual([]);
+    expect(discoverLoopEngineeringScheduledTasks({ configFile: "   ", window, now })).toEqual([]);
+    expect(
+      discoverLoopEngineeringScheduledTasks({ configFile: invalidConfigFile, window, now }),
+    ).toEqual([]);
+  });
+
   it("discovers configured loop-engineering schedules as expected tasks", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-"));
     const configFile = join(root, "loop.yml");
@@ -1335,6 +1554,116 @@ projects:
     expect(records[0]).toMatchObject({
       taskId: `loop:hub:${scheduledAt}`,
       status: "success",
+      repairStatus: "not-needed",
+    });
+  });
+
+  it("flags completed loop final summaries with risky unresolved follow-ups", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-risky-followup-"));
+    const configFile = join(root, "loop.yml");
+    const loopRunsDir = join(root, "loop-runs");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: /tmp/hub
+    agent: codex
+    schedule: "0 2 * * *"
+    goal: Improve architecture
+    maxRounds: 1
+    targetScore: 95
+    assessment:
+      command: npm run assess
+    execution:
+      agent: true
+    allowedActions: []
+    blockedActions: []
+`,
+      "utf8",
+    );
+    const scheduledAt = Date.parse("2026-07-28T02:00:00Z");
+    const runDir = join(loopRunsDir, "hub", `${scheduledAt}-hub`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: [],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: ["CI was not verified before stopping"],
+      }),
+      "utf8",
+    );
+
+    const records = discoverLoopEngineeringScheduledTasks({
+      configFile,
+      loopRunsDir,
+      window: singaporeDayWindow("2026-07-28"),
+      now: Date.parse("2026-07-29T02:00:00Z"),
+    });
+
+    expect(records[0]).toMatchObject({
+      taskId: `loop:hub:${scheduledAt}`,
+      status: "failed",
+      error:
+        "loop supervisor completed with unresolved risky follow-up: CI was not verified before stopping",
+      summary: "final summary status completed",
+      repairStatus: "pending",
+    });
+  });
+
+  it("uses supervisor summary success when the final summary artifact is absent", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-supervisor-success-"));
+    const configFile = join(root, "loop.yml");
+    const loopRunsDir = join(root, "loop-runs");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: /tmp/hub
+    agent: codex
+    schedule: "0 2 * * *"
+    goal: Improve architecture
+    maxRounds: 1
+    targetScore: 95
+    assessment:
+      command: npm run assess
+    execution:
+      agent: true
+    allowedActions: []
+    blockedActions: []
+`,
+      "utf8",
+    );
+    const scheduledAt = Date.parse("2026-07-28T02:00:00Z");
+    const runDir = join(loopRunsDir, "hub", `${scheduledAt}-hub`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      JSON.stringify({ status: "completed", timestamps: { endedAt: scheduledAt + 2000 } }),
+      "utf8",
+    );
+
+    const records = discoverLoopEngineeringScheduledTasks({
+      configFile,
+      loopRunsDir,
+      window: singaporeDayWindow("2026-07-28"),
+      now: Date.parse("2026-07-29T02:00:00Z"),
+    });
+
+    expect(records[0]).toMatchObject({
+      taskId: `loop:hub:${scheduledAt}`,
+      status: "success",
+      endedAt: scheduledAt + 2000,
+      summary: "Loop supervisor run completed.",
+      reportPath: join(runDir, "supervisor-summary.json"),
       repairStatus: "not-needed",
     });
   });

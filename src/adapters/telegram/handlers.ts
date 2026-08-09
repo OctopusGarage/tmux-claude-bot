@@ -51,8 +51,10 @@ import {
 } from "../../core/read/prompt-translation.js";
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
 import { rewriteUserPromptByAck } from "../../core/read/user-prompt-intake.js";
+import { createResourceGuardianStore } from "../../core/resource-guardian/store.js";
 import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
+import { appStateDir } from "../../shared/state-dir.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -450,7 +452,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   bot.command("sysload", async (ctx) => {
     const report = await gatherSystemLoad(defaultSystemLoadProbes());
     await reply(ctx, "view", messages("telegram").sysloadTitle, {
-      body: renderSystemLoad(report),
+      body: renderSystemLoad(
+        report,
+        createResourceGuardianStore({ stateDir: appStateDir() }).readCurrentReadOnly().view,
+      ),
       replyTarget,
     });
   });

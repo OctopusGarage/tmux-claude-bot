@@ -94,7 +94,7 @@ const replyTarget = {
 function ctx(text: string, over: Record<string, unknown> = {}) {
   return {
     message: { text, message_id: 7, reply_to_message: undefined, ...(over.message ?? {}) },
-    chat: { id: 100 },
+    chat: { id: 100, ...(over.chat ?? {}) },
   };
 }
 
@@ -108,6 +108,12 @@ function runCmd(name: string, text: string, deps: ReturnType<typeof depsFor>) {
   const { bot, handlers } = captureBot();
   registerHandlers(bot as any, deps, replyTarget as never);
   return handlers[`cmd:${name}`]?.(ctx(text));
+}
+
+function runCmdWithCtx(name: string, c: unknown, deps: ReturnType<typeof depsFor>) {
+  const { bot, handlers } = captureBot();
+  registerHandlers(bot as any, deps, replyTarget as never);
+  return handlers[`cmd:${name}`]?.(c);
 }
 
 describe("registerHandlers — /start flavor picker", () => {
@@ -414,6 +420,28 @@ describe("registerHandlers — message:text routing", () => {
     );
   });
 
+  it("reports a failed queued-ack rewrite without re-enqueueing the prompt", async () => {
+    const deps = depsFor({
+      queue: {
+        loadPersisted: vi.fn(() => []),
+        clearPersisted: vi.fn(),
+        rewriteByAck: vi.fn(() => ({ kind: "failed" }) as never),
+      },
+      agent: { checkIfRunning: vi.fn(async () => true) },
+    });
+    const c = ctx("new text", { message: { message_id: 9, reply_to_message: { message_id: 5 } } });
+
+    await runText(deps, c);
+
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "err",
+      expect.any(String),
+      expect.objectContaining({ replyTarget }),
+    );
+  });
+
   it("consumes an awaited independent-session label and creates an independent session", async () => {
     const scope = chatScope("telegram", "100");
     requestFreeLabel(scope); // arm the label capture for this chat
@@ -444,6 +472,33 @@ describe("registerHandlers — message:text routing", () => {
     expect(replyMock).toHaveBeenCalledWith(
       expect.anything(),
       "err",
+      expect.any(String),
+      expect.anything(),
+    );
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
+  it("/remove_<id> removes the matching alive session and clears reply targets", async () => {
+    const { sessionShortId } = await import("../../../src/shared/utils/hash.js");
+    const session = "tmux_proj_remove_me";
+    const deps = depsFor({
+      bridge: {
+        listProjectSessions: vi.fn(async () => [session]),
+        killSession: vi.fn(async () => undefined),
+      },
+      currentProject: {
+        get: vi.fn(async () => session),
+        clearSession: vi.fn(async () => undefined),
+      },
+    });
+
+    await runText(deps, ctx(`/remove_${sessionShortId(session)}`));
+
+    expect(replyTarget.removeSession).toHaveBeenCalledWith(session);
+    expect(deps.currentProject.clearSession).toHaveBeenCalledWith(session);
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "ok",
       expect.any(String),
       expect.anything(),
     );
@@ -668,6 +723,63 @@ describe("registerHandlers — commands routed to mocked views/executor", () => 
         session: "tmux_proj_free_2",
         body: expect.stringContaining("Agent：Codex"),
       }),
+    );
+  });
+
+  it("/home ignores non-private chats before changing the current project", async () => {
+    const deps = depsFor({
+      currentProject: { set: vi.fn() },
+      config: {
+        projectSessionPrefix: "tmux_proj_",
+        homeOperator: { enabled: true, agent: "codex", dir: "/repo/operator" },
+      },
+    });
+
+    await runCmdWithCtx("home", ctx("/home", { chat: { id: 100, type: "group" } }), deps);
+
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+    expect(replyMock).not.toHaveBeenCalled();
+  });
+
+  it("/home reports disabled home operator in private chats", async () => {
+    const deps = depsFor({
+      currentProject: { set: vi.fn() },
+      config: {
+        projectSessionPrefix: "tmux_proj_",
+        homeOperator: { enabled: false, agent: "codex", dir: "/repo/operator" },
+      },
+    });
+
+    await runCmdWithCtx("home", ctx("/home", { chat: { id: 100, type: "private" } }), deps);
+
+    expect(deps.currentProject.set).not.toHaveBeenCalled();
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "view",
+      expect.any(String),
+      expect.objectContaining({ replyTarget }),
+    );
+  });
+
+  it("/prompts ignores non-private chats and reports disabled prompt library in private chats", async () => {
+    await runCmdWithCtx(
+      "prompts",
+      ctx("/prompts", { chat: { id: 100, type: "group" } }),
+      depsFor(),
+    );
+    expect(replyMock).not.toHaveBeenCalled();
+
+    await runCmdWithCtx(
+      "prompts",
+      ctx("/prompts", { chat: { id: 100, type: "private" } }),
+      depsFor({ config: { promptMcp: { command: "" } } }),
+    );
+
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "info",
+      expect.any(String),
+      expect.objectContaining({ replyTarget }),
     );
   });
 

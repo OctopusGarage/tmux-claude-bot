@@ -5,6 +5,7 @@ import type { AutopilotNotice } from "../autopilot/notifier.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
+import { admitResourceWork } from "../resource-guardian/admission.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import { accountQuotaHit, pausePool, resumeAtFrom, resumePool } from "./quota.js";
 import { renderSummary } from "./report.js";
@@ -262,6 +263,7 @@ export async function schedulerTick(ctx: TickCtx): Promise<void> {
   // paths, and the operator has no project path. No exclusion code needed here.
   run = reconcile(run, caps, pools, {
     resolveSession: ctx.resolveSession,
+    isGated: ctx.isGated,
     now: ctx.now,
   });
 
@@ -342,6 +344,7 @@ export function startScheduler(deps: HandlerDeps): () => void {
   const taskLedger = new DailyTaskLedger();
   const quotaPct = deps.config.scheduler.quotaPct;
   const reprobeMs = deps.config.scheduler.reprobeMs;
+  const isSessionGated = (_session: string): boolean => false;
 
   // Bug #1/#9 fix: derive pool-paused PURELY from the active run on boot — the
   // run is the single source of truth, so a persisted-but-stale paused flag (run
@@ -398,15 +401,23 @@ export function startScheduler(deps: HandlerDeps): () => void {
       return;
     }
     ticking = true;
+    const tickNow = Date.now();
     void schedulerTick({
-      now: Date.now(),
+      now: tickNow,
       plans: store.listPlans(),
       run: store.getActiveRun(),
       pools,
       lastFired,
       resolveSession: (t) => t.sessionName ?? t.project,
       readUsage,
-      isGated: () => false,
+      isGated: (session) =>
+        isSessionGated(session) ||
+        !admitResourceWork({
+          source: "batch-scheduler",
+          trigger: "background",
+          weight: "heavy",
+          now: tickNow,
+        }).allowed,
       quotaPct,
       reprobeMs,
       save: (run, p) => {

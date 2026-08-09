@@ -191,6 +191,16 @@ export const GOVERNED_PROMPTS: readonly PromptSpec[] = [
     description: "Runtime Guardian self-repair prompt.",
   },
   {
+    id: "repair.resource-guardian",
+    version: 1,
+    owner: "src/core/resource-guardian/repair.ts",
+    audience: "active-agent",
+    riskLevel: "high",
+    actionScope: "commit",
+    evalExpectation: "contract-test",
+    description: "Resource Guardian stable-recovery self-repair prompt.",
+  },
+  {
     id: "legacy.loop.agent-eval",
     version: 1,
     owner: "src/core/loop/run.ts",

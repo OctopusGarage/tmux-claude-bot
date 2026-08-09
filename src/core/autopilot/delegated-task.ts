@@ -35,6 +35,7 @@ import {
 import { loopSupervisorSessionNames, startLoopSupervisor } from "../loop/supervisor-session.js";
 import {
   listUnfinishedLoopSupervisorWorkOrders,
+  readLoopSupervisorWorkOrderRegistry,
   type UnfinishedLoopSupervisorWorkOrder,
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
@@ -47,6 +48,7 @@ import {
 import { markImplementedOpportunitiesForCompletedDelegation } from "../opportunities/delegation-completion.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
+import { admitResourceWork } from "../resource-guardian/admission.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 
 const log = createLogger("autopilot.delegated-task");
@@ -229,9 +231,15 @@ export async function cancelActiveDelegatedTask(
   };
 }
 
+export function delegatedTaskCancellationReason(
+  reason: "user" | "resource-pressure" = "user",
+): string {
+  return reason === "resource-pressure" ? "cancelled by resource pressure" : "cancelled by user";
+}
+
 export async function cancelActiveDelegatedTaskByRunId(
   deps: HandlerDeps,
-  input: { runId: string },
+  input: { runId: string; reason?: "user" | "resource-pressure" },
 ): Promise<ActiveDelegatedTaskCancelResult> {
   const active =
     listUnfinishedLoopSupervisorWorkOrders().find(
@@ -249,14 +257,15 @@ export async function cancelActiveDelegatedTaskByRunId(
   const controller =
     activeDelegatedTasks.get(active.workOrder.projectPath) ??
     activeDelegatedTasks.get(resolve(active.workOrder.projectPath));
-  controller?.controller.abort("cancelled by user");
+  const cancellationReason = delegatedTaskCancellationReason(input.reason);
+  controller?.controller.abort(cancellationReason);
   writeLoopSupervisorWorkOrderState({
     workOrder: active.workOrder,
     supervisorSession: active.state.supervisorSession,
     status: "cancelled",
     now: Date.now(),
     resultStatus: "cancelled",
-    revisionReasons: ["cancelled by user"],
+    revisionReasons: [cancellationReason],
   });
   await interruptSupervisor(deps, active.state.supervisorSession);
   return {
@@ -274,12 +283,31 @@ export async function startActiveDelegatedTask(
     requirement: string;
     opportunityIds?: string[];
     worktreeIsolation?: LoopWorktreeIsolationMode;
+    resourceTrigger?: "operator" | "background" | "resource-repair";
+    resourceForce?: boolean;
+    /** Internal durable idempotency identity for Resource Guardian repair only. */
+    trustedRunId?: string;
   },
 ): Promise<ActiveDelegatedTaskStartResult> {
   if (!deps.config.loopEngineering.supervisor.enabled) {
     return {
       status: "blocked",
       reason: "loop supervisor is disabled; set LOOP_SUPERVISOR_ENABLED=true",
+      showQueue: false,
+    };
+  }
+
+  const admission = admitResourceWork({
+    source: "autopilot-delegate",
+    trigger: input.resourceTrigger ?? "operator",
+    weight: "heavy",
+    ...(input.resourceForce !== undefined ? { forced: input.resourceForce } : {}),
+    now: Date.now(),
+  });
+  if (!admission.allowed) {
+    return {
+      status: "blocked",
+      reason: `resource admission deferred: ${admission.reason}`,
       showQueue: false,
     };
   }
@@ -291,6 +319,36 @@ export async function startActiveDelegatedTask(
       reason: `no project path is recorded for session "${input.session}"`,
       showQueue: false,
     };
+  }
+
+  if (input.trustedRunId !== undefined) {
+    if (
+      input.resourceTrigger !== "resource-repair" ||
+      !/^resource-repair-[A-Za-z0-9_-]+$/.test(input.trustedRunId)
+    ) {
+      return {
+        status: "blocked",
+        reason: "invalid trusted resource repair run id",
+        showQueue: false,
+      };
+    }
+    const existing = readLoopSupervisorWorkOrderRegistry().records.find(
+      (record) =>
+        record.workOrder.id === input.trustedRunId &&
+        record.workOrder.task?.kind === "active-delegated-task" &&
+        resolve(record.workOrder.projectPath) === resolve(projectPath),
+    );
+    if (existing !== undefined) {
+      return {
+        status: "queued",
+        runId: existing.workOrder.id,
+        projectId: existing.workOrder.projectId,
+        supervisorSession: existing.state.supervisorSession,
+        reportDir:
+          existing.workOrder.finalSummaryPath?.replace(/\/supervisor-final-summary\.json$/, "") ??
+          null,
+      };
+    }
   }
 
   const reservationKey = resolve(projectPath);
@@ -334,7 +392,7 @@ export async function startActiveDelegatedTask(
       deps.config.loopEngineering.supervisor.agent;
     const now = Date.now();
     const projectId = projectIdForSession(input.session, projectPath);
-    const runId = `${now}-${projectId}-active-delegate`;
+    const runId = input.trustedRunId ?? `${now}-${projectId}-active-delegate`;
     const projectPolicy = findLoopProjectPolicy(deps, projectPath);
     let workOrder = buildActiveDelegatedTaskWorkOrder({
       session: input.session,
@@ -809,15 +867,15 @@ async function finishActiveDelegatedTask(
     });
   }
   settleActiveDelegatedSupervisorLease(workOrder, result, endedAt);
-  if (result.status === "completed" && workOrder.workerSession !== undefined) {
+  if (workOrder.workerSession !== undefined) {
     try {
       await deps.bridge.killSession(workOrder.workerSession);
       cleanupWorkerSessionRecords(workOrder.workerSession);
-      log.info("active delegated task completed worker session cleaned up", {
+      log.info("active delegated task terminal worker session cleaned up", {
         data: { runId: workOrder.id, workerSession: workOrder.workerSession },
       });
     } catch (err) {
-      log.warn("failed to clean up completed active delegated worker session", {
+      log.warn("failed to clean up terminal active delegated worker session", {
         err,
         data: { runId: workOrder.id, workerSession: workOrder.workerSession },
       });

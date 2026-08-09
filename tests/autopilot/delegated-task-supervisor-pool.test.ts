@@ -3,8 +3,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  formatActiveDelegateCancel,
   formatActiveDelegateCompletion,
+  formatActiveDelegateQueue,
   formatActiveDelegateStart,
+  parseDelegateRequirement,
   reconcileAndResumeActiveDelegatedTasksAfterRestart,
   resumeQueuedActiveDelegatedTasks,
 } from "../../src/core/autopilot/delegated-task.js";
@@ -19,6 +22,7 @@ import {
 } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { setPathForSession } from "../../src/core/projects/sessionPathMap.js";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
 import type { AppConfig } from "../../src/shared/types.js";
 
 const startLoopSupervisor = vi.fn();
@@ -86,6 +90,53 @@ function workOrder(input: {
   } as unknown as LoopWorkOrder;
 }
 
+function writeResourceCircuit(
+  input: {
+    pressure?: "critical" | "emergency";
+    admission?: "background-closed";
+    reason?: string;
+  } = {},
+): void {
+  const now = Date.now();
+  const pressure = input.pressure ?? "critical";
+  const admission = input.admission ?? "background-closed";
+  const reason = input.reason ?? "critical host pressure";
+  const stateDir = process.env.TCB_STATE_DIR;
+  if (stateDir === undefined) throw new Error("TCB_STATE_DIR is required for this test");
+  createResourceGuardianStore({ stateDir, now: () => now }).writeCurrent({
+    circuit: {
+      schemaVersion: 1,
+      pressure,
+      incidentId: "resource-incident-1",
+      admission,
+      reason,
+      changedAt: now,
+      lastSampleAt: now,
+      owner: "resource-guardian",
+    },
+    view: {
+      enabled: true,
+      mode: "protect",
+      profile: "balanced",
+      pressure,
+      circuit: admission,
+      incidentId: "resource-incident-1",
+      reason,
+      attribution: "unknown",
+      latestSample: null,
+      stableSince: null,
+      sampling: {
+        degraded: false,
+        consecutiveFailures: 0,
+        lastFailureAt: null,
+        lastError: null,
+        notifiedPhase: null,
+        overlapSkippedTicks: 0,
+      },
+    },
+  });
+}
+
 describe("active delegated task supervisor pool", () => {
   beforeEach(() => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-delegate-pool-"));
@@ -100,6 +151,273 @@ describe("active delegated task supervisor pool", () => {
         showQueue: false,
       }),
     ).toBe("Autopilot delegate blocked: execution worktree isolation failed");
+  });
+
+  it("parses and formats active delegation command results", () => {
+    expect(parseDelegateRequirement("not delegate this")).toBeNull();
+    expect(parseDelegateRequirement(" delegate   ")).toContain(
+      "Continue the current user-confirmed task",
+    );
+    expect(parseDelegateRequirement("delegate fix the failing release gate")).toBe(
+      "fix the failing release gate",
+    );
+    expect(
+      formatActiveDelegateStart({
+        status: "queued",
+        runId: "run-1",
+        projectId: "api",
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+        reportDir: "/tmp/report",
+      }),
+    ).toContain("report: /tmp/report");
+    expect(
+      formatActiveDelegateStart({
+        status: "queued",
+        runId: "run-2",
+        projectId: "api",
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+        reportDir: null,
+      }),
+    ).not.toContain("report:");
+    expect(
+      formatActiveDelegateCancel({
+        status: "not-found",
+        reason: "no active delegated work",
+      }),
+    ).toBe("No active delegated task: no active delegated work");
+    expect(
+      formatActiveDelegateCancel({
+        status: "cancelled",
+        runId: "run-1",
+        projectId: "api",
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+      }),
+    ).toContain("Autopilot delegate cancellation requested.");
+  });
+
+  it("formats active supervisor queue items with singular/plural and cancellable state", () => {
+    expect(formatActiveDelegateQueue([])).toBe("No active loop supervisor work.");
+    expect(
+      formatActiveDelegateQueue([
+        {
+          runId: "run-1",
+          projectId: "api",
+          taskKind: "active-delegated-task",
+          status: "queued",
+          supervisorSession: "tmux_proj_loop-supervisor-1",
+          updatedAt: Date.parse("2026-08-09T00:00:00.000Z"),
+          runDir: "/tmp/run-1",
+          cancellable: true,
+        },
+      ]),
+    ).toContain("Loop supervisor queue: 1 active work item\n");
+    expect(
+      formatActiveDelegateQueue([
+        {
+          runId: "run-1",
+          projectId: "api",
+          taskKind: "active-delegated-task",
+          status: "queued",
+          supervisorSession: "tmux_proj_loop-supervisor-1",
+          updatedAt: Date.parse("2026-08-09T00:00:00.000Z"),
+          runDir: "/tmp/run-1",
+          cancellable: true,
+        },
+        {
+          runId: "run-2",
+          projectId: "worker",
+          taskKind: "architecture",
+          status: "in-flight",
+          supervisorSession: "tmux_proj_loop-supervisor-2",
+          updatedAt: Date.parse("2026-08-09T00:01:00.000Z"),
+          runDir: "/tmp/run-2",
+          cancellable: false,
+        },
+      ]),
+    ).toContain("Loop supervisor queue: 2 active work items");
+  });
+
+  it("blocks active delegation when the supervisor is disabled", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const d = deps(1);
+    d.config.loopEngineering.supervisor.enabled = false;
+
+    await expect(
+      startActiveDelegatedTask(d, {
+        session: "tmux_proj_project",
+        requirement: "finish the confirmed task",
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: "loop supervisor is disabled; set LOOP_SUPERVISOR_ENABLED=true",
+      showQueue: false,
+    });
+  });
+
+  it("reuses a trusted Resource Guardian repair run id without creating another WorkOrder", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-resource-repair-"));
+    const runId = "resource-repair-repair-100-1";
+    setPathForSession("tmux_proj_project", projectDir);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder({
+        id: runId,
+        projectPath: projectDir,
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+      }),
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "queued",
+      now: 1,
+    });
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_project",
+        requirement: "repair only the durable resource failure",
+        resourceTrigger: "resource-repair",
+        trustedRunId: runId,
+      }),
+    ).resolves.toMatchObject({
+      status: "queued",
+      runId,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+    });
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
+  });
+
+  it("accepts a trusted run id only for resource-repair triggers", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-resource-repair-trigger-"));
+    setPathForSession("tmux_proj_project", projectDir);
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_project",
+        requirement: "repair only the durable resource failure",
+        trustedRunId: "resource-repair-repair-100-1",
+      }),
+    ).resolves.toMatchObject({
+      status: "blocked",
+      reason: "invalid trusted resource repair run id",
+    });
+  });
+
+  it("reuses a terminal trusted repair WorkOrder instead of launching a duplicate", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-terminal-resource-repair-"));
+    const runId = "resource-repair-repair-100-1";
+    setPathForSession("tmux_proj_project", projectDir);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder({
+        id: runId,
+        projectPath: projectDir,
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+      }),
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "completed",
+      now: 1,
+    });
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_project",
+        requirement: "repair only the durable resource failure",
+        resourceTrigger: "resource-repair",
+        trustedRunId: runId,
+      }),
+    ).resolves.toMatchObject({ status: "queued", runId });
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
+  });
+
+  it("defers closed background delegation before session lookup or durable side effects", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    writeResourceCircuit();
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_unmapped",
+        requirement: "repair the failed task",
+        resourceTrigger: "background",
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: "resource admission deferred: critical host pressure",
+      showQueue: false,
+    });
+
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+    expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "loop-runs"))).toBe(false);
+    expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "scheduled_task_ledger.json"))).toBe(
+      false,
+    );
+  });
+
+  it("defaults resource admission to operator and permits nonemergency forced delegation", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    writeResourceCircuit();
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_unmapped",
+        requirement: "repair the failed task",
+        resourceForce: true,
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: 'no project path is recorded for session "tmux_proj_unmapped"',
+      showQueue: false,
+    });
+  });
+
+  it("does not let force override emergency resource admission", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    writeResourceCircuit({ pressure: "emergency", reason: "emergency host pressure" });
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_unmapped",
+        requirement: "repair the failed task",
+        resourceForce: true,
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: "resource admission deferred: emergency host pressure",
+      showQueue: false,
+    });
+  });
+
+  it("blocks active delegation when the session has no recorded project path", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_missing",
+        requirement: "finish the confirmed task",
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: 'no project path is recorded for session "tmux_proj_missing"',
+      showQueue: false,
+    });
+  });
+
+  it("blocks active delegation when no loop supervisor sessions are configured", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-no-supervisors-"));
+    setPathForSession("tmux_proj_project", projectDir);
+
+    await expect(
+      startActiveDelegatedTask(deps(0), {
+        session: "tmux_proj_project",
+        requirement: "finish the confirmed task",
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: "failed to ensure queued loop supervisor session tmux_proj_loop-supervisor",
+      showQueue: true,
+    });
   });
 
   it("distinguishes completed work from a failed system acceptance gate", () => {

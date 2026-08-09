@@ -408,7 +408,7 @@ export const zhTW: Messages = {
   cmdBatch: "批次排程器：查看狀態或控制批次執行（start/pause/resume/stop/report）",
   cmdAutopilot: "把目前工作階段交給 Loop Supervisor 託管推進",
   cmdOpportunity: "查看並討論主動機會建議",
-  cmdSysload: "查看本機負載/發熱/失控程序",
+  cmdSysload: "查看本機負載、發熱、失控程序和資源守護狀態",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,

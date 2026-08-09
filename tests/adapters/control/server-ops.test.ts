@@ -9,8 +9,10 @@ import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import { performStart } from "../../../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
+import { renderSystemLoad } from "../../../src/core/infra/system-load.js";
 import { resolveProjectPath } from "../../../src/core/projects/project-ops.js";
 import { getPathBySession, setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
+import { createResourceGuardianStore } from "../../../src/core/resource-guardian/store.js";
 import { runDailyTaskAuditServiceTick } from "../../../src/core/tasks/daily-audit-service.js";
 
 // Stub the core collaborators each op delegates to — we're covering the control
@@ -183,6 +185,12 @@ describe("control server op dispatch (real unix socket)", () => {
   }
 
   it("handles every read-only op", async () => {
+    const store = createResourceGuardianStore({ stateDir: dir, now: () => 100 });
+    const initial = store.readCurrentReadOnly();
+    store.writeCurrent({
+      circuit: { ...initial.circuit, reason: "canonical guardian state" },
+      view: { ...initial.view, reason: "canonical guardian state" },
+    });
     const c = await connected();
     expect(await c.snapshot()).toMatchObject({ global: { sessionCount: 0 } });
     expect(await c.peek("sX", 5)).toContain("PANE for sX");
@@ -190,6 +198,10 @@ describe("control server op dispatch (real unix socket)", () => {
     expect(await c.recover()).toEqual({ launched: 2, shellOnly: 1, alreadyAlive: 0 });
     expect(await c.logs("sX")).toBe("LOGTEXT");
     expect(await c.sysload()).toBe("SYSLOAD");
+    expect(renderSystemLoad).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ reason: "canonical guardian state" }),
+    );
     expect(await c.inputs("sX")).toEqual(["input-a", "input-b"]);
   });
 

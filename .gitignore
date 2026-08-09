@@ -28,6 +28,7 @@ docs/superpowers/
 # Live runtime state belongs to the user state directory or a dedicated private
 # backup, never in this source repository.
 /state/
+/state/resource-guardian/
 
 # Stryker mutation testing artifacts
 reports/

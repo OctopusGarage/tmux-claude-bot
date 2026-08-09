@@ -117,6 +117,28 @@ describe("home MCP server", () => {
     }
   });
 
+  it.each([
+    ["", "delegate"],
+    ["delegate finish the slice", "delegate finish the slice"],
+  ])("normalizes delegation requirement %j to %j", async (requirement, expectedVerb) => {
+    const autopilot = vi.fn(async () => ({ status: "delegated" }));
+    const { client, server } = await connectHomeClient(() => fakeClient({ autopilot }));
+    try {
+      const result = await client.callTool({
+        name: "tcb.home.delegate_autopilot",
+        arguments: { session: "tmux_proj_demo", requirement },
+      });
+      expect(autopilot).toHaveBeenCalledWith("tmux_proj_demo", expectedVerb);
+      expect(result.structuredContent).toMatchObject({
+        ok: true,
+        data: { session: "tmux_proj_demo", requirement },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("reports control failures as blocked Home tool results", async () => {
     const { client, server } = await connectHomeClient(() =>
       fakeClient({
@@ -135,6 +157,33 @@ describe("home MCP server", () => {
         role: "home",
         blockedReason: "not connected",
       });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("reports Autopilot control failures as blocked Home tool results and closes the client", async () => {
+    const close = vi.fn();
+    const { client, server } = await connectHomeClient(() =>
+      fakeClient({
+        close,
+        autopilot: vi.fn(async () => {
+          throw new Error("delegation blocked");
+        }),
+      }),
+    );
+    try {
+      const result = await client.callTool({
+        name: "tcb.home.delegate_autopilot",
+        arguments: { session: "tmux_proj_demo", requirement: "fix coverage" },
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        role: "home",
+        blockedReason: "delegation blocked",
+      });
+      expect(close).toHaveBeenCalledOnce();
     } finally {
       await client.close();
       await server.close();

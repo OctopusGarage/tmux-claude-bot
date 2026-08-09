@@ -11,6 +11,21 @@ import {
 import type { LoopSupervisorFinalSummary } from "../../../src/core/loop/work-order.js";
 
 describe("eval report", () => {
+  function summary(
+    overrides: Partial<LoopSupervisorFinalSummary> = {},
+  ): LoopSupervisorFinalSummary {
+    return {
+      status: "completed",
+      projectId: "tmux-claude-bot",
+      actionsTaken: [],
+      delegatedTasks: [],
+      finalVerification: "passed",
+      commits: [],
+      followUps: [],
+      ...overrides,
+    };
+  }
+
   it("builds a worker-internal eval report from WorkOrder review evidence", () => {
     const summary: LoopSupervisorFinalSummary = {
       status: "completed",
@@ -124,6 +139,72 @@ describe("eval report", () => {
     });
   });
 
+  it("maps supervisor review and verification states to eval outcomes", () => {
+    const fail = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "failed",
+          deterministicGates: [],
+          decision: "fail",
+          notes: [],
+        },
+      }),
+    });
+    const block = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "block",
+          notes: [],
+        },
+      }),
+    });
+    const finalFailed = buildEvalReportFromSupervisorSummary({
+      summary: summary({ finalVerification: "failed" }),
+    });
+    const supervisorBlocked = buildEvalReportFromSupervisorSummary({
+      summary: summary({ status: "blocked", finalVerification: "unknown" }),
+    });
+    const verificationNotRun = buildEvalReportFromSupervisorSummary({
+      summary: summary({ finalVerification: "not-run" }),
+    });
+    const unknown = buildEvalReportFromSupervisorSummary({
+      summary: summary({ status: "timeout", finalVerification: "unknown" }),
+    });
+
+    expect(fail.outcome).toMatchObject({
+      status: "failed",
+      reviewDecision: "fail",
+      reason: "review-gate-failed",
+    });
+    expect(block.outcome).toMatchObject({
+      status: "blocked",
+      reviewDecision: "block",
+      reason: "review-gate-blocked",
+    });
+    expect(finalFailed.outcome).toMatchObject({
+      status: "failed",
+      reason: "final-verification-failed",
+    });
+    expect(supervisorBlocked.outcome).toMatchObject({
+      status: "blocked",
+      reason: "supervisor-blocked",
+    });
+    expect(verificationNotRun.outcome).toMatchObject({
+      status: "not-run",
+      reason: "verification-not-run",
+    });
+    expect(unknown.outcome).toMatchObject({
+      status: "unknown",
+      reason: "insufficient-eval-signal",
+    });
+  });
+
   it("summarizes string and object deterministic gates without losing result state", () => {
     expect(
       summarizeDeterministicGates([
@@ -172,5 +253,56 @@ describe("eval report", () => {
         evaluatorSession: "tmux_proj_loop-evaluator",
       }),
     ).toEqual({ ok: false, reason: "invalid-report" });
+  });
+
+  it("rejects malformed eval report sections and missing report files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-eval-report-invalid-"));
+    const invalidPath = join(dir, "eval-report.json");
+    writeFileSync(invalidPath, "{", "utf8");
+    const valid = buildEvalReportFromSupervisorSummary({ summary: summary() });
+
+    expect(readEvalReportFile(undefined)).toEqual({ ok: false, reason: "missing-report" });
+    expect(readEvalReportFile(join(dir, "missing.json"))).toEqual({
+      ok: false,
+      reason: "missing-report",
+    });
+    expect(readEvalReportFile(invalidPath)).toEqual({ ok: false, reason: "invalid-report" });
+    expect(parseEvalReport(null)).toEqual({ ok: false, reason: "invalid-report" });
+    expect(parseEvalReport({ ...valid, schemaVersion: 2 })).toEqual({
+      ok: false,
+      reason: "invalid-report",
+    });
+    expect(parseEvalReport({ ...valid, taskId: 42 })).toEqual({
+      ok: false,
+      reason: "invalid-report",
+    });
+    expect(parseEvalReport({ ...valid, source: { kind: "other", projectId: "repo" } })).toEqual({
+      ok: false,
+      reason: "invalid-report",
+    });
+    expect(parseEvalReport({ ...valid, outcome: { status: "passed" } })).toEqual({
+      ok: false,
+      reason: "invalid-report",
+    });
+    expect(
+      parseEvalReport({ ...valid, evidence: [{ questionInvestigated: "missing fields" }] }),
+    ).toEqual({
+      ok: false,
+      reason: "invalid-report",
+    });
+    expect(
+      parseEvalReport({ ...valid, deterministicGates: [{ name: "types", result: "bad" }] }),
+    ).toEqual({
+      ok: false,
+      reason: "invalid-report",
+    });
+    expect(parseEvalReport({ ...valid, notes: ["ok", 42] })).toEqual({
+      ok: false,
+      reason: "invalid-report",
+    });
+    expect(parseEvalReport({ ...valid, learningCandidates: { regression: [] } })).toEqual({
+      ok: false,
+      reason: "invalid-report",
+    });
   });
 });

@@ -2,7 +2,12 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderDailyTaskAudit, runDailyTaskAudit } from "../../src/core/tasks/daily-audit.js";
+import {
+  buildDailyTaskAuditNotification,
+  renderDailyTaskAudit,
+  runDailyTaskAudit,
+} from "../../src/core/tasks/daily-audit.js";
+import type { TaskAuditItem } from "../../src/core/tasks/task-ledger.js";
 import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -51,6 +56,124 @@ describe("runDailyTaskAudit", () => {
     expect(body).not.toContain("taskId:");
     expect(body).not.toContain("report:");
     expect(body).not.toContain(homedir());
+  });
+
+  it("renders an explicit empty audit summary when the window has no records", () => {
+    const body = renderDailyTaskAudit(
+      {
+        window: null,
+        counts: {
+          success: 0,
+          failed: 0,
+          missing: 0,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [],
+      },
+      [],
+    );
+
+    expect(body).toContain("Status: OK");
+    expect(body).toContain("Repair: 0 candidates");
+    expect(body).toContain("No scheduled task records found.");
+  });
+
+  it("counts closed failures when a repair dispatch result is rendered", () => {
+    const closedFailure = taskAuditItem({
+      taskId: "loop:closed",
+      name: "closed repair",
+      status: "failed",
+      repairStatus: "fixed",
+    });
+    const activeFailure = taskAuditItem({
+      taskId: "loop:active",
+      name: "active repair",
+      status: "missing",
+      repairStatus: "pending",
+    });
+
+    const body = renderDailyTaskAudit(
+      {
+        window: { start: 0, end: 1, label: "2026-08-04 SGT" },
+        counts: {
+          success: 0,
+          failed: 1,
+          missing: 1,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [closedFailure, activeFailure],
+      },
+      [activeFailure],
+      { repairDispatch: "queued repair run" },
+    );
+
+    expect(body).toContain("Repair: 1 candidates · queued repair run");
+    expect(body).toContain("Closed: 1 previously reported");
+    expect(body).toContain("active repair · missing");
+    expect(body).not.toContain("closed repair · failed");
+  });
+
+  it("caps the rendered issue list and reports the hidden count", () => {
+    const issues = Array.from({ length: 10 }, (_, index) =>
+      taskAuditItem({
+        taskId: `loop:issue-${index}`,
+        name: `issue ${index}`,
+        status: "failed",
+        repairStatus: "pending",
+      }),
+    );
+
+    const body = renderDailyTaskAudit(
+      {
+        window: { start: 0, end: 1, label: "2026-08-04 SGT" },
+        counts: {
+          success: 0,
+          failed: 10,
+          missing: 0,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: issues,
+      },
+      issues,
+    );
+
+    expect(body).toContain("issue 0 · failed");
+    expect(body).toContain("issue 7 · failed");
+    expect(body).not.toContain("issue 8 · failed");
+    expect(body).toContain("• …and 2 more");
+  });
+
+  it("builds an ok notification for an unknown empty window", () => {
+    const notification = buildDailyTaskAuditNotification({
+      summary: {
+        window: null,
+        counts: {
+          success: 0,
+          failed: 0,
+          missing: 0,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [],
+      },
+      repairCandidates: [],
+      channel: "telegram",
+    });
+
+    expect(notification).toMatchObject({
+      channel: "telegram",
+      level: "success",
+      source: "daily-task-audit",
+      title: "Daily task audit · unknown window",
+    });
+    expect(notification.body).toContain("No scheduled task records found.");
   });
 
   it("sends a previous-day success and failure summary and returns repair candidates", async () => {
@@ -238,6 +361,17 @@ describe("runDailyTaskAudit", () => {
     expect(notifiedBodies[0]).toContain("Repair: 1 candidates");
   });
 });
+
+function taskAuditItem(
+  overrides: Partial<TaskAuditItem> & Pick<TaskAuditItem, "taskId" | "name" | "status">,
+): TaskAuditItem {
+  return {
+    source: "loop-engineering",
+    scheduledAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
 
 function notifiedBody(notify: ReturnType<typeof vi.fn>): string {
   const first = notify.mock.calls[0]?.[0] as { body?: string } | undefined;

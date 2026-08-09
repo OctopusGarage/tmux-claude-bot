@@ -7,10 +7,39 @@ import {
   createControlOperationHandlers,
   handleControlRequest,
 } from "../../../src/adapters/control/operations.js";
+import { createControlDiagnosticsHandlers } from "../../../src/adapters/control/operations-diagnostics.js";
+import { createControlProjectSessionHandlers } from "../../../src/adapters/control/operations-project-sessions.js";
 import type { ControlRequest } from "../../../src/adapters/control/protocol.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 
 describe("control operation registry", () => {
+  it("groups dashboard and diagnostic reads behind one handler family", () => {
+    const handlers = createControlDiagnosticsHandlers({} as HandlerDeps);
+
+    expect(Object.keys(handlers).sort()).toEqual([
+      "inputs",
+      "logs",
+      "peek",
+      "promptTranslate",
+      "snapshot",
+      "sysload",
+    ]);
+  });
+
+  it("groups Project Session lifecycle operations behind one handler family", () => {
+    const handlers = createControlProjectSessionHandlers({} as HandlerDeps);
+
+    expect(Object.keys(handlers).sort()).toEqual([
+      "adopt",
+      "open",
+      "openPath",
+      "openWorker",
+      "orphans",
+      "projects",
+      "recover",
+    ]);
+  });
+
   it("exposes one explicit handler per protocol operation", () => {
     const handlers = createControlOperationHandlers({} as HandlerDeps, () => {});
 

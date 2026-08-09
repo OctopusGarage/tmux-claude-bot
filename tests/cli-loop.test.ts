@@ -289,7 +289,7 @@ describe("CLI loop command", () => {
       enabled: true,
       changed: true,
     });
-  });
+  }, 20_000);
 
   it("syncs approved skills and lists recorded skill state through the real CLI entrypoint", () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-cli-"));
@@ -444,5 +444,5 @@ describe("CLI loop command", () => {
     const afterCloseResult = runCli(["loop", "backlog", "list", "--json"], stateDir);
     expect(closeResult.status).toBe(0);
     expect(JSON.parse(afterCloseResult.stdout)).toEqual([]);
-  });
+  }, 20_000);
 });

@@ -429,7 +429,7 @@ export const ja: Messages = {
     "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",
   cmdAutopilot: "現在のセッション作業を Loop Supervisor に委任",
   cmdOpportunity: "提案された改善機会を確認して議論",
-  cmdSysload: "マシンの負荷・発熱・暴走プロセスを表示",
+  cmdSysload: "マシンの負荷・発熱・暴走プロセス・Resource Guardian を表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,

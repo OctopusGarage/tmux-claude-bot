@@ -16,7 +16,11 @@ import {
   governedPromptSpecs,
   governedPromptsForTaskKind,
 } from "./registry.js";
-import { buildDailyAuditRepairPrompt, buildRuntimeGuardianRepairPrompt } from "./repair-prompts.js";
+import {
+  buildDailyAuditRepairPrompt,
+  buildResourceGuardianRepairPrompt,
+  buildRuntimeGuardianRepairPrompt,
+} from "./repair-prompts.js";
 import type { GovernedPromptId, PromptSpec } from "./types.js";
 
 export type PromptCommandResult =
@@ -355,6 +359,13 @@ function renderGovernedPrompt(id: GovernedPromptId, fixture: "default"): string 
           evidence: ["system-gate.json missing after supervisor completion"],
         },
       ],
+    });
+  }
+  if (id === "repair.resource-guardian") {
+    return buildResourceGuardianRepairPrompt({
+      repoPath: "/repo/tmux-claude-bot",
+      repairBranch: "dev",
+      incident: { id: "incident-1", fingerprint: "resource-load", evidence: ["bot-owned load"] },
     });
   }
 

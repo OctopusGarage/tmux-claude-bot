@@ -136,6 +136,17 @@ describe("docs contract", () => {
     expect(agentRules).toContain("explicit, reviewable slices");
   });
 
+  it("keeps legacy command wrappers on the canonical verification and docs surfaces", () => {
+    const release = read(".claude/commands/release.md");
+    const dev = read(".claude/commands/dev.md");
+
+    expect(release).toContain("npm run verify:local");
+    expect(dev).toContain("npm run verify:local");
+    expect(release).toContain("docs/cli-reference.md");
+    expect(release).toContain("docs/automation-capability-matrix.md");
+    expect(release).not.toContain("command tables in `CLAUDE.md`");
+  });
+
   it("keeps project-owned AI behavior off direct model provider clients", () => {
     const forbidden = [
       /from\s+["']openai["']/,
@@ -238,13 +249,22 @@ describe("docs contract", () => {
       );
     }
 
+    const cliSurface = [
+      cli,
+      ...walkFiles("src/cli")
+        .filter((file) => file.endsWith(".ts"))
+        .map(read),
+    ].join("\n");
     const longOptions = new Set(
-      [...cli.matchAll(/\.(?:requiredOption|option)\("([^"]+)"/g)]
+      [...cliSurface.matchAll(/\.(?:requiredOption|option)\("([^"]+)"/g)]
         .flatMap((m) => [...(m[1] ?? "").matchAll(/--[a-z0-9-]+/g)])
         .map((m) => m[0]),
     );
+    const optionReference = reference.split("## Options")[1]?.split("## Notes")[0] ?? "";
     for (const option of longOptions) {
-      expect(reference, `missing \`${option}\` in docs/cli-reference.md`).toContain(option);
+      expect(optionReference, `missing \`${option}\` in docs/cli-reference.md options`).toContain(
+        option,
+      );
     }
   });
 
