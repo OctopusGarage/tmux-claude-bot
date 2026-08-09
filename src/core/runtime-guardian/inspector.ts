@@ -70,9 +70,9 @@ function inspectTerminalRecord(
   const finalSummaryPath =
     record.workOrder.finalSummaryPath ?? join(record.runDir, "supervisor-final-summary.json");
   for (const finding of [
-    systemGateFailure(record, gatePath),
+    systemGateFailure(record, gatePath, finalSummaryPath),
     failedEval(record, gatePath),
-    invalidOutput(record, gatePath),
+    invalidOutput(record, gatePath, finalSummaryPath),
     transientFailure(record),
     readOnlySmokeBlocked(record, finalSummaryPath),
   ]) {
@@ -96,6 +96,7 @@ function inspectTerminalRecord(
 function systemGateFailure(
   record: TerminalWorkOrder,
   gatePath: string,
+  finalSummaryPath: string,
 ): RuntimeGuardianFinding | null {
   if (
     record.state.status !== "failed" ||
@@ -120,6 +121,14 @@ function systemGateFailure(
     parsed.repairDisposition === "target-or-external-blocker"
       ? parsed.repairDisposition
       : undefined);
+  if (
+    disposition === undefined &&
+    hasRawSuccessfulSummary(finalSummaryPath) &&
+    failures.length > 0 &&
+    failures.every(isLegacyIsolatedBranchMismatchFailure)
+  ) {
+    return null;
+  }
   return {
     ...findingFor(record, "terminal-system-gate-failure", "high", [
       `system gate rejected terminal work-order: ${record.workOrder.id}`,
@@ -147,11 +156,20 @@ function failedEval(record: TerminalWorkOrder, gatePath: string): RuntimeGuardia
   ]);
 }
 
-function invalidOutput(record: TerminalWorkOrder, gatePath: string): RuntimeGuardianFinding | null {
+function invalidOutput(
+  record: TerminalWorkOrder,
+  gatePath: string,
+  finalSummaryPath: string,
+): RuntimeGuardianFinding | null {
   if (record.state.status !== "failed" || record.state.resultStatus !== "invalid-output")
     return null;
   const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
-  if (hasSuccessfulSummary(record) && existsSync(gatePath)) return null;
+  if (
+    (hasSuccessfulSummary(record) || hasRawSuccessfulSummary(finalSummaryPath)) &&
+    existsSync(gatePath)
+  ) {
+    return null;
+  }
   return findingFor(record, "terminal-invalid-output", "medium", [
     `terminal failed work-order has resultStatus=invalid-output: ${record.workOrder.id}`,
     `runDir: ${record.runDir}`,
@@ -252,6 +270,19 @@ function hasSuccessfulSummary(record: TerminalWorkOrder): boolean {
     parsed.summary.status === "completed" &&
     parsed.summary.finalVerification === "passed"
   );
+}
+function hasRawSuccessfulSummary(finalSummaryPath: string): boolean {
+  const summary = readJson(finalSummaryPath);
+  if (summary === null) return false;
+  const reviewGate = isRecord(summary.reviewGate) ? summary.reviewGate : null;
+  return (
+    summary.status === "completed" &&
+    summary.finalVerification === "passed" &&
+    reviewGate?.decision === "pass"
+  );
+}
+function isLegacyIsolatedBranchMismatchFailure(failure: string): boolean {
+  return /^isolated worktree is on "[^"]*", expected WorkOrder branch "[^"]+"$/.test(failure);
 }
 function readSummaryEvidence(runDir: string): string {
   try {

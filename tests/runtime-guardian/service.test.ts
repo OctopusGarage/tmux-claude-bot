@@ -235,6 +235,134 @@ describe("runtime guardian", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
+  it("does not rediscover legacy isolated-branch gate failures after successful final summary evidence", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "alcove", "run-branch-gate");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-branch-gate",
+        "/repo/alcove-isolated",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/alcove-isolated",
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        sourceWorktree: "/repo/alcove",
+        preparedBy: "system-git-worktree",
+      },
+      commitPolicy: { enabled: true, perRound: false, branch: "loop/alcove/run-branch-gate" },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["verified no code change was needed"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-applicable",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          'isolated worktree is on "dev", expected WorkOrder branch "loop/alcove/run-branch-gate"',
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover stale invalid-output when raw final summary evidence passed", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "prs", "run-raw-success");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-raw-success", "/repo/prs", join(runDir, "supervisor-final-summary.json")),
+      projectId: "prs",
+      projectName: "PRs",
+      task: {
+        kind: "repository-pull-request-review",
+        repo: "Owner/repo",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: true,
+        mergeMethod: "squash",
+        repair: { enabled: true, maxAttempts: 1 },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "prs",
+        actionsTaken: ["closed PR #12 as obsolete after no-net-diff evidence"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123"],
+        followUps: [],
+        pullRequestDecisions: [
+          {
+            number: 12,
+            repository: "Owner/repo",
+            outcome: "closed",
+            evidence: ["closed with allowlisted reason obsolete"],
+            nextStep: "No further action; PR is obsolete and closed.",
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({ accepted: false, resultStatus: "invalid-output" }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
   it("does not invoke the supervisor for direct external-blocker dispatch", async () => {
     const result = await dispatchRuntimeGuardianRepair(
       {
