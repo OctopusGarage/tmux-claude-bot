@@ -66,6 +66,16 @@ export type PressureProfile = {
 };
 
 export type ResourceCircuitAdmission = "open" | "heavy-closed" | "background-closed";
+export type ResourceSamplingNotificationPhase = "sampling-failed" | "stale-hold-expired";
+
+export type ResourceSamplingHealth = {
+  degraded: boolean;
+  consecutiveFailures: number;
+  lastFailureAt: number | null;
+  lastError: string | null;
+  notifiedPhase: ResourceSamplingNotificationPhase | null;
+  overlapSkippedTicks: number;
+};
 
 export type ResourceCircuitState = {
   schemaVersion: 1;
@@ -97,6 +107,23 @@ export type ResourceAdmission =
   | { allowed: true; reason: string; incidentId: string | null }
   | { allowed: false; reason: string; incidentId: string | null };
 
+export type ResourceIncidentTransition = {
+  at: number;
+  from: PressureState;
+  to: PressureState;
+  hostCpuPct: number;
+  circuit: ResourceCircuitAdmission;
+  reason: string;
+};
+
+export type ResourceIncidentAction = {
+  kind: "transition" | "notification" | "sampling-degraded" | "overlap-skipped";
+  at: number;
+  outcome: "recorded" | "sent" | "partial" | "failed" | "skipped";
+  reason: string;
+  count?: number;
+};
+
 export type ResourceIncident = {
   schemaVersion: 1;
   id: string;
@@ -106,8 +133,8 @@ export type ResourceIncident = {
   endedAt?: number;
   pressure: PressureState;
   samples: ResourceSample[];
-  transitions: unknown[];
-  actions: unknown[];
+  transitions: ResourceIncidentTransition[];
+  actions: ResourceIncidentAction[];
   repairWorkOrderId?: string;
 };
 
@@ -121,6 +148,7 @@ export type ResourceGuardianView = {
   reason: string;
   attribution: ResourceIncident["attribution"];
   latestSample: ResourceSample | null;
+  sampling: ResourceSamplingHealth;
 };
 
 export type ResourceGuardianOperatorState = {

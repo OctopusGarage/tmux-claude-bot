@@ -51,6 +51,14 @@ function view(overrides: Partial<ResourceGuardianView> = {}): ResourceGuardianVi
     reason: "steady",
     attribution: "unknown",
     latestSample: null,
+    sampling: {
+      degraded: false,
+      consecutiveFailures: 0,
+      lastFailureAt: null,
+      lastError: null,
+      notifiedPhase: null,
+      overlapSkippedTicks: 0,
+    },
     ...overrides,
   };
 }
@@ -81,6 +89,17 @@ function incident(id: string, startedAt: number, endedAt?: number): ResourceInci
 }
 
 describe("resource guardian durable store", () => {
+  it("uses an explicit canonical state directory without adding a second state segment", () => {
+    const stateDir = tempRoot();
+    const store = createResourceGuardianStore({
+      rootDir: path.join(stateDir, "ignored-root"),
+      stateDir,
+      now: clock,
+    });
+
+    expect(store.paths.state).toBe(path.join(stateDir, "resource-guardian", "state.json"));
+  });
+
   it("returns an unwritten degraded observe/open state when state is absent", () => {
     const rootDir = tempRoot();
     const store = createResourceGuardianStore({ rootDir, now: clock });
@@ -104,6 +123,28 @@ describe("resource guardian durable store", () => {
 
     expect(store.readCurrent()).toEqual({ ...current, degraded: false });
     expect(JSON.parse(fs.readFileSync(store.paths.state, "utf8"))).toEqual(current);
+  });
+
+  it("migrates legacy current state without sampling health to a safe degraded view", () => {
+    const store = createResourceGuardianStore({ rootDir: tempRoot(), now: clock });
+    const { sampling: _sampling, ...legacyView } = view();
+    const legacy = { circuit: circuit(), view: legacyView };
+    fs.mkdirSync(path.dirname(store.paths.state), { recursive: true });
+    fs.writeFileSync(store.paths.state, JSON.stringify(legacy));
+
+    expect(store.readCurrent()).toMatchObject({
+      degraded: false,
+      view: {
+        sampling: {
+          degraded: true,
+          consecutiveFailures: 0,
+          lastFailureAt: null,
+          lastError: null,
+          notifiedPhase: null,
+          overlapSkippedTicks: 0,
+        },
+      },
+    });
   });
 
   it("re-reads an externally replaced circuit for every admission", () => {
@@ -220,6 +261,25 @@ describe("resource guardian durable store", () => {
     );
     expect(fs.existsSync(store.paths.operator)).toBe(false);
     expect(fs.existsSync(path.join(store.paths.incidents, "invalid.json"))).toBe(false);
+  });
+
+  it("deeply validates typed incident transitions and actions", () => {
+    const store = createResourceGuardianStore({ rootDir: tempRoot(), now: clock });
+    const malformedTransition = {
+      ...incident("bad-transition", clock()),
+      transitions: [{ from: "healthy", to: "critical" }],
+    } as unknown as ResourceIncident;
+    const malformedAction = {
+      ...incident("bad-action", clock()),
+      actions: [{ kind: "notification", at: clock(), status: "sent", summary: "legacy" }],
+    } as unknown as ResourceIncident;
+
+    expect(() => store.writeIncident(malformedTransition)).toThrow(
+      "Invalid resource guardian incident",
+    );
+    expect(() => store.writeIncident(malformedAction)).toThrow(
+      "Invalid resource guardian incident",
+    );
   });
 
   it("prunes oldest incident records by end/start time and id while ignoring irrelevant entries", () => {

@@ -305,6 +305,7 @@ export async function dispatchRuntimeGuardianRepair(
         session,
         requirement: buildRuntimeGuardianRepairPrompt(request),
         worktreeIsolation: runtimeGuardianRepairWorktreeIsolation(deps.config.runtimeGuardian),
+        resourceTrigger: "background",
       });
       return delegated.status === "blocked"
         ? { status: "blocked", detail: delegated.reason }

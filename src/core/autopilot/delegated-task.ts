@@ -47,6 +47,7 @@ import {
 import { markImplementedOpportunitiesForCompletedDelegation } from "../opportunities/delegation-completion.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
+import { admitResourceWork } from "../resource-guardian/admission.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 
 const log = createLogger("autopilot.delegated-task");
@@ -274,12 +275,29 @@ export async function startActiveDelegatedTask(
     requirement: string;
     opportunityIds?: string[];
     worktreeIsolation?: LoopWorktreeIsolationMode;
+    resourceTrigger?: "operator" | "background" | "resource-repair";
+    resourceForce?: boolean;
   },
 ): Promise<ActiveDelegatedTaskStartResult> {
   if (!deps.config.loopEngineering.supervisor.enabled) {
     return {
       status: "blocked",
       reason: "loop supervisor is disabled; set LOOP_SUPERVISOR_ENABLED=true",
+      showQueue: false,
+    };
+  }
+
+  const admission = admitResourceWork({
+    source: "autopilot-delegate",
+    trigger: input.resourceTrigger ?? "operator",
+    weight: "heavy",
+    ...(input.resourceForce !== undefined ? { forced: input.resourceForce } : {}),
+    now: Date.now(),
+  });
+  if (!admission.allowed) {
+    return {
+      status: "blocked",
+      reason: `resource admission deferred: ${admission.reason}`,
       showQueue: false,
     };
   }

@@ -62,7 +62,10 @@ export async function dispatchProjectRecovery(
 
 export function createProjectRecoveryDelegator(deps: HandlerDeps): ProjectRecoveryDelegator {
   return async (input) => {
-    const result = await startActiveDelegatedTask(deps, input);
+    const result = await startActiveDelegatedTask(deps, {
+      ...input,
+      resourceTrigger: "background",
+    });
     if (result.status === "blocked") return { status: "blocked", reason: result.reason };
     return { status: "queued", runId: result.runId };
   };

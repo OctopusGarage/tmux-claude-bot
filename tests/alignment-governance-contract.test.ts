@@ -66,6 +66,41 @@ describe("alignment governance contract", () => {
     }
   });
 
+  it("locks the Resource Guardian alignment and startup ordering", () => {
+    const alignment = read("docs/automation-alignment.md");
+    const automation = read("docs/intelligent-automation.md");
+    const index = read("src/index.ts");
+    const notificationBlock = index.slice(index.indexOf("const startNotificationDrivenServices"));
+
+    for (const anchor of [
+      "| Resource Guardian |",
+      "observer/protector",
+      "admission before reservation",
+      "active delegated task admission",
+      "Task 6 active",
+      "Loop Engineering gates each due target",
+      "Batch Scheduler gates each",
+      "default disabled",
+      "after notification",
+    ]) {
+      expect(alignment, `missing Resource Guardian alignment anchor: ${anchor}`).toContain(anchor);
+    }
+    expect(automation).toContain("Resource Guardian");
+    expect(automation).toMatch(/Resource Guardian[\s\S]*host resource pressure/i);
+    expect(automation).toMatch(/Runtime Guardian[\s\S]*durable runtime artifact/i);
+    expect(automation).toMatch(/Resource Guardian[\s\S]*WorkOrder/i);
+
+    const resourceStart = notificationBlock.indexOf("startResourceGuardian(deps)");
+    const runtimeStart = notificationBlock.indexOf("startRuntimeGuardian(deps)");
+    const auditStart = notificationBlock.indexOf("startDailyTaskAudit(deps)");
+    expect(resourceStart).toBeGreaterThanOrEqual(0);
+    expect(resourceStart).toBeLessThan(runtimeStart);
+    expect(resourceStart).toBeLessThan(auditStart);
+    expect(index.indexOf("startResourceGuardian(deps)")).toBeGreaterThan(
+      index.indexOf("const startNotificationDrivenServices"),
+    );
+  });
+
   it("keeps important architecture modules present in the alignment contract", () => {
     const requiredModules = [
       "Operator surfaces",

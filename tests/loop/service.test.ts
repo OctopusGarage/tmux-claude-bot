@@ -1,12 +1,14 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
 import { listLoopReports } from "../../src/core/loop/report.js";
 import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import { runLoopServiceTick, runLoopServiceTickAsync } from "../../src/core/loop/service.js";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
+import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
 
@@ -16,6 +18,76 @@ afterEach(() => {
 });
 
 describe("runLoopServiceTick", () => {
+  it("defers a due system target synchronously before creating durable execution state", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-system-resource-gated-state-"),
+    );
+    createResourceGuardianStore({ stateDir: process.env.TCB_STATE_DIR }).writeCurrent({
+      circuit: {
+        schemaVersion: 1,
+        pressure: "critical",
+        incidentId: "incident-resource-closed",
+        admission: "background-closed",
+        reason: "critical host pressure",
+        changedAt: 1000,
+        lastSampleAt: 1000,
+        owner: "resource-guardian",
+      },
+      view: {
+        enabled: true,
+        mode: "protect",
+        profile: "balanced",
+        pressure: "critical",
+        circuit: "background-closed",
+        incidentId: "incident-resource-closed",
+        reason: "critical host pressure",
+        attribution: "unknown",
+        latestSample: null,
+        sampling: {
+          degraded: false,
+          consecutiveFailures: 0,
+          lastFailureAt: null,
+          lastError: null,
+          notifiedPhase: null,
+          overlapSkippedTicks: 0,
+        },
+      },
+    });
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-system-resource-gated-"));
+    const file = join(dir, "loop.yml");
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${mkdtempSync(join(tmpdir(), "tcb-loop-system-resource-gated-project-"))}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run assess
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const runCommand = vi.fn();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    const result = runLoopServiceTick({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand,
+    });
+
+    expect(result).toMatchObject({ checked: 1, due: 1, ran: 0, failed: 0 });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(schedulerStore.getLastFired()).toEqual({});
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+  });
+
   it("runs due projects, writes reports, records backlog suggestions, and persists fire anchors", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-state-"));
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-service-"));

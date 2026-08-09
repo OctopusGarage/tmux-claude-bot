@@ -1,4 +1,6 @@
+import { appStateDir } from "../../shared/state-dir.js";
 import type { ResourceGuardianStore } from "./store.js";
+import { createResourceGuardianStore } from "./store.js";
 import type { ResourceAdmission, ResourceAdmissionInput, ResourceCircuitState } from "./types.js";
 
 function decision(
@@ -30,7 +32,9 @@ export function admitFromCircuit(
 /** Reads the on-disk state on every call. Admission is intentionally read-only. */
 export function admitResourceWork(
   input: ResourceAdmissionInput,
-  store: Pick<ResourceGuardianStore, "readCurrentReadOnly">,
+  store: Pick<ResourceGuardianStore, "readCurrentReadOnly"> = createResourceGuardianStore({
+    stateDir: appStateDir(),
+  }),
 ): ResourceAdmission {
   const current = store.readCurrentReadOnly();
   if (!current.degraded && current.view.mode === "observe") {

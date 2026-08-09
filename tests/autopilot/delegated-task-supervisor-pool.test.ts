@@ -22,6 +22,7 @@ import {
 } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { setPathForSession } from "../../src/core/projects/sessionPathMap.js";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
 import type { AppConfig } from "../../src/shared/types.js";
 
 const startLoopSupervisor = vi.fn();
@@ -87,6 +88,52 @@ function workOrder(input: {
     task: { kind: "active-delegated-task" },
     finalSummaryPath: input.finalSummaryPath,
   } as unknown as LoopWorkOrder;
+}
+
+function writeResourceCircuit(
+  input: {
+    pressure?: "critical" | "emergency";
+    admission?: "background-closed";
+    reason?: string;
+  } = {},
+): void {
+  const now = Date.now();
+  const pressure = input.pressure ?? "critical";
+  const admission = input.admission ?? "background-closed";
+  const reason = input.reason ?? "critical host pressure";
+  const stateDir = process.env.TCB_STATE_DIR;
+  if (stateDir === undefined) throw new Error("TCB_STATE_DIR is required for this test");
+  createResourceGuardianStore({ stateDir, now: () => now }).writeCurrent({
+    circuit: {
+      schemaVersion: 1,
+      pressure,
+      incidentId: "resource-incident-1",
+      admission,
+      reason,
+      changedAt: now,
+      lastSampleAt: now,
+      owner: "resource-guardian",
+    },
+    view: {
+      enabled: true,
+      mode: "protect",
+      profile: "balanced",
+      pressure,
+      circuit: admission,
+      incidentId: "resource-incident-1",
+      reason,
+      attribution: "unknown",
+      latestSample: null,
+      sampling: {
+        degraded: false,
+        consecutiveFailures: 0,
+        lastFailureAt: null,
+        lastError: null,
+        notifiedPhase: null,
+        overlapSkippedTicks: 0,
+      },
+    },
+  });
 }
 
 describe("active delegated task supervisor pool", () => {
@@ -202,6 +249,65 @@ describe("active delegated task supervisor pool", () => {
     ).resolves.toEqual({
       status: "blocked",
       reason: "loop supervisor is disabled; set LOOP_SUPERVISOR_ENABLED=true",
+      showQueue: false,
+    });
+  });
+
+  it("defers closed background delegation before session lookup or durable side effects", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    writeResourceCircuit();
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_unmapped",
+        requirement: "repair the failed task",
+        resourceTrigger: "background",
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: "resource admission deferred: critical host pressure",
+      showQueue: false,
+    });
+
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+    expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "loop-runs"))).toBe(false);
+    expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "scheduled_task_ledger.json"))).toBe(
+      false,
+    );
+  });
+
+  it("defaults resource admission to operator and permits nonemergency forced delegation", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    writeResourceCircuit();
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_unmapped",
+        requirement: "repair the failed task",
+        resourceForce: true,
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: 'no project path is recorded for session "tmux_proj_unmapped"',
+      showQueue: false,
+    });
+  });
+
+  it("does not let force override emergency resource admission", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    writeResourceCircuit({ pressure: "emergency", reason: "emergency host pressure" });
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_unmapped",
+        requirement: "repair the failed task",
+        resourceForce: true,
+      }),
+    ).resolves.toEqual({
+      status: "blocked",
+      reason: "resource admission deferred: emergency host pressure",
       showQueue: false,
     });
   });

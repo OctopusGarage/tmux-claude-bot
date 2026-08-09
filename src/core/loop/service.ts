@@ -12,6 +12,7 @@ import { OpportunityStore, parseOpportunityDiscoveryReportFile } from "../opport
 import { formatOpportunityDigest } from "../opportunities/view.js";
 import { sessionNameFromPath } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
+import { admitResourceWork } from "../resource-guardian/admission.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import {
   createLoopQueueAgentEvalRunner,
@@ -286,6 +287,24 @@ export function runLoopServiceTick(input: {
   const backlog = new LoopBacklogStore();
 
   for (const due of scheduler.dueProjects) {
+    const admission = admitResourceWork({
+      source: "loop-engineering",
+      trigger: "background",
+      weight: "heavy",
+      now: input.now,
+    });
+    if (!admission.allowed) {
+      log.info("loop engineering due target deferred by resource guardian", {
+        data: {
+          projectId: due.projectId,
+          jobKey: due.jobKey,
+          jobKind: due.jobKind,
+          incidentId: admission.incidentId,
+          reason: admission.reason,
+        },
+      });
+      continue;
+    }
     log.info("loop engineering project run start", {
       data: {
         projectId: due.projectId,
@@ -922,7 +941,8 @@ export async function runLoopServiceTickAsync(input: {
   };
 
   const drainRepositoryReviewQueue = async (): Promise<void> => {
-    reconcileRepositoryReviewQueueWorkOrders(repositoryReviewQueue, Date.now());
+    const tickNow = input.now;
+    reconcileRepositoryReviewQueueWorkOrders(repositoryReviewQueue, tickNow);
     const active = activeLoopSupervisorWork(input.configFile);
     const reservedSupervisorSessions = reserveLoopSupervisorSessions(
       supervisorSessions,
@@ -934,7 +954,7 @@ export async function runLoopServiceTickAsync(input: {
           ? reservedSupervisorSessions
           : await asyncFilter(reservedSupervisorSessions, input.isSupervisorSessionAvailable);
       if (idleSupervisorSessions.length === 0) {
-        const readyCount = repositoryReviewQueue.listReady(Date.now()).length;
+        const readyCount = repositoryReviewQueue.listReady(tickNow).length;
         log.info("loop engineering repository review queue waiting for supervisor capacity", {
           data: {
             readyCount,
@@ -946,7 +966,7 @@ export async function runLoopServiceTickAsync(input: {
         return;
       }
 
-      const now = Date.now();
+      const now = tickNow;
       const queueItems = repositoryReviewQueue.listReady(now, idleSupervisorSessions.length);
       const targets = queueItems.flatMap((item) => {
         const repository = config.prReview.repositories.find(
@@ -999,6 +1019,23 @@ export async function runLoopServiceTickAsync(input: {
           batch.map(async ({ item: target, supervisorSession }) => {
             const queueItem = targetByKey.get(`${target.due.projectId}:${target.due.scheduledAt}`);
             if (queueItem === undefined) return;
+            const admission = admitResourceWork({
+              source: "loop-engineering",
+              trigger: "background",
+              weight: "heavy",
+              now: tickNow,
+            });
+            if (!admission.allowed) {
+              log.info("loop engineering repository review deferred by resource guardian", {
+                data: {
+                  jobKey: target.due.jobKey,
+                  queueItemId: queueItem.id,
+                  incidentId: admission.incidentId,
+                  reason: admission.reason,
+                },
+              });
+              return;
+            }
             const owner = `${process.pid}:${supervisorSession}`;
             const leased = repositoryReviewQueue.lease(
               queueItem.id,
@@ -1007,16 +1044,16 @@ export async function runLoopServiceTickAsync(input: {
               REPOSITORY_REVIEW_QUEUE_LEASE_MS,
             );
             if (leased === null) return;
-            repositoryReviewQueue.markRunning(leased.id, owner, Date.now());
+            repositoryReviewQueue.markRunning(leased.id, owner, tickNow);
             try {
               const result = await runSupervisedDue(target, supervisorSession, false);
               if (result === "completed") {
-                repositoryReviewQueue.complete(leased.id, owner, Date.now(), "completed");
+                repositoryReviewQueue.complete(leased.id, owner, tickNow, "completed");
               } else if (result === "manual-review") {
                 repositoryReviewQueue.manualReview(
                   leased.id,
                   owner,
-                  Date.now(),
+                  tickNow,
                   "repository review recorded an explicit manual decision",
                 );
               } else if (result === "blocked") {
@@ -1027,9 +1064,9 @@ export async function runLoopServiceTickAsync(input: {
                 repositoryReviewQueue.retry(
                   leased.id,
                   owner,
-                  Date.now(),
+                  tickNow,
                   "repository review has retryable or incomplete decisions",
-                  Date.now() + retryDelay,
+                  tickNow + retryDelay,
                 );
               } else {
                 const retryDelay = Math.min(
@@ -1039,9 +1076,9 @@ export async function runLoopServiceTickAsync(input: {
                 repositoryReviewQueue.fail(
                   leased.id,
                   owner,
-                  Date.now(),
+                  tickNow,
                   `repository review supervisor result: ${result}`,
-                  Date.now() + retryDelay,
+                  tickNow + retryDelay,
                 );
               }
             } catch (err) {
@@ -1052,9 +1089,9 @@ export async function runLoopServiceTickAsync(input: {
               repositoryReviewQueue.fail(
                 leased.id,
                 owner,
-                Date.now(),
+                tickNow,
                 err instanceof Error ? err.message : String(err),
-                Date.now() + retryDelay,
+                tickNow + retryDelay,
               );
             }
           }),
@@ -1100,11 +1137,34 @@ export async function runLoopServiceTickAsync(input: {
   const skipDueTarget = (target: ResolvedDue, summary: string): void =>
     recordDueTargetWithoutDispatch(target, summary, "not-needed");
 
+  const admittedRepositoryReviewDues: DueProject[] = [];
   for (const due of scheduler.dueProjects) {
     const isRepositoryReview = due.jobKind === "repository-pull-request-review";
     if (input.repositoryReviewOnly && !isRepositoryReview) continue;
     if (!input.repositoryReviewOnly && input.skipRepositoryReview && isRepositoryReview) continue;
     const target = resolveDue(due);
+    const admission = admitResourceWork({
+      source: "loop-engineering",
+      trigger: "background",
+      weight: "heavy",
+      now: input.now,
+    });
+    if (!admission.allowed) {
+      log.info("loop engineering due target deferred by resource guardian", {
+        data: {
+          projectId: due.projectId,
+          jobKey: due.jobKey,
+          jobKind: due.jobKind,
+          incidentId: admission.incidentId,
+          reason: admission.reason,
+        },
+      });
+      continue;
+    }
+    if (input.repositoryReviewOnly) {
+      admittedRepositoryReviewDues.push(due);
+      continue;
+    }
     const runner = target.project?.runner ?? target.repository?.runner ?? target.workspace?.runner;
     if (runner?.kind === "agent-supervised") {
       supervisedBuffer.push(target);
@@ -1116,13 +1176,12 @@ export async function runLoopServiceTickAsync(input: {
   if (!input.repositoryReviewOnly) {
     await flushSupervisedBuffer();
   } else {
-    for (const due of scheduler.dueProjects) {
-      if (due.jobKind !== "repository-pull-request-review") continue;
+    for (const due of admittedRepositoryReviewDues) {
       repositoryReviewQueue.enqueue({
         repositoryId: due.projectId,
         scheduledAt: due.scheduledAt,
         priority: 1000,
-        now: Date.now(),
+        now: input.now,
       });
       input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
     }

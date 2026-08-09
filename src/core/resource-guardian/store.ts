@@ -8,7 +8,10 @@ import type {
   ResourceGuardianOperatorState,
   ResourceGuardianView,
   ResourceIncident,
+  ResourceIncidentAction,
+  ResourceIncidentTransition,
   ResourceSample,
+  ResourceSamplingHealth,
 } from "./types.js";
 
 const INCIDENT_LIMIT = 50;
@@ -46,6 +49,8 @@ export type ResourceGuardianStore = {
 
 export type CreateResourceGuardianStoreOptions = {
   rootDir?: string;
+  /** Canonical app state directory. No additional `state` segment is added. */
+  stateDir?: string;
   now?: () => number;
 };
 
@@ -113,7 +118,25 @@ function isCircuit(value: unknown): value is ResourceCircuitState {
   );
 }
 
-function isView(value: unknown): value is ResourceGuardianView {
+function isSamplingHealth(value: unknown): value is ResourceSamplingHealth {
+  return (
+    isRecord(value) &&
+    typeof value.degraded === "boolean" &&
+    isFiniteNumber(value.consecutiveFailures) &&
+    Number.isInteger(value.consecutiveFailures) &&
+    value.consecutiveFailures >= 0 &&
+    (value.lastFailureAt === null || isFiniteNumber(value.lastFailureAt)) &&
+    (value.lastError === null || typeof value.lastError === "string") &&
+    (value.notifiedPhase === null ||
+      value.notifiedPhase === "sampling-failed" ||
+      value.notifiedPhase === "stale-hold-expired") &&
+    isFiniteNumber(value.overlapSkippedTicks) &&
+    Number.isInteger(value.overlapSkippedTicks) &&
+    value.overlapSkippedTicks >= 0
+  );
+}
+
+function isView(value: unknown, allowLegacySampling = false): value is ResourceGuardianView {
   if (!isRecord(value)) return false;
   return (
     typeof value.enabled === "boolean" &&
@@ -128,18 +151,57 @@ function isView(value: unknown): value is ResourceGuardianView {
     (value.attribution === "bot-owned" ||
       value.attribution === "external" ||
       value.attribution === "unknown") &&
-    (value.latestSample === null || isSample(value.latestSample))
+    (value.latestSample === null || isSample(value.latestSample)) &&
+    (isSamplingHealth(value.sampling) || (allowLegacySampling && value.sampling === undefined))
   );
 }
 
-function isCurrent(value: unknown): value is ResourceGuardianCurrentState {
-  if (!isRecord(value) || !isCircuit(value.circuit) || !isView(value.view)) return false;
+function isCurrent(
+  value: unknown,
+  allowLegacySampling = false,
+): value is ResourceGuardianCurrentState {
+  if (!isRecord(value) || !isCircuit(value.circuit) || !isView(value.view, allowLegacySampling))
+    return false;
   return (
     value.circuit.pressure === value.view.pressure &&
     value.circuit.admission === value.view.circuit &&
     value.circuit.incidentId === value.view.incidentId &&
     value.circuit.reason === value.view.reason &&
     (value.view.mode !== "observe" || value.circuit.admission === "open")
+  );
+}
+
+function isIncidentTransition(value: unknown): value is ResourceIncidentTransition {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.at) &&
+    typeof value.from === "string" &&
+    pressures.has(value.from as PressureState) &&
+    typeof value.to === "string" &&
+    pressures.has(value.to as PressureState) &&
+    isFiniteNumber(value.hostCpuPct) &&
+    typeof value.circuit === "string" &&
+    admissions.has(value.circuit as ResourceCircuitAdmission) &&
+    typeof value.reason === "string"
+  );
+}
+
+function isIncidentAction(value: unknown): value is ResourceIncidentAction {
+  return (
+    isRecord(value) &&
+    (value.kind === "transition" ||
+      value.kind === "notification" ||
+      value.kind === "sampling-degraded" ||
+      value.kind === "overlap-skipped") &&
+    isFiniteNumber(value.at) &&
+    (value.outcome === "recorded" ||
+      value.outcome === "sent" ||
+      value.outcome === "partial" ||
+      value.outcome === "failed" ||
+      value.outcome === "skipped") &&
+    typeof value.reason === "string" &&
+    (value.count === undefined ||
+      (isFiniteNumber(value.count) && Number.isInteger(value.count) && value.count >= 0))
   );
 }
 
@@ -169,7 +231,9 @@ function isIncident(value: unknown): value is ResourceIncident {
     Array.isArray(value.samples) &&
     value.samples.every(isSample) &&
     Array.isArray(value.transitions) &&
+    value.transitions.every(isIncidentTransition) &&
     Array.isArray(value.actions) &&
+    value.actions.every(isIncidentAction) &&
     (value.repairWorkOrderId === undefined || typeof value.repairWorkOrderId === "string")
   );
 }
@@ -240,8 +304,34 @@ function fallbackCurrent(now: number, hasInvalidState: boolean): ResourceGuardia
       reason,
       attribution: "unknown",
       latestSample: null,
+      sampling: legacySamplingHealth(),
     },
     degraded: true,
+  };
+}
+
+function legacySamplingHealth(): ResourceSamplingHealth {
+  return {
+    degraded: true,
+    consecutiveFailures: 0,
+    lastFailureAt: null,
+    lastError: null,
+    notifiedPhase: null,
+    overlapSkippedTicks: 0,
+  };
+}
+
+function normalizeCurrent(value: unknown): ResourceGuardianCurrentState | null {
+  if (isCurrent(value)) return value;
+  if (!isCurrent(value, true) || !isRecord(value.view) || value.view.sampling !== undefined) {
+    return null;
+  }
+  return {
+    circuit: value.circuit,
+    view: {
+      ...(value.view as Omit<ResourceGuardianView, "sampling">),
+      sampling: legacySamplingHealth(),
+    },
   };
 }
 
@@ -254,7 +344,10 @@ export function createResourceGuardianStore(
 ): ResourceGuardianStore {
   const rootDir = path.resolve(options.rootDir ?? process.cwd());
   const now = options.now ?? Date.now;
-  const stateRoot = path.join(rootDir, "state", "resource-guardian");
+  const stateRoot =
+    options.stateDir !== undefined
+      ? path.join(path.resolve(options.stateDir), "resource-guardian")
+      : path.join(rootDir, "state", "resource-guardian");
   const paths = {
     state: path.join(stateRoot, "state.json"),
     incidents: path.join(stateRoot, "incidents"),
@@ -272,7 +365,8 @@ export function createResourceGuardianStore(
       return fallbackCurrent(now(), true);
     }
     const parsed = parseJson(raw);
-    if (isCurrent(parsed)) return { ...parsed, degraded: false };
+    const current = normalizeCurrent(parsed);
+    if (current) return { ...current, degraded: false };
     if (quarantineInvalidState) quarantine(paths.state, now());
     return fallbackCurrent(now(), true);
   };

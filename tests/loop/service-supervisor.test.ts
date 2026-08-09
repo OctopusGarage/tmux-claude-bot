@@ -20,13 +20,17 @@ import {
   reserveLoopSupervisorSessions,
   writeLoopSupervisorWorkerLeaseState,
 } from "../../src/core/loop/supervisor-pool.js";
-import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
+import {
+  listUnfinishedLoopSupervisorWorkOrders,
+  writeLoopSupervisorWorkOrderState,
+} from "../../src/core/loop/supervisor-state.js";
 import {
   buildRepositoryPullRequestReviewWorkOrder,
   type LoopWorkOrder,
 } from "../../src/core/loop/work-order.js";
 import { NotificationGateway } from "../../src/core/notifications/gateway.js";
 import { sessionNameFromPath } from "../../src/core/projects/sessionPathMap.js";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -134,7 +138,86 @@ function finalMarkerFromPrompt(prompt: string): string {
   return marker;
 }
 
+function resourceClosedState() {
+  return {
+    circuit: {
+      schemaVersion: 1 as const,
+      pressure: "critical" as const,
+      incidentId: "incident-resource-closed",
+      admission: "background-closed" as const,
+      reason: "critical host pressure",
+      changedAt: 1000,
+      lastSampleAt: 1000,
+      owner: "resource-guardian" as const,
+    },
+    view: {
+      enabled: true,
+      mode: "protect" as const,
+      profile: "balanced" as const,
+      pressure: "critical" as const,
+      circuit: "background-closed" as const,
+      incidentId: "incident-resource-closed",
+      reason: "critical host pressure",
+      attribution: "unknown" as const,
+      latestSample: null,
+      sampling: {
+        degraded: false,
+        consecutiveFailures: 0,
+        lastFailureAt: null,
+        lastError: null,
+        notifiedPhase: null,
+        overlapSkippedTicks: 0,
+      },
+    },
+  };
+}
+
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("defers a due supervised target before any ledger, lease, WorkOrder, or scheduler reservation", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-state-"));
+    const stateDir = process.env.TCB_STATE_DIR;
+    const resourceStore = createResourceGuardianStore({ stateDir });
+    resourceStore.writeCurrent(resourceClosedState());
+    const schedulerStore = new LoopSchedulerStore();
+    const runSupervisorTask = vi.fn();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    const result = await runLoopServiceTickAsync({
+      configFile: writeLoopConfig({
+        projectPath: mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-project-")),
+        runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      }),
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ checked: 1, due: 1, ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(schedulerStore.getLastFired()).toEqual({});
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+
+    const retry = await runLoopServiceTickAsync({
+      configFile: writeLoopConfig({
+        projectPath: mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-retry-project-")),
+        runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      }),
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+    expect(retry).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(schedulerStore.getLastFired()).toEqual({});
+  });
+
   it("reads active worker leases as supervisor capacity reservations", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-active-resources-"));
     writeLoopSupervisorWorkerLeaseState({
@@ -300,6 +383,100 @@ prReview:
       supervisorSessionName: "tmux_proj_loop-supervisor",
     });
     expect(leaseWasHeld).toBe(true);
+  });
+
+  it("keeps a ready repository review claimable when Resource Guardian closes admission", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-repository-resource-gated-"));
+    const stateDir = process.env.TCB_STATE_DIR;
+    const resourceStore = createResourceGuardianStore({ stateDir });
+    resourceStore.writeCurrent(resourceClosedState());
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repository-resource-project-"));
+    const configFile = join(projectDir, "loop.yml");
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: fluent-frame-all-prs
+      name: Fluent Frame PRs
+      path: ${projectDir}
+      repo: OctopusGarage/fluent-frame
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`,
+    );
+    const queue = new RepositoryReviewQueue();
+    queue.enqueue({
+      repositoryId: "fluent-frame-all-prs",
+      scheduledAt: now,
+      priority: 1000,
+      now,
+    });
+    const runSupervisorTask = vi.fn(async (request) => {
+      const marker = finalMarkerFromPrompt(request.prompt);
+      return {
+        status: 0,
+        stdout: `${marker}\n${JSON.stringify({
+          status: "completed",
+          projectId: "fluent-frame-all-prs",
+          actionsTaken: ["reviewed pull requests"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+          pullRequestDecisions: [],
+        })}`,
+        stderr: "",
+      };
+    });
+    const input = {
+      configFile,
+      now,
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository review should not run system commands");
+      },
+      runGit: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+      repositoryReviewOnly: true,
+    };
+
+    await runLoopServiceTickAsync(input);
+
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({ status: "pending", attempt: 0 }),
+    ]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+
+    const closed = resourceClosedState();
+    resourceStore.writeCurrent({
+      circuit: { ...closed.circuit, admission: "open" },
+      view: { ...closed.view, circuit: "open" },
+    });
+    await runLoopServiceTickAsync(input);
+
+    expect(runSupervisorTask).toHaveBeenCalled();
   });
 
   it("does not reuse a supervisor reserved by a concurrent service tick", async () => {

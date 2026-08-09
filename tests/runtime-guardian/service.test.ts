@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
@@ -23,6 +24,17 @@ import {
 } from "../../src/core/tasks/repair-coordinator.js";
 import { loadConfig } from "../../src/shared/config.js";
 import type { AppConfig } from "../../src/shared/types.js";
+
+vi.mock("../../src/core/autopilot/delegated-task.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/core/autopilot/delegated-task.js")>()),
+  startActiveDelegatedTask: vi.fn(async () => ({
+    status: "queued",
+    runId: "runtime-repair-run-1",
+    projectId: "tmux-claude-bot",
+    supervisorSession: "tmux_proj_loop-supervisor",
+    reportDir: "/tmp/runtime-repair-report",
+  })),
+}));
 
 const originalStateDir = process.env.TCB_STATE_DIR;
 
@@ -265,6 +277,30 @@ describe("runtime guardian", () => {
       },
     );
     expect(result).toEqual({ status: "blocked", detail: "loop supervisor is disabled" });
+  });
+
+  it("marks Runtime Guardian repairs as background delegation", async () => {
+    const result = await dispatchRuntimeGuardianRepair(
+      {
+        config: {
+          loopEngineering: { supervisor: { enabled: true } },
+          projectSessionPrefix: "tmux_proj_",
+          runtimeGuardian: runtimeConfig(),
+        },
+      } as never,
+      {
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        mode: "fast-heal",
+        findings: [finding()],
+      },
+    );
+
+    expect(result).toEqual({ status: "queued", detail: expect.any(String) });
+    expect(startActiveDelegatedTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ resourceTrigger: "background" }),
+    );
   });
 
   it("keeps explicitly isolated guardian repairs isolated", async () => {

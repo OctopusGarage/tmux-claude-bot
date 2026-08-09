@@ -858,7 +858,36 @@ failed stage (`message`, `attachment`, validation, or missing sender), so repair
 work can distinguish "nothing reached the owner" from "the message arrived but
 an attachment failed."
 
+## Resource Guardian
+
+Resource Guardian owns host resource pressure, its sustained-pressure incident
+record, and a durable admission circuit. Task 6 makes active delegated task
+admission the authoritative check before project-path lookup, worktree
+preparation, supervisor reservation, or durable WorkOrder/ledger/worker-lease
+writes. Loop Engineering checks every due target before it can create a ledger,
+WorkOrder, worker lease, or scheduler fire anchor; denied work stays due and
+does not consume a retry. Batch Scheduler checks every queued-to-running
+transition while continuing to reconcile work that is already running; denied
+queued work remains claimable without consuming a retry. Daily Task Audit,
+Runtime Guardian, and Project Recovery send their
+automated delegations as background work. `resourceForce` is an internal,
+reserved input to the authoritative gate; current chat, control, and CLI
+surfaces expose no force option, and default operator work remains subject to a
+closed circuit. Any future force surface requires separate authorization,
+documentation, and tests. It is an observer/protector: observe mode
+records evidence and always leaves the circuit open, while protect mode records
+the closure that consumers honor. It does not create process ownership from CPU
+evidence, directly invoke a model API, or materialize a WorkOrder. Later
+Resource Guardian repair, when added, must reuse the supervised WorkOrder path
+only after stable recovery.
+
 ## Runtime Guardian
+
+Runtime Guardian owns durable runtime artifact correctness and may enqueue
+confirmed bot-owned repair findings. It does not own host pressure, process-load
+attribution, or Resource Guardian's admission circuit. Both modules can affect
+whether a future WorkOrder is safe, but neither is permission to bypass the
+active Claude/Codex agent boundary.
 
 Runtime Guardian is the running-service guardrail for problems that appear while
 Loop Supervisor, workers, PR gates, notifications, launchd/dev-service runtime,

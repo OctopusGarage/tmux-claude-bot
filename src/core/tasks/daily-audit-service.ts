@@ -508,6 +508,7 @@ export async function dispatchDailyTaskRepair(
     session,
     requirement: prompt,
     worktreeIsolation: deps.config.taskAudit.repairWorktreeIsolation,
+    resourceTrigger: "background",
   });
   if (result.status === "blocked") {
     log.warn("daily task audit auto repair could not be delegated", {
