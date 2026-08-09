@@ -1791,6 +1791,8 @@ export function writeSupervisedSystemGateArtifact(input: {
   writtenAt: number;
 }): void {
   const path = join(dirname(input.report.summaryPath), LOOP_RUN_ARTIFACTS.systemGate);
+  const repairDisposition =
+    input.gate.result.repairDisposition ?? systemGateFailureRepairDisposition(input.gate.failures);
   const evalReport =
     "summary" in input.result
       ? buildEvalReportFromSupervisorSummary({
@@ -1812,10 +1814,8 @@ export function writeSupervisedSystemGateArtifact(input: {
         evalReport,
         evidence: input.gate.evidence,
         failures: input.gate.failures,
-        ...(input.gate.result.repairDisposition === undefined
-          ? {}
-          : { repairDisposition: input.gate.result.repairDisposition }),
-        findings: systemGateFindings(input.gate),
+        ...(repairDisposition === undefined ? {} : { repairDisposition }),
+        findings: systemGateFindings(input.gate, repairDisposition),
         recoverableFailures: supervisorRevisionFailures(input.gate.failures),
         writtenAt: input.writtenAt,
       },
@@ -1825,19 +1825,57 @@ export function writeSupervisedSystemGateArtifact(input: {
   );
 }
 
-function systemGateFindings(input: SupervisedSystemGateOutcome): SystemGateFinding[] {
-  const disposition = input.result.repairDisposition;
+function systemGateFindings(
+  input: SupervisedSystemGateOutcome,
+  disposition: SystemGateFinding["repairDisposition"] | undefined,
+): SystemGateFinding[] {
   if (disposition === undefined) return [];
-  const display = "reason" in input.result ? input.result.reason : input.result.output;
+  const dispatchDisposition = input.result.repairDisposition;
+  const display =
+    dispatchDisposition !== undefined
+      ? "reason" in input.result
+        ? input.result.reason
+        : input.result.output
+      : input.failures.join("; ");
   return [
     {
-      code: input.result.status,
+      code: dispatchDisposition !== undefined ? input.result.status : `system-gate-${disposition}`,
       repairDisposition: disposition,
       retry: disposition === "bot-repairable" ? "automatic" : "manual",
-      evidence: input.evidence,
+      evidence: dispatchDisposition !== undefined ? input.evidence : input.failures,
       display,
     },
   ];
+}
+
+function systemGateFailureRepairDisposition(
+  failures: string[],
+): SystemGateFinding["repairDisposition"] | undefined {
+  if (failures.length === 0) return undefined;
+  return failures.some(isTargetOrExternalSystemGateFailure)
+    ? "target-or-external-blocker"
+    : undefined;
+}
+
+function isTargetOrExternalSystemGateFailure(failure: string): boolean {
+  return (
+    failure.startsWith("GitHub account ") ||
+    failure.startsWith("PR lookup failed:") ||
+    failure.startsWith("PR lookup after body cleanup failed:") ||
+    failure.startsWith("PR lookup while waiting for checks failed:") ||
+    failure.startsWith("PR check wait failed:") ||
+    failure.startsWith("CI check ") ||
+    failure.startsWith("PR state is ") ||
+    failure.startsWith("PR mergeability is ") ||
+    failure.startsWith("PR is not mergeable:") ||
+    failure.startsWith("unexpected PR commit count:") ||
+    failure.startsWith("PR is missing supervisor commit ") ||
+    failure.startsWith("PR contains commit outside supervisor summary:") ||
+    failure.startsWith("source git status failed:") ||
+    failure.startsWith("source worktree is dirty after supervisor completion:") ||
+    failure.startsWith("source git branch check failed:") ||
+    failure.startsWith("source branch is ")
+  );
 }
 
 export function runSupervisedSystemGateOutcome(input: {

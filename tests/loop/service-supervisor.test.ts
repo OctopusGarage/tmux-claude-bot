@@ -1143,6 +1143,103 @@ prReview:
     });
   });
 
+  it("classifies non-revisionable PR and GitHub system-gate failures as external blockers", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "supervisor-failed" as const,
+      output: "supervised system gate failed",
+      summary: {
+        status: "failed" as const,
+        projectId: "geo-backend",
+        actionsTaken: ["opened PR"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        commits: ["abc123"],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-geo",
+        projectId: "geo-backend",
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [
+          "GitHub account permission check timed out",
+          'CI check "build" is IN_PROGRESS after waiting for completion',
+          "PR lookup failed: GraphQL: could not resolve to a PullRequest",
+          "PR is missing supervisor commit abc123",
+        ],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: false,
+      repairDisposition: "target-or-external-blocker",
+      findings: [
+        expect.objectContaining({
+          code: "system-gate-target-or-external-blocker",
+          repairDisposition: "target-or-external-blocker",
+          retry: "manual",
+          evidence: expect.arrayContaining([
+            "GitHub account permission check timed out",
+            'CI check "build" is IN_PROGRESS after waiting for completion',
+            "PR lookup failed: GraphQL: could not resolve to a PullRequest",
+            "PR is missing supervisor commit abc123",
+          ]),
+        }),
+      ],
+    });
+  });
+
+  it("leaves recoverable system-gate revision failures without terminal blocker disposition", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "supervisor-failed" as const,
+      output: "supervised system gate failed",
+      summary: {
+        status: "failed" as const,
+        projectId: "hub",
+        actionsTaken: ["left worktree dirty"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        commits: [],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-hub",
+        projectId: "hub",
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: ["worktree is dirty after supervisor completion: M src/index.ts"],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    const artifact = JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"));
+    expect(artifact).toMatchObject({
+      accepted: false,
+      recoverableFailures: ["worktree is dirty after supervisor completion: M src/index.ts"],
+    });
+    expect(artifact).not.toHaveProperty("repairDisposition");
+    expect(artifact.findings).toEqual([]);
+  });
+
   it("writes eval outcome into system gate artifacts when final summary exists", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
     const result = {
