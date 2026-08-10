@@ -356,13 +356,20 @@ export class RepairCoordinator {
     return updated;
   }
 
-  releaseForRetry(id: string, now: number): RepairQueueRecord | undefined {
+  releaseForRetry(
+    id: string,
+    now: number,
+    options: { detachWorkOrder?: boolean } = {},
+  ): RepairQueueRecord | undefined {
     const record = this.store.get(id);
     if (record === undefined) return undefined;
     const attempt = record.attempt + 1;
     const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
+    const retryBase = options.detachWorkOrder
+      ? (({ workOrderId: _workOrderId, ...withoutWorkOrder }) => withoutWorkOrder)(withoutLease)
+      : withoutLease;
     const updated: RepairQueueRecord = {
-      ...withoutLease,
+      ...retryBase,
       status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
       attempt,
       nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),

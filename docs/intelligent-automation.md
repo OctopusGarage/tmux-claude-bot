@@ -90,6 +90,9 @@ target worktrees, branch-policy conflicts, GitHub permission failures, and
 network/TLS failures are terminalized as blocked; stale invalid-output records
 are reconciled from later gate artifacts as fixed or not-reproducible. Only
 confirmed bot-owned runtime findings enter the bot self-repair WorkOrder.
+A completed repair WorkOrder fixes its durable queue record. A failed, timed-out,
+or cancelled repair WorkOrder is detached and returned to bounded retry so a
+service restart cannot leave global repair ownership stuck in `running`.
 
 Every terminal supervised WorkOrder also has a cleanup closure. Successful runs
 release the worker and immediately remove their bot-owned isolated execution
