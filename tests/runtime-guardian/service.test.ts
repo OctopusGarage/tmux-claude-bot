@@ -1083,6 +1083,75 @@ describe("runtime guardian", () => {
     expect(findings).toEqual([]);
   });
 
+  it("ignores legacy repaired initial preflight eval failures after a successful final summary", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-initial-preflight-eval",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["restored local dependencies"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["initial tool preflight failed"],
+          postMutationReview: ["dependency restore completed and tests passed"],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "initial-preflight",
+              command: "test -x .venv/bin/ruff",
+              result: "failed",
+              evidence: "ruff executable was missing",
+            },
+            {
+              name: "environment-repair",
+              command: "uv sync",
+              result: "passed",
+              evidence: "created .venv and installed dependencies",
+            },
+            {
+              name: "post-repair-preflight",
+              command: "test -x .venv/bin/ruff",
+              result: "passed",
+              evidence: "preflight passed after repair",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-legacy-initial-preflight-eval", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(findings).toEqual([]);
+  });
+
   it("ignores historical completed runs outside the runtime lookback", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(
