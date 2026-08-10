@@ -109,7 +109,6 @@ const SYSTEM_GATE_GIT_SEARCH_PATHS = [
   "/run/current-system/sw/bin",
   "/nix/var/nix/profiles/default/bin",
 ];
-const SYSTEM_GATE_GIT_EXECUTABLE = resolveSystemGateGitExecutable(process.env);
 export type SupervisedSystemGateProject = Pick<LoopProjectConfig, "id" | "name" | "path"> & {
   commit: LoopWorkOrder["commitPolicy"];
   pullRequest: NonNullable<LoopWorkOrder["pullRequestPolicy"]>;
@@ -3020,7 +3019,7 @@ function systemGateChildProcessEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export function runGitCommand(invocation: LoopGitInvocation): LoopRunCommandResult {
-  const result = spawnSync(SYSTEM_GATE_GIT_EXECUTABLE, invocation.args, {
+  const result = spawnSync(resolveSystemGateGitExecutable(process.env), invocation.args, {
     cwd: invocation.cwd,
     env: systemGateChildProcessEnv(process.env),
     encoding: "utf8",
