@@ -561,6 +561,145 @@ prReview:
     expect(outcome.evidence).toContain("no mutating git or PR gate required");
   });
 
+  it("publishes a missing supervised PR before applying the acceptance gate", () => {
+    const branch = "loop/hub/active-delegate/run-1";
+    const prCommands: string[] = [];
+    const gitCommands: Array<{ cwd: string; args: string[] }> = [];
+    let prLookups = 0;
+
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-worktree",
+        commit: { enabled: true, perRound: false, branch },
+        pullRequest: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-worktree",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, branch },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-worktree",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          sourceWorktree: "/tmp/hub-source",
+          cleanup: { success: "release-worker", failure: "retain-for-ttl" },
+          preparedBy: "system-git-worktree",
+        },
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "hub",
+          requirement: "Repair the confirmed runtime issue.",
+          requireReview: true,
+          requireTests: true,
+          requireCoverageReview: true,
+          allowAiEval: true,
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["fixed the runtime issue"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: ["abc123"],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed"],
+            postMutationReview: ["verified"],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+        },
+      },
+      runCommand: (invocation) => {
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh pr create")) {
+          return { status: 0, stdout: "https://github.com/acme/hub/pull/1\n", stderr: "" };
+        }
+        prLookups += 1;
+        if (prLookups === 1) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: `no pull requests found for branch "${branch}"`,
+          };
+        }
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/1",
+            state: "OPEN",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [],
+            body: "Automated supervised repair.",
+            files: [{ path: "src/runtime.ts" }],
+            commits: [{ oid: "abc123" }],
+          }),
+          stderr: "",
+        };
+      },
+      runGit: (invocation) => {
+        gitCommands.push(invocation);
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (command === "branch --show-current") {
+          return {
+            status: 0,
+            stdout: invocation.cwd === "/tmp/hub-source" ? "main\n" : `${branch}\n`,
+            stderr: "",
+          };
+        }
+        if (command === `push -u origin ${branch}`) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (command === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "src/runtime.ts\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${command}`);
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("published missing supervised pull request");
+    expect(gitCommands).toContainEqual({
+      cwd: "/tmp/hub-worktree",
+      args: ["push", "-u", "origin", branch],
+    });
+    expect(prCommands).toEqual([
+      `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`,
+      expect.stringContaining(`gh pr create --base 'main' --head '${branch}'`),
+      `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`,
+    ]);
+  });
+
   it("rejects completed automation governance results without a structured review gate", () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
@@ -2764,6 +2903,127 @@ prReview:
       status: "failed",
       error: "blocked",
     });
+  });
+
+  it("revises a recoverable final summary after restart before terminal settlement", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const configFile = writeLoopConfig({ projectPath: projectDir });
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const runId = `${scheduledAt}-hub-active-delegate`;
+    const finalSummaryPath = join(
+      process.env.TCB_STATE_DIR,
+      "loop-runs",
+      "hub",
+      runId,
+      "supervisor-final-summary.json",
+    );
+    const workOrder = {
+      id: runId,
+      scheduledAt,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: projectDir,
+      agent: "codex",
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "hub",
+        requirement: "Repair the confirmed runtime issue.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      goal: "Repair the confirmed runtime issue.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", timeoutMs: 1000, requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: true, dirtyWorktree: true, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+      requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
+      finalSummaryPath,
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: scheduledAt + 1_000,
+    });
+    mkdirSync(dirname(finalSummaryPath), { recursive: true });
+    writeFileSync(
+      finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["fixed the runtime issue"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["confirmed"],
+          postMutationReview: ["verified"],
+          aiReview: "passed",
+          deterministicGates: [
+            { name: "local verify", result: "failed", evidence: "stale first attempt" },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const runSupervisorRevision = vi.fn(async () => ({
+      status: "completed" as const,
+      output: "revised final summary",
+      summary: {
+        status: "completed" as const,
+        projectId: "hub",
+        actionsTaken: ["corrected final acceptance evidence"],
+        delegatedTasks: [],
+        finalVerification: "passed" as const,
+        reviewGate: {
+          preMutationReview: ["confirmed"],
+          postMutationReview: ["verified"],
+          aiReview: "passed" as const,
+          deterministicGates: [{ name: "local verify rerun", result: "passed" as const }],
+          decision: "pass" as const,
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      },
+    }));
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 2_000,
+      runCommand: () => {
+        throw new Error("report-only recovery should not run shell gates");
+      },
+      runSupervisorRevision,
+    });
+
+    expect(runSupervisorRevision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workOrder,
+        supervisorSession: "tmux_proj_loop-supervisor",
+        attempt: 1,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      }),
+    );
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(
+      JSON.parse(readFileSync(join(dirname(finalSummaryPath), "work-order-state.json"), "utf8")),
+    ).toMatchObject({ status: "completed", resultStatus: "completed" });
+    expect(
+      JSON.parse(readFileSync(join(dirname(finalSummaryPath), "system-gate.json"), "utf8")),
+    ).toMatchObject({ accepted: true, resultStatus: "completed" });
   });
 
   it("reconciles active worker leases left behind by terminal completed work orders", async () => {

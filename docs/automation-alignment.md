@@ -155,6 +155,17 @@ reservation while its system gate is still being written. Delegated-task
 reconciliation must leave its ledger entry running, and project recovery must
 defer without consuming a retry, until either an accepted gate or terminal
 WorkOrder state makes the outcome authoritative.
+When a completed supervised WorkOrder reports verified commits and the project
+explicitly enables pull requests, the system gate owns publication as well as
+verification: if the WorkOrder branch has no PR, it pushes that exact branch,
+creates the configured-base PR, then applies the normal commit, CI,
+mergeability, auto-merge, and switch-back gates. This deterministic step must
+also work during restart recovery so a service reload after final-summary write
+cannot strand a verified commit in an isolated worktree.
+If restart recovery finds a genuinely recoverable summary or system-gate
+failure, it must reserve the original supervisor session and run the same
+bounded revision contract as the uninterrupted path before terminal settlement;
+it must not convert a correctable finalization gap into a terminal repair loop.
 Daily Audit ticks, forced audits, and startup-triggered audits share a process
 mutex; an overlapping tick exits as `in-progress` before it can mutate ledger or
 repair-queue state.

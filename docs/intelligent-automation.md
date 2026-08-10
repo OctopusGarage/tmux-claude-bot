@@ -615,6 +615,19 @@ the bot should send a bounded revision prompt and re-run the gate. Non-recoverab
 platform failures, such as missing GitHub permission, should fail with a concrete
 blocker.
 
+PR publication is also system-owned when the project explicitly enables it. A
+verified supervised result with commits may finish before the agent creates a
+PR, especially when the service restarts between final-summary and gate writes.
+The gate therefore pushes the exact WorkOrder branch and creates the configured
+base PR when lookup confirms that it is missing, then continues through the
+same commit, CI, mergeability, merge, and switch-back checks. Authentication,
+permission, network, and ambiguous lookup failures remain blockers rather than
+authorization to create anything.
+Restart recovery uses the same bounded supervisor revision contract for
+recoverable acceptance failures before it writes terminal state. A process
+reload may change who drives finalization, but it must not weaken the gate or
+turn a correctable summary/PR gap into another self-repair WorkOrder.
+
 Every supervised run must persist system gate evidence beside the supervisor
 report as `system-gate.json`. This artifact records whether the gate accepted the
 run, which checks justified acceptance, which failures blocked acceptance, and

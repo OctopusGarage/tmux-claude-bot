@@ -974,6 +974,115 @@ describe("runtime guardian", () => {
     ]);
   });
 
+  it("ignores legacy git ENOENT system-gate failures after a successful final summary", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-git-enoent",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["verified current code resolves git at system-gate time"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        failures: [
+          "git status failed: spawnSync git ENOENT",
+          "isolated worktree branch check failed: spawnSync git ENOENT",
+        ],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-legacy-git-enoent", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("ignores legacy dependency preflight eval failures after a successful final summary", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-preflight-eval",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["restored local dependencies"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["preflight failed because node_modules was absent"],
+          postMutationReview: ["dependency restore completed and tests passed"],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight before repair",
+              result: "failed",
+              evidence: "Command exited 1 because required local Node tool binaries were absent.",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-legacy-preflight-eval", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(findings).toEqual([]);
+  });
+
   it("ignores historical completed runs outside the runtime lookback", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(
