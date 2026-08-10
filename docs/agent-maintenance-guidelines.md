@@ -129,6 +129,12 @@ Do not add feature-specific side channels that bypass WorkOrder state,
 system-gate artifacts, notification gateway routing, or conflict checks unless
 the exception is documented and covered by tests.
 
+Historical recovery evidence commonly stores `reportPath` as a Loop run
+directory rather than a report file. Classification must read that directory's
+`supervisor-final-summary.json` and `system-gate.json` before deciding whether a
+failure is retryable, externally blocked, or a genuine owner decision. A failed
+directory read is missing evidence, not proof that an owner must intervene.
+
 ## Supervisor And System Gates
 
 Supervisors execute target-project work. The bot system enforces final

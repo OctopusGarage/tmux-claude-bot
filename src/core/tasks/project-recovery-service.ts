@@ -429,6 +429,17 @@ function readRecoveryArtifact(reportPath: string): string | undefined {
   try {
     return readFileSync(reportPath, "utf8").slice(0, 32_000);
   } catch {
-    return undefined;
+    const evidence = [
+      join(reportPath, "supervisor-final-summary.json"),
+      join(reportPath, "supervisor-summary.json"),
+      join(reportPath, "system-gate.json"),
+    ].flatMap((path) => {
+      try {
+        return [readFileSync(path, "utf8")];
+      } catch {
+        return [];
+      }
+    });
+    return evidence.length === 0 ? undefined : evidence.join("\n").slice(0, 32_000);
   }
 }

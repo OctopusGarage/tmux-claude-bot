@@ -552,6 +552,56 @@ describe("project recovery service", () => {
     expect(coordinator.list()).toHaveLength(1);
   });
 
+  it("classifies recovery evidence from a run directory instead of falling back to owner decision", async () => {
+    const root = join(tmpdir(), `project-recovery-directory-evidence-${Date.now()}`);
+    const reportPath = join(root, "run");
+    process.env.TCB_STATE_DIR = join(root, "state");
+    await mkdir(reportPath, { recursive: true });
+    await writeFile(
+      join(reportPath, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["recovered a failed worktree branch preparation"],
+      }),
+    );
+    await writeFile(
+      join(reportPath, "system-gate.json"),
+      JSON.stringify({ accepted: false, resultStatus: "supervisor-failed" }),
+    );
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "recovery-2" }));
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:run-1-geo-active-delegate",
+          source: "autopilot-delegate",
+          name: "geo active delegated task",
+          status: "failed",
+          error: "terminal summary status=blocked",
+          summary:
+            "Recovery classification: needs-owner-decision; failure evidence is not specific enough",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "blocked",
+          reportPath,
+        },
+      ],
+      config: {
+        projects: [{ id: "geo", name: "Geo", path: "/repo/geo" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      updateRepairStatus: vi.fn(),
+      dispatch,
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ ownerDecision: 0, enqueued: 1, dispatched: 1 });
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
   it("queues and dispatches failed Autopilot delegations for configured projects", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();

@@ -18,6 +18,10 @@ never duplicated, and later findings are attached as deferred work. A recovery
 is closed only from an authoritative `supervisor-final-summary.json` reporting
 completed with a passing decision. Queue and ledger state are reconciled
 together so a successful environment repair does not remain falsely pending.
+When a ledger `reportPath` names a run directory, recovery classification reads
+the final supervisor summary and system gate inside that directory. It must not
+discard those artifacts and turn recoverable orchestration evidence into a
+generic owner decision.
 Failed Autopilot delegations for configured projects follow the same recovery
 path as Loop Engineering failures; invalid or missing supervisor summaries are
 retryable orchestration evidence. Capacity, active-project, or supervisor

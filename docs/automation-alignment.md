@@ -74,6 +74,9 @@ Recovery alignment invariant: Daily Task Audit and Runtime Guardian must treat
 worker-consumption timeout as retryable delivery, deduplicate project recovery
 by project identity while an active recovery exists, and reconcile ledger plus
 repair-queue state only from an authoritative passing supervisor final summary.
+Project recovery must resolve a run-directory `reportPath` to its final summary
+and system gate before classifying a generic failure; missing a directory read
+must not manufacture an owner-decision outcome.
 When a system gate or execution-isolation producer knows that a finding belongs
 to a target or external boundary, it must persist a structured repair
 disposition; Runtime Guardian must never infer terminal ownership from log or
@@ -297,7 +300,7 @@ feature, review this matrix in the same slice:
 | Daily Task Audit | Active discovery, shared ledger merge including Autopilot delegation lifecycles, self-audit recursion, Repair Coordinator enqueue/consumption, final Telegram/Feishu notification, repair-status closure, docs/tests. |
 | Runtime Guardian | Runtime artifact detection, including terminal `system-gate.json` rejection, evidence threshold, source/isolated worktree policy, Repair Coordinator enqueue/consumption, clean-worktree gate, cooldown, docs/tests. |
 | Resource Guardian | Host pressure sampling, sustained policy, observer/protector mode, durable resource circuit, Task 6 active Loop due-target and Batch queued-to-running admission, background repair producer tagging, incident evidence, `resource-guardian` notifications, default disabled observe configuration, and startup after notification readiness. |
-| Repair Coordinator | Durable pending-repair migration, deterministic classification, configured-project recovery dispatch, project conflict gating, leases, bounded retry backoff, per-item terminal reconciliation, queue visibility, docs/tests. |
+| Repair Coordinator | Durable pending-repair migration, deterministic classification from ledger plus run-directory supervisor/gate evidence, configured-project recovery dispatch, project conflict gating, leases, bounded retry backoff, per-item terminal reconciliation, queue visibility, docs/tests. |
 | GitHub operations | Configured `githubAccount`, command-local `GH_TOKEN` from `gh auth token --user`, all `gh api/pr/run/repo` commands, security alert reads, tests. |
 | Worktree/session isolation | Source path validation, isolated/source/auto policy, supervisor session, worker session, lease cleanup, ordinary chat blocking, logs/artifacts, tests. |
 | AI/eval behavior | Agent-backed/control-surface path only, no direct model-provider SDK/API calls, deterministic fallback, transient agent failure classification/retry boundaries, review/eval evidence, prompt governance metadata, docs/tests. |
