@@ -245,9 +245,9 @@ supervisor turn is idle; startup must clear this stale pane state while
 preserving sessions that still own a live WorkOrder.
 Agent input-readiness must interpret visible pane evidence in lifecycle order.
 Codex may retain an earlier `esc to interrupt` line after its footer reports
-`Context … Goal achieved`; that later completion marker makes the composer
-ready again. A newer working marker still wins, so genuine active turns remain
-protected from queued input.
+`Context … Goal achieved` or its current UI renders `Worked for <duration>`;
+either later completion marker makes the composer ready again. A newer working
+marker still wins, so genuine active turns remain protected from queued input.
 Periodic WorkOrder reconciliation must defer a final summary while the owning
 supervisor queue is still processing or has queued work. The summary can appear
 before the live dispatch promise resolves; consuming it early can terminalize

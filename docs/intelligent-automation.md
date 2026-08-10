@@ -265,6 +265,10 @@ During normal finalization, a valid final summary can precede `system-gate.json`
 and terminal WorkOrder state. That settling WorkOrder continues to reserve its
 project: delegated-task reconciliation waits for the gate, and project recovery
 cannot release or claim another recovery for the same project during the gap.
+Agent lifecycle detection must not treat a stale Codex `esc to interrupt` line
+as newer than a subsequent `Goal achieved` footer or `Worked for <duration>`
+completion banner. This keeps final-summary consumption prompt without
+weakening active-turn protection.
 Terminal ledger invariants are enforced during every audit tick: successful or
 skipped tasks always carry `repairStatus=not-needed`, while failed tasks retain
 their explicit repair outcome.

@@ -24,17 +24,21 @@ export function paneNeedsConfirm(pane: string): boolean {
 }
 
 /** Whether the pane's latest lifecycle evidence still represents an active turn.
- * Codex can leave an old `esc to interrupt` line visible after a goal finishes;
- * its footer then carries a later `Context … Goal achieved` marker. Compare the
- * evidence order so stale scrollback cannot block the next queued prompt, while a
- * newer working marker still wins if another turn has started. */
+ * Codex can leave an old `esc to interrupt` line visible after a turn finishes;
+ * depending on the client version, later completion evidence is either a
+ * `Context … Goal achieved` footer or a `Worked for <duration>` banner. Compare
+ * evidence order so stale scrollback cannot block the next queued prompt, while
+ * a newer working marker still wins if another turn has started. */
 export function paneHasActiveTurn(pane: string): boolean {
   const activeAt = pane.toLowerCase().lastIndexOf("esc to interrupt");
   if (activeAt < 0) return false;
 
   let completedAt = -1;
-  for (const match of pane.matchAll(/^.*\bcontext\b.*\bgoal achieved\b.*$/gimu)) {
-    completedAt = match.index;
+  for (const pattern of [
+    /^.*\bcontext\b.*\bgoal achieved\b.*$/gimu,
+    /^\s*[─━]+\s*worked for\s+(?:\d+\s*[hms]\s*)+[─━]*\s*$/gimu,
+  ]) {
+    for (const match of pane.matchAll(pattern)) completedAt = Math.max(completedAt, match.index);
   }
   return activeAt > completedAt;
 }

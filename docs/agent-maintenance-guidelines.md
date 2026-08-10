@@ -197,9 +197,10 @@ acceptance. Keep these responsibilities separate:
   failed reservation and any leaked active lease; otherwise an idle supervisor
   pane can block that project forever.
 - Diagnose readiness from the newest lifecycle evidence, not any matching text
-  left in pane scrollback. In Codex, a later `Context … Goal achieved` footer
-  supersedes an earlier visible `esc to interrupt` line; a later working marker
-  supersedes that completion again.
+  left in pane scrollback. In Codex, either a later `Context … Goal achieved`
+  footer or the current `Worked for <duration>` completion banner supersedes an
+  earlier visible `esc to interrupt` line; a later working marker supersedes
+  that completion again.
 - Treat a final-summary file as intermediate evidence while the owning
   supervisor queue is still busy. Periodic reconciliation must defer both
   outcome settlement and abandoned-resource cleanup until that live queue owner

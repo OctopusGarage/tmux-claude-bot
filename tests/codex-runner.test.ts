@@ -21,6 +21,17 @@ const completedGoalPane = [
   "",
   "main · Context 14% left · weekly 9% left · Goal achieved (19m)",
 ].join("\n");
+const completedTurnPane = [
+  "◦ Working (46s • esc to interrupt)",
+  "",
+  "• [LOOP_SUPERVISOR_DONE:run-1]",
+  "",
+  "─ Worked for 9m 03s ─",
+  "",
+  "› Write tests for @filename",
+  "",
+  "main · Context 53% left · weekly 6% left",
+].join("\n");
 
 describe("codex pane heuristics", () => {
   it("ready when no 'esc to interrupt' spinner is present", () => {
@@ -33,6 +44,18 @@ describe("codex pane heuristics", () => {
 
   it("is ready when a completed goal footer supersedes a stale working marker", () => {
     expect(paneLooksReady(completedGoalPane)).toBe(true);
+  });
+
+  it("is ready when the current Codex completion banner supersedes a stale working marker", () => {
+    expect(paneLooksReady(completedTurnPane)).toBe(true);
+  });
+
+  it("does not mistake ordinary worked-for prose for a Codex completion banner", () => {
+    expect(
+      paneLooksReady(
+        "› Summarize the history\n- Worked for 2h on the migration\n• Working (1s • esc to interrupt)\n- Worked for 3h",
+      ),
+    ).toBe(false);
   });
 
   it("is not ready when a new working marker follows an earlier completed goal", () => {
@@ -206,6 +229,28 @@ describe("CodexRunner.startWithResume", () => {
 });
 
 describe("CodexRunner.waitUntilDone", () => {
+  it("reports done immediately after the current Codex completion banner", async () => {
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () => completedTurnPane,
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => true,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: { process: (s: string) => s } as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 5,
+      maxWaitDoneMs: 5,
+    });
+
+    await expect(runner.waitUntilDone("sess")).resolves.toMatchObject({ done: true });
+  });
+
   it("does not report done while the stable pane still has the active-turn marker", async () => {
     const bridge = {
       resolveSessionName: async (s?: string) => s ?? "sess",
