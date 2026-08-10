@@ -176,7 +176,7 @@ function isResolvedPreflightRepairObservation(
   if (!gateText(failedGate).includes("preflight")) return false;
   const laterPassedGateText = gates
     .slice(failedGateIndex + 1)
-    .filter((gate) => typeof gate !== "string" && gate.result === "passed")
+    .filter(isPassedStructuredGate)
     .map(gateText);
   return (
     laterPassedGateText.some(isEnvironmentRepairEvidence) &&
@@ -184,8 +184,13 @@ function isResolvedPreflightRepairObservation(
   );
 }
 
-function gateText(gate: LoopSupervisorReviewGateDeterministicGate): string {
-  if (typeof gate === "string") return gate.toLowerCase();
+function isPassedStructuredGate(
+  gate: LoopSupervisorReviewGateDeterministicGate,
+): gate is Exclude<LoopSupervisorReviewGateDeterministicGate, string> {
+  return typeof gate !== "string" && gate.result === "passed";
+}
+
+function gateText(gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>): string {
   return [gate.name, gate.command, gate.evidence].filter(Boolean).join("\n").toLowerCase();
 }
 
