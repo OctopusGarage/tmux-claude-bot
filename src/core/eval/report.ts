@@ -104,10 +104,32 @@ export function summarizeDeterministicGates(
   });
 }
 
+export function isPreMutationDependencyGate(
+  gate: LoopSupervisorReviewGateDeterministicGate,
+): boolean {
+  if (typeof gate === "string") return false;
+  if (gate.result !== "failed") return false;
+  const normalized = [gate.name, gate.command, gate.evidence]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  return (
+    normalized.includes("preflight") &&
+    normalized.includes("before repair") &&
+    (normalized.includes("node_modules") ||
+      normalized.includes("local node") ||
+      normalized.includes("tool binaries") ||
+      normalized.includes(".venv") ||
+      normalized.includes("venv") ||
+      normalized.includes("vendor/bin"))
+  );
+}
+
 function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome {
   const reviewDecision = summary.reviewGate?.decision;
   const failedGate = summary.reviewGate?.deterministicGates.some(
-    (gate) => typeof gate !== "string" && gate.result === "failed",
+    (gate) =>
+      typeof gate !== "string" && gate.result === "failed" && !isPreMutationDependencyGate(gate),
   );
   if (failedGate === true) {
     return baseOutcome(summary, reviewDecision, "failed", "deterministic-gate-failed");

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
+import { isPreMutationDependencyGate } from "../eval/report.js";
 import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
 import {
   listStaleDispatchingLoopSupervisorWorkOrders,
@@ -128,7 +129,9 @@ function systemGateFailure(
     disposition === undefined &&
     hasRawSuccessfulSummary(finalSummaryPath) &&
     failures.length > 0 &&
-    failures.every(isLegacyIsolatedBranchMismatchFailure)
+    (failures.every(isLegacyIsolatedBranchMismatchFailure) ||
+      failures.every(isLegacySystemGitEnoentFailure) ||
+      legacyPreMutationEvalFailure(finalSummaryPath, failures))
   ) {
     return null;
   }
@@ -307,6 +310,28 @@ function hasRawSuccessfulSummary(finalSummaryPath: string): boolean {
 }
 function isLegacyIsolatedBranchMismatchFailure(failure: string): boolean {
   return /^isolated worktree is on "[^"]*", expected WorkOrder branch "[^"]+"$/.test(failure);
+}
+function isLegacySystemGitEnoentFailure(failure: string): boolean {
+  return (
+    failure === "git status failed: spawnSync git ENOENT" ||
+    failure === "isolated worktree branch check failed: spawnSync git ENOENT"
+  );
+}
+function legacyPreMutationEvalFailure(finalSummaryPath: string, failures: string[]): boolean {
+  if (
+    !failures.every((failure) => failure === "eval outcome is failed: deterministic-gate-failed")
+  ) {
+    return false;
+  }
+  const summary = readJson(finalSummaryPath);
+  const reviewGate = isRecord(summary?.reviewGate) ? summary.reviewGate : null;
+  const deterministicGates = Array.isArray(reviewGate?.deterministicGates)
+    ? reviewGate.deterministicGates
+    : [];
+  const failedGates = deterministicGates.filter(
+    (gate) => isRecord(gate) && gate.result === "failed",
+  );
+  return failedGates.length > 0 && failedGates.every((gate) => isPreMutationDependencyGate(gate));
 }
 function readSummaryEvidence(runDir: string): string {
   try {

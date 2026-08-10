@@ -759,6 +759,77 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
+  it("does not fail eval for dependency preflight evidence recorded before repair", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        task: { kind: "architecture" },
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["restored local dependencies"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["preflight failed because node_modules was absent"],
+            postMutationReview: ["dependency restore completed and tests passed"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "preflight before repair",
+                result: "failed",
+                evidence: "Command exited 1 because required local Node tool binaries were absent.",
+              },
+            ],
+            decision: "pass",
+            notes: [],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("eval outcome=passed");
+    expect(outcome.result.status).toBe("completed");
+  });
+
   it("rejects a dirty isolated worker that checked out the shared switch-back branch", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
