@@ -49,6 +49,10 @@ the explicit human terminal state. A PR may be closed automatically only with
 an evidence-backed `duplicate`, `obsolete`, `non-actionable`, or `invalid`
 reason. Draft, conflict, age, pending checks, and ordinary repair failures are
 not close reasons by themselves.
+A supervised repair or recovery that proves the repository already healthy is a
+successful no-delta completion. Even when commit and PR policy are enabled, it
+must record a clean worktree, passing deterministic verification, and
+`commits: []`; it must not manufacture an empty commit or no-op PR.
 An open project-recovery lease linked only to terminal WorkOrders is released
 before the next admission pass when no live WorkOrder remains; an unknown live
 recovery is still deferred to preserve the one-project mutation invariant.

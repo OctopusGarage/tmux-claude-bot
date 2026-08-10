@@ -646,6 +646,7 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
 
 function finalSummaryContractLines(): string[] {
   return [
+    "- A verified no-delta result is successful completion even when commit and PR policy are enabled. Do not create an empty commit or no-op PR; report commits: [] and record the clean worktree plus passing verification as deterministic evidence.",
     "- The JSON file must contain fields: status, projectId, actionsTaken, delegatedTasks, finalVerification, reviewGate, commits, followUps. delegatedTasks must be an array of strings, or objects with only projectId and status.",
     "- The JSON file may contain learning with fields: regressionCandidates, capabilityEvalCandidates, monitorOrTraceCandidates, documentationCandidates. learning must classify follow-up candidates without making capability evals blocking acceptance gates.",
     "- If the WorkOrder has planning, include planReview with fields: checklistCompleted, targetScoreMet, stopConditionReached, overOptimizationAvoided, verificationCompleted, remainingRisks.",

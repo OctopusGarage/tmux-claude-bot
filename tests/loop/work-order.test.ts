@@ -220,6 +220,10 @@ describe("loop supervisor work order", () => {
       'status must be exactly one of: "completed", "blocked", "failed", "timeout", "cancelled"',
     );
     expect(prompt).toContain('Use "completed" for successful no-op runs');
+    expect(prompt).toContain(
+      "A verified no-delta result is successful completion even when commit and PR policy are enabled",
+    );
+    expect(prompt).toContain("Do not create an empty commit or no-op PR");
     expect(prompt).toContain('finalVerification must be one string only: "passed"');
     expect(prompt).toContain("reviewGate must be an object");
     expect(prompt).toContain("preMutationReview must list the evidence checked before editing");

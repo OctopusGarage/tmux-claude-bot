@@ -109,6 +109,10 @@ review without an execution branch must sync to a detached remote base rather
 than attempting to check out the source worktree's branch. Queue infrastructure
 retries use a five-attempt budget and legacy over-budget records terminalize as
 `dead-letter` before another worker can lease them.
+No-delta recovery alignment invariant: when authoritative verification proves
+the target already healthy, the WorkOrder completes with a clean-worktree gate
+and `commits: []` even if its normal commit and PR policies are enabled. The
+system must not require or create an empty commit or no-op PR.
 Architecture alignment invariant: every project and workspace Architecture
 schedule must run its deterministic score assessment before creating a
 WorkOrder. The configured target is normally 95; a score at or above target is
