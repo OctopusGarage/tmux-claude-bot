@@ -166,7 +166,8 @@ function hasUnresolvedFailedDeterministicGate(
       !isPreMutationDependencyGate(gate) &&
       !isResolvedPreflightRepairObservation(gates, index) &&
       !isResolvedProtectedWorktreeBaseSwitchObservation(gate, gates, summary) &&
-      !isResolvedSourceWorktreeControlObservation(gate, gates, summary),
+      !isResolvedSourceWorktreeControlObservation(gate, gates, summary) &&
+      !isBoundedArchitectureTargetResidual(gate, gates, summary),
   );
 }
 
@@ -217,6 +218,30 @@ function isCompletedPassingSummary(summary: LoopSupervisorFinalSummary): boolean
     summary.finalVerification === "passed" &&
     summary.reviewGate?.decision === "pass"
   );
+}
+
+function isBoundedArchitectureTargetResidual(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = gateText(gate);
+  if (!text.includes("architecture assessment")) return false;
+  if (!text.includes("score")) return false;
+  if (!text.includes("target")) return false;
+  if (!/(not met|below target|remained|remaining risk)/.test(text)) return false;
+  if (!/(maxrounds|max rounds|bounded)/.test(text)) return false;
+
+  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText);
+  const hasVerificationGate = passedGateText.some((passed) =>
+    /(typecheck|test|verify|ci|check)/.test(passed),
+  );
+  const hasCleanOrPublicationGate = passedGateText.some((passed) =>
+    /(clean worktree|pr merge|mergeability|ci|statuscheck|status check)/.test(passed),
+  );
+  return hasVerificationGate && hasCleanOrPublicationGate;
 }
 
 function isResolvedPreflightRepairObservation(

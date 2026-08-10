@@ -336,6 +336,54 @@ describe("eval report", () => {
     });
   });
 
+  it("does not fail the eval report for an architecture target residual after bounded verified work", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["confirmed bounded architecture slice"],
+          postMutationReview: ["typecheck, tests, CI, PR mergeability, and merge gates passed"],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "round verification typecheck",
+              command: "pnpm run typecheck",
+              result: "passed",
+              evidence: "exit 0",
+            },
+            {
+              name: "round verification tests",
+              command: "pnpm test",
+              result: "passed",
+              evidence: "all tests passed",
+            },
+            {
+              name: "architecture assessment",
+              command: "node $LOOP_BOT_ROOT/scripts/loop-architecture-assess.mjs",
+              result: "failed",
+              evidence: "score remained 85 after maxRounds=3, target 95 not met",
+            },
+            {
+              name: "PR merge",
+              command: "gh pr merge 20 --auto --squash",
+              result: "passed",
+              evidence: "PR state MERGED",
+            },
+          ],
+          decision: "pass",
+          notes: [
+            "Deterministic code/test/CI/merge gates passed, but target architecture score was not met within maxRounds. This is recorded as remaining risk rather than hidden.",
+          ],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
   it("maps supervisor review and verification states to eval outcomes", () => {
     const fail = buildEvalReportFromSupervisorSummary({
       summary: summary({
