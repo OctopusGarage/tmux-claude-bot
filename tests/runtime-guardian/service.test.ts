@@ -526,6 +526,97 @@ describe("runtime guardian", () => {
     expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
   });
 
+  it("does not rediscover mixed legacy git ENOENT system-gate failures after successful final summary evidence", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "alcove", "run-git-enoent");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-git-enoent",
+        "/repo/alcove-isolated",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/alcove-isolated",
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        sourceWorktree: "/repo/alcove",
+        preparedBy: "system-git-worktree",
+      },
+      commitPolicy: { enabled: true, perRound: false, branch: "loop/alcove/run-git-enoent" },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["verified the repair"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          "eval outcome is failed: deterministic-gate-failed",
+          "git status failed: spawnSync git ENOENT",
+          "isolated worktree branch check failed: spawnSync git ENOENT",
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover restart-recovered active delegation lease invalid-output as a bot repair", () => {
+    writeLoopSupervisorWorkOrderState({
+      workOrder: {
+        ...workOrder("run-orphaned-lease", "/repo/english"),
+        projectId: "english-pilot",
+        projectName: "English Pilot",
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "tmux_proj_english",
+          requirement: "repair the target project issue",
+        },
+      } as never,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+      revisionReasons: ["supervisor worker lease has no live worker session after restart"],
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
   it("does not rediscover stale invalid-output when raw final summary evidence passed", () => {
     const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "prs", "run-raw-success");
     mkdirSync(runDir, { recursive: true });
