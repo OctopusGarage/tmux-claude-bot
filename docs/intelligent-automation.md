@@ -106,6 +106,12 @@ cleanup, absence is not cleanup proof. Terminal reconciliation uses the
 WorkOrder's verified source repository to remove only that exact stale Git
 worktree registration, then releases the matching worker lease. It never
 guesses another repository and never removes a source worktree.
+If the service dies after creating an isolated worktree but before persisting its
+WorkOrder, periodic reconciliation can still close the orphan. It waits through
+the default 72-hour evidence window, proves that every durable WorkOrder resource
+path and worker lease is unrelated, and then applies the same state-boundary and
+Git-toplevel verification before removal. This recovery never shortens normal
+failure retention or treats a source worktree as an orphan.
 
 ## State And Outcome Vocabulary
 

@@ -293,6 +293,12 @@ Worker leases whose bot-owned worktree disappeared are stale and must be
 released during reconciliation. Source worktrees are never removed. The
 invariant is enforced by coordinator/runtime/worktree tests rather than
 notification wording alone.
+An isolated worktree created before its WorkOrder became durable has no terminal
+record to drive cleanup. Reconciliation must treat it as an orphan only when no
+WorkOrder resource path or worker lease references the exact state-owned path;
+it must then preserve the path for the default 72-hour failure-evidence window
+and repeat the exact Git-toplevel check before removal. Young, referenced,
+leased, and unverifiable paths remain fail-closed.
 
 Resource Guardian alignment invariant: the module is an observer/protector for
 host pressure, with admission before reservation as the target consumer boundary.

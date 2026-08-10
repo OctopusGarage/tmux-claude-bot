@@ -92,6 +92,13 @@ recorded for that WorkOrder. If the source repository or registration cannot be
 verified, retain the evidence and fail closed instead of guessing. Source
 worktrees are never cleanup targets.
 
+A crash between `git worktree add` and durable WorkOrder persistence can leave
+an isolated worktree with no registry record. Periodic reconciliation removes
+such an orphan only after the default 72-hour failure-evidence window, after
+proving that no WorkOrder resource path or worker lease references it, and after
+the normal state-owned-path and exact Git-toplevel checks pass. A young,
+referenced, leased, non-directory, or unverifiable path must remain untouched.
+
 ## Logging And Artifacts
 
 Long-running workflows must be diagnosable from persisted logs and artifacts

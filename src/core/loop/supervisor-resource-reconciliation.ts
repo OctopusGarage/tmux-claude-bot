@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
+import { join, resolve as resolvePath } from "node:path";
+import { appStateDir } from "../../shared/state-dir.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import {
@@ -9,6 +11,7 @@ import {
 import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
 import { LoopSchedulerStore } from "./scheduler.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
+import { resourcePathsForLoopWorkOrder } from "./supervisor-active-resources.js";
 import { settleSupervisorWorkOrderOutcome } from "./supervisor-outcome-settlement.js";
 import {
   readLoopSupervisorWorkerLeaseState,
@@ -19,18 +22,21 @@ import {
   type LoopSupervisorWorkOrderStateStatus,
   listAbandonedLoopSupervisorWorkOrders,
   listTerminalLoopSupervisorWorkOrders,
+  readLoopSupervisorWorkOrderRegistry,
   writeLoopSupervisorWorkOrderState,
 } from "./supervisor-state.js";
 import type { LoopWorkOrder } from "./work-order.js";
 import { loopLedgerTaskId, workerLeaseOutcome } from "./work-order-settlement.js";
 
 const log = createLogger("loop.supervisor-resource-reconciliation");
+const ORPHAN_WORKTREE_RETENTION_MS = 72 * 60 * 60 * 1_000;
 
 export type SupervisorResourceReconciliation = {
   settledTerminalLeases: number;
   abandonedWorkOrders: number;
   removedTerminalWorktrees: number;
   removedExpiredWorktrees: number;
+  removedOrphanWorktrees: number;
   removedStaleLeases: number;
   cleanedTerminalWorkerSessions: number;
 };
@@ -69,6 +75,10 @@ export async function reconcileTerminalSupervisorResources(input: {
     input.runGit === undefined
       ? 0
       : reconcileExpiredLoopSupervisorWorkerWorktrees({ now: input.now, runGit: input.runGit });
+  const removedOrphanWorktrees =
+    input.runGit === undefined
+      ? 0
+      : reconcileOrphanLoopSupervisorWorktrees({ now: input.now, runGit: input.runGit });
 
   if (settledTerminalLeases > 0) {
     log.info("loop engineering terminal supervisor worker leases reconciled", {
@@ -100,14 +110,89 @@ export async function reconcileTerminalSupervisorResources(input: {
       data: { removed: removedExpiredWorktrees },
     });
   }
+  if (removedOrphanWorktrees > 0) {
+    log.info("loop engineering orphan supervisor worktrees reconciled", {
+      data: { removed: removedOrphanWorktrees },
+    });
+  }
   return {
     settledTerminalLeases,
     abandonedWorkOrders,
     removedTerminalWorktrees,
     removedExpiredWorktrees,
+    removedOrphanWorktrees,
     removedStaleLeases,
     cleanedTerminalWorkerSessions,
   };
+}
+
+/**
+ * Recover worktrees left behind when a process died after `git worktree add`
+ * but before its WorkOrder became durable. Recorded WorkOrders and every lease
+ * remain authoritative; an unreferenced directory must also age past the normal
+ * failure-evidence window before the existing verified Git cleanup may remove it.
+ */
+function reconcileOrphanLoopSupervisorWorktrees(input: {
+  now: number;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): number {
+  const root = join(appStateDir(), "loop-worktrees");
+  if (!existsSync(root)) return 0;
+
+  const referenced = new Set<string>();
+  for (const { workOrder } of readLoopSupervisorWorkOrderRegistry(input.now).records) {
+    for (const path of resourcePathsForLoopWorkOrder(workOrder)) {
+      if (isBotOwnedLoopExecutionWorktree(path)) referenced.add(resolvePath(path));
+    }
+  }
+  for (const lease of readLoopSupervisorWorkerLeaseState().leases) {
+    if (isBotOwnedLoopExecutionWorktree(lease.projectPath)) {
+      referenced.add(resolvePath(lease.projectPath));
+    }
+  }
+
+  let projectEntries: Dirent<string>[];
+  try {
+    projectEntries = readdirSync(root, { withFileTypes: true });
+  } catch (err) {
+    log.warn("loop failed to scan the supervisor worktree root", { err, data: { root } });
+    return 0;
+  }
+
+  const cleanupWorktree = createLoopExecutionWorktreeCleanup(input.runGit);
+  let removed = 0;
+  for (const projectEntry of projectEntries) {
+    if (!projectEntry.isDirectory()) continue;
+    const projectDir = join(root, projectEntry.name);
+    let worktreeEntries: Dirent<string>[];
+    try {
+      worktreeEntries = readdirSync(projectDir, { withFileTypes: true });
+    } catch (err) {
+      log.warn("loop failed to scan a supervisor project worktree directory", {
+        err,
+        data: { projectDir },
+      });
+      continue;
+    }
+    for (const worktreeEntry of worktreeEntries) {
+      if (!worktreeEntry.isDirectory()) continue;
+      const worktree = resolvePath(projectDir, worktreeEntry.name);
+      if (referenced.has(worktree)) continue;
+      let lastTouchedAt: number;
+      try {
+        lastTouchedAt = statSync(worktree).mtimeMs;
+      } catch (err) {
+        log.warn("loop failed to inspect a possible orphan supervisor worktree", {
+          err,
+          data: { worktree },
+        });
+        continue;
+      }
+      if (lastTouchedAt + ORPHAN_WORKTREE_RETENTION_MS > input.now) continue;
+      if (cleanupWorktree({ worktree }) === "removed") removed++;
+    }
+  }
+  return removed;
 }
 
 function reconcileStaleLoopSupervisorWorkerLeases(): number {
