@@ -24,11 +24,12 @@ export async function reconcileAutopilotDelegatedTasks(
 ): Promise<AutopilotDelegatedTaskReconciliation> {
   const ledger = input.ledger ?? new DailyTaskLedger();
   const coordinator = new RepairCoordinator();
-  const terminalByRunId = new Map(
-    [
-      ...listTerminalLoopSupervisorWorkOrders(),
-      ...listRecoverableFinalSummaryLoopSupervisorWorkOrders(),
-    ].map((record) => [record.workOrder.id, record]),
+  const terminalWorkOrders = listTerminalLoopSupervisorWorkOrders();
+  const terminalRunIds = new Set(terminalWorkOrders.map((record) => record.workOrder.id));
+  const actionableByRunId = new Map(
+    [...terminalWorkOrders, ...listRecoverableFinalSummaryLoopSupervisorWorkOrders()].map(
+      (record) => [record.workOrder.id, record],
+    ),
   );
   const result: AutopilotDelegatedTaskReconciliation = {
     checked: 0,
@@ -43,23 +44,24 @@ export async function reconcileAutopilotDelegatedTasks(
     const runId = task.taskId.startsWith("autopilot:")
       ? task.taskId.slice("autopilot:".length)
       : task.taskId;
-    const terminal = terminalByRunId.get(runId);
-    if (terminal === undefined) continue;
-    result.checked += 1;
+    const actionable = actionableByRunId.get(runId);
+    if (actionable === undefined) continue;
 
-    const summary = parseSupervisorFinalSummaryFile(terminal.workOrder);
-    const gatePath = join(terminal.runDir, "system-gate.json");
+    const summary = parseSupervisorFinalSummaryFile(actionable.workOrder);
+    const gatePath = join(actionable.runDir, "system-gate.json");
     const gate = readAcceptedSystemGate(
       gatePath,
-      terminal.workOrder.id,
-      terminal.workOrder.projectId,
+      actionable.workOrder.id,
+      actionable.workOrder.projectId,
     );
+    if (!terminalRunIds.has(runId) && !gate.ok) continue;
+    result.checked += 1;
     const recoveredSuccessfully = summary.ok && summary.summary.status === "completed" && gate.ok;
     if (recoveredSuccessfully) {
       ledger.finish(task.taskId, {
         endedAt: now,
         summary: "Reconciled from terminal supervisor artifacts.",
-        reportPath: terminal.runDir,
+        reportPath: actionable.runDir,
       });
       reconcileDelegatedRepairQueue({
         coordinator,
@@ -79,7 +81,7 @@ export async function reconcileAutopilotDelegatedTasks(
         endedAt: now,
         error: `Autopilot delegated task reconciliation failed: ${reason}`,
         summary: "Reconciled terminal supervisor artifacts and found an incomplete closure.",
-        reportPath: terminal.runDir,
+        reportPath: actionable.runDir,
       });
       reconcileDelegatedRepairQueue({
         coordinator,
@@ -91,9 +93,9 @@ export async function reconcileAutopilotDelegatedTasks(
       result.failed += 1;
     }
 
-    if (input.cleanupWorkerSession !== undefined && terminal.workOrder.workerSession) {
+    if (input.cleanupWorkerSession !== undefined && actionable.workOrder.workerSession) {
       try {
-        await input.cleanupWorkerSession(terminal.workOrder.workerSession);
+        await input.cleanupWorkerSession(actionable.workOrder.workerSession);
         result.cleaned += 1;
       } catch {
         // Ledger closure remains durable; the next guardian tick can retry cleanup.

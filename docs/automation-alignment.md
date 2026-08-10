@@ -145,6 +145,11 @@ schedule fires again.
 When a project already has any live WorkOrder, an open recovery remains pending
 and is deferred without claiming or incrementing its retry attempt; admission
 resumes after the live WorkOrder reaches a terminal state.
+A non-terminal WorkOrder with a valid final summary remains a project
+reservation while its system gate is still being written. Delegated-task
+reconciliation must leave its ledger entry running, and project recovery must
+defer without consuming a retry, until either an accepted gate or terminal
+WorkOrder state makes the outcome authoritative.
 Daily Audit ticks, forced audits, and startup-triggered audits share a process
 mutex; an overlapping tick exits as `in-progress` before it can mutate ledger or
 repair-queue state.

@@ -176,6 +176,18 @@ describe("autopilot delegated task reconciliation", () => {
     ).toMatchObject({ status: "success", repairStatus: "not-needed" });
   });
 
+  it("keeps a running ledger entry reserved while its final summary awaits the system gate", async () => {
+    const runId = arrangeTerminalRun("in-flight", false);
+    startLedger(runId);
+
+    const result = await reconcileAutopilotDelegatedTasks({ now: 3 });
+
+    expect(result).toMatchObject({ checked: 0, finished: 0, failed: 0 });
+    expect(
+      new DailyTaskLedger().listAll().find((item) => item.taskId === `autopilot:${runId}`),
+    ).toMatchObject({ status: "running" });
+  });
+
   it("is idempotent after the ledger and worker have been reconciled", async () => {
     const runId = arrangeTerminalRun("completed", true);
     startLedger(runId);

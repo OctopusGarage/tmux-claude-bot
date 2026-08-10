@@ -255,6 +255,10 @@ A service restart or machine reboot must therefore preserve live delegations,
 and automatically requeue delegations whose worker disappeared, instead of
 leaving a WorkOrder permanently queued or falsely treating the pool session as
 the worker.
+During normal finalization, a valid final summary can precede `system-gate.json`
+and terminal WorkOrder state. That settling WorkOrder continues to reserve its
+project: delegated-task reconciliation waits for the gate, and project recovery
+cannot release or claim another recovery for the same project during the gap.
 Terminal ledger invariants are enforced during every audit tick: successful or
 skipped tasks always carry `repairStatus=not-needed`, while failed tasks retain
 their explicit repair outcome.

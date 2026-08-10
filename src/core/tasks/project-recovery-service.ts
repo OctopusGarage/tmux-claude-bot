@@ -1,9 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  listTerminalLoopSupervisorWorkOrders,
-  listUnfinishedLoopSupervisorWorkOrders,
-} from "../loop/supervisor-state.js";
+import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
 import {
   type ConfiguredRecoveryConfig,
   type ConfiguredRecoveryTarget,
@@ -74,8 +71,12 @@ export async function runProjectRecoveryPass(input: {
   };
   const targetById = new Map<string, ConfiguredRecoveryTarget>();
   const recordsByTarget = new Map<string, RecoveryRecord[]>();
-  const activeWorkOrders = listUnfinishedLoopSupervisorWorkOrders();
-  const terminalWorkOrders = listTerminalLoopSupervisorWorkOrders();
+  const workOrderRegistry = readLoopSupervisorWorkOrderRegistry(input.now);
+  const reservedWorkOrders = [
+    ...workOrderRegistry.unfinished,
+    ...workOrderRegistry.recoverableFinalSummary,
+  ];
+  const terminalWorkOrders = workOrderRegistry.terminal;
 
   for (const record of input.records) {
     if (record.source !== "loop-engineering" && record.source !== "autopilot-delegate") continue;
@@ -151,11 +152,11 @@ export async function runProjectRecoveryPass(input: {
     const target = targetById.get(targetId);
     if (target === undefined) continue;
     let existing = input.coordinator.findOpenProjectRecovery(target.id);
-    const hasLiveWorkOrder = activeWorkOrders.some(
+    const hasReservedWorkOrder = reservedWorkOrders.some(
       (record) =>
         input.canonicalize(record.workOrder.projectPath) === input.canonicalize(target.path),
     );
-    if (existing !== undefined && hasLiveWorkOrder) {
+    if (existing !== undefined && hasReservedWorkOrder) {
       input.coordinator.linkTaskIds(
         existing.id,
         records.map((record) => record.taskId),
@@ -179,7 +180,7 @@ export async function runProjectRecoveryPass(input: {
             taskId.endsWith(`:${record.workOrder.id}`),
         ),
       );
-      if (!hasLiveWorkOrder && hasTerminalLinkedWorkOrder) {
+      if (!hasReservedWorkOrder && hasTerminalLinkedWorkOrder) {
         const existingId = existing.id;
         input.coordinator.releaseToQueue(existingId, input.now);
         existing = input.coordinator.list().find((record) => record.id === existingId);

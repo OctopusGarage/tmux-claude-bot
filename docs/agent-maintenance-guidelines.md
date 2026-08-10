@@ -146,6 +146,10 @@ Project recovery reconciliation applies the same passing-summary terminalization
 to both scheduled Loop records and Autopilot delegation records; neither source
 should require a second worker solely because its earlier state file remained
 failed.
+If a valid final summary exists but the WorkOrder is still non-terminal and its
+system gate is absent, treat the run as settling rather than failed. Keep the
+ledger running and the project reserved until the gate or terminal state is
+durable; never release and redispatch the recovery inside that write-order gap.
 
 ## Supervisor And System Gates
 
