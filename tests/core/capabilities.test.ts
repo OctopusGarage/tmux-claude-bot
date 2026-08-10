@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  capabilityById,
   capabilityInstallPlan,
   capabilityStatusForTaskFamily,
   DEFAULT_CAPABILITY_CATALOG,
@@ -50,6 +51,35 @@ describe("capability catalog", () => {
     );
   });
 
+  it("recognizes installed capability skills from registry records", () => {
+    const status = capabilityStatusForTaskFamily("architecture", [
+      {
+        skillId: "improve-codebase-architecture",
+        sourceUrl: "https://github.com/mattpocock/skills",
+        sourcePath: "skills/engineering/improve-codebase-architecture",
+        ref: "2ab958093e83e0ec752e6c1c5932da465bf23e0c",
+        checksum: "sha256:installed",
+        platforms: ["claude", "codex"],
+        tags: ["architecture"],
+        trustLevel: "approved",
+        risk: "medium",
+        updatePolicy: "notify",
+        status: "installed",
+        installedAt: 1,
+      },
+    ]);
+
+    expect(status).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capabilityId: "skill:mattpocock:improve-codebase-architecture",
+          installed: true,
+          blocking: false,
+        }),
+      ]),
+    );
+  });
+
   it("builds a default approved skill list from installable skill capabilities", () => {
     const approved = defaultApprovedSkills();
 
@@ -77,5 +107,20 @@ describe("capability catalog", () => {
     expect(DEFAULT_CAPABILITY_CATALOG.every((capability) => capability.source === "external")).toBe(
       true,
     );
+  });
+
+  it("plans keep actions for already installed default capabilities", () => {
+    const installedSkillIds = defaultApprovedSkills().map((skill) => skill.id);
+    const plan = capabilityInstallPlan({
+      scope: "default",
+      installedSkillIds,
+    });
+
+    expect(plan.actions.every((action) => action.action === "keep")).toBe(true);
+    expect(plan.actions.map((action) => action.skillId).sort()).toEqual(installedSkillIds);
+  });
+
+  it("returns undefined for unknown capability identifiers", () => {
+    expect(capabilityById("skill:unknown")).toBeUndefined();
   });
 });

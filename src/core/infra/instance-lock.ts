@@ -70,7 +70,7 @@ function isBotProcess(pid: number): boolean {
   try {
     const cmd = execFileSync("ps", ["-ww", "-p", String(pid), "-o", "command="], {
       encoding: "utf8",
-      timeout: 5000,
+      timeout: 15_000,
     });
     return cmd.includes(BOT_PROCESS_MARKER);
   } catch {

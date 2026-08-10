@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Avoid touching the real .env in the voice-language branch; keep VOICE_LANGS etc.
 vi.mock("../../../src/core/read/voice-support.js", async (importOriginal) => ({
@@ -62,6 +65,8 @@ import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-targe
 import { sendStatusInstall } from "../../../src/adapters/telegram/views.js";
 import { adoptOrphan, findAdoptableOrphans } from "../../../src/core/agents/takeover-service.js";
 import { startActiveDelegatedTask } from "../../../src/core/autopilot/delegated-task.js";
+import { OpportunityStore } from "../../../src/core/opportunities/store.js";
+import type { OpportunitySuggestionInput } from "../../../src/core/opportunities/types.js";
 import { copyToClipboard } from "../../../src/core/platform/clipboard.js";
 import { storeInputList } from "../../../src/core/read/recent-inputs.js";
 import { recoverProjects } from "../../../src/core/recovery/recover.js";
@@ -76,6 +81,7 @@ const startActiveDelegatedTaskMock = vi.mocked(startActiveDelegatedTask);
 
 const SESSION = "tmux_proj_cbtest";
 const SID = sessionShortId(SESSION);
+const originalStateDir = process.env.TCB_STATE_DIR;
 
 const replyTarget = createReplyTargetMap(`/tmp/tg-cb-rt-${Date.now()}`);
 
@@ -88,8 +94,62 @@ function aliveDeps(over: Parameters<typeof fakeDeps>[0] = {}) {
   });
 }
 
+function isolateOpportunityState(): void {
+  process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-tg-opportunity-"));
+}
+
+function opportunityInput(title: string): OpportunitySuggestionInput {
+  return {
+    title,
+    category: "developer-experience",
+    confidence: "high",
+    problem: "The current workflow requires repeated manual checks.",
+    whyNow: "The suggestion came from a recent automation discovery run.",
+    value: "Reduce manual follow-up work.",
+    evidence: ["discovery report"],
+    recommendedApproach: "Discuss the candidate before delegating any implementation.",
+    alternatives: ["Keep the current manual flow."],
+    acceptanceCriteria: ["The operator can decide whether to proceed."],
+    risks: ["The suggestion may be stale."],
+    nonGoals: ["Do not change runtime behavior from the notification button alone."],
+    estimatedComplexity: "small",
+    delegateRequirement: "Human approval before implementation.",
+  };
+}
+
+function storeOpportunity(input: {
+  title: string;
+  projectId?: string;
+  projectName?: string;
+  projectPath?: string;
+  now?: number;
+}): { id: string; token: string } {
+  const [stored] = new OpportunityStore().upsertDiscoveryReport({
+    report: {
+      projectId: input.projectId ?? "hub",
+      projectName: input.projectName ?? "Hub",
+      generatedAt: "2026-08-09T00:00:00.000Z",
+      coverage: "partial",
+      checkedSignals: ["tests"],
+      skippedSignals: [],
+      suggestions: [opportunityInput(input.title)],
+    },
+    projectPath: input.projectPath ?? "/repo/hub",
+    runId: `run-${input.projectId ?? "hub"}`,
+    cooldownDays: 0,
+    now: input.now ?? 1_786_233_600_000,
+  });
+  if (stored === undefined) throw new Error("expected stored opportunity");
+  return { id: stored.id, token: stored.id.split("-").at(-1) ?? stored.id };
+}
+
 describe("handleCallbackQuery", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  afterEach(() => {
+    if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+    else process.env.TCB_STATE_DIR = originalStateDir;
+  });
 
   it("answers (no-op) when callback_data does not parse", async () => {
     const ctx = fakeCtx({ callbackData: "garbage-data" });
@@ -624,6 +684,60 @@ describe("handleCallbackQuery", () => {
       await handleCallbackQuery(ctx, fakeDeps(), replyTarget);
       expect(ctx.answerCallbackQuery).toHaveBeenCalled();
       expect(sendStatusInstallMock).toHaveBeenCalledWith(ctx, "wrap", replyTarget);
+    });
+  });
+
+  describe("opportunity batch callbacks (od / ox)", () => {
+    it("reports missing opportunity tokens without opening a project", async () => {
+      isolateOpportunityState();
+      const ctx = fakeCtx({ callbackData: "od:missing1" });
+      const deps = fakeDeps();
+
+      await handleCallbackQuery(ctx, deps, replyTarget);
+
+      expect(ctx.answered.some((t) => typeof t === "string" && t.includes("missing1"))).toBe(true);
+      expect(ctx.texts().some((t) => t.includes("missing1"))).toBe(true);
+      expect(deps.queue.enqueued).toHaveLength(0);
+    });
+
+    it("dismisses every resolved opportunity and removes the notification keyboard", async () => {
+      isolateOpportunityState();
+      const first = storeOpportunity({ title: "Simplify setup", now: 1_786_233_600_000 });
+      const second = storeOpportunity({ title: "Document recovery", now: 1_786_233_601_000 });
+      const ctx = fakeCtx({ callbackData: `ox:${first.token},${second.token}` });
+
+      await handleCallbackQuery(ctx, fakeDeps(), replyTarget);
+
+      expect(ctx.answered.some((t) => typeof t === "string" && t.includes("2"))).toBe(true);
+      expect(ctx.editedMarkups).toHaveLength(1);
+      expect(new OpportunityStore().get(first.id)).toMatchObject({ status: "dismissed" });
+      expect(new OpportunityStore().get(second.id)).toMatchObject({ status: "dismissed" });
+    });
+
+    it("rejects discussion batches that span multiple project paths", async () => {
+      isolateOpportunityState();
+      const first = storeOpportunity({
+        title: "Simplify setup",
+        projectId: "hub",
+        projectPath: "/repo/hub",
+        now: 1_786_233_600_000,
+      });
+      const second = storeOpportunity({
+        title: "Improve worker docs",
+        projectId: "worker",
+        projectName: "Worker",
+        projectPath: "/repo/worker",
+        now: 1_786_233_601_000,
+      });
+      const ctx = fakeCtx({ callbackData: `od:${first.token},${second.token}` });
+      const deps = fakeDeps();
+
+      await handleCallbackQuery(ctx, deps, replyTarget);
+
+      expect(ctx.texts().some((t) => t.includes("不同项目"))).toBe(true);
+      expect(deps.queue.enqueued).toHaveLength(0);
+      expect(new OpportunityStore().get(first.id)).toMatchObject({ status: "proposed" });
+      expect(new OpportunityStore().get(second.id)).toMatchObject({ status: "proposed" });
     });
   });
 

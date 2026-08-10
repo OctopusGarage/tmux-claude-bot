@@ -79,6 +79,12 @@ export type AppConfig = {
   keepAwake: boolean;
   lark?: LarkConfig | undefined;
   scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
+  resourceGuardian: {
+    enabled: boolean;
+    mode: "observe" | "protect";
+    profile: "balanced" | "conservative";
+    tickMs: number;
+  };
   runtimeGuardian: {
     enabled: boolean;
     mode: RuntimeGuardianMode;

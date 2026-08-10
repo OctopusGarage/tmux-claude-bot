@@ -51,13 +51,14 @@ TUI is open, the TUI auto-reconnects.
 | Key | Action |
 |-----|--------|
 | `j` / `k` (or ↓ / ↑) | move the selection (auto-peeks the selected session) |
+| `Enter` | refresh the peek |
 | `p` | refresh the peek |
 | `i` | compose a prompt for the selected session. **`Enter` sends**; **`Alt+Enter` inserts a newline** and **pasting multi-line text keeps its newlines** (bracketed paste) — so multi-line prompts work. `←`/`→` `↑`/`↓` move, `Ctrl-A`/`Ctrl-E` jump to line start/end, backspace edits at the cursor, `Esc` cancels. |
 | `e` | send `Esc` to the session |
 | `x` | send `Enter` to the session |
 | `r` | restart the session's agent (resumes the conversation); asks for `y/N` confirmation |
 | `l` | **logs** — recent WARN/ERROR for the selected session (any key to close) |
-| `m` | **system load** — machine load / thermal / top CPU / runaway shells (any key to close) |
+| `m` | **system load** — machine load / thermal / top CPU / runaway shells / current Resource Guardian state (any key to close) |
 | `u` | **inputs** — recent inputs you sent to the selected session; `Enter` **re-runs** the selected one, `Esc` to close |
 | `c` | controls overlay — the full action set (interrupt / clear / compact / esc / enter / restart / ↑ / ↓ / tab); dangerous actions ask for `y/N` confirmation |
 | `s` | **projects** overlay — every project (live `●` + stopped `◌`, recents included); `Enter` **opens + starts** the selected one (switch to a project / start a stopped one), `Esc` to close |
@@ -65,6 +66,7 @@ TUI is open, the TUI auto-reconnects.
 | `T` | toggle local control prompt translation between off and Argos zh→en; full language-pair control is available with `tcb prompt-translate status|off|on [from] [to]` |
 | `A` | Autopilot delegates clarified work to the Loop Supervisor. Use `tcb autopilot <project> [requirement]` or the chat **Continue via supervisor** action. |
 | `a` | **attach** — drop into the session's real, fully-interactive pane; the TUI resumes when you detach (`Ctrl-b d`). When already attached, it switches client instead |
+| `?` | show the full keymap |
 | `q` | quit the TUI (the bot keeps running) |
 
 A sent prompt is acked immediately; its reply lands in the status line when the agent

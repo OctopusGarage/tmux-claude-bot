@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDailyAuditRepairPrompt,
+  buildResourceGuardianRepairPrompt,
   buildRuntimeGuardianRepairPrompt,
 } from "../../src/core/prompts/repair-prompts.js";
 
@@ -59,5 +60,33 @@ describe("repair prompts", () => {
     expect(prompt).toContain("commit only verified fixes");
     expect(prompt).toContain("Do not open a PR");
     expect(prompt).toContain("source=runtime-guardian");
+  });
+});
+
+describe("Resource Guardian repair prompt", () => {
+  it("keeps stable recovery repair inside the bot repository with deterministic evidence", () => {
+    const prompt = buildResourceGuardianRepairPrompt({
+      repoPath: "/repo/tmux-claude-bot",
+      repairBranch: "dev",
+      incident: { id: "incident-1", fingerprint: "load", evidence: ["owned process"] },
+    });
+    expect(prompt).toContain("Resource Guardian stable-recovery repair.");
+    expect(prompt).toContain("never edit a target project");
+    expect(prompt).toContain("rev-parse --show-toplevel");
+    expect(prompt).toContain("Explore -> Plan -> Code -> Verify -> Review -> Record");
+    expect(prompt).toContain("npm run verify:local");
+    expect(prompt).toContain("Do not create or open a PR");
+    expect(prompt).toContain(
+      "Stop when the evidence does not prove a bot-owned reproducible defect",
+    );
+    expect(prompt).toContain("do not optimize, refactor, or broaden scope speculatively");
+    expect(prompt).toContain("Commit only a verified, narrow repair");
+    expect(prompt).toContain("pre-mutation reviewGate");
+    expect(prompt).toContain("post-mutation reviewGate");
+    expect(prompt).toContain(
+      "regression, evaluation, monitoring, and documentation follow-up candidates",
+    );
+    expect(prompt).toContain("focused regression/eval/monitor/documentation candidate");
+    expect(prompt).toContain("source=resource-guardian");
   });
 });

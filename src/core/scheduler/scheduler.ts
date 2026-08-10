@@ -9,6 +9,8 @@ const log = createLogger("scheduler.core");
 
 export type ReconcileDeps = {
   resolveSession: (task: TaskState) => string;
+  /** A session-level admission gate. Queued tasks remain queued while gated. */
+  isGated?: (session: string) => boolean;
   now: number;
 };
 
@@ -20,12 +22,17 @@ export function reconcile(
   pools: Record<string, PoolState>,
   deps: ReconcileDeps,
 ): Run {
-  const admit = tasksToAdmit(run.tasks, caps, pools);
+  const sessions = new Map<TaskState, string>();
+  const admit = tasksToAdmit(run.tasks, caps, pools, (task) => {
+    const session = deps.resolveSession(task);
+    sessions.set(task, session);
+    return !deps.isGated?.(session);
+  });
   if (admit.length === 0) return run;
   const admitted = new Set(admit);
   const tasks = run.tasks.map((t) => {
     if (!admitted.has(t)) return t;
-    const session = deps.resolveSession(t);
+    const session = sessions.get(t) ?? deps.resolveSession(t);
     log.info("scheduler admitted task", {
       session,
       data: { project: t.project, agent: t.agent, resuming: t.resuming ?? false },

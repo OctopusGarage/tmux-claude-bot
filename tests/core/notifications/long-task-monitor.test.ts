@@ -265,6 +265,105 @@ describe("LongTaskMonitor", () => {
     expect(telegram).not.toHaveBeenCalled();
   });
 
+  it("ignores operator sessions even when they appear busy beyond the threshold", async () => {
+    const telegram = vi.fn(async (_message: string) => {});
+    const gateway = new NotificationGateway();
+    gateway.register("telegram", telegram);
+    const snapshots = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [row({ operator: true })],
+        global: {},
+        generatedAt: FIVE_MIN,
+      })
+      .mockResolvedValueOnce({
+        sessions: [],
+        global: {},
+        generatedAt: FIVE_MIN + 1000,
+      });
+    const monitor = new LongTaskMonitor({
+      snapshot: snapshots as never,
+      notifications: gateway,
+      ownerActivity: new OwnerActivityTracker(),
+      thresholdMs: FIVE_MIN,
+    });
+
+    await monitor.tick();
+    await monitor.tick();
+
+    expect(telegram).not.toHaveBeenCalled();
+  });
+
+  it("notifies an armed task when the busy row no longer has task metadata", async () => {
+    const telegram = vi.fn(async (_message: string) => {});
+    const gateway = new NotificationGateway();
+    gateway.register("telegram", telegram);
+    const missingTask = row({ busy: true });
+    delete missingTask.task;
+    delete missingTask.taskMs;
+    const snapshots = vi
+      .fn()
+      .mockResolvedValueOnce({ sessions: [row()], global: {}, generatedAt: FIVE_MIN })
+      .mockResolvedValueOnce({
+        sessions: [missingTask],
+        global: {},
+        generatedAt: FIVE_MIN + 1000,
+      });
+    const monitor = new LongTaskMonitor({
+      snapshot: snapshots as never,
+      notifications: gateway,
+      ownerActivity: new OwnerActivityTracker(),
+      thresholdMs: FIVE_MIN,
+    });
+
+    await monitor.tick();
+    await monitor.tick();
+
+    expect(telegram).toHaveBeenCalledTimes(1);
+    expect(telegram.mock.calls[0]?.[0]).toContain("status: completed");
+  });
+
+  it("does not notify when an unarmed short task switches to another short task", async () => {
+    const telegram = vi.fn(async (_message: string) => {});
+    const gateway = new NotificationGateway();
+    gateway.register("telegram", telegram);
+    const snapshots = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [
+          row({
+            taskMs: 1000,
+            task: { key: "queue:short-1", startedAt: 0, source: "queue" },
+            cumulativeBusyMs: 1000,
+          }),
+        ],
+        global: {},
+        generatedAt: 1000,
+      })
+      .mockResolvedValueOnce({
+        sessions: [
+          row({
+            taskMs: 1000,
+            task: { key: "queue:short-2", startedAt: 1000, source: "queue" },
+            cumulativeBusyMs: 2000,
+          }),
+        ],
+        global: {},
+        generatedAt: 2000,
+      });
+    const monitor = new LongTaskMonitor({
+      snapshot: snapshots as never,
+      notifications: gateway,
+      ownerActivity: new OwnerActivityTracker(),
+      thresholdMs: FIVE_MIN,
+    });
+
+    await monitor.tick();
+    await monitor.tick();
+
+    expect(telegram).not.toHaveBeenCalled();
+  });
+
   it("notifies an armed task when the session immediately starts a different task", async () => {
     const telegram = vi.fn(async (_message: string) => {});
     const gateway = new NotificationGateway();
@@ -448,6 +547,36 @@ describe("LongTaskMonitor", () => {
 
     expect(telegram).toHaveBeenCalledTimes(1);
     expect(lark).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fall back when the recent owner channel accepts the notification", async () => {
+    const telegram = vi.fn(async (_message: string) => {});
+    const lark = vi.fn(async (_message: string) => {});
+    const gateway = new NotificationGateway();
+    gateway.register("telegram", telegram);
+    gateway.register("lark", lark);
+    const ownerActivity = new OwnerActivityTracker();
+    ownerActivity.record("telegram");
+    const snapshots = vi
+      .fn()
+      .mockResolvedValueOnce({ sessions: [row()], global: {}, generatedAt: 0 })
+      .mockResolvedValueOnce({
+        sessions: [idleRow()],
+        global: {},
+        generatedAt: FIVE_MIN,
+      });
+    const monitor = new LongTaskMonitor({
+      snapshot: snapshots as never,
+      notifications: gateway,
+      ownerActivity,
+      thresholdMs: FIVE_MIN,
+    });
+
+    await monitor.tick();
+    await monitor.tick();
+
+    expect(telegram).toHaveBeenCalledTimes(1);
+    expect(lark).not.toHaveBeenCalled();
   });
 
   it("sends to both channels when both are registered and no recent owner channel is known", async () => {

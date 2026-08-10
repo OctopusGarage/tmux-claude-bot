@@ -224,9 +224,36 @@ describe("runLoopSupervisedProjectAsync", () => {
       status: "invalid-output",
       reason: "missing-final-marker",
       output: "done without marker\ndone without marker",
+      repairDisposition: "bot-repairable",
     });
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("did not include a parseable final summary");
+  });
+
+  it.each([
+    "Not running — use /resume to restore it, or /start for a new session",
+    "未运行，请使用 /resume 恢复，或 /start 新建",
+    "未執行，請使用 /resume 復原，或 /start 新建",
+    "実行されていません · /resume で復元、または /start で新規開始してください",
+    "No está en ejecución — usa /resume para restaurarlo, o /start para iniciar uno nuevo",
+  ])("classifies agent not-running output as dispatch readiness failure: %s", async (output) => {
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => ({
+        status: 0,
+        stdout: output,
+        stderr: "",
+      }),
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "no live loop supervisor session",
+      output,
+      repairDisposition: "bot-repairable",
+    });
   });
 
   it("asks the supervisor to finalize once when the first output misses the final marker", async () => {
@@ -319,9 +346,41 @@ describe("runLoopSupervisedProjectAsync", () => {
       status: "invalid-output",
       reason: "invalid-summary",
       output: "[LOOP_SUPERVISOR_DONE:wo-1]\n{}\n[LOOP_SUPERVISOR_DONE:wo-1]\n{}",
+      repairDisposition: "bot-repairable",
     });
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("could not run its final gates");
+  });
+
+  it("classifies structurally valid summaries that fail WorkOrder validation as repairable invalid-output", async () => {
+    const planningWorkOrder: LoopWorkOrder = {
+      ...workOrder,
+      planning: {
+        required: true,
+        source: "active-delegation",
+        requireOwnerConfirmation: false,
+        rubric: [],
+        acceptanceCriteria: [],
+        stopConditions: [],
+        nonGoals: [],
+      },
+    };
+    const output =
+      '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":[],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}';
+
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder: planningWorkOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => ({ status: 0, stdout: output, stderr: "" }),
+    });
+
+    expect(result).toEqual({
+      status: "invalid-output",
+      reason: "invalid-summary",
+      output: `${output}\n${output}`,
+      repairDisposition: "bot-repairable",
+    });
   });
 
   it("accepts a successful status alias from the finalization response", async () => {

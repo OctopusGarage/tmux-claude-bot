@@ -302,6 +302,12 @@ describe("runLoopCommand", () => {
     const sync = runLoopCommand(["skills", "sync", file, "--json"]);
     expect(JSON.parse(sync.stdout ?? "{}")).toMatchObject({ phase: "skill-sync", applied: 1 });
     expect(runLoopCommand(["skills", "list"]).stdout).toContain("loop skills: 1 recorded");
+    expect(JSON.parse(runLoopCommand(["skills", "list", "--json"]).stdout ?? "[]")).toEqual([
+      expect.objectContaining({
+        skillId: "improve-codebase-architecture",
+        status: "installed",
+      }),
+    ]);
 
     expect(runLoopCommand(["skills", "refresh"]).stderr).toBe(
       "Usage: loop skills refresh <file> [--write] [--json]",
@@ -309,6 +315,11 @@ describe("runLoopCommand", () => {
     expect(runLoopCommand(["skills", "refresh", file, "--bad"]).stderr).toContain(
       "unknown loop skills refresh option",
     );
+    const beforeRefresh = readFileSync(file, "utf8");
+    const dryRunRefresh = runLoopCommand(["skills", "refresh", file]);
+    expect(dryRunRefresh.stdout).toContain("loop skills refresh completed: refreshed 1, changed 1");
+    expect(readFileSync(file, "utf8")).toBe(beforeRefresh);
+
     const refresh = runLoopCommand(["skills", "refresh", file, "--write", "--json"]);
     expect(JSON.parse(refresh.stdout ?? "{}")).toMatchObject({
       phase: "skill-refresh",
@@ -325,6 +336,15 @@ describe("runLoopCommand", () => {
     expect(runLoopCommand(["targets", "list"]).stderr).toContain("Usage: loop targets list");
     expect(runLoopCommand(["targets", "list", file, "--bad"]).stderr).toContain(
       "unknown loop targets list option",
+    );
+    expect(
+      runLoopCommand(["targets", "disable", file, "repo", "hub-all-prs", "--bad"]).stderr,
+    ).toContain('unknown loop targets disable option "--bad"');
+    expect(
+      runLoopCommand(["targets", "enable", file, "repo", "hub-all-prs", "--bad"]).stderr,
+    ).toContain('unknown loop targets enable option "--bad"');
+    expect(runLoopCommand(["targets", "list", file]).stdout).toContain(
+      "- project:hub: enabled scheduled jobs=architecture",
     );
 
     const listed = JSON.parse(
@@ -371,6 +391,9 @@ describe("runLoopCommand", () => {
       enabled: true,
       changed: true,
     });
+    expect(runLoopCommand(["targets", "enable", file, "repo", "hub-all-prs"]).stdout).toBe(
+      "loop target enable: repo:hub-all-prs unchanged",
+    );
   });
 
   it("handles unknown commands and parse errors", () => {

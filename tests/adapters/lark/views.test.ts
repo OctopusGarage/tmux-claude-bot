@@ -864,7 +864,16 @@ describe("sendRecoverPreview", () => {
 describe("sendDoctor / sendDashboard", () => {
   it("sendDoctor sends the redacted health report as text", async () => {
     const channel = fakeChannel();
-    await sendDoctor(channel, "chat-1");
+    await sendDoctor(channel, "chat-1", {
+      readEnv: () => new Map([["TELEGRAM_BOT_TOKEN", "secret"]]),
+      onPath: async () => true,
+      serviceLoaded: async () => false,
+      botProcessCount: async () => 0,
+      caffeinateActive: async () => false,
+      clamshellClosed: async () => null,
+      sleepDisabled: async () => false,
+      fileExists: () => false,
+    });
     expect(channel.texts()).toHaveLength(1);
     expect(channel.cards()).toHaveLength(0);
   });
@@ -878,6 +887,21 @@ describe("sendDoctor / sendDashboard", () => {
 });
 
 describe("sendLogs", () => {
+  let previousLogDir: string | undefined;
+  let logDir: string;
+
+  beforeEach(() => {
+    previousLogDir = process.env.TCB_LOG_DIR;
+    logDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-lark-logs-"));
+    process.env.TCB_LOG_DIR = logDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+    if (previousLogDir === undefined) delete process.env.TCB_LOG_DIR;
+    else process.env.TCB_LOG_DIR = previousLogDir;
+  });
+
   it("replies the no-context hint when there is no session and no arg", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ session: null });

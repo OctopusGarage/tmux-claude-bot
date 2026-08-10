@@ -231,8 +231,7 @@ async function enqueueLoopAgentPromptToSession(
   }
 
   let leaseAcquired = false;
-  let leaseUnavailableReason = "supervisor worker lease unavailable while dispatching";
-  const acquireLease = (): boolean => {
+  const acquireLease = (): { status: "acquired" } | { status: "unavailable"; reason: string } => {
     const lease = leaseLoopSupervisorWorker({
       state: readLoopSupervisorWorkerLeaseState(),
       supervisorSession: sessionName,
@@ -243,14 +242,12 @@ async function enqueueLoopAgentPromptToSession(
     });
     writeLoopSupervisorWorkerLeaseState(lease.state);
     if (lease.status === "unavailable") {
-      leaseUnavailableReason = lease.reason;
       log.info("loop supervisor worker lease unavailable", {
         session: sessionName,
         data: { workOrderId: workOrder.id, projectId: workOrder.projectId, reason: lease.reason },
       });
-      return false;
+      return { status: "unavailable", reason: lease.reason };
     }
-    leaseAcquired = true;
     log.info("loop supervisor worker leased", {
       session: sessionName,
       data: {
@@ -259,14 +256,18 @@ async function enqueueLoopAgentPromptToSession(
         projectPath: workOrder.projectPath,
       },
     });
-    return true;
+    return { status: "acquired" };
   };
-  if (!deferLeaseUntilConsumption && !acquireLease()) {
-    return {
-      status: 1,
-      stdout: "",
-      stderr: leaseUnavailableReason,
-    };
+  if (!deferLeaseUntilConsumption) {
+    const lease = acquireLease();
+    if (lease.status === "unavailable") {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: lease.reason,
+      };
+    }
+    leaseAcquired = true;
   }
 
   const resetResult = await enqueueContextResetIfNeeded(deps, sessionName, contextReset);
@@ -314,7 +315,11 @@ async function enqueueLoopAgentPromptToSession(
         parseSupervisorFinalSummaryFile(workOrder).ok,
       controlRestore: loopSupervisorControlRestore(workOrder, sessionName, Date.now()),
       started: () => {
-        if (deferLeaseUntilConsumption && !acquireLease()) return false;
+        if (deferLeaseUntilConsumption) {
+          const lease = acquireLease();
+          if (lease.status === "unavailable") return false;
+          leaseAcquired = true;
+        }
         consumed = true;
         clearConsumptionTimer();
         writeLoopSupervisorWorkOrderState({

@@ -30,6 +30,7 @@ export type GovernedPromptId =
   | "loop.policy.active-delegated-task"
   | "repair.daily-task-audit"
   | "repair.runtime-guardian"
+  | "repair.resource-guardian"
   | "legacy.loop.agent-eval"
   | "legacy.loop.agent-task"
   | "legacy.loop.preflight-repair"

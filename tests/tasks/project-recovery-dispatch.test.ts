@@ -1,8 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
+import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import {
+  createProjectRecoveryDelegator,
   dispatchProjectRecovery,
   projectRecoveryLockKey,
 } from "../../src/core/tasks/project-recovery-dispatch.js";
+
+vi.mock("../../src/core/autopilot/delegated-task.js", () => ({
+  startActiveDelegatedTask: vi.fn(async () => ({
+    status: "queued",
+    runId: "recovery-run-1",
+    projectId: "alcove",
+    supervisorSession: "tmux_proj_loop-supervisor",
+    reportDir: "/tmp/recovery-report",
+  })),
+}));
 
 describe("project recovery dispatch", () => {
   it("builds a project-scoped delegated task with the original evidence", async () => {
@@ -58,5 +70,22 @@ describe("project recovery dispatch", () => {
       },
     );
     expect(result).toEqual({ status: "blocked", detail: "capacity" });
+  });
+
+  it("marks Project Recovery delegation as background work", async () => {
+    const delegate = createProjectRecoveryDelegator({} as never);
+
+    await expect(
+      delegate({
+        session: "tmux_proj_alcove",
+        requirement: "repair the configured project",
+        worktreeIsolation: "isolated",
+      }),
+    ).resolves.toEqual({ status: "queued", runId: "recovery-run-1" });
+
+    expect(startActiveDelegatedTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ resourceTrigger: "background" }),
+    );
   });
 });

@@ -246,14 +246,22 @@ function parseDispatchOutput(
   if (result.status !== 0) {
     return { status: "dispatch-failed", reason: result.stderr || "dispatch failed", output };
   }
+  if (isAgentNotRunningOutput(output)) {
+    return {
+      status: "dispatch-failed",
+      reason: "no live loop supervisor session",
+      output,
+      repairDisposition: "bot-repairable",
+    };
+  }
   const fileParsed = parseSupervisorFinalSummaryFile(workOrder);
   const parsed = fileParsed.ok ? fileParsed : parseSupervisorFinalSummary(output, workOrder.id);
   if (!parsed.ok) {
-    return { status: "invalid-output", reason: parsed.reason, output };
+    return invalidSupervisorOutput(parsed.reason, output);
   }
   const summary = recoverNonTerminalPullRequestDecisions(workOrder, parsed.summary);
   if (!validateSupervisorFinalSummaryForWorkOrder(workOrder, summary)) {
-    return { status: "invalid-output", reason: "invalid-summary", output };
+    return invalidSupervisorOutput("invalid-summary", output);
   }
 
   return {
@@ -263,8 +271,29 @@ function parseDispatchOutput(
   };
 }
 
+function invalidSupervisorOutput(reason: string, output: string): LoopSupervisedRunResult {
+  return { status: "invalid-output", reason, output, repairDisposition: "bot-repairable" };
+}
+
 function joinOutput(result: SupervisorDispatchResult): string {
   return [result.stdout, result.stderr].filter((text) => text.length > 0).join("\n");
+}
+
+function isAgentNotRunningOutput(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return (
+    (normalized.includes("not running") &&
+      normalized.includes("/resume") &&
+      normalized.includes("/start")) ||
+    (output.includes("未运行") && output.includes("/resume") && output.includes("/start")) ||
+    (output.includes("未執行") && output.includes("/resume") && output.includes("/start")) ||
+    (output.includes("実行されていません") &&
+      output.includes("/resume") &&
+      output.includes("/start")) ||
+    (normalized.includes("no está en ejecución") &&
+      normalized.includes("/resume") &&
+      normalized.includes("/start"))
+  );
 }
 
 type TimedOutResult = {

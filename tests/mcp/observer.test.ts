@@ -91,6 +91,94 @@ describe("observer MCP server", () => {
     }
   });
 
+  it("returns projects, sessions, queue, and scoped logs through read-only control calls", async () => {
+    const snapshot = vi.fn(
+      async (): Promise<DashboardSnapshot> => ({
+        generatedAt: 2,
+        global: {
+          botUptimeMs: 20,
+          version: "0.0.0-test",
+          sessionCount: 2,
+          runningCount: 1,
+          busyCount: 1,
+          queueDepth: 3,
+          adapters: { telegram: true, lark: true },
+        },
+        sessions: [
+          {
+            session: "tmux_proj_demo",
+            label: "Demo",
+            sessionKind: "regular",
+            workspacePath: "/repo/demo",
+            independentSlot: null,
+            group: null,
+            kind: "codex",
+            running: true,
+            busy: false,
+            cumulativeBusyMs: 0,
+            uptimeMs: 20,
+            usage: null,
+          },
+        ],
+      }),
+    );
+    const projects = vi.fn(async () => [{ sid: "demo", label: "Demo", alive: true, active: true }]);
+    const logs = vi.fn(async (session: string) => `logs for ${session}`);
+    const { client, server } = await connectTestClient(() =>
+      fakeClient({
+        logs,
+        projects,
+        snapshot,
+      }),
+    );
+    try {
+      await expect(
+        client.callTool({ name: "tcb.observer.projects", arguments: {} }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          ok: true,
+          data: [{ sid: "demo", label: "Demo", alive: true, active: true }],
+          evidence: ["control:projects"],
+        },
+      });
+      await expect(
+        client.callTool({ name: "tcb.observer.sessions", arguments: {} }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          ok: true,
+          data: [{ session: "tmux_proj_demo", label: "Demo" }],
+          evidence: ["control:snapshot.sessions"],
+        },
+      });
+      await expect(
+        client.callTool({ name: "tcb.observer.queue", arguments: {} }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          ok: true,
+          data: { queueDepth: 3, busyCount: 1, runningCount: 1, sessionCount: 2 },
+          evidence: ["control:snapshot.global"],
+        },
+      });
+      await expect(
+        client.callTool({
+          name: "tcb.observer.logs_query",
+          arguments: { session: "tmux_proj_demo" },
+        }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          ok: true,
+          data: { session: "tmux_proj_demo", text: "logs for tmux_proj_demo" },
+          evidence: ["control:logs"],
+        },
+      });
+      expect(projects).toHaveBeenCalledOnce();
+      expect(logs).toHaveBeenCalledWith("tmux_proj_demo");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("reports control-socket failures as blocked tool results", async () => {
     const { client, server } = await connectTestClient(() =>
       fakeClient({
@@ -186,6 +274,49 @@ describe("observer MCP server", () => {
       expect(discoverRuntimeGuardianFindings).toHaveBeenCalledWith({
         now: 1_785_657_600_000,
         lookbackMs: 6 * 60 * 60 * 1000,
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("uses injected Loop report discovery and the default Runtime Guardian lookback", async () => {
+    const listLoopReports = vi.fn(() => [
+      {
+        runId: "run-1",
+        projectId: "repo",
+        projectName: "Repo",
+        status: "passed" as const,
+        startedAt: 1,
+        endedAt: 2,
+        markdownPath: "/tmp/report.md",
+        summaryPath: "/tmp/summary.json",
+      },
+    ]);
+    const discoverRuntimeGuardianFindings = vi.fn(() => []);
+    const { client, server } = await connectObserverClient({
+      now: () => 1_785_657_600_000,
+      listLoopReports,
+      discoverRuntimeGuardianFindings,
+    });
+    try {
+      await expect(
+        client.callTool({ name: "tcb.observer.loop_reports_list", arguments: {} }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          ok: true,
+          data: [{ runId: "run-1", projectId: "repo", status: "passed" }],
+          evidence: ["state:loop-runs"],
+        },
+      });
+      await client.callTool({
+        name: "tcb.observer.runtime_guardian_findings",
+        arguments: {},
+      });
+      expect(discoverRuntimeGuardianFindings).toHaveBeenCalledWith({
+        now: 1_785_657_600_000,
+        lookbackMs: 24 * 60 * 60 * 1000,
       });
     } finally {
       await client.close();

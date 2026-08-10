@@ -546,6 +546,60 @@ describe("createLoopSupervisorTaskRunner", () => {
     ]);
   });
 
+  it("rejects deferred supervisor work at consumption when the worker lease is still unavailable", async () => {
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "wo-active",
+          projectId: "active",
+          projectPath: "/repo/active",
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_000,
+        },
+      ],
+    });
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const deps = {
+      queue,
+      config: { projectSessionPrefix: "tmux_proj_" },
+      bridge: {
+        hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+      },
+    };
+    const handled: string[] = [];
+    queue.setHandler(async (message) => {
+      handled.push(message.text);
+      message.resolve("should not run without a lease");
+    });
+
+    const result = await createLoopSupervisorTaskRunner(deps)({
+      session: "tmux_proj_loop-supervisor",
+      prompt: "Run deferred supervised work order",
+      signal: new AbortController().signal,
+      workOrder,
+      deferLeaseUntilConsumption: true,
+    });
+
+    expect(result).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "queued task could not acquire its supervisor lease",
+    });
+    expect(handled).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: "tmux_proj_loop-supervisor",
+        workOrderId: "wo-active",
+        status: "active",
+      }),
+    ]);
+  });
+
   it("retains a supervisor worker lease when queued work fails", async () => {
     const queue = new MessageQueue(
       30,

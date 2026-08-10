@@ -18,6 +18,7 @@ import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { autoRecoverOnBoot } from "./core/recovery/recover.js";
 import { startRunningSweep } from "./core/recovery/running-sweep.js";
 import { startSessionIdleReaper } from "./core/recovery/session-idle-reaper.js";
+import { startResourceGuardian } from "./core/resource-guardian/service.js";
 import { startRuntimeGuardian } from "./core/runtime-guardian/service.js";
 import { startScheduler } from "./core/scheduler/scheduler-loop.js";
 import { startDailyTaskAudit } from "./core/tasks/daily-audit-service.js";
@@ -31,6 +32,7 @@ const AUTO_RECOVER_DELAY_MS = 5000;
 const log = createLogger("boot");
 const fatalLog = createLogger("index");
 let shuttingDown = false;
+let stopResourceGuardian = (): void => {};
 
 // Refuse to start beside another running instance — two pollers on one
 // Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
@@ -109,6 +111,8 @@ process.once("SIGINT", releaseInstanceLock);
 process.once("SIGTERM", releaseInstanceLock);
 process.once("SIGINT", stopKeepAwake);
 process.once("SIGTERM", stopKeepAwake);
+process.once("SIGINT", () => stopResourceGuardian());
+process.once("SIGTERM", () => stopResourceGuardian());
 
 process.on("uncaughtException", (err) => {
   if (shuttingDown && isAbortLikeError(err)) {
@@ -173,6 +177,7 @@ let notificationDrivenServicesStarted = false;
 const startNotificationDrivenServices = (): void => {
   if (notificationDrivenServicesStarted) return;
   notificationDrivenServicesStarted = true;
+  stopResourceGuardian = startResourceGuardian(deps);
   startRuntimeGuardian(deps);
   startDailyTaskAudit(deps);
   startLongTaskMonitor(deps);

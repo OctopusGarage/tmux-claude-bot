@@ -13,7 +13,13 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { registerCapabilityCommands } from "./cli/capability-commands.js";
+import { registerConfigurationCommands } from "./cli/configuration-commands.js";
+import { registerResourceCommands } from "./cli/resource-commands.js";
+import { createResourceGuardianStore } from "./core/resource-guardian/store.js";
 import { SCHEDULED_TASK_SOURCES } from "./core/tasks/task-ledger.js";
+import { appStateDir } from "./shared/state-dir.js";
+import { tildeifyHome } from "./shared/utils/path.js";
 import { appVersion } from "./shared/version.js";
 
 // Operational logs mirror to stdout only for the bot itself (the `run` command,
@@ -94,165 +100,15 @@ program
     await import("./scripts/doctor.js");
   });
 
-const configCommand = program
-  .command("config")
-  .description("inspect and safely edit non-secret personal configuration");
+registerConfigurationCommands(program);
 
-configCommand
-  .command("list")
-  .description("list .env configuration with secrets redacted")
-  .option("--json", "output config entries as JSON")
-  .action(async (o: { json?: boolean }) => {
-    const { runConfigCommand } = await import("./core/config/command.js");
-    const result = runConfigCommand(["list", ...(o.json ? ["--json"] : [])]);
-    if (result.exitCode === 0) console.log(result.stdout);
-    else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
+registerResourceCommands(program);
 
-configCommand
-  .command("get <key>")
-  .description("show one .env configuration value with secrets redacted")
-  .option("--json", "output config entry as JSON")
-  .action(async (key: string, o: { json?: boolean }) => {
-    const { runConfigCommand } = await import("./core/config/command.js");
-    const result = runConfigCommand(["get", key, ...(o.json ? ["--json"] : [])]);
-    if (result.exitCode === 0) console.log(result.stdout);
-    else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
-
-configCommand
-  .command("set <key> <value>")
-  .description("set an allowlisted non-secret .env configuration value")
-  .option("--json", "output set result as JSON")
-  .action(async (key: string, value: string, o: { json?: boolean }) => {
-    const { runConfigCommand } = await import("./core/config/command.js");
-    const result = runConfigCommand(["set", key, value, ...(o.json ? ["--json"] : [])]);
-    if (result.exitCode === 0) console.log(result.stdout);
-    else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
-
-const automation = program
-  .command("automation")
-  .description("inspect and pause or resume high-cost background automation");
-
-automation
-  .command("status")
-  .description("show Loop Engineering, task audit, runtime guardian, and batch scheduler state")
-  .option("--json", "output automation status as JSON")
-  .action(async (o: { json?: boolean }) => {
-    const { runAutomationCommand } = await import("./core/config/command.js");
-    const result = runAutomationCommand(["status", ...(o.json ? ["--json"] : [])]);
-    if (result.exitCode === 0) console.log(result.stdout);
-    else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
-
-for (const action of ["pause", "resume"] as const) {
-  automation
-    .command(`${action} <target>`)
-    .description(`${action} loop, task-audit, runtime-guardian, or batch automation`)
-    .option("--json", "output toggle result as JSON")
-    .action(async (target: string, o: { json?: boolean }) => {
-      const { runAutomationCommand } = await import("./core/config/command.js");
-      const result = runAutomationCommand([action, target, ...(o.json ? ["--json"] : [])]);
-      if (result.exitCode === 0) console.log(result.stdout);
-      else {
-        console.error(result.stderr);
-        process.exit(1);
-      }
-    });
-}
-
-const capabilities = program
-  .command("capabilities")
-  .description("inspect curated external skills and task capability dependencies");
-
-capabilities
-  .command("list")
-  .description("list the curated default capability catalog")
-  .option("--json", "output capability catalog as JSON")
-  .action(async (o: { json?: boolean }) => {
-    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
-    const result = runCapabilitiesCommand(["list", ...(o.json ? ["--json"] : [])]);
-    if (result.exitCode === 0) console.log(result.stdout);
-    else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
-
-capabilities
-  .command("status")
-  .description("show task-specific capability readiness")
-  .requiredOption("--task <taskKind>", "Loop WorkOrder task kind")
-  .option("--json", "output capability status as JSON")
-  .action(async (o: { task: string; json?: boolean }) => {
-    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
-    const result = runCapabilitiesCommand([
-      "status",
-      "--task",
-      o.task,
-      ...(o.json ? ["--json"] : []),
-    ]);
-    if (result.exitCode === 0) console.log(result.stdout);
-    else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
-
-capabilities
-  .command("install")
-  .description("print the default approved-skill install plan for curated capabilities")
-  .option("--default", "use the repo-maintained default capability catalog")
-  .option("--json", "output capability install plan as JSON")
-  .action(async (o: { default?: boolean; json?: boolean }) => {
-    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
-    const result = runCapabilitiesCommand([
-      "install",
-      ...(o.default ? ["--default"] : []),
-      ...(o.json ? ["--json"] : []),
-    ]);
-    if (result.exitCode === 0) console.log(result.stdout);
-    else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
-
-capabilities
-  .command("update")
-  .description("print the default approved-skill refresh path for curated capabilities")
-  .option("--default", "use the repo-maintained default capability catalog")
-  .option("--json", "output capability update plan as JSON")
-  .action(async (o: { default?: boolean; json?: boolean }) => {
-    const { runCapabilitiesCommand } = await import("./core/capabilities/command.js");
-    const result = runCapabilitiesCommand([
-      "update",
-      ...(o.default ? ["--default"] : []),
-      ...(o.json ? ["--json"] : []),
-    ]);
-    if (result.exitCode === 0) console.log(result.stdout);
-    else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
+registerCapabilityCommands(program);
 
 program
   .command("install")
-  .description(`provision the managed service (launchd/systemd) into ${MANAGED_DIR}`)
+  .description(`provision the managed service (launchd/systemd) into ${tildeifyHome(MANAGED_DIR)}`)
   .action(() => {
     // Materialize the prebuilt package into the stable managed dir and register
     // the service, so `npm i -g … && tmux-claude-bot install` stands up the same
@@ -337,13 +193,18 @@ program
 
 program
   .command("sysload")
-  .description("show machine load, thermal state, top CPU, and runaway/orphan shells")
+  .description(
+    "show machine load, thermal state, top CPU, runaway/orphan shells, and Resource Guardian",
+  )
   .action(async () => {
     const { gatherSystemLoad, renderSystemLoad, defaultSystemLoadProbes } = await import(
       "./core/infra/system-load.js"
     );
     process.stdout.write(
-      `${renderSystemLoad(await gatherSystemLoad(defaultSystemLoadProbes()))}\n`,
+      `${renderSystemLoad(
+        await gatherSystemLoad(defaultSystemLoadProbes()),
+        createResourceGuardianStore({ stateDir: appStateDir() }).readCurrentReadOnly().view,
+      )}\n`,
     );
   });
 

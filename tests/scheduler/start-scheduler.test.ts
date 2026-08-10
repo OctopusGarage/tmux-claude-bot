@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
 import { startScheduler } from "../../src/core/scheduler/scheduler-loop.js";
 import { SchedulerStore } from "../../src/core/scheduler/scheduler-store.js";
 import type { Plan } from "../../src/core/scheduler/types.js";
@@ -68,5 +69,50 @@ describe("startScheduler", () => {
     startScheduler(deps);
     const cb = register.mock.calls[0]?.[0] as (n: unknown) => Promise<void>;
     await expect(cb({ kind: "usage", session: "s1" })).resolves.toBeUndefined();
+  });
+
+  it("uses the Resource Guardian's fresh protect-mode gate before starting queued work", async () => {
+    new SchedulerStore().savePlan(plan);
+    createResourceGuardianStore({ stateDir: dir }).writeCurrent({
+      circuit: {
+        schemaVersion: 1,
+        pressure: "critical",
+        incidentId: "incident-resource-closed",
+        admission: "background-closed",
+        reason: "critical host pressure",
+        changedAt: 1000,
+        lastSampleAt: 1000,
+        owner: "resource-guardian",
+      },
+      view: {
+        enabled: true,
+        mode: "protect",
+        profile: "balanced",
+        pressure: "critical",
+        circuit: "background-closed",
+        incidentId: "incident-resource-closed",
+        reason: "critical host pressure",
+        attribution: "unknown",
+        latestSample: null,
+        stableSince: null,
+        sampling: {
+          degraded: false,
+          consecutiveFailures: 0,
+          lastFailureAt: null,
+          lastError: null,
+          notifiedPhase: null,
+          overlapSkippedTicks: 0,
+        },
+      },
+    });
+    const { deps } = makeDeps(1000);
+    const stop = startScheduler(deps);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(new SchedulerStore().getActiveRun()?.tasks).toEqual([
+      expect.objectContaining({ status: "queued" }),
+    ]);
+    stop();
   });
 });

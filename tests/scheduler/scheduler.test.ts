@@ -37,4 +37,29 @@ describe("reconcile", () => {
     expect(running[0]?.sessionName).toBe("/a");
     expect(r1.tasks.find((t) => t.project === "/b")?.status).toBe("queued");
   });
+
+  it("does not let a gated higher-priority task consume capacity needed by an ungated task", () => {
+    const r0 = run([task({ project: "/a", priority: 10 }), task({ project: "/b", priority: 1 })]);
+    const resolved: string[] = [];
+    const resolveSession = (t: TaskState) => {
+      const session = `session:${t.project}`;
+      resolved.push(session);
+      return session;
+    };
+
+    const r1 = reconcile(r0, { claude: 1 }, pools, {
+      resolveSession,
+      isGated: (session) => session === "session:/a",
+      now: 1000,
+    });
+
+    expect(r1.tasks.find((candidate) => candidate.project === "/a")).toMatchObject({
+      status: "queued",
+    });
+    expect(r1.tasks.find((candidate) => candidate.project === "/b")).toMatchObject({
+      status: "running",
+      sessionName: "session:/b",
+    });
+    expect(resolved).toEqual(["session:/a", "session:/b"]);
+  });
 });

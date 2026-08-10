@@ -2,22 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": ["src/scripts/*.ts"],
   "project": ["src/**/*.{ts,tsx}"],
-  "ignoreBinaries": [
-    "scripts/install-service.sh",
-    "scripts/uninstall-service.sh",
-    "scripts/dev-env.sh",
-    "scripts/release.sh",
-    "scripts/service.sh",
-    "scripts/install-whisper.sh",
-    "scripts/install-argos-translate.sh",
-    "scripts/smoke.sh",
-    "scripts/verify-local.sh",
-    "shellcheck",
-    "ps",
-    "tmux",
-    "which",
-    "caffeinate"
-  ],
+  "ignoreBinaries": ["caffeinate", "shellcheck"],
   "ignoreExportsUsedInFile": true,
   "vitest": {
     "config": ["vitest.config.ts"],

@@ -92,7 +92,7 @@ Lifecycle buttons that can interrupt work or reset context (`restart`, `clear`,
   by switching groups (no `/cd`); works without `@bot`.
 - **Settings**: `/lang` (UI language), `/voice_lang`, `/prompt_translate`, status-line install, `/prompts` (browse saved prompts). Telegram and Feishu both surface the voice and translation pickers from the settings controls.
 - **Diagnostics**: `/dashboard` (every session at a glance) · `/sysload` (machine
-  load / heat / runaway processes) · `/logs` · `/doctor`. Owner-only; on Feishu these
+  load / heat / runaway processes / Resource Guardian state) · `/logs` · `/doctor`. Owner-only; on Feishu these
   are 1:1-chat only.
 
 ### Prompt Library (`/prompts`)
@@ -175,12 +175,35 @@ For the complete maintained CLI command and option surface, see
 | `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
 | `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
 | `tcb loop validate\|tick\|run <file>` / `tcb loop targets\|reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, pause/resume configured targets, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |
-| `tcb sysload` | machine load, thermal state, top CPU, runaway shells |
+| `tcb sysload` | machine load, thermal state, top CPU, runaway shells, and current Resource Guardian state |
+| `tcb resource status\|incidents\|mode\|profile` | inspect Resource Guardian state or bounded incident history, and set its local operator mode/profile |
 | `tcb tui` | the terminal control panel (needs the bot running) |
 | `tcb recover` | relaunch agents that were running before a reboot |
 | `tcb logs` | query structured logs; use `--since 30m`, `--component <prefix>`, `--run-id <id>`, `--grep <text>`, and `-n <count>` to keep current-run diagnostics quiet |
 | `tcb install` | provision the managed service into the stable dir |
 | `tcb service <install\|uninstall\|status\|pause\|resume\|restart\|logs>` | manage the auto-restarting service |
+
+### Resource Guardian rollout
+
+Resource Guardian is disabled by default. Enable it through the allowlisted
+configuration, begin in observe mode, and inspect its read-only state before
+considering protect mode:
+
+```sh
+tcb config set RESOURCE_GUARDIAN_ENABLED true
+tcb resource mode observe
+tcb resource profile balanced
+tcb service restart
+tcb resource status --json
+tcb resource incidents --limit 20 --json
+```
+
+Use `tcb config set RESOURCE_GUARDIAN_TICK_MS <milliseconds>` only when an
+operator has chosen a supported polling interval. `tcb resource mode protect`
+refuses until the Guardian is enabled and running. Restart the managed service
+after changing enabled/tick configuration so the process loads it. Do not edit
+Resource Guardian state files by hand; its CLI output redacts secrets and
+tildeifies home-relative paths.
 
 **Drive the bot from the shell** (one-shot control-socket clients — for scripts or an
 AI agent; need the bot running, all accept a project by name and `--json`):

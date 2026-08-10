@@ -83,8 +83,16 @@ re-run input, `a` attach to the real session pane, `q` quit, `?` for all keys. D
 
 **Check status / "is something wrong?"** → `/dashboard` or `tcb dashboard` (every
 session, busy/idle, queue, version); `/sysload` or `tcb sysload` (machine load, heat,
-runaway processes); `/logs` or `tcb logs --since 1h --run-id <id>`; `tcb doctor`
+runaway processes, Resource Guardian state); `tcb resource status` or
+`tcb resource incidents --limit 20` for Guardian detail; `/logs` or
+`tcb logs --since 1h --run-id <id>`; `tcb doctor`
 (install health).
+
+**Enable Resource Guardian observation** → run
+`tcb config set RESOURCE_GUARDIAN_ENABLED true`, then
+`tcb resource mode observe`, `tcb resource profile balanced`, and
+`tcb service restart`. Confirm with `tcb resource status --json`; do not promote
+to protect mode until representative incident evidence has been reviewed.
 
 **Let another local project send notifications** → call `tcb notify` from that
 project. It uses the running bot's local control socket and configured Telegram /
@@ -309,7 +317,7 @@ for one accidentally exited current project use
     `tcb control <project> <esc|enter|resume|restart|…>` — a control key
     (`--yes` is required for dangerous actions in scripts).
 - **CLI — admin**: `run` · `setup` / `setup:lark` · `doctor` · `dashboard` · `sysload`
-  · `tui` · `recover` · `logs` · `install` ·
+  · `resource status|incidents|mode|profile` · `tui` · `recover` · `logs` · `install` ·
   `service <install|uninstall|status|pause|resume|restart|logs>`.
   (`npm run dev|tui|doctor|service:*` for dev.)
 - **TUI keys**: see [tui.md](../tui.md).

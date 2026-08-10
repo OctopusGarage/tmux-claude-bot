@@ -33,6 +33,17 @@ export type UnfinishedLoopSupervisorWorkOrder = {
   runDir: string;
 };
 
+/** Classified WorkOrder views from one durable artifact scan. */
+export type LoopSupervisorWorkOrderRegistry = {
+  records: UnfinishedLoopSupervisorWorkOrder[];
+  unfinished: UnfinishedLoopSupervisorWorkOrder[];
+  recoverableFinalSummary: UnfinishedLoopSupervisorWorkOrder[];
+  recoverableFailed: UnfinishedLoopSupervisorWorkOrder[];
+  abandoned: UnfinishedLoopSupervisorWorkOrder[];
+  staleDispatching: UnfinishedLoopSupervisorWorkOrder[];
+  terminal: UnfinishedLoopSupervisorWorkOrder[];
+};
+
 const TERMINAL_STATES = new Set<LoopSupervisorWorkOrderStateStatus>([
   "completed",
   "failed",
@@ -174,58 +185,75 @@ function isDirectory(path: string): boolean {
 }
 
 export function listUnfinishedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
-  return listLoopSupervisorWorkOrders(
-    (state, workOrder) =>
-      !TERMINAL_STATES.has(state.status) &&
-      unfinishedWorkOrderCanStillProgress(state, workOrder, Date.now()),
-  );
+  return readLoopSupervisorWorkOrderRegistry().unfinished;
 }
 
 export function listRecoverableFailedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
-  return listLoopSupervisorWorkOrders(
-    (state, workOrder) =>
-      state.status === "failed" &&
-      state.resultStatus !== undefined &&
-      RECOVERABLE_FAILED_RESULTS.has(state.resultStatus) &&
-      parseSupervisorFinalSummaryFile(workOrder).ok,
-  );
+  return readLoopSupervisorWorkOrderRegistry().recoverableFailed;
 }
 
 export function listRecoverableFinalSummaryLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
-  return listLoopSupervisorWorkOrders(
-    (state, workOrder) =>
-      !TERMINAL_STATES.has(state.status) && parseSupervisorFinalSummaryFile(workOrder).ok,
-  );
+  return readLoopSupervisorWorkOrderRegistry().recoverableFinalSummary;
 }
 
 export function listAbandonedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
-  return listLoopSupervisorWorkOrders(
-    (state, workOrder) =>
-      !TERMINAL_STATES.has(state.status) &&
-      !unfinishedWorkOrderCanStillProgress(state, workOrder, Date.now()),
-  );
+  return readLoopSupervisorWorkOrderRegistry().abandoned;
 }
 
 export function listStaleDispatchingLoopSupervisorWorkOrders(
   now = Date.now(),
 ): UnfinishedLoopSupervisorWorkOrder[] {
+  return readLoopSupervisorWorkOrderRegistry(now).staleDispatching;
+}
+
+export function listTerminalLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  return readLoopSupervisorWorkOrderRegistry().terminal;
+}
+
+/**
+ * Read durable WorkOrder artifacts once and expose domain lifecycle views.
+ * The file layout, JSON tolerance, lease lookup, and time policies remain
+ * implementation details of this registry module.
+ */
+export function readLoopSupervisorWorkOrderRegistry(
+  now = Date.now(),
+): LoopSupervisorWorkOrderRegistry {
+  const records = readLoopSupervisorWorkOrderRecords();
   const activeLeaseIds = new Set(
     readLoopSupervisorWorkerLeaseState()
       .leases.filter((lease) => lease.status === "active")
       .map((lease) => lease.workOrderId),
   );
-  return listLoopSupervisorWorkOrders(
-    (state, workOrder) =>
-      state.status === "dispatching" &&
-      !activeLeaseIds.has(workOrder.id) &&
-      !hasFinalSummaryFileForState(state) &&
-      now - state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS &&
-      now - state.updatedAt <= STALE_UNFINISHED_RESERVATION_MS,
-  );
-}
-
-export function listTerminalLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
-  return listLoopSupervisorWorkOrders((state) => TERMINAL_STATES.has(state.status));
+  const terminal = records.filter(({ state }) => TERMINAL_STATES.has(state.status));
+  const nonTerminal = records.filter(({ state }) => !TERMINAL_STATES.has(state.status));
+  return {
+    records,
+    terminal,
+    unfinished: nonTerminal.filter(({ state, workOrder }) =>
+      unfinishedWorkOrderCanStillProgress(state, workOrder, now),
+    ),
+    recoverableFinalSummary: nonTerminal.filter(
+      ({ workOrder }) => parseSupervisorFinalSummaryFile(workOrder).ok,
+    ),
+    recoverableFailed: records.filter(
+      ({ state, workOrder }) =>
+        state.status === "failed" &&
+        state.resultStatus !== undefined &&
+        RECOVERABLE_FAILED_RESULTS.has(state.resultStatus) &&
+        parseSupervisorFinalSummaryFile(workOrder).ok,
+    ),
+    abandoned: nonTerminal.filter(
+      ({ state, workOrder }) => !unfinishedWorkOrderCanStillProgress(state, workOrder, now),
+    ),
+    staleDispatching: records.filter(
+      ({ state, workOrder }) =>
+        state.status === "dispatching" &&
+        !activeLeaseIds.has(workOrder.id) &&
+        !hasFinalSummaryFileForState(state) &&
+        now - state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS &&
+        now - state.updatedAt <= STALE_UNFINISHED_RESERVATION_MS,
+    ),
+  };
 }
 
 function hasFinalSummaryFileForState(state: LoopSupervisorWorkOrderState): boolean {
@@ -247,9 +275,7 @@ function unfinishedWorkOrderCanStillProgress(
   return now - state.updatedAt <= INVALID_FINAL_SUMMARY_GRACE_MS;
 }
 
-function listLoopSupervisorWorkOrders(
-  includeState: (state: LoopSupervisorWorkOrderState, workOrder: LoopWorkOrder) => boolean,
-): UnfinishedLoopSupervisorWorkOrder[] {
+function readLoopSupervisorWorkOrderRecords(): UnfinishedLoopSupervisorWorkOrder[] {
   const root = reportsRoot();
   if (!existsSync(root)) return [];
   const records: UnfinishedLoopSupervisorWorkOrder[] = [];
@@ -263,7 +289,6 @@ function listLoopSupervisorWorkOrders(
       if (state === null) continue;
       const workOrder = parseWorkOrder(readJsonFile(workOrderPath(runDir)));
       if (workOrder === null) continue;
-      if (!includeState(state, workOrder)) continue;
       records.push({ workOrder, state, runDir });
     }
   }

@@ -1000,6 +1000,7 @@ function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
         workOrder.projectPath,
         baseBranch,
         isolation,
+        workOrder.commitPolicy.branch,
       )}.`;
     }
     return [
@@ -1025,6 +1026,7 @@ function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
     workOrder.projectPath,
     baseBranch,
     isolation,
+    workOrder.commitPolicy.branch,
   )}.`;
 }
 
@@ -1032,12 +1034,13 @@ function syncRepositoryCommands(
   path: string,
   branch: string,
   isolation?: { preparedBy?: "system-git-worktree" | "source-worktree" },
+  executionBranch?: string,
 ): string {
-  if (isolation?.preparedBy === "system-git-worktree") {
+  if (isolation?.preparedBy === "system-git-worktree" && executionBranch !== undefined) {
     return [
       `${gitInWorktree(path, "status --short")} must be clean`,
       gitInWorktree(path, `fetch origin ${branch}`),
-      gitInWorktree(path, `switch --detach origin/${branch}`),
+      gitInWorktree(path, `switch ${executionBranch}`),
     ].join(", then ");
   }
   return [

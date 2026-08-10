@@ -82,6 +82,11 @@ for the configured inspection TTL, then the next service reconciliation removes
 the isolated worktree and releases the lease. Source worktrees are never removed;
 the cleanup helper verifies both the state-owned path boundary and Git toplevel
 before issuing `git worktree remove --force`.
+If a bot-owned isolated worktree has a missing worktree directory before normal
+cleanup, absence is not cleanup proof. Terminal reconciliation uses the
+WorkOrder's verified source repository to remove only that exact stale Git
+worktree registration, then releases the matching worker lease. It never
+guesses another repository and never removes a source worktree.
 
 ## State And Outcome Vocabulary
 
@@ -682,6 +687,12 @@ existing PRs, reports, and prior verification output.
 Autopilot is not cron. It should reuse the Loop Supervisor WorkOrder path and the
 same system gates as scheduled jobs.
 
+When an active delegation runs in a system-prepared isolated worktree, its base
+sync fetches the configured base but keeps the worker on its configured
+WorkOrder branch. It must never switch, rebase, or merge the shared base or
+switch-back branch from that isolated worktree; the source worktree owns those
+operations.
+
 Before substantive execution, active delegation must form a task advancement
 contract from the user requirement, current session context, and repository
 evidence. The contract is recorded as a concise `delegationBrief` in the
@@ -858,7 +869,81 @@ failed stage (`message`, `attachment`, validation, or missing sender), so repair
 work can distinguish "nothing reached the owner" from "the message arrived but
 an attachment failed."
 
+## Resource Guardian
+
+Resource Guardian owns host resource pressure, its sustained-pressure incident
+record, and a durable admission circuit. Task 6 makes active delegated task
+admission the authoritative check before project-path lookup, worktree
+preparation, supervisor reservation, or durable WorkOrder/ledger/worker-lease
+writes. Loop Engineering checks every due target before it can create a ledger,
+WorkOrder, worker lease, or scheduler fire anchor; denied work stays due and
+does not consume a retry. Batch Scheduler checks every queued-to-running
+transition while continuing to reconcile work that is already running; denied
+queued work remains claimable without consuming a retry. Daily Task Audit,
+Runtime Guardian, and Project Recovery send their
+automated delegations as background work. `resourceForce` is an internal,
+reserved input to the authoritative gate; current chat, control, and CLI
+surfaces expose no force option, and default operator work remains subject to a
+closed circuit. Any future force surface requires separate authorization,
+documentation, and tests. It is an observer/protector: observe mode
+records evidence and always leaves the circuit open, while protect mode records
+the closure that consumers honor. It does not create process ownership from CPU
+evidence, directly invoke a model API, or materialize a WorkOrder. Later
+Resource Guardian repair reuses the supervised WorkOrder path only after ten
+minutes of durable healthy recovery. It selects only the most recent ended,
+bot-owned incident with failed deterministic-cleanup evidence, persists a
+repair intent before delegation, and shares the global Repair Coordinator's
+one-at-a-time fingerprint, cooldown, and retry boundaries. A pressure relapse,
+external/unknown attribution, or missing durable evidence blocks repair.
+
+Task 7 adds a read-only ownership resolver for deep process samples. Strong
+bot attribution requires an exact `pid` plus process-start identity, a verified
+ancestor path from a bot pane or recorded bot launch, and either a durable
+WorkOrder-linked launch or a consistent pane/WorkOrder/lease reservation. A
+process name, command, pane path, or cwd is never sufficient:
+automation-looking processes without that evidence remain unknown. The resolver
+records no signal, cancellation, cleanup, or repair action outside an emergency
+protect-mode pass. Task 8 first durably closes background admission and
+reconciles terminal supervisor resources, cooperatively cancels a single
+bot-active delegated task, then resamples and revalidates ownership before TERM
+or KILL. Observe, elevated, critical, degraded sampling, external, unknown,
+changed-instance, and still-active processes never receive a signal.
+The deep snapshot validates pane ids before and after collection and records an
+unknown attribution when they change. `ps` start times are only second-granular
+on supported platforms, so exact identity remains conservative and Task 8 must
+revalidate immediately before any future action; command text is never process
+identity.
+Task 8 persists its protect-mode action intent before reconciliation, cooperative
+cancellation, or signaling, and records the eventual outcome for restart-safe
+rate limiting. In observe mode it records a proposed action from the same fresh
+ownership evidence but performs no process effects. Resource action failures are
+separate notifications and never reopen or otherwise change admission.
+The intent records the revalidated PID/start identity and durable WorkOrder
+correlation only, never command text, cwd, or an absolute path. Observe proposals
+do not consume protect-mode rate-limit state, so a later protect transition may
+act immediately from fresh ownership evidence.
+
+Task 10 provides the safe local operator surface: `tcb resource status`,
+`tcb resource incidents`, `tcb resource mode observe|protect`, and
+`tcb resource profile balanced|conservative`. Status and incident history are
+read-only (with bounded, secret-free JSON when requested); presentation tildeifies
+home-relative paths. Generic configuration may change only the Guardian enable
+and tick settings. Mode and profile use their dedicated commands, persist the
+environment file atomically, and write a matching live operator override with
+a durable recovery journal. Before reading the live override, every Guardian
+tick completes an update whose environment value committed, or discards an
+intent whose environment value did not change. Protect mode refuses to activate
+until the Guardian is enabled and running. The existing `sysload` diagnostic in
+the CLI, control client, Telegram, and Lark displays the current Guardian state;
+it adds no chat command, protocol action, or button.
+
 ## Runtime Guardian
+
+Runtime Guardian owns durable runtime artifact correctness and may enqueue
+confirmed bot-owned repair findings. It does not own host pressure, process-load
+attribution, or Resource Guardian's admission circuit. Both modules can affect
+whether a future WorkOrder is safe, but neither is permission to bypass the
+active Claude/Codex agent boundary.
 
 Runtime Guardian is the running-service guardrail for problems that appear while
 Loop Supervisor, workers, PR gates, notifications, launchd/dev-service runtime,

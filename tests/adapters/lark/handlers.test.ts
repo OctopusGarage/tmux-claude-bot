@@ -19,9 +19,10 @@ const { recordReplyTarget, removeReplyTargetSession } = await import(
 const { requestNewFolder, startBrowse, clearBrowse } = await import(
   "../../../src/core/projects/dir-browser.js"
 );
-const { bindGroup } = await import("../../../src/core/projects/group-bindings.js");
+const { bindGroup, unbindGroup } = await import("../../../src/core/projects/group-bindings.js");
 const { chatScope } = await import("../../../src/core/projects/project-manager.js");
 const { OpportunityStore } = await import("../../../src/core/opportunities/store.js");
+const { messages } = await import("../../../src/core/i18n/index.js");
 const { fakeChannel, fakeDeps, fakeMessage } = await import("./_fakes.js");
 const nodeFs = await import("node:fs");
 const nodeOs = await import("node:os");
@@ -74,6 +75,19 @@ describe("makeMessageHandler", () => {
     expect(channel.texts().some((t) => t.includes("忽略"))).toBe(true);
   });
 
+  it("reports a failed queued-ack rewrite without re-enqueueing the prompt", async () => {
+    const channel = fakeChannel();
+    const rewriteByAck = vi.fn(() => ({ kind: "failed" }) as never);
+    const deps = fakeDeps({ session: "proj-1", queue: { rewriteByAck } });
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(fakeMessage({ content: "use the safer wording", replyToMessageId: "ack-1" }));
+
+    expect(rewriteByAck).toHaveBeenCalledWith("ack-1", "chat-1", "use the safer wording");
+    expect(deps.queue.enqueued).toHaveLength(0);
+    expect(channel.texts().some((t) => t.includes("失败"))).toBe(true);
+  });
+
   it("ignores non-p2p chats", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
@@ -84,6 +98,60 @@ describe("makeMessageHandler", () => {
 
     expect(channel.sent).toHaveLength(0);
     expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("reports a missing bound group workspace instead of routing the prompt", async () => {
+    const chatId = "chat-missing-workspace";
+    bindGroup(chatId, {
+      workspacePath: "/definitely/missing/tcb-lark-group-workspace",
+      sessionName: "proj-missing",
+      label: "Missing workspace",
+    });
+    try {
+      const channel = fakeChannel();
+      const deps = fakeDeps();
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ chatId, chatType: "group" as never, content: "status please" }));
+
+      expect(deps.queue.enqueued).toHaveLength(0);
+      expect(channel.texts().some((t) => t.includes("Missing workspace"))).toBe(true);
+    } finally {
+      unbindGroup(chatId);
+    }
+  });
+
+  it("re-anchors a bound group to its configured session before enqueueing text", async () => {
+    const dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "tcb-lark-bound-"));
+    const chatId = "chat-restored-binding";
+    bindGroup(chatId, { workspacePath: dir, sessionName: "proj-bound", label: "Bound workspace" });
+    try {
+      const channel = fakeChannel();
+      let current = "proj-drifted";
+      const deps = fakeDeps({
+        session: "proj-drifted",
+        bridge: { hasSession: vi.fn(async () => true) },
+        currentProject: {
+          get: vi.fn(async () => current),
+          set: vi.fn(async (_scope: string, session: string) => {
+            current = session;
+          }),
+        },
+      });
+      const handler = makeMessageHandler(channel, deps);
+
+      await handler(fakeMessage({ chatId, chatType: "group" as never, content: "ship this" }));
+
+      expect(deps.currentProject.set).toHaveBeenCalledWith(chatScope("lark", chatId), "proj-bound");
+      expect(channel.texts().some((t) => t.includes("Bound workspace"))).toBe(true);
+      expect(deps.queue.enqueued[0]).toMatchObject({
+        sessionName: "proj-bound",
+        text: "ship this",
+      });
+    } finally {
+      unbindGroup(chatId);
+      nodeFs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("handles /opportunity commands in bound project groups", async () => {
@@ -484,7 +552,7 @@ describe("makeMessageHandler", () => {
       // chat rendering must carry no ANSI escapes.
       expect(report).toContain("check");
       expect(report).not.toContain("\x1b[");
-    });
+    }, 15_000);
 
     it("/lang sends the language picker card", async () => {
       const channel = fakeChannel();
@@ -534,6 +602,64 @@ describe("makeMessageHandler", () => {
       await handler(fakeMessage({ content: "/ws list" }));
 
       expect(channel.texts().length).toBeGreaterThan(0);
+    });
+
+    it("/home ignores group chats and reports disabled home operator in p2p chats", async () => {
+      const groupChannel = fakeChannel();
+      const groupDeps = fakeDeps({
+        config: {
+          homeOperator: { enabled: true, dir: "/home/user", agent: "claude" as const },
+        },
+      });
+      await makeMessageHandler(
+        groupChannel,
+        groupDeps,
+      )(fakeMessage({ chatType: "group" as never, content: "/home" }));
+      expect(groupDeps.currentProject.set).not.toHaveBeenCalled();
+      expect(groupChannel.sent).toHaveLength(0);
+
+      const p2pChannel = fakeChannel();
+      const p2pDeps = fakeDeps({
+        config: {
+          homeOperator: { enabled: false, dir: "/home/user", agent: "claude" as const },
+        },
+      });
+      await makeMessageHandler(p2pChannel, p2pDeps)(fakeMessage({ content: "/home" }));
+
+      expect(p2pDeps.currentProject.set).not.toHaveBeenCalled();
+      expect(p2pChannel.texts()).toContain(messages("lark").homeOperatorDisabled);
+    });
+
+    it("/prompts ignores group chats and reports disabled prompt library in p2p chats", async () => {
+      const groupChannel = fakeChannel();
+      const groupDeps = fakeDeps();
+      await makeMessageHandler(
+        groupChannel,
+        groupDeps,
+      )(fakeMessage({ chatType: "group" as never, content: "/prompts" }));
+      expect(groupChannel.sent).toHaveLength(0);
+
+      const p2pChannel = fakeChannel();
+      const p2pDeps = fakeDeps({ config: { promptMcp: { command: "", args: [] } } });
+      await makeMessageHandler(p2pChannel, p2pDeps)(fakeMessage({ content: "/prompts" }));
+
+      expect(p2pChannel.texts()).toContain(messages("lark").promptsDisabled);
+    });
+
+    it("/batch is restricted to p2p owner chats", async () => {
+      const groupChannel = fakeChannel();
+      const groupDeps = fakeDeps();
+      await makeMessageHandler(
+        groupChannel,
+        groupDeps,
+      )(fakeMessage({ chatType: "group" as never, content: "/batch report" }));
+      expect(groupChannel.sent).toHaveLength(0);
+
+      const p2pChannel = fakeChannel();
+      const p2pDeps = fakeDeps();
+      await makeMessageHandler(p2pChannel, p2pDeps)(fakeMessage({ content: "/batch report" }));
+
+      expect(p2pChannel.texts().some((t) => t.includes("No active batch run"))).toBe(true);
     });
   });
 

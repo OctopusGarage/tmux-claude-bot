@@ -55,6 +55,61 @@ describe("schedulerTick", () => {
     expect(saved.run?.tasks.filter((t) => t.status === "queued")).toHaveLength(1);
   });
 
+  it("leaves queued work deferred while still reconciling an already-running task", async () => {
+    const run: Run = {
+      runId: "r-resource-gated",
+      planId: "p",
+      startedAt: 0,
+      status: "running",
+      tasks: [
+        {
+          project: "/running",
+          agent: "claude",
+          goals: ["fix-tests"],
+          rounds: 1,
+          retries: 1,
+          priority: 0,
+          status: "running",
+          attempt: 0,
+          goalsCompleted: [],
+          sessionName: "running-session",
+        },
+        {
+          project: "/queued",
+          agent: "claude",
+          goals: ["fix-tests"],
+          rounds: 1,
+          retries: 0,
+          priority: 0,
+          status: "queued",
+          attempt: 0,
+          goalsCompleted: [],
+        },
+      ],
+    };
+    let saved: Run | undefined;
+
+    await schedulerTick(
+      ctx({
+        run,
+        isAlive: async () => false,
+        isGated: () => true,
+        save: (next) => {
+          saved = next;
+        },
+      }),
+    );
+
+    expect(saved?.tasks.find((task) => task.project === "/running")).toMatchObject({
+      status: "queued",
+      attempt: 1,
+    });
+    expect(saved?.tasks.find((task) => task.project === "/queued")).toMatchObject({
+      status: "queued",
+      attempt: 0,
+    });
+  });
+
   it("broadcasts batchRunComplete when all tasks reach a terminal state", async () => {
     const run: Run = {
       runId: "r-complete",

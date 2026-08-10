@@ -103,6 +103,16 @@ describe("makeCardActionHandler", () => {
     expect(JSON.stringify(channel.cards())).toContain("翻译模式");
   });
 
+  it("prompttranslate with a malformed option reports the parse error instead of opening the picker", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+
+    await handle(evt({ cmd: "prompttranslate", arg: "on klingon" }));
+
+    expect(channel.cards()).toHaveLength(0);
+    expect(channel.texts().length).toBeGreaterThanOrEqual(1);
+  });
+
   it("qcancel → cancels that queued message by (session, id)", async () => {
     const cancelQueued = vi.fn(() => true);
     const channel = fakeChannel();
@@ -122,6 +132,23 @@ describe("makeCardActionHandler", () => {
     expect(channel.texts().some((t) => t.includes("不在队列"))).toBe(true);
     expect(channel.texts().some((t) => t.includes("已取消"))).toBe(false);
   });
+
+  it.each([
+    ["missing session", { id: "m-7" }],
+    ["missing queue id", { s: "proj-1" }],
+  ])(
+    "qcancel with %s is inert so stale cards cannot cancel the wrong item",
+    async (_case, value) => {
+      const cancelQueued = vi.fn(() => true);
+      const channel = fakeChannel();
+      const deps = fakeDeps({ queue: { cancelQueued } });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "qcancel", ...value }));
+
+      expect(cancelQueued).not.toHaveBeenCalled();
+      expect(channel.sent).toHaveLength(0);
+    },
+  );
 
   it("ap_plan sends a confirmation card without queueing delegation", async () => {
     const enqueue = vi.fn(() => "queued" as const);
@@ -756,6 +783,28 @@ describe("makeCardActionHandler", () => {
     expect(channel.sent).toHaveLength(0);
   });
 
+  it.each([
+    ["switch", "set"],
+    ["remove", "killSession"],
+    ["addrecent", "set"],
+  ] as const)("%s with no sid is inert before resolving project state", async (cmd, effect) => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_x"]) },
+      agent: { checkIfRunning: vi.fn(async () => false) },
+    });
+
+    await makeCardActionHandler(channel, deps)(evt({ cmd }));
+
+    expect(channel.sent).toHaveLength(0);
+    if (effect === "killSession") {
+      expect(deps.bridge.killSession).not.toHaveBeenCalled();
+    } else {
+      expect(deps.currentProject.set).not.toHaveBeenCalled();
+    }
+    expect(deps.bridge.listProjectSessions).not.toHaveBeenCalled();
+  });
+
   it("'addrecent' with a sid routes to addRecentBySid", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
@@ -968,6 +1017,33 @@ describe("makeCardActionHandler", () => {
       expect(channel.texts()).toHaveLength(1);
       expect(channel.texts().some((t) => t.includes(missingBinary))).toBe(true);
     });
+
+    it.each([
+      ["startpick", undefined],
+      ["startpick", 99],
+      ["restartpick", undefined],
+    ] as const)(
+      "%s with idx=%s is inert so stale picker cards do not launch anything",
+      async (cmd, idx) => {
+        const channel = fakeChannel();
+        const deps = fakeDeps(multi);
+
+        await makeCardActionHandler(channel, deps)(evt({ cmd, idx }));
+
+        expect(deps.agent.start).not.toHaveBeenCalled();
+        expect(channel.sent).toHaveLength(0);
+      },
+    );
+
+    it("startpick with no resolved session reports the missing project after validating the picker value", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ ...multi, session: null });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "startpick", idx: 0 }));
+
+      expect(deps.agent.start).not.toHaveBeenCalled();
+      expect(channel.cards().length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   describe("directory browser", () => {
@@ -1020,6 +1096,22 @@ describe("makeCardActionHandler", () => {
       // The prompt echoes the breadcrumb (~ or the dir path).
       expect(channel.texts().length).toBeGreaterThan(0);
     });
+
+    it.each(["browsecreate", "browsenewfolder"] as const)(
+      "%s with expired browser state is inert",
+      async (cmd) => {
+        const channel = fakeChannel();
+        const deps = fakeDeps({
+          config: { cdAllowedDirs: [dir] },
+          bridge: { hasSession: vi.fn(async () => false) },
+        });
+
+        await makeCardActionHandler(channel, deps)(evt({ cmd }, { chatId: `chat-expired-${cmd}` }));
+
+        expect(deps.bridge.createSession).not.toHaveBeenCalled();
+        expect(channel.sent).toHaveLength(0);
+      },
+    );
   });
 
   // --- inputredo (re-run a /inputs entry as an editable draft) ---

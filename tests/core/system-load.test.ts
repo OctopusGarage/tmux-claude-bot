@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
   gatherSystemLoad,
@@ -75,6 +76,17 @@ describe("gatherSystemLoad + renderSystemLoad", () => {
     expect(r.top.length).toBeGreaterThan(0);
   });
 
+  it("adds host CPU busy percentage only when given a CPU baseline", async () => {
+    const r = await gatherSystemLoad(
+      { ...probes, cpuTotals: () => ({ idle: 120, total: 500 }) },
+      8,
+      { idle: 100, total: 400 },
+    );
+
+    expect(r.hostCpuPct).toBe(80);
+    expect(await gatherSystemLoad(probes)).not.toHaveProperty("hostCpuPct");
+  });
+
   it("renders orphans with a kill hint, and the load/thermal lines", async () => {
     const out = renderSystemLoad(await gatherSystemLoad(probes));
     expect(out).toContain("Load: 4.00 / 5.00 / 6.00  (8 cores, 1-min ≈ 50%)");
@@ -88,5 +100,34 @@ describe("gatherSystemLoad + renderSystemLoad", () => {
     );
     expect(out).toContain("Runaway/orphan shells: none");
     expect(out).not.toContain("kill -9");
+  });
+
+  it("renders optional Resource Guardian context without exposing an absent incident", async () => {
+    const out = renderSystemLoad(await gatherSystemLoad(probes), {
+      enabled: true,
+      mode: "protect",
+      profile: "balanced",
+      pressure: "critical",
+      circuit: "background-closed",
+      incidentId: null,
+      reason: `${homedir()}/work token=super-secret`,
+      attribution: "bot-owned",
+      latestSample: null,
+      stableSince: null,
+      sampling: {
+        degraded: false,
+        consecutiveFailures: 0,
+        lastFailureAt: null,
+        lastError: null,
+        notifiedPhase: null,
+        overlapSkippedTicks: 0,
+      },
+    });
+    expect(out).toContain("Resource Guardian: critical · background closed");
+    expect(out).toContain("Reason: ~/work token=<redacted>");
+    expect(out).not.toContain(homedir());
+    expect(out).not.toContain("super-secret");
+    expect(out).toContain("Attribution: bot-owned");
+    expect(out).not.toContain("Incident: null");
   });
 });

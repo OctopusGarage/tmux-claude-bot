@@ -66,6 +66,62 @@ describe("alignment governance contract", () => {
     }
   });
 
+  it("locks the Resource Guardian alignment and startup ordering", () => {
+    const alignment = read("docs/automation-alignment.md");
+    const automation = read("docs/intelligent-automation.md");
+    const index = read("src/index.ts");
+    const notificationBlock = index.slice(index.indexOf("const startNotificationDrivenServices"));
+
+    for (const anchor of [
+      "| Resource Guardian |",
+      "observer/protector",
+      "admission before reservation",
+      "active delegated task admission",
+      "Task 6 active",
+      "Task 7 ownership proof",
+      "Task 8 may reduce only revalidated bot-owned emergency load",
+      "Task 9 dispatches at most one Resource Guardian repair",
+      "global Repair Coordinator",
+      "tcb resource status|incidents|mode|profile",
+      "existing sysload",
+      "Loop Engineering gates each due target",
+      "Batch Scheduler gates each",
+      "default disabled",
+      "after notification",
+    ]) {
+      expect(alignment, `missing Resource Guardian alignment anchor: ${anchor}`).toContain(anchor);
+    }
+    expect(automation).toContain("Resource Guardian");
+    expect(automation).toMatch(/Resource Guardian[\s\S]*host resource pressure/i);
+    expect(automation).toMatch(/Runtime Guardian[\s\S]*durable runtime artifact/i);
+    expect(automation).toMatch(/Resource Guardian[\s\S]*WorkOrder/i);
+
+    const resourceStart = notificationBlock.indexOf("startResourceGuardian(deps)");
+    const runtimeStart = notificationBlock.indexOf("startRuntimeGuardian(deps)");
+    const auditStart = notificationBlock.indexOf("startDailyTaskAudit(deps)");
+    expect(resourceStart).toBeGreaterThanOrEqual(0);
+    expect(resourceStart).toBeLessThan(runtimeStart);
+    expect(resourceStart).toBeLessThan(auditStart);
+    expect(index.indexOf("startResourceGuardian(deps)")).toBeGreaterThan(
+      index.indexOf("const startNotificationDrivenServices"),
+    );
+  });
+
+  it("keeps Resource Guardian in both end-to-end architecture views", () => {
+    const architecture = read("docs/intelligent-automation-architecture.md");
+    const ascii = read("docs/intelligent-automation-ascii-architecture.md");
+
+    expect(architecture).toContain("| Resource Guardian |");
+    expect(architecture).toMatch(/Resource Guardian[\s\S]*host resource pressure/i);
+    expect(architecture).toContain("admission before durable reservation");
+    expect(architecture).toMatch(/Resource Guardian[\s\S]*Runtime Guardian/);
+    expect(ascii).toContain("RESOURCE GUARDIAN");
+    expect(ascii).toContain("background admission open");
+    expect(ascii).toContain("background admission closed");
+    expect(ascii).toContain("tcb resource status / incidents / mode / profile");
+    expect(architecture).not.toContain("default target is\nArchitecture before allocating");
+  });
+
   it("keeps important architecture modules present in the alignment contract", () => {
     const requiredModules = [
       "Operator surfaces",
@@ -111,6 +167,45 @@ describe("alignment governance contract", () => {
       expect(architecture, `missing input-enhancement architecture anchor: ${anchor}`).toContain(
         anchor,
       );
+    }
+  });
+
+  it("documents the TUI controls that are already reachable in production", () => {
+    const matrix = read("docs/automation-capability-matrix.md");
+    const promptTranslation = matrix
+      .split("\n")
+      .find((line) => line.startsWith("| Prompt translation |"));
+    const resourceGuardian = matrix
+      .split("\n")
+      .find((line) => line.startsWith("| Resource Guardian |"));
+    const tui = read("docs/tui.md");
+
+    expect(promptTranslation).toBeDefined();
+    expect(promptTranslation?.split(/(?<!\\)\|/)[5]).toContain("`T`");
+    expect(promptTranslation?.split(/(?<!\\)\|/)[2]).toContain("tcb prompt-translate");
+    expect(resourceGuardian).toBeDefined();
+    expect(resourceGuardian?.split(/(?<!\\)\|/)[5]).toContain("Resource Guardian");
+    expect(tui).toContain("| `Enter` | refresh the peek |");
+    expect(tui).toContain("| `?` | show the full keymap |");
+    expect(tui).toMatch(/\| `m` \|[^\n]*Resource Guardian/);
+    expect(read("src/tui/app.tsx")).toContain("machine load + Resource Guardian (sysload)");
+  });
+
+  it("keeps the Home Operator skill aligned with Resource Guardian inspection", () => {
+    const skill = read("skills/tcb-home-operator/SKILL.md");
+
+    expect(skill).toContain("tcb resource status");
+    expect(skill).toContain("tcb resource incidents --limit 20");
+  });
+
+  it("keeps missing-worktree registration recovery in business and maintenance truth", () => {
+    const automation = read("docs/intelligent-automation.md");
+    const maintenance = read("docs/agent-maintenance-guidelines.md");
+
+    for (const doc of [automation, maintenance]) {
+      expect(doc).toContain("missing worktree directory");
+      expect(doc).toMatch(/exact stale Git\s+worktree registration/);
+      expect(doc).toMatch(/verified\s+source repository/);
     }
   });
 

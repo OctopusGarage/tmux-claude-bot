@@ -441,7 +441,7 @@ export const zh = {
   cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
   cmdAutopilot: "把当前会话工作托管给 Loop Supervisor 推进",
   cmdOpportunity: "查看并讨论主动机会建议",
-  cmdSysload: "查看本机负载/发热/跑飞进程",
+  cmdSysload: "查看本机负载、发热、跑飞进程和资源守护状态",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,

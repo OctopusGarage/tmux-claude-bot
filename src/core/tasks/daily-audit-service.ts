@@ -8,10 +8,6 @@ import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
 import { parseLoopConfigYaml } from "../loop/config.js";
-import {
-  listTerminalLoopSupervisorWorkOrders,
-  listUnfinishedLoopSupervisorWorkOrders,
-} from "../loop/supervisor-state.js";
 import type { NotificationGateway } from "../notifications/gateway.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildDailyAuditRepairPrompt } from "../prompts/repair-prompts.js";
@@ -22,6 +18,11 @@ import {
   runDailyTaskAudit,
   type ScheduledTaskDiscovery,
 } from "./daily-audit.js";
+import { reconcileDailyAuditRepairState } from "./daily-audit-repair-state.js";
+import {
+  reconcileDailyAuditRepairQueue,
+  reconcileDailyAuditRunState,
+} from "./daily-audit-run-state.js";
 import {
   createProjectRecoveryDelegator,
   dispatchProjectRecovery,
@@ -50,8 +51,6 @@ import { reconcileAutopilotDelegatedTasks } from "./task-reconciliation.js";
 const log = createLogger("tasks.daily-audit-service");
 const LAST_FIRED_KEY = "daily-task-audit";
 const FIRST_TICK_LOOKBACK_MS = 36 * 60 * 60_000;
-const STALE_REPAIR_STATUS_MS = 30 * 60_000;
-const STALE_DAILY_AUDIT_RUN_MS = 30 * 60_000;
 let dailyTaskAuditTickInFlight = false;
 
 export type DailyTaskAuditServiceTickResult =
@@ -123,26 +122,19 @@ async function runDailyTaskAuditServiceTickInternal(
   const store = input.store ?? new DailyTaskAuditStore();
   const ledger = input.ledger ?? new DailyTaskLedger();
   const coordinator = input.coordinator ?? new RepairCoordinator();
-  const staleAudits = ledger.reconcileStaleRunning(input.now, {
-    timeoutMs: STALE_DAILY_AUDIT_RUN_MS,
-    sources: ["daily-audit"],
+  const repoPath = input.config.repoPath.trim() || process.cwd();
+  const staleAudits = reconcileDailyAuditRunState({
+    ledger,
+    coordinator,
+    now: input.now,
+    repoPath,
+    reconcileRepairState: reconcileDailyAuditRepairState,
   });
   if (staleAudits > 0) {
     log.warn("reconciled stale daily audit ledger entries", {
       data: { count: staleAudits },
     });
   }
-  const repoPath = input.config.repoPath.trim() || process.cwd();
-  ledger.reconcileTerminalStatuses(input.now);
-  coordinator.reconcileExpiredLeases(input.now);
-  coordinator.reconcileDuplicateTaskIds(input.now);
-  coordinator.importPending(ledger.listAll(), {
-    projectId: "tmux-claude-bot",
-    projectPath: repoPath,
-    now: input.now,
-  });
-  reopenStaleRepairStatuses(ledger, input.now);
-  coordinator.reconcileFromLedger(ledger.listAll(), input.now);
   const projectRecovery = await runConfiguredProjectRecovery({
     configFile: input.loopConfigFile,
     now: input.now,
@@ -150,8 +142,7 @@ async function runDailyTaskAuditServiceTickInternal(
     coordinator,
     dispatch: input.dispatchProjectRecovery,
   });
-  coordinator.reconcileDuplicateTaskIds(input.now);
-  coordinator.reconcileFromLedger(ledger.listAll(), input.now);
+  reconcileDailyAuditRepairQueue({ ledger, coordinator, now: input.now });
   const scheduledAt = input.force
     ? input.now
     : dueScheduledAt(input.config.schedule, store, input.now);
@@ -324,39 +315,6 @@ async function dispatchRepairQueue(input: {
     : admission.detail === "dispatch failed"
       ? "failed"
       : `${admission.disposition} - ${admission.detail}`;
-}
-
-function reopenStaleRepairStatuses(ledger: DailyTaskLedger, now: number): number {
-  const activeDelegatedTaskIds = new Set(
-    listUnfinishedLoopSupervisorWorkOrders()
-      .filter((record) => record.workOrder.task?.kind === "active-delegated-task")
-      .map((record) => `autopilot:${record.workOrder.id}`),
-  );
-  const terminalDelegatedTaskIds = new Set(
-    listTerminalLoopSupervisorWorkOrders()
-      .filter((record) => record.workOrder.task?.kind === "active-delegated-task")
-      .map((record) => `autopilot:${record.workOrder.id}`),
-  );
-  let reopened = 0;
-  for (const record of ledger.listAll()) {
-    if (record.repairStatus !== "running") continue;
-    if (record.taskId.startsWith("daily-audit:self:")) continue;
-    if (record.source === "autopilot-delegate" && activeDelegatedTaskIds.has(record.taskId))
-      continue;
-    const linkedWorkOrderIsTerminal =
-      record.source === "autopilot-delegate" && terminalDelegatedTaskIds.has(record.taskId);
-    if (!linkedWorkOrderIsTerminal && now - record.updatedAt < STALE_REPAIR_STATUS_MS) continue;
-    ledger.markRepairStatus(record.taskId, {
-      repairStatus: "pending",
-      updatedAt: now,
-      summary: appendRepairSummary(
-        record.summary,
-        "Reopened stale repair status after no active repair remained.",
-      ),
-    });
-    reopened++;
-  }
-  return reopened;
 }
 
 function dueScheduledAt(
@@ -550,6 +508,7 @@ export async function dispatchDailyTaskRepair(
     session,
     requirement: prompt,
     worktreeIsolation: deps.config.taskAudit.repairWorktreeIsolation,
+    resourceTrigger: "background",
   });
   if (result.status === "blocked") {
     log.warn("daily task audit auto repair could not be delegated", {

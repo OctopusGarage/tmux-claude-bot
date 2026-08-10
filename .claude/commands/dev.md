@@ -52,7 +52,7 @@ is paused for the duration.
   bot's own logs / `doctor` instead.
 - "Only `已接收`, no result" usually means the current project points at this bot's
   OWN repo session (a nesting loop) — switch to a real project, never the bot repo.
-- Gates before a PR: `npm test`, `npm run lint`, `npm run lint:types`, `npm run knip`.
+- Gate before a PR or CI-readiness claim: `npm run verify:local`.
 
 ## Report
 

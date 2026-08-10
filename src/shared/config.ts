@@ -135,6 +135,21 @@ export const envSchema = z.object({
   BATCH_SCHEDULER_TICK_MS: optionalRawEnv,
   BATCH_SCHEDULER_QUOTA_PCT: optionalRawEnv,
   BATCH_SCHEDULER_REPROBE_MS: optionalRawEnv,
+  // --- Resource guardian. Observes host pressure and optionally protects
+  // background admission. Existing installations remain disabled by default. ---
+  RESOURCE_GUARDIAN_ENABLED: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["true", "false"]).default("false"),
+  ),
+  RESOURCE_GUARDIAN_MODE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["observe", "protect"]).default("observe"),
+  ),
+  RESOURCE_GUARDIAN_PROFILE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["balanced", "conservative"]).default("balanced"),
+  ),
+  RESOURCE_GUARDIAN_TICK_MS: blankTolerantNonNegativeInt(15_000),
   // --- Runtime guardian. Watches bot-owned automation artifacts while the bot
   // is running and can delegate narrow self-repair for confirmed system issues. ---
   RUNTIME_GUARDIAN_ENABLED: blankTolerantString("false"),
@@ -365,6 +380,12 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       tickMs: blankTolerantNonNegativeInt(8000).parse(parsed.BATCH_SCHEDULER_TICK_MS),
       quotaPct: blankTolerantPositiveInt(99).parse(parsed.BATCH_SCHEDULER_QUOTA_PCT),
       reprobeMs: blankTolerantPositiveInt(1_800_000).parse(parsed.BATCH_SCHEDULER_REPROBE_MS),
+    },
+    resourceGuardian: {
+      enabled: parsed.RESOURCE_GUARDIAN_ENABLED === "true",
+      mode: parsed.RESOURCE_GUARDIAN_MODE,
+      profile: parsed.RESOURCE_GUARDIAN_PROFILE,
+      tickMs: parsed.RESOURCE_GUARDIAN_TICK_MS,
     },
     runtimeGuardian: {
       enabled:

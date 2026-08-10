@@ -29,6 +29,7 @@ export type RepairQueueRecord = {
   nextAttemptAt: number;
   leaseId?: string;
   leaseExpiresAt?: number;
+  workOrderId?: string;
 };
 
 export type RepairQueueStore = {
@@ -320,6 +321,14 @@ export class RepairCoordinator {
     const record = this.store.get(id);
     if (record?.leaseId !== leaseId || record.status !== "leased") return undefined;
     const updated = { ...record, status: "running" as const, updatedAt: now };
+    this.store.set(id, updated);
+    return updated;
+  }
+
+  attachWorkOrder(id: string, workOrderId: string, now: number): RepairQueueRecord | undefined {
+    const record = this.store.get(id);
+    if (record === undefined || record.status !== "running") return undefined;
+    const updated = { ...record, workOrderId, updatedAt: now };
     this.store.set(id, updated);
     return updated;
   }
