@@ -530,6 +530,7 @@ describe("runtime guardian", () => {
 
   it("dispatches a due persisted repair after its finding ages out of discovery", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const store = new RuntimeGuardianStore();
     const queued = coordinator.enqueue({
       projectId: "tmux-claude-bot",
       projectPath: "/repo/tmux-claude-bot",
@@ -543,12 +544,14 @@ describe("runtime guardian", () => {
     });
     coordinator.claimIds([queued.id], { now: 1_001, leaseId: "previous", limit: 1 });
     coordinator.releaseForRetry(queued.id, 1_002);
+    store.markRepairAttempt("/repo/tmux-claude-bot", 39_000);
     const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
 
     const result = await runRuntimeGuardianTick({
       now: 40_000,
-      config: runtimeConfig(),
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
       coordinator,
+      store,
       discover: () => [],
       checkRepairReadiness: () => ({ ok: true }),
       dispatchRepair,
@@ -774,17 +777,23 @@ describe("runtime guardian", () => {
   });
 
   it("blocks fast-heal dispatch when the bot repository is not ready for self-repair", async () => {
+    const store = new RuntimeGuardianStore();
     const dispatchRepair = vi.fn();
+    const readiness = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: false,
+        reason: "runtime guardian repo has uncommitted changes",
+      })
+      .mockReturnValue({ ok: true });
 
     const result = await runRuntimeGuardianTick({
       now: 10_000,
       config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
       discover: () => [finding()],
       dispatchRepair,
-      checkRepairReadiness: () => ({
-        ok: false,
-        reason: "runtime guardian repo has uncommitted changes",
-      }),
+      checkRepairReadiness: readiness,
     });
 
     expect(result).toMatchObject({
@@ -793,6 +802,19 @@ describe("runtime guardian", () => {
       detail: "runtime guardian repo has uncommitted changes",
     });
     expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBeUndefined();
+
+    const retry = await runRuntimeGuardianTick({
+      now: 11_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [finding()],
+      dispatchRepair,
+      checkRepairReadiness: readiness,
+    });
+
+    expect(retry).toMatchObject({ fired: true, repairDispatch: "queued" });
+    expect(dispatchRepair).toHaveBeenCalledTimes(1);
   });
 
   it("blocks source-worktree repair when runtime guardian is not on the repair branch", () => {

@@ -125,6 +125,11 @@ Keep these documents aligned with code and tests when changing:
 - Supervisor pools, target workers, worktree isolation, and cleanup.
 - Feishu/Lark, Telegram, TUI, CLI, and control API surfaces.
 
+Treat Runtime Guardian readiness failures as transient admission deferrals.
+Do not mark findings handled or start the repository repair cooldown before a
+dispatch is attempted; durable Repair Coordinator `nextAttemptAt` remains the
+authoritative retry clock for an already admitted repair.
+
 Do not add feature-specific side channels that bypass WorkOrder state,
 system-gate artifacts, notification gateway routing, or conflict checks unless
 the exception is documented and covered by tests.

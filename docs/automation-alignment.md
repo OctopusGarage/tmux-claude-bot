@@ -293,6 +293,10 @@ worker lease, or scheduler fire anchor; a resource deferral remains transient
 and does not consume a retry or advance the schedule. Batch Scheduler gates each
 queued-to-running admission while continuing already-running reconciliation;
 resource deferral leaves the queued task claimable without consuming a retry.
+Runtime Guardian readiness failures are also transient admission deferrals:
+they do not mark findings handled or start the repository repair cooldown. A
+durable repair whose Repair Coordinator backoff is due may retry even while the
+outer discovery cooldown is active.
 The coordinator and durable circuit are default disabled in observe mode, use the
 `resource-guardian` notification source, and start after notification senders
 are ready but before Runtime Guardian and Daily Task Audit. Observe mode must

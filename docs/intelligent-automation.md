@@ -1007,7 +1007,11 @@ pre-guardian backlog as fresh runtime incidents. The lookback bounds new artifac
 discovery only: a finding already admitted to the durable Repair Coordinator
 remains eligible when its `nextAttemptAt` becomes due, even after the underlying
 artifact ages out of discovery. Runtime Guardian projects those due records back
-into bounded findings before deciding that a tick has no work.
+into bounded findings before deciding that a tick has no work. That durable due
+time is authoritative over the outer repository discovery cooldown. A clean
+worktree or branch readiness failure does not consume either cooldown or mark
+the finding handled, so the next tick retries automatically after the operator
+or another workflow restores readiness.
 `RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
 source-worktree execution so managed-dev self-repair can take effect quickly; set
 it to `isolated` for PR-style conservative repair.

@@ -151,6 +151,7 @@ export async function runRuntimeGuardianTick(input: {
   const repoPath = runtimeGuardianRepoPath(input.config);
   const repairAttemptAt = store.lastRepairAttemptAt(repoPath);
   if (
+    due.length === 0 &&
     repairAttemptAt !== undefined &&
     input.now - repairAttemptAt >= 0 &&
     input.now - repairAttemptAt < input.config.cooldownMs
@@ -181,9 +182,6 @@ export async function runRuntimeGuardianTick(input: {
         findings: repairableFindings.map(loggableFinding),
       },
     });
-    store.markRepairAttempt(repoPath, input.now);
-    for (const finding of repairableFindings)
-      store.markHandled(fingerprintForFinding(finding), input.now);
     return {
       fired: true,
       mode: input.config.mode,
