@@ -179,6 +179,10 @@ acceptance. Keep these responsibilities separate:
   `dispatching` past the five-minute grace, reconciliation must settle both the
   failed reservation and any leaked active lease; otherwise an idle supervisor
   pane can block that project forever.
+- Diagnose readiness from the newest lifecycle evidence, not any matching text
+  left in pane scrollback. In Codex, a later `Context … Goal achieved` footer
+  supersedes an earlier visible `esc to interrupt` line; a later working marker
+  supersedes that completion again.
 
 If target-project code, tests, PR body, branch state, or local verification are
 wrong, let the supervisor repair the target project through the configured

@@ -228,6 +228,11 @@ in-flight, running, or needs-revision WorkOrder must receive an interrupt before
 new work is accepted. A released lease alone is not proof that the interactive
 supervisor turn is idle; startup must clear this stale pane state while
 preserving sessions that still own a live WorkOrder.
+Agent input-readiness must interpret visible pane evidence in lifecycle order.
+Codex may retain an earlier `esc to interrupt` line after its footer reports
+`Context … Goal achieved`; that later completion marker makes the composer
+ready again. A newer working marker still wins, so genuine active turns remain
+protected from queued input.
 Queued, dispatching, and in-flight WorkOrders with an existing worker pane
 receive a bounded two-minute grace period for agent startup before orphan
 reconciliation; a transient startup probe must not fail a valid WorkOrder, and

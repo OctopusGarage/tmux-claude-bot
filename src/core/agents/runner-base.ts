@@ -23,6 +23,22 @@ export function paneNeedsConfirm(pane: string): boolean {
   return paneConfirmAction(pane) !== "wait";
 }
 
+/** Whether the pane's latest lifecycle evidence still represents an active turn.
+ * Codex can leave an old `esc to interrupt` line visible after a goal finishes;
+ * its footer then carries a later `Context … Goal achieved` marker. Compare the
+ * evidence order so stale scrollback cannot block the next queued prompt, while a
+ * newer working marker still wins if another turn has started. */
+export function paneHasActiveTurn(pane: string): boolean {
+  const activeAt = pane.toLowerCase().lastIndexOf("esc to interrupt");
+  if (activeAt < 0) return false;
+
+  let completedAt = -1;
+  for (const match of pane.matchAll(/^.*\bcontext\b.*\bgoal achieved\b.*$/gimu)) {
+    completedAt = match.index;
+  }
+  return activeAt > completedAt;
+}
+
 export function paneConfirmAction(pane: string): ReadyVerdict {
   if (activeCodexAdditionalSafetyMenu(pane)) return "wait";
   if (!activeConfirmGate(pane)) return "wait";
@@ -144,7 +160,7 @@ export abstract class AgentRunnerBase implements AgentRunner {
    * turn is active; without this guard, the queue can type the next message into
    * Codex's composer before the previous turn is actually done. */
   protected activeTurnMarker(pane: string): boolean {
-    return /esc to interrupt/i.test(pane);
+    return paneHasActiveTurn(pane);
   }
 
   /** After a launch: clear the trust-directory gate (BOTH agents show it on first

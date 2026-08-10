@@ -421,6 +421,10 @@ transients are platform failures, not target-project code failures. Treat errors
 such as `Selected model is at capacity. Please try a different model.` as
 retryable agent transient evidence unless later system-gate evidence proves a
 project problem.
+Interactive readiness is also ordered evidence: a completed Codex goal footer
+may follow and supersede a stale visible working marker, while a newer working
+marker means the turn is active again. This prevents completed supervisor panes
+from holding repair delivery open until the outer timeout.
 
 Responsibility is layered:
 

@@ -14,6 +14,13 @@ import type { TmuxBridge } from "../src/core/session/tmux.js";
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const ready = fs.readFileSync(join(FIXTURES, "codex-ready-pane.txt"), "utf8");
 const busy = fs.readFileSync(join(FIXTURES, "codex-busy-pane.txt"), "utf8");
+const completedGoalPane = [
+  "◦ Working (2s • esc to interrupt)",
+  "",
+  "› Find and fix a bug in @filename",
+  "",
+  "main · Context 14% left · weekly 9% left · Goal achieved (19m)",
+].join("\n");
 
 describe("codex pane heuristics", () => {
   it("ready when no 'esc to interrupt' spinner is present", () => {
@@ -22,6 +29,18 @@ describe("codex pane heuristics", () => {
 
   it("not ready while codex is working", () => {
     expect(paneLooksReady(busy)).toBe(false);
+  });
+
+  it("is ready when a completed goal footer supersedes a stale working marker", () => {
+    expect(paneLooksReady(completedGoalPane)).toBe(true);
+  });
+
+  it("is not ready when a new working marker follows an earlier completed goal", () => {
+    expect(
+      paneLooksReady(
+        `${completedGoalPane}\n› Start another task\n• Working (1s • esc to interrupt)`,
+      ),
+    ).toBe(false);
   });
 
   it("not ready on a booting / not-yet-rendered pane (no composer)", () => {
@@ -254,6 +273,28 @@ describe("CodexRunner.waitUntilDone", () => {
 });
 
 describe("CodexRunner.waitUntilInputReady", () => {
+  it("accepts input after a completed goal even when the old working line remains visible", async () => {
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () => completedGoalPane,
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => true,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: { process: (s: string) => s } as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 5,
+      maxWaitDoneMs: 5,
+    });
+
+    await expect(runner.waitUntilInputReady("sess")).resolves.toBeUndefined();
+  });
+
   it("does not auto-confirm a gate while waiting to send normal text", async () => {
     const sent: string[] = [];
     const bridge = {
