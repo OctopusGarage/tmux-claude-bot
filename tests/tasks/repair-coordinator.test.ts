@@ -137,6 +137,58 @@ describe("RepairCoordinator", () => {
     expect(coordinator.claimDue({ now: 2_102, leaseId: "lease-2", limit: 1 })).toEqual([]);
   });
 
+  it("dead-letters a repair after the shared retry limit instead of scheduling forever", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const item = coordinator.enqueue({
+      projectId: "project-a",
+      projectPath: "/repo/a",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "persistent-failure",
+      taskId: "run-1",
+      now: 1_000,
+    });
+
+    let now = 2_000;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      expect(
+        coordinator.claimIds([item.id], { now, leaseId: `lease-${attempt}`, limit: 1 }),
+      ).toHaveLength(1);
+      coordinator.releaseForRetry(item.id, now + 1);
+      now += 2_000_000;
+    }
+
+    expect(coordinator.list()[0]).toMatchObject({ status: "dead-letter", attempt: 3 });
+    expect(coordinator.claimDue({ now: now + 2_000_000, leaseId: "too-late", limit: 1 })).toEqual(
+      [],
+    );
+  });
+
+  it("dead-letters an exhausted persisted repair before a consumer can reclaim it", () => {
+    const store = new InMemoryRepairQueueStore();
+    store.set("repair-legacy", {
+      id: "repair-legacy",
+      dedupeKey: "project-a|/repo/a|terminal-system-gate-failure|legacy",
+      projectId: "project-a",
+      projectPath: "/repo/a",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "legacy",
+      linkedTaskIds: ["run-legacy"],
+      summaries: ["legacy retry"],
+      status: "retry-wait",
+      priority: 100,
+      attempt: 14,
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      nextAttemptAt: 3_000,
+    });
+    const coordinator = new RepairCoordinator(store);
+
+    expect(coordinator.claimDue({ now: 4_000, leaseId: "new", limit: 1 })).toEqual([]);
+    expect(coordinator.list()[0]).toMatchObject({ status: "dead-letter", attempt: 14 });
+  });
+
   it("imports bot-owned historical failures but does not claim unrelated projects", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const imported = coordinator.importPending(

@@ -4,7 +4,18 @@ import { loopRunDir } from "../loop/artifacts.js";
 import { listTerminalLoopSupervisorWorkOrders } from "../loop/supervisor-state.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "../loop/work-order.js";
 import type { RepairCoordinator } from "../tasks/repair-coordinator.js";
-import type { RuntimeGuardianFinding } from "./findings.js";
+import type { RuntimeGuardianFinding, RuntimeGuardianFindingKind } from "./findings.js";
+
+const RUNTIME_GUARDIAN_FINDING_KINDS = new Set<RuntimeGuardianFindingKind>([
+  "missing-system-gate",
+  "terminal-system-gate-failure",
+  "failed-eval-outcome",
+  "terminal-invalid-output",
+  "terminal-agent-transient-failure",
+  "terminal-work-order-active-lease",
+  "stale-dispatching-work-order",
+  "read-only-smoke-preflight-blocked",
+]);
 
 export function isTargetOrExternalBlocker(finding: RuntimeGuardianFinding): boolean {
   return finding.repairDisposition === "target-or-external-blocker";
@@ -47,8 +58,37 @@ export function reconcileRuntimeGuardianQueue(input: {
   return reconciled;
 }
 
+export function dueRuntimeGuardianFindings(input: {
+  coordinator: RepairCoordinator;
+  now: number;
+  limit: number;
+}): RuntimeGuardianFinding[] {
+  return input.coordinator
+    .list()
+    .filter(
+      (record) =>
+        record.source === "runtime-guardian" &&
+        (record.status === "pending" || record.status === "retry-wait") &&
+        record.nextAttemptAt <= input.now &&
+        isRuntimeGuardianFindingKind(record.taskFamily),
+    )
+    .sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt)
+    .slice(0, Math.max(0, input.limit))
+    .map((record) => ({
+      kind: record.taskFamily as RuntimeGuardianFindingKind,
+      severity: record.priority >= 100 ? "high" : "medium",
+      runId: record.linkedTaskIds.at(-1) ?? record.id,
+      projectId: record.projectId,
+      projectPath: record.projectPath,
+      evidence: record.summaries.length > 0 ? record.summaries : [record.fingerprint],
+    }));
+}
+
 function isQueueTerminal(status: string): boolean {
   return ["fixed", "blocked", "not-reproducible", "superseded", "dead-letter"].includes(status);
+}
+function isRuntimeGuardianFindingKind(value: string): value is RuntimeGuardianFindingKind {
+  return RUNTIME_GUARDIAN_FINDING_KINDS.has(value as RuntimeGuardianFindingKind);
 }
 function readPassingTerminalArtifacts(
   runDir: string,

@@ -528,6 +528,45 @@ describe("runtime guardian", () => {
     expect(dispatchRepair).not.toHaveBeenCalled();
   });
 
+  it("dispatches a due persisted repair after its finding ages out of discovery", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "system gate rejected the terminal run",
+      taskId: "run-aged-out",
+      summary: "system gate rejected the terminal run",
+      priority: 100,
+      now: 1_000,
+    });
+    coordinator.claimIds([queued.id], { now: 1_001, leaseId: "previous", limit: 1 });
+    coordinator.releaseForRetry(queued.id, 1_002);
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 40_000,
+      config: runtimeConfig(),
+      coordinator,
+      discover: () => [],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "queued" });
+    expect(dispatchRepair).toHaveBeenCalledWith(
+      expect.objectContaining({
+        findings: [
+          expect.objectContaining({
+            runId: "run-aged-out",
+            kind: "terminal-system-gate-failure",
+          }),
+        ],
+      }),
+    );
+  });
+
   it("does not reconcile or discover findings when runtime guardian is disabled", async () => {
     const discover = vi.fn(() => [finding()]);
     const reconcile = vi.fn();

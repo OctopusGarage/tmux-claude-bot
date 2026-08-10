@@ -96,7 +96,10 @@ problem; its `repairStatus` describes whether recovery is still open. A queue
 record with `pending`, `leased`, `running`, or `retry-wait` is still in progress
 and must not be reported as resolved. `retry-wait` means the bounded backoff has
 not expired yet; once `nextAttemptAt` is due, the record is immediately eligible
-for the next available repair worker.
+for the next available repair worker. The shared retry budget is three failed
+attempts. Reaching that budget, including when loading a legacy record that has
+already exceeded it, terminalizes the queue record as `dead-letter` before any
+consumer can claim it again.
 
 Terminal repair outcomes are `fixed`, `blocked`, `not-reproducible`,
 `superseded`, and `dead-letter` for queue records. Ledger repair outcomes also
@@ -962,7 +965,11 @@ isolated worktrees do not carry ignored dependency directories.
 `observe` records the finding without repair delegation.
 By default it only considers terminal artifacts updated within
 `RUNTIME_GUARDIAN_LOOKBACK_MS` so enabling it does not replay historical
-pre-guardian backlog as fresh runtime incidents.
+pre-guardian backlog as fresh runtime incidents. The lookback bounds new artifact
+discovery only: a finding already admitted to the durable Repair Coordinator
+remains eligible when its `nextAttemptAt` becomes due, even after the underlying
+artifact ages out of discovery. Runtime Guardian projects those due records back
+into bounded findings before deciding that a tick has no work.
 `RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
 source-worktree execution so managed-dev self-repair can take effect quickly; set
 it to `isolated` for PR-style conservative repair.

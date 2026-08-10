@@ -14,6 +14,7 @@ import { reconcileAutopilotDelegatedTasks } from "../tasks/task-reconciliation.j
 import type { RuntimeGuardianFinding } from "./findings.js";
 import { discoverRuntimeGuardianFindings } from "./inspector.js";
 import {
+  dueRuntimeGuardianFindings,
   isTargetOrExternalBlocker,
   reconcileRuntimeGuardianQueue,
 } from "./queue-reconciliation.js";
@@ -80,6 +81,7 @@ export async function runRuntimeGuardianTick(input: {
   dispatchRepair?: RuntimeGuardianRepairDispatch;
   checkRepairReadiness?: RuntimeGuardianRepairReadinessCheck;
   reconcile?: () => Promise<void> | void;
+  coordinator?: RepairCoordinator;
 }): Promise<RuntimeGuardianTickResult> {
   if (!input.config.enabled || input.config.tickMs === 0) {
     return { fired: false, reason: "disabled" };
@@ -96,12 +98,23 @@ export async function runRuntimeGuardianTick(input: {
         repoPath: runtimeGuardianRepoPath(input.config),
       }))
   )();
-  const coordinator = new RepairCoordinator();
+  const coordinator = input.coordinator ?? new RepairCoordinator();
   coordinator.reconcileDuplicateTaskIds(input.now);
   reconcileRuntimeGuardianQueue({ coordinator, now: input.now, findings: discovered });
-  const findings = discovered
-    .filter((finding) => !isCoolingDown(store, finding, input.now, input.config.cooldownMs))
-    .slice(0, input.config.maxFindingsPerTick);
+  const due = dueRuntimeGuardianFindings({
+    coordinator,
+    now: input.now,
+    limit: input.config.maxFindingsPerTick,
+  });
+  const dueKeys = new Set(due.map(runtimeFindingKey));
+  const findings = [
+    ...due,
+    ...discovered.filter(
+      (finding) =>
+        !dueKeys.has(runtimeFindingKey(finding)) &&
+        !isCoolingDown(store, finding, input.now, input.config.cooldownMs),
+    ),
+  ].slice(0, input.config.maxFindingsPerTick);
 
   if (findings.length === 0) {
     return { fired: false, reason: discovered.length > 0 ? "cooldown" : "no-findings" };
@@ -222,6 +235,10 @@ export async function runRuntimeGuardianTick(input: {
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+function runtimeFindingKey(finding: RuntimeGuardianFinding): string {
+  return `${finding.kind}|${finding.projectId}|${finding.runId}`;
 }
 
 export function checkRuntimeGuardianRepairReadiness(

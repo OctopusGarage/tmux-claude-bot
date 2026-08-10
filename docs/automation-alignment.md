@@ -87,7 +87,11 @@ Telegram and Lark remain the only channel-rendering adapters.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing
-record to a terminal outcome from authoritative later artifacts.
+record to a terminal outcome from authoritative later artifacts. Its artifact
+lookback limits new discovery, not durable queue consumption: due Runtime
+Guardian records must re-enter shared admission until they terminalize. The
+Repair Coordinator enforces the shared three-attempt budget and dead-letters
+both newly exhausted and legacy over-budget records before another claim.
 Known target-project and external blockers are admitted there as durable terminal
 records without invoking a bot repair.
 The coordinator must also collapse duplicate non-terminal repairs linked to the

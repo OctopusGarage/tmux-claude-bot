@@ -108,6 +108,7 @@ type PendingLedgerRecord = {
 
 const DEFAULT_LEASE_MS = 30 * 60_000;
 const MAX_BACKOFF_MS = 30 * 60_000;
+export const REPAIR_MAX_ATTEMPTS = 3;
 
 export function createRepairDedupeKey(input: {
   projectId: string;
@@ -258,6 +259,7 @@ export class RepairCoordinator {
   }
 
   claimDue(input: RepairClaimInput): RepairQueueRecord[] {
+    this.deadLetterExhausted(input.now);
     const claimed = this.list()
       .filter(
         (record) =>
@@ -289,6 +291,7 @@ export class RepairCoordinator {
   }
 
   claimIds(ids: readonly string[], input: RepairClaimInput): RepairQueueRecord[] {
+    this.deadLetterExhausted(input.now);
     const wanted = new Set(ids);
     const due = this.list()
       .filter(
@@ -360,9 +363,9 @@ export class RepairCoordinator {
     const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
     const updated: RepairQueueRecord = {
       ...withoutLease,
-      status: "retry-wait",
+      status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
       attempt,
-      nextAttemptAt: now + repairBackoffMs(attempt),
+      nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
       updatedAt: now,
     };
     this.store.set(id, updated);
@@ -463,12 +466,26 @@ export class RepairCoordinator {
       const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
       const updated: RepairQueueRecord = {
         ...withoutLease,
-        status: "retry-wait",
+        status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
         attempt,
-        nextAttemptAt: now + repairBackoffMs(attempt),
+        nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
         updatedAt: now,
       };
       this.store.set(record.id, updated);
+      count++;
+    }
+    return count;
+  }
+
+  private deadLetterExhausted(now: number): number {
+    let count = 0;
+    for (const record of this.list()) {
+      if (
+        (record.status !== "pending" && record.status !== "retry-wait") ||
+        record.attempt < REPAIR_MAX_ATTEMPTS
+      )
+        continue;
+      this.markTerminal(record.id, "dead-letter", now);
       count++;
     }
     return count;

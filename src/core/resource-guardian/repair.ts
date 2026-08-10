@@ -60,12 +60,14 @@ export function resourceRepairQueueState(
   const activeGlobal = (record: (typeof allRecords)[number]) =>
     record.status === "leased" || record.status === "running";
   const retry = matching.filter((record) => record.status === "retry-wait");
+  const deadLettered = matching.some((record) => record.status === "dead-letter");
   const latest = matching.sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0];
   return {
     hasActiveFingerprintRepair: matching.some(activeFingerprint),
     hasActiveResourceRepair: allRecords.some(activeGlobal),
     cooldownActive: retry.some((record) => record.nextAttemptAt > now),
-    retryExhausted: retry.some((record) => record.attempt >= RESOURCE_REPAIR_MAX_ATTEMPTS),
+    retryExhausted:
+      deadLettered || retry.some((record) => record.attempt >= RESOURCE_REPAIR_MAX_ATTEMPTS),
     ...(latest?.workOrderId === undefined ? {} : { workOrderId: latest.workOrderId }),
   };
 }
@@ -284,9 +286,12 @@ export async function dispatchResourceGuardianRepair(input: {
       (record) =>
         record.source === "resource-guardian" &&
         record.fingerprint === input.incident.fingerprint &&
-        record.status === "retry-wait",
+        (record.status === "retry-wait" || record.status === "dead-letter"),
     );
-  if (retry !== undefined && retry.attempt >= RESOURCE_REPAIR_MAX_ATTEMPTS)
+  if (
+    retry !== undefined &&
+    (retry.status === "dead-letter" || retry.attempt >= RESOURCE_REPAIR_MAX_ATTEMPTS)
+  )
     return { status: "blocked", detail: "resource repair retry budget is exhausted" };
   if (retry !== undefined && retry.nextAttemptAt > input.now)
     return { status: "blocked", detail: "resource repair cooldown is active" };
