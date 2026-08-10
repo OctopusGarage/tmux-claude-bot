@@ -2988,10 +2988,7 @@ export function resolveSystemGateGitExecutable(
   env: NodeJS.ProcessEnv,
   deps: SystemGateGitExecutableResolverDeps = { spawn: spawnSync, exists: existsSync },
 ): string {
-  const discoveryPath = [
-    ...(env.PATH ?? "").split(":").filter(Boolean),
-    ...SYSTEM_GATE_GIT_SEARCH_PATHS,
-  ].join(":");
+  const discoveryPath = systemGateChildProcessEnv(env).PATH;
   const discovered = deps.spawn("/bin/sh", ["-lc", "command -v git"], {
     encoding: "utf8",
     env: { ...env, PATH: discoveryPath },
@@ -3013,9 +3010,19 @@ export function resolveSystemGateGitExecutable(
   return "git";
 }
 
+function systemGateChildProcessEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    PATH: [...(env.PATH ?? "").split(":").filter(Boolean), ...SYSTEM_GATE_GIT_SEARCH_PATHS].join(
+      ":",
+    ),
+  };
+}
+
 export function runGitCommand(invocation: LoopGitInvocation): LoopRunCommandResult {
   const result = spawnSync(SYSTEM_GATE_GIT_EXECUTABLE, invocation.args, {
     cwd: invocation.cwd,
+    env: systemGateChildProcessEnv(process.env),
     encoding: "utf8",
   });
   return {
