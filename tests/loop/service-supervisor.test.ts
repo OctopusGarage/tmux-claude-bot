@@ -1039,6 +1039,28 @@ prReview:
     expect(git).toBe("/usr/local/bin/git");
   });
 
+  it("discovers git from service-safe default paths when the launch PATH is empty", async () => {
+    const git = resolveSystemGateGitExecutable(
+      { PATH: "" },
+      {
+        exists: (candidate) => candidate === "/run/current-system/sw/bin/git",
+        spawn: ((...args: unknown[]) => {
+          const options = args[2] as { env?: NodeJS.ProcessEnv } | undefined;
+          const path = options?.env?.PATH ?? "";
+          return {
+            status: path.split(":").includes("/run/current-system/sw/bin") ? 0 : 1,
+            stdout: path.split(":").includes("/run/current-system/sw/bin")
+              ? "/run/current-system/sw/bin/git\n"
+              : "",
+            stderr: "",
+          } as never;
+        }) as typeof spawnSync,
+      },
+    );
+
+    expect(git).toBe("/run/current-system/sw/bin/git");
+  });
+
   it("falls back to git by name when no absolute executable exists", async () => {
     const git = resolveSystemGateGitExecutable(
       { PATH: "" },

@@ -101,6 +101,14 @@ const REPOSITORY_REVIEW_RETRY_BASE_MS = 15 * 60 * 1000;
 const REPOSITORY_REVIEW_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
 const REPOSITORY_REVIEW_MIN_TICK_MS = 10_000;
 const LOG_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const SYSTEM_GATE_GIT_SEARCH_PATHS = [
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  "/run/current-system/sw/bin",
+  "/nix/var/nix/profiles/default/bin",
+];
 const SYSTEM_GATE_GIT_EXECUTABLE = resolveSystemGateGitExecutable(process.env);
 export type SupervisedSystemGateProject = Pick<LoopProjectConfig, "id" | "name" | "path"> & {
   commit: LoopWorkOrder["commitPolicy"];
@@ -2980,9 +2988,13 @@ export function resolveSystemGateGitExecutable(
   env: NodeJS.ProcessEnv,
   deps: SystemGateGitExecutableResolverDeps = { spawn: spawnSync, exists: existsSync },
 ): string {
+  const discoveryPath = [
+    ...(env.PATH ?? "").split(":").filter(Boolean),
+    ...SYSTEM_GATE_GIT_SEARCH_PATHS,
+  ].join(":");
   const discovered = deps.spawn("/bin/sh", ["-lc", "command -v git"], {
     encoding: "utf8",
-    env,
+    env: { ...env, PATH: discoveryPath },
   });
   const discoveredPath = discovered.stdout.trim();
   if (discovered.status === 0 && isAbsolute(discoveredPath) && deps.exists(discoveredPath)) {
