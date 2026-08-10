@@ -227,6 +227,115 @@ describe("eval report", () => {
     });
   });
 
+  it("does not fail eval for a protected-worktree base switch observation superseded by safe reset", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["checked isolated worktree before mutation"],
+          postMutationReview: [
+            "No product-code mutation occurred; only ignored local environment state was created.",
+          ],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "fetch origin main",
+              command: "git fetch origin main",
+              result: "passed",
+              evidence: "Fetched origin/main.",
+            },
+            {
+              name: "literal switch-main base sync",
+              command: "git -C <expected-worktree> switch main",
+              result: "failed",
+              evidence:
+                "Git failed with `fatal: 'main' is already checked out at '/repo/knowledge-engine'`; the original worktree was not mutated.",
+            },
+            {
+              name: "safe work-order branch reset",
+              command: "git switch -C <work-order-branch> origin/main",
+              result: "passed",
+              evidence: "WorkOrder branch reset to origin/main.",
+            },
+            {
+              name: "base freshness",
+              command: "git rev-parse HEAD origin/main",
+              result: "passed",
+              evidence: "HEAD matched origin/main.",
+            },
+            {
+              name: "final clean worktree",
+              command: "git status --short",
+              result: "passed",
+              evidence: "No tracked diff.",
+            },
+          ],
+          decision: "pass",
+          notes: [
+            "The literal `git switch main` instruction remains incompatible with the protected original worktree already checking out main. Freshness was established by fetch plus resetting the WorkOrder branch from origin/main.",
+          ],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("does not fail eval for a source-worktree control check excluded from final acceptance", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["verified prior evidence in the isolated worktree"],
+          postMutationReview: [
+            "Regression risk: npm run verify:local passed in the isolated worktree; no runtime behavior changed because no source patch was made.",
+          ],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "local verification",
+              command: "npm run verify:local",
+              result: "passed",
+              evidence: "verify-local ok",
+            },
+            {
+              name: "ordinary source CLI control check",
+              command:
+                "TCB_STATE_DIR=... /repo/tmux-claude-bot/node_modules/.bin/tsx /repo/tmux-claude-bot/src/cli.ts dashboard --json",
+              result: "failed",
+              evidence:
+                "Failed to transform unrelated reserved source worktree file src/core/loop/service.ts because 'await' can only be used inside an async function. This was not used for final acceptance because this WorkOrder forbids source-worktree mutation.",
+            },
+            {
+              name: "isolated CLI control check",
+              command: "node_modules/.bin/tsx src/cli.ts dashboard --json",
+              result: "passed",
+              evidence: "Dashboard command passed in the isolated worktree.",
+            },
+            {
+              name: "clean isolated worktree",
+              command: "git status --short",
+              result: "passed",
+              evidence: "No tracked diff.",
+            },
+          ],
+          decision: "pass",
+          notes: [
+            "The ordinary source worktree currently contains unrelated uncommitted changes and a TypeScript syntax error. It was checked only as external risk context and was not mutated.",
+          ],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
   it("maps supervisor review and verification states to eval outcomes", () => {
     const fail = buildEvalReportFromSupervisorSummary({
       summary: summary({
