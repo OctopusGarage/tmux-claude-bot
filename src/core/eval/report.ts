@@ -115,7 +115,7 @@ export function isPreMutationDependencyGate(
     .toLowerCase();
   return (
     normalized.includes("preflight") &&
-    normalized.includes("before repair") &&
+    /\bbefore[\s_-]+repair\b/.test(normalized) &&
     (normalized.includes("node_modules") ||
       normalized.includes("local node") ||
       normalized.includes("tool binaries") ||

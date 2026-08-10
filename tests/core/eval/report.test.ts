@@ -139,6 +139,49 @@ describe("eval report", () => {
     });
   });
 
+  it("passes completed recoveries after hyphenated dependency preflight before repair failures", () => {
+    const summary: LoopSupervisorFinalSummary = {
+      status: "completed",
+      projectId: "english-pilot",
+      actionsTaken: ["restored local toolchain and reran verification"],
+      delegatedTasks: [],
+      finalVerification: "passed",
+      reviewGate: {
+        preMutationReview: [],
+        postMutationReview: ["dependency restore completed and tests passed"],
+        aiReview: "passed",
+        deterministicGates: [
+          {
+            name: "preflight-before-repair",
+            result: "failed",
+            command: "npm test",
+            evidence:
+              "node_modules/.bin/vitest tool binaries were missing during dependency preflight",
+          },
+          {
+            name: "preflight",
+            result: "passed",
+            command: "npm test",
+            evidence: "verification passed after environment repair",
+          },
+        ],
+        decision: "pass",
+        notes: [],
+      },
+      commits: ["abc123"],
+      followUps: [],
+    };
+
+    const report = buildEvalReportFromSupervisorSummary({ summary });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+    expect(report.outcome.reason).toBeUndefined();
+  });
+
   it("maps supervisor review and verification states to eval outcomes", () => {
     const fail = buildEvalReportFromSupervisorSummary({
       summary: summary({
