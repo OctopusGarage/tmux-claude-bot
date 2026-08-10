@@ -1329,6 +1329,41 @@ describe("runtime guardian", () => {
     ]);
   });
 
+  it("ignores legacy system-gate failures that are marked supervisor-revisionable", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-recoverable-system-gate-failed",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const failures = [
+      "git status failed: spawnSync git ENOENT",
+      "isolated worktree branch check failed: spawnSync git ENOENT",
+    ];
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures,
+        recoverableFailures: failures,
+        findings: [],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-recoverable-system-gate-failed", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
   it("does not treat intentionally blocked work orders as system-layer failures", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(

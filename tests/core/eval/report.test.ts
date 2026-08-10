@@ -139,6 +139,52 @@ describe("eval report", () => {
     });
   });
 
+  it("accepts repaired initial preflight failures when final verification passes", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "initial-preflight",
+              result: "failed",
+              command: "test -x .venv/bin/pytest",
+              evidence: "pytest was initially missing",
+            },
+            {
+              name: "environment-repair",
+              result: "passed",
+              command: "uv sync",
+              evidence: "installed locked local tooling",
+            },
+            {
+              name: "post-repair-preflight",
+              result: "passed",
+              command: "test -x .venv/bin/pytest",
+              evidence: "pytest is available",
+            },
+            {
+              name: "final-clean-worktree",
+              result: "passed",
+              command: "git status --short",
+              evidence: "clean",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
   it("maps supervisor review and verification states to eval outcomes", () => {
     const fail = buildEvalReportFromSupervisorSummary({
       summary: summary({

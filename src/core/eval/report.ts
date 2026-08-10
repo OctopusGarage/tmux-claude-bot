@@ -107,7 +107,10 @@ export function summarizeDeterministicGates(
 function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome {
   const reviewDecision = summary.reviewGate?.decision;
   const failedGate = summary.reviewGate?.deterministicGates.some(
-    (gate) => typeof gate !== "string" && gate.result === "failed",
+    (gate, index, gates) =>
+      typeof gate !== "string" &&
+      gate.result === "failed" &&
+      !isRepairedInitialPreflightGate(gate, gates.slice(index + 1)),
   );
   if (failedGate === true) {
     return baseOutcome(summary, reviewDecision, "failed", "deterministic-gate-failed");
@@ -131,6 +134,21 @@ function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome
     return baseOutcome(summary, reviewDecision, "passed");
   }
   return baseOutcome(summary, reviewDecision, "unknown", "insufficient-eval-signal");
+}
+
+function isRepairedInitialPreflightGate(
+  gate: LoopSupervisorReviewGateDeterministicGate,
+  laterGates: LoopSupervisorReviewGateDeterministicGate[],
+): boolean {
+  if (typeof gate === "string") return false;
+  const name = gate.name.toLowerCase();
+  if (!name.includes("preflight") || !name.includes("initial")) return false;
+  return laterGates.some((laterGate) => {
+    if (typeof laterGate === "string") return false;
+    if (laterGate.result !== "passed") return false;
+    const laterName = laterGate.name.toLowerCase();
+    return laterName.includes("post-repair") || laterName.includes("environment-repair");
+  });
 }
 
 function baseOutcome(
