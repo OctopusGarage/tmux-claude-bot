@@ -5623,6 +5623,394 @@ prReview:
     ]);
   });
 
+  it("refreshes the PR branch and retries auto-merge when GitHub reports the head is behind base", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
+      ].join("\n"),
+    });
+    const prCommands: string[] = [];
+    const gitCommands: string[][] = [];
+    let mergeAttempts = 0;
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
+        expect(invocation.kind).toBe("pr");
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        if (invocation.command.includes(" gh pr view ")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/146",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+              body: "## Summary\n- Clean architecture docs.",
+              files: [{ path: "README.md" }],
+              commits: [{ oid: "abc123" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.command.includes("gh pr update-branch ")) {
+          return { status: 0, stdout: "Updated branch", stderr: "" };
+        }
+        if (invocation.command.includes("gh pr merge ")) {
+          mergeAttempts += 1;
+          if (mergeAttempts === 1) {
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with the base branch.\nTo have the pull request merged after all the requirements have been met, add the `--auto` flag.\n",
+            };
+          }
+          return { status: 0, stdout: "Merged pull request #146", stderr: "" };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        gitCommands.push(invocation.args);
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "README.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR #146"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(prCommands).toEqual([
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh repo view --json viewerPermission",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr view 'loop/hub/architecture/1784196600000-hub' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge --auto 'loop/hub/architecture/1784196600000-hub' --merge",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr update-branch 'loop/hub/architecture/1784196600000-hub'",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge --auto 'loop/hub/architecture/1784196600000-hub' --merge",
+    ]);
+    expect(gitCommands).toEqual([
+      ["status", "--porcelain"],
+      ["branch", "--show-current"],
+      ["show", "--format=", "--name-only", "abc123"],
+      ["fetch", "origin", "dev"],
+      ["switch", "dev"],
+      ["merge", "--ff-only", "FETCH_HEAD"],
+    ]);
+  });
+
+  it("fails a completed supervised PR when stale-head branch refresh fails", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
+      ].join("\n"),
+    });
+    const prCommands: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
+        expect(invocation.kind).toBe("pr");
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        if (invocation.command.includes(" gh pr view ")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/146",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+              body: "## Summary\n- Clean architecture docs.",
+              files: [{ path: "README.md" }],
+              commits: [{ oid: "abc123" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.command.includes("gh pr merge ")) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr:
+              "X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with the base branch.",
+          };
+        }
+        if (invocation.command.includes("gh pr update-branch ")) {
+          return { status: 1, stdout: "", stderr: "branch update refused" };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "README.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR #146"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(prCommands).toContain(
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr update-branch 'loop/hub/architecture/1784196600000-hub'",
+    );
+    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
+      "PR branch update after auto-merge failure failed: branch update refused",
+    );
+  });
+
+  it("fails a completed supervised PR when auto-merge still fails after branch refresh", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
+      ].join("\n"),
+    });
+    const prCommands: string[] = [];
+    let mergeAttempts = 0;
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
+        expect(invocation.kind).toBe("pr");
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        if (invocation.command.includes(" gh pr view ")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/146",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+              body: "## Summary\n- Clean architecture docs.",
+              files: [{ path: "README.md" }],
+              commits: [{ oid: "abc123" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.command.includes("gh pr update-branch ")) {
+          return { status: 0, stdout: "Updated branch", stderr: "" };
+        }
+        if (invocation.command.includes("gh pr merge ")) {
+          mergeAttempts += 1;
+          if (mergeAttempts === 1) {
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with the base branch.",
+            };
+          }
+          return { status: 1, stdout: "", stderr: "required checks still pending" };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "README.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR #146"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(prCommands).toContain(
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr update-branch 'loop/hub/architecture/1784196600000-hub'",
+    );
+    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
+      "PR auto-merge failed",
+    );
+  });
+
+  it("does not refresh the PR branch for generic auto-merge failures", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
+      ].join("\n"),
+    });
+    const prCommands: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
+        expect(invocation.kind).toBe("pr");
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        if (invocation.command.includes(" gh pr view ")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/146",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+              body: "## Summary\n- Clean architecture docs.",
+              files: [{ path: "README.md" }],
+              commits: [{ oid: "abc123" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.command.includes("gh pr merge ")) {
+          return { status: 1, stdout: "", stderr: "branch protection blocks merge" };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "README.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR #146"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(prCommands).toContain(
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge --auto 'loop/hub/architecture/1784196600000-hub' --merge",
+    );
+    expect(prCommands).not.toContain(
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr update-branch 'loop/hub/architecture/1784196600000-hub'",
+    );
+    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
+      "PR auto-merge failed: branch protection blocks merge",
+    );
+  });
+
   it("dispatches supervised single-repository work from an isolated git worktree", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     process.env.TCB_STATE_DIR = stateDir;
