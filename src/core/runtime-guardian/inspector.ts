@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
-import { isPreMutationDependencyGate } from "../eval/report.js";
+import {
+  buildEvalReportFromSupervisorSummary,
+  isPreMutationDependencyGate,
+} from "../eval/report.js";
 import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
 import {
   listStaleDispatchingLoopSupervisorWorkOrders,
@@ -131,7 +134,7 @@ function systemGateFailure(
     failures.length > 0 &&
     (failures.every(isLegacyIsolatedBranchMismatchFailure) ||
       failures.every(isLegacySystemGitEnoentFailure) ||
-      legacyPreMutationEvalFailure(finalSummaryPath, failures))
+      legacyPreMutationEvalFailure(record, finalSummaryPath, failures))
   ) {
     return null;
   }
@@ -317,11 +320,25 @@ function isLegacySystemGitEnoentFailure(failure: string): boolean {
     failure === "isolated worktree branch check failed: spawnSync git ENOENT"
   );
 }
-function legacyPreMutationEvalFailure(finalSummaryPath: string, failures: string[]): boolean {
+function legacyPreMutationEvalFailure(
+  record: TerminalWorkOrder,
+  finalSummaryPath: string,
+  failures: string[],
+): boolean {
   if (
     !failures.every((failure) => failure === "eval outcome is failed: deterministic-gate-failed")
   ) {
     return false;
+  }
+  const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
+  if (parsed.ok) {
+    return (
+      buildEvalReportFromSupervisorSummary({
+        workOrderId: record.workOrder.id,
+        taskId: record.workOrder.task?.kind ?? "architecture",
+        summary: parsed.summary,
+      }).outcome.status === "passed"
+    );
   }
   const summary = readJson(finalSummaryPath);
   const reviewGate = isRecord(summary?.reviewGate) ? summary.reviewGate : null;
