@@ -116,6 +116,11 @@ No-delta recovery alignment invariant: when authoritative verification proves
 the target already healthy, the WorkOrder completes with a clean-worktree gate
 and `commits: []` even if its normal commit and PR policies are enabled. The
 system must not require or create an empty commit or no-op PR.
+System-gate eval synthesis must distinguish terminal deterministic failures
+from repaired setup observations: an initial failed preflight recorded before a
+successful environment repair and successful post-repair preflight is evidence
+for the repair history, not a reason to rewrite a completed, verified
+`reviewGate.decision=pass` run to `deterministic-gate-failed`.
 Architecture alignment invariant: every project and workspace Architecture
 schedule must run its deterministic score assessment before creating a
 WorkOrder. The configured target is normally 95; a score at or above target is

@@ -898,7 +898,7 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
-  it("does not fail eval for dependency preflight evidence recorded before repair", async () => {
+  it("accepts completed supervisor results when a failed preflight was repaired before final verification", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
         id: "hub",
@@ -919,7 +919,7 @@ prReview:
         projectName: "Hub",
         projectPath: "/tmp/hub",
         agent: "codex",
-        task: { kind: "architecture" },
+        task: { kind: "active-delegated-task" },
         skills: [],
         allowedActions: [],
         blockedActions: [],
@@ -932,22 +932,41 @@ prReview:
         summary: {
           status: "completed",
           projectId: "hub",
-          actionsTaken: ["restored local dependencies"],
+          actionsTaken: ["repaired local dependencies"],
           delegatedTasks: [],
           finalVerification: "passed",
           reviewGate: {
-            preMutationReview: ["preflight failed because node_modules was absent"],
-            postMutationReview: ["dependency restore completed and tests passed"],
+            preMutationReview: ["local Node tools were initially missing"],
+            postMutationReview: ["npm ci restored local tooling and final checks passed"],
             aiReview: "not-applicable",
             deterministicGates: [
               {
-                name: "preflight before repair",
+                name: "preflight-before-repair",
+                command: "test -d node_modules && test -x node_modules/.bin/tsc",
                 result: "failed",
-                evidence: "Command exited 1 because required local Node tool binaries were absent.",
+                evidence: "node_modules and tool binaries were absent",
+              },
+              {
+                name: "environment-repair",
+                command: "npm ci",
+                result: "passed",
+                evidence: "installed dependencies without tracked changes",
+              },
+              {
+                name: "preflight-after-repair",
+                command: "test -d node_modules && test -x node_modules/.bin/tsc",
+                result: "passed",
+                evidence: "required tool binaries are executable",
+              },
+              {
+                name: "typecheck",
+                command: "npm run lint:types",
+                result: "passed",
+                evidence: "tsc --noEmit exited 0",
               },
             ],
             decision: "pass",
-            notes: [],
+            notes: ["The failed preflight was repaired before final verification."],
           },
           commits: [],
           followUps: [],

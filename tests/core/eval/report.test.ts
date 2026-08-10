@@ -139,6 +139,94 @@ describe("eval report", () => {
     });
   });
 
+  it("does not fail the eval report for a repaired preflight observation", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["local Node tools were initially missing"],
+          postMutationReview: ["npm ci restored local tooling and final checks passed"],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight-before-repair",
+              command: "test -d node_modules && test -x node_modules/.bin/tsc",
+              result: "failed",
+              evidence: "node_modules and tool binaries were absent",
+            },
+            {
+              name: "environment-repair",
+              command: "npm ci",
+              result: "passed",
+              evidence: "installed dependencies without tracked changes",
+            },
+            {
+              name: "preflight-after-repair",
+              command: "test -d node_modules && test -x node_modules/.bin/tsc",
+              result: "passed",
+              evidence: "required tool binaries are executable",
+            },
+            {
+              name: "typecheck",
+              command: "npm run lint:types",
+              result: "passed",
+              evidence: "tsc --noEmit exited 0",
+            },
+          ],
+          decision: "pass",
+          notes: ["The failed preflight was repaired before final verification."],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("accepts repaired preflight observations without a before-repair label", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["initial tool preflight failed"],
+          postMutationReview: [
+            "npm install repaired dependencies and post-repair preflight passed",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight",
+              command: "test -x node_modules/.bin/vitest",
+              result: "failed",
+              evidence: "vitest executable was absent",
+            },
+            {
+              name: "environment repair",
+              command: "npm install",
+              result: "passed",
+              evidence: "dependency installation completed",
+            },
+            {
+              name: "post-repair preflight",
+              command: "test -x node_modules/.bin/vitest",
+              result: "passed",
+              evidence: "preflight passed after repair",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
   it("maps supervisor review and verification states to eval outcomes", () => {
     const fail = buildEvalReportFromSupervisorSummary({
       summary: summary({

@@ -115,7 +115,7 @@ export function isPreMutationDependencyGate(
     .toLowerCase();
   return (
     normalized.includes("preflight") &&
-    normalized.includes("before repair") &&
+    /\bbefore[\s_-]+repair\b/.test(normalized) &&
     (normalized.includes("node_modules") ||
       normalized.includes("local node") ||
       normalized.includes("tool binaries") ||
@@ -127,9 +127,8 @@ export function isPreMutationDependencyGate(
 
 function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome {
   const reviewDecision = summary.reviewGate?.decision;
-  const failedGate = summary.reviewGate?.deterministicGates.some(
-    (gate) =>
-      typeof gate !== "string" && gate.result === "failed" && !isPreMutationDependencyGate(gate),
+  const failedGate = hasUnresolvedFailedDeterministicGate(
+    summary.reviewGate?.deterministicGates ?? [],
   );
   if (failedGate === true) {
     return baseOutcome(summary, reviewDecision, "failed", "deterministic-gate-failed");
@@ -153,6 +152,54 @@ function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome
     return baseOutcome(summary, reviewDecision, "passed");
   }
   return baseOutcome(summary, reviewDecision, "unknown", "insufficient-eval-signal");
+}
+
+function hasUnresolvedFailedDeterministicGate(
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+): boolean {
+  return gates.some(
+    (gate, index) =>
+      typeof gate !== "string" &&
+      gate.result === "failed" &&
+      !isPreMutationDependencyGate(gate) &&
+      !isResolvedPreflightRepairObservation(gates, index),
+  );
+}
+
+function isResolvedPreflightRepairObservation(
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  failedGateIndex: number,
+): boolean {
+  const failedGate = gates[failedGateIndex];
+  if (failedGate === undefined) return false;
+  if (typeof failedGate === "string" || failedGate.result !== "failed") return false;
+  if (!gateText(failedGate).includes("preflight")) return false;
+  const laterPassedGateText = gates
+    .slice(failedGateIndex + 1)
+    .filter(isPassedStructuredGate)
+    .map(gateText);
+  return (
+    laterPassedGateText.some(isEnvironmentRepairEvidence) &&
+    laterPassedGateText.some(isPostRepairPreflightEvidence)
+  );
+}
+
+function isPassedStructuredGate(
+  gate: LoopSupervisorReviewGateDeterministicGate,
+): gate is Exclude<LoopSupervisorReviewGateDeterministicGate, string> {
+  return typeof gate !== "string" && gate.result === "passed";
+}
+
+function gateText(gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>): string {
+  return [gate.name, gate.command, gate.evidence].filter(Boolean).join("\n").toLowerCase();
+}
+
+function isEnvironmentRepairEvidence(text: string): boolean {
+  return /\b(environment[- ]repair|preflight[- ]repair|npm ci|npm install|uv sync)\b/.test(text);
+}
+
+function isPostRepairPreflightEvidence(text: string): boolean {
+  return text.includes("preflight") && /\b(after[- ]repair|post[- ]repair)\b/.test(text);
 }
 
 function baseOutcome(
