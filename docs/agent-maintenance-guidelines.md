@@ -142,6 +142,10 @@ During service startup, settle durable Loop final summaries before restoring
 supervisor control messages or resuming active delegations. Treat a valid final
 summary as authoritative replay-suppression evidence even when the prior process
 stopped before removing its persisted queue item.
+Project recovery reconciliation applies the same passing-summary terminalization
+to both scheduled Loop records and Autopilot delegation records; neither source
+should require a second worker solely because its earlier state file remained
+failed.
 
 ## Supervisor And System Gates
 

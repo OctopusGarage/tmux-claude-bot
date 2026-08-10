@@ -351,7 +351,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
   }
   for (const record of input.records) {
     if (
-      record.source !== "loop-engineering" ||
+      (record.source !== "loop-engineering" && record.source !== "autopilot-delegate") ||
       !["failed", "missing", "running-timeout"].includes(record.status) ||
       (record.repairStatus !== "pending" && record.repairStatus !== "running") ||
       record.reportPath === undefined

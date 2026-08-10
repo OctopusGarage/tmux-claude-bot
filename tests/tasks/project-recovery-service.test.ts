@@ -254,6 +254,64 @@ describe("project recovery service", () => {
     });
   });
 
+  it("closes a failed Autopilot record from its passing authoritative final summary", async () => {
+    const runDir = join(tmpdir(), `project-recovery-autopilot-summary-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "bot",
+        actionsTaken: ["verified existing repair"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: { decision: "pass" },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "bot",
+      projectPath: "/repo/bot",
+      source: "project-recovery",
+      taskFamily: "active delegated task",
+      fingerprint: "missing-system-gate",
+      taskId: "autopilot:completed-before-restart",
+      now: 1_000,
+    });
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:completed-before-restart",
+          source: "autopilot-delegate",
+          name: "bot active delegated task",
+          status: "failed",
+          error: "missing system gate during the earlier reconciliation pass",
+          reportPath: runDir,
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "pending",
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:completed-before-restart",
+      "fixed",
+      expect.stringContaining("authoritative supervisor final summary"),
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "fixed",
+    });
+  });
+
   it("releases a failed delegated recovery immediately instead of waiting for lease expiry", async () => {
     process.env.TCB_STATE_DIR = join(tmpdir(), `project-recovery-failed-${Date.now()}`);
     writeLoopSupervisorWorkOrderState({

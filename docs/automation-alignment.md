@@ -174,6 +174,9 @@ fail and settle that reservation even when its active lease leaked; fresh
 dispatch reservations remain untouched.
 Project recovery must link each delegated Autopilot WorkOrder back to the
 original task and close both records only from passing authoritative evidence.
+Passing authoritative final summaries must close pending `autopilot-delegate`
+records directly, just as they close `loop-engineering` records, before another
+project-recovery WorkOrder can be admitted.
 Daily Task Audit repair dispatch must use the same link and return failed
 delegations to the queue immediately.
 The generic Daily Task Audit repair dispatcher must exclude
