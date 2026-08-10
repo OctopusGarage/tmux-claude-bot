@@ -5,7 +5,6 @@ import { currentLogContext } from "./log-context.js";
 
 // Logs live under the app state home so they follow TCB_STATE_DIR like every
 // other state dir; TCB_LOG_DIR still overrides for explicit redirection / tests.
-const LOG_DIR = process.env.TCB_LOG_DIR ?? appStateFile("logs");
 const MAX_ARCHIVE_DAYS = 30;
 
 export type LogCtx = {
@@ -47,21 +46,26 @@ function getDateStr(): string {
   return ymd(new Date());
 }
 
-function getLogFile(dateStr: string): string {
-  return nodePath.join(LOG_DIR, `tcb-${dateStr}.jsonl`);
+function logDir(): string {
+  return process.env.TCB_LOG_DIR ?? appStateFile("logs");
 }
 
-let lastCleanDate = "";
-// The log dir is created once and persists; skip the per-write mkdir syscall.
-// Reset to false on a write failure so a removed dir is re-created next time.
-let dirReady = false;
+function getLogFile(dir: string, dateStr: string): string {
+  return nodePath.join(dir, `tcb-${dateStr}.jsonl`);
+}
 
-function cleanOldLogs(): void {
+let lastCleanKey = "";
+// The log dir is created once and persists; skip the per-write mkdir syscall.
+// Clear the cached path on a write failure so a removed dir is re-created next time.
+let readyDir = "";
+
+function cleanOldLogs(dir: string): void {
   const today = getDateStr();
-  if (lastCleanDate === today) return;
-  lastCleanDate = today;
+  const cleanKey = `${dir}\0${today}`;
+  if (lastCleanKey === cleanKey) return;
+  lastCleanKey = cleanKey;
   try {
-    const entries = fs.readdirSync(LOG_DIR);
+    const entries = fs.readdirSync(dir);
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - MAX_ARCHIVE_DAYS);
     const cutoffStr = ymd(cutoff);
@@ -69,7 +73,7 @@ function cleanOldLogs(): void {
       if (!entry.startsWith("tcb-") || !entry.endsWith(".jsonl")) continue;
       const dateStr = entry.slice(4, 12); // "tcb-YYYYMMDD.jsonl"
       if (dateStr < cutoffStr) {
-        fs.unlinkSync(nodePath.join(LOG_DIR, entry));
+        fs.unlinkSync(nodePath.join(dir, entry));
       }
     }
   } catch {
@@ -148,16 +152,17 @@ function write(
   }
 
   try {
-    if (!dirReady) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-      dirReady = true;
+    const dir = logDir();
+    if (readyDir !== dir) {
+      fs.mkdirSync(dir, { recursive: true });
+      readyDir = dir;
     }
-    fs.appendFileSync(getLogFile(getDateStr()), `${JSON.stringify(entry)}\n`, "utf-8");
-    cleanOldLogs();
+    fs.appendFileSync(getLogFile(dir, getDateStr()), `${JSON.stringify(entry)}\n`, "utf-8");
+    cleanOldLogs(dir);
   } catch {
     // file write failed — the stdout mirror above is the fallback. Re-mkdir next
     // time in case the dir was removed out from under us.
-    dirReady = false;
+    readyDir = "";
   }
 }
 

@@ -8,10 +8,14 @@ LABEL="com.octopusgarage.tmux-claude-bot"
 TARGET="$HOME/Library/LaunchAgents/$PLIST_NAME"
 
 WRAPPER="launchd-wrapper.sh"
+LAUNCHER_ARGS=()
 if [ "${1:-}" = "--dev" ]; then
   WRAPPER="dev-launchd-wrapper.sh"
+  LAUNCHER_ARGS=("--dev")
   echo "[install-launchd] DEV mode: service will hot-reload from $PROJECT_DIR"
 fi
+
+"$SCRIPT_DIR/install-cli-launchers.sh" "${LAUNCHER_ARGS[@]}"
 
 mkdir -p "$HOME/Library/LaunchAgents"
 mkdir -p "$PROJECT_DIR/logs"

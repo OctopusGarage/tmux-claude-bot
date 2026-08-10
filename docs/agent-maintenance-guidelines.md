@@ -24,6 +24,12 @@ Supported modes:
   it on exit.
 - `npm run tui`: control-socket client, not a bot instance.
 
+The global `tcb` launcher must follow the managed service mode. Switching to
+managed dev points it at this repository's source CLI and the deployed state
+directory; switching back to prod points it at the managed `dist/cli.js`.
+Service installers refresh the launcher through `install-cli-launchers.sh` so
+the command surface cannot silently lag behind the running service.
+
 Managed install owns the full onboarding surface: runtime build, global
 launchers, guided setup, launchd/systemd registration, isolated Home Operator
 workspace provisioning, operator-home skill installation, and MCP profile

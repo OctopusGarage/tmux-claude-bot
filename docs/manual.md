@@ -159,6 +159,8 @@ The installer drops global launchers in `~/.local/bin`, so `tcb …` (and the fu
 `tmux-claude-bot …`) work from anywhere — e.g. `tcb tui`, `tcb dashboard`. (If
 `~/.local/bin` isn't on your `PATH`, add it; or run `node dist/cli.js …` from the
 install dir.)
+Managed `service:dev` and `service:prod` switches refresh these launchers too,
+keeping CLI commands on the same source or bundled code as the running service.
 
 For the complete maintained CLI command and option surface, see
 [docs/cli-reference.md](cli-reference.md). For MCP profile setup, see
