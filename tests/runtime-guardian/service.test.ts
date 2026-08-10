@@ -302,6 +302,47 @@ describe("runtime guardian", () => {
     ]);
   });
 
+  it("restores due aggregate retries that an older dedupe pass superseded after detachment", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const records = [
+      coordinator.enqueue({
+        projectId: "fluent-frame",
+        projectPath: "/repo/fluent-frame",
+        source: "runtime-guardian",
+        taskFamily: "terminal-system-gate-failure",
+        fingerprint: "fluent failure",
+        taskId: "run-fluent",
+        now: 1_000,
+      }),
+      coordinator.enqueue({
+        projectId: "english-pilot",
+        projectPath: "/repo/english-pilot",
+        source: "runtime-guardian",
+        taskFamily: "terminal-invalid-output",
+        fingerprint: "english failure",
+        taskId: "run-english",
+        now: 1_001,
+      }),
+    ];
+    coordinator.claimIds(
+      records.map((record) => record.id),
+      { now: 2_000, leaseId: "aggregate", limit: 2 },
+    );
+    for (const record of records) {
+      coordinator.markRunning(record.id, "aggregate", 2_001);
+      coordinator.attachWorkOrder(record.id, "failed-aggregate", 2_002);
+      coordinator.linkTaskIds(record.id, ["autopilot:failed-aggregate"], 2_003);
+      coordinator.releaseForRetry(record.id, 2_004, { detachWorkOrder: true });
+      coordinator.markTerminal(record.id, "superseded", 2_005);
+    }
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 40_000, findings: [] })).toBe(2);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: records[0]?.id, status: "pending", attempt: 1 }),
+      expect.objectContaining({ id: records[1]?.id, status: "pending", attempt: 1 }),
+    ]);
+  });
+
   it("does not infer a terminal blocker from legacy failure wording", async () => {
     const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
 

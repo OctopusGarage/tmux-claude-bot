@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { loopRunDir } from "../loop/artifacts.js";
 import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "../loop/work-order.js";
-import type { RepairCoordinator } from "../tasks/repair-coordinator.js";
+import type { RepairCoordinator, RepairQueueRecord } from "../tasks/repair-coordinator.js";
 import type { RuntimeGuardianFinding, RuntimeGuardianFindingKind } from "./findings.js";
 
 const RUNTIME_GUARDIAN_FINDING_KINDS = new Set<RuntimeGuardianFindingKind>([
@@ -28,7 +28,11 @@ export function reconcileRuntimeGuardianQueue(input: {
 }): number {
   const byRunId = new Map(input.findings.map((finding) => [finding.runId, finding]));
   const registry = readLoopSupervisorWorkOrderRegistry(input.now);
-  let reconciled = recoverRuntimeGuardianWorkOrderLinks({
+  let reconciled = restoreSupersededAggregateRetries({
+    coordinator: input.coordinator,
+    now: input.now,
+  });
+  reconciled += recoverRuntimeGuardianWorkOrderLinks({
     coordinator: input.coordinator,
     now: input.now,
     workOrders: registry.records,
@@ -78,7 +82,7 @@ export function reconcileRuntimeGuardianQueue(input: {
             .map((id) => readPassingTerminalArtifacts(loopRunDir(record.projectId, id)))
             .find(Boolean)
         : readPassingTerminalArtifacts(terminal.runDir, terminal.workOrder);
-    if (evidence === false) continue;
+    if (evidence === false || evidence === undefined) continue;
     input.coordinator.markTerminal(
       record.id,
       evidence === "fixed" ? "fixed" : "not-reproducible",
@@ -87,6 +91,58 @@ export function reconcileRuntimeGuardianQueue(input: {
     reconciled++;
   }
   return reconciled;
+}
+
+function restoreSupersededAggregateRetries(input: {
+  coordinator: RepairCoordinator;
+  now: number;
+}): number {
+  const records = input.coordinator.list();
+  const activeTaskIds = new Set(
+    records
+      .filter((record) => record.source === "runtime-guardian" && !isQueueTerminal(record.status))
+      .flatMap(originalRuntimeGuardianTaskIds),
+  );
+  const byAggregateTaskId = new Map<string, RepairQueueRecord[]>();
+  for (const record of records) {
+    if (
+      record.source !== "runtime-guardian" ||
+      record.status !== "superseded" ||
+      record.workOrderId !== undefined ||
+      record.attempt === 0 ||
+      record.nextAttemptAt > input.now ||
+      originalRuntimeGuardianTaskIds(record).length === 0
+    )
+      continue;
+    for (const taskId of record.linkedTaskIds.filter((id) => id.startsWith("autopilot:"))) {
+      const group = byAggregateTaskId.get(taskId) ?? [];
+      group.push(record);
+      byAggregateTaskId.set(taskId, group);
+    }
+  }
+
+  const aggregateGroups = [...byAggregateTaskId.values()]
+    .filter((records) => records.length > 1)
+    .sort(
+      (left, right) =>
+        Math.max(...right.map((record) => record.updatedAt)) -
+        Math.max(...left.map((record) => record.updatedAt)),
+    );
+  let restored = 0;
+  for (const group of aggregateGroups) {
+    for (const record of group) {
+      const taskIds = originalRuntimeGuardianTaskIds(record);
+      if (taskIds.some((taskId) => activeTaskIds.has(taskId))) continue;
+      if (input.coordinator.releaseToQueue(record.id, input.now) === undefined) continue;
+      for (const taskId of taskIds) activeTaskIds.add(taskId);
+      restored++;
+    }
+  }
+  return restored;
+}
+
+function originalRuntimeGuardianTaskIds(record: RepairQueueRecord): string[] {
+  return record.linkedTaskIds.filter((taskId) => !taskId.startsWith("autopilot:"));
 }
 
 function recoverRuntimeGuardianWorkOrderLinks(input: {

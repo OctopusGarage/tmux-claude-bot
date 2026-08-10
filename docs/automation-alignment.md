@@ -109,7 +109,10 @@ evidence text is not queue identity and must not create one record per tick.
 Derived `autopilot:<workOrderId>` links identify aggregate execution evidence,
 not duplicate source tasks; every attached finding remains independently owned
 and settles from the shared WorkOrder outcome, including after a failed outcome
-detaches the WorkOrder and returns every finding to bounded retry.
+detaches the WorkOrder and returns every finding to bounded retry. Reconciliation
+must also restore due aggregate siblings that an older dedupe pass terminalized
+as `superseded`; this migration is evidence-bound and must not require operators
+to edit the durable repair queue.
 Repository PR review alignment invariant: every repository-wide review WorkOrder
 must persist one structured decision per in-scope PR. Only `merged` and
 evidence-backed allowlisted `closed` decisions complete the queue item; retryable
