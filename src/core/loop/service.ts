@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { WorktreeIsolationMode } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -101,6 +101,7 @@ const REPOSITORY_REVIEW_RETRY_BASE_MS = 15 * 60 * 1000;
 const REPOSITORY_REVIEW_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
 const REPOSITORY_REVIEW_MIN_TICK_MS = 10_000;
 const LOG_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const SYSTEM_GATE_GIT_EXECUTABLE = resolveSystemGateGitExecutable(process.env);
 export type SupervisedSystemGateProject = Pick<LoopProjectConfig, "id" | "name" | "path"> & {
   commit: LoopWorkOrder["commitPolicy"];
   pullRequest: NonNullable<LoopWorkOrder["pullRequestPolicy"]>;
@@ -2967,8 +2968,38 @@ export function runShellCommand(invocation: LoopRunCommandInvocation): LoopRunCo
   };
 }
 
+type SystemGateGitExecutableResolverDeps = {
+  spawn: typeof spawnSync;
+  exists: (path: string) => boolean;
+};
+
+export function resolveSystemGateGitExecutable(
+  env: NodeJS.ProcessEnv,
+  deps: SystemGateGitExecutableResolverDeps = { spawn: spawnSync, exists: existsSync },
+): string {
+  const discovered = deps.spawn("/bin/sh", ["-lc", "command -v git"], {
+    encoding: "utf8",
+    env,
+  });
+  const discoveredPath = discovered.stdout.trim();
+  if (discovered.status === 0 && isAbsolute(discoveredPath) && deps.exists(discoveredPath)) {
+    return discoveredPath;
+  }
+
+  for (const candidate of [
+    "/opt/homebrew/bin/git",
+    "/usr/local/bin/git",
+    "/usr/bin/git",
+    "/bin/git",
+  ]) {
+    if (deps.exists(candidate)) return candidate;
+  }
+
+  return "git";
+}
+
 export function runGitCommand(invocation: LoopGitInvocation): LoopRunCommandResult {
-  const result = spawnSync("git", invocation.args, {
+  const result = spawnSync(SYSTEM_GATE_GIT_EXECUTABLE, invocation.args, {
     cwd: invocation.cwd,
     encoding: "utf8",
   });
