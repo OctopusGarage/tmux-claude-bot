@@ -1283,6 +1283,52 @@ describe("runtime guardian", () => {
     ]);
   });
 
+  it("classifies legacy PR and CI gate failures as target or external blockers", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-pr-gate-failed",
+    );
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          "PR is missing supervisor commit 788270747454e3d6d5ba5c0af557044946104267",
+          "PR contains commit outside supervisor summary: 7882707ab9308f08d2b23b86a428acd52d5e2e71",
+          'CI check "build (3.12)" is IN_PROGRESS after waiting for completion',
+        ],
+        findings: [],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-legacy-pr-gate-failed", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-system-gate-failure",
+        severity: "high",
+        runId: "run-legacy-pr-gate-failed",
+        repairDisposition: "target-or-external-blocker",
+        evidence: expect.arrayContaining([
+          expect.stringContaining("PR is missing supervisor commit"),
+          expect.stringContaining("PR contains commit outside supervisor summary"),
+          expect.stringContaining('CI check "build (3.12)" is IN_PROGRESS'),
+        ]),
+      }),
+    ]);
+  });
+
   it("does not treat intentionally blocked work orders as system-layer failures", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(
