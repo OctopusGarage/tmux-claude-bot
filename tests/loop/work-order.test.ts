@@ -1950,6 +1950,63 @@ prReview:
     }
   });
 
+  it("normalizes explanatory target score decisions from supervisor plan reviews", () => {
+    const parseWithTargetScoreMet = (targetScoreMet: string) =>
+      parseSupervisorFinalSummary(
+        [
+          "done",
+          "[LOOP_SUPERVISOR_DONE:wo-1]",
+          JSON.stringify({
+            status: "completed",
+            projectId: "datavibe",
+            actionsTaken: ["verified"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: ["confirmed bounded task"],
+              postMutationReview: ["reviewed final state"],
+              aiReview: "passed",
+              deterministicGates: [
+                {
+                  name: "assessment",
+                  command: "npm run assess",
+                  result: "passed",
+                  evidence: "score 100",
+                },
+              ],
+              decision: "pass",
+              notes: [],
+            },
+            planReview: {
+              checklistCompleted: true,
+              targetScoreMet,
+              stopConditionReached: false,
+              overOptimizationAvoided: true,
+              verificationCompleted: true,
+              remainingRisks: [],
+            },
+            commits: [],
+            followUps: [],
+          }),
+        ].join("\n"),
+        "wo-1",
+      );
+
+    const met = parseWithTargetScoreMet("yes: isolated assessment returned score 100");
+    const notApplicable = parseWithTargetScoreMet(
+      "not-applicable on retry: previous assessment already met score 100",
+    );
+
+    expect(met).toMatchObject({
+      ok: true,
+      summary: { planReview: { targetScoreMet: true } },
+    });
+    expect(notApplicable).toMatchObject({
+      ok: true,
+      summary: { planReview: { targetScoreMet: "not-applicable" } },
+    });
+  });
+
   it("normalizes a singleton remaining risk from a supervisor plan review", () => {
     const result = parseSupervisorFinalSummary(
       [

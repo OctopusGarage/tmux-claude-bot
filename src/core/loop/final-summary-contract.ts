@@ -410,7 +410,12 @@ function parseChecklistCompleted(value: unknown): boolean | null {
 function parseTargetScoreMet(value: unknown): LoopSupervisorPlanReview["targetScoreMet"] | null {
   if (typeof value === "boolean") return value;
   if (value === "not-applicable") return value;
-  return typeof value === "string" && /^not-applicable:\s*\S/.test(value) ? "not-applicable" : null;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (/^not[- ]applicable\b/.test(normalized)) return "not-applicable";
+  if (/^(?:yes|met|passed|true)\b/.test(normalized)) return true;
+  if (/^(?:no|not[- ]met|failed|false)\b/.test(normalized)) return false;
+  return null;
 }
 
 function parseReviewGate(value: unknown): LoopSupervisorReviewGate | null {
