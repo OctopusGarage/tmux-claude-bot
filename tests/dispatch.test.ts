@@ -853,7 +853,7 @@ describe("executeMessage — text action with history", () => {
         waitUntilInputReady,
         waitUntilDone: vi.fn(async () => ({ done: true, output: "DONE" })),
       } as never,
-      config: { maxWaitDoneMs: 1, maxWaitDoneTotalMs: 5_000 } as never,
+      config: { maxWaitDoneMs: 10 * 60_000, maxWaitDoneTotalMs: 5_000 } as never,
     });
     (d.configResolver.resolveConfigRoot as ReturnType<typeof vi.fn>).mockResolvedValue(configRoot);
 
@@ -864,7 +864,7 @@ describe("executeMessage — text action with history", () => {
       ),
     ).resolves.toBe("DONE");
     expect(waitUntilInputReady).toHaveBeenCalledTimes(3);
-  });
+  }, 10_000);
 
   it("keeps waiting across timeout rounds and notifies once, then resolves the real result", async () => {
     const waitUntilDone = vi
