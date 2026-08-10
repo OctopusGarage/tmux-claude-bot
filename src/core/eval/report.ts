@@ -129,6 +129,7 @@ function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome
   const reviewDecision = summary.reviewGate?.decision;
   const failedGate = hasUnresolvedFailedDeterministicGate(
     summary.reviewGate?.deterministicGates ?? [],
+    summary,
   );
   if (failedGate === true) {
     return baseOutcome(summary, reviewDecision, "failed", "deterministic-gate-failed");
@@ -156,13 +157,65 @@ function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome
 
 function hasUnresolvedFailedDeterministicGate(
   gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
 ): boolean {
   return gates.some(
     (gate, index) =>
       typeof gate !== "string" &&
       gate.result === "failed" &&
       !isPreMutationDependencyGate(gate) &&
-      !isResolvedPreflightRepairObservation(gates, index),
+      !isResolvedPreflightRepairObservation(gates, index) &&
+      !isResolvedProtectedWorktreeBaseSwitchObservation(gate, gates, summary) &&
+      !isResolvedSourceWorktreeControlObservation(gate, gates, summary),
+  );
+}
+
+function isResolvedProtectedWorktreeBaseSwitchObservation(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = gateText(gate);
+  if (!text.includes("literal switch-main base sync")) return false;
+  if (!text.includes("switch main")) return false;
+  if (!text.includes("already checked out")) return false;
+  if (!text.includes("original worktree was not mutated")) return false;
+
+  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText);
+  return (
+    passedGateText.some((passed) => passed.includes("safe work-order branch reset")) &&
+    passedGateText.some((passed) => passed.includes("base freshness")) &&
+    passedGateText.some((passed) => passed.includes("final clean worktree"))
+  );
+}
+
+function isResolvedSourceWorktreeControlObservation(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = gateText(gate);
+  if (!text.includes("ordinary source cli control check")) return false;
+  if (!text.includes("not used for final acceptance")) return false;
+  if (!text.includes("forbids source-worktree mutation")) return false;
+
+  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText);
+  return (
+    passedGateText.some((passed) => passed.includes("local verification")) &&
+    passedGateText.some((passed) => passed.includes("isolated cli control check")) &&
+    passedGateText.some((passed) => passed.includes("clean isolated worktree"))
+  );
+}
+
+function isCompletedPassingSummary(summary: LoopSupervisorFinalSummary): boolean {
+  return (
+    summary.status === "completed" &&
+    summary.finalVerification === "passed" &&
+    summary.reviewGate?.decision === "pass"
   );
 }
 
