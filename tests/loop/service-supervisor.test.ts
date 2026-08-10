@@ -988,6 +988,96 @@ prReview:
     expect(outcome.result.status).toBe("completed");
   });
 
+  it("accepts completed supervisor results when initial preflight failure is followed by environment repair", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["repaired local dependencies"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["local tools were initially missing"],
+            postMutationReview: ["environment repair restored tooling and final checks passed"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "initial-preflight",
+                command: "test -x .venv/bin/ruff && test -x .venv/bin/mypy",
+                result: "failed",
+                evidence: "All target executables were initially missing.",
+              },
+              {
+                name: "environment-repair",
+                command: "uv sync",
+                result: "passed",
+                evidence: "created .venv and installed required tool binaries",
+              },
+              {
+                name: "post-repair-preflight",
+                command: "test -x .venv/bin/ruff && test -x .venv/bin/mypy",
+                result: "passed",
+                evidence: "ruff and mypy executables are present",
+              },
+              {
+                name: "final-clean-worktree",
+                command: "git status --short",
+                result: "passed",
+                evidence: "status --short returned no output",
+              },
+            ],
+            decision: "pass",
+            notes: ["The failed initial preflight was repaired before final verification."],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("eval outcome=passed");
+    expect(outcome.result.status).toBe("completed");
+  });
+
   it("rejects a dirty isolated worker that checked out the shared switch-back branch", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
