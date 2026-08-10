@@ -368,6 +368,53 @@ describe("prepareLoopExecutionWorktrees", () => {
     expect(calls.map((call) => call.args.slice(0, 3).join(" "))).toContain("worktree add --detach");
   });
 
+  it("repairs a normal source checkout misconfigured as bare before isolation", () => {
+    const repo = makeRepo();
+    const calls: LoopGitInvocation[] = [];
+    let bare = true;
+
+    const prepared = prepareLoopExecutionWorktrees({
+      workOrder: workOrder(repo),
+      runGit: (invocation) => {
+        calls.push(invocation);
+        const command = invocation.args.join(" ");
+        if (command === "rev-parse --show-toplevel") {
+          return bare
+            ? {
+                status: 128,
+                stdout: "",
+                stderr: "fatal: this operation must be run in a work tree",
+              }
+            : { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+        }
+        if (command.endsWith("config --bool --get core.bare")) {
+          return { status: 0, stdout: bare ? "true\n" : "false\n", stderr: "" };
+        }
+        if (command.endsWith("config core.bare false")) {
+          bare = false;
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (command === "status --porcelain" || command === "fetch origin main") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.slice(0, 3).join(" ") === "worktree add --detach") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      defaultMode: "isolated",
+    });
+
+    expect(bare).toBe(false);
+    expect(prepared.projectPath).toContain("loop-worktrees/repo/run-1");
+    expect(calls.map((call) => call.args.join(" "))).toEqual(
+      expect.arrayContaining([
+        `--git-dir ${join(repo, ".git")} config --bool --get core.bare`,
+        `--git-dir ${join(repo, ".git")} config core.bare false`,
+      ]),
+    );
+  });
+
   it("checks out the required WorkOrder branch before dispatching an isolated worker", () => {
     const repo = makeRepo();
     const calls: LoopGitInvocation[] = [];

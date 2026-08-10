@@ -244,6 +244,15 @@ command runs. Keep `scripts/agent-command-guard.sh` covered by tests and wired
 into Claude/Codex `PreToolUse` hooks so agents cannot corrupt the source or
 linked worktree configuration while trying to repair git state.
 
+Loop execution preparation also contains a narrow recovery boundary for target
+repositories: when the configured path contains its own `.git/`, `core.bare` is
+exactly `true`, and the initial toplevel check fails, it restores
+`core.bare=false` and rechecks the same path. This is not a general Git repair;
+genuine bare repositories, missing `.git/`, and every other validation failure
+remain fail-closed. The bundled security assessment uses a project's own Python
+virtualenv when available, supports both npm and pnpm lockfiles, and bounds each
+subprocess to two minutes.
+
 AI capacity, rate-limit, readiness, queue, and network transients must be
 classified before they are reported as project failures. Keep the shared
 transient classifier covered by tests, wire provider transients into bounded

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -210,10 +210,7 @@ function readMissingWorktreeRegistrations(input: {
   if (input.registrations.has(input.sourceWorktree)) {
     return input.registrations.get(input.sourceWorktree) ?? null;
   }
-  const sourceTopLevel = input.runGit({
-    cwd: input.sourceWorktree,
-    args: ["rev-parse", "--show-toplevel"],
-  });
+  const sourceTopLevel = verifiedSourceTopLevel(input.sourceWorktree, input.runGit);
   if (
     sourceTopLevel.status !== 0 ||
     sourceTopLevel.stdout.trim().length === 0 ||
@@ -388,10 +385,7 @@ function prepareSourceExecutionWorktree(input: {
     });
     return null;
   }
-  const sourceTopLevel = input.runGit({
-    cwd: input.sourceWorktree,
-    args: ["rev-parse", "--show-toplevel"],
-  });
+  const sourceTopLevel = verifiedSourceTopLevel(input.sourceWorktree, input.runGit);
   if (sourceTopLevel.status !== 0 || sourceTopLevel.stdout.trim().length === 0) {
     log.warn("loop source execution skipped because git toplevel could not be verified", {
       data: {
@@ -452,10 +446,7 @@ function prepareGitExecutionWorktree(input: {
     });
     return null;
   }
-  const sourceTopLevel = input.runGit({
-    cwd: input.sourceWorktree,
-    args: ["rev-parse", "--show-toplevel"],
-  });
+  const sourceTopLevel = verifiedSourceTopLevel(input.sourceWorktree, input.runGit);
   if (sourceTopLevel.status !== 0 || sourceTopLevel.stdout.trim().length === 0) {
     log.warn("loop skipped execution worktree isolation for non-git target", {
       data: {
@@ -514,6 +505,37 @@ function prepareGitExecutionWorktree(input: {
     data: { ...loggableInput(input), executionWorktree },
   });
   return { executionWorktree };
+}
+
+/**
+ * Recover the one safe Git-config corruption possible for a normal checkout:
+ * a directory with its own `.git/` was accidentally marked bare. A genuine bare
+ * repository has no nested `.git/`, so this repair cannot convert one into a
+ * worktree. Every other toplevel failure remains fail-closed.
+ */
+function verifiedSourceTopLevel(
+  sourceWorktree: string,
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
+): LoopRunCommandResult {
+  const first = runGit({ cwd: sourceWorktree, args: ["rev-parse", "--show-toplevel"] });
+  const gitDir = join(sourceWorktree, ".git");
+  if (first.status === 0 || !statSync(gitDir, { throwIfNoEntry: false })?.isDirectory())
+    return first;
+
+  const configuredBare = runGit({
+    cwd: sourceWorktree,
+    args: ["--git-dir", gitDir, "config", "--bool", "--get", "core.bare"],
+  });
+  if (configuredBare.status !== 0 || configuredBare.stdout.trim() !== "true") return first;
+  const repaired = runGit({
+    cwd: sourceWorktree,
+    args: ["--git-dir", gitDir, "config", "core.bare", "false"],
+  });
+  if (repaired.status !== 0) return first;
+  log.warn("loop repaired normal source checkout marked as bare", {
+    data: { sourceWorktree },
+  });
+  return runGit({ cwd: sourceWorktree, args: ["rev-parse", "--show-toplevel"] });
 }
 
 function prepareIsolatedExecutionBranch(

@@ -134,7 +134,11 @@ the configured command must emit a JSON object with numeric `riskScore` from
 optional string arrays `findings` and `suggestedBotImprovements` are retained as
 assessment notes. Non-zero exit status, invalid JSON, or a missing numeric
 `riskScore` blocks dispatch without repository mutation. The default action and
-critical thresholds are 70 and 90, respectively.
+critical thresholds are 70 and 90, respectively. The bundled dependency
+assessment supports npm and pnpm lockfiles. For Python projects it prefers the
+target's `.venv/bin/pip-audit`, then falls back to `pip-audit` on `PATH`; each
+external audit has a bounded runtime so assessment cannot become an unbounded
+resource consumer.
 
 This document is the maintenance map for tmux-claude-bot's intelligent
 automation features. It defines the names, ownership boundaries, execution flow,
@@ -484,6 +488,10 @@ centralized.
   supervisor or worker must verify `git -C <projectPath> rev-parse --show-toplevel`
   matches the configured path. Workspace WorkOrders must perform the same check
   for every repository they touch.
+- If that check fails only because a normal checkout with its own `.git/`
+  directory was accidentally configured with `core.bare=true`, preparation may
+  restore `core.bare=false` and repeat the exact-path check. A genuine bare
+  repository or any other Git failure remains blocked.
 - In isolated execution, the worker must stay on the WorkOrder branch and must
   not checkout, rebase, or mutate the shared base/switch-back branch or the
   original source worktree. Preparation may fetch a remote ref for the isolated
