@@ -176,6 +176,9 @@ creates the configured-base PR, then applies the normal commit, CI,
 mergeability, auto-merge, and switch-back gates. This deterministic step must
 also work during restart recovery so a service reload after final-summary write
 cannot strand a verified commit in an isolated worktree.
+If GitHub rejects auto-merge because the PR head is behind the base branch, the
+system gate must use GitHub's same-PR branch update mechanism and retry
+auto-merge before treating the finalization as failed.
 If restart recovery finds a genuinely recoverable summary or system-gate
 failure, it must reserve the original supervisor session and run the same
 bounded revision contract as the uninterrupted path before terminal settlement;

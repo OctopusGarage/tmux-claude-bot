@@ -3067,12 +3067,56 @@ function runSupervisedAutoMerge(input: {
       env: {},
     });
     if (merge.status !== 0) {
+      if (isPullRequestHeadBehindBaseFailure(merge)) {
+        const update = input.runCommand({
+          kind: "pr",
+          command: [
+            ghCommandPrefix(input.project),
+            "pr update-branch",
+            shellQuoteLocal(input.commitBranch),
+          ].join(" "),
+          cwd: input.project.path,
+          env: {},
+        });
+        if (update.status !== 0) {
+          failures.push(
+            `PR branch update after auto-merge failure failed: ${
+              update.stderr || update.stdout || "unknown error"
+            }`,
+          );
+          return failures;
+        }
+        const retry = input.runCommand({
+          kind: "pr",
+          command: [
+            ghCommandPrefix(input.project),
+            "pr merge",
+            "--auto",
+            shellQuoteLocal(input.commitBranch),
+            mergeMethodFlag(input.project.pullRequest.mergeMethod),
+          ].join(" "),
+          cwd: input.project.path,
+          env: {},
+        });
+        if (retry.status === 0) return syncSwitchBackBranch(input);
+        failures.push(
+          `PR auto-merge failed after branch update: ${
+            retry.stderr || retry.stdout || "unknown error"
+          }`,
+        );
+        return failures;
+      }
       failures.push(`PR auto-merge failed: ${merge.stderr || merge.stdout || "unknown error"}`);
       return failures;
     }
   }
 
   return syncSwitchBackBranch(input);
+}
+
+function isPullRequestHeadBehindBaseFailure(result: LoopRunCommandResult): boolean {
+  const detail = `${result.stderr}\n${result.stdout}`.toLowerCase();
+  return detail.includes("head branch is not up to date with the base branch");
 }
 
 function mergeMethodFlag(method: "squash" | "merge" | "rebase" | undefined): string {
