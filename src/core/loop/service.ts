@@ -3059,6 +3059,7 @@ function runSupervisedAutoMerge(input: {
       command: [
         ghCommandPrefix(input.project),
         "pr merge",
+        "--auto",
         shellQuoteLocal(input.commitBranch),
         mergeMethodFlag(input.project.pullRequest.mergeMethod),
       ].join(" "),
