@@ -152,6 +152,11 @@ When an abandoned WorkOrder is closed, its scheduler `lastFired` checkpoint is
 advanced for that occurrence so a concurrent scheduler pass cannot immediately
 dispatch the same run again. Delegated-task reconciliation also accepts a valid
 final summary while the WorkOrder state file is still `in-flight`.
+Service startup must await Loop WorkOrder reconciliation before restoring the
+persisted control queue or resuming active delegations. Queue restoration must
+also discard any supervisor prompt whose WorkOrder already has a valid final
+summary, so a crash between summary persistence and queue cleanup cannot replay
+completed work or move it back to `in-flight`.
 Queued or dispatching active-delegate WorkOrders must be resumed during service
 startup when their worker lease is no longer active. An active lease must also
 be validated against the WorkOrder's actual isolated worker session and agent;

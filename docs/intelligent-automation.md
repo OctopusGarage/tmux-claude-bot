@@ -242,7 +242,11 @@ expiry and retry backoff, and reconciles each linked task into a terminal or
 retryable repair status. This is the only service-owned consumer of durable
 repair backlog state; manual force-triggering is an operator diagnostic, not a
 required recovery path.
-On process startup, queued or dispatching Autopilot WorkOrders are reattached
+On process startup, Loop reconciliation is an explicit barrier: durable final
+summaries and terminal resources are settled before persisted supervisor prompts
+are restored and before Autopilot recovery may resume a delegation. Persisted
+prompts whose WorkOrder already has a valid final summary are discarded rather
+than replayed. After that barrier, queued or dispatching Autopilot WorkOrders are reattached
 to the current background executor when no active worker lease exists. Active
 leases are checked against the WorkOrder's actual isolated worker session and
 agent; an active supervisor-pool lease without that worker is recorded as a

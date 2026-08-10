@@ -138,6 +138,10 @@ Daily Audit discovery must also persist expected scheduled occurrences before
 enqueueing repairs. Repair prompts may project those records as `missing`, but
 the durable ledger identity must exist so running/fixed/blocked outcomes survive
 restart and the next audit does not create a duplicate WorkOrder.
+During service startup, settle durable Loop final summaries before restoring
+supervisor control messages or resuming active delegations. Treat a valid final
+summary as authoritative replay-suppression evidence even when the prior process
+stopped before removing its persisted queue item.
 
 ## Supervisor And System Gates
 

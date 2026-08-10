@@ -2,6 +2,7 @@ import { startControlServer } from "./adapters/control/server.js";
 import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
+import { reconcileAndResumeActiveDelegatedTasksAfterRestart } from "./core/autopilot/delegated-task.js";
 import {
   acquireInstanceLock,
   InstanceLockHeldError,
@@ -152,10 +153,28 @@ await init();
 startRunningSweep(deps, config.runningSweepMs);
 startSessionIdleReaper(deps, config.sessionIdleReaper);
 
-startScheduler(deps);
-startLoopEngineering(deps, config.loopEngineering);
+let loopStartupReady = true;
+try {
+  await startLoopEngineering(deps, config.loopEngineering);
+} catch (err) {
+  loopStartupReady = false;
+  log.error("loop engineering startup reconciliation failed; automatic recovery remains paused", {
+    err,
+  });
+}
 // Boot the background Loop Supervisor session. No-op unless explicitly enabled.
 void startLoopSupervisors(deps);
+// Active delegation recovery must observe the Loop startup barrier. Otherwise a
+// restart can resume a WorkOrder before its already-written final summary has
+// been reconciled and settled.
+if (loopStartupReady) {
+  try {
+    await reconcileAndResumeActiveDelegatedTasksAfterRestart(deps);
+  } catch (err) {
+    log.error("active delegation startup recovery failed", { err });
+  }
+}
+startScheduler(deps);
 // Boot the home operator session (provision home dir + create session + start agent).
 // Fire-and-forget — must not block boot. No-op when HOME_OPERATOR_ENABLED=false.
 void startOperator(deps);

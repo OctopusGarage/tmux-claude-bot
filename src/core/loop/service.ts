@@ -1433,13 +1433,11 @@ function reconcileRepositoryReviewQueueWorkOrders(queue: RepositoryReviewQueue, 
 }
 /* c8 ignore stop */
 
-export function startLoopEngineering(
+export async function startLoopEngineering(
   deps: HandlerDeps,
   config: { configFile: string; tickMs: number },
-): () => void {
+): Promise<() => void> {
   if (config.configFile.trim() === "" || config.tickMs === 0) return () => {};
-  const restored = restoreLoopControlQueue({ queue: deps.queue });
-  if (restored > 0) log.info("loop engineering control queue restored", { data: { restored } });
   log.info("loop engineering supervisor pool configured", {
     data: {
       enabled: deps.config.loopEngineering.supervisor.enabled,
@@ -1453,7 +1451,10 @@ export function startLoopEngineering(
       cronInterpretation: "utc",
     },
   });
-  void reconcileLoopSupervisorWorkOrders({
+  // Reconcile durable completion evidence before restoring queued prompts. A
+  // restored prompt may otherwise replay work whose worker finished immediately
+  // before the previous process stopped.
+  const startupReconciliation = await reconcileLoopSupervisorWorkOrders({
     configFile: config.configFile,
     now: Date.now(),
     runCommand: runShellCommand,
@@ -1463,13 +1464,14 @@ export function startLoopEngineering(
       cleanupWorkerSessionRecords(sessionName);
     },
     workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
-  })
-    .then((reconciled) => {
-      if (reconciled.checked > 0) {
-        log.info("loop engineering supervisor work order reconcile complete", { data: reconciled });
-      }
-    })
-    .catch((err) => log.error("loop engineering supervisor work order reconcile failed", { err }));
+  });
+  if (startupReconciliation.checked > 0) {
+    log.info("loop engineering supervisor work order reconcile complete", {
+      data: startupReconciliation,
+    });
+  }
+  const restored = restoreLoopControlQueue({ queue: deps.queue });
+  if (restored > 0) log.info("loop engineering control queue restored", { data: { restored } });
   const schedulerStore = new LoopSchedulerStore();
   let tickInFlight = false;
   let repositoryReviewTickInFlight = false;

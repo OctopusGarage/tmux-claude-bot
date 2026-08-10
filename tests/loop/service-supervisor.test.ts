@@ -5304,7 +5304,7 @@ prReview:
       });
       vi.setSystemTime(new Date("2026-07-16T10:10:00Z"));
       const enqueue = vi.fn(() => "queued" as const);
-      const stop = startLoopEngineering(
+      const stop = await startLoopEngineering(
         {
           config: {
             projectSessionPrefix: "tmux_proj_",
@@ -5401,7 +5401,7 @@ prReview:
         status: "in-flight",
         now: 1_000,
       });
-      const stop = startLoopEngineering(
+      const stop = await startLoopEngineering(
         {
           config: {
             projectSessionPrefix: "tmux_proj_",

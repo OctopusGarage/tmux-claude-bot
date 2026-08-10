@@ -1,4 +1,5 @@
 import type { PersistedMessage, QueuedMessage } from "../command/queue.js";
+import { parseSupervisorFinalSummaryFile } from "./final-summary-contract.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import { completeLoopSupervisorRun } from "./supervisor-completion.js";
 import { workOrderStateForResult, writeLoopSupervisorWorkOrderState } from "./supervisor-state.js";
@@ -34,6 +35,10 @@ export function restoredLoopSupervisorMessage(
 ): QueuedMessage | null {
   const restore = parseLoopSupervisorControlRestore(persisted);
   if (restore === null) return null;
+  // A crash can leave the durable queue item behind after the worker has already
+  // written its authoritative final summary. Replaying that prompt would turn a
+  // completed WorkOrder back into in-flight work and duplicate expensive checks.
+  if (parseSupervisorFinalSummaryFile(restore.workOrder).ok) return null;
   return {
     id: persisted.id,
     text: persisted.text,
