@@ -561,6 +561,70 @@ prReview:
     expect(outcome.evidence).toContain("no mutating git or PR gate required");
   });
 
+  it("rejects completed automation governance results without a structured review gate", () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        task: {
+          kind: "automation-governance-review",
+          targetScore: 90,
+          maxFindings: 5,
+          allowRepairPr: true,
+          requireAiEval: true,
+        },
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toContain(
+      "supervisor reviewGate is required for automation governance review",
+    );
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
   it("rejects completed supervisor results when the review gate blocks", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {

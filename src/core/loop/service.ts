@@ -1920,6 +1920,9 @@ export function runSupervisedSystemGateOutcome(input: {
   const reviewGate = input.result.summary.reviewGate;
   if (reviewGate === undefined) {
     evidence.push("supervisor reviewGate not reported; deterministic system gates still enforced");
+    if (input.workOrder.task?.kind === "automation-governance-review") {
+      failures.push("supervisor reviewGate is required for automation governance review");
+    }
   } else {
     evidence.push(
       `supervisor reviewGate decision=${reviewGate.decision}, aiReview=${reviewGate.aiReview}`,
