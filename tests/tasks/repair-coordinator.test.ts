@@ -42,6 +42,34 @@ describe("RepairCoordinator", () => {
     expect(createRepairDedupeKey(second)).toContain("active-delegated-task");
   });
 
+  it("keeps one active runtime repair when diagnostic evidence formatting changes", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const first = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "gate failed | artifact exists",
+      taskId: "run-1",
+      summary: "gate failed; artifact exists",
+      now: 1_000,
+    });
+    const rediscovered = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "gate failed; artifact exists",
+      taskId: "run-1",
+      summary: "gate failed; artifact exists",
+      now: 2_000,
+    });
+
+    expect(rediscovered.id).toBe(first.id);
+    expect(rediscovered.status).toBe("pending");
+    expect(coordinator.list()).toHaveLength(1);
+  });
+
   it("claims due items in priority order and leaves later items pending", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     coordinator.enqueue({

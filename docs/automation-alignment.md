@@ -103,7 +103,9 @@ Known target-project and external blockers are admitted there as durable termina
 records without invoking a bot repair.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
 same task before dispatch; project recovery wins over an accidental bot-owned
-import for the same task.
+import for the same task. Runtime Guardian rediscovery must reuse its active
+record by durable task identity even when diagnostic evidence formatting changes;
+evidence text is not queue identity and must not create one record per tick.
 Repository PR review alignment invariant: every repository-wide review WorkOrder
 must persist one structured decision per in-scope PR. Only `merged` and
 evidence-backed allowlisted `closed` decisions complete the queue item; retryable

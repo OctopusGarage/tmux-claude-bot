@@ -139,6 +139,16 @@ export class RepairCoordinator {
     let existing = this.list().find(
       (record) => record.dedupeKey === dedupeKey && !isTerminal(record.status),
     );
+    if (existing === undefined && input.source === "runtime-guardian") {
+      existing = this.list().find(
+        (record) =>
+          record.source === "runtime-guardian" &&
+          record.projectId === input.projectId &&
+          record.taskFamily === input.taskFamily &&
+          record.linkedTaskIds.includes(input.taskId) &&
+          !isTerminal(record.status),
+      );
+    }
     if (existing === undefined && input.source === "project-recovery") {
       const stale = this.list().find(
         (record) =>

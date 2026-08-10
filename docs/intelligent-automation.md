@@ -1040,7 +1040,9 @@ When admission creates a fresh record beside a terminal historical duplicate,
 the fresh non-terminal record is authoritative. Successful delegation attaches
 the new WorkOrder id and delegated ledger task id to every claimed record;
 terminal WorkOrder or ledger reconciliation then closes those records without
-another discovery or manual force.
+another discovery or manual force. Repeated discovery of the same runtime task
+reuses its active queue record even if evidence punctuation or presentation
+changes, so diagnostic text cannot produce unbounded superseded queue history.
 `RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
 source-worktree execution so managed-dev self-repair can take effect quickly; set
 it to `isolated` for PR-style conservative repair.
