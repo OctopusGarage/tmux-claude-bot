@@ -808,9 +808,15 @@ idempotent queue item per repository review occurrence and releases the
 scheduler immediately. Independent consumers lease pending items when a
 supervisor is available, enforce the existing per-project conflict rule, and
 reuse the normal WorkOrder, system gate, final-summary, merge, and cleanup path.
-Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`, and
-`blocked`; expired leases return to `pending`, transient supervisor failures use
-bounded backoff, and a service restart does not lose an uncompleted review.
+Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`,
+`blocked`, `manual-review`, and `dead-letter`; expired leases return to
+`pending`, transient supervisor failures use bounded backoff, and a service
+restart does not lose an uncompleted review. Infrastructure retries have a
+five-attempt budget; reaching it, including while loading an over-budget legacy
+record, terminalizes the occurrence as `dead-letter` before another lease.
+An isolated repository-review WorkOrder synchronizes to a detached remote base
+when it does not own an execution branch. It never checks out or pulls the base
+branch already owned by the source worktree.
 Before a repository-review WorkOrder enters `dispatching`, it must hold the
 matching active supervisor-worker lease. Recovery may mark a queue occurrence
 `running` only when that same lease remains active; an unleased dispatch

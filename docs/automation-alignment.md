@@ -104,7 +104,11 @@ decisions return to the shared queue. `manual-review` remains terminal only when
 its evidence names a concrete ownership, permission, product, migration,
 security-design, legal, or compliance boundary; generic architecture/design
 review, Draft, conflict, age, pending CI, and temporary worker failures are
-normalized to retry and must never silently complete or close a PR.
+normalized to retry and must never silently complete or close a PR. An isolated
+review without an execution branch must sync to a detached remote base rather
+than attempting to check out the source worktree's branch. Queue infrastructure
+retries use a five-attempt budget and legacy over-budget records terminalize as
+`dead-letter` before another worker can lease them.
 Architecture alignment invariant: every project and workspace Architecture
 schedule must run its deterministic score assessment before creating a
 WorkOrder. The configured target is normally 95; a score at or above target is

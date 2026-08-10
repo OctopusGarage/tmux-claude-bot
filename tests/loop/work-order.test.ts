@@ -1654,6 +1654,62 @@ prReview:
     expect(prompt).toContain("git -C '/repo/app' pull --rebase origin dev");
   });
 
+  it("syncs an isolated repository review without checking out the source worktree branch", () => {
+    const reviewConfig = parseLoopConfigYaml(`
+projects:
+  - id: placeholder
+    name: Placeholder
+    path: /repo/app
+    agent: codex
+    goal: Keep the placeholder valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: release-prs
+      name: Release PRs
+      path: /repo/app
+      repo: OctopusGarage/app
+      agent: codex
+      schedule: "0 2 * * *"
+      switchBack: dev
+`);
+    const repository = reviewConfig.prReview.repositories[0];
+    if (repository === undefined) throw new Error("expected repository review config");
+    const built = buildRepositoryPullRequestReviewWorkOrder({
+      config: reviewConfig,
+      repository,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-release-prs-repo-pr-review",
+    });
+    const isolation = built.executionIsolation;
+    if (isolation === undefined) throw new Error("expected repository review execution isolation");
+    const prompt = buildLoopSupervisorPrompt({
+      ...built,
+      projectPath: "/state/loop-worktrees/release-prs/run",
+      executionIsolation: {
+        ...isolation,
+        expectedWorktree: "/state/loop-worktrees/release-prs/run",
+        sourceWorktree: "/repo/app",
+        worktreeIsolation: "isolated",
+        preparedBy: "system-git-worktree",
+      },
+    });
+
+    expect(prompt).toContain(
+      "git -C '/state/loop-worktrees/release-prs/run' switch --detach origin/dev",
+    );
+    expect(prompt).not.toContain("git -C '/state/loop-worktrees/release-prs/run' switch dev");
+    expect(prompt).not.toContain(
+      "git -C '/state/loop-worktrees/release-prs/run' pull --rebase origin dev",
+    );
+  });
+
   it("syncs the configured switchBack branch when a PR policy defines one", () => {
     const project = {
       ...firstProject(),

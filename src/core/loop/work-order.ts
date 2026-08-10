@@ -1043,6 +1043,13 @@ function syncRepositoryCommands(
       gitInWorktree(path, `switch ${executionBranch}`),
     ].join(", then ");
   }
+  if (isolation?.preparedBy === "system-git-worktree") {
+    return [
+      `${gitInWorktree(path, "status --short")} must be clean`,
+      gitInWorktree(path, `fetch origin ${branch}`),
+      gitInWorktree(path, `switch --detach origin/${branch}`),
+    ].join(", then ");
+  }
   return [
     `${gitInWorktree(path, "status --short")} must be clean`,
     gitInWorktree(path, `fetch origin ${branch}`),

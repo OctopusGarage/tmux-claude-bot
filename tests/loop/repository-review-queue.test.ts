@@ -242,6 +242,52 @@ describe("repository review queue", () => {
     });
   });
 
+  it("dead-letters an occurrence after the bounded infrastructure retry budget", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "persistent-failure" }));
+    let now = 100;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      expect(store.lease(created.id, "worker", now, 50)).not.toBeNull();
+      expect(store.fail(created.id, "worker", now + 1, "worker setup failed", now + 2)).toBe(true);
+      now += 100;
+    }
+
+    expect(store.list({ all: true }).find((entry) => entry.id === created.id)).toMatchObject({
+      status: "dead-letter",
+      attempt: 5,
+      lastError: "worker setup failed",
+    });
+    expect(store.listReady(now + 1_000)).toEqual([]);
+  });
+
+  it("dead-letters a legacy over-budget retry before another worker can lease it", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-pr-review-queue-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    writeFileSync(
+      join(stateDir, "repository-pr-review-queue.json"),
+      JSON.stringify({
+        legacy: {
+          id: "legacy",
+          repositoryId: "repo-prs",
+          scheduledAt: 100,
+          priority: 100,
+          status: "retry-wait",
+          attempt: 107,
+          createdAt: 100,
+          updatedAt: 110,
+          nextAttemptAt: 100,
+          lastError: "recovered supervisor work order result: blocked",
+        },
+      }),
+    );
+    const store = new RepositoryReviewQueue();
+
+    expect(store.listReady(200)).toEqual([]);
+    expect(store.list({ all: true })).toEqual([
+      expect.objectContaining({ id: "legacy", status: "dead-letter", attempt: 107 }),
+    ]);
+  });
+
   it("keeps retryable review work claimable and records explicit manual review separately", () => {
     const store = queue();
     const retry = store.enqueue(item({ repositoryId: "retryable" }));
