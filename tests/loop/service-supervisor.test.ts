@@ -759,6 +759,96 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
+  it("accepts completed supervisor results when a failed preflight was repaired before final verification", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["repaired local dependencies"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["local Node tools were initially missing"],
+            postMutationReview: ["npm ci restored local tooling and final checks passed"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "preflight-before-repair",
+                command: "test -d node_modules && test -x node_modules/.bin/tsc",
+                result: "failed",
+                evidence: "node_modules and tool binaries were absent",
+              },
+              {
+                name: "environment-repair",
+                command: "npm ci",
+                result: "passed",
+                evidence: "installed dependencies without tracked changes",
+              },
+              {
+                name: "preflight-after-repair",
+                command: "test -d node_modules && test -x node_modules/.bin/tsc",
+                result: "passed",
+                evidence: "required tool binaries are executable",
+              },
+              {
+                name: "typecheck",
+                command: "npm run lint:types",
+                result: "passed",
+                evidence: "tsc --noEmit exited 0",
+              },
+            ],
+            decision: "pass",
+            notes: ["The failed preflight was repaired before final verification."],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("eval outcome=passed");
+    expect(outcome.result.status).toBe("completed");
+  });
+
   it("rejects a dirty isolated worker that checked out the shared switch-back branch", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {
