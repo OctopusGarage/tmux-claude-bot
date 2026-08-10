@@ -282,9 +282,12 @@ async function dispatchRepairQueue(input: {
       claimed.flatMap((queueRecord) =>
         queueRecord.linkedTaskIds.flatMap((taskId) => {
           const record = input.ledger.listAll().find((candidate) => candidate.taskId === taskId);
-          return record === undefined || record.status === "expected"
-            ? []
-            : [record as TaskAuditItem];
+          if (record === undefined) return [];
+          return [
+            record.status === "expected"
+              ? ({ ...record, status: "missing" } as TaskAuditItem)
+              : (record as TaskAuditItem),
+          ];
         }),
       ),
     dispatch: async (items) =>

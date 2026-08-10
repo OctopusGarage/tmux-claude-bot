@@ -36,6 +36,10 @@ is abandoned even if its supervisor lease leaked; the stale lease is settled
 with the failed WorkOrder instead of keeping the project blocked indefinitely.
 Scheduled and forced Daily Audit invocations are serialized by a process-local
 mutex, preventing overlapping audits from creating duplicate recovery attempts.
+Actively discovered scheduled occurrences are persisted as expected ledger
+records before repair admission. If they are missing, the worker receives the
+same durable task ids and the eventual repair outcome closes those occurrences;
+an in-memory-only missing item must not be rediscovered and delegated forever.
 Closing an abandoned WorkOrder advances the scheduler checkpoint for its
 occurrence, preventing an immediate duplicate dispatch; a valid delegated final
 summary is authoritative even if the WorkOrder state is still `in-flight`.

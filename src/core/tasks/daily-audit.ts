@@ -32,8 +32,18 @@ export async function runDailyTaskAudit(input: {
 }): Promise<DailyTaskAuditResult> {
   const window = previousSingaporeDayWindow(input.now);
   input.ledger.reconcileSupersededFailures();
-  const ledgerRecords = input.ledger.listForWindow(window);
   const discoveredRecords = input.discover?.({ window, now: input.now }) ?? [];
+  for (const record of discoveredRecords) {
+    if (record.status !== "expected") continue;
+    input.ledger.expect({
+      taskId: record.taskId,
+      source: record.source,
+      name: record.name,
+      scheduledAt: record.scheduledAt,
+      ...(record.summary === undefined ? {} : { summary: record.summary }),
+    });
+  }
+  const ledgerRecords = input.ledger.listForWindow(window);
   const summary = summarizeTaskWindow({
     records: mergeDiscoveredTaskRecords(ledgerRecords, discoveredRecords),
     now: input.now,

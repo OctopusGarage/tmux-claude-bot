@@ -180,6 +180,10 @@ WorkOrder remains for that project, its stale lease must be released before the
 next recovery admission pass; unknown active recoveries remain deferred.
 Audit reconciliation must normalize successful and skipped ledger records to
 the `not-needed` repair terminal before evaluating active failures.
+Discovery must persist expected scheduled occurrences before repair admission;
+an expected ledger record is projected as `missing` for the repair prompt, then
+keeps its durable task id through running and terminal repair states. Do not
+enqueue an in-memory-only missing item that cannot be resolved after restart.
 Stale `repairStatus=running` records must be reopened per linked WorkOrder;
 one unrelated active delegation must not suppress recovery of every other stale
 record. Ledger/queue reconciliation must run before project-recovery admission

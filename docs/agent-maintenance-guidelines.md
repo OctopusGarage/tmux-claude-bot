@@ -134,6 +134,10 @@ directory rather than a report file. Classification must read that directory's
 `supervisor-final-summary.json` and `system-gate.json` before deciding whether a
 failure is retryable, externally blocked, or a genuine owner decision. A failed
 directory read is missing evidence, not proof that an owner must intervene.
+Daily Audit discovery must also persist expected scheduled occurrences before
+enqueueing repairs. Repair prompts may project those records as `missing`, but
+the durable ledger identity must exist so running/fixed/blocked outcomes survive
+restart and the next audit does not create a duplicate WorkOrder.
 
 ## Supervisor And System Gates
 
