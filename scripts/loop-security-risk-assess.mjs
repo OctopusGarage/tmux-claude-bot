@@ -9,6 +9,7 @@ function run(command, args, cwd) {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: 120_000,
   });
 }
 
@@ -16,15 +17,15 @@ function output(result) {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-function npmRisk(projectPath) {
-  const result = run("npm", ["audit", "--json", "--omit=dev"], projectPath);
+function javascriptRisk(projectPath, command, args) {
+  const result = run(command, args, projectPath);
   let report;
   try {
     report = JSON.parse(result.stdout);
   } catch {
     output({
       findings: [],
-      suggestedBotImprovements: ["npm audit did not return valid JSON"],
+      suggestedBotImprovements: [`${command} audit did not return valid JSON`],
     });
     process.exitCode = 2;
     return;
@@ -39,17 +40,20 @@ function npmRisk(projectPath) {
     riskScore,
     critical: critical > 0,
     findings: [
-      critical > 0 ? `npm audit reports ${critical} critical vulnerability(s)` : "",
-      high > 0 ? `npm audit reports ${high} high vulnerability(s)` : "",
-      moderate > 0 ? `npm audit reports ${moderate} moderate vulnerability(s)` : "",
-      low > 0 ? `npm audit reports ${low} low vulnerability(s)` : "",
+      critical > 0 ? `${command} audit reports ${critical} critical vulnerability(s)` : "",
+      high > 0 ? `${command} audit reports ${high} high vulnerability(s)` : "",
+      moderate > 0 ? `${command} audit reports ${moderate} moderate vulnerability(s)` : "",
+      low > 0 ? `${command} audit reports ${low} low vulnerability(s)` : "",
     ].filter(Boolean),
   });
 }
 
 function pipAuditRisk(projectPath) {
-  const executable = run("sh", ["-lc", "command -v pip-audit"], projectPath);
-  if (executable.status !== 0) {
+  const projectExecutable = join(projectPath, ".venv", "bin", "pip-audit");
+  const executable = existsSync(projectExecutable)
+    ? projectExecutable
+    : run("sh", ["-lc", "command -v pip-audit"], projectPath).stdout.trim();
+  if (executable.length === 0) {
     output({
       findings: [],
       suggestedBotImprovements: ["pip-audit is not installed in the target environment"],
@@ -57,7 +61,7 @@ function pipAuditRisk(projectPath) {
     process.exitCode = 2;
     return;
   }
-  const result = run("pip-audit", ["--format", "json"], projectPath);
+  const result = run(executable, ["--format", "json"], projectPath);
   let report;
   try {
     report = JSON.parse(result.stdout);
@@ -80,7 +84,9 @@ function pipAuditRisk(projectPath) {
 
 const projectPath = process.env.LOOP_PROJECT_PATH ?? process.cwd();
 if (existsSync(join(projectPath, "package-lock.json")) || existsSync(join(projectPath, "npm-shrinkwrap.json"))) {
-  npmRisk(projectPath);
+  javascriptRisk(projectPath, "npm", ["audit", "--json", "--omit=dev"]);
+} else if (existsSync(join(projectPath, "pnpm-lock.yaml"))) {
+  javascriptRisk(projectPath, "pnpm", ["audit", "--json", "--prod"]);
 } else if (
   existsSync(join(projectPath, "pyproject.toml")) ||
   existsSync(join(projectPath, "requirements.txt")) ||
