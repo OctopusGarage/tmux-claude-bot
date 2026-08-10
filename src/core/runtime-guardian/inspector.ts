@@ -110,7 +110,7 @@ function systemGateFailure(
     ? parsed.failures.filter((value): value is string => typeof value === "string")
     : [];
   const structured = Array.isArray(parsed.findings) ? parsed.findings : [];
-  const disposition =
+  const structuredDisposition =
     structured
       .map((value) => (isRecord(value) ? value.repairDisposition : undefined))
       .find(
@@ -121,6 +121,9 @@ function systemGateFailure(
     parsed.repairDisposition === "target-or-external-blocker"
       ? parsed.repairDisposition
       : undefined);
+  const disposition =
+    structuredDisposition ??
+    (failures.some(isTargetOrExternalSystemGateFailure) ? "target-or-external-blocker" : undefined);
   if (
     disposition === undefined &&
     hasRawSuccessfulSummary(finalSummaryPath) &&
@@ -154,6 +157,27 @@ function failedEval(record: TerminalWorkOrder, gatePath: string): RuntimeGuardia
     `system gate eval outcome is ${status}: ${reason}`,
     `system gate evidence exists: ${gatePath}`,
   ]);
+}
+
+function isTargetOrExternalSystemGateFailure(failure: string): boolean {
+  return (
+    failure.startsWith("GitHub account ") ||
+    failure.startsWith("PR lookup failed:") ||
+    failure.startsWith("PR lookup after body cleanup failed:") ||
+    failure.startsWith("PR lookup while waiting for checks failed:") ||
+    failure.startsWith("PR check wait failed:") ||
+    failure.startsWith("CI check ") ||
+    failure.startsWith("PR state is ") ||
+    failure.startsWith("PR mergeability is ") ||
+    failure.startsWith("PR is not mergeable:") ||
+    failure.startsWith("unexpected PR commit count:") ||
+    failure.startsWith("PR is missing supervisor commit ") ||
+    failure.startsWith("PR contains commit outside supervisor summary:") ||
+    failure.startsWith("source git status failed:") ||
+    failure.startsWith("source worktree is dirty after supervisor completion:") ||
+    failure.startsWith("source git branch check failed:") ||
+    failure.startsWith("source branch is ")
+  );
 }
 
 function invalidOutput(
