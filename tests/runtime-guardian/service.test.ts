@@ -140,6 +140,62 @@ describe("runtime guardian", () => {
     expect(coordinator.list().map((record) => record.status)).toEqual(["blocked", "blocked"]);
   });
 
+  it("recovers queue links when a Runtime Guardian WorkOrder was dispatched before attachment", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const now = 10_000;
+    const running = coordinator.enqueue({
+      ...finding({ runId: "run-fluent", projectId: "fluent-frame" }),
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "fluent failure",
+      taskId: "run-fluent",
+      now,
+    });
+    coordinator.claimIds([running.id], { now, leaseId: "lost-attachment", limit: 1 });
+    coordinator.markRunning(running.id, "lost-attachment", now);
+    const pending = coordinator.enqueue({
+      ...finding({ runId: "run-english", projectId: "english-pilot" }),
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "english failure",
+      taskId: "run-english",
+      now,
+    });
+    const repairRunId = "runtime-repair-after-crash";
+    writeLoopSupervisorWorkOrderState({
+      workOrder: {
+        ...workOrder(repairRunId, "/repo/tmux-claude-bot"),
+        scheduledAt: now + 100,
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "tmux_proj_bot",
+          requirement:
+            'Repair findings [{"runId":"run-fluent"},{"runId":"run-english"}]\nsource=runtime-guardian',
+        },
+      } as never,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: now + 100,
+    });
+
+    reconcileRuntimeGuardianQueue({ coordinator, now: now + 200, findings: [] });
+
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({
+        id: running.id,
+        status: "running",
+        workOrderId: repairRunId,
+        linkedTaskIds: ["run-fluent", `autopilot:${repairRunId}`],
+      }),
+      expect.objectContaining({
+        id: pending.id,
+        status: "running",
+        workOrderId: repairRunId,
+        linkedTaskIds: ["run-english", `autopilot:${repairRunId}`],
+      }),
+    ]);
+  });
+
   it("does not infer a terminal blocker from legacy failure wording", async () => {
     const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
 
@@ -429,6 +485,14 @@ describe("runtime guardian", () => {
       expect.any(Object),
       expect.objectContaining({ resourceTrigger: "background" }),
     );
+    expect(new RepairCoordinator().list()).toEqual([
+      expect.objectContaining({
+        source: "runtime-guardian",
+        status: "running",
+        workOrderId: "runtime-repair-run-1",
+        linkedTaskIds: ["run-1", "autopilot:runtime-repair-run-1"],
+      }),
+    ]);
   });
 
   it("keeps explicitly isolated guardian repairs isolated", async () => {

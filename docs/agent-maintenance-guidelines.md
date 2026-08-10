@@ -129,6 +129,10 @@ Treat Runtime Guardian readiness failures as transient admission deferrals.
 Do not mark findings handled or start the repository repair cooldown before a
 dispatch is attempted; durable Repair Coordinator `nextAttemptAt` remains the
 authoritative retry clock for an already admitted repair.
+After dispatch, persist the delegated WorkOrder id and ledger task id on each
+claimed queue record. Prefer a current non-terminal record over terminal
+historical duplicates so successful reconciliation cannot leave a fresh repair
+pending or running forever.
 
 Do not add feature-specific side channels that bypass WorkOrder state,
 system-gate artifacts, notification gateway routing, or conflict checks unless

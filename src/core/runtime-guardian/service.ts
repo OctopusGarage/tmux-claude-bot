@@ -299,6 +299,7 @@ export async function dispatchRuntimeGuardianRepair(
   setPathForSession(session, request.repoPath);
   const now = Date.now();
   const coordinator = new RepairCoordinator();
+  const leaseId = `runtime-guardian:${now}`;
   let delegated: Awaited<ReturnType<typeof startActiveDelegatedTask>> | undefined;
   const admission = await admitRecoveryFindings({
     findings: request.findings.map((finding) => ({
@@ -314,7 +315,7 @@ export async function dispatchRuntimeGuardianRepair(
     })),
     coordinator,
     now,
-    leaseId: `runtime-guardian:${now}`,
+    leaseId,
     dispatch: async () => {
       delegated = await startActiveDelegatedTask(deps, {
         session,
@@ -336,6 +337,17 @@ export async function dispatchRuntimeGuardianRepair(
     delegated.status === "blocked"
   ) {
     return { status: "blocked", detail: admission.detail };
+  }
+  for (const record of coordinator
+    .list()
+    .filter(
+      (record) =>
+        record.source === "runtime-guardian" &&
+        record.status === "running" &&
+        record.leaseId === leaseId,
+    )) {
+    coordinator.attachWorkOrder(record.id, delegated.runId, now);
+    coordinator.linkTaskIds(record.id, [`autopilot:${delegated.runId}`], now);
   }
   return {
     status: "queued",

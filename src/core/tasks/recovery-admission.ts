@@ -104,11 +104,20 @@ function findRecordForFinding(
     .list()
     .find(
       (record) =>
+        !TERMINAL_REPAIR_STATUSES.has(record.status) &&
         record.projectId === finding.projectId &&
         record.taskFamily === finding.taskFamily &&
         record.fingerprint === finding.fingerprint,
     );
 }
+
+const TERMINAL_REPAIR_STATUSES = new Set([
+  "fixed",
+  "blocked",
+  "not-reproducible",
+  "superseded",
+  "dead-letter",
+]);
 
 export async function dispatchRecoveryQueue<T>(input: {
   coordinator: RepairCoordinator;

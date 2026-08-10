@@ -1012,6 +1012,11 @@ time is authoritative over the outer repository discovery cooldown. A clean
 worktree or branch readiness failure does not consume either cooldown or mark
 the finding handled, so the next tick retries automatically after the operator
 or another workflow restores readiness.
+When admission creates a fresh record beside a terminal historical duplicate,
+the fresh non-terminal record is authoritative. Successful delegation attaches
+the new WorkOrder id and delegated ledger task id to every claimed record;
+terminal WorkOrder or ledger reconciliation then closes those records without
+another discovery or manual force.
 `RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
 source-worktree execution so managed-dev self-repair can take effect quickly; set
 it to `isolated` for PR-style conservative repair.

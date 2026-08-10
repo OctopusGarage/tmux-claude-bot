@@ -297,6 +297,10 @@ Runtime Guardian readiness failures are also transient admission deferrals:
 they do not mark findings handled or start the repository repair cooldown. A
 durable repair whose Repair Coordinator backoff is due may retry even while the
 outer discovery cooldown is active.
+Admission must select the current non-terminal queue record when an equivalent
+historical record is already terminal. A queued Runtime Guardian delegation
+persists both its WorkOrder id and delegated ledger task id on every claimed
+record so terminal WorkOrder and ledger reconciliation can close the queue.
 The coordinator and durable circuit are default disabled in observe mode, use the
 `resource-guardian` notification source, and start after notification senders
 are ready but before Runtime Guardian and Daily Task Audit. Observe mode must

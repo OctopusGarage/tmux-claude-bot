@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loopRunDir } from "../loop/artifacts.js";
-import { listTerminalLoopSupervisorWorkOrders } from "../loop/supervisor-state.js";
+import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "../loop/work-order.js";
 import type { RepairCoordinator } from "../tasks/repair-coordinator.js";
 import type { RuntimeGuardianFinding, RuntimeGuardianFindingKind } from "./findings.js";
@@ -27,10 +27,13 @@ export function reconcileRuntimeGuardianQueue(input: {
   findings: readonly RuntimeGuardianFinding[];
 }): number {
   const byRunId = new Map(input.findings.map((finding) => [finding.runId, finding]));
-  const terminalByRunId = new Map(
-    listTerminalLoopSupervisorWorkOrders().map((record) => [record.workOrder.id, record]),
-  );
-  let reconciled = 0;
+  const registry = readLoopSupervisorWorkOrderRegistry(input.now);
+  let reconciled = recoverRuntimeGuardianWorkOrderLinks({
+    coordinator: input.coordinator,
+    now: input.now,
+    workOrders: registry.records,
+  });
+  const terminalByRunId = new Map(registry.terminal.map((record) => [record.workOrder.id, record]));
   for (const record of input.coordinator.list()) {
     if (record.source !== "runtime-guardian" || isQueueTerminal(record.status)) continue;
     const finding = record.linkedTaskIds.map((id) => byRunId.get(id)).find(Boolean);
@@ -56,6 +59,52 @@ export function reconcileRuntimeGuardianQueue(input: {
     reconciled++;
   }
   return reconciled;
+}
+
+function recoverRuntimeGuardianWorkOrderLinks(input: {
+  coordinator: RepairCoordinator;
+  now: number;
+  workOrders: ReturnType<typeof readLoopSupervisorWorkOrderRegistry>["records"];
+}): number {
+  let recovered = 0;
+  for (const record of input.coordinator.list()) {
+    if (
+      record.source !== "runtime-guardian" ||
+      record.workOrderId !== undefined ||
+      !["pending", "leased", "running", "retry-wait"].includes(record.status)
+    )
+      continue;
+    const candidate = input.workOrders
+      .filter(({ workOrder }) => {
+        const requirement =
+          workOrder.task?.kind === "active-delegated-task" ? workOrder.task.requirement : undefined;
+        return (
+          requirement?.includes("source=runtime-guardian") &&
+          workOrder.scheduledAt >= record.createdAt &&
+          workOrder.scheduledAt <= input.now &&
+          record.linkedTaskIds.every((taskId) => requirement.includes(JSON.stringify(taskId)))
+        );
+      })
+      .sort((a, b) => b.workOrder.scheduledAt - a.workOrder.scheduledAt)[0];
+    if (candidate === undefined) continue;
+    if (record.status === "pending" || record.status === "retry-wait") {
+      const leaseId = `runtime-guardian-recovered:${candidate.workOrder.id}`;
+      const claimed = input.coordinator.claimIds([record.id], {
+        now: input.now,
+        leaseId,
+        limit: 1,
+      });
+      if (claimed.length !== 1) continue;
+      input.coordinator.markRunning(record.id, leaseId, input.now);
+    } else if (record.status === "leased") {
+      if (record.leaseId === undefined) continue;
+      input.coordinator.markRunning(record.id, record.leaseId, input.now);
+    }
+    input.coordinator.attachWorkOrder(record.id, candidate.workOrder.id, input.now);
+    input.coordinator.linkTaskIds(record.id, [`autopilot:${candidate.workOrder.id}`], input.now);
+    recovered++;
+  }
+  return recovered;
 }
 
 export function dueRuntimeGuardianFindings(input: {
