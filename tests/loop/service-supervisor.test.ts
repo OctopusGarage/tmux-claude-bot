@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,6 +10,8 @@ import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
   reconcileLoopSupervisorWorkOrders,
+  resolveSystemGateGitExecutable,
+  runGitCommand,
   runLoopServiceTickAsync,
   runSupervisedSystemGateOutcome,
   startLoopEngineering,
@@ -80,6 +83,14 @@ function mockArchitectureAssessment(invocation: LoopRunCommandInvocation) {
     stdout: JSON.stringify({ score: 50, findings: [], suggestedBotImprovements: [] }),
     stderr: "",
   };
+}
+
+function discoverGitExecutable(): string {
+  const result = spawnSync("/bin/sh", ["-lc", "command -v git"], { encoding: "utf8" });
+  expect(result.status).toBe(0);
+  const git = result.stdout.trim();
+  expect(git).not.toBe("");
+  return git;
 }
 
 function writeRepositoryPrReviewConfig(input: { repoOne: string; repoTwo: string }): string {
@@ -859,6 +870,121 @@ prReview:
       "restored isolated worktree to WorkOrder branch loop/hub/run-1",
     );
     expect(invocations).toContain("/tmp/hub-isolated: switch loop/hub/run-1");
+  });
+
+  it("accepts clean isolated worker git checks when PATH is empty but git has an absolute fallback", async () => {
+    const git = discoverGitExecutable();
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-empty-path-"));
+    const branch = "loop/hub/run-1";
+    const init = spawnSync(git, ["init", "-b", branch], { cwd: dir, encoding: "utf8" });
+    expect(init.status).toBe(0);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      const outcome = runSupervisedSystemGateOutcome({
+        project: {
+          id: "hub",
+          name: "Hub",
+          path: dir,
+          commit: { enabled: true, perRound: false, branch },
+          pullRequest: {
+            enabled: false,
+            base: "dev",
+            switchBack: "dev",
+            autoMerge: false,
+            mergeMethod: "squash",
+          },
+        },
+        workOrder: {
+          id: "run-1",
+          projectId: "hub",
+          projectName: "Hub",
+          projectPath: dir,
+          agent: "codex",
+          task: { kind: "active-delegated-task" },
+          executionIsolation: {
+            mode: "supervised-worker",
+            expectedWorktree: dir,
+            sourceWorktree: "/tmp/hub",
+            worktreeIsolation: "isolated",
+            contextReset: "compact",
+            cleanup: {
+              success: "release-worker",
+              failure: "retain-for-ttl",
+              retainFailureForHours: 72,
+            },
+          },
+          allowedActions: [],
+          blockedActions: [],
+          verificationCommands: [],
+          commitPolicy: { enabled: true, perRound: false, branch },
+          pullRequestPolicy: {
+            enabled: false,
+            base: "dev",
+            switchBack: "dev",
+            autoMerge: false,
+            mergeMethod: "squash",
+          },
+        } as never,
+        result: {
+          status: "completed",
+          output: "",
+          summary: {
+            status: "completed",
+            projectId: "hub",
+            actionsTaken: [],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: [],
+              postMutationReview: [],
+              aiReview: "passed",
+              deterministicGates: [],
+              decision: "pass",
+              notes: [],
+            },
+            commits: [],
+            followUps: [],
+          },
+        },
+        runCommand: (invocation) =>
+          mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+        runGit: runGitCommand,
+      });
+
+      expect(outcome.failures).toEqual([]);
+      expect(outcome.result.status).toBe("completed");
+      expect(outcome.evidence).toContain("target worktree clean");
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("resolves git from absolute fallback paths when PATH is empty", async () => {
+    const git = resolveSystemGateGitExecutable(
+      { PATH: "" },
+      {
+        exists: (candidate) => candidate === "/usr/local/bin/git",
+        spawn: () => ({ status: 1, stdout: "", stderr: "" }) as never,
+      },
+    );
+
+    expect(git).toBe("/usr/local/bin/git");
+  });
+
+  it("falls back to git by name when no absolute executable exists", async () => {
+    const git = resolveSystemGateGitExecutable(
+      { PATH: "" },
+      {
+        exists: () => false,
+        spawn: () => ({ status: 1, stdout: "", stderr: "" }) as never,
+      },
+    );
+
+    expect(git).toBe("git");
   });
 
   it("reports branch-check failures before restoring an isolated worker branch", async () => {
