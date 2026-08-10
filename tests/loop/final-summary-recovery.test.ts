@@ -53,6 +53,34 @@ describe("final summary recovery", () => {
     });
   });
 
+  it("prefers a valid final summary over an earlier dispatch failure", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["completed after the queue transport failed"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(
+      recoverInvalidOutputFromFinalSummary(workOrder(summaryPath), {
+        status: "dispatch-failed",
+        reason: "queued task could not acquire its supervisor lease",
+        output: "transport failed before the recovered supervisor completed",
+      }),
+    ).toMatchObject({
+      status: "completed",
+      summary: { actionsTaken: ["completed after the queue transport failed"] },
+    });
+  });
+
   it("leaves invalid output unchanged when the final summary file is missing", () => {
     const original: LoopSupervisedRunResult = {
       status: "invalid-output",

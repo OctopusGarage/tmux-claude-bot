@@ -38,7 +38,7 @@ export function recoverInvalidOutputFromFinalSummary(
   workOrder: LoopWorkOrder,
   result: SupervisorRunResult,
 ): SupervisorRunResult {
-  if (result.status !== "invalid-output") return result;
+  if (!isRecoverableTransportFailure(result.status)) return result;
   const parsed = parseSupervisorFinalSummaryFile(workOrder);
   if (!parsed.ok) return result;
   return {
@@ -58,13 +58,19 @@ export async function recoverInvalidOutputFromFinalSummaryAsync(
   result: SupervisorRunResult,
   options: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<SupervisorRunResult> {
-  if (result.status !== "invalid-output") return result;
+  if (!isRecoverableTransportFailure(result.status)) return result;
   const deadline = Date.now() + (options.timeoutMs ?? FINAL_SUMMARY_RECOVERY_TIMEOUT_MS);
   const intervalMs = options.intervalMs ?? FINAL_SUMMARY_RECOVERY_INTERVAL_MS;
   let recovered = recoverInvalidOutputFromFinalSummary(workOrder, result);
-  while (recovered.status === "invalid-output" && Date.now() < deadline) {
+  while (isRecoverableTransportFailure(recovered.status) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     recovered = recoverInvalidOutputFromFinalSummary(workOrder, result);
   }
   return recovered;
+}
+
+function isRecoverableTransportFailure(status: SupervisorRunResult["status"]): boolean {
+  return (
+    status === "dispatch-failed" || status === "dispatch-timeout" || status === "invalid-output"
+  );
 }

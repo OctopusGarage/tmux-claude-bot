@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import {
   listRecoverableFailedLoopSupervisorWorkOrders,
+  listRecoverableFinalSummaryLoopSupervisorWorkOrders,
   listUnfinishedLoopSupervisorWorkOrders,
   type UnfinishedLoopSupervisorWorkOrder,
 } from "../loop/supervisor-state.js";
@@ -21,6 +22,7 @@ export function listReservedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisor
   const byRunDir = new Map<string, UnfinishedLoopSupervisorWorkOrder>();
   for (const record of [
     ...listUnfinishedLoopSupervisorWorkOrders(),
+    ...listRecoverableFinalSummaryLoopSupervisorWorkOrders(),
     ...listRecoverableFailedLoopSupervisorWorkOrders(),
   ]) {
     byRunDir.set(record.runDir, record);
