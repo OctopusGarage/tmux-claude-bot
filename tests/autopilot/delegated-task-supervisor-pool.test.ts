@@ -494,6 +494,7 @@ describe("active delegated task supervisor pool", () => {
     const d = deps(1);
     d.bridge = {
       hasSession: vi.fn(async (session: string) => session === "tmux_proj_loop-supervisor-1"),
+      capturePane: vi.fn(async () => "• Working (2s • esc to interrupt)"),
     } as unknown as HandlerDeps["bridge"];
     d.configResolver = {
       isCodexRunning: vi.fn(async () => true),
@@ -508,6 +509,48 @@ describe("active delegated task supervisor pool", () => {
       listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
     ).toBe(true);
     expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
+  });
+
+  it("releases an in-flight lease when only an idle supervisor process survived restart", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-idle-supervisor-"));
+    const order = workOrder({ id: "idle-supervisor-after-restart", projectPath: projectDir });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const d = deps(1);
+    d.bridge = {
+      hasSession: vi.fn(async () => true),
+      capturePane: vi.fn(async () => "› Ready for the next prompt"),
+    } as unknown as HandlerDeps["bridge"];
+    d.configResolver = {
+      isCodexRunning: vi.fn(async () => true),
+    } as unknown as HandlerDeps["configResolver"];
+
+    vi.useFakeTimers();
+    const reconciliation = reconcileAndResumeActiveDelegatedTasksAfterRestart(d);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(await reconciliation).toBe(0);
+    vi.useRealTimers();
+    expect(
+      listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
+    ).toBe(false);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("retained");
   });
 
   it("reconciles an active lease whose worker disappeared during restart", async () => {
@@ -569,7 +612,10 @@ describe("active delegated task supervisor pool", () => {
       ],
     });
     const d = deps(1);
-    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.bridge = {
+      hasSession: vi.fn(async () => true),
+      capturePane: vi.fn(async () => "• Working (2s • esc to interrupt)"),
+    } as unknown as HandlerDeps["bridge"];
     d.configResolver = {
       isCodexRunning: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
     } as unknown as HandlerDeps["configResolver"];
@@ -610,6 +656,7 @@ describe("active delegated task supervisor pool", () => {
         sessionChecks += 1;
         return sessionChecks > 2;
       }),
+      capturePane: vi.fn(async () => "• Working (2s • esc to interrupt)"),
     } as unknown as HandlerDeps["bridge"];
     d.configResolver = {
       isCodexRunning: vi.fn().mockResolvedValue(true),

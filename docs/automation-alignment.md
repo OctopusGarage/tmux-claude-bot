@@ -196,8 +196,11 @@ Queued or dispatching active-delegate WorkOrders must be resumed during service
 startup when their worker lease is no longer active. An active lease must also
 be validated against the leased supervisor session that actually consumes its
 queue turn and against the configured agent; a derived WorkOrder worker-session
-name is not liveness evidence for this queue-driven path. If the leased consumer
-disappeared during restart, the WorkOrder is recorded as a
+name is not liveness evidence for this queue-driven path. A surviving agent
+process is also insufficient because pooled supervisors remain alive while
+idle; after the bounded startup grace its pane must still carry the shared
+active-turn or confirmation-gate signal. If the leased consumer disappeared or
+became idle during restart, the WorkOrder is recorded as a
 bounded invalid-output failure, the lease is released, and project recovery
 requeues it. Reboot recovery must not leave a durable delegation orphaned in an
 intermediate state or falsely fail a live supervisor-owned turn.
@@ -255,7 +258,8 @@ Queued, dispatching, and in-flight WorkOrders with an existing worker pane
 receive a bounded two-minute grace period for agent startup before orphan
 reconciliation; a transient startup probe must not fail a valid WorkOrder, and
 the grace period waits for the worker session to appear rather than treating a
-currently absent session as immediate proof of orphaning.
+currently absent session as immediate proof of orphaning. Once the grace expires,
+an idle agent process cannot retain the lease without active-turn evidence.
 Ledger reconciliation must include pending queue records: when every linked
 task has reached a terminal repair outcome, a pending duplicate is closed before
 it can be claimed again. If a linked historical ledger task is missing while all

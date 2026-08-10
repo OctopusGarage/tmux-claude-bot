@@ -167,6 +167,10 @@ summary as authoritative replay-suppression evidence even when the prior process
 stopped before removing its persisted queue item. Validate an active delegation
 against the supervisor session named by its durable lease; do not substitute a
 derived WorkOrder worker-session name and falsely fail a live queue consumer.
+Process existence alone is not turn ownership: after the startup grace, the
+leased pane must still expose the shared active-turn or confirmation-gate signal.
+An idle long-lived supervisor is an orphaned dispatch and must release its lease
+for bounded automatic recovery rather than block the project indefinitely.
 Project recovery reconciliation applies the same passing-summary terminalization
 to both scheduled Loop records and Autopilot delegation records; neither source
 should require a second worker solely because its earlier state file remained

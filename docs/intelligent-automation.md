@@ -253,8 +253,11 @@ than replayed. After that barrier, queued or dispatching Autopilot WorkOrders ar
 to the current background executor when no active worker lease exists. Active
 leases are checked against their actual queue-consuming supervisor session and
 agent; the WorkOrder's derived worker-session name is not substituted for that
-lease owner. A lease whose consuming session is gone is recorded as a bounded
-invalid-output failure, released, and handed back to project recovery.
+lease owner. Because supervisor agents remain alive between turns, process
+liveness is necessary but not sufficient: the leased pane must also retain an
+active-turn or confirmation-gate signal after the startup grace. A lease whose
+consumer is gone or idle is recorded as a bounded invalid-output failure,
+released, and handed back to project recovery.
 A service restart or machine reboot must therefore preserve live delegations,
 and automatically requeue delegations whose worker disappeared, instead of
 leaving a WorkOrder permanently queued or falsely failing a live pool session.

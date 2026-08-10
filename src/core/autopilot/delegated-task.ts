@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
 import {
   findProjectAutomationConflict,
   listReservedLoopSupervisorWorkOrders,
@@ -552,7 +553,7 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
     // WorkOrder's workerSession is a derived cleanup/resource identity and may
     // never have been created for queue-driven active delegations.
     if (
-      await workerAgentIsRunningAfterStartupGrace(deps, record.workOrder.agent, lease.workerSession)
+      await workerAgentOwnsTurnAfterStartupGrace(deps, record.workOrder.agent, lease.workerSession)
     ) {
       continue;
     }
@@ -563,7 +564,7 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
       status: "failed",
       now,
       resultStatus: "invalid-output",
-      revisionReasons: ["supervisor worker lease has no live worker session after restart"],
+      revisionReasons: ["supervisor worker lease has no active queue turn after restart"],
     });
     const taskLedger = new DailyTaskLedger();
     const taskLedgerId = activeDelegatedTaskLedgerId(record.workOrder.id);
@@ -572,7 +573,7 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
       taskLedger.fail(taskLedgerId, {
         endedAt: now,
         error: "orphaned-supervisor-worker",
-        summary: "Recovered an active delegation whose worker session no longer exists.",
+        summary: "Recovered an active delegation whose supervisor no longer owns an active turn.",
       });
     }
     writeLoopSupervisorWorkerLeaseState(
@@ -599,7 +600,7 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
   return resumeQueuedActiveDelegatedTasks(deps);
 }
 
-async function workerAgentIsRunningAfterStartupGrace(
+async function workerAgentOwnsTurnAfterStartupGrace(
   deps: HandlerDeps,
   agent: LoopWorkOrder["agent"],
   workerSession: string,
@@ -618,7 +619,10 @@ async function workerAgentIsRunningAfterStartupGrace(
       agent === "codex"
         ? await deps.configResolver.isCodexRunning(workerSession)
         : await deps.configResolver.isClaudeRunning(workerSession);
-    if (agentRunning) return true;
+    if (agentRunning) {
+      const pane = await deps.bridge.capturePane(workerSession).catch(() => "");
+      if (paneHasActiveTurn(pane) || paneNeedsConfirm(pane)) return true;
+    }
     const remaining = deadline - Date.now();
     if (remaining <= 0) return false;
     await new Promise((resolve) =>
