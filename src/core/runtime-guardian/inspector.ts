@@ -132,9 +132,9 @@ function systemGateFailure(
     disposition === undefined &&
     hasRawSuccessfulSummary(finalSummaryPath) &&
     failures.length > 0 &&
-    (failures.every(isLegacyIsolatedBranchMismatchFailure) ||
-      failures.every(isLegacySystemGitEnoentFailure) ||
-      legacyPreMutationEvalFailure(record, finalSummaryPath, failures))
+    failures.every((failure) =>
+      isIgnorableLegacySuccessfulSummaryFailure(record, finalSummaryPath, failure),
+    )
   ) {
     return null;
   }
@@ -200,6 +200,7 @@ function invalidOutput(
   ) {
     return null;
   }
+  if (isRestartRecoveredActiveDelegationInvalidOutput(record)) return null;
   return findingFor(record, "terminal-invalid-output", "medium", [
     `terminal failed work-order has resultStatus=invalid-output: ${record.workOrder.id}`,
     `runDir: ${record.runDir}`,
@@ -320,6 +321,17 @@ function isLegacySystemGitEnoentFailure(failure: string): boolean {
     failure === "isolated worktree branch check failed: spawnSync git ENOENT"
   );
 }
+function isIgnorableLegacySuccessfulSummaryFailure(
+  record: TerminalWorkOrder,
+  finalSummaryPath: string,
+  failure: string,
+): boolean {
+  return (
+    isLegacyIsolatedBranchMismatchFailure(failure) ||
+    isLegacySystemGitEnoentFailure(failure) ||
+    legacyPreMutationEvalFailure(record, finalSummaryPath, [failure])
+  );
+}
 function legacyPreMutationEvalFailure(
   record: TerminalWorkOrder,
   finalSummaryPath: string,
@@ -349,6 +361,14 @@ function legacyPreMutationEvalFailure(
     (gate) => isRecord(gate) && gate.result === "failed",
   );
   return failedGates.length > 0 && failedGates.every((gate) => isPreMutationDependencyGate(gate));
+}
+function isRestartRecoveredActiveDelegationInvalidOutput(record: TerminalWorkOrder): boolean {
+  if (record.workOrder.task?.kind !== "active-delegated-task") return false;
+  return (record.state.revisionReasons ?? []).some(
+    (reason) =>
+      reason === "supervisor worker lease has no live worker session after restart" ||
+      reason === "supervisor worker lease has no active queue turn after restart",
+  );
 }
 function readSummaryEvidence(runDir: string): string {
   try {
