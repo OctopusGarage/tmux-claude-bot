@@ -623,6 +623,10 @@ base PR when lookup confirms that it is missing, then continues through the
 same commit, CI, mergeability, merge, and switch-back checks. Authentication,
 permission, network, and ambiguous lookup failures remain blockers rather than
 authorization to create anything.
+Restart recovery uses the same bounded supervisor revision contract for
+recoverable acceptance failures before it writes terminal state. A process
+reload may change who drives finalization, but it must not weaken the gate or
+turn a correctable summary/PR gap into another self-repair WorkOrder.
 
 Every supervised run must persist system gate evidence beside the supervisor
 report as `system-gate.json`. This artifact records whether the gate accepted the

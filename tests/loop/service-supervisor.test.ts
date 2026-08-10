@@ -2886,6 +2886,127 @@ prReview:
     });
   });
 
+  it("revises a recoverable final summary after restart before terminal settlement", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const configFile = writeLoopConfig({ projectPath: projectDir });
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const runId = `${scheduledAt}-hub-active-delegate`;
+    const finalSummaryPath = join(
+      process.env.TCB_STATE_DIR,
+      "loop-runs",
+      "hub",
+      runId,
+      "supervisor-final-summary.json",
+    );
+    const workOrder = {
+      id: runId,
+      scheduledAt,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: projectDir,
+      agent: "codex",
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "hub",
+        requirement: "Repair the confirmed runtime issue.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      goal: "Repair the confirmed runtime issue.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", timeoutMs: 1000, requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: true, dirtyWorktree: true, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+      requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
+      finalSummaryPath,
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: scheduledAt + 1_000,
+    });
+    mkdirSync(dirname(finalSummaryPath), { recursive: true });
+    writeFileSync(
+      finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["fixed the runtime issue"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["confirmed"],
+          postMutationReview: ["verified"],
+          aiReview: "passed",
+          deterministicGates: [
+            { name: "local verify", result: "failed", evidence: "stale first attempt" },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const runSupervisorRevision = vi.fn(async () => ({
+      status: "completed" as const,
+      output: "revised final summary",
+      summary: {
+        status: "completed" as const,
+        projectId: "hub",
+        actionsTaken: ["corrected final acceptance evidence"],
+        delegatedTasks: [],
+        finalVerification: "passed" as const,
+        reviewGate: {
+          preMutationReview: ["confirmed"],
+          postMutationReview: ["verified"],
+          aiReview: "passed" as const,
+          deterministicGates: [{ name: "local verify rerun", result: "passed" as const }],
+          decision: "pass" as const,
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      },
+    }));
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 2_000,
+      runCommand: () => {
+        throw new Error("report-only recovery should not run shell gates");
+      },
+      runSupervisorRevision,
+    });
+
+    expect(runSupervisorRevision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workOrder,
+        supervisorSession: "tmux_proj_loop-supervisor",
+        attempt: 1,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      }),
+    );
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(
+      JSON.parse(readFileSync(join(dirname(finalSummaryPath), "work-order-state.json"), "utf8")),
+    ).toMatchObject({ status: "completed", resultStatus: "completed" });
+    expect(
+      JSON.parse(readFileSync(join(dirname(finalSummaryPath), "system-gate.json"), "utf8")),
+    ).toMatchObject({ accepted: true, resultStatus: "completed" });
+  });
+
   it("reconciles active worker leases left behind by terminal completed work orders", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
