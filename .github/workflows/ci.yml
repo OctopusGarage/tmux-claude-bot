@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   checks:
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       # The deploy target is macOS (launchd, mlx_whisper, tmux quirks), so
@@ -42,7 +43,7 @@ jobs:
       - run: npx biome check .
       - run: npx tsc --noEmit
       - run: npx tsc -p tsconfig.tests.json --noEmit
-      - run: npx vitest run --coverage
+      - run: npm run test:coverage
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         if: matrix.os == 'ubuntu-latest'
         with:
