@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath, loopRunDir, loopRunsRoot } from "./artifacts.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
-import { readLoopSupervisorWorkerLeaseState } from "./supervisor-pool.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
 export type LoopSupervisorWorkOrderStateStatus =
@@ -219,11 +218,6 @@ export function readLoopSupervisorWorkOrderRegistry(
   now = Date.now(),
 ): LoopSupervisorWorkOrderRegistry {
   const records = readLoopSupervisorWorkOrderRecords();
-  const activeLeaseIds = new Set(
-    readLoopSupervisorWorkerLeaseState()
-      .leases.filter((lease) => lease.status === "active")
-      .map((lease) => lease.workOrderId),
-  );
   const terminal = records.filter(({ state }) => TERMINAL_STATES.has(state.status));
   const nonTerminal = records.filter(({ state }) => !TERMINAL_STATES.has(state.status));
   return {
@@ -246,9 +240,8 @@ export function readLoopSupervisorWorkOrderRegistry(
       ({ state, workOrder }) => !unfinishedWorkOrderCanStillProgress(state, workOrder, now),
     ),
     staleDispatching: records.filter(
-      ({ state, workOrder }) =>
+      ({ state }) =>
         state.status === "dispatching" &&
-        !activeLeaseIds.has(workOrder.id) &&
         !hasFinalSummaryFileForState(state) &&
         now - state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS &&
         now - state.updatedAt <= STALE_UNFINISHED_RESERVATION_MS,

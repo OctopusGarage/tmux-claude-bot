@@ -147,6 +147,10 @@ acceptance. Keep these responsibilities separate:
   supervisor output, PR lookup, mergeability, CI/check interpretation,
   auto-merge completion, switch-back branch, clean worktree, notification
   result, and final artifact integrity.
+- A supervisor lease does not prove prompt consumption. If a WorkOrder remains
+  `dispatching` past the five-minute grace, reconciliation must settle both the
+  failed reservation and any leaked active lease; otherwise an idle supervisor
+  pane can block that project forever.
 
 If target-project code, tests, PR body, branch state, or local verification are
 wrong, let the supervisor repair the target project through the configured

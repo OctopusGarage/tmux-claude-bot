@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { listLoopReports } from "../../src/core/loop/report.js";
 import { reconcileLoopSupervisorWorkOrders } from "../../src/core/loop/service.js";
-import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
 import { readLoopSupervisorWorkOrderRegistry } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
@@ -289,7 +292,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("does not recover a dispatching work order while its supervisor lease is active", async () => {
+  it("recovers a stale dispatching work order even when its supervisor lease leaked", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -334,14 +337,17 @@ describe("loop supervisor work order reconciliation", () => {
       configFile,
       now,
       runCommand: () => {
-        throw new Error("leased dispatching work orders must not be reconciled");
+        throw new Error("stale dispatching work orders must not run project commands");
       },
     });
 
-    expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 1 });
     expect(JSON.parse(readFileSync(join(runDir, "work-order-state.json"), "utf8"))).toEqual(
-      expect.objectContaining({ status: "dispatching" }),
+      expect.objectContaining({ status: "failed" }),
     );
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({ workOrderId: order.id, status: "retained" }),
+    ]);
   });
 
   it("runs the supervised PR gate when reconciling a completed work order", async () => {

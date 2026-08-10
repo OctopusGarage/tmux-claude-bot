@@ -1610,6 +1610,9 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
 }): Promise<{ checked: number; recovered: number; failed: number }> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const registry = readLoopSupervisorWorkOrderRegistry(input.now);
+  const staleDispatchingIds = new Set(
+    registry.staleDispatching.map((record) => record.workOrder.id),
+  );
   const unfinished = [
     ...registry.recoverableFinalSummary,
     ...registry.unfinished,
@@ -1625,11 +1628,9 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
   for (const record of new Map(unfinished.map((entry) => [entry.workOrder.id, entry])).values()) {
     const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
     const staleDispatching =
+      staleDispatchingIds.has(record.workOrder.id) &&
       record.state.status === "dispatching" &&
-      !parsed.ok &&
-      !readLoopSupervisorWorkerLeaseState().leases.some(
-        (lease) => lease.status === "active" && lease.workOrderId === record.workOrder.id,
-      );
+      !parsed.ok;
     if (!parsed.ok && !staleDispatching) continue;
     const project = systemGateProjectForRecoveredWorkOrder(config, record.workOrder);
     checked++;

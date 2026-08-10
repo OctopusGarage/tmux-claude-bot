@@ -163,6 +163,10 @@ Failed Autopilot delegations for configured projects must enter the same
 project-scoped recovery path as Loop Engineering failures. Invalid or missing
 supervisor summaries are retryable orchestration evidence; capacity and active
 automation deferrals must remain pending rather than terminal blocked records.
+A supervisor lease is reservation evidence, not proof that a `dispatching`
+WorkOrder started. After the five-minute dispatch grace, reconciliation must
+fail and settle that reservation even when its active lease leaked; fresh
+dispatch reservations remain untouched.
 Project recovery must link each delegated Autopilot WorkOrder back to the
 original task and close both records only from passing authoritative evidence.
 Daily Task Audit repair dispatch must use the same link and return failed

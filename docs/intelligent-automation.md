@@ -30,6 +30,10 @@ blocked outcomes.
 If any live WorkOrder already owns the project, project recovery defers without
 claiming the queue record or consuming a retry attempt; admission resumes after
 that WorkOrder reaches a terminal state.
+A `dispatching` WorkOrder must advance to queued/in-flight once its prompt is
+consumed. Remaining in `dispatching` beyond the five-minute reservation grace
+is abandoned even if its supervisor lease leaked; the stale lease is settled
+with the failed WorkOrder instead of keeping the project blocked indefinitely.
 Scheduled and forced Daily Audit invocations are serialized by a process-local
 mutex, preventing overlapping audits from creating duplicate recovery attempts.
 Closing an abandoned WorkOrder advances the scheduler checkpoint for its
