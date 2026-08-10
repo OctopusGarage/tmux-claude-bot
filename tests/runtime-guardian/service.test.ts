@@ -196,6 +196,64 @@ describe("runtime guardian", () => {
     ]);
   });
 
+  it("retries failed repair WorkOrders and closes completed repair WorkOrders", () => {
+    const now = 20_000;
+    const failedRunId = "runtime-repair-failed";
+    const completedRunId = "runtime-repair-completed";
+    for (const [runId, status] of [
+      [failedRunId, "failed"],
+      [completedRunId, "completed"],
+    ] as const) {
+      writeLoopSupervisorWorkOrderState({
+        workOrder: workOrder(runId, "/repo/tmux-claude-bot"),
+        supervisorSession: "tmux_proj_loop-supervisor",
+        status,
+        now: now - 100,
+        ...(status === "failed" ? { resultStatus: "invalid-output" as const } : {}),
+      });
+    }
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const failed = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "alcove-failure",
+      taskId: "run-alcove",
+      now: now - 200,
+    });
+    const completed = coordinator.enqueue({
+      projectId: "english-pilot",
+      projectPath: "/repo/english-pilot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "english-failure",
+      taskId: "run-english",
+      now: now - 199,
+    });
+    coordinator.claimIds([failed.id, completed.id], {
+      now: now - 150,
+      leaseId: "repair-lease",
+      limit: 2,
+    });
+    coordinator.markRunning(failed.id, "repair-lease", now - 150);
+    coordinator.markRunning(completed.id, "repair-lease", now - 150);
+    coordinator.attachWorkOrder(failed.id, failedRunId, now - 140);
+    coordinator.attachWorkOrder(completed.id, completedRunId, now - 140);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now, findings: [] })).toBe(2);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({
+        id: failed.id,
+        status: "retry-wait",
+        attempt: 1,
+        nextAttemptAt: now + 30_000,
+      }),
+      expect.objectContaining({ id: completed.id, status: "fixed" }),
+    ]);
+    expect(coordinator.list()[0]?.workOrderId).toBeUndefined();
+  });
+
   it("does not infer a terminal blocker from legacy failure wording", async () => {
     const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
 

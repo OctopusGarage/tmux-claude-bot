@@ -133,6 +133,9 @@ After dispatch, persist the delegated WorkOrder id and ledger task id on each
 claimed queue record. Prefer a current non-terminal record over terminal
 historical duplicates so successful reconciliation cannot leave a fresh repair
 pending or running forever.
+Reconcile a terminal Runtime Guardian repair WorkOrder on every tick: completion
+terminalizes the queue record as fixed; any other terminal outcome clears the
+stale WorkOrder link and consumes one bounded retry attempt.
 
 Do not add feature-specific side channels that bypass WorkOrder state,
 system-gate artifacts, notification gateway routing, or conflict checks unless

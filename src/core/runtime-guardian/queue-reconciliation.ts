@@ -36,6 +36,17 @@ export function reconcileRuntimeGuardianQueue(input: {
   const terminalByRunId = new Map(registry.terminal.map((record) => [record.workOrder.id, record]));
   for (const record of input.coordinator.list()) {
     if (record.source !== "runtime-guardian" || isQueueTerminal(record.status)) continue;
+    const repairWorkOrder =
+      record.workOrderId === undefined ? undefined : terminalByRunId.get(record.workOrderId);
+    if (repairWorkOrder !== undefined) {
+      if (repairWorkOrder.state.status === "completed") {
+        input.coordinator.markTerminal(record.id, "fixed", input.now);
+      } else {
+        input.coordinator.releaseForRetry(record.id, input.now, { detachWorkOrder: true });
+      }
+      reconciled++;
+      continue;
+    }
     const finding = record.linkedTaskIds.map((id) => byRunId.get(id)).find(Boolean);
     if (finding !== undefined && isTargetOrExternalBlocker(finding)) {
       input.coordinator.markTerminal(record.id, "blocked", input.now);
