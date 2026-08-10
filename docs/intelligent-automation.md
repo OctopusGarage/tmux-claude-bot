@@ -1045,7 +1045,8 @@ reuses its active queue record even if evidence punctuation or presentation
 changes, so diagnostic text cannot produce unbounded superseded queue history.
 When one repair WorkOrder covers multiple findings, its derived Autopilot task
 link is shared settlement evidence rather than a dedupe key. Each finding keeps
-its queue record and all attached siblings reconcile from the aggregate outcome.
+its queue record and all attached siblings reconcile from the aggregate outcome;
+failed aggregate retries retain those links without collapsing sibling findings.
 `RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
 source-worktree execution so managed-dev self-repair can take effect quickly; set
 it to `isolated` for PR-style conservative repair.

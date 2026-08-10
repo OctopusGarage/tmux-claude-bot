@@ -452,6 +452,15 @@ describe("RepairCoordinator", () => {
       expect.objectContaining({ id: fluent.id, status: "running" }),
       expect.objectContaining({ id: english.id, status: "running" }),
     ]);
+
+    coordinator.releaseForRetry(fluent.id, 2_001, { detachWorkOrder: true });
+    coordinator.releaseForRetry(english.id, 2_001, { detachWorkOrder: true });
+    expect(coordinator.reconcileDuplicateTaskIds(2_002)).toBe(0);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: fluent.id, status: "retry-wait" }),
+      expect.objectContaining({ id: english.id, status: "retry-wait" }),
+    ]);
+    expect(coordinator.list().every((record) => record.workOrderId === undefined)).toBe(true);
   });
 
   it("supersedes a stale terminal project-recovery record when the same task reopens", () => {

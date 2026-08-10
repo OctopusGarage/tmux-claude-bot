@@ -422,7 +422,11 @@ export class RepairCoordinator {
         : undefined;
       if (
         derivedWorkOrderId !== undefined &&
-        unique.every((record) => record.workOrderId === derivedWorkOrderId)
+        unique.every(
+          (record) =>
+            record.workOrderId === derivedWorkOrderId ||
+            record.linkedTaskIds.some((linkedTaskId) => linkedTaskId !== taskId),
+        )
       )
         continue;
       unique.sort(compareDuplicatePriority);
