@@ -414,9 +414,17 @@ export class RepairCoordinator {
       }
     }
     const superseded = new Set<string>();
-    for (const records of byTaskId.values()) {
+    for (const [taskId, records] of byTaskId) {
       const unique = [...new Map(records.map((record) => [record.id, record])).values()];
       if (unique.length < 2) continue;
+      const derivedWorkOrderId = taskId.startsWith("autopilot:")
+        ? taskId.slice("autopilot:".length)
+        : undefined;
+      if (
+        derivedWorkOrderId !== undefined &&
+        unique.every((record) => record.workOrderId === derivedWorkOrderId)
+      )
+        continue;
       unique.sort(compareDuplicatePriority);
       const winner = unique[0];
       if (winner === undefined) continue;

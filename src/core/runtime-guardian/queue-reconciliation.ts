@@ -34,8 +34,25 @@ export function reconcileRuntimeGuardianQueue(input: {
     workOrders: registry.records,
   });
   const terminalByRunId = new Map(registry.terminal.map((record) => [record.workOrder.id, record]));
-  for (const record of input.coordinator.list()) {
-    if (record.source !== "runtime-guardian" || isQueueTerminal(record.status)) continue;
+  const queueRecords = input.coordinator.list();
+  const recordsPerWorkOrder = new Map<string, number>();
+  for (const record of queueRecords) {
+    if (record.source !== "runtime-guardian" || record.workOrderId === undefined) continue;
+    recordsPerWorkOrder.set(
+      record.workOrderId,
+      (recordsPerWorkOrder.get(record.workOrderId) ?? 0) + 1,
+    );
+  }
+  for (const record of queueRecords) {
+    const recoverableAggregateSibling =
+      record.status === "superseded" &&
+      record.workOrderId !== undefined &&
+      (recordsPerWorkOrder.get(record.workOrderId) ?? 0) > 1;
+    if (
+      record.source !== "runtime-guardian" ||
+      (isQueueTerminal(record.status) && !recoverableAggregateSibling)
+    )
+      continue;
     const repairWorkOrder =
       record.workOrderId === undefined ? undefined : terminalByRunId.get(record.workOrderId);
     if (repairWorkOrder !== undefined) {

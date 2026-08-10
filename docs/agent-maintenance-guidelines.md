@@ -135,6 +135,9 @@ historical duplicates so successful reconciliation cannot leave a fresh repair
 pending or running forever. Keep Runtime Guardian rediscovery keyed to the
 durable task identity; evidence formatting changes must update the active record
 rather than create a replacement on every tick.
+Do not deduplicate independent findings through their shared derived
+`autopilot:<workOrderId>` link. An aggregate repair must retain and terminalize
+every attached queue record from the same authoritative WorkOrder result.
 Reconcile a terminal Runtime Guardian repair WorkOrder on every tick: completion
 terminalizes the queue record as fixed; any other terminal outcome clears the
 stale WorkOrder link and consumes one bounded retry attempt.

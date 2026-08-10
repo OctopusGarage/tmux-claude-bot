@@ -106,6 +106,9 @@ same task before dispatch; project recovery wins over an accidental bot-owned
 import for the same task. Runtime Guardian rediscovery must reuse its active
 record by durable task identity even when diagnostic evidence formatting changes;
 evidence text is not queue identity and must not create one record per tick.
+Derived `autopilot:<workOrderId>` links identify aggregate execution evidence,
+not duplicate source tasks; every attached finding remains independently owned
+and settles from the shared WorkOrder outcome.
 Repository PR review alignment invariant: every repository-wide review WorkOrder
 must persist one structured decision per in-scope PR. Only `merged` and
 evidence-backed allowlisted `closed` decisions complete the queue item; retryable

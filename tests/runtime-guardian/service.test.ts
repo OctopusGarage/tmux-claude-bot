@@ -254,6 +254,54 @@ describe("runtime guardian", () => {
     expect(coordinator.list()[0]?.workOrderId).toBeUndefined();
   });
 
+  it("settles aggregate siblings that were historically superseded by their shared WorkOrder ID", () => {
+    const now = 30_000;
+    const repairRunId = "runtime-repair-aggregate";
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder(repairRunId, "/repo/tmux-claude-bot"),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: now - 100,
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const records = [
+      coordinator.enqueue({
+        projectId: "fluent-frame",
+        projectPath: "/repo/fluent-frame",
+        source: "runtime-guardian",
+        taskFamily: "terminal-system-gate-failure",
+        fingerprint: "fluent failure",
+        taskId: "run-fluent",
+        now: now - 300,
+      }),
+      coordinator.enqueue({
+        projectId: "english-pilot",
+        projectPath: "/repo/english-pilot",
+        source: "runtime-guardian",
+        taskFamily: "terminal-invalid-output",
+        fingerprint: "english failure",
+        taskId: "run-english",
+        now: now - 299,
+      }),
+    ];
+    coordinator.claimIds(
+      records.map((record) => record.id),
+      { now: now - 250, leaseId: "aggregate", limit: 2 },
+    );
+    for (const record of records) {
+      coordinator.markRunning(record.id, "aggregate", now - 240);
+      coordinator.attachWorkOrder(record.id, repairRunId, now - 230);
+      coordinator.linkTaskIds(record.id, [`autopilot:${repairRunId}`], now - 220);
+    }
+    coordinator.markTerminal(records[1]?.id ?? "missing", "superseded", now - 200);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now, findings: [] })).toBe(2);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: records[0]?.id, status: "fixed" }),
+      expect.objectContaining({ id: records[1]?.id, status: "fixed" }),
+    ]);
+  });
+
   it("does not infer a terminal blocker from legacy failure wording", async () => {
     const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
 
