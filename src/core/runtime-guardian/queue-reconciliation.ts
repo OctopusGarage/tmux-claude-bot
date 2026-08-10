@@ -210,7 +210,7 @@ export function dueRuntimeGuardianFindings(input: {
     .map((record) => ({
       kind: record.taskFamily as RuntimeGuardianFindingKind,
       severity: record.priority >= 100 ? "high" : "medium",
-      runId: record.linkedTaskIds.at(-1) ?? record.id,
+      runId: originalRuntimeGuardianTaskIds(record)[0] ?? record.id,
       projectId: record.projectId,
       projectPath: record.projectPath,
       evidence: record.summaries.length > 0 ? record.summaries : [record.fingerprint],

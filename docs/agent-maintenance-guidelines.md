@@ -141,7 +141,9 @@ every attached queue record from the same authoritative WorkOrder result, and a
 failed aggregate must retry each sibling after its WorkOrder attachment clears.
 If an older release already marked those detached, due siblings `superseded`,
 the normal reconciliation tick restores the newest evidence-bound group; never
-repair this condition by hand-editing `repair_queue.json`.
+repair this condition by hand-editing `repair_queue.json`. Keep the original
+runtime task id authoritative for rediscovery and admission; `autopilot:` links
+are execution evidence only.
 Reconcile a terminal Runtime Guardian repair WorkOrder on every tick: completion
 terminalizes the queue record as fixed; any other terminal outcome clears the
 stale WorkOrder link and consumes one bounded retry attempt.

@@ -1049,7 +1049,8 @@ its queue record and all attached siblings reconcile from the aggregate outcome;
 failed aggregate retries retain those links without collapsing sibling findings.
 The reconciler also migrates due siblings misclassified as `superseded` by older
 dedupe behavior, reopening only the newest aggregate group whose original task
-identities have no active owner.
+identities have no active owner. Admission projects the original task identity,
+never the appended aggregate execution link, back into a Runtime Guardian finding.
 `RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
 source-worktree execution so managed-dev self-repair can take effect quickly; set
 it to `isolated` for PR-style conservative repair.

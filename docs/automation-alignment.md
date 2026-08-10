@@ -112,7 +112,8 @@ and settles from the shared WorkOrder outcome, including after a failed outcome
 detaches the WorkOrder and returns every finding to bounded retry. Reconciliation
 must also restore due aggregate siblings that an older dedupe pass terminalized
 as `superseded`; this migration is evidence-bound and must not require operators
-to edit the durable repair queue.
+to edit the durable repair queue. Derived aggregate links must never replace the
+original runtime finding id when a due record re-enters admission.
 Repository PR review alignment invariant: every repository-wide review WorkOrder
 must persist one structured decision per in-scope PR. Only `merged` and
 evidence-backed allowlisted `closed` decisions complete the queue item; retryable

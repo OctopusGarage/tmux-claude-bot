@@ -9,7 +9,10 @@ import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/superviso
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import type { RuntimeGuardianFinding } from "../../src/core/runtime-guardian/findings.js";
 import { discoverRuntimeGuardianFindings as discoverRuntimeGuardianArtifacts } from "../../src/core/runtime-guardian/inspector.js";
-import { reconcileRuntimeGuardianQueue } from "../../src/core/runtime-guardian/queue-reconciliation.js";
+import {
+  dueRuntimeGuardianFindings,
+  reconcileRuntimeGuardianQueue,
+} from "../../src/core/runtime-guardian/queue-reconciliation.js";
 import {
   buildRuntimeGuardianRepairPrompt,
   checkRuntimeGuardianRepairReadiness,
@@ -340,6 +343,24 @@ describe("runtime guardian", () => {
     expect(coordinator.list()).toEqual([
       expect.objectContaining({ id: records[0]?.id, status: "pending", attempt: 1 }),
       expect.objectContaining({ id: records[1]?.id, status: "pending", attempt: 1 }),
+    ]);
+  });
+
+  it("preserves the original finding identity after aggregate execution evidence is linked", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "fluent failure",
+      taskId: "run-fluent",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(record.id, ["autopilot:failed-aggregate"], 2_000);
+
+    expect(dueRuntimeGuardianFindings({ coordinator, now: 2_000, limit: 1 })).toEqual([
+      expect.objectContaining({ runId: "run-fluent" }),
     ]);
   });
 
