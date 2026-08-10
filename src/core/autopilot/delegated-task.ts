@@ -548,8 +548,12 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
   for (const lease of leaseState.leases.filter((candidate) => candidate.status === "active")) {
     const record = activeDelegated.get(lease.workOrderId);
     if (record === undefined) continue;
-    const workerSession = record.workOrder.workerSession ?? lease.workerSession;
-    if (await workerAgentIsRunningAfterStartupGrace(deps, record.workOrder.agent, workerSession)) {
+    // The supervisor lease names the session that consumes this WorkOrder. The
+    // WorkOrder's workerSession is a derived cleanup/resource identity and may
+    // never have been created for queue-driven active delegations.
+    if (
+      await workerAgentIsRunningAfterStartupGrace(deps, record.workOrder.agent, lease.workerSession)
+    ) {
       continue;
     }
 

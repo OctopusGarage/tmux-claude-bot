@@ -194,11 +194,13 @@ summary, so a crash between summary persistence and queue cleanup cannot replay
 completed work or move it back to `in-flight`.
 Queued or dispatching active-delegate WorkOrders must be resumed during service
 startup when their worker lease is no longer active. An active lease must also
-be validated against the WorkOrder's actual isolated worker session and agent;
-if that worker disappeared during restart, the WorkOrder is recorded as a
+be validated against the leased supervisor session that actually consumes its
+queue turn and against the configured agent; a derived WorkOrder worker-session
+name is not liveness evidence for this queue-driven path. If the leased consumer
+disappeared during restart, the WorkOrder is recorded as a
 bounded invalid-output failure, the lease is released, and project recovery
 requeues it. Reboot recovery must not leave a durable delegation orphaned in an
-intermediate state or treat the supervisor pool session itself as the worker.
+intermediate state or falsely fail a live supervisor-owned turn.
 Failed Autopilot delegations for configured projects must enter the same
 project-scoped recovery path as Loop Engineering failures. Invalid or missing
 supervisor summaries are retryable orchestration evidence; capacity and active

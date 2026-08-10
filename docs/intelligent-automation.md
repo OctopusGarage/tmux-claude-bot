@@ -251,13 +251,13 @@ are restored and before Autopilot recovery may resume a delegation. Persisted
 prompts whose WorkOrder already has a valid final summary are discarded rather
 than replayed. After that barrier, queued or dispatching Autopilot WorkOrders are reattached
 to the current background executor when no active worker lease exists. Active
-leases are checked against the WorkOrder's actual isolated worker session and
-agent; an active supervisor-pool lease without that worker is recorded as a
-bounded invalid-output failure, released, and handed back to project recovery.
+leases are checked against their actual queue-consuming supervisor session and
+agent; the WorkOrder's derived worker-session name is not substituted for that
+lease owner. A lease whose consuming session is gone is recorded as a bounded
+invalid-output failure, released, and handed back to project recovery.
 A service restart or machine reboot must therefore preserve live delegations,
 and automatically requeue delegations whose worker disappeared, instead of
-leaving a WorkOrder permanently queued or falsely treating the pool session as
-the worker.
+leaving a WorkOrder permanently queued or falsely failing a live pool session.
 During normal finalization, a valid final summary can precede `system-gate.json`
 and terminal WorkOrder state. That settling WorkOrder continues to reserve its
 project: delegated-task reconciliation waits for the gate, and project recovery

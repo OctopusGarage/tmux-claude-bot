@@ -466,6 +466,50 @@ describe("active delegated task supervisor pool", () => {
     expect(resumeQueuedActiveDelegatedTasks(d)).toBe(1);
   });
 
+  it("reconciles restart liveness against the leased supervisor session", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-live-supervisor-"));
+    const order = {
+      ...workOrder({ id: "live-supervisor-after-restart", projectPath: projectDir }),
+      workerSession: "tmux_proj_loop-worker-derived-name",
+    };
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const d = deps(1);
+    d.bridge = {
+      hasSession: vi.fn(async (session: string) => session === "tmux_proj_loop-supervisor-1"),
+    } as unknown as HandlerDeps["bridge"];
+    d.configResolver = {
+      isCodexRunning: vi.fn(async () => true),
+    } as unknown as HandlerDeps["configResolver"];
+
+    vi.useFakeTimers();
+    const reconciliation = reconcileAndResumeActiveDelegatedTasksAfterRestart(d);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(await reconciliation).toBe(0);
+    vi.useRealTimers();
+    expect(
+      listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
+    ).toBe(true);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
+  });
+
   it("reconciles an active lease whose worker disappeared during restart", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-orphan-"));
     const order = workOrder({ id: "orphaned-after-restart", projectPath: projectDir });
