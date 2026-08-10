@@ -63,6 +63,39 @@ describe("recovery admission", () => {
     ]);
   });
 
+  it("claims an active runtime repair by task identity after evidence formatting changes", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const existing = coordinator.enqueue({
+      ...finding({
+        source: "runtime-guardian",
+        fingerprint: "gate failed | artifact exists",
+        taskId: "runtime-run-1",
+      }),
+      now: 1,
+    });
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, detail: "run-2" }));
+
+    const result = await admitRecoveryFindings({
+      findings: [
+        finding({
+          source: "runtime-guardian",
+          fingerprint: "gate failed; artifact exists",
+          taskId: "runtime-run-1",
+        }),
+      ],
+      coordinator,
+      now: 2,
+      leaseId: "admission:runtime",
+      dispatch,
+    });
+
+    expect(result).toMatchObject({ disposition: "queued", admitted: 1, claimed: 1 });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: existing.id, status: "running" }),
+    ]);
+  });
+
   it("returns an immediate capacity deferral to the queue without incrementing retry", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
 

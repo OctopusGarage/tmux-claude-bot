@@ -100,15 +100,26 @@ function findRecordForFinding(
   coordinator: RepairCoordinator,
   finding: RecoveryFinding,
 ): RepairQueueRecord | undefined {
-  return coordinator
+  const active = coordinator
     .list()
-    .find(
+    .filter((record) => !TERMINAL_REPAIR_STATUSES.has(record.status));
+  return (
+    active.find(
       (record) =>
-        !TERMINAL_REPAIR_STATUSES.has(record.status) &&
         record.projectId === finding.projectId &&
         record.taskFamily === finding.taskFamily &&
         record.fingerprint === finding.fingerprint,
-    );
+    ) ??
+    (finding.source === "runtime-guardian"
+      ? active.find(
+          (record) =>
+            record.source === "runtime-guardian" &&
+            record.projectId === finding.projectId &&
+            record.taskFamily === finding.taskFamily &&
+            record.linkedTaskIds.includes(finding.taskId),
+        )
+      : undefined)
+  );
 }
 
 const TERMINAL_REPAIR_STATUSES = new Set([
