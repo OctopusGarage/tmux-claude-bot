@@ -425,6 +425,10 @@ Interactive readiness is also ordered evidence: a completed Codex goal footer
 may follow and supersede a stale visible working marker, while a newer working
 marker means the turn is active again. This prevents completed supervisor panes
 from holding repair delivery open until the outer timeout.
+Likewise, a supervisor final summary is not terminal by itself while the live
+queue turn that produced it is still running. Periodic reconciliation defers
+that WorkOrder and its abandoned-resource cleanup until the queue owner settles;
+after a restart, durable summary recovery proceeds because no live owner remains.
 
 Responsibility is layered:
 

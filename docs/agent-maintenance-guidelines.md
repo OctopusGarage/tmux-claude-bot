@@ -183,6 +183,10 @@ acceptance. Keep these responsibilities separate:
   left in pane scrollback. In Codex, a later `Context … Goal achieved` footer
   supersedes an earlier visible `esc to interrupt` line; a later working marker
   supersedes that completion again.
+- Treat a final-summary file as intermediate evidence while the owning
+  supervisor queue is still busy. Periodic reconciliation must defer both
+  outcome settlement and abandoned-resource cleanup until that live queue owner
+  finishes; startup recovery remains authoritative after the old owner is gone.
 
 If target-project code, tests, PR body, branch state, or local verification are
 wrong, let the supervisor repair the target project through the configured

@@ -1521,6 +1521,7 @@ export async function startLoopEngineering(
           cleanupWorkerSessionRecords(sessionName);
         },
         workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
+        supervisorSessionBusy: (sessionName) => supervisorSessionHasQueuedWork(deps, sessionName),
       });
       if (reconciled.checked > 0) {
         log.info("loop engineering supervisor work order reconcile complete", { data: reconciled });
@@ -1625,10 +1626,16 @@ async function supervisorSessionIsAvailable(
   deps: HandlerDeps,
   sessionName: string,
 ): Promise<boolean> {
-  if (deps.queue.isSessionProcessing(sessionName)) return false;
-  if (deps.queue.getSessionQueue(sessionName).length > 0) return false;
-  if (deps.queue.size(sessionName) > 0) return false;
+  if (supervisorSessionHasQueuedWork(deps, sessionName)) return false;
   return agentIsIdle(deps, sessionName);
+}
+
+function supervisorSessionHasQueuedWork(deps: HandlerDeps, sessionName: string): boolean {
+  return (
+    deps.queue.isSessionProcessing(sessionName) ||
+    deps.queue.getSessionQueue(sessionName).length > 0 ||
+    deps.queue.size(sessionName) > 0
+  );
 }
 
 export async function reconcileLoopSupervisorWorkOrders(input: {
@@ -1646,6 +1653,9 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
   }) => Promise<LoopSupervisedRunResult>;
   cleanupCompletedWorkerSession?: (sessionName: string) => Promise<void>;
   workerSessionExists?: (sessionName: string) => Promise<boolean>;
+  /** Live-process guard for periodic reconciliation. Startup callers omit this
+   * so durable final summaries can recover work after the old process is gone. */
+  supervisorSessionBusy?: (sessionName: string) => boolean;
 }): Promise<{ checked: number; recovered: number; failed: number }> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const registry = readLoopSupervisorWorkOrderRegistry(input.now);
@@ -1664,8 +1674,16 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
   let checked = 0;
   let recovered = 0;
   let failed = 0;
+  const busyWorkOrderIds = new Set<string>();
 
   for (const record of new Map(unfinished.map((entry) => [entry.workOrder.id, entry])).values()) {
+    // A supervisor writes its summary before its queue turn resolves. Periodic
+    // reconciliation must not race that live owner into duplicate revisions or
+    // overwrite the terminal state back to `in-flight`.
+    if (input.supervisorSessionBusy?.(record.state.supervisorSession) === true) {
+      busyWorkOrderIds.add(record.workOrder.id);
+      continue;
+    }
     const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
     const staleDispatching =
       staleDispatchingIds.has(record.workOrder.id) &&
@@ -1787,6 +1805,7 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
 
   const resources = await reconcileTerminalSupervisorResources({
     now: input.now,
+    excludedWorkOrderIds: busyWorkOrderIds,
     ...(input.runGit === undefined ? {} : { runGit: input.runGit }),
     ...(input.cleanupCompletedWorkerSession === undefined
       ? {}

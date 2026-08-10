@@ -233,6 +233,12 @@ Codex may retain an earlier `esc to interrupt` line after its footer reports
 `Context … Goal achieved`; that later completion marker makes the composer
 ready again. A newer working marker still wins, so genuine active turns remain
 protected from queued input.
+Periodic WorkOrder reconciliation must defer a final summary while the owning
+supervisor queue is still processing or has queued work. The summary can appear
+before the live dispatch promise resolves; consuming it early can terminalize
+the WorkOrder, release its lease/worktree, and then let the live owner overwrite
+it back to `in-flight`. Startup reconciliation may consume the same durable
+summary because the previous process and its queue owner are gone.
 Queued, dispatching, and in-flight WorkOrders with an existing worker pane
 receive a bounded two-minute grace period for agent startup before orphan
 reconciliation; a transient startup probe must not fail a valid WorkOrder, and

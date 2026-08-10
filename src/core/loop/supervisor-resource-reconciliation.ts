@@ -37,6 +37,7 @@ export type SupervisorResourceReconciliation = {
 
 export async function reconcileTerminalSupervisorResources(input: {
   now: number;
+  excludedWorkOrderIds?: ReadonlySet<string>;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
   cleanupWorkerSession?: (sessionName: string) => Promise<void> | void;
   workerSessionExists?: (sessionName: string) => Promise<boolean> | boolean;
@@ -49,6 +50,7 @@ export async function reconcileTerminalSupervisorResources(input: {
     input.now,
     taskLedger,
     schedulerStore,
+    input.excludedWorkOrderIds,
   );
   const cleanedTerminalWorkerSessions =
     input.cleanupWorkerSession === undefined
@@ -168,9 +170,11 @@ function reconcileAbandonedLoopSupervisorWorkOrders(
   now: number,
   taskLedger: DailyTaskLedger,
   schedulerStore: LoopSchedulerStore,
+  excludedWorkOrderIds: ReadonlySet<string> = new Set(),
 ): number {
   let settled = 0;
   for (const record of listAbandonedLoopSupervisorWorkOrders()) {
+    if (excludedWorkOrderIds.has(record.workOrder.id)) continue;
     const existing = taskLedger
       .listAll()
       .find((task) => task.taskId === loopLedgerTaskId(record.workOrder));
