@@ -3,22 +3,41 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardSnapshot } from "../../src/core/dashboard/dashboard.js";
 import type { ScheduledTaskRecord } from "../../src/core/tasks/task-ledger.js";
-import { createObserverMcpServer, OBSERVER_MCP_TOOLS } from "../../src/mcp/observer.js";
+import {
+  createObserverMcpServer,
+  OBSERVER_MCP_TOOLS,
+  type ObserverClient,
+} from "../../src/mcp/observer.js";
 
-function fakeClient(
-  overrides: Partial<{
-    close: () => void;
-    connect: () => Promise<void>;
-    logs: (session: string) => Promise<string>;
-    projects: () => Promise<{ sid: string; label: string; alive: boolean; active: boolean }[]>;
-    snapshot: () => Promise<DashboardSnapshot>;
-  }> = {},
-) {
+function fakeClient(overrides: Partial<ObserverClient> = {}) {
   return {
     close: vi.fn(),
     connect: vi.fn(async () => undefined),
+    dailyTaskAuditStatus: vi.fn(async () => ({
+      observedAt: 1,
+      lastFiredAt: null,
+      summary: {
+        window: null,
+        counts: { success: 0, failed: 0, missing: 0, running: 0, runningTimeout: 0, skipped: 0 },
+        items: [],
+      },
+      recentWindow: { start: 0, end: 1, label: "recent" },
+      recentRecords: [],
+      recentLimit: 50,
+      recentTotal: 0,
+      recentTruncated: false,
+    })),
     logs: vi.fn(async (session: string) => `logs for ${session}`),
+    loopReports: vi.fn(async () => ({ items: [], total: 0, limit: 20, truncated: false })),
     projects: vi.fn(async () => [{ sid: "demo", label: "Demo", alive: true, active: false }]),
+    runtimeGuardianFindings: vi.fn(async () => ({
+      observedAt: 1,
+      lookbackHours: 24,
+      findings: [],
+      total: 0,
+      limit: 50,
+      truncated: false,
+    })),
     snapshot: vi.fn(
       async (): Promise<DashboardSnapshot> => ({
         generatedAt: 1,
@@ -55,7 +74,7 @@ function fakeClient(
           operator: {
             session: { state: "ready" },
             skills: { installed: 2, expected: 2, state: "ready" },
-            mcpProfiles: { installed: 2, expected: 2, state: "ready" },
+            mcpProfiles: { installed: 2, expected: 2, state: "ready", profiles: [] },
             promptLibrary: { state: "disabled" },
             optionalProjectMcpCount: 0,
           },
@@ -97,6 +116,13 @@ describe("observer MCP server", () => {
     try {
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name).sort()).toEqual([...OBSERVER_MCP_TOOLS].sort());
+      expect(listed.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
+      const advertised = Object.fromEntries(
+        listed.tools.map((tool) => [tool.name, JSON.stringify(tool.outputSchema)]),
+      );
+      expect(advertised["tcb.observer.status"]).toContain('"runtimeDomains"');
+      expect(advertised["tcb.observer.loop_reports_list"]).toContain('"projectName"');
+      expect(advertised["tcb.observer.daily_task_audit"]).toContain('"runningTimeout"');
     } finally {
       await client.close();
       await server.close();
@@ -118,7 +144,7 @@ describe("observer MCP server", () => {
         },
         evidence: ["control:snapshot"],
         blockedReason: null,
-        scope: "runtime-overview",
+        scope: { kind: "runtime-overview" },
         errorKind: null,
         nextSuggestedAction: "tcb power status",
       });
@@ -232,6 +258,8 @@ describe("observer MCP server", () => {
         blockedReason: "control-unavailable",
         errorKind: "control-unavailable",
         nextSuggestedAction: "tcb service status",
+        scope: { kind: "runtime-overview" },
+        evidence: ["control:snapshot"],
       });
     } finally {
       await client.close();
@@ -250,12 +278,23 @@ describe("observer MCP server", () => {
       repairStatus: "not-needed",
       updatedAt: 1_785_571_260_000,
     };
-    const listForWindow = vi.fn(() => [record]);
-    const { client, server } = await connectObserverClient({
-      now: () => 1_785_657_600_000,
-      dailyTaskAuditStore: () => ({ getLastFired: () => 1_785_571_200_000 }),
-      dailyTaskLedger: () => ({ listForWindow }),
-    });
+    const dailyTaskAuditStatus = vi.fn(async () => ({
+      observedAt: 1_785_657_600_000,
+      lastFiredAt: 1_785_571_200_000,
+      summary: {
+        window: null,
+        counts: { success: 1, failed: 0, missing: 0, running: 0, runningTimeout: 0, skipped: 0 },
+        items: [{ ...record, status: "success" as const }],
+      },
+      recentWindow: { start: 1, end: 2, label: "recent" },
+      recentRecords: [record],
+      recentLimit: 50,
+      recentTotal: 1,
+      recentTruncated: false,
+    }));
+    const { client, server } = await connectObserverClient({}, () =>
+      fakeClient({ dailyTaskAuditStatus }),
+    );
     try {
       const result = await client.callTool({
         name: "tcb.observer.daily_task_audit",
@@ -270,10 +309,12 @@ describe("observer MCP server", () => {
           summary: { counts: { success: 1 } },
           recentRecords: [{ taskId: "daily-audit:test", status: "success" }],
           recentLimit: 50,
+          recentTotal: 1,
+          recentTruncated: false,
         },
-        evidence: ["state:daily_task_audit_lastfired", "state:scheduled_task_ledger"],
+        evidence: ["control:daily-task-audit"],
       });
-      expect(listForWindow).toHaveBeenCalledTimes(2);
+      expect(dailyTaskAuditStatus).toHaveBeenCalledWith();
     } finally {
       await client.close();
       await server.close();
@@ -281,20 +322,26 @@ describe("observer MCP server", () => {
   });
 
   it("returns Runtime Guardian findings without dispatching repair", async () => {
-    const discoverRuntimeGuardianFindings = vi.fn(() => [
-      {
-        kind: "missing-system-gate" as const,
-        severity: "high" as const,
-        runId: "run-1",
-        projectId: "tmux-claude-bot",
-        projectPath: "/repo",
-        evidence: ["system gate evidence is missing"],
-      },
-    ]);
-    const { client, server } = await connectObserverClient({
-      now: () => 1_785_657_600_000,
-      discoverRuntimeGuardianFindings,
-    });
+    const runtimeGuardianFindings = vi.fn(async () => ({
+      observedAt: 1_785_657_600_000,
+      lookbackHours: 6,
+      findings: [
+        {
+          kind: "missing-system-gate" as const,
+          severity: "high" as const,
+          runId: "run-1",
+          projectId: "tmux-claude-bot",
+          projectPath: "/repo",
+          evidence: ["system gate evidence is missing"],
+        },
+      ],
+      total: 1,
+      limit: 50,
+      truncated: false,
+    }));
+    const { client, server } = await connectObserverClient({}, () =>
+      fakeClient({ runtimeGuardianFindings }),
+    );
     try {
       const result = await client.callTool({
         name: "tcb.observer.runtime_guardian_findings",
@@ -307,12 +354,15 @@ describe("observer MCP server", () => {
           observedAt: 1_785_657_600_000,
           lookbackHours: 6,
           findings: [{ kind: "missing-system-gate", severity: "high", runId: "run-1" }],
+          total: 1,
+          limit: 50,
+          truncated: false,
         },
-        evidence: ["state:loop-supervisor-work-orders", "state:runtime-guardian-discovery"],
+        evidence: ["control:runtime-guardian-findings"],
       });
-      expect(discoverRuntimeGuardianFindings).toHaveBeenCalledWith({
-        now: 1_785_657_600_000,
-        lookbackMs: 6 * 60 * 60 * 1000,
+      expect(runtimeGuardianFindings).toHaveBeenCalledWith({
+        lookbackHours: 6,
+        limit: 50,
       });
     } finally {
       await client.close();
@@ -321,7 +371,7 @@ describe("observer MCP server", () => {
   });
 
   it("uses injected Loop report discovery and the default Runtime Guardian lookback", async () => {
-    const listLoopReports = vi.fn(() => ({
+    const loopReports = vi.fn(async () => ({
       items: [
         {
           runId: "run-1",
@@ -338,12 +388,17 @@ describe("observer MCP server", () => {
       limit: 5,
       truncated: false,
     }));
-    const discoverRuntimeGuardianFindings = vi.fn(() => []);
-    const { client, server } = await connectObserverClient({
-      now: () => 1_785_657_600_000,
-      listLoopReports,
-      discoverRuntimeGuardianFindings,
-    });
+    const runtimeGuardianFindings = vi.fn(async () => ({
+      observedAt: 1_785_657_600_000,
+      lookbackHours: 24,
+      findings: [],
+      total: 0,
+      limit: 50,
+      truncated: false,
+    }));
+    const { client, server } = await connectObserverClient({}, () =>
+      fakeClient({ loopReports, runtimeGuardianFindings }),
+    );
     try {
       await expect(
         client.callTool({
@@ -359,10 +414,10 @@ describe("observer MCP server", () => {
             limit: 5,
             truncated: false,
           },
-          evidence: ["state:loop-runs"],
+          evidence: ["control:loop-reports"],
         },
       });
-      expect(listLoopReports).toHaveBeenCalledWith({
+      expect(loopReports).toHaveBeenCalledWith({
         limit: 5,
         projectId: "repo",
         status: "passed",
@@ -371,9 +426,9 @@ describe("observer MCP server", () => {
         name: "tcb.observer.runtime_guardian_findings",
         arguments: {},
       });
-      expect(discoverRuntimeGuardianFindings).toHaveBeenCalledWith({
-        now: 1_785_657_600_000,
-        lookbackMs: 24 * 60 * 60 * 1000,
+      expect(runtimeGuardianFindings).toHaveBeenCalledWith({
+        lookbackHours: 24,
+        limit: 50,
       });
     } finally {
       await client.close();

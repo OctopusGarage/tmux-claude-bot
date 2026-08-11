@@ -1,4 +1,8 @@
-import type { OpportunityNotificationDigest, OpportunitySuggestion } from "./types.js";
+import {
+  isOpportunityVisible,
+  type OpportunityNotificationDigest,
+  type OpportunitySuggestion,
+} from "./types.js";
 
 const LIST_LIMIT = 10;
 
@@ -24,11 +28,12 @@ export function formatOpportunityDigest(digest: OpportunityNotificationDigest): 
   return lines.join("\n").trimEnd();
 }
 
-export function formatOpportunityList(suggestions: OpportunitySuggestion[]): string {
+export function formatOpportunityList(
+  suggestions: OpportunitySuggestion[],
+  now = Date.now(),
+): string {
   const visible = suggestions
-    .filter(
-      (suggestion) => suggestion.status !== "dismissed" && suggestion.status !== "implemented",
-    )
+    .filter((suggestion) => isOpportunityVisible(suggestion, now))
     .slice(0, LIST_LIMIT);
   if (visible.length === 0) return "No active opportunity suggestions.";
   return visible

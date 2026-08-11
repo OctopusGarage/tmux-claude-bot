@@ -405,6 +405,45 @@ only its runtime domain, and every presentation keeps attention, active work, an
 recent outcomes bounded. Managed MCP profiles may be checked for readiness, but
 the overview must not inspect private global MCP client configuration.
 
+Promise-returning Runtime Domain collectors have a bounded wait and report a
+stable `errorKind` (`read-failed` or `timeout`) without exposing the original
+exception. Synchronous local stores are not falsely described as cancellable:
+the expensive WorkOrder, Task Ledger, and Runtime Guardian projections use a
+30-second in-memory cache so the two-second TUI refresh does not rescan disk each
+time; their underlying readers remain authoritative and side-effect free.
+Automation rows preserve dependency readiness and the latest durable outcome;
+Daily Task Ledger terminal evidence contributes to Recent Outcomes without
+duplicating Loop WorkOrder outcomes. Managed MCP profile evidence includes its
+role, exposure class, descriptor freshness, and tool count. Project-declared
+optional MCP counts stay in explicit project-scoped AI-tool diagnostics because
+the global Dashboard has no trusted project root and must never infer one from
+the process working directory.
+
+Dashboard adapter flags describe configured channel exposure, not live transport
+connectivity. The overview must not claim an adapter is healthy without durable,
+cross-process connection evidence. Prompt Library similarly reports configured or
+disabled today; degraded is reserved for a future authoritative failure signal and
+must never be inferred by spawning or probing the MCP server during refresh.
+
+Telegram and Lark Dashboard copy is localized through the message catalogs,
+including health, domain, attention, and fleet-count labels. The terminal-only CLI
+and TUI remain intentionally English operator surfaces; their copy is not a chat
+locale contract. Stable product names such as WorkOrder, Runtime Guardian, and MCP
+may remain untranslated in English locales, but chat must bind runtime domain codes
+to the selected channel catalog rather than rendering reader labels directly.
+
+Dashboard narrowing is one read-model operation: `--project`, `--problems`, and
+bounded limits apply equally to text and JSON. TUI refreshes order busy sessions,
+then stopped attention-relevant sessions, then healthy idle sessions, while
+preserving selection by session identity. Chat surfaces summarize healthy
+Automation Families and idle Project Sessions instead of enumerating them.
+
+Observer and Home MCP drill-downs for Loop reports, Daily Task Audit, and Runtime
+Guardian findings use read-only Control operations. MCP processes do not open the
+underlying ledgers, WorkOrder artifacts, or Guardian stores themselves. Bounded
+responses expose `total`, `limit`, and `truncated` whenever a collection may be
+cut off.
+
 Runtime Overview is diagnostic only. Follow-up mutation stays behind an existing
 dedicated command or control tool with its own authorization and safety policy.
 AI operators prefer `tcb.observer.status`, fall back to `tcb dashboard --json`,

@@ -46,6 +46,9 @@ TUI is open, the TUI auto-reconnects.
   the project label, and the current-task duration while busy.
 - **Right** — a live snapshot (peek) of the selected session's pane plus its status.
   The list and peek refresh automatically when the bot reports activity.
+- **Ordering** — busy sessions appear first, stopped sessions needing attention
+  follow, and healthy idle sessions come last. Refresh preserves selection by
+  session identity even when rows move.
 - **Header / Runtime Overview** — the health-first header is the same canonical
   snapshot used by `tcb dashboard` and MCP. Press `o` for its read-only domain,
   Automation, AI Interface, and recent-outcome detail.

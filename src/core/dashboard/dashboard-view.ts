@@ -1,9 +1,10 @@
 import { type AgentKind, agentGlyph } from "../../shared/types.js";
 import { UI_ICONS } from "../../shared/ui/icons.js";
 import { tildeifyHome } from "../../shared/utils/path.js";
+import type { Messages } from "../i18n/index.js";
 import type { UsageSnapshot } from "../read/usage.js";
 import type { DashboardSnapshot, SessionRow } from "./dashboard.js";
-import type { RuntimeOverview } from "./runtime-overview.js";
+import type { AttentionItem, RuntimeOverview } from "./runtime-overview.js";
 
 /** Compact human-readable duration from milliseconds.
  * <60s → "Ns"; <60m → "Nm" or "NmSs"; <24h → "Nh" or "NhMm"; else "NdMh". */
@@ -29,11 +30,11 @@ export function humanizeMs(ms: number): string {
   return h > 0 ? `${totalDay}d${h}h` : `${totalDay}d`;
 }
 
-function formatAdapters(adapters: { telegram: boolean; lark: boolean }): string {
+function formatAdapters(adapters: { telegram: boolean; lark: boolean }, none: string): string {
   const parts: string[] = [];
   if (adapters.telegram) parts.push("TG");
   if (adapters.lark) parts.push("Lark");
-  return parts.length > 0 ? parts.join("+") : "none";
+  return parts.length > 0 ? parts.join("+") : none;
 }
 
 function formatUsageParts(usage: UsageSnapshot): string {
@@ -75,6 +76,23 @@ export type DashboardLabels = {
   projectSessions: string;
   none: string;
   more: string;
+  enabled: string;
+  idle: string;
+  shown: string;
+  healthy: string;
+  session: string;
+  skills: string;
+  mcpProfiles: string;
+  promptLibrary: string;
+  sessions: string;
+  running: string;
+  busy: string;
+  queue: string;
+  up: string;
+  noAdapters: string;
+  healthStatus: (status: RuntimeOverview["health"]["status"]) => string;
+  attentionSummary: (item: AttentionItem) => string;
+  runtimeDomainLabel: (id: string, fallback: string) => string;
 };
 
 const ENGLISH_DASHBOARD_LABELS: DashboardLabels = {
@@ -88,10 +106,98 @@ const ENGLISH_DASHBOARD_LABELS: DashboardLabels = {
   projectSessions: "Project Sessions",
   none: "none",
   more: "more",
+  enabled: "enabled",
+  idle: "idle",
+  shown: "shown",
+  healthy: "healthy",
+  session: "session",
+  skills: "skills",
+  mcpProfiles: "MCP profiles",
+  promptLibrary: "Prompt Library",
+  sessions: "sessions",
+  running: "running",
+  busy: "busy",
+  queue: "queue",
+  up: "up",
+  noAdapters: "none",
+  healthStatus: (status) => status,
+  attentionSummary: (item) => item.summary,
+  runtimeDomainLabel: (_id, fallback) => fallback,
 };
 
 function dashboardLabels(labels: Partial<DashboardLabels> | undefined): DashboardLabels {
   return { ...ENGLISH_DASHBOARD_LABELS, ...labels };
+}
+
+/** Bind the neutral Runtime Overview presentation codes to one chat locale. */
+export function dashboardLabelsForMessages(m: Messages): DashboardLabels {
+  return {
+    overallHealth: m.dashboardOverallHealth,
+    attention: m.dashboardAttention,
+    activeWork: m.dashboardActiveWork,
+    automation: m.dashboardAutomation,
+    operatorAi: m.dashboardOperatorAi,
+    runtimeDomains: m.dashboardRuntimeDomains,
+    recentOutcomes: m.dashboardRecentOutcomes,
+    projectSessions: m.dashboardProjectSessions,
+    none: m.dashboardNone,
+    more: m.dashboardMore,
+    enabled: m.dashboardEnabled,
+    idle: m.dashboardIdle,
+    shown: m.dashboardShown,
+    healthy: m.dashboardHealthy,
+    session: m.dashboardSession,
+    skills: m.dashboardSkills,
+    mcpProfiles: m.dashboardMcpProfiles,
+    promptLibrary: m.dashboardPromptLibrary,
+    sessions: m.dashboardSessions,
+    running: m.dashboardRunning,
+    busy: m.dashboardBusy,
+    queue: m.dashboardQueue,
+    up: m.dashboardUp,
+    noAdapters: m.dashboardNoAdapters,
+    runtimeDomainLabel: (id) => m.dashboardRuntimeDomain(id),
+    healthStatus: (status) =>
+      status === "healthy"
+        ? m.dashboardHealthHealthy
+        : status === "attention"
+          ? m.dashboardHealthAttention
+          : m.dashboardHealthDegraded,
+    attentionSummary: (item) => {
+      const presentation = item.presentation;
+      if (presentation === undefined) return item.summary;
+      switch (presentation.kind) {
+        case "operator-session":
+          return m.dashboardAttentionOperatorSession;
+        case "operator-skills":
+          return m.dashboardAttentionOperatorSkills(presentation.installed, presentation.expected);
+        case "operator-mcp":
+          return m.dashboardAttentionOperatorMcp(presentation.installed, presentation.expected);
+        case "operator-prompt":
+          return m.dashboardAttentionOperatorPrompt;
+        case "work-order-failed":
+          return m.dashboardAttentionWorkOrderFailed(presentation.project, presentation.taskKind);
+        case "work-order-abandoned":
+          return m.dashboardAttentionWorkOrderAbandoned(presentation.project);
+        case "work-order-stale":
+          return m.dashboardAttentionWorkOrderStale(presentation.project);
+        case "automation-dependency":
+          return m.dashboardAttentionAutomationDependency(presentation.automation);
+        case "daily-audit-attention":
+          return m.dashboardAttentionDailyAudit(presentation.count);
+        case "runtime-finding":
+          return m.dashboardAttentionRuntimeFinding(presentation.project, presentation.findingKind);
+        case "resource-pressure":
+          return m.dashboardAttentionResourcePressure(presentation.pressure, presentation.circuit);
+        case "power-policy":
+          return m.dashboardAttentionPowerPolicy(
+            presentation.mode,
+            presentation.phase,
+            presentation.schedule,
+          );
+      }
+    },
+  };
 }
 
 /** One session as two lines: a status-dot + name headline, then an indented
@@ -138,17 +244,17 @@ function formatSessionBlock(row: SessionRow, options: DashboardFormatOptions = {
  * bot version + uptime, session counts, queue depth, and connected adapters. */
 export function formatHeader(s: DashboardSnapshot, labels: Partial<DashboardLabels> = {}): string {
   const uptime = s.global.botUptimeMs !== null ? humanizeMs(s.global.botUptimeMs) : "?";
-  const adapters = formatAdapters(s.global.adapters);
   const text = dashboardLabels(labels);
+  const adapters = formatAdapters(s.global.adapters, text.noAdapters);
   const health = s.overview
-    ? `${text.overallHealth}: ${s.overview.health.status} · ${text.attention.toLowerCase()} ${s.overview.health.attentionCount} · ${text.activeWork.toLowerCase()} ${s.overview.activeWork.total}\n`
+    ? `${text.overallHealth}: ${text.healthStatus(s.overview.health.status)} · ${text.attention.toLowerCase()} ${s.overview.health.attentionCount} · ${text.activeWork.toLowerCase()} ${s.overview.activeWork.total}\n`
     : "";
   return (
     health +
     `🤖 tmux-claude-bot · v${s.global.version}\n` +
-    `⏱ up ${uptime} · 🗂 ${s.global.sessionCount} sessions · ` +
-    `▶ ${s.global.runningCount} running · 🟢 ${s.global.busyCount} busy · ` +
-    `📬 queue ${s.global.queueDepth} · 🔌 ${adapters}`
+    `⏱ ${text.up} ${uptime} · 🗂 ${s.global.sessionCount} ${text.sessions} · ` +
+    `▶ ${s.global.runningCount} ${text.running} · 🟢 ${s.global.busyCount} ${text.busy} · ` +
+    `📬 ${text.queue} ${s.global.queueDepth} · 🔌 ${adapters}`
   );
 }
 
@@ -183,6 +289,7 @@ function formatOverviewBlocks(
     .filter(
       (item) =>
         options.project === undefined ||
+        item.projectId === options.project ||
         item.label.toLowerCase().includes(options.project.toLowerCase()),
     )
     .slice(0, outcomeLimit);
@@ -194,7 +301,7 @@ function formatOverviewBlocks(
         `${labels.attention} (${overview.attention.total})`,
         ...attention.map(
           (item) =>
-            `  ${item.severity === "error" ? "🔴" : item.severity === "warning" ? "🟠" : "🔵"} ${item.summary} — ${item.nextAction}`,
+            `  ${item.severity === "error" ? "🔴" : item.severity === "warning" ? "🟠" : "🔵"} ${labels.attentionSummary(item)} — ${item.nextAction}`,
         ),
         ...truncationLine(overview.attention.total, attention.length, labels.more),
       ].join("\n"),
@@ -208,35 +315,53 @@ function formatOverviewBlocks(
       [
         `${labels.activeWork} (${overview.activeWork.total})`,
         ...(active.length > 0
-          ? active.map((item) => `  ▶ ${item.label} · ${item.status}`)
+          ? active.map((item) => `  ▶ ${item.label}${options.chat ? "" : ` · ${item.status}`}`)
           : [`  ${labels.none}`]),
         ...truncationLine(overview.activeWork.total, active.length, labels.more),
       ].join("\n"),
     );
     const enabled = overview.automation.filter((item) => item.enabled);
     blocks.push(
-      [
-        `${labels.automation} (${enabled.length}/${overview.automation.length} enabled)`,
-        ...overview.automation.map(
-          (item) =>
-            `  ${item.enabled ? "✓" : "○"} ${item.label} · ${item.enabled ? "enabled" : "disabled"} · active ${item.activeCount}${item.tickMs === undefined ? "" : ` · every ${humanizeMs(item.tickMs)}`}`,
-        ),
-      ].join("\n"),
+      options.chat
+        ? `${labels.automation}: ${enabled.length}/${overview.automation.length} ${labels.enabled}`
+        : [
+            `${labels.automation} (${enabled.length}/${overview.automation.length} ${labels.enabled})`,
+            ...overview.automation.map((item) => {
+              const dependencies = Object.entries(item.dependencies ?? {});
+              const lastOutcome = item.lastOutcome;
+              return `  ${item.enabled ? "✓" : "○"} ${item.label} · ${item.enabled ? "enabled" : "disabled"} · active ${item.activeCount}${item.tickMs === undefined ? "" : ` · every ${humanizeMs(item.tickMs)}`}${dependencies.length === 0 ? "" : ` · dependencies ${dependencies.filter(([, ready]) => ready).length}/${dependencies.length}`}${lastOutcome === undefined ? "" : ` · last ${lastOutcome.status}`}`;
+            }),
+          ].join("\n"),
     );
     blocks.push(
-      [
-        labels.operatorAi,
-        `  session ${overview.operator.session.state} · skills ${overview.operator.skills.installed}/${overview.operator.skills.expected} ${overview.operator.skills.state} · MCP ${overview.operator.mcpProfiles.installed}/${overview.operator.mcpProfiles.expected} ${overview.operator.mcpProfiles.state}`,
-        `  Prompt Library ${overview.operator.promptLibrary.state} · optional project MCPs ${overview.operator.optionalProjectMcpCount}`,
-      ].join("\n"),
+      options.chat
+        ? `${labels.operatorAi}: ${labels.session} ${overview.operator.session.state === "ready" ? "✓" : overview.operator.session.state === "disabled" ? "○" : "!"} · ${labels.skills} ${overview.operator.skills.installed}/${overview.operator.skills.expected} · ${labels.mcpProfiles} ${overview.operator.mcpProfiles.installed}/${overview.operator.mcpProfiles.expected} · ${labels.promptLibrary} ${overview.operator.promptLibrary.state === "configured" || overview.operator.promptLibrary.state === "ready" ? "✓" : overview.operator.promptLibrary.state === "disabled" ? "○" : "!"}`
+        : [
+            labels.operatorAi,
+            `  session ${overview.operator.session.state} · skills ${overview.operator.skills.installed}/${overview.operator.skills.expected} ${overview.operator.skills.state} · MCP ${overview.operator.mcpProfiles.installed}/${overview.operator.mcpProfiles.expected} ${overview.operator.mcpProfiles.state}`,
+            ...overview.operator.mcpProfiles.profiles.map(
+              (profile) =>
+                `  ${profile.profile} · ${profile.role}/${profile.exposure} · ${profile.toolCount} tools · ${profile.descriptorState}`,
+            ),
+            `  Prompt Library ${overview.operator.promptLibrary.state}`,
+          ].join("\n"),
     );
     blocks.push(
       [
         labels.runtimeDomains,
-        ...overview.runtimeDomains.map(
-          (item) =>
-            `  ${item.status === "healthy" ? "✓" : item.status === "disabled" ? "○" : "!"} ${item.label} · ${item.status} · ${item.summary}`,
+        ...(options.chat
+          ? overview.runtimeDomains.filter((item) => !["healthy", "disabled"].includes(item.status))
+          : overview.runtimeDomains
+        ).map((item) =>
+          options.chat
+            ? `  ! ${labels.runtimeDomainLabel(item.id, item.label)}`
+            : `  ${item.status === "healthy" ? "✓" : item.status === "disabled" ? "○" : "!"} ${item.label} · ${item.status} · ${item.summary}`,
         ),
+        ...(options.chat
+          ? [
+              `  ✓ ${overview.runtimeDomains.filter((item) => item.status === "healthy").length} ${labels.healthy}`,
+            ]
+          : []),
       ].join("\n"),
     );
     blocks.push(
@@ -244,7 +369,8 @@ function formatOverviewBlocks(
         `${labels.recentOutcomes} (${overview.recentOutcomes.total})`,
         ...(outcomes.length > 0
           ? outcomes.map(
-              (item) => `  ${item.status === "passed" ? "✓" : "!"} ${item.label} · ${item.status}`,
+              (item) =>
+                `  ${item.status === "passed" ? "✓" : "!"} ${item.label}${options.chat ? "" : ` · ${item.status}`}`,
             )
           : [`  ${labels.none}`]),
         ...truncationLine(overview.recentOutcomes.total, outcomes.length, labels.more),
@@ -296,10 +422,13 @@ export function formatDashboardText(
  * appended when it still fits. */
 export function formatDashboardForChat(
   s: DashboardSnapshot,
-  { maxChars, showGroups, labels }: { maxChars: number } & DashboardFormatOptions,
+  { maxChars, labels }: { maxChars: number } & DashboardFormatOptions,
 ): string {
   const header = formatHeader(s, labels);
-  const options = showGroups === undefined ? {} : { showGroups };
+  const text = dashboardLabels(labels);
+  const projectSessions = s.sessions.filter((row) => !row.operator);
+  const visibleSessions = projectSessions.filter((row) => row.busy || !row.running);
+  const idleCount = projectSessions.filter((row) => row.running && !row.busy).length;
   const blocks = [
     ...(s.overview
       ? formatOverviewBlocks(s.overview, {
@@ -307,7 +436,8 @@ export function formatDashboardForChat(
           ...(labels === undefined ? {} : { labels }),
         })
       : []),
-    ...s.sessions.map((row) => formatSessionBlock(row, options)),
+    `${text.projectSessions}: ${visibleSessions.length} ${text.shown} · ${idleCount} ${text.idle}`,
+    ...visibleSessions.map((row) => `${row.busy ? "🟢" : "⚫"} ${row.label}`),
   ];
 
   let result = header.slice(0, maxChars);

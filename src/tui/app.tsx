@@ -25,6 +25,7 @@ import {
   projectOpenIntent,
   promptSendIntent,
 } from "./interaction.js";
+import { reconcileTuiSessionRows } from "./session-list.js";
 
 const PEEK_LINES = 80;
 
@@ -126,6 +127,8 @@ export function App({
   const [interaction, setInteraction] = useState(initialInteractionState);
 
   const selected = rows[Math.min(sel, Math.max(0, rows.length - 1))];
+  const selectedSession = useRef<string | undefined>(undefined);
+  selectedSession.current = selected?.session;
   // Keep both panes within the terminal (the health-first fleet summary, status,
   // footer, and borders take about 11 rows).
   const bodyRows = Math.max(6, (stdout?.rows ?? 30) - 11);
@@ -147,7 +150,9 @@ export function App({
   const loadSnapshot = useCallback(async () => {
     try {
       const snap = await client.snapshot();
-      setRows(snap.sessions);
+      const reconciled = reconcileTuiSessionRows(snap.sessions, selectedSession.current);
+      setRows(reconciled.rows);
+      setSel(reconciled.selectedIndex);
       setSummary(formatHeader(snap));
       setOverviewText(
         snap.overview === undefined

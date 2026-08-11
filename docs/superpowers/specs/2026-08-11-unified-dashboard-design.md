@@ -115,6 +115,11 @@ Every bounded section carries `items`, `total`, `limit`, and `truncated`. Stable
 identifiers and enums are machine-facing; concise labels are neutral presentation
 data. Rendered prose remains outside the snapshot.
 
+Every `RuntimeDomainView` also carries a stable `errorKind` (`null`,
+`read-failed`, or `timeout`). The compatibility-only `degradedDomains` list is
+retained in the additive JSON contract, but health is derived from the canonical
+Runtime Domain rows.
+
 No new field may contain a personal absolute path, secret, raw command, arbitrary
 exception text, chat identifier, prompt text, or unbounded artifact payload.
 
@@ -130,11 +135,15 @@ exception text, chat identifier, prompt text, or unbounded artifact payload.
 | Daily Task Audit | audit store and task ledger | last run, bounded failure/repair summary |
 | Runtime Guardian | finding discovery/repair state | unresolved count and latest bounded finding summary |
 | Resource Guardian | read-only Guardian store/view | pressure, circuit, mode, profile, sampling health |
-| Service and Power | service/runtime metadata and power status readers | uptime, adapters, power mode/source/schedule health |
+| Service and Power | service/runtime metadata and power status readers | uptime, configured adapter exposure, power mode/source/schedule health |
 | Operator and AI Interfaces | Operator Session, AI-tool status, MCP profile descriptors, prompt MCP configuration | readiness and role/capability summary |
 
 Collectors read core interfaces directly. They never execute or parse the text output
 of another CLI command.
+
+The collector composition lives in the bot process. Observer/Home MCP drill-downs
+reach the same readers through typed, read-only Control operations rather than
+opening state files from the MCP process.
 
 ## Capability-To-Surface Allocation
 
@@ -201,11 +210,15 @@ state files directly, parse human CLI prose, or copy health rules.
 
 - Managed product profiles (`observer`, `home`) appear in Operator and AI Interface
   health with role, exposure, descriptor freshness, and tool count.
-- Prompt Library MCP is a product dependency. Show disabled/configured/degraded from
-  existing configuration or last-known evidence; do not spawn a server during every
-  Dashboard refresh.
+- Prompt Library MCP is a product dependency. Show disabled/configured from current
+  configuration. Show degraded only when an authoritative last-known failure signal
+  exists; the current runtime has no such durable signal and must not probe or spawn
+  a server during Dashboard refresh.
 - Project-declared optional MCPs, such as Context7, may appear as an informational
-  count/detail in AI-tool diagnostics. They do not affect bot runtime health.
+  count/detail in project-scoped AI-tool diagnostics. They do not appear in the
+  global Runtime Overview because it has no trusted project root; its retained
+  compatibility field is `null` (not observed), never a guessed zero. They do not
+  affect bot runtime health.
 - Client-private global MCP registrations, such as CodeGraph or EnglishPilot, are not
   scanned. They are not tcb-owned truth and their private configuration may contain
   secrets. The Home Operator may use tools already exposed by its current client.
@@ -249,19 +262,28 @@ Ordering is deterministic:
 3. newest evidence first;
 4. stable domain/id lexical tie-break.
 
+When a source has no authoritative observation timestamp, it must not infer
+recency from an identifier. Runtime Guardian drill-downs therefore sort by
+severity and stable project/kind/run identity until the finding contract owns a
+real evidence timestamp.
+
 ## Failure And Performance Behavior
 
 - Session collection keeps its current best-effort row behavior.
 - Each added Runtime Domain is independently contained and reports a stable error kind.
 - No raw stack, token, command, prompt, or absolute path reaches the snapshot.
-- Slow optional collectors use a bounded timeout and become degraded/informational
-  according to whether the domain is required.
+- Slow promise-returning collectors use a bounded timeout and become
+  degraded/informational according to whether the domain is required. Synchronous
+  local stores are not preemptible in JavaScript; expensive WorkOrder, Task Ledger,
+  and Runtime Guardian projections therefore use a 30-second in-memory cache instead
+  of claiming cancellation they cannot provide.
 - Dashboard collection does not start MCP servers, run audits, dispatch repair, refresh
   schedules, or perform network access.
 - Independent local reads run concurrently where their stores do not share a mutable
   transaction.
 - A Control snapshot remains suitable for frequent TUI refresh; expensive history is
-  read with fixed bounds and may be cached briefly only as an in-memory projection.
+  read with fixed response bounds and may be cached briefly only as an in-memory
+  projection. Explicit Guardian drill-down reads remain authoritative on demand.
 
 ## Documentation And Alignment
 

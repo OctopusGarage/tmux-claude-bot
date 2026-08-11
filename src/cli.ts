@@ -178,6 +178,8 @@ program
           attentionLimit: limit,
           activeWorkLimit: limit,
           recentOutcomeLimit: limit,
+          ...(o.problems ? { problemsOnly: true } : {}),
+          ...(o.project === undefined ? {} : { project: o.project }),
         },
       });
       process.stdout.write(
@@ -185,7 +187,6 @@ program
           ? `${JSON.stringify(tildeifyHomeDeep(snap), null, 2)}\n`
           : `${formatDashboardText(snap, {
               ...(o.problems ? { problemsOnly: true } : {}),
-              ...(o.project === undefined ? {} : { project: o.project }),
             })}\n`,
       );
       process.exit(0); // bootstrap starts a live fs.watch (activity watcher) that would otherwise hang the process

@@ -7,6 +7,7 @@ import {
 } from "../src/core/loop/task-family.js";
 import { HOME_MCP_TOOLS, OBSERVER_MCP_TOOLS } from "../src/core/mcp/profiles.js";
 import { NOTIFICATION_SOURCE_CATALOG } from "../src/core/notifications/gateway.js";
+import { OPPORTUNITY_COMMAND_VERBS } from "../src/core/opportunities/command.js";
 
 const root = path.resolve(__dirname, "..");
 const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf8");
@@ -241,6 +242,80 @@ describe("alignment governance contract", () => {
 
     expect(skill).toContain("tcb resource status");
     expect(skill).toContain("tcb resource incidents --limit 20");
+  });
+
+  it("keeps live Home workspace policy on MCP-first diagnostics with safe refresh", () => {
+    const operatorHome = read("src/core/projects/operator-home.ts");
+    const governance = read("docs/ai-tool-surface-governance.md");
+
+    expect(operatorHome).toContain("TCB_MANAGED_OPERATOR_POLICY_START");
+    expect(operatorHome).toContain("tcb.observer.status");
+    expect(operatorHome).toContain("tcb dashboard --json");
+    expect(governance).toContain("preserve operator-authored content");
+    expect(governance).toContain("marked managed-policy block");
+  });
+
+  it("keeps the capability matrix complete without erasing intentional surface boundaries", () => {
+    const matrix = read("docs/automation-capability-matrix.md");
+
+    for (const capability of [
+      "Project/session intake and recovery",
+      "Session control and evidence",
+      "Prompt Library",
+      "Batch Scheduler",
+      "Host power and quiet hours",
+      "Home Operator and AI tool installation",
+      "Governed prompts and capability dependencies",
+      "Attachments and outbound notifications",
+      "Setup, service lifecycle, and diagnostics",
+    ]) {
+      expect(matrix, `missing capability matrix row: ${capability}`).toContain(`| ${capability} |`);
+    }
+    for (const phrase of [
+      "macOS owns sleep",
+      "MCP is a typed AI boundary, not a mirror of every CLI command",
+      "Global skill publication is explicit opt-in",
+      "plan-file administration stays local",
+    ]) {
+      expect(matrix, `missing intentional surface boundary: ${phrase}`).toContain(phrase);
+    }
+  });
+
+  it("marks reserved AI role surfaces as future instead of advertising them as implemented", () => {
+    const governance = read("docs/ai-tool-surface-governance.md");
+
+    expect(governance).toContain("Only `observer` and `home` are implemented profiles today");
+    expect(governance).toContain("reserved future package name");
+    expect(governance).toContain("No Guardian mutation profile");
+    expect(governance).toContain("No Audit mutation profile");
+    expect(governance).toContain("one shared MCP implementation with role-aware registration");
+  });
+
+  it("documents every Opportunity command verb on chat and operator guidance surfaces", () => {
+    const commands = read("docs/commands.md");
+    const matrix = read("docs/automation-capability-matrix.md");
+    const skill = read("skills/tcb-home-operator/SKILL.md");
+
+    for (const verb of OPPORTUNITY_COMMAND_VERBS) {
+      expect(commands, `missing Opportunity verb ${verb} in chat reference`).toContain(verb);
+      expect(matrix, `missing Opportunity verb ${verb} in capability matrix`).toContain(verb);
+      expect(skill, `missing Opportunity verb ${verb} in Home Operator skill`).toContain(verb);
+    }
+    expect(commands).toContain("hides an item from the active numbered list for 14 days");
+  });
+
+  it("keeps capability dependency lifecycle commands visible across operator docs", () => {
+    const matrix = read("docs/automation-capability-matrix.md");
+    const skills = read("docs/agents/skills.md");
+
+    for (const action of ["list", "status", "install", "update"]) {
+      expect(matrix, `missing capabilities ${action} in matrix`).toContain(
+        `capabilities list/status/install/update`,
+      );
+      expect(skills, `missing capabilities ${action} in skill docs`).toContain(
+        `tcb capabilities ${action}`,
+      );
+    }
   });
 
   it("keeps missing-worktree registration recovery in business and maintenance truth", () => {

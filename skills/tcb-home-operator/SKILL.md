@@ -1,6 +1,6 @@
 ---
 name: tcb-home-operator
-description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Operated through the `tcb` CLI.
+description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Prefer managed MCP observation and use the `tcb` CLI for fallbacks and local administration.
 ---
 
 # Operating tmux-claude-bot
@@ -53,7 +53,7 @@ prompts.
 - **Control keys** — `tcb control <project> <esc|enter|interrupt|restart|clear|compact|up|down|tab>`.
 - **Status / health** — `tcb.observer.status` first; `tcb dashboard --json` is the
   CLI fallback. Use `tcb dashboard` for a human view and `tcb sysload` for machine load /
-  heat / runaway processes / Resource Guardian), `tcb resource status` and
+  heat / runaway processes / Resource Guardian, `tcb resource status` and
   `tcb resource incidents --limit 20` (Guardian detail), `tcb doctor` (install health).
 - **Delegate clarified work** — `tcb autopilot <project> [requirement]`. Use this
   after the user has clarified a task and wants the supervisor to finish
@@ -99,13 +99,16 @@ matches; pick the right one or ask the user.
 ## Modern automation shortcuts
 
 - Clarified current task -> `tcb autopilot <project> "[requirement]"`.
-- Proactive suggestions -> `/opportunity list|show|discuss|dismiss` in chat;
+- Proactive suggestions -> `/opportunity list|show|discuss|dismiss|snooze` in chat;
   execute approved work through Autopilot/supervisor delegation.
 - Yesterday's schedules -> `tcb task audit --force`.
 - Loop config health -> `tcb loop validate <config> --json`.
 - Loop run history -> `tcb.observer.loop_reports_list` first; CLI fallback:
   `tcb loop reports list --limit 20 --json` and
   `tcb loop backlog list --status all --limit 20 --json`.
+- Home AI-surface health -> `tcb ai-tools status`; refresh the operator-workspace
+  skill and Observer/Home MCP descriptors with `tcb ai-tools install`. Global
+  skill publication is a separate explicit opt-in, never the managed default.
 
 ## Sending an image or file to the user
 

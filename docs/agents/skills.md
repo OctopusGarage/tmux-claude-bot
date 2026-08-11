@@ -33,6 +33,7 @@ layer before running scheduled task families:
 tcb capabilities list
 tcb capabilities status --task architecture
 tcb capabilities install --default
+tcb capabilities update --default
 ```
 
 `capabilities status` compares a task family's declared dependencies against the
@@ -48,6 +49,9 @@ set `skills.applyCommand` to a reviewed local installer, then run:
 ```bash
 tcb loop skills sync /path/to/loop-engineering.yml
 ```
+
+`capabilities update --default` prints the explicit refresh and sync path for
+already curated dependencies; it also performs no installation by itself.
 
 Restart affected Claude Code / Codex sessions after installing external skills;
 agent skill discovery is session-environment dependent.

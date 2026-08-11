@@ -185,6 +185,13 @@ export async function buildDashboard(
           deps,
           now: input.now,
           operatorSessionRunning: input.rows.some((row) => row.operator && row.running),
+          service: {
+            uptimeMs: botUptimeMs,
+            adapters: {
+              telegram: Boolean(deps.config.telegramBotToken),
+              lark: Boolean(deps.config.lark),
+            },
+          },
         }),
         ...(input.options === undefined ? {} : { options: input.options }),
       }));
@@ -193,9 +200,19 @@ export async function buildDashboard(
     rows,
     ...(opts.overviewOptions === undefined ? {} : { options: opts.overviewOptions }),
   });
+  const project = opts.overviewOptions?.project?.toLowerCase();
+  const selectedRows = opts.overviewOptions?.problemsOnly
+    ? []
+    : rows.filter(
+        (row) =>
+          project === undefined ||
+          project.length === 0 ||
+          row.session.toLowerCase() === project ||
+          row.label.toLowerCase().includes(project),
+      );
 
   return {
-    sessions: rows,
+    sessions: selectedRows,
     overview,
     global: {
       botUptimeMs,

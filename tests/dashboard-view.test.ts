@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardSnapshot } from "../src/core/dashboard/dashboard.js";
 import {
+  dashboardLabelsForMessages,
   formatDashboardForChat,
   formatDashboardText,
 } from "../src/core/dashboard/dashboard-view.js";
+import { zh } from "../src/core/i18n/catalog/zh.js";
 
 const snap: DashboardSnapshot = {
   sessions: [
@@ -121,12 +123,31 @@ const snap: DashboardSnapshot = {
       },
     ],
     runtimeDomains: [
-      { id: "power", label: "Service and Power", status: "attention", summary: "scheduled" },
+      {
+        id: "power",
+        label: "Service and Power",
+        status: "attention",
+        summary: "scheduled",
+        errorKind: null,
+      },
     ],
     operator: {
       session: { state: "ready" },
       skills: { installed: 2, expected: 2, state: "ready" },
-      mcpProfiles: { installed: 2, expected: 2, state: "ready" },
+      mcpProfiles: {
+        installed: 2,
+        expected: 2,
+        state: "ready",
+        profiles: [
+          {
+            profile: "observer",
+            role: "observer",
+            exposure: "read-only",
+            toolCount: 8,
+            descriptorState: "ready",
+          },
+        ],
+      },
       promptLibrary: { state: "disabled" },
       optionalProjectMcpCount: 1,
     },
@@ -164,6 +185,7 @@ describe("dashboard-view", () => {
     expect(out.indexOf("Attention (2)")).toBeLessThan(out.indexOf("Active Work (1)"));
     expect(out.indexOf("Active Work (1)")).toBeLessThan(out.indexOf("Project Sessions"));
     expect(out).toContain("Operator and AI Interfaces");
+    expect(out).toContain("observer · observer/read-only · 8 tools · ready");
   });
 
   it("can hide Lark-only project-group details for Telegram", () => {
@@ -171,6 +193,63 @@ describe("dashboard-view", () => {
     expect(out).toContain("proj-a");
     expect(out).not.toContain("Proj A Group");
     expect(out).not.toContain("🗂 Proj A Group");
+  });
+
+  it("summarizes healthy automation and idle sessions in chat", () => {
+    const out = formatDashboardForChat(snap, { maxChars: 3500, showGroups: false });
+
+    expect(out).toContain("Automation: 1/1 enabled");
+    expect(out).toContain("Project Sessions: 2 shown · 1 idle");
+    expect(out).not.toContain("🟡 proj-b");
+    expect(out).toContain("🟢 proj-a");
+    expect(out).toContain("⚫ proj-c");
+  });
+
+  it("renders structured attention evidence through the chat locale", () => {
+    const overview = snap.overview;
+    if (overview === undefined) throw new Error("fixture overview is required");
+    const first = overview.attention.items[0];
+    if (first === undefined) throw new Error("fixture attention is required");
+    const localized: DashboardSnapshot = {
+      ...snap,
+      overview: {
+        ...overview,
+        attention: {
+          ...overview.attention,
+          items: [
+            {
+              ...first,
+              presentation: {
+                kind: "work-order-failed",
+                project: "项目甲",
+                taskKind: "架构检查",
+              },
+            },
+          ],
+          total: 1,
+        },
+      },
+    };
+
+    const out = formatDashboardForChat(localized, {
+      maxChars: 3500,
+      labels: dashboardLabelsForMessages(zh),
+    });
+    expect(out).toContain("总体健康: 需处理");
+    expect(out).toContain("项目甲 的工作单失败");
+    expect(out).toContain("3 会话");
+    expect(out).toContain("服务与电源");
+    expect(out).not.toContain("Service and Power");
+    expect(out).not.toContain("Loop failed");
+  });
+
+  it("renders only health and attention blocks in problems mode", () => {
+    const out = formatDashboardText(snap, { problemsOnly: true });
+
+    expect(out).toContain("Attention (2)");
+    expect(out).not.toContain("\n\nActive Work");
+    expect(out).not.toContain("\nAutomation");
+    expect(out).not.toContain("\nProject Sessions");
   });
 
   it("distinguishes the three states: busy 🟢, idle-running 🟡, stopped ⏹/⚫", () => {

@@ -6,21 +6,42 @@ import { createObserverMcpServer, type ObserverClient, type ObserverDeps } from 
 
 type HomeClient = ObserverClient & Pick<ControlClient, "autopilot" | "send">;
 
-type HomeToolResponse = {
+const homeScopeSchema = z.object({
+  kind: z.literal("controlled-operation"),
+  session: z.string(),
+});
+
+type HomeScope = z.infer<typeof homeScopeSchema>;
+
+type HomeToolResponse<T> = {
   ok: boolean;
   role: "home";
   capability: "controlled operation";
-  data: unknown;
+  data: T | null;
   evidence: string[];
   blockedReason: string | null;
-  scope: "controlled-operation";
+  scope: HomeScope;
   errorKind: "control-unavailable" | "operation-blocked" | null;
   nextSuggestedAction: string | null;
 };
 
 export { HOME_MCP_TOOLS };
 
-function response(data: unknown, evidence: string[]): HomeToolResponse {
+function homeOutputSchema<T extends z.ZodTypeAny>(data: T) {
+  return z.object({
+    ok: z.boolean(),
+    role: z.literal("home"),
+    capability: z.literal("controlled operation"),
+    data: data.nullable(),
+    evidence: z.array(z.string()),
+    blockedReason: z.string().nullable(),
+    scope: homeScopeSchema,
+    errorKind: z.enum(["control-unavailable", "operation-blocked"]).nullable(),
+    nextSuggestedAction: z.string().nullable(),
+  });
+}
+
+function response<T>(data: T, evidence: string[], scope: HomeScope): HomeToolResponse<T> {
   return {
     ok: true,
     role: "home",
@@ -28,13 +49,13 @@ function response(data: unknown, evidence: string[]): HomeToolResponse {
     data: tildeifyHomeDeep(data),
     evidence,
     blockedReason: null,
-    scope: "controlled-operation",
+    scope,
     errorKind: null,
     nextSuggestedAction: null,
   };
 }
 
-function blocked(error: unknown): HomeToolResponse {
+function blocked(error: unknown, scope: HomeScope, evidence: string[]): HomeToolResponse<never> {
   const message = error instanceof Error ? error.message : String(error);
   const errorKind = /not connected|disconnected|control|socket/i.test(message)
     ? "control-unavailable"
@@ -44,15 +65,15 @@ function blocked(error: unknown): HomeToolResponse {
     role: "home",
     capability: "controlled operation",
     data: null,
-    evidence: [],
+    evidence,
     blockedReason: errorKind,
-    scope: "controlled-operation",
+    scope,
     errorKind,
     nextSuggestedAction: errorKind === "control-unavailable" ? "tcb service status" : null,
   };
 }
 
-function toolResult(payload: HomeToolResponse) {
+function toolResult<T>(payload: HomeToolResponse<T>) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
     structuredContent: payload,
@@ -94,6 +115,12 @@ export function createHomeMcpServer(
         session: z.string().min(1),
         text: z.string().min(1),
       }),
+      outputSchema: homeOutputSchema(
+        z.object({
+          session: z.string(),
+          result: z.object({ status: z.string() }).passthrough(),
+        }),
+      ),
     },
     async ({ session, text }) => {
       try {
@@ -105,11 +132,17 @@ export function createHomeMcpServer(
                 result: await client.send(session, text),
               },
               ["control:send", "control:queue-gate"],
+              { kind: "controlled-operation", session },
             ),
           ),
         );
       } catch (err) {
-        return toolResult(blocked(err));
+        return toolResult(
+          blocked(err, { kind: "controlled-operation", session }, [
+            "control:send",
+            "control:queue-gate",
+          ]),
+        );
       }
     },
   );
@@ -124,6 +157,13 @@ export function createHomeMcpServer(
         session: z.string().min(1),
         requirement: z.string().default(""),
       }),
+      outputSchema: homeOutputSchema(
+        z.object({
+          session: z.string(),
+          requirement: z.string(),
+          result: z.object({ status: z.string() }).passthrough(),
+        }),
+      ),
     },
     async ({ session, requirement }) => {
       try {
@@ -136,11 +176,17 @@ export function createHomeMcpServer(
                 result: await client.autopilot(session, delegationVerb(requirement)),
               },
               ["control:autopilot", "control:work-order-gate"],
+              { kind: "controlled-operation", session },
             ),
           ),
         );
       } catch (err) {
-        return toolResult(blocked(err));
+        return toolResult(
+          blocked(err, { kind: "controlled-operation", session }, [
+            "control:autopilot",
+            "control:work-order-gate",
+          ]),
+        );
       }
     },
   );

@@ -8,7 +8,7 @@ import {
 const readyOperator: OperatorInterfaceView = {
   session: { state: "ready" },
   skills: { installed: 2, expected: 2, state: "ready" },
-  mcpProfiles: { installed: 2, expected: 2, state: "ready" },
+  mcpProfiles: { installed: 2, expected: 2, state: "ready", profiles: [] },
   promptLibrary: { state: "disabled" },
   optionalProjectMcpCount: 1,
 };
@@ -145,5 +145,97 @@ describe("Runtime Overview policy", () => {
 
     expect(overview.health.status).toBe("healthy");
     expect(JSON.stringify(overview)).not.toMatch(/path|token|command/i);
+  });
+
+  it("applies project and problems filters before bounding the neutral snapshot", () => {
+    const overview = buildRuntimeOverview(
+      input({
+        attention: [
+          {
+            id: "global",
+            domain: "power",
+            severity: "warning",
+            observedAt: 30,
+            summary: "global warning",
+            nextAction: "tcb power status",
+          },
+          {
+            id: "beta",
+            domain: "loop",
+            severity: "error",
+            observedAt: 20,
+            summary: "Beta failed",
+            nextAction: "tcb loop reports list",
+            projectId: "beta",
+          },
+          {
+            id: "alpha",
+            domain: "loop",
+            severity: "error",
+            observedAt: 10,
+            summary: "Alpha failed",
+            nextAction: "tcb loop reports list",
+            projectId: "alpha",
+          },
+        ],
+        activeWork: [
+          {
+            id: "beta-work",
+            kind: "work-order",
+            label: "Beta work",
+            status: "running",
+            startedAt: 20,
+            projectId: "beta",
+          },
+          {
+            id: "alpha-work",
+            kind: "work-order",
+            label: "Alpha work",
+            status: "running",
+            startedAt: 10,
+            projectId: "alpha",
+          },
+        ],
+      }),
+      { project: "alpha", attentionLimit: 1, problemsOnly: true },
+    );
+
+    expect(overview.attention.items.map((item) => item.id)).toEqual(["alpha"]);
+    expect(overview.attention.total).toBe(2);
+    expect(overview.activeWork).toMatchObject({ items: [], total: 0, truncated: false });
+    expect(overview.automation).toEqual([]);
+    expect(overview.recentOutcomes.items).toEqual([]);
+  });
+
+  it("does not retain a global attention status after project evidence is filtered out", () => {
+    const overview = buildRuntimeOverview(
+      input({
+        attention: [
+          {
+            id: "beta",
+            domain: "loop",
+            severity: "warning",
+            observedAt: 10,
+            summary: "Beta warning",
+            nextAction: "tcb loop reports list",
+            projectId: "beta",
+          },
+        ],
+        runtimeDomains: [
+          {
+            id: "work-orders",
+            label: "WorkOrders",
+            status: "attention",
+            summary: "one warning",
+            errorKind: null,
+          },
+        ],
+      }),
+      { project: "alpha" },
+    );
+
+    expect(overview.attention.total).toBe(0);
+    expect(overview.health.status).toBe("healthy");
+    expect(overview.runtimeDomains).toEqual([]);
   });
 });

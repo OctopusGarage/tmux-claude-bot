@@ -17,15 +17,20 @@ import {
 import { logger } from "../../src/shared/utils/logger.js";
 
 describe("provisionOperatorHome", () => {
-  it("seeds CLAUDE.md when absent and never clobbers", () => {
+  it("seeds and refreshes only the managed policy block without clobbering custom content", () => {
     const dir = mkdtempSync(join(tmpdir(), "op-"));
     provisionOperatorHome(dir);
     const md = join(dir, "CLAUDE.md");
     expect(existsSync(md)).toBe(true);
     expect(readFileSync(md, "utf8")).toContain("operator");
-    writeFileSync(md, "EDITED");
-    provisionOperatorHome(dir); // idempotent — must not clobber
-    expect(readFileSync(md, "utf8")).toBe("EDITED");
+    writeFileSync(md, "EDITED\n");
+    provisionOperatorHome(dir);
+    const refreshed = readFileSync(md, "utf8");
+    expect(refreshed).toContain("EDITED");
+    expect(refreshed).toContain("TCB_MANAGED_OPERATOR_POLICY_START");
+    expect(refreshed).toContain("tcb.observer.status");
+    provisionOperatorHome(dir);
+    expect(readFileSync(md, "utf8").match(/TCB_MANAGED_OPERATOR_POLICY_START/g)).toHaveLength(1);
   });
 
   it("creates the directory when it does not exist", () => {
@@ -33,6 +38,48 @@ describe("provisionOperatorHome", () => {
     const dir = join(base, "nested", "home");
     provisionOperatorHome(dir);
     expect(existsSync(join(dir, "CLAUDE.md"))).toBe(true);
+  });
+
+  it("replaces an untouched legacy generated policy instead of duplicating it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "op-legacy-"));
+    const md = join(dir, "CLAUDE.md");
+    writeFileSync(
+      md,
+      `# Home Operator
+
+You are the **operator** for tmux-claude-bot. The user talks to you in chat (Telegram/
+Lark); you manage their coding projects/agents on their behalf using the \`tcb\` CLI and
+the Home Operator skill when available. You do NOT write code yourself -
+you open projects, dispatch work, and report status.
+
+This directory is the persistent working home for the Home Operator session. It
+is not a product repository, target project, or WorkOrder worker directory.
+
+## Recipes
+- Open / switch a project: \`tcb open <name>\` (or \`tcb projects\` to list).
+- Dispatch a task to a project's agent: \`tcb send <name> "<task>"\` (waits for the reply).
+  For long tasks use \`tcb send <name> "<task>" --no-wait\` then \`tcb peek <name>\` to report.
+- Status: \`tcb dashboard\` (all sessions), \`tcb peek <name>\` (one pane).
+- Delegate clarified current work: \`tcb autopilot <name> [requirement]\`.
+- Fleet control: \`tcb control <name> <esc|enter|restart|…>\`, \`tcb open\`, autopilot/batch.
+
+## House rules
+- **Restate and confirm before destructive actions** (removing a project, killing/
+  restarting a session, any \`rm\`/destructive shell): say what you're about to do and
+  wait for the user's "yes".
+- Reply **concisely** — this is a chat surface.
+- You drive OTHER sessions; never send to yourself.
+- Do not edit files in target projects directly from this directory. Delegate
+  code-changing work through the bot's project sessions, Autopilot, Loop
+  Supervisor, or WorkOrder path.
+`,
+    );
+
+    provisionOperatorHome(dir);
+
+    const migrated = readFileSync(md, "utf8");
+    expect(migrated.match(/TCB_MANAGED_OPERATOR_POLICY_START/g)).toHaveLength(1);
+    expect(migrated).not.toContain("- Status: `tcb dashboard` (all sessions)");
   });
 });
 

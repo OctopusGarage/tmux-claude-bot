@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { runOpportunityCommand } from "../../../src/core/opportunities/command.js";
 import { OpportunityStore } from "../../../src/core/opportunities/store.js";
@@ -10,6 +10,7 @@ import type { OpportunityDiscoveryReport } from "../../../src/core/opportunities
 const oldStateDir = process.env.TCB_STATE_DIR;
 
 afterEach(() => {
+  vi.useRealTimers();
   if (oldStateDir === undefined) {
     delete process.env.TCB_STATE_DIR;
   } else {
@@ -55,6 +56,35 @@ describe("runOpportunityCommand", () => {
     expect(discuss.body).toContain("Use Autopilot / Continue via supervisor");
     expect(dismiss).toMatchObject({ tone: "ok" });
     expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "dismissed" });
+  });
+
+  it("hides snoozed suggestions until their durable deadline expires", async () => {
+    vi.useFakeTimers();
+    const now = Date.parse("2026-07-29T09:00:00Z");
+    vi.setSystemTime(now);
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-opportunity-command-"));
+    const [suggestion] = new OpportunityStore().upsertDiscoveryReport({
+      report,
+      projectPath: "/repo/hub",
+      runId: "run-1",
+      cooldownDays: 14,
+      now,
+    });
+    if (suggestion === undefined) throw new Error("expected suggestion");
+
+    await runOpportunityCommand({} as HandlerDeps, "telegram", `snooze ${suggestion.id}`);
+
+    expect((await runOpportunityCommand({} as HandlerDeps, "telegram", "list")).body).toBe(
+      "No active opportunity suggestions.",
+    );
+    expect((await runOpportunityCommand({} as HandlerDeps, "telegram", "show 1")).body).toContain(
+      "Opportunity not found",
+    );
+
+    vi.setSystemTime(now + 14 * 24 * 60 * 60 * 1000);
+    expect((await runOpportunityCommand({} as HandlerDeps, "telegram", "list")).body).toContain(
+      suggestion.title,
+    );
   });
 
   it("returns usage errors for missing ids", async () => {

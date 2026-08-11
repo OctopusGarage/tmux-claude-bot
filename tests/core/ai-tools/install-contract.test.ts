@@ -25,17 +25,52 @@ describe("AI tool install contract", () => {
       }),
     ).toEqual({
       skills: { installed: 2, expected: 2, state: "ready" },
-      mcpProfiles: { installed: 2, expected: 2, state: "ready" },
+      mcpProfiles: {
+        installed: 2,
+        expected: 2,
+        state: "ready",
+        profiles: [
+          {
+            profile: "observer",
+            role: "observer",
+            exposure: "read-only",
+            toolCount: mcpProfileSpec("observer").tools.length,
+            descriptorState: "ready",
+          },
+          {
+            profile: "home",
+            role: "home-operator",
+            exposure: "controlled-operation",
+            toolCount: mcpProfileSpec("home").tools.length,
+            descriptorState: "ready",
+          },
+        ],
+      },
     });
 
     const homeProfile = files.find((file) => file.profile === "home");
     expect(homeProfile).toBeDefined();
-    content.set(homeProfile?.path ?? "", JSON.stringify({ profile: "home", tools: [] }));
+    const staleHome = mcpProfileSpec("home");
+    content.set(
+      homeProfile?.path ?? "",
+      JSON.stringify({
+        ...staleHome,
+        server: { ...staleHome.server, command: "unexpected-command" },
+      }),
+    );
     expect(
       readAiToolReadiness(home, {
         exists: (path) => content.has(path),
         read: (path) => content.get(path) ?? "",
       }).mcpProfiles,
-    ).toEqual({ installed: 1, expected: 2, state: "attention" });
+    ).toMatchObject({
+      installed: 1,
+      expected: 2,
+      state: "attention",
+      profiles: [
+        { profile: "observer", descriptorState: "ready" },
+        { profile: "home", descriptorState: "stale" },
+      ],
+    });
   });
 });

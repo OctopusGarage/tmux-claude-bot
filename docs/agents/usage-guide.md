@@ -284,6 +284,14 @@ Coordinator: retryable failures are recreated through the configured project's
 own WorkOrder policy, while external waits and owner decisions remain visible
 without unsafe edits.
 
+**Install or inspect Home Operator AI surfaces** → use `tcb ai-tools status`
+first. `tcb ai-tools install` provisions the bundled Home Operator skill plus
+Observer/Home MCP descriptors into `<state-dir>/home` and removes stale global
+skill copies. A global discovery copy is separate and explicit:
+`tcb skill install --scope global`. Installation location is not mutation
+authority; Observer stays read-only, and Home operations still require an
+explicit session plus the control service's normal conflict and WorkOrder gates.
+
 **Evaluate system prompts** → use `tcb prompts governed list --json` to see every
 repo-owned governed prompt, `tcb prompts governed show <promptId>` to inspect
 owner and safety metadata, `tcb prompts governed render <promptId>` to inspect

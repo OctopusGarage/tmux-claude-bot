@@ -1,27 +1,43 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ControlClient } from "../../src/adapters/control/client.js";
 import type { DashboardSnapshot } from "../../src/core/dashboard/dashboard.js";
 import { createHomeMcpServer, HOME_MCP_TOOLS } from "../../src/mcp/home.js";
-import { OBSERVER_MCP_TOOLS } from "../../src/mcp/observer.js";
+import { OBSERVER_MCP_TOOLS, type ObserverClient } from "../../src/mcp/observer.js";
 
 function fakeClient(
-  overrides: Partial<{
-    autopilot: (session: string, verb: string) => Promise<{ status: string }>;
-    close: () => void;
-    connect: () => Promise<void>;
-    logs: (session: string) => Promise<string>;
-    projects: () => Promise<{ sid: string; label: string; alive: boolean; active: boolean }[]>;
-    send: (session: string, text: string) => Promise<{ status: string }>;
-    snapshot: () => Promise<DashboardSnapshot>;
-  }> = {},
+  overrides: Partial<ObserverClient & Pick<ControlClient, "autopilot" | "send">> = {},
 ) {
   return {
     autopilot: vi.fn(async () => ({ status: "delegated" })),
     close: vi.fn(),
     connect: vi.fn(async () => undefined),
+    dailyTaskAuditStatus: vi.fn(async () => ({
+      observedAt: 1,
+      lastFiredAt: null,
+      summary: {
+        window: null,
+        counts: { success: 0, failed: 0, missing: 0, running: 0, runningTimeout: 0, skipped: 0 },
+        items: [],
+      },
+      recentWindow: { start: 0, end: 1, label: "recent" },
+      recentRecords: [],
+      recentLimit: 50,
+      recentTotal: 0,
+      recentTruncated: false,
+    })),
     logs: vi.fn(async (session: string) => `logs for ${session}`),
+    loopReports: vi.fn(async () => ({ items: [], total: 0, limit: 20, truncated: false })),
     projects: vi.fn(async () => [{ sid: "demo", label: "Demo", alive: true, active: false }]),
+    runtimeGuardianFindings: vi.fn(async () => ({
+      observedAt: 1,
+      lookbackHours: 24,
+      findings: [],
+      total: 0,
+      limit: 50,
+      truncated: false,
+    })),
     send: vi.fn(async () => ({ status: "queued" })),
     snapshot: vi.fn(
       async (): Promise<DashboardSnapshot> => ({
@@ -63,6 +79,7 @@ describe("home MCP server", () => {
       expect(listed.tools.map((tool) => tool.name).sort()).toEqual(
         [...OBSERVER_MCP_TOOLS, ...HOME_MCP_TOOLS].sort(),
       );
+      expect(listed.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
     } finally {
       await client.close();
       await server.close();
@@ -85,6 +102,7 @@ describe("home MCP server", () => {
         data: { session: "tmux_proj_demo", result: { status: "queued" } },
         evidence: ["control:send", "control:queue-gate"],
         blockedReason: null,
+        scope: { kind: "controlled-operation", session: "tmux_proj_demo" },
       });
     } finally {
       await client.close();
@@ -158,6 +176,8 @@ describe("home MCP server", () => {
         role: "home",
         blockedReason: "control-unavailable",
         errorKind: "control-unavailable",
+        scope: { kind: "controlled-operation", session: "tmux_proj_demo" },
+        evidence: ["control:send", "control:queue-gate"],
       });
     } finally {
       await client.close();

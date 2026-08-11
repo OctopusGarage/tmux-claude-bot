@@ -8,9 +8,14 @@ import {
   handleControlRequest,
 } from "../../../src/adapters/control/operations.js";
 import { createControlDiagnosticsHandlers } from "../../../src/adapters/control/operations-diagnostics.js";
+import {
+  createControlObservationHandlers,
+  readDailyTaskAuditObservation,
+} from "../../../src/adapters/control/operations-observation.js";
 import { createControlProjectSessionHandlers } from "../../../src/adapters/control/operations-project-sessions.js";
 import type { ControlRequest } from "../../../src/adapters/control/protocol.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
+import type { ScheduledTaskRecord } from "../../../src/core/tasks/task-ledger.js";
 
 describe("control operation registry", () => {
   it("groups dashboard and diagnostic reads behind one handler family", () => {
@@ -24,6 +29,98 @@ describe("control operation registry", () => {
       "snapshot",
       "sysload",
     ]);
+  });
+
+  it("groups bounded automation evidence behind one read-only handler family", () => {
+    const handlers = createControlObservationHandlers({} as HandlerDeps);
+
+    expect(Object.keys(handlers).sort()).toEqual([
+      "dailyTaskAuditStatus",
+      "loopReports",
+      "runtimeGuardianFindings",
+    ]);
+  });
+
+  it("reports explicit Daily Task Audit truncation", () => {
+    const now = Date.parse("2026-08-12T12:00:00+08:00");
+    const records = Array.from(
+      { length: 52 },
+      (_, index): ScheduledTaskRecord => ({
+        taskId: `task-${index}`,
+        source: "daily-audit",
+        name: `Task ${index}`,
+        scheduledAt: now - index * 1_000,
+        status: "success",
+        endedAt: now - index * 1_000 + 10,
+        updatedAt: now - index * 1_000 + 10,
+      }),
+    );
+
+    const view = readDailyTaskAuditObservation({
+      now,
+      ledger: { listForWindow: () => records },
+      auditStore: { getLastFired: () => now - 1_000 },
+    });
+
+    expect(view).toMatchObject({
+      recentLimit: 50,
+      recentTotal: 52,
+      recentTruncated: true,
+    });
+    expect(view.recentRecords).toHaveLength(50);
+  });
+
+  it("validates and bounds Runtime Guardian observation at the Control boundary", async () => {
+    const ok = vi.fn();
+    const findings = [
+      {
+        kind: "missing-system-gate" as const,
+        severity: "medium" as const,
+        runId: "run-3",
+        projectId: "project",
+        projectPath: "/synthetic/project",
+        evidence: ["missing gate"],
+      },
+      {
+        kind: "stale-dispatching-work-order" as const,
+        severity: "high" as const,
+        runId: "run-1",
+        projectId: "project",
+        projectPath: "/synthetic/project",
+        evidence: ["stale dispatch"],
+      },
+      {
+        kind: "terminal-work-order-active-lease" as const,
+        severity: "high" as const,
+        runId: "run-2",
+        projectId: "project",
+        projectPath: "/synthetic/project",
+        evidence: ["active lease"],
+      },
+    ];
+    const handlers = createControlObservationHandlers(
+      { config: { runtimeGuardian: { repoPath: "" } } } as HandlerDeps,
+      { runtimeGuardianFindings: () => findings },
+    );
+
+    await handlers.runtimeGuardianFindings(
+      { id: 1, op: "runtimeGuardianFindings", now: 100, lookbackHours: 999, limit: 2 },
+      {
+        ok,
+        fail: vi.fn(),
+        send: vi.fn(),
+        isOperatorHomeCaller: false,
+      },
+    );
+
+    expect(ok).toHaveBeenCalledWith({
+      observedAt: 100,
+      lookbackHours: 168,
+      findings: [findings[1], findings[2]],
+      total: 3,
+      limit: 2,
+      truncated: true,
+    });
   });
 
   it("groups Project Session lifecycle operations behind one handler family", () => {
@@ -61,6 +158,9 @@ describe("control operation registry", () => {
       "inputs",
       "promptTranslate",
       "taskAudit",
+      "loopReports",
+      "dailyTaskAuditStatus",
+      "runtimeGuardianFindings",
       "notify",
       "autopilot",
       "sendAttachment",

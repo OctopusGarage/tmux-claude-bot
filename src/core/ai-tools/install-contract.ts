@@ -80,7 +80,18 @@ export function defaultOperatorHomeAiToolFiles(homeDir: string): AiToolExpectedF
 
 export type AiToolReadiness = {
   skills: { installed: number; expected: number; state: "ready" | "attention" };
-  mcpProfiles: { installed: number; expected: number; state: "ready" | "attention" };
+  mcpProfiles: {
+    installed: number;
+    expected: number;
+    state: "ready" | "attention";
+    profiles: Array<{
+      profile: McpProfile;
+      role: "observer" | "home-operator";
+      exposure: "read-only" | "controlled-operation";
+      toolCount: number;
+      descriptorState: "ready" | "missing" | "stale";
+    }>;
+  };
 };
 
 type AiToolStatusProbes = {
@@ -103,9 +114,17 @@ function validMcpProfile(path: string, profile: McpProfile, probes: AiToolStatus
       actual.profile === expected.profile &&
       actual.role === expected.role &&
       actual.exposure === expected.exposure &&
+      actual.server?.transport === expected.server.transport &&
+      actual.server.command === expected.server.command &&
+      Array.isArray(actual.server.args) &&
+      actual.server.args.length === expected.server.args.length &&
+      expected.server.args.every((arg, index) => actual.server?.args[index] === arg) &&
       Array.isArray(actual.tools) &&
       actual.tools.length === expected.tools.length &&
-      expected.tools.every((tool) => actual.tools?.includes(tool))
+      expected.tools.every((tool) => actual.tools?.includes(tool)) &&
+      Array.isArray(actual.boundaries) &&
+      actual.boundaries.length === expected.boundaries.length &&
+      expected.boundaries.every((boundary) => actual.boundaries?.includes(boundary))
     );
   } catch {
     return false;
@@ -123,6 +142,22 @@ export function readAiToolReadiness(
   const installedMcpProfiles = mcpFiles.filter(
     (file) => file.profile !== undefined && validMcpProfile(file.path, file.profile, probes),
   ).length;
+  const profiles = MCP_PROFILES.map((profile) => {
+    const file = mcpFiles.find((candidate) => candidate.profile === profile);
+    const expected = mcpProfileSpec(profile);
+    const exists = file !== undefined && probes.exists(file.path);
+    return {
+      profile,
+      role: expected.role,
+      exposure: expected.exposure,
+      toolCount: expected.tools.length,
+      descriptorState: !exists
+        ? ("missing" as const)
+        : validMcpProfile(file.path, profile, probes)
+          ? ("ready" as const)
+          : ("stale" as const),
+    };
+  });
   return {
     skills: {
       installed: installedSkills,
@@ -133,25 +168,7 @@ export function readAiToolReadiness(
       installed: installedMcpProfiles,
       expected: mcpFiles.length,
       state: installedMcpProfiles === mcpFiles.length ? "ready" : "attention",
+      profiles,
     },
   };
-}
-
-/** Count repository-declared optional MCPs without inspecting client-private registrations. */
-export function readOptionalProjectMcpCount(
-  projectRoot: string,
-  probes: Pick<AiToolStatusProbes, "exists" | "read"> = defaultStatusProbes,
-): number {
-  const file = join(projectRoot, ".mcp.json");
-  if (!probes.exists(file)) return 0;
-  try {
-    const parsed = JSON.parse(probes.read(file)) as { mcpServers?: unknown };
-    return parsed.mcpServers !== null &&
-      typeof parsed.mcpServers === "object" &&
-      !Array.isArray(parsed.mcpServers)
-      ? Object.keys(parsed.mcpServers).length
-      : 0;
-  } catch {
-    return 0;
-  }
 }

@@ -58,7 +58,7 @@ Verified external behavior:
 
 Practical consequence:
 
-- The first MCP milestone is `observer` only. Current implemented tools are
+- The implemented Observer profile is read-only. Current tools are
   `tcb.observer.status`, `tcb.observer.projects`, `tcb.observer.sessions`,
   `tcb.observer.queue`, `tcb.observer.logs_query`, and
   `tcb.observer.loop_reports_list`, `tcb.observer.daily_task_audit`, and
@@ -68,7 +68,7 @@ Practical consequence:
   the first discovery call for Home operation. Home inherits it rather than
   registering a duplicate status tool. Narrow evidence tools follow only when
   the overview points to their domain.
-- The first Home MCP milestone is controlled operation only. `tcb mcp home`
+- The implemented Home profile is controlled-operation only. `tcb mcp home`
   exposes all Observer tools plus `tcb.home.send_prompt` and
   `tcb.home.delegate_autopilot`. Both require an explicit target session and
   call existing control-service queue, conflict, and WorkOrder gates.
@@ -176,6 +176,11 @@ Required generated files:
   skill copy.
 - `.codex/prompts/tcb-home-operator.md`: operator-home scoped Codex prompt copy.
 
+`CLAUDE.md` and `AGENTS.md` preserve operator-authored content while startup
+refreshes only their marked managed-policy block. This keeps the live Home Agent
+aligned with the current MCP-first diagnostic and control boundaries without
+turning workspace provisioning into a destructive template overwrite.
+
 Generated role descriptors:
 
 - `skills/`: role-local copies or pointers for `tcb-home-operator` and
@@ -218,6 +223,9 @@ Use deny-by-default role profiles for MCP tools:
   tools.
 - `audit`: Daily Task Audit candidate-bound self-repair tools plus observer
   tools.
+
+Only `observer` and `home` are implemented profiles today. The remaining names
+are reserved policy shapes, not advertised or installable MCP capabilities.
 
 Mutating profiles should be enabled explicitly by installation/configuration and
 should be visible in `doctor` or future MCP status diagnostics. If the MCP
@@ -281,12 +289,12 @@ should declare one capability class.
 | Role | Skill Surface | MCP Surface | CLI Surface | Notes |
 | --- | --- | --- | --- | --- |
 | Home Operator | `tcb-home-operator` or the current bundled operator skill section. | `tcb.home.*`, `tcb.observer.*` | `tcb dashboard`, `tcb sessions`, `tcb loop reports`, `tcb task audit`, `tcb autopilot` | Owns discovery and owner-facing orchestration, not target edits. |
-| Loop Supervisor | `tcb-loop-supervisor` task policy embedded in governed prompts/skills. | `tcb.supervisor.*`, limited `tcb.worker.*`, read-only observer tools | No direct human CLI dependency inside prompts except documented control operations. | Must be WorkOrder-bound and produce final summary evidence. |
-| Loop Worker | `tcb-loop-worker` scoped execution instructions. | `tcb.worker.*` scoped by `workOrderId` and repository path | Project-local commands only through WorkOrder policy | Cannot discover or mutate unrelated sessions/projects. |
-| Runtime Guardian Repair | `tcb-runtime-guardian` repair recipe. | `tcb.guardian.*`, observer tools | `tcb automation status|pause|resume runtime-guardian`, `tcb logs` | Repairs bot runtime policy/artifacts only. |
-| Daily Audit Repair | `tcb-daily-audit-repair` repair recipe. | `tcb.audit.*`, observer tools | `tcb task audit`, `tcb task report` | Repairs bot task audit/reporting logic only. |
+| Loop Supervisor | Implemented as WorkOrder-bound governed prompt policy; `tcb-loop-supervisor` is a reserved future package name. | Not implemented; any future `tcb.supervisor.*`/worker subset must be WorkOrder-bound. | No direct human CLI dependency inside prompts except documented control operations. | Must be WorkOrder-bound and produce final summary evidence. |
+| Loop Worker | Implemented as WorkOrder execution policy; `tcb-loop-worker` is a reserved future package name. | Not implemented; any future `tcb.worker.*` must bind `workOrderId` and repository path. | Project-local commands only through WorkOrder policy | Cannot discover or mutate unrelated sessions/projects. |
+| Runtime Guardian Repair | Implemented as governed repair delegation; `tcb-runtime-guardian` is a reserved future package name. | No Guardian mutation profile; Observer exposes read-only findings only. | `tcb automation status|pause|resume runtime-guardian`, `tcb logs` | Repairs bot runtime policy/artifacts only. |
+| Daily Audit Repair | Implemented as governed repair delegation; `tcb-daily-audit-repair` is a reserved future package name. | No Audit mutation profile; Observer exposes read-only audit evidence only. | `tcb task audit`, `tcb task report` | Repairs bot task audit/reporting logic only. |
 | Project Agent | General project guidance, not automation admin skill. | Usually none; optionally read-only project diagnostics. | Chat/TUI workflows; external `tcb send` is an operator action targeting this session, not authority held by the project agent. | Ordinary user chat must respect active automation conflicts. |
-| Observer | `tcb-observer` diagnostic recipe. | `tcb.observer.*` | read-only CLI commands with `--json` where available | Safe first MCP milestone. |
+| Observer | Read-only descriptor policy today; `tcb-observer` is a reserved future standalone skill name. | Implemented `tcb.observer.*` profile. | read-only CLI commands with `--json` where available | Safe to expose broadly when the local control boundary is trusted. |
 
 The concrete non-operator skill names above are target names for future
 decomposition. Until they exist as separate installable skills, the bundled
@@ -309,9 +317,10 @@ Use role namespaces so tools are discoverable without being overpowered:
 | `tcb.guardian.*` | Runtime Guardian self-repair flow. | `findings`, `repair_delegate`, `repair_readiness`. |
 | `tcb.audit.*` | Daily Task Audit self-repair flow. | `run`, `summary`, `repair_candidates`, `repair_delegate`. |
 
-Prefer one MCP server with role-aware tool registration over multiple
-independent servers at first. Split servers only when deployment or security
-requires independent installation.
+Prefer one shared MCP implementation with role-aware registration. Separate
+stdio profile entry points are acceptable for discovery and least-privilege
+configuration, as the current Observer and Home commands demonstrate; do not
+fork their schemas, health model, or control backing into independent products.
 
 Namespace is not security. It improves discovery and model behavior, but every
 mutating tool must still enforce role, scope, and conflict checks in code.
@@ -347,6 +356,7 @@ AI-facing tool responses should be structured and evidence-bearing:
   "role": "observer",
   "capability": "read-only observation",
   "scope": {
+    "kind": "runtime-overview",
     "projectId": "example",
     "session": "tmux_proj_example",
     "workOrderId": "optional"

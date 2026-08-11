@@ -212,6 +212,12 @@ For the complete maintained CLI command and option surface, see
 | `tcb install` | provision the managed service into the stable dir |
 | `tcb service <install\|uninstall\|status\|pause\|resume\|restart\|logs>` | manage the auto-restarting service |
 
+Dashboard filters apply to both text and JSON. `--project` narrows Project
+Sessions and project-owned attention/work/outcomes while retaining global health
+evidence; `--problems` suppresses nonproblem collections (the stable JSON schema
+still retains its required scalar/interface fields); `--limit` is enforced before
+bounded sections are serialized.
+
 ### Resource Guardian rollout
 
 Resource Guardian is disabled by default. Enable it through the allowlisted

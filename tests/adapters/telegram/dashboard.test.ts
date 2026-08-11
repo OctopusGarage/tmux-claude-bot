@@ -70,7 +70,7 @@ describe("/dashboard (Telegram)", () => {
     // No monospace fence — the emoji + "·" lines render as clean prose.
     const opts = replyMock.mock.calls.at(-1)?.[3];
     expect(opts?.code).toBeUndefined();
-    expect(opts?.body as string).toContain("sessions");
+    expect(opts?.body as string).toContain("会话");
     expect(opts?.body as string).toContain("总体健康");
     expect(opts?.body as string).toContain("待处理");
   });

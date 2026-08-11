@@ -431,6 +431,53 @@ Send any text → forwarded to the agent → reply`,
   dashboardProjectSessions: "Project Sessions",
   dashboardNone: "none",
   dashboardMore: "more",
+  dashboardEnabled: "enabled",
+  dashboardIdle: "idle",
+  dashboardShown: "shown",
+  dashboardHealthy: "healthy",
+  dashboardSession: "session",
+  dashboardSkills: "skills",
+  dashboardMcpProfiles: "MCP profiles",
+  dashboardPromptLibrary: "Prompt Library",
+  dashboardSessions: "sessions",
+  dashboardRunning: "running",
+  dashboardBusy: "busy",
+  dashboardQueue: "queue",
+  dashboardUp: "up",
+  dashboardNoAdapters: "none",
+  dashboardRuntimeDomain: (id: string) =>
+    ({
+      "work-orders": "WorkOrders",
+      automation: "Automation",
+      batch: "Batch Scheduler",
+      "daily-task-audit": "Daily Task Audit",
+      "runtime-guardian": "Runtime Guardian",
+      "resource-guardian": "Resource Guardian",
+      power: "Service and Power",
+      "operator-ai": "Operator and AI Interfaces",
+    })[id] ?? id,
+  dashboardHealthHealthy: "healthy",
+  dashboardHealthAttention: "attention",
+  dashboardHealthDegraded: "degraded",
+  dashboardAttentionOperatorSession: "Home Operator Session needs attention",
+  dashboardAttentionOperatorSkills: (installed: number, expected: number) =>
+    `Home Operator skills ${installed}/${expected} ready`,
+  dashboardAttentionOperatorMcp: (installed: number, expected: number) =>
+    `Managed MCP profiles ${installed}/${expected} ready`,
+  dashboardAttentionOperatorPrompt: "Configured Prompt Library is unavailable",
+  dashboardAttentionWorkOrderFailed: (project: string, _taskKind: string) =>
+    `${project} WorkOrder failed`,
+  dashboardAttentionWorkOrderAbandoned: (project: string) => `${project} WorkOrder is abandoned`,
+  dashboardAttentionWorkOrderStale: (project: string) => `${project} WorkOrder dispatch is stale`,
+  dashboardAttentionAutomationDependency: (automation: string) =>
+    `${automation} has a disabled dependency`,
+  dashboardAttentionDailyAudit: (count: number) => `${count} Daily Task Audit item needs attention`,
+  dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
+    `${project} has a Runtime Guardian finding`,
+  dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) =>
+    "Resource Guardian needs attention",
+  dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
+    "Power policy needs attention",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "Delegate the current session context to the Loop Supervisor. Start immediately when the scope is already clear, or review the plan first when you want an explicit checklist and stop conditions before execution.",

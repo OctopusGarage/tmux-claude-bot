@@ -67,8 +67,18 @@ export type RuntimeOverviewReaders = {
         active?: { id: string; label: string; status: string; startedAt: number };
       }>;
   dailyAudit():
-    | { enabled: boolean; lastFiredAt?: number }
-    | Promise<{ enabled: boolean; lastFiredAt?: number }>;
+    | {
+        enabled: boolean;
+        lastFiredAt?: number;
+        summary?: { active: number; failed: number; attention: number; repairPending: number };
+        outcomes?: RecentOutcome[];
+      }
+    | Promise<{
+        enabled: boolean;
+        lastFiredAt?: number;
+        summary?: { active: number; failed: number; attention: number; repairPending: number };
+        outcomes?: RecentOutcome[];
+      }>;
   runtimeGuardian():
     | {
         enabled: boolean;
@@ -118,6 +128,10 @@ export type RuntimeOverviewReaders = {
         powerSource: string;
         scheduleStatus: string;
         degraded: boolean;
+        service?: {
+          uptimeMs: number | null;
+          adapters: { telegram: boolean; lark: boolean };
+        };
       }
     | Promise<{
         mode: string;
@@ -125,19 +139,38 @@ export type RuntimeOverviewReaders = {
         powerSource: string;
         scheduleStatus: string;
         degraded: boolean;
+        service?: {
+          uptimeMs: number | null;
+          adapters: { telegram: boolean; lark: boolean };
+        };
       }>;
   operator(): OperatorInterfaceView | Promise<OperatorInterfaceView>;
 };
 
-type Collected<T> = { ok: true; value: T } | { ok: false };
+type Collected<T> =
+  | { ok: true; value: T }
+  | { ok: false; errorKind: Exclude<RuntimeDomainView["errorKind"], null> };
 
 const FAILED_WORK_ORDER_ATTENTION_MS = 24 * 60 * 60 * 1_000;
 
-async function collect<T>(reader: () => T | Promise<T>): Promise<Collected<T>> {
+async function collect<T>(reader: () => T | Promise<T>, timeoutMs: number): Promise<Collected<T>> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    return { ok: true, value: await reader() };
-  } catch {
-    return { ok: false };
+    const result = await Promise.race([
+      Promise.resolve().then(reader),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("collector-timeout")), timeoutMs);
+      }),
+    ]);
+    return { ok: true, value: result };
+  } catch (error) {
+    return {
+      ok: false,
+      errorKind:
+        error instanceof Error && error.message === "collector-timeout" ? "timeout" : "read-failed",
+    };
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
@@ -147,11 +180,15 @@ function domain(
   status: RuntimeDomainView["status"],
   summary: string,
 ): RuntimeDomainView {
-  return { id, label, status, summary };
+  return { id, label, status, summary, errorKind: null };
 }
 
-function failedDomain(id: string, label: string): RuntimeDomainView {
-  return domain(id, label, "degraded", "read unavailable");
+function failedDomain(
+  id: string,
+  label: string,
+  errorKind: Exclude<RuntimeDomainView["errorKind"], null>,
+): RuntimeDomainView {
+  return { id, label, status: "degraded", summary: "read unavailable", errorKind };
 }
 
 function workOrderView(record: OverviewWorkOrder): ActiveWorkItem {
@@ -179,6 +216,7 @@ function workOrderOutcome(record: OverviewWorkOrder): RecentOutcome {
     label: `${record.projectName}: ${record.taskKind}`,
     status,
     endedAt: record.updatedAt,
+    projectId: record.projectId,
   };
 }
 
@@ -192,6 +230,7 @@ function attentionForOperator(operator: OperatorInterfaceView, now: number): Att
       observedAt: now,
       summary: "Home Operator Session needs attention",
       nextAction: "tcb doctor",
+      presentation: { kind: "operator-session" },
     });
   }
   if (operator.skills.state === "attention") {
@@ -202,6 +241,11 @@ function attentionForOperator(operator: OperatorInterfaceView, now: number): Att
       observedAt: now,
       summary: `Home Operator skills ${operator.skills.installed}/${operator.skills.expected} ready`,
       nextAction: "tcb ai-tools status",
+      presentation: {
+        kind: "operator-skills",
+        installed: operator.skills.installed,
+        expected: operator.skills.expected,
+      },
     });
   }
   if (operator.mcpProfiles.state === "attention") {
@@ -212,9 +256,14 @@ function attentionForOperator(operator: OperatorInterfaceView, now: number): Att
       observedAt: now,
       summary: `Managed MCP profiles ${operator.mcpProfiles.installed}/${operator.mcpProfiles.expected} ready`,
       nextAction: "tcb ai-tools status",
+      presentation: {
+        kind: "operator-mcp",
+        installed: operator.mcpProfiles.installed,
+        expected: operator.mcpProfiles.expected,
+      },
     });
   }
-  if (operator.promptLibrary.state === "attention") {
+  if (operator.promptLibrary.state === "attention" || operator.promptLibrary.state === "degraded") {
     items.push({
       id: "operator:prompt-library",
       domain: "operator",
@@ -222,6 +271,7 @@ function attentionForOperator(operator: OperatorInterfaceView, now: number): Att
       observedAt: now,
       summary: "Configured Prompt Library is unavailable",
       nextAction: "tcb doctor",
+      presentation: { kind: "operator-prompt" },
     });
   }
   return items;
@@ -232,7 +282,9 @@ export async function readRuntimeOverview(input: {
   sessions: RuntimeOverviewSession[];
   readers: RuntimeOverviewReaders;
   options?: RuntimeOverviewOptions;
+  collectorTimeoutMs?: number;
 }): Promise<RuntimeOverview> {
+  const collectorTimeoutMs = input.collectorTimeoutMs ?? 1_000;
   const [
     automationRead,
     workOrdersRead,
@@ -243,14 +295,14 @@ export async function readRuntimeOverview(input: {
     powerRead,
     operatorRead,
   ] = await Promise.all([
-    collect(input.readers.automation),
-    collect(input.readers.workOrders),
-    collect(input.readers.batch),
-    collect(input.readers.dailyAudit),
-    collect(input.readers.runtimeGuardian),
-    collect(input.readers.resourceGuardian),
-    collect(input.readers.power),
-    collect(input.readers.operator),
+    collect(input.readers.automation, collectorTimeoutMs),
+    collect(input.readers.workOrders, collectorTimeoutMs),
+    collect(input.readers.batch, collectorTimeoutMs),
+    collect(input.readers.dailyAudit, collectorTimeoutMs),
+    collect(input.readers.runtimeGuardian, collectorTimeoutMs),
+    collect(input.readers.resourceGuardian, collectorTimeoutMs),
+    collect(input.readers.power, collectorTimeoutMs),
+    collect(input.readers.operator, collectorTimeoutMs),
   ]);
 
   const degradedDomains: string[] = [];
@@ -287,6 +339,12 @@ export async function readRuntimeOverview(input: {
         observedAt: record.updatedAt,
         summary: `${record.projectName} ${record.taskKind} failed`,
         nextAction: "tcb loop reports list --limit 20",
+        projectId: record.projectId,
+        presentation: {
+          kind: "work-order-failed",
+          project: record.projectName,
+          taskKind: record.taskKind,
+        },
       });
     }
     for (const record of value.abandoned) {
@@ -297,6 +355,8 @@ export async function readRuntimeOverview(input: {
         observedAt: record.updatedAt,
         summary: `${record.projectName} WorkOrder is abandoned`,
         nextAction: "tcb loop reports list --limit 20",
+        projectId: record.projectId,
+        presentation: { kind: "work-order-abandoned", project: record.projectName },
       });
     }
     for (const record of value.staleDispatching) {
@@ -306,7 +366,9 @@ export async function readRuntimeOverview(input: {
         severity: "warning",
         observedAt: record.updatedAt,
         summary: `${record.projectName} WorkOrder dispatch is stale`,
-        nextAction: "tcb runtime-guardian findings --json",
+        nextAction: "tcb logs --grep runtime-guardian --since 24h",
+        projectId: record.projectId,
+        presentation: { kind: "work-order-stale", project: record.projectName },
       });
     }
     runtimeDomains.push(
@@ -321,18 +383,50 @@ export async function readRuntimeOverview(input: {
     );
   } else {
     degradedDomains.push("work-orders");
-    runtimeDomains.push(failedDomain("work-orders", "WorkOrders"));
+    runtimeDomains.push(failedDomain("work-orders", "WorkOrders", workOrdersRead.errorKind));
   }
 
   if (automationRead.ok) {
     const activeCount = workOrdersRead.ok ? workOrdersRead.value.unfinished.length : 0;
+    const loopLastOutcome = workOrdersRead.ok
+      ? workOrdersRead.value.terminal
+          .map(workOrderOutcome)
+          .sort((left, right) => right.endedAt - left.endedAt)[0]
+      : undefined;
+    const auditLastOutcome = dailyAuditRead.ok
+      ? (dailyAuditRead.value.outcomes ?? [])
+          .filter((outcome) => outcome.domain === "daily-audit")
+          .sort((left, right) => right.endedAt - left.endedAt)[0]
+      : undefined;
+    const batchLastOutcome = dailyAuditRead.ok
+      ? (dailyAuditRead.value.outcomes ?? [])
+          .filter((outcome) => outcome.domain === "batch-scheduler")
+          .sort((left, right) => right.endedAt - left.endedAt)[0]
+      : undefined;
     automation = automationRead.value.map((item) => ({
       id: item.id,
       label: item.label,
       enabled: item.enabled,
       configured: item.configured,
       tickMs: item.tickMs,
-      activeCount: item.id === "loop" ? activeCount : 0,
+      activeCount:
+        item.id === "loop"
+          ? activeCount
+          : item.id === "task-audit" && dailyAuditRead.ok
+            ? (dailyAuditRead.value.summary?.active ?? 0)
+            : item.id === "batch" && batchRead.ok && batchRead.value.active !== undefined
+              ? 1
+              : 0,
+      ...(item.dependencies === undefined ? {} : { dependencies: item.dependencies }),
+      ...(item.id === "loop" && loopLastOutcome !== undefined
+        ? { lastOutcome: { status: loopLastOutcome.status, endedAt: loopLastOutcome.endedAt } }
+        : item.id === "task-audit" && auditLastOutcome !== undefined
+          ? { lastOutcome: { status: auditLastOutcome.status, endedAt: auditLastOutcome.endedAt } }
+          : item.id === "batch" && batchLastOutcome !== undefined
+            ? {
+                lastOutcome: { status: batchLastOutcome.status, endedAt: batchLastOutcome.endedAt },
+              }
+            : {}),
     }));
     const dependencyProblems = automationRead.value.filter(
       (item) => item.enabled && Object.values(item.dependencies ?? {}).some((ready) => !ready),
@@ -345,6 +439,7 @@ export async function readRuntimeOverview(input: {
         observedAt: input.now,
         summary: `${item.label} has a disabled dependency`,
         nextAction: "tcb automation status",
+        presentation: { kind: "automation-dependency", automation: item.label },
       });
     }
     runtimeDomains.push(
@@ -357,7 +452,7 @@ export async function readRuntimeOverview(input: {
     );
   } else {
     degradedDomains.push("automation");
-    runtimeDomains.push(failedDomain("automation", "Automation"));
+    runtimeDomains.push(failedDomain("automation", "Automation", automationRead.errorKind));
   }
 
   if (batchRead.ok) {
@@ -382,22 +477,41 @@ export async function readRuntimeOverview(input: {
     );
   } else {
     degradedDomains.push("batch");
-    runtimeDomains.push(failedDomain("batch", "Batch Scheduler"));
+    runtimeDomains.push(failedDomain("batch", "Batch Scheduler", batchRead.errorKind));
   }
 
   if (dailyAuditRead.ok) {
     const value = dailyAuditRead.value;
+    recentOutcomes.push(...(value.outcomes ?? []));
+    const summary = value.summary;
+    if (value.enabled && (summary?.attention ?? 0) > 0) {
+      attention.push({
+        id: "daily-task-audit:repair-pending",
+        domain: "daily-task-audit",
+        severity: "warning",
+        observedAt: value.lastFiredAt ?? input.now,
+        summary: `${summary?.attention ?? 0} Daily Task Audit item needs attention`,
+        nextAction: "tcb logs --grep daily-task-audit --since 7d",
+        presentation: { kind: "daily-audit-attention", count: summary?.attention ?? 0 },
+      });
+    }
     runtimeDomains.push(
       domain(
         "daily-task-audit",
         "Daily Task Audit",
-        value.enabled ? "healthy" : "disabled",
-        value.lastFiredAt === undefined ? "no completed run recorded" : "last run recorded",
+        !value.enabled ? "disabled" : (summary?.attention ?? 0) > 0 ? "attention" : "healthy",
+        summary === undefined
+          ? value.lastFiredAt === undefined
+            ? "no completed run recorded"
+            : "last run recorded"
+          : `${summary.failed} failed, ${summary.repairPending} repair pending`,
       ),
     );
   } else {
     degradedDomains.push("daily-task-audit");
-    runtimeDomains.push(failedDomain("daily-task-audit", "Daily Task Audit"));
+    runtimeDomains.push(
+      failedDomain("daily-task-audit", "Daily Task Audit", dailyAuditRead.errorKind),
+    );
   }
 
   if (runtimeGuardianRead.ok) {
@@ -409,7 +523,13 @@ export async function readRuntimeOverview(input: {
         severity: finding.severity === "high" ? "error" : "warning",
         observedAt: finding.observedAt,
         summary: `${finding.projectId}: ${finding.kind}`,
-        nextAction: "tcb runtime-guardian findings --json",
+        nextAction: "tcb logs --grep runtime-guardian --since 24h",
+        projectId: finding.projectId,
+        presentation: {
+          kind: "runtime-finding",
+          project: finding.projectId,
+          findingKind: finding.kind,
+        },
       });
     }
     runtimeDomains.push(
@@ -422,7 +542,9 @@ export async function readRuntimeOverview(input: {
     );
   } else {
     degradedDomains.push("runtime-guardian");
-    runtimeDomains.push(failedDomain("runtime-guardian", "Runtime Guardian"));
+    runtimeDomains.push(
+      failedDomain("runtime-guardian", "Runtime Guardian", runtimeGuardianRead.errorKind),
+    );
   }
 
   if (resourceGuardianRead.ok) {
@@ -440,6 +562,11 @@ export async function readRuntimeOverview(input: {
         observedAt: value.changedAt,
         summary: `Resource pressure ${value.pressure}; admission ${value.circuit}`,
         nextAction: "tcb resource status --json",
+        presentation: {
+          kind: "resource-pressure",
+          pressure: value.pressure,
+          circuit: value.circuit,
+        },
       });
     }
     runtimeDomains.push(
@@ -458,7 +585,9 @@ export async function readRuntimeOverview(input: {
     );
   } else {
     degradedDomains.push("resource-guardian");
-    runtimeDomains.push(failedDomain("resource-guardian", "Resource Guardian"));
+    runtimeDomains.push(
+      failedDomain("resource-guardian", "Resource Guardian", resourceGuardianRead.errorKind),
+    );
   }
 
   if (powerRead.ok) {
@@ -471,6 +600,12 @@ export async function readRuntimeOverview(input: {
         observedAt: input.now,
         summary: `Power ${value.mode}/${value.phase}; schedule ${value.scheduleStatus}`,
         nextAction: "tcb power status",
+        presentation: {
+          kind: "power-policy",
+          mode: value.mode,
+          phase: value.phase,
+          schedule: value.scheduleStatus,
+        },
       });
     }
     runtimeDomains.push(
@@ -480,12 +615,23 @@ export async function readRuntimeOverview(input: {
         value.degraded || !["verified", "not-required"].includes(value.scheduleStatus)
           ? "attention"
           : "healthy",
-        `${value.mode}/${value.phase}; ${value.powerSource}; schedule ${value.scheduleStatus}`,
+        [
+          `${value.mode}/${value.phase}`,
+          value.powerSource,
+          `schedule ${value.scheduleStatus}`,
+          ...(value.service === undefined
+            ? []
+            : [
+                `up ${value.service.uptimeMs === null ? "unknown" : `${value.service.uptimeMs}ms`}`,
+                `telegram ${value.service.adapters.telegram ? "configured" : "not configured"}`,
+                `lark ${value.service.adapters.lark ? "configured" : "not configured"}`,
+              ]),
+        ].join("; "),
       ),
     );
   } else {
     degradedDomains.push("power");
-    runtimeDomains.push(failedDomain("power", "Service and Power"));
+    runtimeDomains.push(failedDomain("power", "Service and Power", powerRead.errorKind));
   }
 
   const operator = operatorRead.ok
@@ -493,9 +639,9 @@ export async function readRuntimeOverview(input: {
     : {
         session: { state: "attention" as const },
         skills: { installed: 0, expected: 0, state: "attention" as const },
-        mcpProfiles: { installed: 0, expected: 0, state: "attention" as const },
+        mcpProfiles: { installed: 0, expected: 0, state: "attention" as const, profiles: [] },
         promptLibrary: { state: "disabled" as const },
-        optionalProjectMcpCount: 0,
+        optionalProjectMcpCount: null,
       };
   if (operatorRead.ok) {
     const operatorAttention = attentionForOperator(operator, input.now);
@@ -510,7 +656,9 @@ export async function readRuntimeOverview(input: {
     );
   } else {
     degradedDomains.push("operator-ai");
-    runtimeDomains.push(failedDomain("operator-ai", "Operator and AI Interfaces"));
+    runtimeDomains.push(
+      failedDomain("operator-ai", "Operator and AI Interfaces", operatorRead.errorKind),
+    );
   }
 
   return buildRuntimeOverview(

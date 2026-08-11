@@ -2,6 +2,20 @@ export type OverviewHealthStatus = "healthy" | "attention" | "degraded";
 
 export type AttentionSeverity = "error" | "warning" | "info";
 
+export type AttentionPresentation =
+  | { kind: "operator-session" }
+  | { kind: "operator-skills"; installed: number; expected: number }
+  | { kind: "operator-mcp"; installed: number; expected: number }
+  | { kind: "operator-prompt" }
+  | { kind: "work-order-failed"; project: string; taskKind: string }
+  | { kind: "work-order-abandoned"; project: string }
+  | { kind: "work-order-stale"; project: string }
+  | { kind: "automation-dependency"; automation: string }
+  | { kind: "daily-audit-attention"; count: number }
+  | { kind: "runtime-finding"; project: string; findingKind: string }
+  | { kind: "resource-pressure"; pressure: string; circuit: string }
+  | { kind: "power-policy"; mode: string; phase: string; schedule: string };
+
 export type AttentionItem = {
   id: string;
   domain: string;
@@ -9,6 +23,8 @@ export type AttentionItem = {
   observedAt: number;
   summary: string;
   nextAction: string;
+  projectId?: string;
+  presentation?: AttentionPresentation;
 };
 
 export type ActiveWorkItem = {
@@ -28,6 +44,7 @@ export type RecentOutcome = {
   label: string;
   status: "passed" | "failed" | "cancelled";
   endedAt: number;
+  projectId?: string;
 };
 
 export type AutomationFamilyView = {
@@ -37,6 +54,8 @@ export type AutomationFamilyView = {
   configured: boolean;
   activeCount: number;
   tickMs?: number;
+  dependencies?: Record<string, boolean>;
+  lastOutcome?: Pick<RecentOutcome, "status" | "endedAt">;
 };
 
 export type RuntimeDomainView = {
@@ -44,6 +63,7 @@ export type RuntimeDomainView = {
   label: string;
   status: "healthy" | "attention" | "degraded" | "disabled";
   summary: string;
+  errorKind: "read-failed" | "timeout" | null;
 };
 
 export type OperatorInterfaceState = "ready" | "attention" | "disabled";
@@ -59,9 +79,17 @@ export type OperatorInterfaceView = {
     installed: number;
     expected: number;
     state: OperatorInterfaceState;
+    profiles: Array<{
+      profile: "observer" | "home";
+      role: "observer" | "home-operator";
+      exposure: "read-only" | "controlled-operation";
+      toolCount: number;
+      descriptorState: "ready" | "missing" | "stale";
+    }>;
   };
-  promptLibrary: { state: OperatorInterfaceState };
-  optionalProjectMcpCount: number;
+  promptLibrary: { state: OperatorInterfaceState | "configured" | "degraded" };
+  /** @deprecated Project-scoped diagnostics own this value; null means not observed globally. */
+  optionalProjectMcpCount: number | null;
 };
 
 export type BoundedSection<T> = {
@@ -100,6 +128,8 @@ export type RuntimeOverviewOptions = {
   attentionLimit?: number;
   activeWorkLimit?: number;
   recentOutcomeLimit?: number;
+  project?: string;
+  problemsOnly?: boolean;
 };
 
 const DEFAULT_SECTION_LIMIT = 10;
@@ -129,26 +159,44 @@ export function buildRuntimeOverview(
   input: RuntimeOverviewInput,
   options: RuntimeOverviewOptions = {},
 ): RuntimeOverview {
-  const attention = [...input.attention].sort(
-    (left, right) =>
-      severityRank[left.severity] - severityRank[right.severity] ||
-      right.observedAt - left.observedAt ||
-      left.id.localeCompare(right.id),
-  );
-  const activeWork = [...input.activeWork].sort(
+  const project = options.project?.trim().toLowerCase();
+  const matchesProject = (item: { projectId?: string; label?: string }): boolean =>
+    project === undefined ||
+    project.length === 0 ||
+    item.projectId?.toLowerCase() === project ||
+    item.label?.toLowerCase().includes(project) === true;
+  const attention = input.attention
+    .filter(
+      (item) =>
+        project === undefined ||
+        item.projectId === undefined ||
+        item.projectId.toLowerCase() === project,
+    )
+    .sort(
+      (left, right) =>
+        severityRank[left.severity] - severityRank[right.severity] ||
+        right.observedAt - left.observedAt ||
+        left.id.localeCompare(right.id),
+    );
+  const activeWork = (options.problemsOnly ? [] : input.activeWork.filter(matchesProject)).sort(
     (left, right) => right.startedAt - left.startedAt || left.id.localeCompare(right.id),
   );
-  const recentOutcomes = [...input.recentOutcomes].sort(
-    (left, right) => right.endedAt - left.endedAt || left.id.localeCompare(right.id),
-  );
+  const recentOutcomes = (
+    options.problemsOnly ? [] : input.recentOutcomes.filter(matchesProject)
+  ).sort((left, right) => right.endedAt - left.endedAt || left.id.localeCompare(right.id));
   const degradedDomains = [...new Set(input.degradedDomains)].sort();
+  const runtimeDomains = input.runtimeDomains.filter(
+    (domain) =>
+      project === undefined ||
+      domain.status === "degraded" ||
+      !["work-orders", "runtime-guardian"].includes(domain.id),
+  );
   const degradedDomainCount = new Set([
     ...degradedDomains,
-    ...input.runtimeDomains
-      .filter((domain) => domain.status === "degraded")
-      .map((domain) => domain.id),
+    ...runtimeDomains.filter((domain) => domain.status === "degraded").map((domain) => domain.id),
   ]).size;
-  const hasAttentionDomain = input.runtimeDomains.some((domain) => domain.status === "attention");
+  const hasAttentionDomain =
+    project === undefined && runtimeDomains.some((domain) => domain.status === "attention");
   const status: OverviewHealthStatus =
     degradedDomainCount > 0
       ? "degraded"
@@ -164,10 +212,13 @@ export function buildRuntimeOverview(
     },
     attention: bounded(attention, normalizedLimit(options.attentionLimit)),
     activeWork: bounded(activeWork, normalizedLimit(options.activeWorkLimit)),
-    automation: [...input.automation].sort((left, right) => left.id.localeCompare(right.id)),
-    runtimeDomains: [...input.runtimeDomains].sort((left, right) =>
+    automation: (options.problemsOnly ? [] : [...input.automation]).sort((left, right) =>
       left.id.localeCompare(right.id),
     ),
+    runtimeDomains: (options.problemsOnly
+      ? runtimeDomains.filter((domain) => !["healthy", "disabled"].includes(domain.status))
+      : [...runtimeDomains]
+    ).sort((left, right) => left.id.localeCompare(right.id)),
     operator: input.operator,
     recentOutcomes: bounded(recentOutcomes, normalizedLimit(options.recentOutcomeLimit)),
     degradedDomains,

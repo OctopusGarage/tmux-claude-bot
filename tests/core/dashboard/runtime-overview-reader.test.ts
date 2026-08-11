@@ -39,7 +39,7 @@ function readers(overrides: Partial<RuntimeOverviewReaders> = {}): RuntimeOvervi
     operator: () => ({
       session: { state: "ready" },
       skills: { installed: 2, expected: 2, state: "ready" },
-      mcpProfiles: { installed: 2, expected: 2, state: "ready" },
+      mcpProfiles: { installed: 2, expected: 2, state: "ready", profiles: [] },
       promptLibrary: { state: "disabled" },
       optionalProjectMcpCount: 0,
     }),
@@ -63,7 +63,14 @@ describe("Runtime Overview reader", () => {
     expect(overview.degradedDomains).toEqual(["runtime-guardian"]);
     expect(overview.automation).toHaveLength(1);
     expect(overview.runtimeDomains).toContainEqual(
-      expect.objectContaining({ id: "power", status: "healthy" }),
+      expect.objectContaining({ id: "power", status: "healthy", errorKind: null }),
+    );
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({
+        id: "runtime-guardian",
+        status: "degraded",
+        errorKind: "read-failed",
+      }),
     );
     expect(JSON.stringify(overview)).not.toContain("token=secret");
     expect(JSON.stringify(overview)).not.toContain("/Users/private");
@@ -122,7 +129,7 @@ describe("Runtime Overview reader", () => {
         operator: () => ({
           session: { state: "ready" },
           skills: { installed: 1, expected: 2, state: "attention" },
-          mcpProfiles: { installed: 2, expected: 2, state: "ready" },
+          mcpProfiles: { installed: 2, expected: 2, state: "ready", profiles: [] },
           promptLibrary: { state: "disabled" },
           optionalProjectMcpCount: 0,
         }),
@@ -144,6 +151,111 @@ describe("Runtime Overview reader", () => {
       ]),
     );
     expect(overview.health.status).toBe("attention");
+  });
+
+  it("contains a collector timeout without blocking the whole snapshot", async () => {
+    const startedAt = Date.now();
+    const overview = await readRuntimeOverview({
+      now: 1_000,
+      sessions: [],
+      collectorTimeoutMs: 10,
+      readers: readers({
+        runtimeGuardian: () => new Promise(() => undefined),
+      }),
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({
+        id: "runtime-guardian",
+        status: "degraded",
+        errorKind: "timeout",
+      }),
+    );
+  });
+
+  it("keeps dependency readiness and scheduled outcomes in the canonical model", async () => {
+    const overview = await readRuntimeOverview({
+      now: 2_000,
+      sessions: [],
+      readers: readers({
+        automation: () => [
+          {
+            id: "loop",
+            label: "Loop Engineering",
+            enabled: true,
+            configured: true,
+            tickMs: 300_000,
+            dependencies: { loopSupervisor: true },
+          },
+        ],
+        workOrders: () => ({
+          unfinished: [],
+          terminal: [
+            {
+              id: "loop-passed",
+              projectId: "alpha",
+              projectName: "Alpha",
+              taskKind: "architecture",
+              status: "completed",
+              scheduledAt: 1_000,
+              updatedAt: 1_700,
+            },
+          ],
+          abandoned: [],
+          staleDispatching: [],
+        }),
+        dailyAudit: () => ({
+          enabled: true,
+          lastFiredAt: 1_900,
+          summary: { active: 1, failed: 1, attention: 1, repairPending: 1 },
+          outcomes: [
+            {
+              id: "ledger:audit-1",
+              domain: "daily-audit",
+              label: "Daily audit",
+              status: "failed",
+              endedAt: 1_800,
+            },
+          ],
+        }),
+        power: () => ({
+          mode: "scheduled",
+          phase: "service",
+          powerSource: "ac",
+          scheduleStatus: "verified",
+          degraded: false,
+          service: {
+            uptimeMs: 60_000,
+            adapters: { telegram: true, lark: false },
+          },
+        }),
+      }),
+    });
+
+    expect(overview.automation[0]).toMatchObject({
+      dependencies: { loopSupervisor: true },
+      lastOutcome: { status: "passed", endedAt: 1_700 },
+    });
+    expect(overview.automation.find((item) => item.id === "loop")?.activeCount).toBe(0);
+    expect(overview.attention.items).toContainEqual(
+      expect.objectContaining({ id: "daily-task-audit:repair-pending" }),
+    );
+    expect(overview.recentOutcomes.items).toContainEqual(
+      expect.objectContaining({ id: "ledger:audit-1", status: "failed" }),
+    );
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({
+        id: "daily-task-audit",
+        summary: expect.stringContaining("1 failed"),
+      }),
+    );
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({
+        id: "power",
+        summary: expect.stringMatching(/up 60000ms.*telegram configured.*lark not configured/),
+      }),
+    );
   });
 
   it("keeps absent optional integrations informational", async () => {

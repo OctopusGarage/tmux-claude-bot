@@ -81,7 +81,7 @@ describe("buildDashboard", () => {
       operator: {
         session: { state: "ready" as const },
         skills: { installed: 2, expected: 2, state: "ready" as const },
-        mcpProfiles: { installed: 2, expected: 2, state: "ready" as const },
+        mcpProfiles: { installed: 2, expected: 2, state: "ready" as const, profiles: [] },
         promptLibrary: { state: "disabled" as const },
         optionalProjectMcpCount: 0,
       },

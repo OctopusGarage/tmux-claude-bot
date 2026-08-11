@@ -444,6 +444,56 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   dashboardProjectSessions: "Sesiones de proyecto",
   dashboardNone: "ninguno",
   dashboardMore: "más",
+  dashboardEnabled: "habilitadas",
+  dashboardIdle: "inactivas",
+  dashboardShown: "mostradas",
+  dashboardHealthy: "saludables",
+  dashboardSession: "sesión",
+  dashboardSkills: "habilidades",
+  dashboardMcpProfiles: "perfiles MCP",
+  dashboardPromptLibrary: "biblioteca de prompts",
+  dashboardSessions: "sesiones",
+  dashboardRunning: "en ejecución",
+  dashboardBusy: "ocupadas",
+  dashboardQueue: "cola",
+  dashboardUp: "activo",
+  dashboardNoAdapters: "sin adaptadores",
+  dashboardRuntimeDomain: (id: string) =>
+    ({
+      "work-orders": "órdenes de trabajo",
+      automation: "automatización",
+      batch: "planificador por lotes",
+      "daily-task-audit": "auditoría diaria de tareas",
+      "runtime-guardian": "guardián de ejecución",
+      "resource-guardian": "guardián de recursos",
+      power: "servicio y energía",
+      "operator-ai": "operador e interfaces de IA",
+    })[id] ?? id,
+  dashboardHealthHealthy: "saludable",
+  dashboardHealthAttention: "requiere atención",
+  dashboardHealthDegraded: "degradado",
+  dashboardAttentionOperatorSession: "La sesión Home Operator requiere atención",
+  dashboardAttentionOperatorSkills: (installed: number, expected: number) =>
+    `Habilidades de Home Operator listas ${installed}/${expected}`,
+  dashboardAttentionOperatorMcp: (installed: number, expected: number) =>
+    `Perfiles MCP administrados listos ${installed}/${expected}`,
+  dashboardAttentionOperatorPrompt: "La biblioteca de prompts configurada no está disponible",
+  dashboardAttentionWorkOrderFailed: (project: string, _taskKind: string) =>
+    `Falló el WorkOrder de ${project}`,
+  dashboardAttentionWorkOrderAbandoned: (project: string) =>
+    `El WorkOrder de ${project} está abandonado`,
+  dashboardAttentionWorkOrderStale: (project: string) =>
+    `El despacho del WorkOrder de ${project} está obsoleto`,
+  dashboardAttentionAutomationDependency: (automation: string) =>
+    `${automation} tiene una dependencia deshabilitada`,
+  dashboardAttentionDailyAudit: (count: number) =>
+    `${count} elemento(s) de Daily Task Audit requieren atención`,
+  dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
+    `${project} tiene un hallazgo de Runtime Guardian`,
+  dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) =>
+    "Resource Guardian requiere atención",
+  dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
+    "La política de energía requiere atención",
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "Delega el contexto de la sesión actual al Loop Supervisor. Empieza directamente cuando el alcance esté claro, o revisa primero el plan si quieres ver la lista, criterios y condiciones de parada.",
