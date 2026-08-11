@@ -178,8 +178,16 @@ function toggleAutomation(
     if (spec.enableKey !== undefined) values[spec.enableKey] = "false";
   }
 
-  writeEnvValues(values);
-  writePauseState(pauseState);
+  if (enabled) {
+    // Restoring the environment is idempotent; only remove its recovery state
+    // after the restored values are durable.
+    writeEnvValues(values);
+    writePauseState(pauseState);
+  } else {
+    // Preserve the values needed by resume before disabling the automation.
+    writePauseState(pauseState);
+    writeEnvValues(values);
+  }
   const after = automationStatusFor(spec, readEnvMap());
   return {
     status: after,

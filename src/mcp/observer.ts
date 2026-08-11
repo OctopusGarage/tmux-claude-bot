@@ -101,8 +101,9 @@ function recentTaskWindow(now: number): TaskWindow {
 export function createObserverMcpServer(
   makeClient: () => ObserverClient = () => new ControlClient(),
   deps: ObserverDeps = {},
+  serverName = "tcb-observer",
 ): McpServer {
-  const server = new McpServer({ name: "tcb-observer", version: appVersion() });
+  const server = new McpServer({ name: serverName, version: appVersion() });
   const now = deps.now ?? Date.now;
   const dailyTaskLedger = deps.dailyTaskLedger ?? (() => new DailyTaskLedger());
   const dailyTaskAuditStore = deps.dailyTaskAuditStore ?? (() => new DailyTaskAuditStore());

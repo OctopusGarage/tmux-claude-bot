@@ -5,6 +5,7 @@ import {
   LOOP_TASK_FAMILY_GOVERNANCE,
   LOOP_WORK_ORDER_TASK_KINDS,
 } from "../src/core/loop/task-family.js";
+import { HOME_MCP_TOOLS, OBSERVER_MCP_TOOLS } from "../src/core/mcp/profiles.js";
 import { NOTIFICATION_SOURCE_CATALOG } from "../src/core/notifications/gateway.js";
 
 const root = path.resolve(__dirname, "..");
@@ -145,6 +146,42 @@ describe("alignment governance contract", () => {
     for (const module of requiredModules) {
       expect(alignment, `missing module alignment row: ${module}`).toContain(`| ${module} |`);
     }
+  });
+
+  it("keeps scheduled automation governance visible in every architecture view", () => {
+    for (const file of [
+      "docs/intelligent-automation-architecture.md",
+      "docs/intelligent-automation-ascii-architecture.md",
+      "docs/agent-maintenance-guidelines.md",
+    ]) {
+      expect(read(file), `${file} must include automationGovernanceReview`).toContain(
+        "automationGovernanceReview",
+      );
+    }
+    const readme = read("README.md");
+    expect(readme).toContain("automationGovernanceReview");
+    expect(readme).toContain("| Resource Guardian |");
+  });
+
+  it("keeps the ASCII architecture on the canonical configurable state directory", () => {
+    const ascii = read("docs/intelligent-automation-ascii-architecture.md");
+
+    expect(ascii).toContain("<state-dir>");
+    expect(ascii).toContain("not the install root");
+    expect(ascii).not.toContain(" ~/.tmux-claude-bot/\n");
+  });
+
+  it("keeps implemented MCP names and canonical role packages aligned", () => {
+    const governance = read("docs/ai-tool-surface-governance.md");
+    const matrix = read("docs/automation-capability-matrix.md");
+    const alignment = read("docs/automation-alignment.md");
+
+    for (const tool of [...OBSERVER_MCP_TOOLS, ...HOME_MCP_TOOLS]) {
+      expect(governance, `missing implemented MCP tool ${tool}`).toContain(tool);
+      expect(matrix, `missing implemented MCP tool ${tool}`).toContain(tool);
+    }
+    expect(governance).not.toMatch(/`tcb-(?:supervisor|worker)`/);
+    expect(alignment).toContain("advertise its canonical server identity");
   });
 
   it("keeps voice and prompt translation visible in architecture and capability docs", () => {

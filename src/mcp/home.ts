@@ -68,7 +68,7 @@ export function createHomeMcpServer(
   makeClient: () => HomeClient = () => new ControlClient(),
   observerDeps: ObserverDeps = {},
 ) {
-  const server = createObserverMcpServer(makeClient, observerDeps);
+  const server = createObserverMcpServer(makeClient, observerDeps, "tcb-home-operator");
 
   server.registerTool(
     "tcb.home.send_prompt",

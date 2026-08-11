@@ -916,9 +916,7 @@ export function startResourceGuardian(
   const repairCoordinator = options.repairCoordinator ?? new RepairCoordinator();
   const repairDispatcher =
     options.repairDispatcher ??
-    (deps.config.runtimeGuardian === undefined
-      ? undefined
-      : createProductionResourceRepairDispatcher(deps, { coordinator: repairCoordinator }));
+    createProductionResourceRepairDispatcher(deps, { coordinator: repairCoordinator });
   const store = options.store ?? createResourceGuardianStore({ stateDir: appStateDir(), now });
   const sampler = createResourceSampler(defaultLightweightProbe(), async () => ({
     capturedAt: now(),
@@ -935,7 +933,7 @@ export function startResourceGuardian(
     ...(options.incidentId ? { incidentId: options.incidentId } : {}),
     ...(options.staleHoldMs === undefined ? {} : { staleHoldMs: options.staleHoldMs }),
     actionController,
-    ...(repairDispatcher === undefined ? {} : { repairDispatcher }),
+    repairDispatcher,
     repairCoordinator,
     recoverOperatorUpdate:
       options.recoverOperatorUpdate ??

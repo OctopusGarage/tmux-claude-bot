@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -163,6 +163,21 @@ describe("config and automation commands", () => {
       changed: true,
     });
     expect(readFileSync(join(dir, ".env"), "utf8")).toContain("LOOP_ENGINEERING_TICK_MS=12345");
+  });
+
+  it("does not pause automation when its resume state cannot be persisted", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-automation-pause-failure-"));
+    process.env.TCB_STATE_DIR = dir;
+    writeEnv(dir, "LOOP_ENGINEERING_CONFIG_FILE=/tmp/loop.yml\nLOOP_ENGINEERING_TICK_MS=12345\n");
+    mkdirSync(join(dir, "automation-pauses.json"));
+    const { runAutomationCommand } = await import("../src/core/config/command.js");
+
+    try {
+      expect(runAutomationCommand(["pause", "loop"]).exitCode).toBe(1);
+      expect(readFileSync(join(dir, ".env"), "utf8")).toContain("LOOP_ENGINEERING_TICK_MS=12345");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("allows the Loop supervisor dependency to be changed through config commands", async () => {

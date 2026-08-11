@@ -5,8 +5,8 @@ instructions, user-facing surfaces, intelligent automation modules, and
 maintenance documentation. It exists because this project now has several
 surfaces that can drift independently: Claude Code project memory, Codex
 `AGENTS.md`, repo skills, `.claude` commands, CLI commands, the TUI, Telegram,
-Feishu/Lark, Loop Engineering, Autopilot, Opportunity Discovery, PR review,
-Daily Task Audit, Runtime Guardian, and docs.
+Feishu/Lark, MCP, Loop Engineering, Autopilot, Opportunity Discovery, PR review,
+Daily Task Audit, Runtime Guardian, Resource Guardian, and docs.
 
 For the current intelligent-automation business model, read
 `docs/intelligent-automation.md`. For user-facing command usage, read
@@ -55,9 +55,9 @@ Use the smallest durable surface that matches the scope:
 | --- | --- | --- |
 | `AGENTS.md` | Cross-agent repository rules Codex and other coding agents must see immediately. Keep it short, strict, and pointer-heavy. | Long tutorials, historical design notes, or feature matrices. |
 | `CLAUDE.md` | Claude Code project memory: development conventions, service/runtime facts, logging, verification, architecture constraints. | Full product manuals or repeated copies of intelligent automation docs. |
-| `docs/intelligent-automation.md` | Business truth for Loop Engineering, Supervisor, WorkOrder, Autopilot, Opportunity Discovery, PR review, Daily Task Audit, Runtime Guardian. | Tool-specific memory mechanics or one-off historical plans. |
+| `docs/intelligent-automation.md` | Business truth for Loop Engineering, Supervisor, WorkOrder, Autopilot, Opportunity Discovery, PR review, Daily Task Audit, Runtime Guardian, and Resource Guardian. | Tool-specific memory mechanics or one-off historical plans. |
 | `docs/automation-alignment.md` | Alignment checklist and source-of-truth map across agent instructions, docs, commands, channels, config, and tests. | User-facing command reference. |
-| `docs/automation-capability-matrix.md` | Surface-by-surface capability parity for CLI, TUI, Telegram, Feishu/Lark, and the home/operator skill. | Deep implementation details or task-family business truth. |
+| `docs/automation-capability-matrix.md` | Surface-by-surface capability parity for CLI, TUI, Telegram, Feishu/Lark, MCP, and the home/operator skill. | Deep implementation details or task-family business truth. |
 | `docs/ai-tool-surface-governance.md` | Role-based exposure rules for AI-facing CLI, MCP tools, and skills. | Human command manuals or provider-specific SDK integration. |
 | `docs/manual.md`, `docs/commands.md`, `docs/tui.md` | Human-facing usage and command behavior. | Internal-only design constraints unless needed to explain user behavior. |
 | `docs/agents/usage-guide.md` | AI operator recipes for using the installed bot. | Source-code implementation details that can drift from CLI help. |
@@ -367,6 +367,10 @@ The coordinator and durable circuit are default disabled in observe mode, use th
 are ready but before Runtime Guardian and Daily Task Audit. Observe mode must
 keep the circuit open; only protect mode may close Guardian-owned admission.
 
+Each role-scoped MCP server must advertise its canonical server identity during
+initialization. The Home profile is `tcb-home-operator`, never `tcb-observer`,
+while inherited Observer tools keep their read-only response roles.
+
 When adding, renaming, removing, or changing a user-visible or automation-visible
 feature, review this matrix in the same slice:
 
@@ -376,7 +380,7 @@ feature, review this matrix in the same slice:
 | Control button/card action | Shared action registry when available, Telegram keyboard/callback parser, Lark card/action parser, TUI when applicable, dangerous-action confirmation, parity tests. |
 | CLI command | `src/cli.ts` composition plus `src/cli/*-commands.ts` family registrars, control protocol/client/server if socket-backed, `docs/cli-reference.md`, `docs/manual.md`, `docs/agents/usage-guide.md`, CLI tests. |
 | User personal configuration | Safe operator command surface such as `tcb config ...`, `tcb automation ...`, setup/dedicated commands for credentials, redacted reads, allowlisted non-secret writes, `.env.example`, `docs/manual.md`, `docs/agents/usage-guide.md`, and config/CLI tests. |
-| MCP tool or AI tool surface | Role namespace, capability class, typed response contract, control/CLI backing path, actual enforcement layer for role/scope/permission, `docs/ai-tool-surface-governance.md`, docs/tests. |
+| MCP tool or AI tool surface | Canonical server identity, role namespace, capability class, typed response contract, control/CLI backing path, actual enforcement layer for role/scope/permission, `docs/ai-tool-surface-governance.md`, docs/tests. |
 | External skill/tool dependency | Curated capability catalog, task-family dependency metadata, approved skill registry, install/update/status CLI, doctor check, prompt fallback wording, `docs/agents/skills.md`, docs/tests. |
 | Home/operator workspace | `<state-dir>/home` provisioning, `CLAUDE.md`, `AGENTS.md`, README/manifest, skill/MCP role names, control-service provenance checks, docs/tests. |
 | TUI action | TUI keymap/help text, control client protocol, user docs, tests. If intentionally unsupported, document the reason. |

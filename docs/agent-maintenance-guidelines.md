@@ -124,8 +124,8 @@ The alignment matrix and drift checklist live in `docs/automation-alignment.md`.
 Keep these documents aligned with code and tests when changing:
 
 - Loop Engineering task families: architecture, bug-fix, test-coverage,
-  security-maintenance, harness-auto, opportunity-discovery, PR review, and
-  workspace tasks.
+  security-maintenance, harness-auto, opportunity-discovery,
+  automationGovernanceReview, PR review, and workspace tasks.
 - Autopilot active delegation.
 - Daily Task Audit and auto-repair.
 - Runtime Guardian and fast-heal repair.

@@ -277,8 +277,8 @@ should declare one capability class.
 | Role | Skill Surface | MCP Surface | CLI Surface | Notes |
 | --- | --- | --- | --- | --- |
 | Home Operator | `tcb-home-operator` or the current bundled operator skill section. | `tcb.home.*`, `tcb.observer.*` | `tcb dashboard`, `tcb sessions`, `tcb loop reports`, `tcb task audit`, `tcb autopilot` | Owns discovery and owner-facing orchestration, not target edits. |
-| Loop Supervisor | `tcb-supervisor` task policy embedded in governed prompts/skills. | `tcb.supervisor.*`, limited `tcb.worker.*`, read-only observer tools | No direct human CLI dependency inside prompts except documented control operations. | Must be WorkOrder-bound and produce final summary evidence. |
-| Loop Worker | `tcb-worker` scoped execution instructions. | `tcb.worker.*` scoped by `workOrderId` and repository path | Project-local commands only through WorkOrder policy | Cannot discover or mutate unrelated sessions/projects. |
+| Loop Supervisor | `tcb-loop-supervisor` task policy embedded in governed prompts/skills. | `tcb.supervisor.*`, limited `tcb.worker.*`, read-only observer tools | No direct human CLI dependency inside prompts except documented control operations. | Must be WorkOrder-bound and produce final summary evidence. |
+| Loop Worker | `tcb-loop-worker` scoped execution instructions. | `tcb.worker.*` scoped by `workOrderId` and repository path | Project-local commands only through WorkOrder policy | Cannot discover or mutate unrelated sessions/projects. |
 | Runtime Guardian Repair | `tcb-runtime-guardian` repair recipe. | `tcb.guardian.*`, observer tools | Runtime Guardian config/check commands when added | Repairs bot runtime policy/artifacts only. |
 | Daily Audit Repair | `tcb-daily-audit-repair` repair recipe. | `tcb.audit.*`, observer tools | `tcb task audit`, `tcb task report` | Repairs bot task audit/reporting logic only. |
 | Project Agent | General project guidance, not automation admin skill. | Usually none; optionally read-only project diagnostics. | Chat/TUI workflows; external `tcb send` is an operator action targeting this session, not authority held by the project agent. | Ordinary user chat must respect active automation conflicts. |
@@ -298,8 +298,8 @@ Use role namespaces so tools are discoverable without being overpowered:
 
 | Namespace | Tool Shape | First Tools To Consider |
 | --- | --- | --- |
-| `tcb.observer.*` | Read-only service and artifact discovery. | `status`, `projects`, `sessions`, `queue`, `logs_query`, `loop_reports_list`, `task_audit_summary`, `runtime_findings`. |
-| `tcb.home.*` | Operator control and owner-approved delegation. | `open_project`, `autopilot_delegate`, `autopilot_queue`, `opportunity_list`, `opportunity_show`, `opportunity_discuss`. |
+| `tcb.observer.*` | Read-only service and artifact discovery. | Implemented: `status`, `projects`, `sessions`, `queue`, `logs_query`, `loop_reports_list`, `daily_task_audit`, `runtime_guardian_findings`. |
+| `tcb.home.*` | Operator control and owner-approved delegation. | Implemented: `send_prompt`, `delegate_autopilot`; future candidates: `open_project`, `autopilot_queue`, `opportunity_list`, `opportunity_show`, `opportunity_discuss`. |
 | `tcb.supervisor.*` | WorkOrder orchestration and finalization. | `workorder_read`, `worker_lease`, `worker_peek`, `final_summary_write`, `system_gate_status`. |
 | `tcb.worker.*` | Bounded worker execution. | `scope_read`, `artifact_write`, `project_peek`, future command wrappers constrained by WorkOrder policy. |
 | `tcb.guardian.*` | Runtime Guardian self-repair flow. | `findings`, `repair_delegate`, `repair_readiness`. |

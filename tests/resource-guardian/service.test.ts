@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { HandlerDeps } from "../../src/core/deps.js";
 import { notificationRequestForEvent } from "../../src/core/notifications/events.js";
 import { createProductionResourceActionController } from "../../src/core/resource-guardian/action-controller.js";
+import type { ResourceGuardianRepairDispatch } from "../../src/core/resource-guardian/repair.js";
 import {
   createResourceGuardianCoordinator,
   type ResourceGuardianTickRuntime,
@@ -33,6 +34,10 @@ import type { AppConfig } from "../../src/shared/types.js";
 
 const minute = 60_000;
 type StartResourceGuardianTestOptions = NonNullable<Parameters<typeof startResourceGuardian>[1]>;
+const unusedRepairDispatcher = async (): Promise<ResourceGuardianRepairDispatch> => ({
+  status: "blocked",
+  detail: "repair is outside these startup timer tests",
+});
 
 function sample(capturedAt: number, hostCpuPct: number): ResourceSample {
   return {
@@ -1468,6 +1473,7 @@ describe("resource guardian coordinator", () => {
       incidentId: () => "unused",
       setInterval: setIntervalFn,
       clearInterval: clearIntervalFn,
+      repairDispatcher: unusedRepairDispatcher,
       recoverOperatorUpdate: () => {},
     });
     await Promise.resolve();
@@ -1507,11 +1513,13 @@ describe("resource guardian coordinator", () => {
           return { id: 2 } as unknown as NodeJS.Timeout;
         }) as NonNullable<StartResourceGuardianTestOptions["setInterval"]>,
         clearInterval: () => {},
+        repairDispatcher: unusedRepairDispatcher,
         recoverOperatorUpdate: () => {},
       },
     );
 
     await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(store.writes).toBe(1));
     expect(takeSample).toHaveBeenNthCalledWith(1, 1_200, 1_000);
     intervalTick?.();
     await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(2));
@@ -1541,6 +1549,7 @@ describe("resource guardian coordinator", () => {
           return { id: 3 } as unknown as NodeJS.Timeout;
         }) as NonNullable<StartResourceGuardianTestOptions["setInterval"]>,
         clearInterval: () => {},
+        repairDispatcher: unusedRepairDispatcher,
         recoverOperatorUpdate: () => {},
       },
     );

@@ -58,6 +58,7 @@ describe("home MCP server", () => {
   it("registers observer tools plus controlled Home tools", async () => {
     const { client, server } = await connectHomeClient();
     try {
+      expect(client.getServerVersion()?.name).toBe("tcb-home-operator");
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name).sort()).toEqual(
         [...OBSERVER_MCP_TOOLS, ...HOME_MCP_TOOLS].sort(),

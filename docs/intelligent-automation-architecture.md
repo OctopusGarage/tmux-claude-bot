@@ -111,6 +111,8 @@ Loop Engineering supports project and workspace task families:
 - `securityMaintenance`: fix reachable and confirmed security risks.
 - `harnessAuto`: orchestrate multiple health subtasks in one run, branch, and PR.
 - `opportunityDiscovery`: propose useful work without editing.
+- `automationGovernanceReview`: review the bot's own automation governance and
+  allow at most one non-auto-merged P0/P1 repair PR when configured.
 - `pullRequestReview`: review loop-created PRs for configured projects or workspaces.
 
 `prReview.repositories` is separate from `pullRequestReview`. It processes all

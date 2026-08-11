@@ -294,6 +294,17 @@ describe("docs contract", () => {
     ]) {
       expect(llms, `missing ${doc} in llms.txt`).toContain(doc);
     }
+    expect(llms).toContain("Resource Guardian");
+    expect(llms).toContain("Runtime Guardian");
+    expect(llms).toMatch(/Automation capability matrix[^\n]*MCP/);
+  });
+
+  it("keeps the documentation map complete for Guardian and MCP surfaces", () => {
+    const map = read("docs/README.md");
+
+    expect(map).toMatch(/intelligent-automation\.md[^\n]*Resource Guardian/);
+    expect(map).toMatch(/intelligent-automation\.md[^\n]*Runtime Guardian/);
+    expect(map).toMatch(/automation-capability-matrix\.md[^\n]*MCP/);
   });
 
   it("keeps maintained docs in English", () => {
