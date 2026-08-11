@@ -3116,7 +3116,7 @@ function runSupervisedAutoMerge(input: {
 
 function isPullRequestHeadBehindBaseFailure(result: LoopRunCommandResult): boolean {
   const detail = `${result.stderr}\n${result.stdout}`.toLowerCase();
-  return detail.includes("head branch is not up to date with the base branch");
+  return /head branch is not up to date with (?:the )?base(?: branch)?/.test(detail);
 }
 
 function mergeMethodFlag(method: "squash" | "merge" | "rebase" | undefined): string {
