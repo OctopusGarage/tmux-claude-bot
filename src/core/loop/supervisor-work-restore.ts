@@ -66,6 +66,11 @@ export function restoredLoopSupervisorMessage(
   };
 }
 
+export function shouldDiscardRestoredLoopSupervisorMessage(persisted: PersistedMessage): boolean {
+  const restore = parseLoopSupervisorControlRestore(persisted);
+  return restore !== null && parseSupervisorFinalSummaryFile(restore.workOrder).ok;
+}
+
 function parseLoopSupervisorControlRestore(
   persisted: PersistedMessage,
 ): LoopSupervisorControlRestore | null {

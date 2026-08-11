@@ -12,12 +12,14 @@ export type PersistedChannelRestoreDeps = {
   keepPersistedCarryover(messages: PersistedMessage[]): void;
 };
 
+export type PersistedChannelRestoreResult = QueuedMessage | "discard" | null;
+
 export function restorePersistedChannel(input: {
   channel: Channel;
   loadPersisted: PersistedChannelRestoreDeps["loadPersisted"];
   enqueue: PersistedChannelRestoreDeps["enqueue"];
   keepPersistedCarryover: PersistedChannelRestoreDeps["keepPersistedCarryover"];
-  restore: (message: PersistedMessage) => QueuedMessage | null;
+  restore: (message: PersistedMessage) => PersistedChannelRestoreResult;
 }): RestorePersistedChannelSummary {
   let restored = 0;
   let skipped = 0;
@@ -35,6 +37,10 @@ export function restorePersistedChannel(input: {
       continue;
     }
     const message = input.restore(persisted);
+    if (message === "discard") {
+      skipped++;
+      continue;
+    }
     if (message === null) {
       skipped++;
       carryover.push(persisted);
