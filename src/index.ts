@@ -12,8 +12,8 @@ import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.
 import { startLoopEngineering } from "./core/loop/service.js";
 import { startLoopSupervisors } from "./core/loop/supervisor-session.js";
 import { startLongTaskMonitor } from "./core/notifications/long-task-monitor.js";
-import { startKeepAwake, stopKeepAwake } from "./core/platform/keep-awake.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
+import { startHostPowerManager } from "./core/power/power-manager.js";
 import { startOperator } from "./core/projects/operator-home.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { autoRecoverOnBoot } from "./core/recovery/recover.js";
@@ -34,6 +34,7 @@ const log = createLogger("boot");
 const fatalLog = createLogger("index");
 let shuttingDown = false;
 let stopResourceGuardian = (): void => {};
+let stopHostPowerManager = (): void => {};
 
 // Refuse to start beside another running instance — two pollers on one
 // Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
@@ -54,11 +55,6 @@ try {
 
 const deps = bootstrap();
 const { config, currentProject, bridge } = deps;
-
-// Keep the Mac awake on AC power (macOS, opt-in) for the bot's lifetime. In the
-// bot process — not the launchd wrapper — so it covers every launch path
-// identically (dev tsx, managed service, manual run).
-startKeepAwake(config.keepAwake);
 
 async function init(): Promise<void> {
   // Restore every channel's current session (Telegram + Feishu may differ).
@@ -110,8 +106,8 @@ process.once("SIGINT", markCleanShutdown);
 process.once("SIGTERM", markCleanShutdown);
 process.once("SIGINT", releaseInstanceLock);
 process.once("SIGTERM", releaseInstanceLock);
-process.once("SIGINT", stopKeepAwake);
-process.once("SIGTERM", stopKeepAwake);
+process.once("SIGINT", () => stopHostPowerManager());
+process.once("SIGTERM", () => stopHostPowerManager());
 process.once("SIGINT", () => stopResourceGuardian());
 process.once("SIGTERM", () => stopResourceGuardian());
 
@@ -196,6 +192,7 @@ let notificationDrivenServicesStarted = false;
 const startNotificationDrivenServices = (): void => {
   if (notificationDrivenServicesStarted) return;
   notificationDrivenServicesStarted = true;
+  stopHostPowerManager = startHostPowerManager(deps);
   stopResourceGuardian = startResourceGuardian(deps);
   startRuntimeGuardian(deps);
   startDailyTaskAudit(deps);

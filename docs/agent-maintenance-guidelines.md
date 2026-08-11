@@ -50,6 +50,45 @@ Identify bot processes with both the project path and entrypoint
 (`dist/cli.js` or `src/index.ts`). Do not use broad process patterns such as
 `node` or `tsx` alone.
 
+### Host power and quiet hours
+
+Keep host power policy separate from automation admission. `off` lets macOS
+apply its normal idle-sleep, battery, lid, display, and Power Nap rules.
+`always` is the explicit reachability trade-off that holds `caffeinate -s` on
+AC power. `scheduled` holds that assertion during the service window, releases
+it for natural sleep after active work drains, and relies on one explicit fixed
+daily `wake` installed by the operator. The runtime verifies that event before
+release and fails awake when it is missing or conflicting.
+
+Quiet hours remain a workload policy, not a request to sleep. A quiet-hours decision
+may defer a new Loop, Batch, Daily Task Audit repair, Runtime Guardian repair,
+Project Recovery, Opportunity Discovery, or similar autonomous start. It must
+not force the machine to sleep, schedule a wake, terminate an agent, or treat
+system sleep as task cancellation. Existing processes are allowed to freeze and
+resume with the operating system. User-initiated work that arrives while the
+host is awake remains interactive; a sleeping host is not remotely reachable
+through its outbound chat connections.
+
+Keep the implementation deliberately small:
+
+- calculate the configured quiet window from the requested IANA timezone;
+- apply the decision at the existing pre-reservation admission seam;
+- leave deferred work due without consuming a retry or fire anchor;
+- collapse missed recurring intervals instead of replaying every slot after
+  wake and a short reconnect warmup;
+- rely on the existing Telegram polling supervision and Feishu/Lark sleep/network
+  reconnect watchdog when the process resumes.
+
+Runtime code must not mutate `pmset`. The dedicated operator command may install
+or remove only the exact fixed repeating `wake` event after conflict checks; it
+is the sole privileged boundary. Do not add forced sleep, `wakeorpoweron`,
+dynamic or periodic wakes, a root helper, passwordless sudo, screen/HID presence
+emulation, an agent-hibernation protocol, or a durable host-power state machine.
+Telegram retains pending updates according to its provider contract.
+Feishu/Lark long-connection events that occur while the host sleeps are
+best-effort and may be missed; that limitation is intentionally accepted for
+this operating mode.
+
 ## Sensitive Data And Paths
 
 Never hardcode personal paths, usernames, credentials, tokens, or private

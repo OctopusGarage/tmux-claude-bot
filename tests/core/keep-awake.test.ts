@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
-import { startKeepAwake, stopKeepAwake } from "../../src/core/platform/keep-awake.js";
+import {
+  createKeepAwakeController,
+  startKeepAwake,
+  stopKeepAwake,
+} from "../../src/core/platform/keep-awake.js";
 
 const fakeChild = () => {
   const handlers = new Map<string, (...args: unknown[]) => void>();
@@ -104,5 +108,24 @@ describe("keep-awake", () => {
     startKeepAwake(true);
 
     expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("exposes idempotent acquire, release, active, and stop operations", () => {
+    const child = fakeChild();
+    const spawnChild = vi.fn(() => child);
+    const controller = createKeepAwakeController({
+      platform: "darwin",
+      pid: 42,
+      spawnChild: spawnChild as never,
+    });
+    expect(controller.active()).toBe(false);
+    expect(controller.acquire()).toBe(true);
+    expect(controller.acquire()).toBe(true);
+    expect(controller.active()).toBe(true);
+    expect(spawnChild).toHaveBeenCalledTimes(1);
+    controller.release();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(controller.active()).toBe(false);
+    controller.stop();
   });
 });

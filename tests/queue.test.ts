@@ -36,6 +36,24 @@ const createTestMessage = (
 });
 
 describe("MessageQueue", () => {
+  it("reports pending and in-flight work through one lifecycle predicate", async () => {
+    const queue = new MessageQueue(10);
+    let release: (() => void) | undefined;
+    queue.setHandler(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    expect(queue.hasPendingOrRunning()).toBe(false);
+    queue.enqueue(createTestMessage({ id: "active" }));
+    await waitFor(() => release !== undefined);
+    expect(queue.hasPendingOrRunning()).toBe(true);
+    release?.();
+    await waitFor(() => !queue.hasPendingOrRunning());
+    expect(queue.hasPendingOrRunning()).toBe(false);
+  });
+
   describe("basic processing", () => {
     it("processes messages with handler", async () => {
       const queue = new MessageQueue(10);

@@ -13,6 +13,7 @@ family registrars.
 - `tcb doctor`
 - `tcb config`
 - `tcb automation`
+- `tcb power`
 - `tcb resource`
 - `tcb capabilities`
 - `tcb install`
@@ -57,6 +58,9 @@ family registrars.
 - `tcb automation status`
 - `tcb automation pause <loop|task-audit|runtime-guardian|batch>`
 - `tcb automation resume <loop|task-audit|runtime-guardian|batch>`
+- `tcb power status`
+- `tcb power schedule install`
+- `tcb power schedule remove`
 - `tcb resource status`
 - `tcb resource incidents`
 - `tcb resource mode <observe|protect>`

@@ -97,6 +97,26 @@ export const envSchema = z.object({
   // macOS: keep the Mac awake on AC power while the bot runs so a plugged-in
   // laptop stays reachable from the phone. Opt-in; set by the setup wizard.
   TCB_KEEP_AWAKE: z.string().default("0"),
+  TCB_KEEP_AWAKE_MODE: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.enum(["off", "always", "scheduled"]).optional(),
+  ),
+  TCB_QUIET_HOURS_TIMEZONE: blankTolerantString("Asia/Singapore").refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value }).format();
+      return true;
+    } catch {
+      return false;
+    }
+  }, "invalid IANA timezone"),
+  TCB_QUIET_HOURS_START: blankTolerantString("02:00").refine(
+    (value) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value),
+    "expected HH:mm",
+  ),
+  TCB_QUIET_HOURS_END: blankTolerantString("09:30").refine(
+    (value) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value),
+    "expected HH:mm",
+  ),
   LARK_ENABLED: z.string().default("false"),
   LARK_APP_ID: z.string().default(""),
   LARK_APP_SECRET: z.string().default(""),
@@ -339,6 +359,19 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
         }
       : undefined;
 
+  const legacyKeepAwake = parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true";
+  const hostPowerMode = parsed.TCB_KEEP_AWAKE_MODE ?? (legacyKeepAwake ? "always" : "off");
+  const quietMinutes = (value: string): number => {
+    const [hour, minute] = value.split(":").map(Number);
+    return (hour ?? 0) * 60 + (minute ?? 0);
+  };
+  const quietDuration =
+    (quietMinutes(parsed.TCB_QUIET_HOURS_END) - quietMinutes(parsed.TCB_QUIET_HOURS_START) + 1440) %
+    1440;
+  if (quietDuration <= 15) {
+    throw new Error("quiet-hours window must be longer than the 15-minute wake warmup");
+  }
+
   return {
     telegramBotToken,
     claudeStartCommand: parsed.CLAUDE_START_COMMAND,
@@ -374,7 +407,13 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       loopWorkerMaxIdleMs: parsed.SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS,
     },
     autoRecover: parsed.AUTO_RECOVER !== "false" && parsed.AUTO_RECOVER !== "0",
-    keepAwake: parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true",
+    keepAwake: hostPowerMode === "always",
+    hostPower: {
+      mode: hostPowerMode,
+      timezone: parsed.TCB_QUIET_HOURS_TIMEZONE,
+      quietStart: parsed.TCB_QUIET_HOURS_START,
+      quietEnd: parsed.TCB_QUIET_HOURS_END,
+    },
     lark,
     scheduler: {
       tickMs: blankTolerantNonNegativeInt(8000).parse(parsed.BATCH_SCHEDULER_TICK_MS),

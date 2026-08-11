@@ -60,6 +60,18 @@ clearly synthetic fixtures or generic examples. Live user configuration belongs
 under the state/config directory, external backups, or operator notes outside
 the source tree.
 
+## Host Power Ownership
+
+Let the operating system own the decision to sleep; never force host sleep.
+Keep-awake is an explicit reachability policy, not a platform requirement.
+Scheduled mode may use one operator-authorized, fixed, verified daily macOS
+`wake` event to restore its normal service window. Runtime code must not mutate
+that schedule or request privileges: only a dedicated interactive command may
+install or remove it. Do not add dynamic/frequent wakes, `wakeorpoweron`, a root
+helper, passwordless sudo, screen/HID presence emulation, or agent termination
+merely to make the host sleep. Quiet hours defer new autonomous work before
+reservation; in-flight work drains before the keep-awake assertion is released.
+
 ## AI Capability Boundary
 
 Do not implement bot-owned AI behavior by writing code or scripts that call
