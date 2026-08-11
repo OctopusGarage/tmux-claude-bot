@@ -321,6 +321,13 @@ function isLegacySystemGitEnoentFailure(failure: string): boolean {
     failure === "isolated worktree branch check failed: spawnSync git ENOENT"
   );
 }
+function isLegacyPrAutoMergeHeadBehindBaseFailure(failure: string): boolean {
+  const detail = failure.toLowerCase();
+  return (
+    failure.startsWith("PR auto-merge failed:") &&
+    /head branch is not up to date with (?:the )?base(?: branch)?/.test(detail)
+  );
+}
 function isIgnorableLegacySuccessfulSummaryFailure(
   record: TerminalWorkOrder,
   finalSummaryPath: string,
@@ -329,6 +336,7 @@ function isIgnorableLegacySuccessfulSummaryFailure(
   return (
     isLegacyIsolatedBranchMismatchFailure(failure) ||
     isLegacySystemGitEnoentFailure(failure) ||
+    isLegacyPrAutoMergeHeadBehindBaseFailure(failure) ||
     legacyPreMutationEvalFailure(record, finalSummaryPath, [failure])
   );
 }
