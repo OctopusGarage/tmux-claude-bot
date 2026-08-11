@@ -763,6 +763,57 @@ describe("createLoopSupervisorTaskRunner", () => {
     ]);
   });
 
+  it("discards persisted supervisor control work that already has a final summary", () => {
+    const persistPath = join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json");
+    const finalSummaryPath = join(process.env.TCB_STATE_DIR ?? "", "supervisor-final-summary.json");
+    writeFileSync(
+      finalSummaryPath,
+      JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["already completed before restart"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      }),
+    );
+    const message = persistedSupervisorMessage("wo-completed", "Run completed work order");
+    const restore = message.controlRestore;
+    if (restore?.kind !== "loop-supervisor")
+      throw new Error("expected supervisor restore metadata");
+    writeFileSync(
+      persistPath,
+      `${JSON.stringify(
+        [
+          {
+            ...message,
+            controlRestore: {
+              ...restore,
+              workOrder: {
+                ...workOrder,
+                id: "wo-completed",
+                finalSummaryPath,
+              },
+            },
+          },
+        ],
+        null,
+        2,
+      )}\n`,
+    );
+    const restoredQueue = new MessageQueue(30, persistPath);
+    restoredQueue.setHandler(async (queuedMessage) => {
+      queuedMessage.reject(new Error("completed work should not be replayed"));
+    });
+
+    const restored = restoreLoopControlQueue({ queue: restoredQueue });
+    restoredQueue.flushPending();
+
+    expect(restored).toBe(0);
+    expect(restoredQueue.loadPersisted()).toEqual([]);
+  });
+
   it("keeps supervisor control work persisted when restore cannot re-enqueue it", async () => {
     const persistPath = join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json");
     writeFileSync(
