@@ -144,6 +144,11 @@ must remain visible in the WorkOrder or task ledger evidence.
 Task Family is the single scheduled-job read model for Loop Engineering. The
 scheduler and Daily Task Audit discovery must consume it rather than reconstruct
 project, workspace, or repository task policy, job keys, or job kinds.
+Active-delegated WorkOrders are aggregate execution evidence, not scheduled
+Architecture occurrences. Their settlement identity must include
+`active-delegated-task` so a completed delegation cannot advance the plain
+project Architecture `lastFired` checkpoint or overwrite the Architecture
+ledger task id.
 Security alignment invariant: every project Security Maintenance schedule must
 run its configured deterministic risk assessment before creating a WorkOrder.
 The default action threshold is 70 and the default critical threshold is 90;
