@@ -26,7 +26,7 @@ type KeepAwakeControllerOptions = {
  *
  * Lives in the bot process (not the launchd wrapper) so it covers every launch path
  * and can be released during scheduled quiet hours without changing macOS policy.
- * Does NOT cover lid-closed (clamshell) sleep; that needs `sudo pmset -a disablesleep 1`.
+ * Does not override normal lid-closed (clamshell) sleep behavior.
  */
 export function createKeepAwakeController(
   options: KeepAwakeControllerOptions = {},

@@ -44,6 +44,12 @@ function config(poolSize: number): AppConfig {
     projectSessionPrefix: "tmux_proj_",
     startCommands: [],
     claudeStartCommand: "claude",
+    hostPower: {
+      mode: "off",
+      timezone: "Asia/Singapore",
+      quietStart: "02:00",
+      quietEnd: "09:30",
+    },
     loopEngineering: {
       configFile: "",
       supervisor: {
@@ -341,9 +347,44 @@ describe("active delegated task supervisor pool", () => {
       }),
     ).resolves.toEqual({
       status: "blocked",
-      reason: "resource admission deferred: critical host pressure",
+      reason: "automation admission deferred: critical host pressure",
       showQueue: false,
     });
+
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+    expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "loop-runs"))).toBe(false);
+    expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "scheduled_task_ledger.json"))).toBe(
+      false,
+    );
+  });
+
+  it("defers quiet-hours background delegation before durable side effects", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const d = deps(1);
+    d.config.hostPower = {
+      mode: "scheduled",
+      timezone: "Asia/Singapore",
+      quietStart: "02:00",
+      quietEnd: "09:30",
+    };
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-16T20:10:00Z"));
+    try {
+      await expect(
+        startActiveDelegatedTask(d, {
+          session: "tmux_proj_unmapped",
+          requirement: "repair the failed task",
+          resourceTrigger: "background",
+        }),
+      ).resolves.toEqual({
+        status: "blocked",
+        reason: "automation admission deferred: quiet-hours",
+        showQueue: false,
+      });
+    } finally {
+      now.mockRestore();
+    }
 
     expect(startLoopSupervisor).not.toHaveBeenCalled();
     expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
@@ -383,7 +424,7 @@ describe("active delegated task supervisor pool", () => {
       }),
     ).resolves.toEqual({
       status: "blocked",
-      reason: "resource admission deferred: emergency host pressure",
+      reason: "automation admission deferred: emergency host pressure",
       showQueue: false,
     });
   });

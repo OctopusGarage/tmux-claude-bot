@@ -69,12 +69,11 @@ id for that project. Use `/start` only when they want a fresh agent session.
 exactly ONE bot process (two cause a Telegram 409); (3) check network/proxy can reach
 the chat API; (4) on macOS, was it asleep? — see keep-awake.
 
-**Keep the Mac awake so it stays reachable** → a sleeping Mac drops the bot (an
-outbound long-poll can't be woken). Enable in setup or `tcb setup --reconfigure`: while
-the bot runs it holds `caffeinate -s`, which prevents system sleep only on AC power. On
-battery, the Mac may sleep normally. A **closed lid** still sleeps — for that they ALSO
-need `sudo pmset -a disablesleep 1` (persistent, drains battery; warn them). `tcb doctor`
-shows if it's active.
+**Balance reachability with natural Mac sleep** → `off` leaves sleep to macOS;
+`always` holds the legacy AC-only assertion; `scheduled` releases it during the
+default 02:00–09:30 quiet window after active work drains. Use the scheduled setup
+sequence in the CLI admin section below and diagnose it with `tcb power status`.
+A closed lid and battery operation continue to follow normal macOS behavior.
 
 **Use it from the PC terminal** → `tcb tui` (managed) or `npm run tui` (dev). Needs the
 bot running. Keys: `j/k` move, `i` compose a prompt (multi-line paste works), `c`
@@ -327,6 +326,12 @@ for one accidentally exited current project use
   `resource status|incidents|mode|profile` · `tui` · `recover` · `logs` · `install` ·
   `service <install|uninstall|status|pause|resume|restart|logs>`.
   (`npm run dev|tui|doctor|service:*` for dev.)
+
+  To enable the default 02:00–09:30 Asia/Singapore natural-sleep window, run
+  `tcb config set TCB_KEEP_AWAKE_MODE scheduled`, then
+  `tcb power schedule install`, restart the service, and verify with
+  `tcb power status`. The managed wake is 09:15, providing a 15-minute reconnect
+  warmup. Schedule conflicts fail closed; do not overwrite them manually.
 - **TUI keys**: see [tui.md](../tui.md).
 
 ---

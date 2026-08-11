@@ -60,6 +60,22 @@ it for natural sleep after active work drains, and relies on one explicit fixed
 daily `wake` installed by the operator. The runtime verifies that event before
 release and fails awake when it is missing or conflicting.
 
+The supported operator sequence is `tcb config set TCB_KEEP_AWAKE_MODE
+scheduled`, `tcb power schedule install`, service restart, then `tcb power
+status`. The default Singapore timeline is quiet at 02:00, fixed wake at 09:15,
+and background resume at 09:30. `tcb power status` must distinguish a verified
+schedule from one that is not required in `off`/`always`, and must surface the
+AC-only assertion as degraded on battery. Doctor validates the selected mode;
+time-dependent schedule, phase, and power-source diagnosis remains owned by the
+dedicated power command.
+
+The configured IANA timezone is policy truth and must not be required to equal
+the macOS host timezone. Convert its wake time to the host's local wall clock
+before inspecting or installing the `pmset repeat` event, and show both times in
+status. Read the macOS system timezone independently of any process `TZ`
+environment variable. A different fixed-offset timezone is valid; reject only a seasonal or
+otherwise changing offset that one fixed repeating event cannot preserve.
+
 Quiet hours remain a workload policy, not a request to sleep. A quiet-hours decision
 may defer a new Loop, Batch, Daily Task Audit repair, Runtime Guardian repair,
 Project Recovery, Opportunity Discovery, or similar autonomous start. It must

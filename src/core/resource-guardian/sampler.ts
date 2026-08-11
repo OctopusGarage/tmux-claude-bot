@@ -15,6 +15,12 @@ export type ResourceSampler = {
   sample(request: ResourceSampleRequest): Promise<ResourceSample>;
 };
 
+export const RESOURCE_SUSPENSION_MIN_GAP_MS = 60_000;
+
+export function resourceSuspensionGapMs(tickMs: number): number {
+  return Math.max(RESOURCE_SUSPENSION_MIN_GAP_MS, tickMs * 4);
+}
+
 export function defaultLightweightProbe(): LightweightProbe {
   return {
     cpuTotals: hostCpuTotals,
@@ -26,17 +32,22 @@ export function defaultLightweightProbe(): LightweightProbe {
 export function createResourceSampler(
   lightweightProbe: LightweightProbe,
   deepProbe: DeepResourceProbe,
+  options: { suspensionGapMs?: number } = {},
 ): ResourceSampler {
   let previousCpuTotals: CpuTotals | undefined;
+  const suspensionGapMs = options.suspensionGapMs ?? RESOURCE_SUSPENSION_MIN_GAP_MS;
 
   return {
     async sample({ now, scheduledAt, deep }): Promise<ResourceSample> {
       const currentCpuTotals = lightweightProbe.cpuTotals();
       const [oneMinuteLoad] = lightweightProbe.loadAverage();
       const cpuCount = lightweightProbe.cpuCount();
-      const hostCpuPct = previousCpuTotals
-        ? hostCpuBusyPct(previousCpuTotals, currentCpuTotals)
-        : 0;
+      const eventLoopLagMs = Math.max(0, now - scheduledAt);
+      const resumedAfterSuspension = eventLoopLagMs > suspensionGapMs;
+      const hostCpuPct =
+        previousCpuTotals && !resumedAfterSuspension
+          ? hostCpuBusyPct(previousCpuTotals, currentCpuTotals)
+          : 0;
       previousCpuTotals = { ...currentCpuTotals };
       const deepSnapshot = deep ? await deepProbe() : undefined;
 
@@ -44,7 +55,7 @@ export function createResourceSampler(
         capturedAt: now,
         hostCpuPct,
         loadPct: cpuCount > 0 ? Math.round((oneMinuteLoad / cpuCount) * 100) : 0,
-        eventLoopLagMs: Math.max(0, now - scheduledAt),
+        eventLoopLagMs: resumedAfterSuspension ? 0 : eventLoopLagMs,
         thermal: deepSnapshot?.thermal ?? "unknown",
         ...(deepSnapshot ? { deepSnapshot } : {}),
       };

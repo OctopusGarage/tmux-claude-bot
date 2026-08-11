@@ -15,16 +15,35 @@ function probe(outputs: string[]): PowerScheduleProbe {
     platform: "darwin",
     readSchedule: vi.fn(() => outputs.shift() ?? ""),
     localTimezone: () => "Asia/Singapore",
+    now: () => Date.parse("2026-08-11T00:00:00Z"),
     runPrivileged: vi.fn(),
   };
 }
 
 describe("power command", () => {
+  it("does not inspect a wake schedule when the current mode does not require one", () => {
+    const scheduleProbe = probe([]);
+    const result = runPowerCommand(["status", "--json"], {
+      config: { ...config, mode: "always" },
+      probe: scheduleProbe,
+      readPowerSource: () => "battery",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout ?? "null")).toMatchObject({
+      mode: "always",
+      powerSource: "battery",
+      degradedReason: "host is on battery; caffeinate -s does not prevent system sleep",
+      schedule: { status: "not-required" },
+    });
+    expect(scheduleProbe.readSchedule).not.toHaveBeenCalled();
+  });
+
   it("renders bounded JSON status", () => {
     const result = runPowerCommand(["status", "--json"], {
       config,
       now: () => Date.parse("2026-08-11T01:00:00+08:00"),
       probe: probe(["Repeating power events:\n  wake at 9:15AM every day\n"]),
+      readPowerSource: () => "ac",
     });
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout ?? "null")).toMatchObject({
@@ -33,6 +52,8 @@ describe("power command", () => {
       quietStart: "02:00",
       wakeAt: "09:15",
       quietEnd: "09:30",
+      powerSource: "ac",
+      degradedReason: null,
       schedule: { status: "verified" },
     });
   });
@@ -49,6 +70,24 @@ describe("power command", () => {
       "wake",
       "MTWRFSU",
       "09:15:00",
+    ]);
+  });
+
+  it("installs the Singapore wake translated to the Tokyo host clock", () => {
+    const scheduleProbe = probe([
+      "Scheduled power events:\n",
+      "Repeating power events:\n  wake at 10:15AM every day\n",
+    ]);
+    scheduleProbe.localTimezone = () => "Asia/Tokyo";
+    const result = runPowerCommand(["schedule", "install"], { config, probe: scheduleProbe });
+    expect(result).toMatchObject({ exitCode: 0 });
+    expect(result.stdout).toContain("09:15 Asia/Singapore");
+    expect(result.stdout).toContain("10:15 Asia/Tokyo");
+    expect(scheduleProbe.runPrivileged).toHaveBeenCalledWith([
+      "repeat",
+      "wake",
+      "MTWRFSU",
+      "10:15:00",
     ]);
   });
 

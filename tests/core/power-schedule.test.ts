@@ -1,5 +1,7 @@
+import { readlinkSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
+  createPowerScheduleProbe,
   inspectPowerSchedule,
   type PowerScheduleProbe,
 } from "../../src/core/platform/power-schedule.js";
@@ -17,12 +19,31 @@ function probe(output: string, overrides: Partial<PowerScheduleProbe> = {}): Pow
     platform: "darwin",
     readSchedule: vi.fn(() => output),
     localTimezone: vi.fn(() => "Asia/Singapore"),
+    now: () => Date.parse("2026-08-11T00:00:00Z"),
     runPrivileged: vi.fn(),
     ...overrides,
   };
 }
 
 describe("macOS power schedule inspection", () => {
+  it.runIf(process.platform === "darwin")(
+    "reads the macOS system timezone independently of the process TZ environment",
+    () => {
+      const marker = "/zoneinfo/";
+      const localtimeTarget = readlinkSync("/etc/localtime");
+      const systemTimezone = localtimeTarget.slice(localtimeTarget.indexOf(marker) + marker.length);
+      const originalTimezone = process.env.TZ;
+      process.env.TZ = systemTimezone === "Asia/Tokyo" ? "Asia/Singapore" : "Asia/Tokyo";
+
+      try {
+        expect(createPowerScheduleProbe().localTimezone()).toBe(systemTimezone);
+      } finally {
+        if (originalTimezone === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTimezone;
+      }
+    },
+  );
+
   it("verifies the exact daily wake schedule", () => {
     expect(
       inspectPowerSchedule(
@@ -52,15 +73,32 @@ describe("macOS power schedule inspection", () => {
     expect(inspectPowerSchedule(config, probe(output))).toMatchObject({ status: "conflict" });
   });
 
-  it("reports timezone mismatch before trusting the fixed local wake", () => {
+  it("translates the configured wake into the host local clock", () => {
     expect(
       inspectPowerSchedule(
         config,
-        probe("Repeating power events:\n  wake at 9:15AM every day\n", {
+        probe("Repeating power events:\n  wake at 10:15AM every day\n", {
+          localTimezone: () => "Asia/Tokyo",
+        }),
+      ),
+    ).toMatchObject({
+      status: "verified",
+      wakeAt: "09:15",
+      timezone: "Asia/Singapore",
+      hostWakeAt: "10:15",
+      hostTimezone: "Asia/Tokyo",
+    });
+  });
+
+  it("refuses a fixed repeating wake when the timezone offset changes seasonally", () => {
+    expect(
+      inspectPowerSchedule(
+        config,
+        probe("", {
           localTimezone: () => "America/Los_Angeles",
         }),
       ),
-    ).toMatchObject({ status: "timezone-mismatch" });
+    ).toMatchObject({ status: "dynamic-offset" });
   });
 
   it("is unsupported away from macOS and contains read failures", () => {

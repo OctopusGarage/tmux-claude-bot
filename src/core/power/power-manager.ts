@@ -4,6 +4,7 @@ import type { HandlerDeps } from "../deps.js";
 import { createKeepAwakeController, type KeepAwakeController } from "../platform/keep-awake.js";
 import { resolveHostPowerPhase } from "../platform/power-policy.js";
 import { inspectPowerSchedule, type PowerScheduleInspection } from "../platform/power-schedule.js";
+import { type MacPowerSource, readMacPowerSource } from "../platform/power-source.js";
 import { createProtectedWorkProbe, type ProtectedWorkSnapshot } from "./protected-work.js";
 
 const log = createLogger("power.manager");
@@ -15,6 +16,7 @@ export type HostPowerManagerOptions = {
   keepAwake: KeepAwakeController;
   hasProtectedWork(): Promise<ProtectedWorkSnapshot>;
   inspectSchedule(): PowerScheduleInspection;
+  readPowerSource(): MacPowerSource;
   notifyDegraded(reason: string): Promise<void>;
   setInterval(tick: () => void, delayMs: number): TimerHandle;
   clearInterval(timer: TimerHandle): void;
@@ -38,6 +40,7 @@ export function createHostPowerManager(
   let inFlight: Promise<void> | undefined;
   let stopped = false;
   let lastDegradedReason: string | undefined;
+  const isStopped = (): boolean => stopped;
 
   const notifyDegradation = async (reason: string): Promise<void> => {
     if (reason === lastDegradedReason) return;
@@ -49,18 +52,35 @@ export function createHostPowerManager(
   };
 
   const acquireOrNotify = async (): Promise<void> => {
-    if (options.keepAwake.acquire()) {
-      lastDegradedReason = undefined;
+    if (!options.keepAwake.acquire()) {
+      await notifyDegradation("caffeinate assertion could not be acquired");
       return;
     }
-    await notifyDegradation("caffeinate assertion could not be acquired");
+    let source: MacPowerSource = "unknown";
+    try {
+      source = options.readPowerSource();
+    } catch (error) {
+      await notifyDegradation(`power-source probe failed: ${safeError(error)}`);
+      return;
+    }
+    if (source === "battery") {
+      await notifyDegradation("host is on battery; caffeinate -s does not prevent system sleep");
+      return;
+    }
+    lastDegradedReason = undefined;
   };
 
   const failAwake = async (reason: string): Promise<void> => {
     const acquired = options.keepAwake.acquire();
-    await notifyDegradation(
-      acquired ? reason : `${reason}; caffeinate assertion could not be acquired`,
-    );
+    let fullReason = acquired ? reason : `${reason}; caffeinate assertion could not be acquired`;
+    try {
+      if (options.readPowerSource() === "battery") {
+        fullReason += "; host is on battery and the AC-only caffeinate assertion is ineffective";
+      }
+    } catch (error) {
+      fullReason += `; power-source probe failed: ${safeError(error)}`;
+    }
+    await notifyDegradation(fullReason);
   };
 
   const reconcileOnce = async (): Promise<void> => {
@@ -77,7 +97,7 @@ export function createHostPowerManager(
     }
     try {
       const protectedWork = await options.hasProtectedWork();
-      if (stopped) return;
+      if (isStopped()) return;
       if (protectedWork.active) {
         await acquireOrNotify();
         log.info("quiet-hours release delayed for protected work", {
@@ -130,11 +150,12 @@ export function startHostPowerManager(deps: HandlerDeps): () => void {
     keepAwake: createKeepAwakeController(),
     hasProtectedWork: createProtectedWorkProbe(deps),
     inspectSchedule: () => inspectPowerSchedule(deps.config.hostPower),
+    readPowerSource: readMacPowerSource,
     notifyDegraded: async (reason) => {
       await deps.notifications.notify({
         level: "warning",
-        title: "Host power schedule degraded",
-        body: `${reason}. Keep-awake remains active; run tcb power status and tcb power schedule install.`,
+        title: "Host power policy degraded",
+        body: `${reason}. Run tcb power status${deps.config.hostPower.mode === "scheduled" ? " and resolve any wake-schedule finding before the quiet window" : ""}.`,
         source: "tmux-claude-bot",
       });
     },

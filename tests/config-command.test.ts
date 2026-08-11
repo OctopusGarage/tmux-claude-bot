@@ -124,6 +124,7 @@ describe("config and automation commands", () => {
         "HOME_OPERATOR_AGENT=claude",
         "LOOP_ENGINEERING_TICK_MS=300000",
         "TASK_AUDIT_ENABLED=false",
+        "TCB_KEEP_AWAKE_MODE=off",
         "UI_LANG=zh",
         "PROMPT_TRANSLATE_MODE=off",
       ].join("\n"),
@@ -146,6 +147,7 @@ describe("config and automation commands", () => {
       ["UI_LANG", "klingon"],
       ["PROMPT_TRANSLATE_MODE", "remote-api"],
       ["RUNTIME_GUARDIAN_ENABLED", "maybe"],
+      ["TCB_KEEP_AWAKE_MODE", "sometimes"],
     ] as const) {
       expect(runConfigCommand(["set", key, value])).toMatchObject({ exitCode: 1 });
     }
@@ -155,6 +157,12 @@ describe("config and automation commands", () => {
     expect(persisted).toContain("HOME_OPERATOR_AGENT=claude");
     expect(persisted).toContain("UI_LANG=zh");
     expect(persisted).toContain("PROMPT_TRANSLATE_MODE=off");
+    expect(persisted).toContain("TCB_KEEP_AWAKE_MODE=off");
+
+    expect(runConfigCommand(["set", "TCB_KEEP_AWAKE_MODE", "scheduled"])).toMatchObject({
+      exitCode: 0,
+    });
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("TCB_KEEP_AWAKE_MODE=scheduled");
   });
 
   it("summarizes and toggles high-cost automation without losing previous tick values", async () => {

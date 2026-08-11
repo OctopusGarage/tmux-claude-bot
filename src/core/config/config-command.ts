@@ -34,6 +34,7 @@ const CONFIG_SETTABLE_KEYS = new Set([
   "HOME_OPERATOR_AGENT",
   "HOME_OPERATOR_DIR",
   "TCB_KEEP_AWAKE",
+  "TCB_KEEP_AWAKE_MODE",
   "AUTO_RECOVER",
   "LOOP_ENGINEERING_CONFIG_FILE",
   "LOOP_ENGINEERING_TICK_MS",
@@ -141,6 +142,11 @@ function normalizeSettableValue(key: string, value: string): string | { error: s
     return value === "claude" || value === "codex"
       ? value
       : { error: `${key} must be claude or codex` };
+  }
+  if (key === "TCB_KEEP_AWAKE_MODE") {
+    return value === "off" || value === "always" || value === "scheduled"
+      ? value
+      : { error: `${key} must be off, always, or scheduled` };
   }
   if (UI_LANGUAGE_KEYS.has(key)) {
     return value === "" || isUiLang(value)

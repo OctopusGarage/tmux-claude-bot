@@ -166,6 +166,14 @@ family registrars.
   value's domain before persistence; opaque strings such as paths and commands
   are not coerced. Use `tcb setup --reconfigure`, `tcb setup:lark`, or a
   dedicated command for tokens, app secrets, and owner ids.
+- `tcb config set TCB_KEEP_AWAKE_MODE <off|always|scheduled>` is the safe mode
+  switch. Restart the service after changing it. In `scheduled` mode, install
+  and verify the exact fixed wake separately with `tcb power schedule install`;
+  `tcb power status [--json]` reports phase, power source, degradation, and
+  whether that schedule is verified or not required. The configured policy
+  timezone is authoritative; schedule inspection and installation translate it
+  to the macOS system clock and display both times. Shell and service `TZ`
+  environment variables do not redefine the host timezone.
 - `tcb automation ...` is the supported top-level control for high-cost
   background loops. `pause` records the previous tick/enabled values in state so
   `resume` can restore the prior cadence instead of guessing a default.

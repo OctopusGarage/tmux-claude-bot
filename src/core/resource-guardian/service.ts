@@ -22,7 +22,11 @@ import {
   type ResourceGuardianRepairDispatch,
   recordResourceRepairDispatchFailure,
 } from "./repair.js";
-import { createResourceSampler, defaultLightweightProbe } from "./sampler.js";
+import {
+  createResourceSampler,
+  defaultLightweightProbe,
+  resourceSuspensionGapMs,
+} from "./sampler.js";
 import {
   createResourceGuardianStore,
   type ResourceGuardianCurrentRead,
@@ -918,11 +922,16 @@ export function startResourceGuardian(
     options.repairDispatcher ??
     createProductionResourceRepairDispatcher(deps, { coordinator: repairCoordinator });
   const store = options.store ?? createResourceGuardianStore({ stateDir: appStateDir(), now });
-  const sampler = createResourceSampler(defaultLightweightProbe(), async () => ({
-    capturedAt: now(),
-    thermal: "unknown",
-    processes: [],
-  }));
+  const suspensionGapMs = resourceSuspensionGapMs(config.tickMs);
+  const sampler = createResourceSampler(
+    defaultLightweightProbe(),
+    async () => ({
+      capturedAt: now(),
+      thermal: "unknown",
+      processes: [],
+    }),
+    { suspensionGapMs },
+  );
   const coordinator = createResourceGuardianCoordinator({
     config,
     store,
@@ -947,11 +956,11 @@ export function startResourceGuardian(
   });
   let stopped = false;
   let generation = 0;
-  const runScheduledTick = (scheduledAt: number): void => {
+  const runScheduledTick = (scheduledAt: number, actualNow?: number): void => {
     if (stopped) return;
     const tickGeneration = generation;
     void coordinator
-      .run(now(), scheduledAt, () => !stopped && generation === tickGeneration)
+      .run(actualNow ?? now(), scheduledAt, () => !stopped && generation === tickGeneration)
       .catch((error) => {
         log.warn("resource guardian tick failed", { err: safeErrorMessage(error) });
       });
@@ -964,8 +973,12 @@ export function startResourceGuardian(
   let nextScheduledAt = initialScheduledAt + config.tickMs;
   const timer = setIntervalFn(() => {
     const scheduledAt = nextScheduledAt;
-    nextScheduledAt += config.tickMs;
-    runScheduledTick(scheduledAt);
+    const actualNow = now();
+    nextScheduledAt =
+      actualNow - scheduledAt > suspensionGapMs
+        ? actualNow + config.tickMs
+        : nextScheduledAt + config.tickMs;
+    runScheduledTick(scheduledAt, actualNow);
   }, config.tickMs);
   (timer as { unref?: () => void }).unref?.();
   runScheduledTick(initialScheduledAt);

@@ -132,7 +132,7 @@ const en: SetupMessages = {
     "Keep this Mac awake on AC power so the bot stays reachable from your phone while plugged in.",
   keepAwakePrompt: "Keep the Mac awake on AC power while the bot runs? (y/N)",
   keepAwakeClamshellHint:
-    "Note: works with the lid OPEN or an external display. For lid-closed (clamshell) use, also run: sudo pmset -a disablesleep 1",
+    "Note: a closed lid still follows normal macOS sleep behavior. Use scheduled mode when you want a daily natural-sleep window.",
   homeOperatorIntro:
     "Home operator: a default agent session you chat with when no project is selected — it manages your projects via the tcb CLI.",
   homeOperatorPrompt: "Enable the home operator session? (y/N)",
@@ -196,7 +196,7 @@ const zh: SetupMessages = {
   keepAwakeIntro: "接通电源时保持这台 Mac 唤醒，便于手机持续连接 bot。",
   keepAwakePrompt: "运行期间仅在接通电源时保持 Mac 唤醒？(y/N)",
   keepAwakeClamshellHint:
-    "提示：仅在开盖或接外接显示器时有效。合盖（clamshell）使用还需手动执行：sudo pmset -a disablesleep 1",
+    "提示：合盖仍遵循 macOS 的正常休眠行为。如需每日自然休眠时段，请使用 scheduled 模式。",
   homeOperatorIntro:
     "主控 Agent：当没有选中项目时，你与之对话的默认 Agent 会话，通过 tcb CLI 管理你的项目。",
   homeOperatorPrompt: "启用主控 Agent 会话？(y/N)",
@@ -260,7 +260,7 @@ const yue: SetupMessages = {
   keepAwakeIntro: "接通電源時保持這台 Mac 喚醒，便於手機持續連接 bot。",
   keepAwakePrompt: "運行期間僅在接通電源時保持 Mac 喚醒？(y/N)",
   keepAwakeClamshellHint:
-    "提示：僅在開蓋或接外接顯示器時有效。合蓋（clamshell）使用還需手動執行：sudo pmset -a disablesleep 1",
+    "提示：合蓋仍遵循 macOS 的正常休眠行為。如需每日自然休眠時段，請使用 scheduled 模式。",
   homeOperatorIntro:
     "主控 Agent：在未選取專案時，與你對話的預設 Agent 會話，透過 tcb CLI 管理你的專案。",
   homeOperatorPrompt: "是否啟用主控 Agent 會話？(y/N)",
@@ -324,7 +324,7 @@ const zhTW: SetupMessages = {
   keepAwakeIntro: "接通電源時保持這台 Mac 喚醒，便於手機持續連接 bot。",
   keepAwakePrompt: "執行期間僅在接通電源時保持 Mac 喚醒？(y/N)",
   keepAwakeClamshellHint:
-    "提示：僅在開蓋或接外接顯示器時有效。闔蓋（clamshell）使用還需手動執行：sudo pmset -a disablesleep 1",
+    "提示：闔蓋仍遵循 macOS 的正常休眠行為。如需每日自然休眠時段，請使用 scheduled 模式。",
   homeOperatorIntro:
     "主控 Agent：在沒有選取專案時，你與之對話的預設 Agent 會話，透過 tcb CLI 管理你的專案。",
   homeOperatorPrompt: "啟用主控 Agent 會話？(y/N)",
@@ -392,7 +392,7 @@ const ja: SetupMessages = {
     "電源接続中は Mac をスリープさせず、スマホから bot に接続し続けられるようにします。",
   keepAwakePrompt: "bot の実行中、電源接続時のみ Mac をスリープさせない？(y/N)",
   keepAwakeClamshellHint:
-    "注意：ふたを開けた状態または外部ディスプレイ接続時に有効です。ふたを閉じた（クラムシェル）運用には別途 sudo pmset -a disablesleep 1 を実行してください。",
+    "注意：ふたを閉じた場合も macOS の通常のスリープ動作に従います。毎日の自然スリープ時間帯には scheduled モードを使用してください。",
   homeOperatorIntro:
     "ホームオペレーター：プロジェクト未選択時にチャットする既定のエージェントセッションで、tcb CLI でプロジェクトを管理します。",
   homeOperatorPrompt: "ホームオペレーターセッションを有効にしますか？(y/N)",
@@ -462,7 +462,7 @@ const es: SetupMessages = {
     "Mantén este Mac despierto con alimentación de corriente para que el bot siga accesible desde el teléfono.",
   keepAwakePrompt: "¿Mantener el Mac despierto con corriente mientras el bot está en marcha? (y/N)",
   keepAwakeClamshellHint:
-    "Nota: funciona con la tapa abierta o una pantalla externa. Para uso con la tapa cerrada (clamshell), ejecuta también: sudo pmset -a disablesleep 1",
+    "Nota: una tapa cerrada sigue el comportamiento normal de reposo de macOS. Usa el modo scheduled para una ventana diaria de reposo natural.",
   homeOperatorIntro:
     "Operador principal: la sesión de agente predeterminada con la que charlas cuando no hay ningún proyecto seleccionado; gestiona tus proyectos a través de la CLI tcb.",
   homeOperatorPrompt: "¿Habilitar la sesión del operador principal? (y/N)",

@@ -25,8 +25,11 @@ function harness(overrides: Record<string, unknown> = {}) {
       status: "verified" as const,
       wakeAt: "09:15",
       timezone: "Asia/Singapore",
+      hostWakeAt: "09:15",
+      hostTimezone: "Asia/Singapore",
       detail: "exact",
     })),
+    readPowerSource: vi.fn(() => "ac" as const),
     notifyDegraded: vi.fn(async () => {}),
     setInterval: vi.fn(() => ({ unref: vi.fn() })),
     clearInterval: vi.fn(),
@@ -65,7 +68,7 @@ describe("host power manager", () => {
     expect(keepAwake.release).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["missing", "conflict", "timezone-mismatch", "error"] as const)(
+  it.each(["missing", "conflict", "dynamic-offset", "error"] as const)(
     "fails awake and notifies once when wake verification is %s",
     async (status) => {
       const notifyDegraded = vi.fn(async () => {});
@@ -85,6 +88,26 @@ describe("host power manager", () => {
       expect(notifyDegraded).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("reports both wake and AC-only failures when fail-awake runs on battery", async () => {
+    const notifyDegraded = vi.fn(async () => {});
+    const { manager } = harness({
+      readPowerSource: () => "battery",
+      inspectSchedule: () => ({
+        status: "missing",
+        wakeAt: "09:15",
+        timezone: "Asia/Singapore",
+        hostWakeAt: "09:15",
+        hostTimezone: "Asia/Singapore",
+        detail: "managed daily wake is not installed",
+      }),
+      notifyDegraded,
+    });
+    await manager.reconcile();
+    expect(notifyDegraded).toHaveBeenCalledWith(
+      "missing: managed daily wake is not installed; host is on battery and the AC-only caffeinate assertion is ineffective",
+    );
+  });
 
   it("fails awake when protected-work evidence cannot be read", async () => {
     const notifyDegraded = vi.fn(async () => {});
@@ -142,5 +165,19 @@ describe("host power manager", () => {
     });
     await manager.reconcile();
     expect(notifyDegraded).toHaveBeenCalledWith("caffeinate assertion could not be acquired");
+  });
+
+  it("reports AC-only keep-awake as degraded while the host is on battery", async () => {
+    const notifyDegraded = vi.fn(async () => {});
+    const { manager, keepAwake } = harness({
+      now: () => atSingapore("2026-08-11T12:00:00"),
+      readPowerSource: () => "battery",
+      notifyDegraded,
+    });
+    await manager.reconcile();
+    expect(keepAwake.acquire).toHaveBeenCalledTimes(1);
+    expect(notifyDegraded).toHaveBeenCalledWith(
+      "host is on battery; caffeinate -s does not prevent system sleep",
+    );
   });
 });

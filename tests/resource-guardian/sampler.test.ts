@@ -83,6 +83,17 @@ describe("createResourceSampler", () => {
     });
   });
 
+  it("resets CPU and lag baselines after a host-suspension gap", async () => {
+    const sampler = createResourceSampler(lightweightProbe(), async () => {
+      throw new Error("deep probe must not run");
+    });
+
+    await sampler.sample({ now: 100, scheduledAt: 90, deep: false });
+    await expect(
+      sampler.sample({ now: 3_600_140, scheduledAt: 125, deep: false }),
+    ).resolves.toMatchObject({ hostCpuPct: 0, eventLoopLagMs: 0 });
+  });
+
   it("copies the CPU baseline when a probe reuses its totals object", async () => {
     const totals = { idle: 100, total: 400 };
     const sampler = createResourceSampler(

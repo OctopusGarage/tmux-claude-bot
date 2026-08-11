@@ -6,6 +6,7 @@ import {
   inspectPowerSchedule,
   type PowerScheduleProbe,
 } from "./power-schedule.js";
+import { type MacPowerSource, readMacPowerSource } from "./power-source.js";
 
 type CommandResult =
   | { exitCode: number; stdout: string; stderr?: never }
@@ -15,6 +16,7 @@ type PowerCommandOptions = {
   config?: HostPowerConfig;
   now?: () => number;
   probe?: PowerScheduleProbe;
+  readPowerSource?: () => MacPowerSource;
 };
 
 function commandError(error: unknown): CommandResult {
@@ -25,10 +27,26 @@ function statusResult(
   config: HostPowerConfig,
   now: number,
   probe: PowerScheduleProbe,
+  powerSource: MacPowerSource,
   json: boolean,
 ): CommandResult {
   const phase = resolveHostPowerPhase(config, now);
-  const schedule = inspectPowerSchedule(config, probe);
+  const schedule =
+    config.mode === "scheduled"
+      ? inspectPowerSchedule(config, probe)
+      : {
+          status: "not-required" as const,
+          wakeAt: wakeTimeFor(config),
+          timezone: config.timezone,
+          detail: `wake verification is not required in ${config.mode} mode`,
+        };
+  const keepAwakeExpected =
+    config.mode === "always" ||
+    (config.mode === "scheduled" && (phase === "service" || phase === "wake-warmup"));
+  const degradedReason =
+    keepAwakeExpected && powerSource === "battery"
+      ? "host is on battery; caffeinate -s does not prevent system sleep"
+      : null;
   const view = {
     mode: config.mode,
     phase,
@@ -36,9 +54,9 @@ function statusResult(
     quietStart: config.quietStart,
     wakeAt: wakeTimeFor(config),
     quietEnd: config.quietEnd,
-    keepAwakeExpected:
-      config.mode === "always" ||
-      (config.mode === "scheduled" && (phase === "service" || phase === "wake-warmup")),
+    keepAwakeExpected,
+    powerSource,
+    degradedReason,
     schedule,
   };
   return {
@@ -49,6 +67,7 @@ function statusResult(
           `power: mode=${view.mode} phase=${view.phase} timezone=${view.timezone}`,
           `window: quiet=${view.quietStart} wake=${view.wakeAt} resume=${view.quietEnd}`,
           `keep-awake: ${view.keepAwakeExpected ? "expected" : "released"}`,
+          `power source: ${view.powerSource}${view.degradedReason ? ` (degraded: ${view.degradedReason})` : ""}`,
           `wake schedule: ${schedule.status} (${schedule.detail})`,
         ].join("\n"),
   };
@@ -74,13 +93,16 @@ function installSchedule(config: HostPowerConfig, probe: PowerScheduleProbe): Co
     };
   }
   try {
-    probe.runPrivileged(["repeat", "wake", "MTWRFSU", `${before.wakeAt}:00`]);
+    probe.runPrivileged(["repeat", "wake", "MTWRFSU", `${before.hostWakeAt}:00`]);
   } catch (error) {
     return commandError(error);
   }
   const after = inspectPowerSchedule(config, probe);
   return after.status === "verified"
-    ? { exitCode: 0, stdout: `power schedule install: wake daily at ${after.wakeAt}` }
+    ? {
+        exitCode: 0,
+        stdout: `power schedule install: wake daily at ${after.wakeAt} ${after.timezone} (${after.hostWakeAt} ${after.hostTimezone} host time)`,
+      }
     : {
         exitCode: 1,
         stderr: `power schedule install could not be verified: ${after.status}: ${after.detail}`,
@@ -122,7 +144,13 @@ export function runPowerCommand(args: string[], options: PowerCommandOptions = {
     if (rest.length > 0 || (subcommand !== undefined && subcommand !== "--json")) {
       return { exitCode: 1, stderr: "Usage: power status [--json]" };
     }
-    return statusResult(config, (options.now ?? Date.now)(), probe, subcommand === "--json");
+    return statusResult(
+      config,
+      (options.now ?? Date.now)(),
+      probe,
+      (options.readPowerSource ?? readMacPowerSource)(),
+      subcommand === "--json",
+    );
   }
   if (action === "schedule" && rest.length === 0) {
     if (subcommand === "install") return installSchedule(config, probe);

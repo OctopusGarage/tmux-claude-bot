@@ -1527,6 +1527,48 @@ describe("resource guardian coordinator", () => {
     stop();
   });
 
+  it("rebases the next schedule after one host-suspension tick", async () => {
+    const store = new MemoryStore();
+    const takeSample = vi.fn(async (actualNow: number, scheduledAt: number) => ({
+      ...sample(actualNow, 10),
+      eventLoopLagMs: Math.max(0, actualNow - scheduledAt),
+    }));
+    let currentNow = 1_000;
+    let intervalTick: (() => void) | undefined;
+    const stop = startResourceGuardian(
+      {
+        config: { resourceGuardian: config({ tickMs: 1_000 }) },
+        notifications: { notify: async () => sent },
+      } as unknown as Parameters<typeof startResourceGuardian>[0],
+      {
+        store,
+        sample: takeSample,
+        now: () => currentNow,
+        setInterval: ((tick: () => void) => {
+          intervalTick = tick;
+          return { id: 22 } as unknown as NodeJS.Timeout;
+        }) as NonNullable<StartResourceGuardianTestOptions["setInterval"]>,
+        clearInterval: () => {},
+        repairDispatcher: unusedRepairDispatcher,
+        recoverOperatorUpdate: () => {},
+      },
+    );
+
+    await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(store.writes).toBe(1));
+    currentNow = 3_601_000;
+    intervalTick?.();
+    await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(2));
+    expect(takeSample).toHaveBeenNthCalledWith(2, 3_601_000, 2_000);
+    await vi.waitFor(() => expect(store.writes).toBe(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    currentNow = 3_602_000;
+    intervalTick?.();
+    await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(3));
+    expect(takeSample).toHaveBeenNthCalledWith(3, 3_602_000, 3_602_000);
+    stop();
+  });
+
   it("drops queued and in-flight ticks after stop", async () => {
     const store = new MemoryStore();
     const notify = vi.fn(async () => sent);

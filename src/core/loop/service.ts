@@ -2,8 +2,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
-import type { WorktreeIsolationMode } from "../../shared/types.js";
+import type { HostPowerConfig, WorktreeIsolationMode } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { admitAutomationWork } from "../automation/admission.js";
 import { agentIsIdle } from "../command/agent-ready.js";
 import type { HandlerDeps } from "../deps.js";
 import { buildEvalReportFromSupervisorSummary } from "../eval/report.js";
@@ -12,7 +13,6 @@ import { OpportunityStore, parseOpportunityDiscoveryReportFile } from "../opport
 import { formatOpportunityDigest } from "../opportunities/view.js";
 import { sessionNameFromPath } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
-import { admitResourceWork } from "../resource-guardian/admission.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import {
   createLoopQueueAgentEvalRunner,
@@ -283,6 +283,7 @@ export function runLoopServiceTick(input: {
   now: number;
   schedulerStore: LoopSchedulerStore;
   runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+  hostPower?: HostPowerConfig;
 }): LoopServiceTickSummary {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const scheduler = runLoopSchedulerTick({
@@ -296,14 +297,17 @@ export function runLoopServiceTick(input: {
   const backlog = new LoopBacklogStore();
 
   for (const due of scheduler.dueProjects) {
-    const admission = admitResourceWork({
-      source: "loop-engineering",
-      trigger: "background",
-      weight: "heavy",
-      now: input.now,
-    });
+    const admission = admitAutomationWork(
+      {
+        source: "loop-engineering",
+        trigger: "background",
+        weight: "heavy",
+        now: input.now,
+      },
+      input.hostPower === undefined ? {} : { hostPower: input.hostPower },
+    );
     if (!admission.allowed) {
-      log.info("loop engineering due target deferred by resource guardian", {
+      log.info("loop engineering due target deferred by automation admission", {
         data: {
           projectId: due.projectId,
           jobKey: due.jobKey,
@@ -376,6 +380,7 @@ export async function runLoopServiceTickAsync(input: {
   repositoryReviewOnly?: boolean;
   /** Keep repository review out of the main Loop tick; production uses the independent consumer. */
   skipRepositoryReview?: boolean;
+  hostPower?: HostPowerConfig;
 }): Promise<LoopServiceTickSummary> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const previousLastFired = input.schedulerStore.getLastFired();
@@ -1028,14 +1033,17 @@ export async function runLoopServiceTickAsync(input: {
           batch.map(async ({ item: target, supervisorSession }) => {
             const queueItem = targetByKey.get(`${target.due.projectId}:${target.due.scheduledAt}`);
             if (queueItem === undefined) return;
-            const admission = admitResourceWork({
-              source: "loop-engineering",
-              trigger: "background",
-              weight: "heavy",
-              now: tickNow,
-            });
+            const admission = admitAutomationWork(
+              {
+                source: "loop-engineering",
+                trigger: "background",
+                weight: "heavy",
+                now: tickNow,
+              },
+              input.hostPower === undefined ? {} : { hostPower: input.hostPower },
+            );
             if (!admission.allowed) {
-              log.info("loop engineering repository review deferred by resource guardian", {
+              log.info("loop engineering repository review deferred by automation admission", {
                 data: {
                   jobKey: target.due.jobKey,
                   queueItemId: queueItem.id,
@@ -1152,14 +1160,17 @@ export async function runLoopServiceTickAsync(input: {
     if (input.repositoryReviewOnly && !isRepositoryReview) continue;
     if (!input.repositoryReviewOnly && input.skipRepositoryReview && isRepositoryReview) continue;
     const target = resolveDue(due);
-    const admission = admitResourceWork({
-      source: "loop-engineering",
-      trigger: "background",
-      weight: "heavy",
-      now: input.now,
-    });
+    const admission = admitAutomationWork(
+      {
+        source: "loop-engineering",
+        trigger: "background",
+        weight: "heavy",
+        now: input.now,
+      },
+      input.hostPower === undefined ? {} : { hostPower: input.hostPower },
+    );
     if (!admission.allowed) {
-      log.info("loop engineering due target deferred by resource guardian", {
+      log.info("loop engineering due target deferred by automation admission", {
         data: {
           projectId: due.projectId,
           jobKey: due.jobKey,
@@ -1558,6 +1569,7 @@ export async function startLoopEngineering(
         notifications: deps.notifications,
         projectSessionPrefix: deps.config.projectSessionPrefix,
         skipRepositoryReview: true,
+        hostPower: deps.config.hostPower,
       });
       log.info("loop engineering tick complete", { data: result });
     } catch (err) {
@@ -1600,6 +1612,7 @@ export async function startLoopEngineering(
         notifications: deps.notifications,
         projectSessionPrefix: deps.config.projectSessionPrefix,
         repositoryReviewOnly: true,
+        hostPower: deps.config.hostPower,
       });
     } catch (err) {
       log.error("repository PR review queue tick failed", { err });

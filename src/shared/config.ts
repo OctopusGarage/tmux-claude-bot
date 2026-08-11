@@ -407,7 +407,6 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       loopWorkerMaxIdleMs: parsed.SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS,
     },
     autoRecover: parsed.AUTO_RECOVER !== "false" && parsed.AUTO_RECOVER !== "0",
-    keepAwake: hostPowerMode === "always",
     hostPower: {
       mode: hostPowerMode,
       timezone: parsed.TCB_QUIET_HOURS_TIMEZONE,

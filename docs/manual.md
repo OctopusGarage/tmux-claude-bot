@@ -140,16 +140,43 @@ recent input, `a` attach into the real session pane, `q` quit. Press `?` for all
 
 ---
 
-## 5. Keeping the Mac awake
+## 5. Host power and scheduled natural sleep
 
-A sleeping Mac drops the bot off your phone (nothing can wake an outbound long-poll).
-Opt in during setup (or `tcb setup --reconfigure`): while the bot runs it holds a
-`caffeinate -s` assertion, which prevents system sleep only while the Mac is on AC
-power. It does **not** keep the Mac awake on battery power and does **not** cover a
-closed lid — for that also run `sudo pmset -a disablesleep 1`. `tcb doctor` reports
-whether keep-awake is on and active, **and** reads the actual lid state — if the lid is
-closed while `pmset disablesleep` is off (so the Mac will sleep and drop the bot) it
-fails the check with the fix command.
+Host power has three explicit modes. `off` leaves idle sleep entirely to macOS.
+`always` retains the legacy AC-only `caffeinate -s` assertion. `scheduled` keeps the
+service reachable outside quiet hours, then releases that assertion after active work
+drains so macOS may sleep naturally. It never forces sleep and never disables normal
+battery, lid, display, or idle-sleep policy.
+
+The default scheduled window uses `Asia/Singapore`: quiet begins at 02:00, macOS gets
+one fixed daily `wake` event at 09:15, and autonomous background admission resumes at
+09:30 after a reconnect warmup. Install it explicitly:
+
+```bash
+tcb config set TCB_KEEP_AWAKE_MODE scheduled
+tcb power schedule install
+tcb service restart
+tcb power status
+```
+
+The install command is the only privileged boundary. It inspects the existing repeating
+schedule, converts the policy wake into the macOS host clock, refuses conflicts, invokes
+`sudo pmset` only for that exact daily wake, and re-reads the schedule before reporting
+success. The configured IANA timezone remains authoritative: for example, 09:15
+Asia/Singapore is installed as 10:15 on an Asia/Tokyo host. The runtime itself only reads
+the macOS system timezone; a shell or service `TZ` environment variable does not redefine
+the host clock. It otherwise only reads `pmset`. If verification later becomes missing or conflicting, the bot fails awake and
+notifies the operator instead of silently entering an unreachable sleep. A fixed daily
+event is refused only when the policy-to-host offset changes seasonally and therefore
+cannot be represented faithfully by one repeating wall-clock time. Remove only the
+matching managed event with `tcb power schedule remove`.
+
+`caffeinate -s` works only on AC power; `tcb power status` reports battery operation as
+degraded when keep-awake is expected. A closed lid still follows normal macOS behavior.
+The fixed event is `wake`, not `wakeorpoweron`, so it does not power on a shut-down Mac.
+Telegram may deliver provider-retained updates after wake. Feishu/Lark events during
+sleep are best-effort and may be missed; that trade-off is intentional in scheduled
+mode.
 
 ---
 
@@ -919,7 +946,8 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
   (multiple cause a Telegram 409); check network/proxy reachability.
 - **"No session" / can't talk to a project** → `/resume` if it was accidentally
   exited, `/start` for a new agent session, or switch/open the project.
-- **Mac keeps sleeping** → enable keep-awake (§5); lid-closed needs `pmset disablesleep`.
+- **Mac sleeps at the wrong time** → inspect mode, phase, power source, and the
+  fixed wake with `tcb power status`; see §5 for the scheduled setup sequence.
 - **TUI says "can't reach the control socket"** → the bot isn't running; start the
   service.
 - **Machine warm / slow** → `/sysload` or `tcb sysload` to spot a runaway process.

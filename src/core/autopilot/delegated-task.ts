@@ -3,6 +3,7 @@ import { basename, resolve } from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
+import { admitAutomationWork } from "../automation/admission.js";
 import {
   findProjectAutomationConflict,
   listReservedLoopSupervisorWorkOrders,
@@ -49,7 +50,6 @@ import {
 import { markImplementedOpportunitiesForCompletedDelegation } from "../opportunities/delegation-completion.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
-import { admitResourceWork } from "../resource-guardian/admission.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 
 const log = createLogger("autopilot.delegated-task");
@@ -298,17 +298,20 @@ export async function startActiveDelegatedTask(
     };
   }
 
-  const admission = admitResourceWork({
-    source: "autopilot-delegate",
-    trigger: input.resourceTrigger ?? "operator",
-    weight: "heavy",
-    ...(input.resourceForce !== undefined ? { forced: input.resourceForce } : {}),
-    now: Date.now(),
-  });
+  const admission = admitAutomationWork(
+    {
+      source: "autopilot-delegate",
+      trigger: input.resourceTrigger ?? "operator",
+      weight: "heavy",
+      ...(input.resourceForce !== undefined ? { forced: input.resourceForce } : {}),
+      now: Date.now(),
+    },
+    { hostPower: deps.config.hostPower },
+  );
   if (!admission.allowed) {
     return {
       status: "blocked",
-      reason: `resource admission deferred: ${admission.reason}`,
+      reason: `automation admission deferred: ${admission.reason}`,
       showQueue: false,
     };
   }
