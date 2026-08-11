@@ -5683,7 +5683,7 @@ prReview:
               status: 1,
               stdout: "",
               stderr:
-                "X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with the base branch.\nTo have the pull request merged after all the requirements have been met, add the `--auto` flag.\n",
+                "X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with base.\nTo have the pull request merged after all the requirements have been met, add the `--auto` flag.\n",
             };
           }
           return { status: 0, stdout: "Merged pull request #146", stderr: "" };
