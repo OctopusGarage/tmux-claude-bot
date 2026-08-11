@@ -114,6 +114,49 @@ describe("config and automation commands", () => {
     expect(runConfigCommand([]).stderr).toContain("Usage: config");
   });
 
+  it("validates generic config values by their declared domain without rewriting strings", async () => {
+    const dir = join(tmpdir(), `tcb-config-validation-${Date.now()}`);
+    process.env.TCB_STATE_DIR = dir;
+    writeEnv(
+      dir,
+      [
+        "HOME_OPERATOR_DIR=/tmp/operator",
+        "HOME_OPERATOR_AGENT=claude",
+        "LOOP_ENGINEERING_TICK_MS=300000",
+        "TASK_AUDIT_ENABLED=false",
+        "UI_LANG=zh",
+        "PROMPT_TRANSLATE_MODE=off",
+      ].join("\n"),
+    );
+    const { runConfigCommand } = await import("../src/core/config/command.js");
+
+    expect(runConfigCommand(["set", "HOME_OPERATOR_DIR", "on", "--json"])).toMatchObject({
+      exitCode: 0,
+    });
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("HOME_OPERATOR_DIR=on");
+
+    expect(runConfigCommand(["set", "TASK_AUDIT_ENABLED", "yes", "--json"])).toMatchObject({
+      exitCode: 0,
+      stdout: expect.stringContaining('"value":"true"'),
+    });
+    for (const [key, value] of [
+      ["LOOP_ENGINEERING_TICK_MS", "later"],
+      ["LOOP_ENGINEERING_TICK_MS", "1.5"],
+      ["HOME_OPERATOR_AGENT", "gemini"],
+      ["UI_LANG", "klingon"],
+      ["PROMPT_TRANSLATE_MODE", "remote-api"],
+      ["RUNTIME_GUARDIAN_ENABLED", "maybe"],
+    ] as const) {
+      expect(runConfigCommand(["set", key, value])).toMatchObject({ exitCode: 1 });
+    }
+
+    const persisted = readFileSync(join(dir, ".env"), "utf8");
+    expect(persisted).toContain("LOOP_ENGINEERING_TICK_MS=300000");
+    expect(persisted).toContain("HOME_OPERATOR_AGENT=claude");
+    expect(persisted).toContain("UI_LANG=zh");
+    expect(persisted).toContain("PROMPT_TRANSLATE_MODE=off");
+  });
+
   it("summarizes and toggles high-cost automation without losing previous tick values", async () => {
     const dir = join(tmpdir(), `tcb-automation-command-test-${Date.now()}`);
     process.env.TCB_STATE_DIR = dir;

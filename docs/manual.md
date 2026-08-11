@@ -171,7 +171,7 @@ For the complete maintained CLI command and option surface, see
 | `tcb run` | run the bot in the foreground (what the service runs) |
 | `tcb setup` / `tcb setup:lark` | guided setup wizard / add Feishu via QR |
 | `tcb doctor` | health checks against the install |
-| `tcb config list\|get\|set` | inspect personal `.env` configuration with secrets redacted, and edit allowlisted non-secret keys |
+| `tcb config list\|get\|set` | inspect personal `.env` configuration with secrets redacted, and edit allowlisted, domain-validated non-secret keys |
 | `tcb automation status\|pause\|resume` | inspect or toggle high-cost background automation: Loop Engineering, Daily Task Audit, Runtime Guardian, and Batch Scheduler |
 | `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
 | `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
@@ -242,8 +242,11 @@ tcb notify --channel lark --title "Radar ready" --body "Daily report attached" \
 
 Use `tcb config list --json` before editing `.env` by hand. It redacts tokens
 and app secrets, and `tcb config set <key> <value>` only accepts allowlisted
-non-secret keys. Use `tcb setup --reconfigure` or `tcb setup:lark` for Telegram
-tokens, Feishu/Lark app credentials, and owner identifiers.
+non-secret keys. Generic writes validate booleans, non-negative timing values,
+UI languages, agent choices, and translation modes before changing the durable
+configuration; string values such as paths and commands are preserved exactly.
+Use `tcb setup --reconfigure` or `tcb setup:lark` for Telegram tokens,
+Feishu/Lark app credentials, and owner identifiers.
 
 When Loop targets use `runner.kind: agent-supervised`, enable their shared
 supervisor through the command surface:

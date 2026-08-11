@@ -88,6 +88,12 @@ runaway processes, Resource Guardian state); `tcb resource status` or
 `tcb logs --since 1h --run-id <id>`; `tcb doctor`
 (install health).
 
+**Inspect or change personal configuration safely** → use `tcb config list|get|set`
+instead of editing the durable `.env` directly. Reads redact secrets; generic
+writes accept only allowlisted non-secret keys, validate typed values before
+persistence, and preserve path/command strings without boolean coercion. Use setup
+or a dedicated command for credentials, owner identifiers, and guarded settings.
+
 **Enable Resource Guardian observation** → run
 `tcb config set RESOURCE_GUARDIAN_ENABLED true`, then
 `tcb resource mode observe`, `tcb resource profile balanced`, and

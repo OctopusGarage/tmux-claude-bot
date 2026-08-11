@@ -158,9 +158,10 @@ family registrars.
 
 - `tcb autopilot <project>` means supervisor-backed delegation only.
 - `tcb config list` and `tcb config get` redact secrets by default. Generic
-  `config set` accepts only allowlisted non-secret keys; use `tcb setup
-  --reconfigure`, `tcb setup:lark`, or a dedicated command for tokens, app
-  secrets, and owner ids.
+  `config set` accepts only allowlisted non-secret keys and validates each
+  value's domain before persistence; opaque strings such as paths and commands
+  are not coerced. Use `tcb setup --reconfigure`, `tcb setup:lark`, or a
+  dedicated command for tokens, app secrets, and owner ids.
 - `tcb automation ...` is the supported top-level control for high-cost
   background loops. `pause` records the previous tick/enabled values in state so
   `resume` can restore the prior cadence instead of guessing a default.

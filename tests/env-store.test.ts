@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { writeConfigEnvironment } from "../src/core/config/env-store.js";
 import { persistEnvVar } from "../src/core/infra/env-store.js";
 
 // Real-fs behaviour tests: persistEnvVar writes the actual .env under TCB_STATE_DIR.
@@ -52,5 +53,13 @@ describe("persistEnvVar", () => {
     fs.writeFileSync(envFile(), "EXISTING=1\n");
     persistEnvVar("K", "v");
     expect(fs.readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+
+  it("uses the setup template only when creating a new environment", () => {
+    writeConfigEnvironment({ UI_LANG: "en" }, "UI_LANG=zh\nKEEP=template\n");
+
+    expect(fs.readFileSync(envFile(), "utf8")).toBe("UI_LANG=en\nKEEP=template\n");
+    writeConfigEnvironment({ UI_LANG: "ja" }, "SHOULD_NOT=replace-current\n");
+    expect(fs.readFileSync(envFile(), "utf8")).toBe("UI_LANG=ja\nKEEP=template\n");
   });
 });

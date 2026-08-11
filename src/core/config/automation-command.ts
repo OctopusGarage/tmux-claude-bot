@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { appStateFile } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
-import { readConfigEnvironment, writeConfigEnvironment } from "./env-store.js";
+import {
+  readConfigEnvironment,
+  withConfigEnvironmentLock,
+  writeConfigEnvironment,
+} from "./env-store.js";
 
 type CommandResult =
   | { exitCode: number; stdout: string; stderr?: never }
@@ -154,6 +158,13 @@ function renderAutomationStatus(statuses: AutomationStatus[]): string {
 }
 
 function toggleAutomation(
+  spec: AutomationSpec,
+  enabled: boolean,
+): { status: AutomationStatus; changed: boolean } {
+  return withConfigEnvironmentLock(() => toggleAutomationLocked(spec, enabled));
+}
+
+function toggleAutomationLocked(
   spec: AutomationSpec,
   enabled: boolean,
 ): { status: AutomationStatus; changed: boolean } {

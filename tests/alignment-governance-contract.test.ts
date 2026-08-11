@@ -171,6 +171,13 @@ describe("alignment governance contract", () => {
     expect(ascii).not.toContain(" ~/.tmux-claude-bot/\n");
   });
 
+  it("keeps development commands on the canonical state-directory environment file", () => {
+    const devCommand = read(".claude/commands/dev.md");
+
+    expect(devCommand).toContain("<state-dir>/.env");
+    expect(devCommand).not.toContain("~/.tmux-claude-bot/.env");
+  });
+
   it("keeps implemented MCP names and canonical role packages aligned", () => {
     const governance = read("docs/ai-tool-surface-governance.md");
     const matrix = read("docs/automation-capability-matrix.md");
@@ -181,6 +188,7 @@ describe("alignment governance contract", () => {
       expect(matrix, `missing implemented MCP tool ${tool}`).toContain(tool);
     }
     expect(governance).not.toMatch(/`tcb-(?:supervisor|worker)`/);
+    expect(governance).not.toContain("Runtime Guardian config/check commands when added");
     expect(alignment).toContain("advertise its canonical server identity");
   });
 
