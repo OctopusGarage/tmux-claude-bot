@@ -1845,6 +1845,63 @@ describe("runtime guardian", () => {
     ]);
   });
 
+  it("ignores legacy auto-merge stale-head failures that current finalization retries", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-auto-merge-stale-head",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = workOrder("run-legacy-auto-merge-stale-head", projectDir, summaryPath);
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["verified and published PR branch"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["confirmed bounded runtime issue"],
+          postMutationReview: ["diff reviewed"],
+          aiReview: "not-run",
+          deterministicGates: [
+            { name: "verify-local", result: "passed" },
+            { name: "clean-worktree", result: "passed" },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123"],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          "PR auto-merge failed: X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with the base branch.\nTo have the pull request merged after all the requirements have been met, add the `--auto` flag.\n",
+        ],
+        findings: [],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=not-run"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
   it("classifies legacy PR and CI gate failures as target or external blockers", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(
