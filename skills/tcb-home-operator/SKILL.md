@@ -12,7 +12,24 @@ inspect it with `tcb service status`; use `tcb service resume` when it is paused
 `tcb service restart` when it needs a clean restart. You are the **operator**, a
 separate process — not one of the managed sessions.
 
-## Start from docs, then use the CLI
+## Start from the Runtime Overview
+
+For status and discovery, call `tcb.observer.status` first when the managed
+Observer/Home MCP profile is available. Its `data.overview` is the canonical,
+bounded Runtime Overview; use its `attention`, `activeWork`, `runtimeDomains`,
+and `nextSuggestedAction` before opening a narrower evidence tool. Use
+`tcb.observer.loop_reports_list`, `tcb.observer.daily_task_audit`,
+`tcb.observer.runtime_guardian_findings`, session logs, or queue/project tools
+only when that evidence is relevant.
+
+If MCP is unavailable, fall back to `tcb dashboard --json`, then dedicated
+read-only CLI commands. Do not read files under the state directory directly,
+parse human-formatted CLI prose, invoke a generic MCP shell wrapper, or copy
+Dashboard health rules into this skill. Mutations still require explicit owner
+intent and an explicit target identity; status discovery grants no mutation
+authority.
+
+## Continue from maintained docs
 
 For user-facing usage, read `docs/agents/usage-guide.md` first, then
 `docs/manual.md`, `docs/commands.md`, or `docs/tui.md` for exact syntax. Do not
@@ -34,7 +51,8 @@ prompts.
 - **Look** — `tcb peek <project>` prints a snapshot of its session pane.
 - **Start / switch a project** — `tcb open <project>` (works for stopped projects too).
 - **Control keys** — `tcb control <project> <esc|enter|interrupt|restart|clear|compact|up|down|tab>`.
-- **Status / health** — `tcb dashboard` (all sessions), `tcb sysload` (machine load /
+- **Status / health** — `tcb.observer.status` first; `tcb dashboard --json` is the
+  CLI fallback. Use `tcb dashboard` for a human view and `tcb sysload` for machine load /
   heat / runaway processes / Resource Guardian), `tcb resource status` and
   `tcb resource incidents --limit 20` (Guardian detail), `tcb doctor` (install health).
 - **Delegate clarified work** — `tcb autopilot <project> [requirement]`. Use this
@@ -56,7 +74,8 @@ matches; pick the right one or ask the user.
 ## Mapping requests → commands
 
 - "Tell geo-backend to fix the failing test" → `tcb send geo-backend "fix the failing test"`, then relay the reply.
-- "What's running / what's busy?" → `tcb sessions` (or `tcb dashboard` for detail).
+- "What's running / what's busy?" → `tcb.observer.status`; if MCP is unavailable,
+  use `tcb dashboard --json` (or `tcb sessions` for a narrow session list).
 - "Start / switch to <project>" → `tcb open <project>`.
 - "Stop what it's doing / interrupt it" → `tcb control <project> esc`.
 - "Show me what it's doing" → `tcb peek <project>`.
@@ -84,8 +103,9 @@ matches; pick the right one or ask the user.
   execute approved work through Autopilot/supervisor delegation.
 - Yesterday's schedules -> `tcb task audit --force`.
 - Loop config health -> `tcb loop validate <config> --json`.
-- Loop run history -> `tcb loop reports list --json` and
-  `tcb loop backlog list --all --json`.
+- Loop run history -> `tcb.observer.loop_reports_list` first; CLI fallback:
+  `tcb loop reports list --limit 20 --json` and
+  `tcb loop backlog list --status all --limit 20 --json`.
 
 ## Sending an image or file to the user
 

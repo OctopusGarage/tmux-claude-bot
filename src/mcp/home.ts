@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ControlClient } from "../adapters/control/client.js";
 import { HOME_MCP_TOOLS } from "../core/mcp/profiles.js";
+import { tildeifyHomeDeep } from "../shared/utils/path.js";
 import { createObserverMcpServer, type ObserverClient, type ObserverDeps } from "./observer.js";
 
 type HomeClient = ObserverClient & Pick<ControlClient, "autopilot" | "send">;
@@ -12,6 +13,9 @@ type HomeToolResponse = {
   data: unknown;
   evidence: string[];
   blockedReason: string | null;
+  scope: "controlled-operation";
+  errorKind: "control-unavailable" | "operation-blocked" | null;
+  nextSuggestedAction: string | null;
 };
 
 export { HOME_MCP_TOOLS };
@@ -21,20 +25,30 @@ function response(data: unknown, evidence: string[]): HomeToolResponse {
     ok: true,
     role: "home",
     capability: "controlled operation",
-    data,
+    data: tildeifyHomeDeep(data),
     evidence,
     blockedReason: null,
+    scope: "controlled-operation",
+    errorKind: null,
+    nextSuggestedAction: null,
   };
 }
 
 function blocked(error: unknown): HomeToolResponse {
+  const message = error instanceof Error ? error.message : String(error);
+  const errorKind = /not connected|disconnected|control|socket/i.test(message)
+    ? "control-unavailable"
+    : "operation-blocked";
   return {
     ok: false,
     role: "home",
     capability: "controlled operation",
     data: null,
     evidence: [],
-    blockedReason: error instanceof Error ? error.message : String(error),
+    blockedReason: errorKind,
+    scope: "controlled-operation",
+    errorKind,
+    nextSuggestedAction: errorKind === "control-unavailable" ? "tcb service status" : null,
   };
 }
 

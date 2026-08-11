@@ -11,7 +11,7 @@ type CommandResult =
   | { exitCode: number; stdout: string; stderr?: never }
   | { exitCode: number; stderr: string; stdout?: never };
 
-type AutomationId = "loop" | "task-audit" | "runtime-guardian" | "batch";
+export type AutomationId = "loop" | "task-audit" | "runtime-guardian" | "batch";
 
 type AutomationSpec = {
   id: AutomationId;
@@ -23,7 +23,7 @@ type AutomationSpec = {
   dependencyKeys?: string[];
 };
 
-type AutomationStatus = {
+export type AutomationStatus = {
   id: AutomationId;
   label: string;
   enabled: boolean;
@@ -32,6 +32,12 @@ type AutomationStatus = {
   keys: string[];
   dependencies?: Record<string, boolean>;
 };
+
+/** Read the canonical Automation Family configuration without rendering CLI prose. */
+export function readAutomationStatuses(): AutomationStatus[] {
+  const env = readEnvMap();
+  return AUTOMATIONS.map((spec) => automationStatusFor(spec, env));
+}
 
 const AUTOMATIONS: AutomationSpec[] = [
   {
@@ -212,8 +218,7 @@ export function runAutomationCommand(args: string[]): CommandResult {
     if (action === "status") {
       const json = jsonFlag(args.slice(1));
       if (typeof json === "string") return { exitCode: 1, stderr: json };
-      const env = readEnvMap();
-      const statuses = AUTOMATIONS.map((spec) => automationStatusFor(spec, env));
+      const statuses = readAutomationStatuses();
       return {
         exitCode: 0,
         stdout: json ? JSON.stringify(statuses) : renderAutomationStatus(statuses),

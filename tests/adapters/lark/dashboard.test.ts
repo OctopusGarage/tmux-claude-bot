@@ -27,6 +27,8 @@ describe("/dashboard (Lark) — owner-only, p2p", () => {
     const cards = JSON.stringify(channel.cards());
     expect(cards).toContain("tmux-claude-bot");
     expect(cards).toContain("sessions");
+    expect(cards).toContain("总体健康");
+    expect(cards).toContain("待处理");
   });
 
   it("does NOT expose the dashboard in a group context (no send)", async () => {

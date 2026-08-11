@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { tildeifyHomeDeep } from "../../shared/utils/path.js";
 import { readEvalReportFile } from "../eval/report.js";
 import type { EvalOutcome } from "../eval/types.js";
 import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
@@ -16,6 +17,22 @@ export type LoopReportRecord = {
   evalReportPath?: string;
   evalOutcome?: Pick<EvalOutcome, "status" | "finalVerification" | "reviewDecision" | "reason">;
 };
+
+export type LoopReportQuery = {
+  limit?: number;
+  projectId?: string;
+  status?: LoopReportRecord["status"];
+};
+
+export type LoopReportQueryResult = {
+  items: LoopReportRecord[];
+  total: number;
+  limit: number;
+  truncated: boolean;
+};
+
+export const DEFAULT_LOOP_REPORT_LIMIT = 20;
+export const MAX_LOOP_REPORT_LIMIT = 100;
 
 type LoopSupervisorReportSummary = {
   runId: string;
@@ -44,6 +61,31 @@ export function listLoopReportRecords(root: string): LoopReportRecord[] {
   return records.sort(
     (a, b) => b.startedAt - a.startedAt || a.projectId.localeCompare(b.projectId),
   );
+}
+
+export function queryLoopReportRecords(
+  root: string,
+  query: LoopReportQuery = {},
+): LoopReportQueryResult {
+  const requestedLimit = query.limit ?? DEFAULT_LOOP_REPORT_LIMIT;
+  const limit = Math.min(
+    MAX_LOOP_REPORT_LIMIT,
+    Math.max(
+      1,
+      Math.floor(Number.isFinite(requestedLimit) ? requestedLimit : DEFAULT_LOOP_REPORT_LIMIT),
+    ),
+  );
+  const filtered = listLoopReportRecords(root).filter(
+    (record) =>
+      (query.projectId === undefined || record.projectId === query.projectId) &&
+      (query.status === undefined || record.status === query.status),
+  );
+  return {
+    items: tildeifyHomeDeep(filtered.slice(0, limit)),
+    total: filtered.length,
+    limit,
+    truncated: filtered.length > limit,
+  };
 }
 
 function readReportRecord(dir: string): LoopReportRecord | null {

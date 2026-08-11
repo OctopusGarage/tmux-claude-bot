@@ -32,7 +32,8 @@ TUI is open, the TUI auto-reconnects.
 ## Layout
 
 ```
- tmux-claude-bot   1/6 busy · queue 0 · v0.2.0
+ Overall Health: healthy · attention 0 · active work 1
+ tmux-claude-bot · v0.2.0 · 1/6 busy · queue 0
 ╭ Sessions ───────────╮ ╭ geo-backend  busy ─────────────╮
 │● 🟠 tmux-claude-bot ││ <live peek of the selected pane> │
 │○ 🟠 geo-backend     ││                                  │
@@ -45,6 +46,9 @@ TUI is open, the TUI auto-reconnects.
   the project label, and the current-task duration while busy.
 - **Right** — a live snapshot (peek) of the selected session's pane plus its status.
   The list and peek refresh automatically when the bot reports activity.
+- **Header / Runtime Overview** — the health-first header is the same canonical
+  snapshot used by `tcb dashboard` and MCP. Press `o` for its read-only domain,
+  Automation, AI Interface, and recent-outcome detail.
 
 ## Keys
 
@@ -59,6 +63,7 @@ TUI is open, the TUI auto-reconnects.
 | `r` | restart the session's agent (resumes the conversation); asks for `y/N` confirmation |
 | `l` | **logs** — recent WARN/ERROR for the selected session (any key to close) |
 | `m` | **system load** — machine load / thermal / top CPU / runaway shells / current Resource Guardian state (any key to close) |
+| `o` | **Runtime Overview** — Attention, Active Work, Automation Families, Operator and AI Interfaces, Runtime Domains, and recent outcomes; `j`/`k` scroll, `Esc` closes |
 | `u` | **inputs** — recent inputs you sent to the selected session; `Enter` **re-runs** the selected one, `Esc` to close |
 | `c` | controls overlay — the full action set (interrupt / clear / compact / esc / enter / restart / ↑ / ↓ / tab); dangerous actions ask for `y/N` confirmation |
 | `s` | **projects** overlay — every project (live `●` + stopped `◌`, recents included); `Enter` **opens + starts** the selected one (switch to a project / start a stopped one), `Esc` to close |

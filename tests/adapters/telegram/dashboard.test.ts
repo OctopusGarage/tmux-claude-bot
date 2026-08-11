@@ -71,5 +71,7 @@ describe("/dashboard (Telegram)", () => {
     const opts = replyMock.mock.calls.at(-1)?.[3];
     expect(opts?.code).toBeUndefined();
     expect(opts?.body as string).toContain("sessions");
+    expect(opts?.body as string).toContain("总体健康");
+    expect(opts?.body as string).toContain("待处理");
   });
 });

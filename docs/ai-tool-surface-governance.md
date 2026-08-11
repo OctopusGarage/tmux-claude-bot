@@ -64,6 +64,10 @@ Practical consequence:
   `tcb.observer.loop_reports_list`, `tcb.observer.daily_task_audit`, and
   `tcb.observer.runtime_guardian_findings`, served by `tcb mcp observer` over
   stdio.
+- `tcb.observer.status` returns the canonical bounded Runtime Overview and is
+  the first discovery call for Home operation. Home inherits it rather than
+  registering a duplicate status tool. Narrow evidence tools follow only when
+  the overview points to their domain.
 - The first Home MCP milestone is controlled operation only. `tcb mcp home`
   exposes all Observer tools plus `tcb.home.send_prompt` and
   `tcb.home.delegate_autopilot`. Both require an explicit target session and

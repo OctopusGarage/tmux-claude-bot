@@ -80,9 +80,12 @@ bot running. Keys: `j/k` move, `i` compose a prompt (multi-line paste works), `c
 controls, `s` projects (switch/start), `R` recover, `l` logs, `m` machine load, `u`
 re-run input, `a` attach to the real session pane, `q` quit, `?` for all keys. Detail: tui.md.
 
-**Check status / "is something wrong?"** → `/dashboard` or `tcb dashboard` (every
-session, busy/idle, queue, version); `/sysload` or `tcb sysload` (machine load, heat,
-runaway processes, Resource Guardian state); `tcb resource status` or
+**Check status / "is something wrong?"** → use the canonical **Runtime Overview**:
+call `tcb.observer.status` from an Observer/Home MCP session, or run
+`tcb dashboard --json` when MCP is unavailable. The same snapshot backs `/dashboard`,
+the TUI overview (`o`), and `tcb dashboard`; it puts health and bounded attention
+items before active work. Use `/sysload` or `tcb sysload` for machine load, heat,
+runaway processes, and Resource Guardian state; `tcb resource status` or
 `tcb resource incidents --limit 20` for Guardian detail; `/logs` or
 `tcb logs --since 1h --run-id <id>`; `tcb doctor`
 (install health).
@@ -332,6 +335,11 @@ for one accidentally exited current project use
   `tcb power schedule install`, restart the service, and verify with
   `tcb power status`. The managed wake is 09:15, providing a 15-minute reconnect
   warmup. Schedule conflicts fail closed; do not overwrite them manually.
+- **AI status inspection**: prefer `tcb.observer.status` for a typed, read-only
+  Runtime Overview. Home inherits this Observer tool and adds only controlled send
+  and delegation tools; it does not define a second status contract. Fall back to
+  `tcb dashboard --json`, never direct reads of runtime state files or parsing of
+  human-formatted dashboard text.
 - **TUI keys**: see [tui.md](../tui.md).
 
 ---

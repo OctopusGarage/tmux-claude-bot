@@ -440,8 +440,24 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   // separator-based, not column-aligned, so it needs no monospace).
   bot.command("dashboard", async (ctx) => {
     const snap = await buildDashboard(deps);
-    const body = formatDashboardForChat(snap, { maxChars: 3500, showGroups: false });
-    await reply(ctx, "view", messages("telegram").dashboardTitle, {
+    const m = messages("telegram");
+    const body = formatDashboardForChat(snap, {
+      maxChars: 3500,
+      showGroups: false,
+      labels: {
+        overallHealth: m.dashboardOverallHealth,
+        attention: m.dashboardAttention,
+        activeWork: m.dashboardActiveWork,
+        automation: m.dashboardAutomation,
+        operatorAi: m.dashboardOperatorAi,
+        runtimeDomains: m.dashboardRuntimeDomains,
+        recentOutcomes: m.dashboardRecentOutcomes,
+        projectSessions: m.dashboardProjectSessions,
+        none: m.dashboardNone,
+        more: m.dashboardMore,
+      },
+    });
+    await reply(ctx, "view", m.dashboardTitle, {
       body,
       replyTarget,
     });

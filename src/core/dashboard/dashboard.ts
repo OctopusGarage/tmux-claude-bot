@@ -11,6 +11,9 @@ import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
 import { PANE_DIFF_MS } from "../session/pane-activity.js";
 import { SESSION_ACTIVITY_WINDOW_MS } from "../session/session-telemetry.js";
+import type { RuntimeOverview, RuntimeOverviewOptions } from "./runtime-overview.js";
+import { createRuntimeOverviewReaders } from "./runtime-overview-production.js";
+import { readRuntimeOverview } from "./runtime-overview-reader.js";
 
 /** A transcript written within this window counts the session as actively
  * working. Generous so brief gaps between streamed writes don't flip to idle;
@@ -53,6 +56,8 @@ export type SessionRow = {
 /** A global snapshot: every live session plus bot-level totals. */
 export type DashboardSnapshot = {
   sessions: SessionRow[];
+  /** Additive canonical operations read model. Optional for old Control snapshots. */
+  overview?: RuntimeOverview;
   global: {
     botUptimeMs: number | null;
     version: string;
@@ -141,7 +146,15 @@ async function gatherRow(
  */
 export async function buildDashboard(
   deps: HandlerDeps,
-  opts: { paneDiffMs?: number } = {},
+  opts: {
+    paneDiffMs?: number;
+    overviewOptions?: RuntimeOverviewOptions;
+    readOverview?: (input: {
+      now: number;
+      rows: SessionRow[];
+      options?: RuntimeOverviewOptions;
+    }) => Promise<RuntimeOverview>;
+  } = {},
 ): Promise<DashboardSnapshot> {
   const paneDiffMs = opts.paneDiffMs ?? PANE_DIFF_MS;
   const now = Date.now();
@@ -155,9 +168,35 @@ export async function buildDashboard(
 
   const st = instanceStartedAt();
   const botUptimeMs = st ? Math.max(0, now - Date.parse(st)) : null;
+  const readOverview =
+    opts.readOverview ??
+    ((input: { now: number; rows: SessionRow[]; options?: RuntimeOverviewOptions }) =>
+      readRuntimeOverview({
+        now: input.now,
+        sessions: input.rows.map((row) => ({
+          session: row.session,
+          label: row.label,
+          busy: row.busy,
+          running: row.running,
+          ...(row.operator === undefined ? {} : { operator: row.operator }),
+          ...(row.task === undefined ? {} : { taskStartedAt: row.task.startedAt }),
+        })),
+        readers: createRuntimeOverviewReaders({
+          deps,
+          now: input.now,
+          operatorSessionRunning: input.rows.some((row) => row.operator && row.running),
+        }),
+        ...(input.options === undefined ? {} : { options: input.options }),
+      }));
+  const overview = await readOverview({
+    now,
+    rows,
+    ...(opts.overviewOptions === undefined ? {} : { options: opts.overviewOptions }),
+  });
 
   return {
     sessions: rows,
+    overview,
     global: {
       botUptimeMs,
       version: appVersion(),

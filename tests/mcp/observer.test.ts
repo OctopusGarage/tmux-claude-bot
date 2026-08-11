@@ -32,6 +32,36 @@ function fakeClient(
           adapters: { telegram: true, lark: false },
         },
         sessions: [],
+        overview: {
+          health: { status: "attention", attentionCount: 1, degradedDomainCount: 0 },
+          attention: {
+            items: [
+              {
+                id: "power:policy",
+                domain: "power",
+                severity: "warning",
+                observedAt: 1,
+                summary: "Wake schedule needs attention",
+                nextAction: "tcb power status",
+              },
+            ],
+            total: 1,
+            limit: 10,
+            truncated: false,
+          },
+          activeWork: { items: [], total: 0, limit: 10, truncated: false },
+          automation: [],
+          runtimeDomains: [],
+          operator: {
+            session: { state: "ready" },
+            skills: { installed: 2, expected: 2, state: "ready" },
+            mcpProfiles: { installed: 2, expected: 2, state: "ready" },
+            promptLibrary: { state: "disabled" },
+            optionalProjectMcpCount: 0,
+          },
+          recentOutcomes: { items: [], total: 0, limit: 10, truncated: false },
+          degradedDomains: [],
+        },
       }),
     ),
     ...overrides,
@@ -81,9 +111,16 @@ describe("observer MCP server", () => {
         ok: true,
         role: "observer",
         capability: "read-only observation",
-        data: { global: { queueDepth: 0, sessionCount: 1 } },
+        data: {
+          global: { queueDepth: 0, sessionCount: 1 },
+          overview: { health: { status: "attention", attentionCount: 1 } },
+          sessions: [],
+        },
         evidence: ["control:snapshot"],
         blockedReason: null,
+        scope: "runtime-overview",
+        errorKind: null,
+        nextSuggestedAction: "tcb power status",
       });
     } finally {
       await client.close();
@@ -192,7 +229,9 @@ describe("observer MCP server", () => {
       expect(result.structuredContent).toMatchObject({
         ok: false,
         role: "observer",
-        blockedReason: "not connected",
+        blockedReason: "control-unavailable",
+        errorKind: "control-unavailable",
+        nextSuggestedAction: "tcb service status",
       });
     } finally {
       await client.close();
@@ -282,18 +321,23 @@ describe("observer MCP server", () => {
   });
 
   it("uses injected Loop report discovery and the default Runtime Guardian lookback", async () => {
-    const listLoopReports = vi.fn(() => [
-      {
-        runId: "run-1",
-        projectId: "repo",
-        projectName: "Repo",
-        status: "passed" as const,
-        startedAt: 1,
-        endedAt: 2,
-        markdownPath: "/tmp/report.md",
-        summaryPath: "/tmp/summary.json",
-      },
-    ]);
+    const listLoopReports = vi.fn(() => ({
+      items: [
+        {
+          runId: "run-1",
+          projectId: "repo",
+          projectName: "Repo",
+          status: "passed" as const,
+          startedAt: 1,
+          endedAt: 2,
+          markdownPath: "~/report.md",
+          summaryPath: "~/summary.json",
+        },
+      ],
+      total: 1,
+      limit: 5,
+      truncated: false,
+    }));
     const discoverRuntimeGuardianFindings = vi.fn(() => []);
     const { client, server } = await connectObserverClient({
       now: () => 1_785_657_600_000,
@@ -302,13 +346,26 @@ describe("observer MCP server", () => {
     });
     try {
       await expect(
-        client.callTool({ name: "tcb.observer.loop_reports_list", arguments: {} }),
+        client.callTool({
+          name: "tcb.observer.loop_reports_list",
+          arguments: { limit: 5, projectId: "repo", status: "passed" },
+        }),
       ).resolves.toMatchObject({
         structuredContent: {
           ok: true,
-          data: [{ runId: "run-1", projectId: "repo", status: "passed" }],
+          data: {
+            items: [{ runId: "run-1", projectId: "repo", status: "passed" }],
+            total: 1,
+            limit: 5,
+            truncated: false,
+          },
           evidence: ["state:loop-runs"],
         },
+      });
+      expect(listLoopReports).toHaveBeenCalledWith({
+        limit: 5,
+        projectId: "repo",
+        status: "passed",
       });
       await client.callTool({
         name: "tcb.observer.runtime_guardian_findings",

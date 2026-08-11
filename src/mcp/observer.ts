@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { ControlClient } from "../adapters/control/client.js";
 import type { DashboardSnapshot } from "../core/dashboard/dashboard.js";
-import { listLoopReports } from "../core/loop/report.js";
+import { queryLoopReports } from "../core/loop/report.js";
 import { OBSERVER_MCP_TOOLS } from "../core/mcp/profiles.js";
 import { discoverRuntimeGuardianFindings } from "../core/runtime-guardian/service.js";
 import { DailyTaskAuditStore } from "../core/tasks/daily-audit-service.js";
@@ -13,6 +13,7 @@ import {
   summarizeTaskWindow,
   type TaskWindow,
 } from "../core/tasks/task-ledger.js";
+import { tildeifyHomeDeep } from "../shared/utils/path.js";
 import { appVersion } from "../shared/version.js";
 
 export type ObserverClient = Pick<
@@ -27,7 +28,7 @@ export type ObserverDeps = {
   dailyTaskLedger?: () => ObserverDailyTaskLedger;
   dailyTaskAuditStore?: () => ObserverDailyTaskAuditStore;
   discoverRuntimeGuardianFindings?: typeof discoverRuntimeGuardianFindings;
-  listLoopReports?: typeof listLoopReports;
+  listLoopReports?: typeof queryLoopReports;
 };
 
 export { OBSERVER_MCP_TOOLS };
@@ -39,27 +40,44 @@ type ObserverToolResponse = {
   data: unknown;
   evidence: string[];
   blockedReason: string | null;
+  scope: string;
+  errorKind: "control-unavailable" | "read-failed" | null;
+  nextSuggestedAction: string | null;
 };
 
-function response(data: unknown, evidence: string[]): ObserverToolResponse {
+function response(
+  data: unknown,
+  evidence: string[],
+  options: { scope?: string; nextSuggestedAction?: string | null } = {},
+): ObserverToolResponse {
   return {
     ok: true,
     role: "observer",
     capability: "read-only observation",
-    data,
+    data: tildeifyHomeDeep(data),
     evidence,
     blockedReason: null,
+    scope: options.scope ?? "observation",
+    errorKind: null,
+    nextSuggestedAction: options.nextSuggestedAction ?? null,
   };
 }
 
 function blocked(error: unknown): ObserverToolResponse {
+  const message = error instanceof Error ? error.message : String(error);
+  const errorKind = /not connected|disconnected|control|socket/i.test(message)
+    ? "control-unavailable"
+    : "read-failed";
   return {
     ok: false,
     role: "observer",
     capability: "read-only observation",
     data: null,
     evidence: [],
-    blockedReason: error instanceof Error ? error.message : String(error),
+    blockedReason: errorKind,
+    scope: "observation",
+    errorKind,
+    nextSuggestedAction: errorKind === "control-unavailable" ? "tcb service status" : "tcb doctor",
   };
 }
 
@@ -83,11 +101,10 @@ async function withClient<T>(
   }
 }
 
-function statusData(snapshot: DashboardSnapshot): unknown {
-  return {
-    generatedAt: snapshot.generatedAt,
-    global: snapshot.global,
-  };
+function statusNextAction(snapshot: DashboardSnapshot): string | null {
+  if (snapshot.overview === undefined) return null;
+  if (snapshot.overview.health.status === "degraded") return "tcb doctor";
+  return snapshot.overview.attention.items[0]?.nextAction ?? null;
 }
 
 function recentTaskWindow(now: number): TaskWindow {
@@ -107,7 +124,7 @@ export function createObserverMcpServer(
   const now = deps.now ?? Date.now;
   const dailyTaskLedger = deps.dailyTaskLedger ?? (() => new DailyTaskLedger());
   const dailyTaskAuditStore = deps.dailyTaskAuditStore ?? (() => new DailyTaskAuditStore());
-  const readLoopReports = deps.listLoopReports ?? listLoopReports;
+  const readLoopReports = deps.listLoopReports ?? queryLoopReports;
   const readRuntimeGuardianFindings =
     deps.discoverRuntimeGuardianFindings ?? discoverRuntimeGuardianFindings;
 
@@ -121,9 +138,13 @@ export function createObserverMcpServer(
     async () => {
       try {
         return toolResult(
-          await withClient(makeClient, async (client) =>
-            response(statusData(await client.snapshot()), ["control:snapshot"]),
-          ),
+          await withClient(makeClient, async (client) => {
+            const snapshot = await client.snapshot();
+            return response(snapshot, ["control:snapshot"], {
+              scope: "runtime-overview",
+              nextSuggestedAction: statusNextAction(snapshot),
+            });
+          }),
         );
       } catch (err) {
         return toolResult(blocked(err));
@@ -225,9 +246,23 @@ export function createObserverMcpServer(
     {
       title: "tmux-claude-bot Loop Reports",
       description: "Read persisted Loop Engineering report records from state.",
-      inputSchema: z.object({}),
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+        projectId: z.string().min(1).optional(),
+        status: z.enum(["passed", "failed"]).optional(),
+      }),
     },
-    async () => toolResult(response(readLoopReports(), ["state:loop-runs"])),
+    async ({ limit, projectId, status }) =>
+      toolResult(
+        response(
+          readLoopReports({
+            limit: limit ?? 20,
+            ...(projectId === undefined ? {} : { projectId }),
+            ...(status === undefined ? {} : { status }),
+          }),
+          ["state:loop-runs"],
+        ),
+      ),
   );
 
   server.registerTool(

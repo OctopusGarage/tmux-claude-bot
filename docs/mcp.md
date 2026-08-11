@@ -13,6 +13,13 @@ AI-facing tool surface, not a bypass around the bot's control service.
 The Home profile intentionally does not expose arbitrary shell execution, direct
 file edits, PR merge operations, or WorkOrder internals.
 
+`tcb.observer.status` is the canonical agent-facing Runtime Overview. It returns
+the complete bounded Dashboard snapshot, stable evidence, `scope`, `errorKind`,
+and `nextSuggestedAction`. The Home profile inherits this tool; there is no
+duplicate `tcb.home.status`. Use `tcb.observer.loop_reports_list` for narrower
+history with optional `projectId`, `status`, and `limit` (default 20, maximum
+100).
+
 ## Install Profile Descriptors
 
 Generate or refresh local profile descriptor files in the Home Operator

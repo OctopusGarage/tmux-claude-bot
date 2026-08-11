@@ -356,12 +356,23 @@ export async function sendDashboard(
   chatId: string,
 ): Promise<void> {
   const snap = await buildDashboard(deps);
-  const body = formatDashboardForChat(snap, { maxChars: 3500 });
-  await sendCard(
-    channel,
-    chatId,
-    viewCard(messages("lark").dashboardTitle, body, isProjectGroup(chatId)),
-  );
+  const m = messages("lark");
+  const body = formatDashboardForChat(snap, {
+    maxChars: 3500,
+    labels: {
+      overallHealth: m.dashboardOverallHealth,
+      attention: m.dashboardAttention,
+      activeWork: m.dashboardActiveWork,
+      automation: m.dashboardAutomation,
+      operatorAi: m.dashboardOperatorAi,
+      runtimeDomains: m.dashboardRuntimeDomains,
+      recentOutcomes: m.dashboardRecentOutcomes,
+      projectSessions: m.dashboardProjectSessions,
+      none: m.dashboardNone,
+      more: m.dashboardMore,
+    },
+  });
+  await sendCard(channel, chatId, viewCard(m.dashboardTitle, body, isProjectGroup(chatId)));
 }
 
 /** Machine load / thermal / top CPU / runaway-orphan shells. Mirrors /dashboard;

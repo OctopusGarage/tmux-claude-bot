@@ -200,7 +200,7 @@ For the complete maintained CLI command and option surface, see
 | `tcb doctor` | health checks against the install |
 | `tcb config list\|get\|set` | inspect personal `.env` configuration with secrets redacted, and edit allowlisted, domain-validated non-secret keys |
 | `tcb automation status\|pause\|resume` | inspect or toggle high-cost background automation: Loop Engineering, Daily Task Audit, Runtime Guardian, and Batch Scheduler |
-| `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
+| `tcb dashboard` | unified Runtime Overview plus Project Sessions (`--json`, `--problems`, `--project <id>`, `--limit <1-100>`) |
 | `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
 | `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
 | `tcb loop validate\|tick\|run <file>` / `tcb loop targets\|reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, pause/resume configured targets, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |
@@ -808,8 +808,9 @@ Useful commands:
 - `tcb loop targets disable <file> <project|workspace|repo> <id> [--json]`
 - `tcb loop targets enable <file> <project|workspace|repo> <id> [--json]`
 - `tcb loop run <file> <projectId> [--json]` for command-backed/manual runs
-- `tcb loop reports list [--json]` for command-backed reports and supervisor reports
-- `tcb loop backlog list [--all] [--json]`
+- `tcb loop reports list [--project <id>] [--status <passed|failed>] [--limit <1-100>] [--json]`
+  for a bounded command-backed and supervisor report history
+- `tcb loop backlog list [--project <id>] [--status <open|closed|all>] [--limit <1-100>] [--json]`
 - `tcb loop skills refresh <file> [--write] [--json]`
 - `tcb capabilities status --task architecture [--json]` to see the external
   skills/tools a task family expects

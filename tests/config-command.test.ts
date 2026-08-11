@@ -182,6 +182,7 @@ describe("config and automation commands", () => {
       ].join("\n"),
     );
     const { runAutomationCommand } = await import("../src/core/config/command.js");
+    const { readAutomationStatuses } = await import("../src/core/config/automation-command.js");
 
     const status = runAutomationCommand(["status", "--json"]);
     expect(status.exitCode).toBe(0);
@@ -196,6 +197,7 @@ describe("config and automation commands", () => {
       expect.objectContaining({ id: "runtime-guardian", enabled: false, tickMs: 34567 }),
       expect.objectContaining({ id: "batch", enabled: true, tickMs: 45678 }),
     ]);
+    expect(readAutomationStatuses()).toEqual(JSON.parse(stdoutOf(status)));
 
     const pause = runAutomationCommand(["pause", "loop", "--json"]);
     expect(pause.exitCode).toBe(0);

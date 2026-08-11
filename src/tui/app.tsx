@@ -4,7 +4,7 @@ import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ControlClient } from "../adapters/control/client.js";
 import type { SessionRow } from "../core/dashboard/dashboard.js";
-import { formatHeader } from "../core/dashboard/dashboard-view.js";
+import { formatHeader, formatRuntimeOverviewText } from "../core/dashboard/dashboard-view.js";
 import { agentGlyph } from "../shared/types.js";
 import { UI_ICONS } from "../shared/ui/icons.js";
 import { autopilotActionList } from "./autopilot-panel.js";
@@ -49,6 +49,7 @@ const HELP: [string, string][] = [
   ["p", "refresh peek"],
   ["l", "logs (WARN+) for this session"],
   ["m", "machine load + Resource Guardian (sysload)"],
+  ["o", "Runtime Overview domains and recent outcomes"],
   ["u", "recent inputs → Enter re-runs"],
   ["c", "controls (interrupt/clear/compact/…)"],
   ["e / x / r", "esc / enter / restart"],
@@ -80,6 +81,7 @@ type Mode =
   | "projects"
   | "logs"
   | "sysload"
+  | "overview"
   | "inputs"
   | "help"
   | "autopilot";
@@ -110,6 +112,7 @@ export function App({
   // Live fleet summary line(s) shown at the top — the same header `tcb dashboard`
   // renders. Refreshed on every snapshot (activity events + the periodic timer).
   const [summary, setSummary] = useState("");
+  const [overviewText, setOverviewText] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [projSel, setProjSel] = useState(0);
   const [overlayText, setOverlayText] = useState("");
@@ -123,9 +126,9 @@ export function App({
   const [interaction, setInteraction] = useState(initialInteractionState);
 
   const selected = rows[Math.min(sel, Math.max(0, rows.length - 1))];
-  // Keep both panes within the terminal (the 2-line fleet summary + status line +
-  // footer + borders take ~10 rows).
-  const bodyRows = Math.max(6, (stdout?.rows ?? 30) - 10);
+  // Keep both panes within the terminal (the health-first fleet summary, status,
+  // footer, and borders take about 11 rows).
+  const bodyRows = Math.max(6, (stdout?.rows ?? 30) - 11);
   const peekRows = bodyRows;
   // Window the lists/overlays so long content scrolls with the selection.
   const listStart = Math.max(0, Math.min(sel - Math.floor(bodyRows / 2), rows.length - bodyRows));
@@ -146,6 +149,11 @@ export function App({
       const snap = await client.snapshot();
       setRows(snap.sessions);
       setSummary(formatHeader(snap));
+      setOverviewText(
+        snap.overview === undefined
+          ? "Runtime Overview unavailable"
+          : formatRuntimeOverviewText(snap.overview),
+      );
       // Clear the initial "connecting…" once, but never clobber a transient
       // reply/notify/error message that the periodic refresh would otherwise wipe.
       setStatus((s) => (s === "connecting…" ? "" : s));
@@ -423,12 +431,13 @@ export function App({
         }
         return;
       }
-      if (mode === "logs" || mode === "sysload") {
+      if (mode === "logs" || mode === "sysload" || mode === "overview") {
         if (
           key.escape ||
           ch === "q" ||
           (mode === "logs" && ch === "l") ||
-          (mode === "sysload" && ch === "m")
+          (mode === "sysload" && ch === "m") ||
+          (mode === "overview" && ch === "o")
         )
           setMode("list");
         else if (key.upArrow || ch === "k") setOverlayScroll((s) => Math.max(0, s - 1));
@@ -495,7 +504,12 @@ export function App({
         );
       else if (ch === "m")
         void showText("sysload", "System load · Resource Guardian", () => client.sysload());
-      else if (ch === "u") void openInputs();
+      else if (ch === "o") {
+        setOverlayTitle("Runtime Overview");
+        setOverlayText(overviewText || "Runtime Overview unavailable");
+        setOverlayScroll(0);
+        setMode("overview");
+      } else if (ch === "u") void openInputs();
       else if (ch === "p" || key.return) void loadPeek(selected?.session);
       else if (ch === "e") void doControl("esc");
       else if (ch === "x") void doControl("enter");
@@ -619,7 +633,7 @@ export function App({
                     </Box>
                   ),
                 )
-              : mode === "logs" || mode === "sysload"
+              : mode === "logs" || mode === "sysload" || mode === "overview"
                 ? pane(
                     <Text bold color="yellow" wrap="truncate">
                       {overlayTitle} · j/k scroll · Esc close
@@ -671,7 +685,7 @@ export function App({
         </Text>
       ) : mode === "projects" || mode === "inputs" ? (
         <Text color="gray">j/k move · Enter select · Esc cancel</Text>
-      ) : mode === "logs" || mode === "sysload" ? (
+      ) : mode === "logs" || mode === "sysload" || mode === "overview" ? (
         <Text color="gray">j/k scroll · Esc close</Text>
       ) : mode === "help" ? (
         <Text color="gray">any key to close</Text>
@@ -679,8 +693,8 @@ export function App({
         <Text color="gray">j/k move · Enter delegate · A/Esc close</Text>
       ) : (
         <Text color="gray">
-          j/k move · i prompt · T translate · a attach · s projects · A autopilot · ? more keys · q
-          quit
+          j/k move · i prompt · o overview · T translate · a attach · s projects · A autopilot · ?
+          more keys · q quit
         </Text>
       )}
     </Box>

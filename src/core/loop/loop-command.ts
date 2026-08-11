@@ -14,7 +14,7 @@ import {
 } from "../skills/registry.js";
 import { LoopBacklogStore } from "./backlog.js";
 import { type LoopValidationSummary, parseLoopConfigYaml, validateLoopConfig } from "./config.js";
-import { listLoopReports, writeLoopRunReport } from "./report.js";
+import { queryLoopReports, writeLoopRunReport } from "./report.js";
 import { type LoopRunCommandInvocation, type LoopRunSummary, runLoopProject } from "./run.js";
 import { LoopSchedulerStore, type LoopTickSummary, runLoopSchedulerTick } from "./scheduler.js";
 
@@ -110,6 +110,50 @@ type TargetToggleArgs = {
   enabled: boolean;
   json: boolean;
 };
+
+type BoundedListArgs = {
+  json: boolean;
+  limit: number;
+  projectId?: string;
+  status?: string;
+};
+
+function parseBoundedListArgs(
+  args: string[],
+  validStatuses: ReadonlySet<string>,
+  usage: string,
+): BoundedListArgs | string {
+  const parsed: BoundedListArgs = { json: false, limit: 20 };
+  for (let index = 2; index < args.length; index += 1) {
+    const option = args[index];
+    if (option === "--json") {
+      parsed.json = true;
+      continue;
+    }
+    const value = args[index + 1];
+    if (option === "--limit") {
+      const limit = Number(value);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) return `${usage}: invalid --limit`;
+      parsed.limit = limit;
+      index += 1;
+      continue;
+    }
+    if (option === "--project") {
+      if (value === undefined || value.startsWith("--")) return `${usage}: missing --project value`;
+      parsed.projectId = value;
+      index += 1;
+      continue;
+    }
+    if (option === "--status") {
+      if (value === undefined || !validStatuses.has(value)) return `${usage}: invalid --status`;
+      parsed.status = value;
+      index += 1;
+      continue;
+    }
+    return `${usage}: unknown option "${option ?? ""}"`;
+  }
+  return parsed;
+}
 type LoopTargetSummary = {
   kind: LoopTargetKind;
   id: string;
@@ -414,28 +458,37 @@ export function runLoopCommand(args: string[]): LoopCommandResult {
     }
     if (command === "reports") {
       const action = args[1];
-      const option = args[2];
       if (action !== "list") {
-        return { exitCode: 1, stderr: "Usage: loop reports list [--json]" };
+        return {
+          exitCode: 1,
+          stderr:
+            "Usage: loop reports list [--project <id>] [--status <passed|failed>] [--limit <1-100>] [--json]",
+        };
       }
-      if (option !== undefined && option !== "--json") {
-        return { exitCode: 1, stderr: `unknown loop reports list option "${option}"` };
-      }
-      const reports = listLoopReports();
+      const parsed = parseBoundedListArgs(
+        args,
+        new Set(["passed", "failed"]),
+        "Usage: loop reports list [--project <id>] [--status <passed|failed>] [--limit <1-100>] [--json]",
+      );
+      if (typeof parsed === "string") return { exitCode: 1, stderr: parsed };
+      const reports = queryLoopReports({
+        limit: parsed.limit,
+        ...(parsed.projectId === undefined ? {} : { projectId: parsed.projectId }),
+        ...(parsed.status === undefined ? {} : { status: parsed.status as "passed" | "failed" }),
+      });
       return {
         exitCode: 0,
-        stdout:
-          option === "--json"
-            ? JSON.stringify(reports)
-            : [
-                `loop reports: ${reports.length}`,
-                ...reports.map(
-                  (r) =>
-                    `- ${r.projectId}: ${r.status} ${r.runId}${
-                      r.evalOutcome === undefined ? "" : ` eval=${r.evalOutcome.status}`
-                    }`,
-                ),
-              ].join("\n"),
+        stdout: parsed.json
+          ? JSON.stringify(reports)
+          : [
+              `loop reports: ${reports.items.length}/${reports.total}${reports.truncated ? " (truncated)" : ""}`,
+              ...reports.items.map(
+                (r) =>
+                  `- ${r.projectId}: ${r.status} ${r.runId}${
+                    r.evalOutcome === undefined ? "" : ` eval=${r.evalOutcome.status}`
+                  }`,
+              ),
+            ].join("\n"),
       };
     }
     if (command === "targets") {
@@ -485,20 +538,29 @@ export function runLoopCommand(args: string[]): LoopCommandResult {
       const action = args[1];
       const store = new LoopBacklogStore();
       if (action === "list") {
-        const options = new Set(args.slice(2));
-        for (const option of options) {
-          if (option !== "--json" && option !== "--all") {
-            return { exitCode: 1, stderr: `unknown loop backlog list option "${option}"` };
-          }
-        }
-        const items = store.list({ all: options.has("--all") });
+        const normalizedArgs = args.map((value) => (value === "--all" ? "--status" : value));
+        const allIndex = args.indexOf("--all");
+        if (allIndex >= 0) normalizedArgs.splice(allIndex + 1, 0, "all");
+        const parsed = parseBoundedListArgs(
+          normalizedArgs,
+          new Set(["open", "closed", "all"]),
+          "Usage: loop backlog list [--project <id>] [--status <open|closed|all>] [--limit <1-100>] [--json]",
+        );
+        if (typeof parsed === "string") return { exitCode: 1, stderr: parsed };
+        const result = store.query({
+          limit: parsed.limit,
+          ...(parsed.projectId === undefined ? {} : { projectId: parsed.projectId }),
+          ...(parsed.status === undefined
+            ? {}
+            : { status: parsed.status as "open" | "closed" | "all" }),
+        });
         return {
           exitCode: 0,
-          stdout: options.has("--json")
-            ? JSON.stringify(items)
+          stdout: parsed.json
+            ? JSON.stringify(result)
             : [
-                `loop backlog: ${items.length}`,
-                ...items.map((item) => `- ${item.id}: ${item.text}`),
+                `loop backlog: ${result.items.length}/${result.total}${result.truncated ? " (truncated)" : ""}`,
+                ...result.items.map((item) => `- ${item.id}: ${item.text}`),
               ].join("\n"),
         };
       }

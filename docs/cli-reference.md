@@ -78,11 +78,11 @@ family registrars.
 - `tcb loop validate <file>`
 - `tcb loop tick <file>`
 - `tcb loop run <file> <projectId>`
-- `tcb loop reports list`
+- `tcb loop reports list [--project <id>] [--status <passed|failed>] [--limit <1-100>]`
 - `tcb loop targets list <file>`
 - `tcb loop targets enable <file> <project|workspace|repo> <id>`
 - `tcb loop targets disable <file> <project|workspace|repo> <id>`
-- `tcb loop backlog list`
+- `tcb loop backlog list [--project <id>] [--status <open|closed|all>] [--limit <1-100>]`
 - `tcb loop backlog close <id>`
 - `tcb loop skills list`
 - `tcb loop skills sync <file>`
@@ -136,6 +136,8 @@ family registrars.
 - `--now`
 - `--output`
 - `--profile`
+- `--problems`
+- `--project`
 - `--reconfigure`
 - `--repair-status`
 - `--report`

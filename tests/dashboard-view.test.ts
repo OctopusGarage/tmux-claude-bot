@@ -70,6 +70,74 @@ const snap: DashboardSnapshot = {
     adapters: { telegram: true, lark: false },
   },
   generatedAt: 0,
+  overview: {
+    health: { status: "attention", attentionCount: 2, degradedDomainCount: 0 },
+    attention: {
+      items: [
+        {
+          id: "loop:failed",
+          domain: "loop",
+          severity: "error",
+          observedAt: 10,
+          summary: "Loop failed",
+          nextAction: "tcb loop reports list --limit 20",
+        },
+        {
+          id: "power:policy",
+          domain: "power",
+          severity: "warning",
+          observedAt: 9,
+          summary: "Wake schedule missing",
+          nextAction: "tcb power status",
+        },
+      ],
+      total: 2,
+      limit: 10,
+      truncated: false,
+    },
+    activeWork: {
+      items: [
+        {
+          id: "work-order:one",
+          kind: "work-order",
+          label: "proj-a architecture",
+          status: "running",
+          startedAt: 8,
+          projectId: "proj-a",
+        },
+      ],
+      total: 1,
+      limit: 10,
+      truncated: false,
+    },
+    automation: [
+      {
+        id: "loop",
+        label: "Loop Engineering",
+        enabled: true,
+        configured: true,
+        activeCount: 1,
+        tickMs: 300_000,
+      },
+    ],
+    runtimeDomains: [
+      { id: "power", label: "Service and Power", status: "attention", summary: "scheduled" },
+    ],
+    operator: {
+      session: { state: "ready" },
+      skills: { installed: 2, expected: 2, state: "ready" },
+      mcpProfiles: { installed: 2, expected: 2, state: "ready" },
+      promptLibrary: { state: "disabled" },
+      optionalProjectMcpCount: 1,
+    },
+    recentOutcomes: {
+      items: [],
+      total: 0,
+      limit: 10,
+      truncated: false,
+    },
+    degradedDomains: [],
+  },
 };
 
 describe("dashboard-view", () => {
@@ -87,6 +155,15 @@ describe("dashboard-view", () => {
     expect(out).toMatch(/idle/i);
     expect(out).toContain("47"); // context %
     expect(out).toMatch(/3 sessions/); // session count in header
+  });
+
+  it("renders health and attention before active work and sessions", () => {
+    const out = formatDashboardText(snap);
+
+    expect(out.startsWith("Overall Health: attention")).toBe(true);
+    expect(out.indexOf("Attention (2)")).toBeLessThan(out.indexOf("Active Work (1)"));
+    expect(out.indexOf("Active Work (1)")).toBeLessThan(out.indexOf("Project Sessions"));
+    expect(out).toContain("Operator and AI Interfaces");
   });
 
   it("can hide Lark-only project-group details for Telegram", () => {

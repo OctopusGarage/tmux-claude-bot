@@ -4,6 +4,7 @@ import { resolveHostPowerPhase, wakeTimeFor } from "./power-policy.js";
 import {
   createPowerScheduleProbe,
   inspectPowerSchedule,
+  type PowerScheduleInspection,
   type PowerScheduleProbe,
 } from "./power-schedule.js";
 import { type MacPowerSource, readMacPowerSource } from "./power-source.js";
@@ -19,17 +20,31 @@ type PowerCommandOptions = {
   readPowerSource?: () => MacPowerSource;
 };
 
+export type PowerStatusView = {
+  mode: HostPowerConfig["mode"];
+  phase: ReturnType<typeof resolveHostPowerPhase>;
+  timezone: string;
+  quietStart: string;
+  wakeAt: string;
+  quietEnd: string;
+  keepAwakeExpected: boolean;
+  powerSource: MacPowerSource;
+  degradedReason: string | null;
+  schedule:
+    | PowerScheduleInspection
+    | { status: "not-required"; wakeAt: string; timezone: string; detail: string };
+};
+
 function commandError(error: unknown): CommandResult {
   return { exitCode: 1, stderr: error instanceof Error ? error.message : String(error) };
 }
 
-function statusResult(
+export function readPowerStatus(
   config: HostPowerConfig,
   now: number,
   probe: PowerScheduleProbe,
   powerSource: MacPowerSource,
-  json: boolean,
-): CommandResult {
+): PowerStatusView {
   const phase = resolveHostPowerPhase(config, now);
   const schedule =
     config.mode === "scheduled"
@@ -47,7 +62,7 @@ function statusResult(
     keepAwakeExpected && powerSource === "battery"
       ? "host is on battery; caffeinate -s does not prevent system sleep"
       : null;
-  const view = {
+  return {
     mode: config.mode,
     phase,
     timezone: config.timezone,
@@ -59,6 +74,9 @@ function statusResult(
     degradedReason,
     schedule,
   };
+}
+
+function statusResult(view: PowerStatusView, json: boolean): CommandResult {
   return {
     exitCode: 0,
     stdout: json
@@ -68,7 +86,7 @@ function statusResult(
           `window: quiet=${view.quietStart} wake=${view.wakeAt} resume=${view.quietEnd}`,
           `keep-awake: ${view.keepAwakeExpected ? "expected" : "released"}`,
           `power source: ${view.powerSource}${view.degradedReason ? ` (degraded: ${view.degradedReason})` : ""}`,
-          `wake schedule: ${schedule.status} (${schedule.detail})`,
+          `wake schedule: ${view.schedule.status} (${view.schedule.detail})`,
         ].join("\n"),
   };
 }
@@ -145,10 +163,12 @@ export function runPowerCommand(args: string[], options: PowerCommandOptions = {
       return { exitCode: 1, stderr: "Usage: power status [--json]" };
     }
     return statusResult(
-      config,
-      (options.now ?? Date.now)(),
-      probe,
-      (options.readPowerSource ?? readMacPowerSource)(),
+      readPowerStatus(
+        config,
+        (options.now ?? Date.now)(),
+        probe,
+        (options.readPowerSource ?? readMacPowerSource)(),
+      ),
       subcommand === "--json",
     );
   }

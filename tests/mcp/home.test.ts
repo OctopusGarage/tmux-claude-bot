@@ -156,7 +156,8 @@ describe("home MCP server", () => {
       expect(result.structuredContent).toMatchObject({
         ok: false,
         role: "home",
-        blockedReason: "not connected",
+        blockedReason: "control-unavailable",
+        errorKind: "control-unavailable",
       });
     } finally {
       await client.close();
@@ -182,7 +183,8 @@ describe("home MCP server", () => {
       expect(result.structuredContent).toMatchObject({
         ok: false,
         role: "home",
-        blockedReason: "delegation blocked",
+        blockedReason: "operation-blocked",
+        errorKind: "operation-blocked",
       });
       expect(close).toHaveBeenCalledOnce();
     } finally {
