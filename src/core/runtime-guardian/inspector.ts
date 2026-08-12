@@ -195,11 +195,14 @@ function invalidOutput(
     return null;
   const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
   if (
-    (hasSuccessfulSummary(record) || hasRawSuccessfulSummary(finalSummaryPath)) &&
+    parsed.ok &&
+    parsed.summary.status === "completed" &&
+    parsed.summary.finalVerification === "passed" &&
     existsSync(gatePath)
   ) {
     return null;
   }
+  if (!parsed.ok && hasRawSuccessfulSummary(finalSummaryPath)) return null;
   if (isRestartRecoveredActiveDelegationInvalidOutput(record)) return null;
   return findingFor(record, "terminal-invalid-output", "medium", [
     `terminal failed work-order has resultStatus=invalid-output: ${record.workOrder.id}`,
@@ -293,14 +296,6 @@ function readJson(path: string): Record<string, unknown> | null {
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasSuccessfulSummary(record: TerminalWorkOrder): boolean {
-  const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
-  return (
-    parsed.ok &&
-    parsed.summary.status === "completed" &&
-    parsed.summary.finalVerification === "passed"
-  );
 }
 function hasRawSuccessfulSummary(finalSummaryPath: string): boolean {
   const summary = readJson(finalSummaryPath);

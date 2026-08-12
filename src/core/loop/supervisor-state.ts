@@ -52,6 +52,7 @@ const RECOVERABLE_FAILED_RESULTS = new Set<LoopSupervisedRunResult["status"]>([
   "dispatch-failed",
   "dispatch-timeout",
   "invalid-output",
+  "supervisor-failed",
 ]);
 export const STALE_DISPATCHING_WORK_ORDER_MS = 5 * 60 * 1000;
 const STALE_UNFINISHED_RESERVATION_MS = 12 * 60 * 60 * 1000;

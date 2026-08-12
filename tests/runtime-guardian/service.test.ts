@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import { runGitCommand, runShellCommand } from "../../src/core/loop/service.js";
 import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
-import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
+import {
+  listRecoverableFailedLoopSupervisorWorkOrders,
+  writeLoopSupervisorWorkOrderState,
+} from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import type { RuntimeGuardianFinding } from "../../src/core/runtime-guardian/findings.js";
 import { discoverRuntimeGuardianFindings as discoverRuntimeGuardianArtifacts } from "../../src/core/runtime-guardian/inspector.js";
@@ -792,6 +795,90 @@ projects:
     expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
   });
 
+  it("does not rediscover non-blocking read-only opportunity-discovery preflight eval failures after successful final summary evidence", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "alcove",
+      "run-opportunity-preflight",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-opportunity-preflight",
+        "/repo/alcove",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      task: {
+        kind: "opportunity-discovery",
+        maxRounds: 1,
+        maxSuggestions: 3,
+        minConfidence: "medium",
+        categories: ["maintenance"],
+        cooldownDays: 7,
+        requireEvidence: true,
+      },
+      preflight: {
+        commands: ["tcb opportunity smoke --read-only"],
+        repair: { agent: false },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["wrote read-only opportunity suggestions"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["target dependency preflight failed before discovery"],
+          postMutationReview: [
+            "Opportunity discovery was read-only; the failed preflight was recorded as a non-blocking discovery signal.",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "target dependency preflight",
+              command: "tcb opportunity smoke --read-only",
+              result: "failed",
+              evidence:
+                "preflight command exited 1; explicitly non-blocking read-only opportunity-discovery signal only.",
+            },
+            {
+              name: "opportunity summary parse",
+              result: "passed",
+              evidence: "completed/passed/pass",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
   it("does not rediscover restart-recovered active delegation lease invalid-output as a bot repair", () => {
     writeLoopSupervisorWorkOrderState({
       workOrder: {
@@ -873,6 +960,204 @@ projects:
     });
 
     expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover parser-invalid stale invalid-output when raw final summary evidence passed without gate evidence", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "prs",
+      "run-raw-success-no-gate",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-raw-success-no-gate",
+        "/repo/prs",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "prs",
+      projectName: "PRs",
+      task: {
+        kind: "repository-pull-request-review",
+        repo: "Owner/repo",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: true,
+        mergeMethod: "squash",
+        repair: { enabled: true, maxAttempts: 1 },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "prs",
+        actionsTaken: ["verified existing PR evidence"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+        pullRequestDecisions: [
+          {
+            number: 12,
+            repository: "Owner/repo",
+            outcome: "closed",
+            evidence: ["closed with allowlisted reason obsolete"],
+            nextStep: "No further action; PR is obsolete and closed.",
+          },
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("treats supervisor-failed terminal summaries as recoverable for system-gate reconciliation", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "alcove",
+      "run-supervisor-failed-summary",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-supervisor-failed-summary",
+        "/repo/alcove",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      task: {
+        kind: "opportunity-discovery",
+        maxRounds: 1,
+        maxSuggestions: 2,
+        minConfidence: "medium",
+        categories: ["developer-experience"],
+        cooldownDays: 14,
+        requireEvidence: true,
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["recorded read-only opportunities"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-applicable",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(listRecoverableFailedLoopSupervisorWorkOrders()).toEqual([
+      expect.objectContaining({ workOrder: expect.objectContaining({ id: order.id }) }),
+    ]);
+  });
+
+  it("marks stale invalid-output with parser-invalid raw successful final summary as not reproducible", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "prs", "run-legacy-raw");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-legacy-raw", "/repo/prs", join(runDir, "supervisor-final-summary.json")),
+      projectId: "prs",
+      projectName: "PRs",
+      task: {
+        kind: "repository-pull-request-review",
+        repo: "Owner/repo",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: true,
+        mergeMethod: "squash",
+        repair: { enabled: true, maxAttempts: 1 },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "prs",
+        actionsTaken: ["reviewed PRs and found no remaining action"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123"],
+        followUps: [],
+        pullRequestDecisions: [
+          {
+            number: 12,
+            repository: "Owner/repo",
+            outcome: "closed",
+            evidence: ["legacy summary omitted the strict close reason"],
+            nextStep: "No further action.",
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({ accepted: true, resultStatus: "completed" }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "prs",
+      projectPath: "/repo/prs",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "invalid-summary",
+      taskId: "run-legacy-raw",
+      now: 1_000,
+    });
+    coordinator.releaseForRetry(queued.id, 1_001);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "not-reproducible" });
   });
 
   it("does not invoke the supervisor for direct external-blocker dispatch", async () => {
