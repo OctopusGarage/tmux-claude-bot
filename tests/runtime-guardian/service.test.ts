@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
+import { runGitCommand, runShellCommand } from "../../src/core/loop/service.js";
 import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
@@ -19,7 +20,9 @@ import {
   discoverRuntimeGuardianFindings,
   dispatchRuntimeGuardianRepair,
   RuntimeGuardianStore,
+  reconcileRuntimeGuardianBeforeDiscovery,
   runRuntimeGuardianTick,
+  startRuntimeGuardian,
 } from "../../src/core/runtime-guardian/service.js";
 import {
   InMemoryRepairQueueStore,
@@ -27,6 +30,7 @@ import {
 } from "../../src/core/tasks/repair-coordinator.js";
 import { loadConfig } from "../../src/shared/config.js";
 import type { AppConfig } from "../../src/shared/types.js";
+import { fakeDeps } from "../adapters/lark/_fakes.js";
 
 vi.mock("../../src/core/autopilot/delegated-task.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/core/autopilot/delegated-task.js")>()),
@@ -96,6 +100,199 @@ describe("runtime guardian", () => {
 
   it("keeps Runtime Guardian artifact discovery owned by the inspector module", () => {
     expect(discoverRuntimeGuardianFindings).toBe(discoverRuntimeGuardianArtifacts);
+  });
+
+  it("reconciles Loop WorkOrders before Runtime Guardian discovers stale invalid-output artifacts", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-missing-system-gate",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-missing-system-gate", projectDir, summaryPath),
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_tcb",
+        requirement: "Repair the confirmed runtime issue.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["wrote final summary before terminal marker was captured"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-run",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: tmux-claude-bot
+    name: tmux-claude-bot
+    path: ${projectDir}
+    agent: codex
+    goal: Keep runtime orchestration healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+`,
+    );
+
+    await reconcileRuntimeGuardianBeforeDiscovery({
+      configFile,
+      now: 3,
+      runCommand: runShellCommand,
+      runGit: runGitCommand,
+      reconcileAutopilot: async () => ({ checked: 0, finished: 0, failed: 0, cleaned: 0 }),
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("reconciles Autopilot before Loop WorkOrders with the same cleanup boundary", async () => {
+    const calls: string[] = [];
+    const cleanupWorkerSession = vi.fn(async () => undefined);
+    const workerSessionExists = vi.fn(async () => true);
+    const runCommand = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const runGit = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const reconcileAutopilot = vi.fn(async (input) => {
+      calls.push("autopilot");
+      expect(input.cleanupWorkerSession).toBe(cleanupWorkerSession);
+      return { checked: 0, finished: 0, failed: 0, cleaned: 0 };
+    });
+    const reconcileLoop = vi.fn(async (input) => {
+      calls.push("loop");
+      expect(input).toMatchObject({
+        configFile: "/tmp/loop.yml",
+        now: 42,
+        runCommand,
+        runGit,
+        cleanupCompletedWorkerSession: cleanupWorkerSession,
+        workerSessionExists,
+      });
+      return { checked: 0, recovered: 0, failed: 0 };
+    });
+
+    await reconcileRuntimeGuardianBeforeDiscovery({
+      configFile: "/tmp/loop.yml",
+      now: 42,
+      runCommand,
+      runGit,
+      cleanupCompletedWorkerSession: cleanupWorkerSession,
+      workerSessionExists,
+      reconcileAutopilot,
+      reconcileLoop,
+    });
+
+    expect(calls).toEqual(["autopilot", "loop"]);
+  });
+
+  it("uses a no-op cleanup and omits absent optional probes", async () => {
+    const reconcileAutopilot = vi.fn(async ({ cleanupWorkerSession }) => {
+      await cleanupWorkerSession?.("already-absent");
+      return { checked: 0, finished: 0, failed: 0, cleaned: 0 };
+    });
+    const reconcileLoop = vi.fn(async (input) => {
+      expect(input).not.toHaveProperty("runGit");
+      expect(input).not.toHaveProperty("workerSessionExists");
+      return { checked: 0, recovered: 0, failed: 0 };
+    });
+
+    await reconcileRuntimeGuardianBeforeDiscovery({
+      configFile: "/tmp/loop.yml",
+      now: 42,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      reconcileAutopilot,
+      reconcileLoop,
+    });
+
+    expect(reconcileAutopilot).toHaveBeenCalledOnce();
+    expect(reconcileLoop).toHaveBeenCalledOnce();
+  });
+
+  it("runs an immediate production tick and clears the scheduled timer", async () => {
+    const runTick = vi.fn(async (input) => {
+      await input.reconcile();
+      return { fired: false as const, reason: "no-findings" as const };
+    });
+    const reconcileBeforeDiscovery = vi.fn(async (input) => {
+      expect(input).toMatchObject({ configFile: "/tmp/loop.yml", now: 42 });
+      await input.cleanupCompletedWorkerSession?.("terminal-worker");
+      expect(await input.workerSessionExists?.("terminal-worker")).toBe(false);
+    });
+    const timer = { unref: vi.fn() } as unknown as ReturnType<typeof setInterval>;
+    const setIntervalFn = vi.fn(() => timer);
+    const clearIntervalFn = vi.fn();
+    const deps = fakeDeps({
+      config: {
+        runtimeGuardian: runtimeConfig({ tickMs: 5000 }),
+        loopEngineering: {
+          configFile: "/tmp/loop.yml",
+          tickMs: 0,
+          supervisor: {
+            enabled: true,
+            dir: "/tmp",
+            agent: "codex",
+            poolSize: 1,
+            resetBeforeWorkOrder: "compact",
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+    });
+
+    const stop = startRuntimeGuardian(deps, {
+      now: () => 42,
+      setInterval: setIntervalFn as unknown as typeof setInterval,
+      clearInterval: clearIntervalFn as typeof clearInterval,
+      runTick,
+      reconcileBeforeDiscovery,
+    });
+    await vi.waitFor(() => expect(reconcileBeforeDiscovery).toHaveBeenCalledOnce());
+
+    expect(setIntervalFn).toHaveBeenCalledWith(expect.any(Function), 5000);
+    expect(timer.unref).toHaveBeenCalledOnce();
+    expect(deps.bridge.killSession).toHaveBeenCalledWith("terminal-worker");
+    stop();
+    expect(clearIntervalFn).toHaveBeenCalledWith(timer);
   });
 
   it("terminalizes explicitly classified target and external blockers instead of retrying bot repair forever", () => {
