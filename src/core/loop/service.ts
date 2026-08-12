@@ -806,7 +806,16 @@ export async function runLoopServiceTickAsync(input: {
       result.status === "completed" &&
       input.runGit !== undefined &&
       isPreparedIsolatedExecutionWorktree(workOrder) &&
-      !cleanupLoopExecutionWorktree({ worktree: workOrder.projectPath, runGit: input.runGit });
+      !cleanupLoopExecutionWorktree({
+        worktree: workOrder.projectPath,
+        runGit: input.runGit,
+        ...(workOrder.executionIsolation?.sourceWorktree === undefined
+          ? {}
+          : { sourceWorktree: workOrder.executionIsolation.sourceWorktree }),
+        ...(workOrder.commitPolicy.branch === undefined
+          ? {}
+          : { expectedBranch: workOrder.commitPolicy.branch }),
+      });
     settleLoopSupervisorWorkerLease(workOrder, result, endedAt, isolatedCleanupFailed);
     await cleanupCompletedWorkerSession(workOrder, input.cleanupCompletedWorkerSession);
     if (checkpointScheduler) {

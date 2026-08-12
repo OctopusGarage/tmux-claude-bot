@@ -28,6 +28,7 @@ function workOrder(stateDir: string, overrides: Partial<LoopWorkOrder> = {}): Lo
     scheduledAt: 1_000,
     requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${id}]`,
     finalSummaryPath: join(stateDir, "loop-runs", "app", id, "supervisor-final-summary.json"),
+    commitPolicy: { enabled: false, perRound: false },
     ...overrides,
   } as LoopWorkOrder;
 }

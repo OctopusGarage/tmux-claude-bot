@@ -319,6 +319,14 @@ Worker leases whose bot-owned worktree disappeared are stale and must be
 released during reconciliation. Source worktrees are never removed. The
 invariant is enforced by coordinator/runtime/worktree tests rather than
 notification wording alone.
+When an isolated WorkOrder uses a bot-owned `loop/*` branch, successful or
+retention-expired cleanup must treat the worktree registration and its local
+branch ref as one lifecycle. Verify the source repository, expected branch, and
+HEAD; detach the terminal worktree; compare-and-delete the exact ref; then remove
+the worktree. When the directory disappeared first, the eligible terminal
+WorkOrder remains the authority: prove the source registry no longer owns that
+path, re-read the exact ref SHA, and compare-and-delete it rather than deleting
+by name.
 An isolated worktree created before its WorkOrder became durable has no terminal
 record to drive cleanup. Reconciliation must treat it as an orphan only when no
 WorkOrder resource path or worker lease references the exact state-owned path;

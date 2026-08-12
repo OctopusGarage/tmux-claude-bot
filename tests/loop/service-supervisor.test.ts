@@ -3548,6 +3548,34 @@ projects:
         if (args === "rev-parse --show-toplevel" && invocation.cwd === workerDir) {
           return { status: 0, stdout: `${workerDir}\n`, stderr: "" };
         }
+        if (args === "rev-parse --show-toplevel" && invocation.cwd === sourceDir) {
+          return { status: 0, stdout: `${sourceDir}\n`, stderr: "" };
+        }
+        if (args === "rev-parse --verify HEAD" && invocation.cwd === workerDir) {
+          return { status: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" };
+        }
+        if (args === `switch --detach ${"a".repeat(40)}` && invocation.cwd === workerDir) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (args === "worktree list --porcelain" && invocation.cwd === sourceDir) {
+          return {
+            status: 0,
+            stdout: `worktree ${sourceDir}\nbranch refs/heads/dev\n`,
+            stderr: "",
+          };
+        }
+        if (
+          args === "show-ref --verify --hash refs/heads/loop/hub/run-1" &&
+          invocation.cwd === sourceDir
+        ) {
+          return { status: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" };
+        }
+        if (
+          args === `update-ref -d refs/heads/loop/hub/run-1 ${"a".repeat(40)}` &&
+          invocation.cwd === sourceDir
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
         if (args === `worktree remove --force ${workerDir}` && invocation.cwd === workerDir) {
           return { status: 0, stdout: "", stderr: "" };
         }

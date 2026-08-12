@@ -147,6 +147,14 @@ recorded for that WorkOrder. If the source repository or registration cannot be
 verified, retain the evidence and fail closed instead of guessing. Source
 worktrees are never cleanup targets.
 
+An isolated worktree's local `loop/*` branch is part of the same resource. For
+a verified terminal WorkOrder, cleanup records the exact HEAD, detaches the
+worktree, compare-and-deletes that exact local ref, and only then removes the
+worktree. This ordering is restart-safe. If the directory disappeared first,
+the eligible terminal WorkOrder and verified missing registration authorize a
+fresh exact-SHA compare-and-delete of its uniquely named branch; never delete a
+local ref from a name-only sweep.
+
 A crash between `git worktree add` and durable WorkOrder persistence can leave
 an isolated worktree with no registry record. Periodic reconciliation removes
 such an orphan only after the default 72-hour failure-evidence window, after

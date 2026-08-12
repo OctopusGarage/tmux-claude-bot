@@ -339,6 +339,9 @@ function reconcileTerminalLoopSupervisorWorktrees(input: {
     if (
       cleanupWorktree({
         worktree: record.workOrder.projectPath,
+        ...(record.workOrder.commitPolicy.branch === undefined
+          ? {}
+          : { expectedBranch: record.workOrder.commitPolicy.branch }),
         ...(record.workOrder.executionIsolation?.sourceWorktree === undefined
           ? {}
           : { sourceWorktree: record.workOrder.executionIsolation.sourceWorktree }),
