@@ -448,6 +448,7 @@ Send any text → forwarded to the agent → reply`,
   dashboardRuntimeDomain: (id: string) =>
     ({
       "work-orders": "WorkOrders",
+      "repository-reviews": "Repository PR Reviews",
       automation: "Automation",
       batch: "Batch Scheduler",
       "daily-task-audit": "Daily Task Audit",
@@ -478,6 +479,12 @@ Send any text → forwarded to the agent → reply`,
     "Resource Guardian needs attention",
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "Power policy needs attention",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} is retrying automatically (epoch ${retryEpoch})`
+      : status === "manual-review"
+        ? `${project} has a verified human boundary`
+        : `${project} repository PR review retry budget is exhausted`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "Delegate the current session context to the Loop Supervisor. Start immediately when the scope is already clear, or review the plan first when you want an explicit checklist and stop conditions before execution.",

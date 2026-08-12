@@ -459,6 +459,7 @@ export const ja: Messages = {
   dashboardRuntimeDomain: (id: string) =>
     ({
       "work-orders": "ワークオーダー",
+      "repository-reviews": "リポジトリ PR レビュー",
       automation: "自動化",
       batch: "バッチスケジューラー",
       "daily-task-audit": "日次タスク監査",
@@ -492,6 +493,12 @@ export const ja: Messages = {
     "リソースガーディアンの確認が必要です",
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "電源ポリシーの確認が必要です",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} は自動再試行中です（エポック ${retryEpoch}）`
+      : status === "manual-review"
+        ? `${project} に検証済みの人手境界があります`
+        : `${project} のリポジトリ PR レビュー再試行上限に達しました`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "現在のセッション文脈を Loop Supervisor に委任します。範囲が明確ならすぐ委任し、先にチェックリストと停止条件を確認したい場合は計画を確認してから進めます。",

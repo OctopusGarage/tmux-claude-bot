@@ -461,6 +461,7 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   dashboardRuntimeDomain: (id: string) =>
     ({
       "work-orders": "órdenes de trabajo",
+      "repository-reviews": "revisiones PR del repositorio",
       automation: "automatización",
       batch: "planificador por lotes",
       "daily-task-audit": "auditoría diaria de tareas",
@@ -494,6 +495,12 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
     "Resource Guardian requiere atención",
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "La política de energía requiere atención",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} se reintenta automáticamente (época ${retryEpoch})`
+      : status === "manual-review"
+        ? `${project} tiene un límite humano verificado`
+        : `${project} agotó el presupuesto de reintentos de revisión PR`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "Delega el contexto de la sesión actual al Loop Supervisor. Empieza directamente cuando el alcance esté claro, o revisa primero el plan si quieres ver la lista, criterios y condiciones de parada.",

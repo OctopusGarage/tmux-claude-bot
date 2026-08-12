@@ -333,6 +333,15 @@ This applies to `gh api`, `gh pr`, `gh run`, `gh repo`, and security-alert
 checks, even when the task does not create a PR. Do not rely on the global
 active `gh` account for configured projects.
 
+Repository PR self-healing must remain narrower than general GitHub
+administration. It may approve or rerun an exact head workflow and may enable
+private-fork workflow execution only with write tokens, secrets, and variables
+disabled. Re-read repository permission, PR identity, head SHA, and workflow
+policy before mutation; persist sanitized intent first and outcome second. A
+prose mention of access or permission is not a human boundary: only the closed
+structured boundary-code contract may terminalize an occurrence as
+`manual-review`.
+
 ## Verification And Coverage
 
 Before pushing or claiming CI readiness, run `npm run verify:local`. If remote

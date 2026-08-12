@@ -40,6 +40,12 @@ import {
   resolveLoopPreDispatchAssessment,
 } from "./pre-dispatch-assessment.js";
 import { writeLoopRunReport } from "./report.js";
+import { createRepositoryPullRequestGitHub } from "./repository-pr-github.js";
+import {
+  createRepositoryPullRequestRecoveryController,
+  type RepositoryPullRequestRecoveryController,
+} from "./repository-pr-recovery.js";
+import { RepositoryPullRequestRecoveryStore } from "./repository-pr-recovery-store.js";
 import { RepositoryReviewQueue } from "./repository-review-queue.js";
 import {
   type LoopGitInvocation,
@@ -381,6 +387,7 @@ export async function runLoopServiceTickAsync(input: {
   /** Keep repository review out of the main Loop tick; production uses the independent consumer. */
   skipRepositoryReview?: boolean;
   hostPower?: HostPowerConfig;
+  repositoryPullRequestRecovery?: RepositoryPullRequestRecoveryController;
 }): Promise<LoopServiceTickSummary> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const previousLastFired = input.schedulerStore.getLastFired();
@@ -395,6 +402,19 @@ export async function runLoopServiceTickAsync(input: {
   const backlog = new LoopBacklogStore();
   const taskLedger = new DailyTaskLedger();
   const repositoryReviewQueue = new RepositoryReviewQueue();
+  const repositoryPullRequestRecovery =
+    input.repositoryPullRequestRecovery ??
+    createRepositoryPullRequestRecoveryController({
+      github: createRepositoryPullRequestGitHub({
+        run: (command) =>
+          input.runCommand({ kind: "pr", command, cwd: dirname(input.configFile), env: {} }),
+      }),
+      evidence: new RepositoryPullRequestRecoveryStore(),
+      verifyTarget: (cwd) => {
+        const result = input.runGit?.({ cwd, args: ["rev-parse", "--show-toplevel"] });
+        return result?.status === 0 && result.stdout.trim() === cwd;
+      },
+    });
   const supervisorSessions =
     input.supervisorSessionNames ??
     (input.supervisorSessionName !== undefined ? [input.supervisorSessionName] : []);
@@ -706,12 +726,39 @@ export async function runLoopServiceTickAsync(input: {
       revisionFailures = supervisorRevisionFailures(gate.failures);
     }
     result = gate.result;
-    const reviewDisposition =
+    let reviewDisposition =
       workOrder.task?.kind === "repository-pull-request-review" && "summary" in result
         ? repositoryPullRequestReviewDisposition(result.summary)
         : workOrder.task?.kind === "repository-pull-request-review"
           ? "invalid"
           : undefined;
+    if (
+      workOrder.task?.kind === "repository-pull-request-review" &&
+      "summary" in result &&
+      reviewDisposition !== "completed" &&
+      workOrder.pullRequestPolicy?.githubAccount !== undefined
+    ) {
+      try {
+        const recovery = repositoryPullRequestRecovery.recover(result.summary, {
+          account: workOrder.pullRequestPolicy.githubAccount,
+          cwd: workOrder.projectPath,
+          now: Date.now(),
+        });
+        reviewDisposition = recovery.disposition;
+        log.info("repository PR review recovery evaluated", {
+          data: {
+            workOrderId: workOrder.id,
+            repositoryId: workOrder.projectId,
+            disposition: recovery.disposition,
+            openPullRequests: recovery.openPullRequests,
+            repaired: recovery.repaired,
+          },
+        });
+      } catch (error) {
+        reviewDisposition = "retry";
+        log.warn("repository PR review recovery failed closed", { err: error });
+      }
+    }
     if (
       workOrder.task?.kind === "repository-pull-request-review" &&
       result.status === "completed" &&
@@ -956,7 +1003,11 @@ export async function runLoopServiceTickAsync(input: {
 
   const drainRepositoryReviewQueue = async (): Promise<void> => {
     const tickNow = input.now;
-    reconcileRepositoryReviewQueueWorkOrders(repositoryReviewQueue, tickNow);
+    reconcileRepositoryReviewQueueWorkOrders(
+      repositoryReviewQueue,
+      tickNow,
+      repositoryPullRequestRecovery,
+    );
     const active = activeLoopSupervisorWork(input.configFile);
     const reservedSupervisorSessions = reserveLoopSupervisorSessions(
       supervisorSessions,
@@ -1372,7 +1423,11 @@ function restoreLastFired(
 }
 
 /* c8 ignore start -- filesystem-backed WorkOrder reconciliation is exercised by live service smoke tests. */
-function reconcileRepositoryReviewQueueWorkOrders(queue: RepositoryReviewQueue, now: number): void {
+function reconcileRepositoryReviewQueueWorkOrders(
+  queue: RepositoryReviewQueue,
+  now: number,
+  recovery: RepositoryPullRequestRecoveryController,
+): void {
   for (const record of listUnfinishedLoopSupervisorWorkOrders()) {
     if (record.workOrder.task?.kind !== "repository-pull-request-review") continue;
     const hasActiveWorkerLease = readLoopSupervisorWorkerLeaseState().leases.some(
@@ -1411,6 +1466,36 @@ function reconcileRepositoryReviewQueueWorkOrders(queue: RepositoryReviewQueue, 
           item.repositoryId === record.workOrder.projectId &&
           item.scheduledAt === record.workOrder.scheduledAt,
       );
+    if (
+      queueItem !== undefined &&
+      queue.canRecoverTerminal(queueItem.id) &&
+      (queueItem.status === "manual-review" || queueItem.status === "dead-letter") &&
+      record.workOrder.pullRequestPolicy?.githubAccount !== undefined
+    ) {
+      const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
+      if (parsed.ok && repositoryPullRequestReviewDisposition(parsed.summary) === "retry") {
+        try {
+          const recovered = recovery.recover(parsed.summary, {
+            account: record.workOrder.pullRequestPolicy.githubAccount,
+            cwd: record.workOrder.projectPath,
+            now,
+          });
+          if (recovered.disposition === "retry" && recovered.openPullRequests > 0) {
+            queue.reopenTerminal(queueItem.id, {
+              now,
+              reason: "migrated false repository review terminal after structured revalidation",
+            });
+          } else if (recovered.disposition === "completed" && recovered.openPullRequests === 0) {
+            queue.completeRecoveredTerminal(queueItem.id, {
+              now,
+              reason: "revalidated repository review pull requests are already terminal",
+            });
+          }
+        } catch (error) {
+          log.warn("repository PR review terminal migration failed closed", { err: error });
+        }
+      }
+    }
     const retryDelay =
       queueItem === undefined
         ? REPOSITORY_REVIEW_RETRY_BASE_MS

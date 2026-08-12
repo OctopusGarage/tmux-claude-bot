@@ -57,7 +57,8 @@ blocked; an agent cannot safely repair an unidentifiable task.
 Repository-wide PR review has a narrower decision contract: every in-scope PR
 must be recorded as `merged`, `closed`, `retry`, or `manual-review`. `retry`
 remains claimable through the review queue and backoff path; `manual-review` is
-the explicit human terminal state. A PR may be closed automatically only with
+the explicit human terminal state only when accompanied by a validated
+structured boundary code. Evidence prose cannot create that state. A PR may be closed automatically only with
 an evidence-backed `duplicate`, `obsolete`, `non-actionable`, or `invalid`
 reason. Draft, conflict, age, pending checks, and ordinary repair failures are
 not close reasons by themselves.
@@ -141,13 +142,18 @@ Repository PR review queue records additionally expose `manual-review` as a
 terminal status distinct from retryable `retry-wait`. The queue may complete
 only after all structured PR decisions are terminal (`merged` or allowlisted
 `closed`), or retain the item as `manual-review` when every unresolved decision
-explicitly requires an owner at a concrete ownership, permission, product,
-migration, security-design, legal, or compliance boundary. Generic architecture
+explicitly requires an owner under a structured ownership, protected-branch,
+product, migration, security, legal/compliance, or organization-policy boundary. Generic architecture
 or design review, diff size, Draft state, merge conflicts, and ordinary code
 repair are not human boundaries: the contract downgrades those claims to
 `retry`, returning the item to the shared repair queue. Missing or malformed PR
 decisions are orchestration failures and return to retry, never to a false
-completed state.
+completed state. `action_required`, supported workflow approval, safe
+private-fork workflow configuration, conflicts, pending checks, and transient
+GitHub failures are system-repairable states. The system binds recovery to the
+configured GitHub account, re-observes the exact head SHA before mutation,
+records durable intent and outcome evidence, and never enables fork access to
+write tokens, secrets, or variables.
 
 Security Maintenance assessments use the same deterministic contract everywhere:
 the configured command must emit a JSON object with numeric `riskScore` from
@@ -882,7 +888,12 @@ Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`,
 `pending`, transient supervisor failures use bounded backoff, and a service
 restart does not lose an uncompleted review. Infrastructure retries have a
 five-attempt budget; reaching it, including while loading an over-budget legacy
-record, terminalizes the occurrence as `dead-letter` before another lease.
+record, terminalizes the occurrence as `dead-letter` before another lease. When
+historical `manual-review` or `dead-letter` evidence has no valid structured
+human boundary and the PR remains open, the repository-review consumer may
+reopen it once as `retry-wait`. Reopening increments a retry epoch, resets only
+that epoch's bounded attempt counter, retains migration evidence, and yields to
+any newer or active occurrence for the same repository.
 An isolated repository-review WorkOrder synchronizes to a detached remote base
 when it does not own an execution branch. It never checks out or pulls the base
 branch already owned by the source worktree.

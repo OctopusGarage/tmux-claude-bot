@@ -195,6 +195,12 @@ export function dashboardLabelsForMessages(m: Messages): DashboardLabels {
             presentation.phase,
             presentation.schedule,
           );
+        case "repository-review":
+          return m.dashboardAttentionRepositoryReview(
+            presentation.project,
+            presentation.status,
+            presentation.retryEpoch,
+          );
       }
     },
   };

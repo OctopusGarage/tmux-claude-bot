@@ -14,7 +14,13 @@ export type AttentionPresentation =
   | { kind: "daily-audit-attention"; count: number }
   | { kind: "runtime-finding"; project: string; findingKind: string }
   | { kind: "resource-pressure"; pressure: string; circuit: string }
-  | { kind: "power-policy"; mode: string; phase: string; schedule: string };
+  | { kind: "power-policy"; mode: string; phase: string; schedule: string }
+  | {
+      kind: "repository-review";
+      project: string;
+      status: "retry-wait" | "manual-review" | "dead-letter";
+      retryEpoch: number;
+    };
 
 export type AttentionItem = {
   id: string;

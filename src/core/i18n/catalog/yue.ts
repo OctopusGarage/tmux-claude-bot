@@ -440,6 +440,7 @@ export const yue: Messages = {
   dashboardRuntimeDomain: (id: string) =>
     ({
       "work-orders": "工作單",
+      "repository-reviews": "儲存庫 PR 審查",
       automation: "自動化",
       batch: "批次排程",
       "daily-task-audit": "每日任務審計",
@@ -468,6 +469,12 @@ export const yue: Messages = {
   dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) => "資源守護需要處理",
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "電源策略需要處理",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} 正在自動重試（輪次 ${retryEpoch}）`
+      : status === "manual-review"
+        ? `${project} 有已驗證嘅人工邊界`
+        : `${project} 嘅儲存庫 PR 審查重試額度已用完`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "將目前工作階段上下文交畀 Loop Supervisor。範圍清楚就可以直接託管；想先睇清任務清單、驗收標準同停止條件，就先睇計劃再確認推進。",

@@ -471,6 +471,7 @@ export const zh = {
   dashboardRuntimeDomain: (id: string) =>
     ({
       "work-orders": "工作单",
+      "repository-reviews": "仓库 PR 审查",
       automation: "自动化",
       batch: "批处理调度",
       "daily-task-audit": "每日任务审计",
@@ -499,6 +500,12 @@ export const zh = {
   dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) => "资源守护需要处理",
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "电源策略需要处理",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} 正在自动重试（轮次 ${retryEpoch}）`
+      : status === "manual-review"
+        ? `${project} 存在已验证的人工边界`
+        : `${project} 的仓库 PR 审查重试额度已耗尽`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "把当前会话上下文托管给 Loop Supervisor。范围已经清楚时可以直接托管；需要先看清任务清单、验收标准和停止条件时，先看计划再确认推进。",

@@ -16,6 +16,7 @@ function readers(overrides: Partial<RuntimeOverviewReaders> = {}): RuntimeOvervi
       },
     ],
     workOrders: () => ({ unfinished: [], terminal: [], abandoned: [], staleDispatching: [] }),
+    repositoryReviews: () => [],
     batch: () => ({ enabled: true }),
     dailyAudit: () => ({ enabled: true, lastFiredAt: 100 }),
     runtimeGuardian: () => ({ enabled: true, findings: [] }),
@@ -151,6 +152,64 @@ describe("Runtime Overview reader", () => {
       ]),
     );
     expect(overview.health.status).toBe("attention");
+  });
+
+  it("distinguishes automatic repository review recovery from real manual and exhausted work", async () => {
+    const overview = await readRuntimeOverview({
+      now: 2_000,
+      sessions: [],
+      readers: readers({
+        repositoryReviews: () => [
+          {
+            id: "retry",
+            repositoryId: "fluent-frame-all-prs",
+            status: "retry-wait",
+            updatedAt: 1_900,
+            nextAttemptAt: 3_000,
+            retryEpoch: 1,
+          },
+          {
+            id: "manual",
+            repositoryId: "product-all-prs",
+            status: "manual-review",
+            updatedAt: 1_800,
+            nextAttemptAt: 1_800,
+            retryEpoch: 0,
+          },
+          {
+            id: "dead",
+            repositoryId: "broken-all-prs",
+            status: "dead-letter",
+            updatedAt: 1_700,
+            nextAttemptAt: 1_700,
+            retryEpoch: 0,
+          },
+        ],
+      }),
+    });
+
+    expect(overview.attention.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "repository-review:retry",
+          severity: "info",
+          summary: expect.stringContaining("automatic retry"),
+        }),
+        expect.objectContaining({
+          id: "repository-review:manual",
+          severity: "warning",
+          summary: expect.stringContaining("human boundary"),
+        }),
+        expect.objectContaining({
+          id: "repository-review:dead",
+          severity: "error",
+          summary: expect.stringContaining("retry budget exhausted"),
+        }),
+      ]),
+    );
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({ id: "repository-reviews", status: "attention" }),
+    );
   });
 
   it("contains a collector timeout without blocking the whole snapshot", async () => {

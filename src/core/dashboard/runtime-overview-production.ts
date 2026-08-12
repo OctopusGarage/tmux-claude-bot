@@ -2,6 +2,7 @@ import { appStateDir } from "../../shared/state-dir.js";
 import { readAiToolReadiness } from "../ai-tools/install-contract.js";
 import { readAutomationStatuses } from "../config/automation-command.js";
 import type { HandlerDeps } from "../deps.js";
+import { RepositoryReviewQueue } from "../loop/repository-review-queue.js";
 import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
 import { type PowerStatusView, readPowerStatus } from "../platform/power-command.js";
 import { createPowerScheduleProbe } from "../platform/power-schedule.js";
@@ -101,6 +102,23 @@ export function createRuntimeOverviewReaders(input: {
       workOrderCache = read.entry;
       return read.value;
     },
+    repositoryReviews: () =>
+      new RepositoryReviewQueue()
+        .list({ all: true })
+        .filter(
+          (item) =>
+            item.status === "retry-wait" ||
+            item.status === "manual-review" ||
+            item.status === "dead-letter",
+        )
+        .map((item) => ({
+          id: item.id,
+          repositoryId: item.repositoryId,
+          status: item.status as "retry-wait" | "manual-review" | "dead-letter",
+          updatedAt: item.updatedAt,
+          nextAttemptAt: item.nextAttemptAt,
+          retryEpoch: item.retryEpoch ?? 0,
+        })),
     batch: () => {
       const active = new SchedulerStore().getActiveRun();
       return {

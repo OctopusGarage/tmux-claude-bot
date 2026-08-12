@@ -36,6 +36,15 @@ export type WorkOrderOverviewRead = {
   staleDispatching: OverviewWorkOrder[];
 };
 
+export type RepositoryReviewOverview = {
+  id: string;
+  repositoryId: string;
+  status: "retry-wait" | "manual-review" | "dead-letter";
+  updatedAt: number;
+  nextAttemptAt: number;
+  retryEpoch: number;
+};
+
 export type RuntimeOverviewReaders = {
   automation():
     | Array<{
@@ -57,6 +66,7 @@ export type RuntimeOverviewReaders = {
         }>
       >;
   workOrders(): WorkOrderOverviewRead | Promise<WorkOrderOverviewRead>;
+  repositoryReviews(): RepositoryReviewOverview[] | Promise<RepositoryReviewOverview[]>;
   batch():
     | {
         enabled: boolean;
@@ -288,6 +298,7 @@ export async function readRuntimeOverview(input: {
   const [
     automationRead,
     workOrdersRead,
+    repositoryReviewsRead,
     batchRead,
     dailyAuditRead,
     runtimeGuardianRead,
@@ -297,6 +308,7 @@ export async function readRuntimeOverview(input: {
   ] = await Promise.all([
     collect(input.readers.automation, collectorTimeoutMs),
     collect(input.readers.workOrders, collectorTimeoutMs),
+    collect(input.readers.repositoryReviews, collectorTimeoutMs),
     collect(input.readers.batch, collectorTimeoutMs),
     collect(input.readers.dailyAudit, collectorTimeoutMs),
     collect(input.readers.runtimeGuardian, collectorTimeoutMs),
@@ -384,6 +396,53 @@ export async function readRuntimeOverview(input: {
   } else {
     degradedDomains.push("work-orders");
     runtimeDomains.push(failedDomain("work-orders", "WorkOrders", workOrdersRead.errorKind));
+  }
+
+  if (repositoryReviewsRead.ok) {
+    for (const item of repositoryReviewsRead.value) {
+      const summary =
+        item.status === "retry-wait"
+          ? `${item.repositoryId} scheduled for automatic retry`
+          : item.status === "manual-review"
+            ? `${item.repositoryId} has a verified human boundary`
+            : `${item.repositoryId} retry budget exhausted`;
+      attention.push({
+        id: `repository-review:${item.id}`,
+        domain: "repository-reviews",
+        severity:
+          item.status === "dead-letter"
+            ? "error"
+            : item.status === "manual-review"
+              ? "warning"
+              : "info",
+        observedAt: item.updatedAt,
+        summary,
+        nextAction:
+          item.status === "retry-wait"
+            ? `automatic retry at ${new Date(item.nextAttemptAt).toISOString()}`
+            : "tcb loop reports list --limit 20",
+        projectId: item.repositoryId,
+        presentation: {
+          kind: "repository-review",
+          project: item.repositoryId,
+          status: item.status,
+          retryEpoch: item.retryEpoch,
+        },
+      });
+    }
+    runtimeDomains.push(
+      domain(
+        "repository-reviews",
+        "Repository PR Reviews",
+        repositoryReviewsRead.value.length > 0 ? "attention" : "healthy",
+        `${repositoryReviewsRead.value.length} pending operator or recovery item${repositoryReviewsRead.value.length === 1 ? "" : "s"}`,
+      ),
+    );
+  } else {
+    degradedDomains.push("repository-reviews");
+    runtimeDomains.push(
+      failedDomain("repository-reviews", "Repository PR Reviews", repositoryReviewsRead.errorKind),
+    );
   }
 
   if (automationRead.ok) {

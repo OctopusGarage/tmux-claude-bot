@@ -1148,6 +1148,10 @@ prReview:
     );
     expect(prompt).toContain("merge the PR with GitHub CLI using --rebase");
     expect(prompt).toContain("required reviews are missing");
+    expect(prompt).toContain("boundary code");
+    expect(prompt).toContain("organization-policy");
+    expect(prompt).toContain("action_required");
+    expect(prompt).toContain("system-repairable");
     expect(prompt).toContain("state=MERGED");
     expect(prompt).toContain("stop waiting on mergeability");
     expect(prompt).toContain("Draft is a review state, not an exclusion");

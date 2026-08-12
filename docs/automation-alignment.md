@@ -118,14 +118,22 @@ Repository PR review alignment invariant: every repository-wide review WorkOrder
 must persist one structured decision per in-scope PR. Only `merged` and
 evidence-backed allowlisted `closed` decisions complete the queue item; retryable
 decisions return to the shared queue. `manual-review` remains terminal only when
-its evidence names a concrete ownership, permission, product, migration,
-security-design, legal, or compliance boundary; generic architecture/design
-review, Draft, conflict, age, pending CI, and temporary worker failures are
-normalized to retry and must never silently complete or close a PR. An isolated
+the decision carries a validated structured boundary code for ownership,
+protected-branch policy, product, migration, security, legal/compliance, or
+organization policy. Free-form evidence text is never a boundary classifier.
+Generic architecture/design review, Draft, conflict, age, pending CI,
+`action_required`, workflow approval, and temporary worker or GitHub failures
+are normalized to retry and must never silently complete or close a PR. An isolated
 review without an execution branch must sync to a detached remote base rather
 than attempting to check out the source worktree's branch. Queue infrastructure
 retries use a five-attempt budget and legacy over-budget records terminalize as
-`dead-letter` before another worker can lease them.
+`dead-letter` before another worker can lease them. System-owned Repository PR
+recovery may enable private-fork workflow execution only with write tokens and
+secrets disabled, revalidates the exact PR head before every action, and
+persists a sanitized intent before mutation plus its outcome afterward.
+Historical prose-only `manual-review` or repairable `dead-letter` records are
+reopened once with a fresh retry epoch only while the PR is open and no newer or
+active occurrence owns the repository.
 No-delta recovery alignment invariant: when authoritative verification proves
 the target already healthy, the WorkOrder completes with a clean-worktree gate
 and `commits: []` even if its normal commit and PR policies are enabled. The
