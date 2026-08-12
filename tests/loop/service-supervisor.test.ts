@@ -185,6 +185,56 @@ function resourceClosedState() {
 }
 
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("reconciles remote Loop branches at startup and on a bounded maintenance cadence", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-branch-maintenance-state-"));
+      const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-branch-maintenance-project-"));
+      const file = writeLoopConfig({ projectPath: projectDir });
+      vi.setSystemTime(new Date("2026-07-16T10:10:00Z"));
+      const reconcile = vi.fn(async () => ({
+        scanned: 0,
+        eligible: 0,
+        deleted: 0,
+        skipped: 0,
+        failed: 0,
+      }));
+
+      const stop = await startLoopEngineering(
+        {
+          config: {
+            projectSessionPrefix: "tmux_proj_",
+            maxWaitDoneTotalMs: 60_000,
+            loopEngineering: {
+              configFile: file,
+              tickMs: 60_000,
+              supervisor: { enabled: false, dir: "", agent: "codex" },
+            },
+          },
+          bridge: { hasSession: vi.fn(async () => true) },
+          queue: {
+            enqueue: vi.fn(() => "queued" as const),
+            cancelQueued: vi.fn(() => false),
+            loadPersisted: vi.fn(() => []),
+            keepPersistedCarryover: vi.fn(),
+          },
+        } as never,
+        { configFile: file, tickMs: 60_000 },
+        { remoteBranchMaintenance: { reconcile } },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(29 * 60 * 1000);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60 * 1000);
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("defers a due supervised target before any ledger, lease, WorkOrder, or scheduler reservation", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-state-"));
     const stateDir = process.env.TCB_STATE_DIR;

@@ -192,6 +192,16 @@ cannot strand a verified commit in an isolated worktree.
 If GitHub rejects auto-merge because the PR head is behind the base branch, the
 system gate must use GitHub's same-PR branch update mechanism and retry
 auto-merge before treating the finalization as failed.
+Bot-owned remote branches have a separate terminal lifecycle from local
+forensic worktrees. GitHub delete-on-merge is the normal path; Loop startup and
+a bounded 30-minute maintenance cadence reconcile configured
+`loop/<project-id>/...` refs left behind after terminal PRs. Deletion requires an
+exact PR-head SHA match, no open PR, no live WorkOrder or active lease, exclusion
+of protected/default/base/switch-back branches, last-moment revalidation, and a
+durable sanitized intent/outcome. A merged PR is authoritative; a merely closed
+PR additionally requires the structured allowlisted close reason from a
+terminal supervisor summary. The remote ref may be deleted while a failed local
+worktree remains inside its independent retention window.
 If restart recovery finds a genuinely recoverable summary or system-gate
 failure, it must reserve the original supervisor session and run the same
 bounded revision contract as the uninterrupted path before terminal settlement;
@@ -481,7 +491,7 @@ feature, review this matrix in the same slice:
 | Runtime Guardian | Runtime artifact detection, including terminal `system-gate.json` rejection, evidence threshold, source/isolated worktree policy, Repair Coordinator enqueue/consumption, clean-worktree gate, cooldown, docs/tests. |
 | Resource Guardian | Host pressure sampling, sustained policy, observer/protector mode, durable resource circuit, Task 6 active Loop due-target and Batch queued-to-running admission, background repair producer tagging, incident evidence, `resource-guardian` notifications, default disabled observe configuration, and startup after notification readiness. |
 | Repair Coordinator | Durable pending-repair migration, deterministic classification from ledger plus run-directory supervisor/gate evidence, configured-project recovery dispatch, project conflict gating, leases, bounded retry backoff, per-item terminal reconciliation, queue visibility, docs/tests. |
-| GitHub operations | Configured `githubAccount`, command-local `GH_TOKEN` from `gh auth token --user`, all `gh api/pr/run/repo` commands, security alert reads, tests. |
+| GitHub operations | Configured `githubAccount`, command-local `GH_TOKEN` from `gh auth token --user`, all `gh api/pr/run/repo` commands, security alert reads, native delete-on-merge, terminal Loop remote-branch reconciliation with exact-SHA/live-owner/durable-evidence gates, tests. |
 | Worktree/session isolation | Source path validation, isolated/source/auto policy, supervisor session, worker session, lease cleanup, ordinary chat blocking, logs/artifacts, tests. |
 | AI/eval behavior | Agent-backed/control-surface path only, no direct model-provider SDK/API calls, deterministic fallback, transient agent failure classification/retry boundaries, review/eval evidence, prompt governance metadata, docs/tests. |
 | Governed system prompt | Prompt registry metadata, task-family coverage, allowed-action scope, stop condition, active-agent-only boundary, deterministic contract tests, `docs/prompt-governance.md`. |

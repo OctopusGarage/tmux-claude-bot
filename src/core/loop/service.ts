@@ -39,6 +39,10 @@ import {
   type LoopPreDispatchAssessment,
   resolveLoopPreDispatchAssessment,
 } from "./pre-dispatch-assessment.js";
+import {
+  createLoopRemoteBranchMaintenance,
+  type LoopRemoteBranchMaintenance,
+} from "./remote-branch-maintenance.js";
 import { writeLoopRunReport } from "./report.js";
 import { createRepositoryPullRequestGitHub } from "./repository-pr-github.js";
 import {
@@ -107,6 +111,7 @@ const REPOSITORY_REVIEW_QUEUE_LEASE_MS = 24 * 60 * 60 * 1000;
 const REPOSITORY_REVIEW_RETRY_BASE_MS = 15 * 60 * 1000;
 const REPOSITORY_REVIEW_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
 const REPOSITORY_REVIEW_MIN_TICK_MS = 10_000;
+const REMOTE_BRANCH_RECONCILIATION_TICK_MS = 30 * 60 * 1000;
 const LOG_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const SYSTEM_GATE_GIT_SEARCH_PATHS = [
   "/opt/homebrew/bin",
@@ -1533,6 +1538,7 @@ function reconcileRepositoryReviewQueueWorkOrders(
 export async function startLoopEngineering(
   deps: HandlerDeps,
   config: { configFile: string; tickMs: number },
+  options: { remoteBranchMaintenance?: LoopRemoteBranchMaintenance } = {},
 ): Promise<() => void> {
   if (config.configFile.trim() === "" || config.tickMs === 0) return () => {};
   log.info("loop engineering supervisor pool configured", {
@@ -1595,6 +1601,29 @@ export async function startLoopEngineering(
   const restored = restoreLoopControlQueue({ queue: deps.queue });
   if (restored > 0) log.info("loop engineering control queue restored", { data: { restored } });
   const schedulerStore = new LoopSchedulerStore();
+  const remoteBranchMaintenance =
+    options.remoteBranchMaintenance ??
+    createLoopRemoteBranchMaintenance({
+      configFile: config.configFile,
+      runCommand: runShellCommand,
+      runGit: runGitCommand,
+    });
+  let remoteBranchReconciliationInFlight = false;
+  const reconcileRemoteBranches = async (): Promise<void> => {
+    if (remoteBranchReconciliationInFlight) return;
+    remoteBranchReconciliationInFlight = true;
+    try {
+      const result = await remoteBranchMaintenance.reconcile(Date.now());
+      if (result.scanned > 0 || result.failed > 0) {
+        log.info("loop remote branch reconciliation complete", { data: result });
+      }
+    } catch (err) {
+      log.warn("loop remote branch reconciliation failed closed", { err });
+    } finally {
+      remoteBranchReconciliationInFlight = false;
+    }
+  };
+  void reconcileRemoteBranches();
   let tickInFlight = false;
   let repositoryReviewTickInFlight = false;
   const tick = async (): Promise<void> => {
@@ -1710,13 +1739,19 @@ export async function startLoopEngineering(
     () => void repositoryReviewTick(),
     Math.min(config.tickMs, REPOSITORY_REVIEW_MIN_TICK_MS),
   );
+  const remoteBranchTimer = setInterval(
+    () => void reconcileRemoteBranches(),
+    REMOTE_BRANCH_RECONCILIATION_TICK_MS,
+  );
   timer.unref();
   repositoryReviewTimer.unref();
+  remoteBranchTimer.unref();
   void tick();
   void repositoryReviewTick();
   return () => {
     clearInterval(timer);
     clearInterval(repositoryReviewTimer);
+    clearInterval(remoteBranchTimer);
   };
 }
 

@@ -342,6 +342,17 @@ prose mention of access or permission is not a human boundary: only the closed
 structured boundary-code contract may terminalize an occurrence as
 `manual-review`.
 
+For Loop-created remote refs, keep the source repository setting
+`delete_branch_on_merge` enabled. The runtime fallback reconciler runs at service
+startup and every 30 minutes; it must stay bounded to configured
+`loop/<project-id>/...` prefixes and use the configured account. Do not replace
+it with an unguarded `git push --delete` sweep. Merged PR state is authoritative,
+while a closed unmerged PR needs one of the structured close reasons from its
+terminal supervisor summary. Exact head SHA, protected/default/base/switch-back
+exclusions, live WorkOrder and active-lease ownership, durable intent, and an
+immediate second observation are mandatory before deletion. Remote cleanup does
+not shorten the independent local failure-worktree retention window.
+
 ## Verification And Coverage
 
 Before pushing or claiming CI readiness, run `npm run verify:local`. If remote

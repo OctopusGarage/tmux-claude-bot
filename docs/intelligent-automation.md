@@ -907,6 +907,18 @@ leases even when their WorkOrder artifact has already become terminal, so no
 new review can select a supervisor that is still executing another task.
 This prevents an unrelated long WorkOrder from starving repository PR review.
 
+Loop-owned remote branches follow the terminal PR lifecycle, not the local
+worktree retention lifecycle. Repositories should enable GitHub's native
+delete-on-merge for the normal merge path. A service-startup and 30-minute
+fallback reconciliation scans only configured `loop/<project-id>/...` prefixes
+and deletes a ref only after exact repository, branch, PR head SHA, terminal PR,
+protected/base branch, and live WorkOrder/lease checks pass twice. A closed but
+unmerged PR needs a structured close reason (`duplicate`, `obsolete`,
+`non-actionable`, or `invalid`) in durable supervisor evidence. Every mutation
+writes an intent before deletion and a sanitized outcome afterward. This allows
+a failed WorkOrder's local isolated worktree to remain available for forensic
+retention without leaking its terminal remote branch indefinitely.
+
 ## Daily Task Audit And Auto Repair
 
 Daily Task Audit is the bot's self-check and self-healing schedule audit. It
