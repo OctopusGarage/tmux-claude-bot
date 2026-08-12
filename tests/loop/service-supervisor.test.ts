@@ -1162,6 +1162,115 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
+  it("syncs an isolated repository PR review without mutating the source switch-back branch", () => {
+    const invocations: Array<{ cwd: string; args: string[] }> = [];
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "alcove-all-prs",
+        name: "Alcove PRs",
+        path: "/tmp/alcove-isolated",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "alcove-all-prs",
+        projectName: "Alcove PRs",
+        projectPath: "/tmp/alcove-isolated",
+        agent: "codex",
+        task: { kind: "repository-pull-request-review", repo: "OctopusGarage/alcove" },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/alcove-isolated",
+          sourceWorktree: "/tmp/alcove-source",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+          preparedBy: "system-git-worktree",
+        },
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false, perRound: false },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "alcove-all-prs",
+          actionsTaken: ["reviewed all open PRs"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed PR review scope"],
+            postMutationReview: ["verified merged PR state"],
+            aiReview: "not-run",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        invocations.push(invocation);
+        if (invocation.cwd === "/tmp/alcove-isolated") {
+          if (invocation.args.join(" ") === "status --porcelain") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "fetch origin dev") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "switch --detach FETCH_HEAD") {
+            return { status: 0, stdout: "HEAD is now at abc123\n", stderr: "" };
+          }
+        }
+        if (invocation.cwd === "/tmp/alcove-source") {
+          if (invocation.args.join(" ") === "status --porcelain") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "branch --show-current") {
+            return { status: 0, stdout: "dev\n", stderr: "" };
+          }
+        }
+        throw new Error(
+          `unexpected git invocation: ${invocation.cwd} ${invocation.args.join(" ")}`,
+        );
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(invocations).toEqual([
+      { cwd: "/tmp/alcove-isolated", args: ["status", "--porcelain"] },
+      { cwd: "/tmp/alcove-source", args: ["status", "--porcelain"] },
+      { cwd: "/tmp/alcove-source", args: ["branch", "--show-current"] },
+      { cwd: "/tmp/alcove-isolated", args: ["fetch", "origin", "dev"] },
+      { cwd: "/tmp/alcove-isolated", args: ["switch", "--detach", "FETCH_HEAD"] },
+    ]);
+    expect(outcome.evidence).toContain("isolated repository review synced to origin/dev");
+  });
+
   it("restores a clean isolated worker to the WorkOrder branch before accepting completion", async () => {
     const invocations: string[] = [];
     let currentBranch = "dev";
