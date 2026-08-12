@@ -165,10 +165,38 @@ function hasUnresolvedFailedDeterministicGate(
       gate.result === "failed" &&
       !isPreMutationDependencyGate(gate) &&
       !isResolvedPreflightRepairObservation(gates, index) &&
+      !isNonBlockingReadOnlyPreflightObservation(gate, gates, summary) &&
       !isResolvedProtectedWorktreeBaseSwitchObservation(gate, gates, summary) &&
       !isResolvedSourceWorktreeControlObservation(gate, gates, summary) &&
       !isBoundedArchitectureTargetResidual(gate, gates, summary),
   );
+}
+
+function isNonBlockingReadOnlyPreflightObservation(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = [
+    gateText(gate),
+    ...summary.actionsTaken,
+    ...(summary.reviewGate?.preMutationReview ?? []),
+    ...(summary.reviewGate?.postMutationReview ?? []),
+    ...(summary.reviewGate?.notes ?? []),
+  ]
+    .join("\n")
+    .toLowerCase();
+  if (!text.includes("preflight")) return false;
+  if (!text.includes("read-only")) return false;
+  if (!/(non[- ]blocking|did not block|does not block|recorded as a .*signal)/.test(text)) {
+    return false;
+  }
+  if (!/(opportunity[- ]discovery|discovery)/.test(text)) return false;
+
+  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText).join("\n");
+  return /(opportunity|report|summary|json)/.test(passedGateText);
 }
 
 function isResolvedProtectedWorktreeBaseSwitchObservation(
