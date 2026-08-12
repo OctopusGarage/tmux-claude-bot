@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
+import { runGitCommand, runShellCommand } from "../../src/core/loop/service.js";
 import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
@@ -19,6 +20,7 @@ import {
   discoverRuntimeGuardianFindings,
   dispatchRuntimeGuardianRepair,
   RuntimeGuardianStore,
+  reconcileRuntimeGuardianBeforeDiscovery,
   runRuntimeGuardianTick,
 } from "../../src/core/runtime-guardian/service.js";
 import {
@@ -96,6 +98,90 @@ describe("runtime guardian", () => {
 
   it("keeps Runtime Guardian artifact discovery owned by the inspector module", () => {
     expect(discoverRuntimeGuardianFindings).toBe(discoverRuntimeGuardianArtifacts);
+  });
+
+  it("reconciles Loop WorkOrders before Runtime Guardian discovers stale invalid-output artifacts", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-missing-system-gate",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-missing-system-gate", projectDir, summaryPath),
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_tcb",
+        requirement: "Repair the confirmed runtime issue.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["wrote final summary before terminal marker was captured"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-run",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: tmux-claude-bot
+    name: tmux-claude-bot
+    path: ${projectDir}
+    agent: codex
+    goal: Keep runtime orchestration healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+`,
+    );
+
+    await reconcileRuntimeGuardianBeforeDiscovery({
+      configFile,
+      now: 3,
+      runCommand: runShellCommand,
+      runGit: runGitCommand,
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 86_400_000 })).toEqual([]);
   });
 
   it("terminalizes explicitly classified target and external blockers instead of retrying bot repair forever", () => {

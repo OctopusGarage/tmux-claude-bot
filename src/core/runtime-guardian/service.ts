@@ -5,6 +5,11 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
+import {
+  reconcileLoopSupervisorWorkOrders,
+  runGitCommand,
+  runShellCommand,
+} from "../loop/service.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildRuntimeGuardianRepairPrompt } from "../prompts/repair-prompts.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
@@ -22,6 +27,8 @@ import {
 const log = createLogger("runtime-guardian");
 
 export { buildRuntimeGuardianRepairPrompt, discoverRuntimeGuardianFindings };
+
+type LoopSupervisorReconcileInput = Parameters<typeof reconcileLoopSupervisorWorkOrders>[0];
 
 export type RuntimeGuardianTickResult =
   | { fired: false; reason: "disabled" | "no-findings" | "cooldown" }
@@ -235,6 +242,20 @@ export async function runRuntimeGuardianTick(input: {
   }
 }
 
+export async function reconcileRuntimeGuardianBeforeDiscovery(
+  input: Pick<
+    LoopSupervisorReconcileInput,
+    | "configFile"
+    | "now"
+    | "runCommand"
+    | "runGit"
+    | "cleanupCompletedWorkerSession"
+    | "workerSessionExists"
+  >,
+): Promise<void> {
+  await reconcileLoopSupervisorWorkOrders(input);
+}
+
 function runtimeFindingKey(finding: RuntimeGuardianFinding): string {
   return `${finding.kind}|${finding.projectId}|${finding.runId}`;
 }
@@ -379,6 +400,17 @@ export function startRuntimeGuardian(deps: HandlerDeps): () => void {
             await deps.bridge.killSession(session);
             cleanupWorkerSessionRecords(session);
           },
+        });
+        await reconcileRuntimeGuardianBeforeDiscovery({
+          configFile: deps.config.loopEngineering.configFile,
+          now: Date.now(),
+          runCommand: runShellCommand,
+          runGit: runGitCommand,
+          cleanupCompletedWorkerSession: async (session) => {
+            await deps.bridge.killSession(session);
+            cleanupWorkerSessionRecords(session);
+          },
+          workerSessionExists: (session) => deps.bridge.hasSession(session),
         });
       },
     }).catch((err) => log.warn("runtime guardian tick failed", { err }));
