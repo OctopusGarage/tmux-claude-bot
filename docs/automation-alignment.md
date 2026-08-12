@@ -95,6 +95,12 @@ lookback limits new discovery, not durable queue consumption: due Runtime
 Guardian records must re-enter shared admission until they terminalize. The
 Repair Coordinator enforces the shared three-attempt budget and dead-letters
 both newly exhausted and legacy over-budget records before another claim.
+Before Runtime Guardian discovers terminal WorkOrder artifacts, it must run the
+same Loop WorkOrder reconciliation used by startup and Loop ticks so persisted
+valid final summaries can synthesize missing system gates before self-repair
+admission. Runtime Guardian must not delegate a bot repair for stale
+`invalid-output` artifacts that deterministic Loop reconciliation can settle
+from already-written summary evidence.
 When a linked Runtime Guardian repair WorkOrder becomes terminal, reconciliation
 must mark a completed repair fixed or detach a non-completed WorkOrder and return
 the queue record to bounded retry; terminal WorkOrders must never leave durable
