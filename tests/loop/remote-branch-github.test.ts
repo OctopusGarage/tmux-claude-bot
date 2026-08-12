@@ -90,6 +90,82 @@ describe("Loop remote branch GitHub adapter", () => {
     });
   });
 
+  it("derives an allowlisted external close reason only from an authorized post-close comment", async () => {
+    const branch = "loop/tmux-claude-bot/harness-auto/100-worker";
+    const run: LoopRemoteBranchGitHubRun = (command) => {
+      if (command.includes("/git/ref/heads/")) {
+        return { status: 0, stdout: JSON.stringify({ object: { sha: "abc123" } }), stderr: "" };
+      }
+      if (command.includes("/branches/")) {
+        return { status: 0, stdout: JSON.stringify({ protected: false }), stderr: "" };
+      }
+      if (command.includes("/pulls?")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              number: 22,
+              state: "closed",
+              merged_at: null,
+              closed_at: "2026-08-07T14:16:23Z",
+              head: {
+                ref: branch,
+                sha: "abc123",
+                repo: { full_name: target.repository },
+              },
+              base: { ref: "dev" },
+            },
+          ]),
+          stderr: "",
+        };
+      }
+      if (command.includes("/issues/22/comments?")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              body: "obsolete — superseded before the PR was closed",
+              created_at: "2026-08-07T14:16:22Z",
+              author_association: "MEMBER",
+            },
+            {
+              body: "obsolete — current dev contains the same or newer fix",
+              created_at: "2026-08-07T14:16:23Z",
+              author_association: "MEMBER",
+            },
+            {
+              body: "invalid — this later comment is not repository-authorized",
+              created_at: "2026-08-07T14:16:24Z",
+              author_association: "CONTRIBUTOR",
+            },
+          ]),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: JSON.stringify({ default_branch: "main" }), stderr: "" };
+    };
+    const github = createLoopRemoteBranchGitHub({ run });
+
+    await expect(github.observe(target, branch)).resolves.toEqual({
+      repository: target.repository,
+      branch,
+      sha: "abc123",
+      protected: false,
+      defaultBranch: "main",
+      pullRequests: [
+        {
+          number: 22,
+          state: "closed",
+          headBranch: branch,
+          headSha: "abc123",
+          baseBranch: "dev",
+          closedAt: "2026-08-07T14:16:23Z",
+          externalCloseReason: "obsolete",
+        },
+      ],
+    });
+  });
+
   it("deletes only the exact encoded ref and treats absence as idempotent", async () => {
     const commands: string[] = [];
     const run: LoopRemoteBranchGitHubRun = (command) => {

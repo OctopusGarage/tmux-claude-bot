@@ -13,6 +13,8 @@ export type LoopRemoteBranchPullRequest = {
   headBranch: string;
   headSha: string;
   baseBranch: string;
+  closedAt?: string;
+  externalCloseReason?: LoopRemoteBranchCloseReason;
 };
 
 export type LoopRemoteBranchObservation = {
@@ -115,7 +117,8 @@ export function planLoopRemoteBranchCleanup(input: {
 
   const closed = matching.find((pullRequest) => pullRequest.state === "closed");
   if (closed === undefined) return { kind: "skip", reason: "terminal-pull-request-missing" };
-  const closeReason = input.closedReasons.get(`${target.repository}#${closed.number}`);
+  const closeReason =
+    input.closedReasons.get(`${target.repository}#${closed.number}`) ?? closed.externalCloseReason;
   if (closeReason === undefined) return { kind: "skip", reason: "closed-reason-missing" };
   return {
     kind: "delete",

@@ -154,6 +154,31 @@ describe("Loop remote branch cleanup policy", () => {
       }),
     ).toEqual({ kind: "delete", pullRequestNumber: 22, reason: "closed-duplicate" });
   });
+
+  it("accepts a repository-authorized external close reason captured by the GitHub adapter", () => {
+    const closed = observation({
+      pullRequests: [
+        {
+          number: 22,
+          state: "closed",
+          headBranch: "loop/tmux-claude-bot/architecture/100-worker",
+          headSha: "abc123",
+          baseBranch: "dev",
+          closedAt: "2026-08-07T14:16:23Z",
+          externalCloseReason: "obsolete",
+        },
+      ],
+    });
+
+    expect(
+      planLoopRemoteBranchCleanup({
+        target,
+        observation: closed,
+        liveBranches: new Set(),
+        closedReasons: new Map(),
+      }),
+    ).toEqual({ kind: "delete", pullRequestNumber: 22, reason: "closed-obsolete" });
+  });
 });
 
 function fakeEvidence(): LoopRemoteBranchEvidenceWriter & {

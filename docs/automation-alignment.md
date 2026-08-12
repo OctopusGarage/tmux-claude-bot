@@ -205,8 +205,10 @@ a bounded 30-minute maintenance cadence reconcile configured
 exact PR-head SHA match, no open PR, no live WorkOrder or active lease, exclusion
 of protected/default/base/switch-back branches, last-moment revalidation, and a
 durable sanitized intent/outcome. A merged PR is authoritative; a merely closed
-PR additionally requires the structured allowlisted close reason from a
-terminal supervisor summary. The remote ref may be deleted while a failed local
+PR additionally requires a structured allowlisted close reason from a terminal
+supervisor summary, or an allowlisted reason recorded at or after closure by a
+repository owner, member, or collaborator. Free-form or unauthorized comments
+never authorize deletion. The remote ref may be deleted while a failed local
 worktree remains inside its independent retention window.
 If restart recovery finds a genuinely recoverable summary or system-gate
 failure, it must reserve the original supervisor session and run the same
