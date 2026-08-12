@@ -2107,12 +2107,20 @@ export function runSupervisedSystemGateOutcome(input: {
           input.workOrder.task?.kind === "repository-pull-request-review") &&
         input.project.pullRequest.autoMerge
       ) {
-        failures.push(
-          ...syncSwitchBackBranch({
-            project: syncBackProjectForWorkOrder(input.project, input.workOrder),
-            runGit: input.runGit,
-          }),
-        );
+        const syncFailures = syncRepositoryReviewSwitchBackBranch({
+          project: input.project,
+          workOrder: input.workOrder,
+          runGit: input.runGit,
+        });
+        failures.push(...syncFailures);
+        if (
+          syncFailures.length === 0 &&
+          shouldSyncRepositoryReviewToDetachedBase(input.workOrder)
+        ) {
+          evidence.push(
+            `isolated repository review synced to origin/${input.project.pullRequest.switchBack}`,
+          );
+        }
       }
     }
   }
@@ -2635,6 +2643,15 @@ function syncBackProjectForWorkOrder(
   return sourceWorktree === undefined ? project : { ...project, path: sourceWorktree };
 }
 
+function shouldSyncRepositoryReviewToDetachedBase(workOrder: LoopWorkOrder): boolean {
+  return (
+    workOrder.executionIsolation?.sourceWorktree !== undefined &&
+    workOrder.executionIsolation.worktreeIsolation === "isolated" &&
+    workOrder.task?.kind === "repository-pull-request-review" &&
+    workOrder.commitPolicy.branch === undefined
+  );
+}
+
 export function systemGateProjectFromWorkOrder(
   workOrder: LoopWorkOrder,
 ): SupervisedSystemGateProject {
@@ -3145,6 +3162,41 @@ function syncSwitchBackBranch(input: {
     ["fetch", "origin", branch],
     ["switch", branch],
     ["merge", "--ff-only", "FETCH_HEAD"],
+  ]) {
+    const result = input.runGit({ cwd: input.project.path, args });
+    if (result.status !== 0) {
+      return [`git ${args.join(" ")} failed: ${result.stderr || result.stdout || "unknown error"}`];
+    }
+  }
+  return [];
+}
+
+function syncRepositoryReviewSwitchBackBranch(input: {
+  project: SupervisedSystemGateProject;
+  workOrder: LoopWorkOrder;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): string[] {
+  if (shouldSyncRepositoryReviewToDetachedBase(input.workOrder)) {
+    return syncDetachedRemoteBase({
+      project: input.project,
+      branch: input.project.pullRequest.switchBack,
+      runGit: input.runGit,
+    });
+  }
+  return syncSwitchBackBranch({
+    project: syncBackProjectForWorkOrder(input.project, input.workOrder),
+    runGit: input.runGit,
+  });
+}
+
+function syncDetachedRemoteBase(input: {
+  project: SupervisedSystemGateProject;
+  branch: string;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): string[] {
+  for (const args of [
+    ["fetch", "origin", input.branch],
+    ["switch", "--detach", "FETCH_HEAD"],
   ]) {
     const result = input.runGit({ cwd: input.project.path, args });
     if (result.status !== 0) {
