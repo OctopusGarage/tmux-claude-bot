@@ -879,6 +879,89 @@ projects:
     expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
   });
 
+  it("does not rediscover read-only preflight-executables eval failures after authoritative pass evidence", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "alcove",
+      "run-opportunity-executables",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-opportunity-executables",
+        "/repo/alcove",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      task: {
+        kind: "opportunity-discovery",
+        maxRounds: 1,
+        maxSuggestions: 3,
+        minConfidence: "medium",
+        categories: ["maintenance"],
+        cooldownDays: 7,
+        requireEvidence: true,
+      },
+      preflight: {
+        commands: ["test -x node_modules/.bin/tsx"],
+        repair: { agent: false },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["completed read-only discovery and wrote the opportunity report"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["preflight-executables failed before read-only discovery"],
+          postMutationReview: [
+            "The failed preflight-executables gate was explicitly non-blocking for read-only discovery; report and clean-worktree gates passed.",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight-executables",
+              command: "test -x node_modules/.bin/tsx",
+              result: "failed",
+              evidence:
+                "Local executable preflight failed; non-blocking for read-only opportunity discovery.",
+            },
+            "report gate passed: supervisor-final-summary and opportunity report parsed successfully",
+            "clean-worktree gate passed: no tracked changes",
+          ],
+          decision: "pass",
+          notes: [
+            "preflight-executables remained a non-blocking setup observation for this read-only task.",
+          ],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
   it("does not rediscover restart-recovered active delegation lease invalid-output as a bot repair", () => {
     writeLoopSupervisorWorkOrderState({
       workOrder: {
