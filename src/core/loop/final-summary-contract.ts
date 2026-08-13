@@ -151,8 +151,29 @@ export function recoverNonTerminalPullRequestDecisions(
     .filter((decision): decision is NonNullable<typeof decision> => decision !== undefined);
 
   const uniqueNumbers = new Set(decisions.map((decision) => decision.number));
-  if (decisions.length === 0 || uniqueNumbers.size !== decisions.length) return summary;
+  if (decisions.length === 0) {
+    return summary.actionsTaken.some((action) =>
+      provesEmptyPullRequestInventory(action, repository),
+    )
+      ? { ...summary, pullRequestDecisions: [] }
+      : summary;
+  }
+  if (uniqueNumbers.size !== decisions.length) return summary;
   return { ...summary, pullRequestDecisions: decisions };
+}
+
+function provesEmptyPullRequestInventory(action: string, repository: string): boolean {
+  const normalized = action.toLowerCase();
+  const repo = repository.toLowerCase();
+  if (!normalized.includes(repo)) return false;
+  return (
+    /\b(?:open\s+pr|pull\s+request)\s+(?:inventory|list)\b[\s\S]*\b(?:empty|returned\s+\[\])/i.test(
+      action,
+    ) ||
+    /\b(?:open\s+pr|pull\s+request)\s+count\s*[:=]?\s*(?:0|zero)\b/i.test(action) ||
+    /\b(?:0|zero)\s+open\s+pr(?:s|\b)/i.test(action) ||
+    /\bgh\s+pr\s+list\b[\s\S]*\breturned\s+\[\]/i.test(action)
+  );
 }
 
 export function parseSupervisorFinalSummary(
