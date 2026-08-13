@@ -14,6 +14,7 @@ export type AttentionPresentation =
   | { kind: "daily-audit-attention"; count: number }
   | { kind: "runtime-finding"; project: string; findingKind: string }
   | { kind: "resource-pressure"; pressure: string; circuit: string }
+  | { kind: "agent-capacity"; agent: string; state: string }
   | { kind: "power-policy"; mode: string; phase: string; schedule: string }
   | {
       kind: "repository-review";

@@ -40,7 +40,6 @@ family registrars.
 - `tcb mcp`
 - `tcb recover`
 - `tcb logs`
-- `tcb batch`
 - `tcb task`
 - `tcb loop`
 
@@ -57,8 +56,10 @@ family registrars.
 - `tcb config get <key>`
 - `tcb config set <key> <value>`
 - `tcb automation status`
-- `tcb automation pause <loop|task-audit|runtime-guardian|batch>`
-- `tcb automation resume <loop|task-audit|runtime-guardian|batch>`
+- `tcb automation pause <loop|task-audit|runtime-guardian>`
+- `tcb automation resume <loop|task-audit|runtime-guardian>`
+- `tcb automation capacity status [--json]`
+- `tcb automation capacity history [--since <time>] [--json]`
 - `tcb power status`
 - `tcb power history`
 - `tcb power schedule install`
@@ -68,14 +69,6 @@ family registrars.
 - `tcb resource mode <observe|protect>`
 - `tcb resource profile <balanced|conservative>`
 - `tcb runtime-guardian findings [--project <id>] [--limit <n>] [--lookback-hours <n>]`
-- `tcb batch load <file>`
-- `tcb batch export <id> [file]`
-- `tcb batch start [id]`
-- `tcb batch status`
-- `tcb batch report`
-- `tcb batch pause`
-- `tcb batch resume`
-- `tcb batch stop`
 - `tcb task audit`
 - `tcb task report`
 - `tcb loop validate <file>`
@@ -183,10 +176,15 @@ family registrars.
 - `tcb power history [--since <ISO|epoch|30m|2h|1d>] [--json]` audits recent
   phase/assertion transitions alongside read-only macOS Sleep/DarkWake/Wake
   evidence. It defaults to 24 hours, rejects lookbacks over 30 days, retains the
-  newest 200 events, and reports missing evidence as `incomplete`.
+  newest 200 events, correlates checks only within the newest quiet-window cycle,
+  and reports missing evidence as `incomplete`.
 - `tcb automation ...` is the supported top-level control for high-cost
   background loops. `pause` records the previous tick/enabled values in state so
   `resume` can restore the prior cadence instead of guessing a default.
+- `tcb automation capacity status [--json]` reports both local agent-capacity
+  pools, active autonomous leases, planned occurrences, and the latest durable
+  admission decision. `history` defaults to 24 hours, rejects lookbacks over 30
+  days, and returns at most the newest 200 structured events.
 - `tcb resource status|incidents` is the read-only Resource Guardian diagnostic
   surface. Mode/profile use their dedicated commands; generic config accepts
   only the Guardian enabled/tick keys, and protect requires an enabled running

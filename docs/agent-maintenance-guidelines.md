@@ -74,7 +74,9 @@ policy from historical execution. The bounded report reads the low-frequency
 typed power-event journal and correlates it with a fixed read-only `pmset -g log`
 probe. It must preserve partial evidence, treat natural sleep as optional after
 release, distinguish DarkWake from full Wake, and mark missing evidence
-`incomplete`. Do not copy raw `pmset` logs into state or scan high-volume general
+`incomplete`. Correlation is restricted to the newest quiet-window cycle in the
+requested lookback; evidence from different dates must never complete one check.
+Do not copy raw `pmset` logs into state or scan high-volume general
 application logs for this report.
 
 The configured IANA timezone is policy truth and must not be required to equal
@@ -85,7 +87,7 @@ environment variable. A different fixed-offset timezone is valid; reject only a 
 otherwise changing offset that one fixed repeating event cannot preserve.
 
 Quiet hours remain a workload policy, not a request to sleep. A quiet-hours decision
-may defer a new Loop, Batch, Daily Task Audit repair, Runtime Guardian repair,
+may defer a new Loop, Daily Task Audit repair, Runtime Guardian repair,
 Project Recovery, Opportunity Discovery, or similar autonomous start. It must
 not force the machine to sleep, schedule a wake, terminate an agent, or treat
 system sleep as task cancellation. Existing processes are allowed to freeze and
@@ -112,6 +114,19 @@ Telegram retains pending updates according to its provider contract.
 Feishu/Lark long-connection events that occur while the host sleeps are
 best-effort and may be missed; that limitation is intentionally accepted for
 this operating mode.
+
+Autonomous schedule variation is an execution-window policy, not an evasion or
+prompt-rewriting feature. Draw a random offset only once per durable occurrence,
+reuse it after restart, and keep all provider-facing prompts under the existing
+governance registry. Capacity probes may read only local agent authentication
+metadata and usage snapshots. On an official limit signal, persist a typed,
+secret-free capacity state and wait; never rotate accounts, alter client identity,
+route around a quota, or add provider SDK/API calls. Recent owner activity defers
+new autonomous reservation but never reorders or cancels user-initiated queue work.
+Keep the default 60-minute execution window durable and draw its offset only once;
+fixed-time operation requires an explicit `scheduler.jitter.enabled: false`.
+Admission evidence belongs in the bounded structured journal and its supported
+CLI projection, never in ad hoc logs or direct state-file editing instructions.
 
 ## Sensitive Data And Paths
 

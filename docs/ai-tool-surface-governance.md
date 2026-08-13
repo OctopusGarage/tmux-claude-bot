@@ -440,7 +440,6 @@ skill guidance, or only human/chat surfaces.
 | Voice transcription and prompt translation | Home Operator for setup, Project Agent target for delivery | Expose readiness/status and setup diagnostics before exposing toggles; preserve original-input provenance. |
 | Prompt library browsing/search/send/discuss | Observer for browse, Home Operator for send/discuss | Keep external prompt-library content separate from governed automation prompts. |
 | Attachments and notification attachments | Home Operator | Require path validation, size/type evidence, and target session/notification scope. |
-| Batch scheduler | Home Operator, Observer | Read-only plan/status/report tools first; mutating pause/resume/stop tools need explicit operator authority. |
 | Loop Engineering, Autopilot, Opportunity Discovery, PR review | Home Operator, Supervisor, Worker, Observer | WorkOrder-bound for execution; owner-confirmed for delegation; read-only for reports and suggestions. |
 | Daily Task Audit and Runtime Guardian | Audit/Guardian repair roles plus Observer | Repair tools target tmux-claude-bot self-repair only; findings and summaries are safe observer candidates. |
 | GitHub operations and PR merge | Supervisor under WorkOrder policy | Do not expose generic GitHub mutation tools; require configured identity and system-gate evidence. |

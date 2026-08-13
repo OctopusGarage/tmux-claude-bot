@@ -186,6 +186,7 @@ report for automation. The default lookback is 24 hours, the maximum is 30 days,
 and output keeps the newest 200 events. A released assertion followed by no sleep
 is reported as `not-observed`, because macOS owns the sleep decision; missing TCB
 or host evidence is `incomplete`, never inferred as success from configuration.
+Checks correlate only evidence from the newest quiet-window cycle in the lookback.
 
 ---
 
@@ -208,11 +209,10 @@ For the complete maintained CLI command and option surface, see
 | `tcb setup` / `tcb setup:lark` | guided setup wizard / add Feishu via QR |
 | `tcb doctor` | health checks against the install |
 | `tcb config list\|get\|set` | inspect personal `.env` configuration with secrets redacted, and edit allowlisted, domain-validated non-secret keys |
-| `tcb automation status\|pause\|resume` | inspect or toggle high-cost background automation: Loop Engineering, Daily Task Audit, Runtime Guardian, and Batch Scheduler |
+| `tcb automation status\|pause\|resume` | inspect or toggle high-cost background automation: Loop Engineering, Daily Task Audit, and Runtime Guardian |
 | `tcb dashboard` | unified Runtime Overview plus Project Sessions (`--json`, `--problems`, `--project <id>`, `--limit <1-100>`) |
 | `tcb runtime-guardian findings` | read-only Runtime Guardian finding drilldown (`--project <id>`, `--limit <n>`, `--lookback-hours <n>`, `--json`) |
 | `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
-| `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
 | `tcb loop validate\|tick\|run <file>` / `tcb loop targets\|reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, pause/resume configured targets, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |
 | `tcb sysload` | machine load, thermal state, top CPU, runaway shells, and current Resource Guardian state |
 | `tcb resource status\|incidents\|mode\|profile` | inspect Resource Guardian state or bounded incident history, and set its local operator mode/profile |
@@ -304,7 +304,7 @@ dependency means agent-supervised Loop work and Runtime Guardian repair cannot
 run reliably even when the Loop tick itself is enabled.
 `tcb automation pause loop` sets `LOOP_ENGINEERING_TICK_MS=0` and records the
 previous cadence in state; `tcb automation resume loop` restores it. The same
-pattern works for `task-audit`, `runtime-guardian`, and `batch`.
+pattern works for `task-audit` and `runtime-guardian`.
 
 Use `tcb notify --attach` for owner/background notifications. Use `tcb attach`
 when a chat-originated project session should receive a file reply in that same
@@ -607,6 +607,18 @@ TCB_LOOP_SUPERVISOR_REVISION_MAX_ATTEMPTS=3
 Example project:
 
 ```yaml
+scheduler:
+  jitter:
+    enabled: true
+    architectureMaxDelayMinutes: 10
+    bugFixMaxDelayMinutes: 20
+    testCoverageMaxDelayMinutes: 20
+    securityMaintenanceMaxDelayMinutes: 20
+    harnessAutoMaxDelayMinutes: 20
+    opportunityDiscoveryMaxDelayMinutes: 20
+    automationGovernanceReviewMaxDelayMinutes: 20
+    pullRequestReviewMaxDelayMinutes: 30
+    repositoryPullRequestReviewMaxDelayMinutes: 30
 projects:
   - id: datavibe-backend
     name: Datavibe Backend
@@ -739,6 +751,24 @@ projects:
     blockedActions: [direct-model-api, broad-rewrite]
 ```
 
+The jitter values are maximum execution-window delays, not deterministic hash
+seeds. Each scheduled occurrence draws once and persists its `notBefore` time, so
+restarts do not redraw it. Omitted scheduler settings default to enabled with a
+60-minute maximum for every task family; set `enabled: false` to require fixed
+schedule times. `scheduleJitterMinutes` on a specific task overrides its family
+maximum. Missed intervals normally coalesce to the latest occurrence instead of
+starting a burst after downtime.
+
+Before agent-backed work starts, the bot also rechecks recent owner activity,
+interactive queue activity, quiet hours, Resource Guardian, and locally observed
+Claude/Codex capacity. Official exhaustion waits for reset/re-probe; constrained
+capacity is reserved for user work; unknown capacity admits autonomous work
+conservatively. These decisions appear in the Agent Capacity Runtime Overview
+domain on `tcb dashboard`, the TUI, chat Dashboard, and Observer/Home MCP status.
+Use `tcb automation capacity status` for the complete local snapshot and
+`tcb automation capacity history --since 24h` for bounded decision evidence.
+Capacity transitions notify the operator once per observed state change.
+
 The configured security assessment command must print a JSON object containing
 numeric `riskScore` (0–100). It may also include boolean `critical` or
 `severity: critical`, plus string arrays `findings` and
@@ -862,34 +892,7 @@ HOME_OPERATOR_DIR=            # blank → <state-dir>/home (auto-created)
 
 ---
 
-## 10. Batch scheduler
-
-Run a set of agent tasks across multiple projects on a schedule (cron, one-shot, or immediate).
-Use `BATCH_SCHEDULER_TICK_MS`, `BATCH_SCHEDULER_QUOTA_PCT`, and
-`BATCH_SCHEDULER_REPROBE_MS` for runtime tuning.
-
-**Quick start:**
-
-1. Define a YAML plan file (see `docs/examples/batch-plan.example.yml` for the full schema).
-2. `tcb batch load <file>` — parse, validate, and save the plan.
-3. `tcb batch start <id>` — materialise and activate a run immediately.
-4. `tcb batch status` — print the live task table for the active run.
-5. `tcb batch report` — print a completion summary (done/failed/skipped counts).
-
-**Other controls:**
-
-| Command | Effect |
-|---------|--------|
-| `tcb batch export <id> [file]` | dump the saved plan back to YAML |
-| `tcb batch pause` | pause the active run (tasks already in flight continue) |
-| `tcb batch resume` | resume a paused run |
-| `tcb batch stop` | cancel and clear the active run |
-
-**Cron notes:** schedule expressions are five fields (`min hour dom month dow`), matched in **UTC**. Both `dom` and `dow` must match (they are ANDed, not ORed — non-standard vs. vixie cron).
-
----
-
-## 11. Daily task audit
+## 10. Daily task audit
 
 The daily task audit checks the previous Singapore calendar day for actively
 discovered scheduled tasks and explicit task records. It is the bot's
@@ -919,8 +922,8 @@ tcb task audit --force --json
 
 The audit actively discovers tmux-claude-bot-owned launchd jobs and
 loop-engineering schedules, then merges that expected-task list with the shared
-ledger. Loop Engineering and the batch scheduler write to the ledger
-automatically. Article monitors, radar monitors, and other local jobs should
+ledger. Loop Engineering writes to the ledger automatically. Article monitors,
+radar monitors, and other local jobs should
 call `tcb task report` from their own scheduler or status exporter because their
 domain-specific health rules belong in the owning project. Auto-repair is
 deliberately scoped: the supervisor must inspect evidence, classify each
@@ -938,7 +941,7 @@ which prevents recursive repair storms.
 
 ---
 
-## 12. Managing the service
+## 11. Managing the service
 
 The bot is a managed, auto-restarting service. **Restart via the service manager**,
 not the dev scripts (the manager respawns it):

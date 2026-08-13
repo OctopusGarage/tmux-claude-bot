@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 import { ChannelSenderRegistry } from "../../../src/core/projects/channel-sender.js";
@@ -33,7 +32,6 @@ function deps(): HandlerDeps {
     config: {
       lark: larkConfig(),
     },
-    notifier: new NotifierRegistry(),
     notifications: new NotificationGateway(),
     channelSenders: new ChannelSenderRegistry(),
   } as unknown as HandlerDeps;
@@ -109,34 +107,6 @@ describe("registerLarkNotifications", () => {
       "Radar report",
       undefined,
       undefined,
-    );
-  });
-
-  it("routes batch owner notices through the notification gateway", async () => {
-    const { registerLarkNotifications } = await import(
-      "../../../src/adapters/lark/notifications.js"
-    );
-    const d = deps();
-    const notify = vi.spyOn(d.notifications, "notify");
-
-    registerLarkNotifications(d, larkConfig(), channel as never);
-    await d.notifier.broadcast({
-      kind: "batchRunStarted",
-      runId: "r1",
-      planId: "plan-a",
-      tasks: 2,
-    });
-
-    expect(notify).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "lark",
-        source: "batch-scheduler",
-        title: "Batch scheduler",
-      }),
-    );
-    expect(mocks.notifyLarkOwner).toHaveBeenCalledWith(
-      d.config.lark,
-      expect.stringContaining("Batch scheduler"),
     );
   });
 

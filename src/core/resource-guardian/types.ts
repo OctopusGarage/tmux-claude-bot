@@ -105,7 +105,6 @@ export type ResourceAdmissionInput = {
     | "runtime-guardian"
     | "project-recovery"
     | "autopilot-delegate"
-    | "batch-scheduler"
     | "resource-guardian";
   trigger: "interactive" | "operator" | "background" | "reconcile" | "resource-repair";
   weight: "light" | "heavy";

@@ -47,6 +47,7 @@ node dist/cli.js --version >/dev/null
 
 for cmd in \
   service \
+  automation \
   dashboard \
   autopilot \
   sysload \
@@ -63,13 +64,14 @@ for cmd in \
   skill \
   recover \
   logs \
-  batch \
   loop
 do
   node dist/cli.js "$cmd" --help >/dev/null
 done
 
 node dist/cli.js loop skills --help >/dev/null
+node dist/cli.js automation capacity status --help >/dev/null
+node dist/cli.js automation capacity history --help >/dev/null
 node dist/cli.js loop validate docs/examples/loop-skills-catalog.example.yml --json >/dev/null
 
 fake_bin="$tmp/bin"

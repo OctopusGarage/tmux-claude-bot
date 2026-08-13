@@ -41,6 +41,7 @@ CONTROL + BOT SERVICE
  - starts adapters
  - starts control socket
  - starts schedulers
+ - restores durable occurrence windows and capacity state on demand
  - starts Resource Guardian before notification-driven background services
  - manages project/session state
  - resolves localized UI copy
@@ -107,9 +108,11 @@ ORCHESTRATION
  evidence, and governance primitives. New automation should deepen this shared
  pipeline rather than inventing a side path.
 
- Background lanes must check Resource Guardian admission before durable
- reservation. A closed circuit blocks new background ownership while leaving
- read-only diagnostics and explicit operator recovery controls available.
+ Background lanes pass one admission chain before durable reservation and again
+ before agent-backed dispatch: occurrence window -> owner activity / interactive
+ queue -> quiet hours -> agent capacity -> Resource Guardian. A denial leaves the
+ occurrence due and consumes no retry. User work keeps FIFO ordering; official
+ exhausted capacity waits rather than bypassing a provider limit.
 
 
 ORDINARY INTERACTIVE WORK

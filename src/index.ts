@@ -21,7 +21,6 @@ import { startRunningSweep } from "./core/recovery/running-sweep.js";
 import { startSessionIdleReaper } from "./core/recovery/session-idle-reaper.js";
 import { startResourceGuardian } from "./core/resource-guardian/service.js";
 import { startRuntimeGuardian } from "./core/runtime-guardian/service.js";
-import { startScheduler } from "./core/scheduler/scheduler-loop.js";
 import { startDailyTaskAudit } from "./core/tasks/daily-audit-service.js";
 import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
@@ -170,7 +169,6 @@ if (loopStartupReady) {
     log.error("active delegation startup recovery failed", { err });
   }
 }
-startScheduler(deps);
 // Boot the home operator session (provision home dir + create session + start agent).
 // Fire-and-forget — must not block boot. No-op when HOME_OPERATOR_ENABLED=false.
 void startOperator(deps);

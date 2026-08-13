@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 import { OwnerActivityTracker } from "../../../src/core/notifications/owner-activity.js";
@@ -63,7 +62,6 @@ function deps(): HandlerDeps {
     queue: {
       flushPending: vi.fn(),
     },
-    notifier: new NotifierRegistry(),
     notifications: new NotificationGateway(),
     ownerActivity: new OwnerActivityTracker(),
     channelSenders: new ChannelSenderRegistry(),
@@ -112,39 +110,6 @@ describe("startTelegram notification registration", () => {
       "file",
       "Radar report",
     );
-  });
-
-  it("routes batch owner notices through the notification gateway", async () => {
-    mockGrammy();
-    vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
-    vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({
-      registerHandlers: vi.fn(),
-    }));
-    vi.doMock("../../../src/adapters/telegram/voice-handler.js", () => ({
-      registerVoiceHandler: vi.fn(),
-    }));
-    vi.doMock("../../../src/adapters/telegram/media.js", () => ({ sendTelegramAttachment }));
-
-    const { startTelegram } = await import("../../../src/adapters/telegram/start.js");
-    const d = deps();
-    const notify = vi.spyOn(d.notifications, "notify");
-
-    await startTelegram(d);
-    await d.notifier.broadcast({
-      kind: "batchRunStarted",
-      runId: "r1",
-      planId: "plan-a",
-      tasks: 2,
-    });
-
-    expect(notify).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "telegram",
-        source: "batch-scheduler",
-        title: "Batch scheduler",
-      }),
-    );
-    expect(sendMessage).toHaveBeenCalledWith("12345", expect.stringContaining("Batch scheduler"));
   });
 
   it("renders opportunity discovery notifications with telegram action buttons", async () => {

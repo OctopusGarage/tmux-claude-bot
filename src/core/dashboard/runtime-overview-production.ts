@@ -1,5 +1,7 @@
 import { appStateDir } from "../../shared/state-dir.js";
 import { readAiToolReadiness } from "../ai-tools/install-contract.js";
+import { AgentCapacityStore } from "../automation/capacity-store.js";
+import { AutomationOccurrenceStore } from "../automation/occurrence-window.js";
 import { readAutomationStatuses } from "../config/automation-command.js";
 import type { HandlerDeps } from "../deps.js";
 import { RepositoryReviewQueue } from "../loop/repository-review-queue.js";
@@ -10,7 +12,6 @@ import { readMacPowerSource } from "../platform/power-source.js";
 import { operatorHomeDir } from "../projects/operator-home.js";
 import { createResourceGuardianStore } from "../resource-guardian/store.js";
 import { discoverRuntimeGuardianFindings } from "../runtime-guardian/inspector.js";
-import { SchedulerStore } from "../scheduler/scheduler-store.js";
 import { DailyTaskAuditStore } from "../tasks/daily-audit-service.js";
 import { DailyTaskLedger, summarizeTaskWindow } from "../tasks/task-ledger.js";
 import type { RuntimeOverviewReaders, WorkOrderOverviewRead } from "./runtime-overview-reader.js";
@@ -119,22 +120,6 @@ export function createRuntimeOverviewReaders(input: {
           nextAttemptAt: item.nextAttemptAt,
           retryEpoch: item.retryEpoch ?? 0,
         })),
-    batch: () => {
-      const active = new SchedulerStore().getActiveRun();
-      return {
-        enabled: deps.config.scheduler.tickMs > 0,
-        ...(active === undefined
-          ? {}
-          : {
-              active: {
-                id: active.runId,
-                label: `Batch ${active.planId}`,
-                status: active.status,
-                startedAt: active.startedAt,
-              },
-            }),
-      };
-    },
     dailyAudit: () => {
       const read = cachedDomain(dailyAuditCache, appStateDir(), now, () => {
         const window = {
@@ -237,6 +222,30 @@ export function createRuntimeOverviewReaders(input: {
         changedAt: current.circuit.changedAt,
         degraded: current.degraded,
         samplingDegraded: current.view.sampling.degraded,
+      };
+    },
+    agentCapacity: () => {
+      const agent = deps.config.loopEngineering.supervisor.agent;
+      const capacity = new AgentCapacityStore().read(agent, now);
+      const planned = new AutomationOccurrenceStore()
+        .list()
+        .filter(
+          (occurrence) => occurrence.status === "planned" || occurrence.status === "admitted",
+        );
+      return {
+        enabled: deps.config.loopEngineering.supervisor.enabled,
+        agent,
+        authentication: capacity.authentication,
+        state: capacity.state,
+        observedAt: capacity.observedAt,
+        retryAt: capacity.resetAt ?? capacity.nextProbeAt,
+        activeAutonomousLeases: capacity.activeAutonomousLeases,
+        plannedOccurrences: planned.length,
+        nextOccurrenceAt:
+          planned.length === 0
+            ? null
+            : Math.min(...planned.map((occurrence) => occurrence.notBefore)),
+        ownerLastActivityAt: deps.ownerActivity.lastObservedAt(),
       };
     },
     power: () => {

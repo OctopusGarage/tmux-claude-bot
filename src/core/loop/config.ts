@@ -194,7 +194,7 @@ const harnessAutoSchema = z
         z
           .object({
             kind: harnessAutoTaskKindSchema,
-            enabled: z.boolean().default(true),
+            enabled: z.boolean().default(false),
             weight: z.number().int().positive().default(1),
           })
           .strict(),
@@ -466,47 +466,49 @@ const loopConfigSchema = z
       .object({
         jitter: z
           .object({
-            enabled: z.boolean().default(false),
-            seed: z.string().min(1).default("loop-engineering"),
-            architectureMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
-            bugFixMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
-            testCoverageMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
-            securityMaintenanceMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
-            harnessAutoMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
-            opportunityDiscoveryMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
-            automationGovernanceReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
-            pullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
-            repositoryPullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(0),
+            enabled: z.boolean().default(true),
+            architectureMaxDelayMinutes: z.number().int().min(0).max(240).default(60),
+            bugFixMaxDelayMinutes: z.number().int().min(0).max(240).default(60),
+            testCoverageMaxDelayMinutes: z.number().int().min(0).max(240).default(60),
+            securityMaintenanceMaxDelayMinutes: z.number().int().min(0).max(240).default(60),
+            harnessAutoMaxDelayMinutes: z.number().int().min(0).max(240).default(60),
+            opportunityDiscoveryMaxDelayMinutes: z.number().int().min(0).max(240).default(60),
+            automationGovernanceReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(60),
+            pullRequestReviewMaxDelayMinutes: z.number().int().min(0).max(240).default(60),
+            repositoryPullRequestReviewMaxDelayMinutes: z
+              .number()
+              .int()
+              .min(0)
+              .max(240)
+              .default(60),
           })
           .strict()
           .default({
-            enabled: false,
-            seed: "loop-engineering",
-            architectureMaxDelayMinutes: 0,
-            bugFixMaxDelayMinutes: 0,
-            testCoverageMaxDelayMinutes: 0,
-            securityMaintenanceMaxDelayMinutes: 0,
-            harnessAutoMaxDelayMinutes: 0,
-            opportunityDiscoveryMaxDelayMinutes: 0,
-            automationGovernanceReviewMaxDelayMinutes: 0,
-            pullRequestReviewMaxDelayMinutes: 0,
-            repositoryPullRequestReviewMaxDelayMinutes: 0,
+            enabled: true,
+            architectureMaxDelayMinutes: 60,
+            bugFixMaxDelayMinutes: 60,
+            testCoverageMaxDelayMinutes: 60,
+            securityMaintenanceMaxDelayMinutes: 60,
+            harnessAutoMaxDelayMinutes: 60,
+            opportunityDiscoveryMaxDelayMinutes: 60,
+            automationGovernanceReviewMaxDelayMinutes: 60,
+            pullRequestReviewMaxDelayMinutes: 60,
+            repositoryPullRequestReviewMaxDelayMinutes: 60,
           }),
       })
       .strict()
       .default({
         jitter: {
-          enabled: false,
-          seed: "loop-engineering",
-          architectureMaxDelayMinutes: 0,
-          bugFixMaxDelayMinutes: 0,
-          testCoverageMaxDelayMinutes: 0,
-          securityMaintenanceMaxDelayMinutes: 0,
-          harnessAutoMaxDelayMinutes: 0,
-          opportunityDiscoveryMaxDelayMinutes: 0,
-          automationGovernanceReviewMaxDelayMinutes: 0,
-          pullRequestReviewMaxDelayMinutes: 0,
-          repositoryPullRequestReviewMaxDelayMinutes: 0,
+          enabled: true,
+          architectureMaxDelayMinutes: 60,
+          bugFixMaxDelayMinutes: 60,
+          testCoverageMaxDelayMinutes: 60,
+          securityMaintenanceMaxDelayMinutes: 60,
+          harnessAutoMaxDelayMinutes: 60,
+          opportunityDiscoveryMaxDelayMinutes: 60,
+          automationGovernanceReviewMaxDelayMinutes: 60,
+          pullRequestReviewMaxDelayMinutes: 60,
+          repositoryPullRequestReviewMaxDelayMinutes: 60,
         },
       }),
     skills: z

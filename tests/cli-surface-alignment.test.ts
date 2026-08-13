@@ -46,6 +46,12 @@ describe("CLI surface alignment", () => {
     expect(cliHelp()).toMatch(/^ {2}sysload\s+.*Resource Guardian$/m);
   });
 
+  it("does not advertise the retired Batch Scheduler", () => {
+    expect(commandNames(cliHelp())).not.toContain("batch");
+    expect(read("docs/cli-reference.md")).not.toContain("tcb batch");
+    expect(read("scripts/smoke.sh")).not.toMatch(/^\s*batch\s*\\?$/m);
+  });
+
   it("keeps Home Operator service recipes within the executable service command set", () => {
     const supported = new Set(commandNames(cliHelp(["service"])));
     const skill = read("skills/tcb-home-operator/SKILL.md");

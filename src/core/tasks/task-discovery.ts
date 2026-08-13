@@ -11,7 +11,7 @@ import {
   loopScheduleJitterMs,
 } from "../loop/schedule-jitter.js";
 import { loopScheduledJobs } from "../loop/task-family.js";
-import { nextFire } from "../scheduler/scheduling.js";
+import { nextFire } from "../scheduling/occurrence.js";
 import type { ScheduledTaskRecord, TaskWindow } from "./task-ledger.js";
 
 type LoopDiscoveredJobKind = LoopJitterJobKind;

@@ -55,7 +55,6 @@ import {
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
 import { rewriteUserPromptByAck } from "../../core/read/user-prompt-intake.js";
 import { createResourceGuardianStore } from "../../core/resource-guardian/store.js";
-import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
 import { appStateDir } from "../../shared/state-dir.js";
 import { normalizeError } from "../../shared/utils/error.js";
@@ -499,13 +498,6 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
           : {}),
       },
     );
-  });
-
-  // Owner-only: batch scheduler status and control.
-  bot.command("batch", async (ctx) => {
-    const arg = ctx.match.toString();
-    const body = runBatchCommand(arg);
-    await reply(ctx, "view", "Batch", { body, replyTarget });
   });
 
   bot.command("opportunity", async (ctx) => {

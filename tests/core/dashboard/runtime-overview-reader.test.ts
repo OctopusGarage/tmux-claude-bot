@@ -17,7 +17,6 @@ function readers(overrides: Partial<RuntimeOverviewReaders> = {}): RuntimeOvervi
     ],
     workOrders: () => ({ unfinished: [], terminal: [], abandoned: [], staleDispatching: [] }),
     repositoryReviews: () => [],
-    batch: () => ({ enabled: true }),
     dailyAudit: () => ({ enabled: true, lastFiredAt: 100 }),
     runtimeGuardian: () => ({ enabled: true, findings: [] }),
     resourceGuardian: () => ({
@@ -29,6 +28,18 @@ function readers(overrides: Partial<RuntimeOverviewReaders> = {}): RuntimeOvervi
       changedAt: 100,
       degraded: false,
       samplingDegraded: false,
+    }),
+    agentCapacity: () => ({
+      enabled: true,
+      agent: "codex",
+      authentication: "subscription",
+      state: "available",
+      observedAt: 100,
+      retryAt: 200,
+      activeAutonomousLeases: 0,
+      plannedOccurrences: 1,
+      nextOccurrenceAt: 500,
+      ownerLastActivityAt: null,
     }),
     power: () => ({
       mode: "scheduled",
@@ -178,6 +189,37 @@ describe("Runtime Overview reader", () => {
       expect.objectContaining({
         id: "runtime-guardian:terminal-invalid-output:run-1",
         nextAction: "tcb runtime-guardian findings --project alpha --limit 20",
+      }),
+    );
+  });
+
+  it("surfaces exhausted agent capacity as operator attention", async () => {
+    const overview = await readRuntimeOverview({
+      now: 2_000,
+      sessions: [],
+      readers: readers({
+        agentCapacity: () => ({
+          enabled: true,
+          agent: "codex",
+          authentication: "subscription",
+          state: "exhausted",
+          observedAt: 1_900,
+          retryAt: 3_000,
+          activeAutonomousLeases: 0,
+          plannedOccurrences: 2,
+          nextOccurrenceAt: 3_000,
+          ownerLastActivityAt: 1_800,
+        }),
+      }),
+    });
+
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({ id: "agent-capacity", status: "attention" }),
+    );
+    expect(overview.attention.items).toContainEqual(
+      expect.objectContaining({
+        id: "agent-capacity:codex",
+        presentation: { kind: "agent-capacity", agent: "codex", state: "exhausted" },
       }),
     );
   });

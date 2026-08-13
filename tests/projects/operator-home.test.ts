@@ -61,7 +61,7 @@ is not a product repository, target project, or WorkOrder worker directory.
   For long tasks use \`tcb send <name> "<task>" --no-wait\` then \`tcb peek <name>\` to report.
 - Status: \`tcb dashboard\` (all sessions), \`tcb peek <name>\` (one pane).
 - Delegate clarified current work: \`tcb autopilot <name> [requirement]\`.
-- Fleet control: \`tcb control <name> <esc|enter|restart|…>\`, \`tcb open\`, autopilot/batch.
+- Fleet control: \`tcb control <name> <esc|enter|restart|…>\`, \`tcb open\`, and Autopilot.
 
 ## House rules
 - **Restate and confirm before destructive actions** (removing a project, killing/

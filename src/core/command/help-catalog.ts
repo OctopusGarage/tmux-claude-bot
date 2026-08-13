@@ -182,14 +182,6 @@ const SETTINGS: readonly HelpRow[] = [
 const DIAGNOSTICS: readonly HelpRow[] = [
   [
     {
-      cmds: ["batch"],
-      descKey: "cmdBatch",
-      argHint: " [start <id>|pause|resume|stop|report]",
-      telegramDescription: "Batch scheduler status or control",
-    },
-  ],
-  [
-    {
       cmds: ["autopilot"],
       descKey: "cmdAutopilot",
       argHint: " [requirement]",

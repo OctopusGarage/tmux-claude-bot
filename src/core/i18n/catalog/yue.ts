@@ -407,7 +407,6 @@ export const yue: Messages = {
   homeOperatorDisabled: "主控操作員工作階段未啟用",
   homeOperatorSwitched: "🏠 已切換至主控操作員工作階段",
   cmdDashboard: "查看全域儀表板（所有工作階段狀態總覽）",
-  cmdBatch: "批次排程器：查看狀態或控制批次運行（start/pause/resume/stop/report）",
   cmdAutopilot: "將目前工作階段交畀 Loop Supervisor 託管推進",
   cmdOpportunity: "睇同討論主動機會建議",
   cmdSysload: "睇本機負載、發熱、失控進程同資源守護狀態",
@@ -442,10 +441,10 @@ export const yue: Messages = {
       "work-orders": "工作單",
       "repository-reviews": "儲存庫 PR 審查",
       automation: "自動化",
-      batch: "批次排程",
       "daily-task-audit": "每日任務審計",
       "runtime-guardian": "運行守護",
       "resource-guardian": "資源守護",
+      "agent-capacity": "代理容量",
       power: "服務同電源",
       "operator-ai": "操作員同 AI 介面",
     })[id] ?? id,
@@ -467,6 +466,7 @@ export const yue: Messages = {
   dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
     `${project} 有運行守護發現`,
   dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) => "資源守護需要處理",
+  dashboardAttentionAgentCapacity: (agent: string, state: string) => `${agent} 容量狀態係 ${state}`,
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "電源策略需要處理",
   dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
@@ -478,10 +478,6 @@ export const yue: Messages = {
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "將目前工作階段上下文交畀 Loop Supervisor。範圍清楚就可以直接託管；想先睇清任務清單、驗收標準同停止條件，就先睇計劃再確認推進。",
-  batchRunStarted: (planId, tasks) => `🚀 批次執行已啟動：計劃 ${planId}，共 ${tasks} 個任務`,
-  batchPoolPaused: (agent, resumeAt) =>
-    `⏸ 批次池已暫停 [${agent}]：額度已達上限，預計恢復 ${resumeAt}`,
-  batchRunComplete: (summary) => `✅ 批次執行完成\n${summary}`,
   autopilotUsage: (raw) =>
     `未知子命令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
   autopilotPlanPreviewBody:

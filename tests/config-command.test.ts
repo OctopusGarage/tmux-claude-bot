@@ -178,7 +178,6 @@ describe("config and automation commands", () => {
         "TASK_AUDIT_TICK_MS=23456",
         "RUNTIME_GUARDIAN_ENABLED=false",
         "RUNTIME_GUARDIAN_TICK_MS=34567",
-        "BATCH_SCHEDULER_TICK_MS=45678",
       ].join("\n"),
     );
     const { runAutomationCommand } = await import("../src/core/config/command.js");
@@ -195,7 +194,6 @@ describe("config and automation commands", () => {
       }),
       expect.objectContaining({ id: "task-audit", enabled: true, tickMs: 23456 }),
       expect.objectContaining({ id: "runtime-guardian", enabled: false, tickMs: 34567 }),
-      expect.objectContaining({ id: "batch", enabled: true, tickMs: 45678 }),
     ]);
     expect(readAutomationStatuses()).toEqual(JSON.parse(stdoutOf(status)));
 

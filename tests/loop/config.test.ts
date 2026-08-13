@@ -54,17 +54,16 @@ describe("parseLoopConfigYaml", () => {
     const config = parseLoopConfigYaml(validConfig);
 
     expect(config.scheduler.jitter).toEqual({
-      enabled: false,
-      seed: "loop-engineering",
-      architectureMaxDelayMinutes: 0,
-      bugFixMaxDelayMinutes: 0,
-      testCoverageMaxDelayMinutes: 0,
-      securityMaintenanceMaxDelayMinutes: 0,
-      harnessAutoMaxDelayMinutes: 0,
-      opportunityDiscoveryMaxDelayMinutes: 0,
-      automationGovernanceReviewMaxDelayMinutes: 0,
-      pullRequestReviewMaxDelayMinutes: 0,
-      repositoryPullRequestReviewMaxDelayMinutes: 0,
+      enabled: true,
+      architectureMaxDelayMinutes: 60,
+      bugFixMaxDelayMinutes: 60,
+      testCoverageMaxDelayMinutes: 60,
+      securityMaintenanceMaxDelayMinutes: 60,
+      harnessAutoMaxDelayMinutes: 60,
+      opportunityDiscoveryMaxDelayMinutes: 60,
+      automationGovernanceReviewMaxDelayMinutes: 60,
+      pullRequestReviewMaxDelayMinutes: 60,
+      repositoryPullRequestReviewMaxDelayMinutes: 60,
     });
     expect(config.skills.approved[0]).toMatchObject({
       id: "improve-codebase-architecture",
@@ -117,6 +116,7 @@ projects:
       cleanupPolicy: aggressive
       tasks:
         - kind: architecture
+          enabled: true
 `);
 
     expect(config.projects[0]?.cleanupPolicy).toBe("balanced");
@@ -128,7 +128,6 @@ projects:
     const config = parseLoopConfigYaml(`scheduler:
   jitter:
     enabled: true
-    seed: local-stable
     architectureMaxDelayMinutes: 10
     bugFixMaxDelayMinutes: 20
     testCoverageMaxDelayMinutes: 25
@@ -156,14 +155,13 @@ prReview:
 
     expect(config.scheduler.jitter).toEqual({
       enabled: true,
-      seed: "local-stable",
       architectureMaxDelayMinutes: 10,
       bugFixMaxDelayMinutes: 20,
       testCoverageMaxDelayMinutes: 25,
       securityMaintenanceMaxDelayMinutes: 28,
       harnessAutoMaxDelayMinutes: 26,
       opportunityDiscoveryMaxDelayMinutes: 18,
-      automationGovernanceReviewMaxDelayMinutes: 0,
+      automationGovernanceReviewMaxDelayMinutes: 60,
       pullRequestReviewMaxDelayMinutes: 30,
       repositoryPullRequestReviewMaxDelayMinutes: 45,
     });

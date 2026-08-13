@@ -150,6 +150,9 @@ prReview:
       schedule: "0 4 * * *"
 `;
 
+const fixedScheduleConfig = (text: string): string =>
+  `scheduler:\n  jitter:\n    enabled: false\n${text}`;
+
 function runCli(
   args: string[],
   stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-state-")),
@@ -218,7 +221,9 @@ describe("CLI loop command", () => {
     const file = join(dir, "loop.yml");
     writeFileSync(
       file,
-      configText.replace("assessment:", 'schedule: "*/5 * * * *"\n    assessment:'),
+      fixedScheduleConfig(
+        configText.replace("assessment:", 'schedule: "*/5 * * * *"\n    assessment:'),
+      ),
     );
 
     const result = runCli(["loop", "tick", file, "--now", "2026-07-16T10:10:00Z"]);
@@ -236,7 +241,9 @@ describe("CLI loop command", () => {
     const file = join(dir, "loop.yml");
     writeFileSync(
       file,
-      configText.replace("assessment:", 'schedule: "*/5 * * * *"\n    assessment:'),
+      fixedScheduleConfig(
+        configText.replace("assessment:", 'schedule: "*/5 * * * *"\n    assessment:'),
+      ),
     );
 
     const result = runCli(["loop", "tick", file, "--now", "2026-07-16T10:10:00Z", "--json"]);

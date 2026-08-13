@@ -427,8 +427,6 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   homeOperatorDisabled: "La sesión del operador principal no está habilitada",
   homeOperatorSwitched: "🏠 Cambiado a la sesión del operador principal",
   cmdDashboard: "Ver el panel global (resumen de todas las sesiones)",
-  cmdBatch:
-    "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",
   cmdAutopilot: "Delegar el trabajo de la sesión actual al Loop Supervisor",
   cmdOpportunity: "Revisar y discutir oportunidades propuestas",
   cmdSysload: "Ver carga, temperatura, procesos descontrolados y Resource Guardian",
@@ -463,10 +461,10 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
       "work-orders": "órdenes de trabajo",
       "repository-reviews": "revisiones PR del repositorio",
       automation: "automatización",
-      batch: "planificador por lotes",
       "daily-task-audit": "auditoría diaria de tareas",
       "runtime-guardian": "guardián de ejecución",
       "resource-guardian": "guardián de recursos",
+      "agent-capacity": "capacidad del agente",
       power: "servicio y energía",
       "operator-ai": "operador e interfaces de IA",
     })[id] ?? id,
@@ -493,6 +491,8 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
     `${project} tiene un hallazgo de Runtime Guardian`,
   dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) =>
     "Resource Guardian requiere atención",
+  dashboardAttentionAgentCapacity: (agent: string, state: string) =>
+    `La capacidad de ${agent} está ${state}`,
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "La política de energía requiere atención",
   dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
@@ -504,11 +504,6 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "Delega el contexto de la sesión actual al Loop Supervisor. Empieza directamente cuando el alcance esté claro, o revisa primero el plan si quieres ver la lista, criterios y condiciones de parada.",
-  batchRunStarted: (planId, tasks) =>
-    `🚀 Ejecución de lote iniciada: plan ${planId}, ${tasks} tarea(s)`,
-  batchPoolPaused: (agent, resumeAt) =>
-    `⏸ Pool de lote pausado [${agent}]: cuota alcanzada, reanudación en ${resumeAt}`,
-  batchRunComplete: (summary) => `✅ Ejecución de lote completada\n${summary}`,
   autopilotUsage: (raw) =>
     `Subcomando desconocido «${raw}». Uso: /autopilot [requisito] o /autopilot delegate [requisito]`,
   autopilotPlanPreviewBody:

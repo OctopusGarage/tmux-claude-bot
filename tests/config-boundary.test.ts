@@ -46,36 +46,6 @@ describe("no env var crashes startup when left blank", () => {
       repairWorktreeIsolation: "source",
     });
   });
-
-  it("parses BATCH_SCHEDULER_* values", () => {
-    const config = loadConfig({
-      TELEGRAM_BOT_TOKEN: "t",
-      BATCH_SCHEDULER_TICK_MS: "1234",
-      BATCH_SCHEDULER_QUOTA_PCT: "88",
-      BATCH_SCHEDULER_REPROBE_MS: "4321",
-    });
-
-    expect(config.scheduler).toEqual({
-      tickMs: 1234,
-      quotaPct: 88,
-      reprobeMs: 4321,
-    });
-  });
-
-  it("uses scheduler defaults when BATCH_SCHEDULER_* values are blank", () => {
-    const config = loadConfig({
-      TELEGRAM_BOT_TOKEN: "t",
-      BATCH_SCHEDULER_TICK_MS: "",
-      BATCH_SCHEDULER_QUOTA_PCT: "",
-      BATCH_SCHEDULER_REPROBE_MS: "",
-    });
-
-    expect(config.scheduler).toEqual({
-      tickMs: 8000,
-      quotaPct: 99,
-      reprobeMs: 1_800_000,
-    });
-  });
 });
 
 describe("repository state boundary", () => {

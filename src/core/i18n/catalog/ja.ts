@@ -425,8 +425,6 @@ export const ja: Messages = {
   homeOperatorDisabled: "ホームオペレーターセッションは有効ではありません",
   homeOperatorSwitched: "🏠 ホームオペレーターセッションに切り替えました",
   cmdDashboard: "グローバルダッシュボードを表示（全セッションの状態概要）",
-  cmdBatch:
-    "バッチスケジューラー：状態確認またはバッチ実行の制御（start/pause/resume/stop/report）",
   cmdAutopilot: "現在のセッション作業を Loop Supervisor に委任",
   cmdOpportunity: "提案された改善機会を確認して議論",
   cmdSysload: "マシンの負荷・発熱・暴走プロセス・Resource Guardian を表示",
@@ -461,10 +459,10 @@ export const ja: Messages = {
       "work-orders": "ワークオーダー",
       "repository-reviews": "リポジトリ PR レビュー",
       automation: "自動化",
-      batch: "バッチスケジューラー",
       "daily-task-audit": "日次タスク監査",
       "runtime-guardian": "ランタイムガーディアン",
       "resource-guardian": "リソースガーディアン",
+      "agent-capacity": "エージェント容量",
       power: "サービスと電源",
       "operator-ai": "オペレーターと AI インターフェース",
     })[id] ?? id,
@@ -491,6 +489,8 @@ export const ja: Messages = {
     `${project} にランタイムガーディアンの検出事項があります`,
   dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) =>
     "リソースガーディアンの確認が必要です",
+  dashboardAttentionAgentCapacity: (agent: string, state: string) =>
+    `${agent} の容量状態は ${state} です`,
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "電源ポリシーの確認が必要です",
   dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
@@ -502,11 +502,6 @@ export const ja: Messages = {
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "現在のセッション文脈を Loop Supervisor に委任します。範囲が明確ならすぐ委任し、先にチェックリストと停止条件を確認したい場合は計画を確認してから進めます。",
-  batchRunStarted: (planId, tasks) =>
-    `🚀 バッチ実行を開始しました：プラン ${planId}、${tasks} 件のタスク`,
-  batchPoolPaused: (agent, resumeAt) =>
-    `⏸ バッチプールを一時停止 [${agent}]：クォータ上限に達しました。再開予定：${resumeAt}`,
-  batchRunComplete: (summary) => `✅ バッチ実行完了\n${summary}`,
   autopilotUsage: (raw) =>
     `不明なサブコマンド「${raw}」。使い方：/autopilot [requirement] または /autopilot delegate [requirement]`,
   autopilotPlanPreviewBody:

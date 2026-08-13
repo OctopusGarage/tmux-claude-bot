@@ -11,7 +11,6 @@ import {
   createLineDecoder,
 } from "../../../src/adapters/control/protocol.js";
 import { hardenControlSocket, startControlServer } from "../../../src/adapters/control/server.js";
-import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { OutputProcessor } from "../../../src/core/session/output.js";
@@ -31,7 +30,6 @@ function fakeDeps(): { deps: HandlerDeps; enqueued: QueuedMessage[] } {
       },
     },
     activity: { onActivity: () => () => {} },
-    notifier: new NotifierRegistry(),
   } as unknown as HandlerDeps;
   return { deps, enqueued };
 }

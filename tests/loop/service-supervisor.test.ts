@@ -12,7 +12,7 @@ import {
   reconcileLoopSupervisorWorkOrders,
   resolveSystemGateGitExecutable,
   runGitCommand,
-  runLoopServiceTickAsync,
+  runLoopServiceTickAsync as runLoopServiceTickAsyncProduction,
   runSupervisedSystemGateOutcome,
   startLoopEngineering,
   writeSupervisedSystemGateArtifact,
@@ -38,6 +38,16 @@ import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-l
 
 const originalStateDir = process.env.TCB_STATE_DIR;
 
+const runLoopServiceTickAsync = async (
+  input: Parameters<typeof runLoopServiceTickAsyncProduction>[0],
+) => {
+  const configText = readFileSync(input.configFile, "utf8");
+  if (!/^scheduler:/m.test(configText)) {
+    writeFileSync(input.configFile, `scheduler:\n  jitter:\n    enabled: false\n${configText}`);
+  }
+  return runLoopServiceTickAsyncProduction(input);
+};
+
 afterEach(() => {
   if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
   else process.env.TCB_STATE_DIR = originalStateDir;
@@ -55,6 +65,9 @@ function writeLoopConfig(input: {
   writeFileSync(
     file,
     `
+scheduler:
+  jitter:
+    enabled: false
 projects:
   - id: hub
     name: Hub
@@ -98,6 +111,9 @@ function writeRepositoryPrReviewConfig(input: { repoOne: string; repoTwo: string
   writeFileSync(
     file,
     `
+scheduler:
+  jitter:
+    enabled: false
 projects:
   - id: placeholder
     name: Placeholder

@@ -433,12 +433,11 @@ export const zh = {
   promptsPrev: "◀ 上一页",
   promptsNext: "下一页 ▶",
 
-  // ── dashboard / batch ──
+  // ── dashboard ──
   cmdHome: "切换到主控操作员会话（未选项目时的默认目标）",
   homeOperatorDisabled: "未启用主控操作员会话",
   homeOperatorSwitched: "🏠 已切换到主控操作员会话",
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
-  cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
   cmdAutopilot: "把当前会话工作托管给 Loop Supervisor 推进",
   cmdOpportunity: "查看并讨论主动机会建议",
   cmdSysload: "查看本机负载、发热、跑飞进程和资源守护状态",
@@ -473,10 +472,10 @@ export const zh = {
       "work-orders": "工作单",
       "repository-reviews": "仓库 PR 审查",
       automation: "自动化",
-      batch: "批处理调度",
       "daily-task-audit": "每日任务审计",
       "runtime-guardian": "运行时守护",
       "resource-guardian": "资源守护",
+      "agent-capacity": "智能体容量",
       power: "服务与电源",
       "operator-ai": "操作员与 AI 接口",
     })[id] ?? id,
@@ -498,6 +497,7 @@ export const zh = {
   dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
     `${project} 存在运行时守护发现`,
   dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) => "资源守护需要处理",
+  dashboardAttentionAgentCapacity: (agent: string, state: string) => `${agent} 容量状态为 ${state}`,
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "电源策略需要处理",
   dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
@@ -509,11 +509,6 @@ export const zh = {
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "把当前会话上下文托管给 Loop Supervisor。范围已经清楚时可以直接托管；需要先看清任务清单、验收标准和停止条件时，先看计划再确认推进。",
-  batchRunStarted: (planId: string, tasks: number) =>
-    `🚀 批次运行已启动：计划 ${planId}，共 ${tasks} 个任务`,
-  batchPoolPaused: (agent: string, resumeAt: string) =>
-    `⏸ 批次池已暂停 [${agent}]：额度已达上限，预计恢复 ${resumeAt}`,
-  batchRunComplete: (summary: string) => `✅ 批次运行完成\n${summary}`,
   autopilotUsage: (raw: string) =>
     `未知子命令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
   autopilotPlanPreviewBody:

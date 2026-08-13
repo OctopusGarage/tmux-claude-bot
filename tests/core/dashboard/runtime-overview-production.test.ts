@@ -36,4 +36,24 @@ describe("production Runtime Overview readers", () => {
     createRuntimeOverviewReaders({ deps, now: 500, operatorSessionRunning: false }).workOrders();
     expect(registryRead).toHaveBeenCalledTimes(3);
   });
+
+  it("keeps Agent Capacity visible for Autopilot when no Loop config file is configured", () => {
+    const deps = {
+      config: {
+        loopEngineering: {
+          configFile: "",
+          supervisor: { enabled: true, agent: "codex" },
+        },
+      },
+      ownerActivity: { lastObservedAt: () => null },
+    } as HandlerDeps;
+
+    expect(
+      createRuntimeOverviewReaders({
+        deps,
+        now: 1_000,
+        operatorSessionRunning: false,
+      }).agentCapacity?.(),
+    ).toMatchObject({ enabled: true, agent: "codex" });
+  });
 });

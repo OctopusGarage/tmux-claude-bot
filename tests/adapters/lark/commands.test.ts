@@ -129,6 +129,10 @@ describe("parseLarkInput", () => {
     expect(parseLarkInput("/doctor")).toEqual({ kind: "view", name: "doctor", arg: undefined });
   });
 
+  it("treats the retired /batch token as ordinary text", () => {
+    expect(parseLarkInput("/batch status")).toEqual({ kind: "text", text: "/batch status" });
+  });
+
   it("/history → view history, no arg", () => {
     expect(parseLarkInput("/history")).toEqual({ kind: "view", name: "history", arg: undefined });
   });

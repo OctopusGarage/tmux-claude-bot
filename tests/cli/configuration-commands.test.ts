@@ -46,6 +46,11 @@ describe("configuration command family", () => {
       "status",
       "pause",
       "resume",
+      "capacity",
+    ]);
+    expect(program.commands[1]?.commands[3]?.commands.map((command) => command.name())).toEqual([
+      "status",
+      "history",
     ]);
   });
 
@@ -59,11 +64,17 @@ describe("configuration command family", () => {
     await program.parseAsync(["node", "tcb", "automation", "status", "--json"], {
       from: "node",
     });
+    await program.parseAsync(["node", "tcb", "automation", "capacity", "status", "--json"], {
+      from: "node",
+    });
 
     expect(JSON.parse(log.mock.calls[0]?.[0] ?? "null")).toEqual([]);
     expect(JSON.parse(log.mock.calls[1]?.[0] ?? "null")).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "loop" })]),
     );
+    expect(JSON.parse(log.mock.calls[2]?.[0] ?? "null")).toMatchObject({
+      agents: expect.arrayContaining([expect.objectContaining({ agent: "codex" })]),
+    });
     expect(error).not.toHaveBeenCalled();
     expect(process.exitCode).toBeUndefined();
   });

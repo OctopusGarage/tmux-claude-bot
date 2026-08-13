@@ -1,5 +1,5 @@
 import { JsonMapStore } from "../infra/json-map-store.js";
-import { nextFire } from "../scheduler/scheduling.js";
+import { nextFire } from "../scheduling/occurrence.js";
 import type { LoopConfig } from "./config.js";
 import {
   type LoopJitterJobKind,

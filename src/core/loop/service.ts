@@ -4,7 +4,17 @@ import { dirname, isAbsolute, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { HostPowerConfig, WorktreeIsolationMode } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import type { AgentKind } from "../agents/types.js";
 import { admitAutomationWork } from "../automation/admission.js";
+import { observeAgentCapacity } from "../automation/capacity-probe.js";
+import { AgentCapacityStore } from "../automation/capacity-store.js";
+import {
+  type AutonomousAdmissionContext,
+  type AutonomousAdmissionLease,
+  AutonomousWorkCoordinator,
+  type AutonomousWorkIntent,
+} from "../automation/coordinator.js";
+import { automationOccurrenceId } from "../automation/occurrence-window.js";
 import { agentIsIdle } from "../command/agent-ready.js";
 import type { HandlerDeps } from "../deps.js";
 import { buildEvalReportFromSupervisorSummary } from "../eval/report.js";
@@ -393,6 +403,9 @@ export async function runLoopServiceTickAsync(input: {
   skipRepositoryReview?: boolean;
   hostPower?: HostPowerConfig;
   repositoryPullRequestRecovery?: RepositoryPullRequestRecoveryController;
+  automationCoordinator?: AutonomousWorkCoordinator;
+  automationAgent?: AgentKind;
+  automationContext?: () => AutonomousAdmissionContext;
 }): Promise<LoopServiceTickSummary> {
   const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
   const previousLastFired = input.schedulerStore.getLastFired();
@@ -434,8 +447,48 @@ export async function runLoopServiceTickAsync(input: {
     return resolveLoopSupervisorDueTarget(config, due);
   };
 
+  const autonomousIntent = (
+    target: ResolvedDue,
+    includeOccurrence = true,
+  ): AutonomousWorkIntent => ({
+    id: `${target.due.jobKey}:${target.due.scheduledAt}`,
+    source: "loop-engineering",
+    trigger: "background",
+    weight: "heavy",
+    agent: input.automationAgent ?? "claude",
+    ...(includeOccurrence
+      ? {
+          occurrenceId: automationOccurrenceId(
+            `${target.due.jobKey}:${target.due.jobKind}`,
+            target.due.scheduledAt,
+          ),
+        }
+      : {}),
+  });
+  const autonomousContext = (): AutonomousAdmissionContext =>
+    input.automationContext?.() ??
+    (input.hostPower === undefined ? {} : { hostPower: input.hostPower });
+  const precheckAutonomousTarget = (
+    target: ResolvedDue,
+    includeOccurrence = true,
+  ): ReturnType<typeof admitAutomationWork> =>
+    input.automationCoordinator?.precheck(
+      autonomousIntent(target, includeOccurrence),
+      autonomousContext(),
+    ) ??
+    admitAutomationWork(
+      {
+        source: "loop-engineering",
+        trigger: "background",
+        weight: "heavy",
+        now: input.now,
+      },
+      input.hostPower === undefined ? {} : { hostPower: input.hostPower },
+    );
+
   const beginLedger = (
     target: ResolvedDue,
+    identity?: { startedAt: number; runId: string; ledgerTaskId: string },
   ): { startedAt: number; runId: string; ledgerTaskId: string } => {
     log.info("loop engineering project run start", {
       data: {
@@ -446,14 +499,17 @@ export async function runLoopServiceTickAsync(input: {
         scheduledAt: new Date(target.due.scheduledAt).toISOString(),
       },
     });
-    const startedAt = Date.now();
-    const runId = runIdForDueProject(
-      target.due.scheduledAt,
-      target.due.projectId,
-      target.due.jobKind,
-      target.due.jobKey,
-    );
-    const ledgerTaskId = `loop:${target.due.jobKey}:${target.due.scheduledAt}`;
+    const startedAt = identity?.startedAt ?? Date.now();
+    const runId =
+      identity?.runId ??
+      runIdForDueProject(
+        target.due.scheduledAt,
+        target.due.projectId,
+        target.due.jobKind,
+        target.due.jobKey,
+      );
+    const ledgerTaskId =
+      identity?.ledgerTaskId ?? `loop:${target.due.jobKey}:${target.due.scheduledAt}`;
     taskLedger.expect({
       taskId: ledgerTaskId,
       source: "loop-engineering",
@@ -468,7 +524,8 @@ export async function runLoopServiceTickAsync(input: {
     target: ResolvedDue,
     supervisorSession: string,
     checkpointScheduler = true,
-  ): Promise<LoopSupervisedRunResult["status"] | "manual-review"> => {
+    admissionLease?: AutonomousAdmissionLease,
+  ): Promise<LoopSupervisedRunResult["status"] | "manual-review" | null> => {
     const { due, project, repository, workspace } = target;
     const runner =
       project?.runner ??
@@ -493,7 +550,14 @@ export async function runLoopServiceTickAsync(input: {
       return preDispatch.status;
     }
     preDispatchAssessment = preDispatch.assessment;
-    const { startedAt, runId, ledgerTaskId } = beginLedger(target);
+    const startedAt = Date.now();
+    const runId = runIdForDueProject(
+      target.due.scheduledAt,
+      target.due.projectId,
+      target.due.jobKind,
+      target.due.jobKey,
+    );
+    const ledgerTaskId = `loop:${target.due.jobKey}:${target.due.scheduledAt}`;
     log.info("loop engineering supervised dispatch start", {
       data: {
         runId,
@@ -557,6 +621,41 @@ export async function runLoopServiceTickAsync(input: {
       defaultMode: input.supervisorWorktreeIsolation ?? "isolated",
       onPreparationFailure: (failure) => preparationFailures.push(failure),
     });
+    if (
+      preparationFailures.length === 0 &&
+      admissionLease !== undefined &&
+      input.automationCoordinator !== undefined
+    ) {
+      const finalAdmission = input.automationCoordinator.revalidate(
+        admissionLease,
+        autonomousContext(),
+      );
+      if (!finalAdmission.allowed) {
+        if (input.runGit !== undefined && isPreparedIsolatedExecutionWorktree(workOrder)) {
+          cleanupLoopExecutionWorktree({
+            worktree: workOrder.projectPath,
+            runGit: input.runGit,
+            ...(workOrder.executionIsolation?.sourceWorktree === undefined
+              ? {}
+              : { sourceWorktree: workOrder.executionIsolation.sourceWorktree }),
+            ...(workOrder.commitPolicy.branch === undefined
+              ? {}
+              : { expectedBranch: workOrder.commitPolicy.branch }),
+          });
+        }
+        log.info("loop engineering supervised target deferred after preparation", {
+          data: {
+            projectId: due.projectId,
+            jobKey: due.jobKey,
+            supervisorSession,
+            reason: finalAdmission.reason,
+            retryAt: finalAdmission.retryAt,
+          },
+        });
+        return null;
+      }
+    }
+    beginLedger(target, { startedAt, runId, ledgerTaskId });
     if (workOrder.finalSummaryPath !== undefined) {
       mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
     }
@@ -731,6 +830,12 @@ export async function runLoopServiceTickAsync(input: {
       revisionFailures = supervisorRevisionFailures(gate.failures);
     }
     result = gate.result;
+    if (result.status !== "completed") {
+      input.automationCoordinator?.recordLimitSignal(
+        input.automationAgent ?? "claude",
+        result.output,
+      );
+    }
     let reviewDisposition =
       workOrder.task?.kind === "repository-pull-request-review" && "summary" in result
         ? repositoryPullRequestReviewDisposition(result.summary)
@@ -883,6 +988,38 @@ export async function runLoopServiceTickAsync(input: {
     return result.status;
   };
 
+  const runSupervisedDueWithAdmission = async (
+    target: ResolvedDue,
+    supervisorSession: string,
+    checkpointScheduler = true,
+    includeOccurrence = true,
+  ): Promise<LoopSupervisedRunResult["status"] | "manual-review" | null> => {
+    if (input.automationCoordinator === undefined) {
+      return runSupervisedDue(target, supervisorSession, checkpointScheduler);
+    }
+    const result = await input.automationCoordinator.execute(
+      autonomousIntent(target, includeOccurrence),
+      autonomousContext(),
+      (lease) => runSupervisedDue(target, supervisorSession, checkpointScheduler, lease),
+      {
+        settleOccurrence: (value) =>
+          value !== null &&
+          input.schedulerStore.getLastFired()[target.due.jobKey] === target.due.scheduledAt,
+      },
+    );
+    if (result.executed) return result.value;
+    log.info("loop engineering supervised target deferred by fresh automation admission", {
+      data: {
+        projectId: target.due.projectId,
+        jobKey: target.due.jobKey,
+        supervisorSession,
+        reason: result.admission.reason,
+        retryAt: result.admission.retryAt,
+      },
+    });
+    return null;
+  };
+
   const cleanupCompletedWorkerSession = async (
     workOrder: LoopWorkOrder,
     cleanup: ((sessionName: string) => Promise<void>) | undefined,
@@ -909,7 +1046,7 @@ export async function runLoopServiceTickAsync(input: {
     }
   };
 
-  const runSystemDue = async (target: ResolvedDue): Promise<void> => {
+  const runSystemDue = async (target: ResolvedDue): Promise<boolean> => {
     const { due, project } = target;
     const { startedAt, runId, ledgerTaskId } = beginLedger(target);
     const summary = await runLoopProjectAsync({
@@ -926,7 +1063,8 @@ export async function runLoopServiceTickAsync(input: {
       endedAt,
       runId,
     });
-    if (!shouldRetrySystemSchedule(summary)) {
+    const completedOccurrence = !shouldRetrySystemSchedule(summary);
+    if (completedOccurrence) {
       input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
     }
     if (summary.status === "failed") {
@@ -947,6 +1085,7 @@ export async function runLoopServiceTickAsync(input: {
     logRunResult({ runId, scheduledAt: due.scheduledAt, startedAt, endedAt, summary, report });
     ran++;
     if (summary.status === "failed") failed++;
+    return completedOccurrence;
   };
 
   let supervisedBuffer: ResolvedDue[] = [];
@@ -1007,7 +1146,9 @@ export async function runLoopServiceTickAsync(input: {
       const batches = allocateLoopSupervisorBatches(readyTargets, idleSupervisorSessions);
       for (const batch of batches) {
         await Promise.all(
-          batch.map(({ item, supervisorSession }) => runSupervisedDue(item, supervisorSession)),
+          batch.map(({ item, supervisorSession }) =>
+            runSupervisedDueWithAdmission(item, supervisorSession),
+          ),
         );
       }
     } finally {
@@ -1098,15 +1239,7 @@ export async function runLoopServiceTickAsync(input: {
           batch.map(async ({ item: target, supervisorSession }) => {
             const queueItem = targetByKey.get(`${target.due.projectId}:${target.due.scheduledAt}`);
             if (queueItem === undefined) return;
-            const admission = admitAutomationWork(
-              {
-                source: "loop-engineering",
-                trigger: "background",
-                weight: "heavy",
-                now: tickNow,
-              },
-              input.hostPower === undefined ? {} : { hostPower: input.hostPower },
-            );
+            const admission = precheckAutonomousTarget(target, false);
             if (!admission.allowed) {
               log.info("loop engineering repository review deferred by automation admission", {
                 data: {
@@ -1128,7 +1261,23 @@ export async function runLoopServiceTickAsync(input: {
             if (leased === null) return;
             repositoryReviewQueue.markRunning(leased.id, owner, tickNow);
             try {
-              const result = await runSupervisedDue(target, supervisorSession, false);
+              const admitted = await runSupervisedDueWithAdmission(
+                target,
+                supervisorSession,
+                false,
+                false,
+              );
+              if (admitted === null) {
+                repositoryReviewQueue.retry(
+                  leased.id,
+                  owner,
+                  tickNow,
+                  "automation admission changed before dispatch",
+                  tickNow + REPOSITORY_REVIEW_RETRY_BASE_MS,
+                );
+                return;
+              }
+              const result = admitted;
               if (result === "completed") {
                 repositoryReviewQueue.complete(leased.id, owner, tickNow, "completed");
               } else if (result === "manual-review") {
@@ -1225,15 +1374,7 @@ export async function runLoopServiceTickAsync(input: {
     if (input.repositoryReviewOnly && !isRepositoryReview) continue;
     if (!input.repositoryReviewOnly && input.skipRepositoryReview && isRepositoryReview) continue;
     const target = resolveDue(due);
-    const admission = admitAutomationWork(
-      {
-        source: "loop-engineering",
-        trigger: "background",
-        weight: "heavy",
-        now: input.now,
-      },
-      input.hostPower === undefined ? {} : { hostPower: input.hostPower },
-    );
+    const admission = precheckAutonomousTarget(target);
     if (!admission.allowed) {
       log.info("loop engineering due target deferred by automation admission", {
         data: {
@@ -1256,7 +1397,26 @@ export async function runLoopServiceTickAsync(input: {
       continue;
     }
     await flushSupervisedBuffer();
-    await runSystemDue(target);
+    if (input.automationCoordinator === undefined) {
+      await runSystemDue(target);
+    } else {
+      const result = await input.automationCoordinator.execute(
+        autonomousIntent(target),
+        autonomousContext(),
+        () => runSystemDue(target),
+        { settleOccurrence: (completed) => completed },
+      );
+      if (!result.executed) {
+        log.info("loop engineering system target deferred by fresh automation admission", {
+          data: {
+            projectId: due.projectId,
+            jobKey: due.jobKey,
+            reason: result.admission.reason,
+            retryAt: result.admission.retryAt,
+          },
+        });
+      }
+    }
   }
   if (!input.repositoryReviewOnly) {
     await flushSupervisedBuffer();
@@ -1269,6 +1429,9 @@ export async function runLoopServiceTickAsync(input: {
         now: input.now,
       });
       input.schedulerStore.setLastFired(due.jobKey, due.scheduledAt);
+      input.automationCoordinator?.settleOccurrence(
+        automationOccurrenceId(`${due.jobKey}:${due.jobKind}`, due.scheduledAt),
+      );
     }
     await drainRepositoryReviewQueue();
   }
@@ -1610,6 +1773,63 @@ export async function startLoopEngineering(
   const restored = restoreLoopControlQueue({ queue: deps.queue });
   if (restored > 0) log.info("loop engineering control queue restored", { data: { restored } });
   const schedulerStore = new LoopSchedulerStore();
+  const capacityStore = new AgentCapacityStore();
+  const automationCoordinator = new AutonomousWorkCoordinator({
+    capacity: capacityStore,
+    onCapacityTransition: (transition) =>
+      deps.notifications.notify({
+        source: "loop-engineering",
+        level: transition.to === "available" ? "info" : "warning",
+        title:
+          transition.to === "exhausted"
+            ? `${transition.agent} capacity exhausted`
+            : transition.to === "available"
+              ? `${transition.agent} capacity recovered`
+              : `${transition.agent} capacity ${transition.to}`,
+        body: [
+          `Capacity changed from ${transition.from} to ${transition.to}.`,
+          `Reason: ${transition.reason}`,
+          ...(transition.resetAt === null
+            ? []
+            : [`Next probe: ${new Date(transition.resetAt).toISOString()}`]),
+        ].join("\n"),
+      }),
+  });
+  const automationAgent = deps.config.loopEngineering.supervisor.agent;
+  const supervisorSessions = loopSupervisorSessionNames(
+    deps.config.projectSessionPrefix,
+    deps.config.loopEngineering.supervisor.poolSize,
+  );
+  let capacityRefresh: Promise<void> | null = null;
+  const refreshCapacity = async (): Promise<void> => {
+    const now = Date.now();
+    const current = capacityStore.read(automationAgent, now);
+    if (current.observedAt > 0 && current.nextProbeAt > now) return;
+    if (capacityRefresh !== null) return capacityRefresh;
+    capacityRefresh = (async () => {
+      const session = supervisorSessions[0];
+      if (session === undefined) {
+        capacityStore.ensureUnknown(automationAgent, now);
+        return;
+      }
+      const observation = await observeAgentCapacity({
+        agent: automationAgent,
+        session,
+        projectPath: dirname(config.configFile),
+        resolver: deps.configResolver,
+        now,
+      });
+      automationCoordinator.recordCapacityObservation(observation, "loop-engineering");
+    })().finally(() => {
+      capacityRefresh = null;
+    });
+    return capacityRefresh;
+  };
+  const automationContext = (): AutonomousAdmissionContext => ({
+    hostPower: deps.config.hostPower,
+    ownerLastActivityAt: deps.ownerActivity.lastObservedAt(),
+    interactiveBusy: ownerInteractiveWorkBusy(deps),
+  });
   const remoteBranchMaintenance =
     options.remoteBranchMaintenance ??
     createLoopRemoteBranchMaintenance({
@@ -1660,6 +1880,7 @@ export async function startLoopEngineering(
       if (reconciled.checked > 0) {
         log.info("loop engineering supervisor work order reconcile complete", { data: reconciled });
       }
+      await refreshCapacity();
       const result = await runLoopServiceTickAsync({
         configFile: config.configFile,
         now: Date.now(),
@@ -1674,10 +1895,7 @@ export async function startLoopEngineering(
           cleanupWorkerSessionRecords(sessionName);
         },
         workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
-        supervisorSessionNames: loopSupervisorSessionNames(
-          deps.config.projectSessionPrefix,
-          deps.config.loopEngineering.supervisor.poolSize,
-        ),
+        supervisorSessionNames: supervisorSessions,
         resetSupervisorBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
         supervisorWorktreeIsolation: deps.config.loopEngineering.supervisor.worktreeIsolation,
         ...(deps.config.loopEngineering.supervisor.enabled
@@ -1693,6 +1911,9 @@ export async function startLoopEngineering(
         projectSessionPrefix: deps.config.projectSessionPrefix,
         skipRepositoryReview: true,
         hostPower: deps.config.hostPower,
+        automationCoordinator,
+        automationAgent,
+        automationContext,
       });
       log.info("loop engineering tick complete", { data: result });
     } catch (err) {
@@ -1705,6 +1926,7 @@ export async function startLoopEngineering(
     if (repositoryReviewTickInFlight) return;
     repositoryReviewTickInFlight = true;
     try {
+      await refreshCapacity();
       await runLoopServiceTickAsync({
         configFile: config.configFile,
         now: Date.now(),
@@ -1717,10 +1939,7 @@ export async function startLoopEngineering(
           cleanupWorkerSessionRecords(sessionName);
         },
         workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
-        supervisorSessionNames: loopSupervisorSessionNames(
-          deps.config.projectSessionPrefix,
-          deps.config.loopEngineering.supervisor.poolSize,
-        ),
+        supervisorSessionNames: supervisorSessions,
         resetSupervisorBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
         supervisorWorktreeIsolation: deps.config.loopEngineering.supervisor.worktreeIsolation,
         ...(deps.config.loopEngineering.supervisor.enabled
@@ -1736,6 +1955,9 @@ export async function startLoopEngineering(
         projectSessionPrefix: deps.config.projectSessionPrefix,
         repositoryReviewOnly: true,
         hostPower: deps.config.hostPower,
+        automationCoordinator,
+        automationAgent,
+        automationContext,
       });
     } catch (err) {
       log.error("repository PR review queue tick failed", { err });
@@ -1778,6 +2000,20 @@ function supervisorSessionHasQueuedWork(deps: HandlerDeps, sessionName: string):
     deps.queue.getSessionQueue(sessionName).length > 0 ||
     deps.queue.size(sessionName) > 0
   );
+}
+
+function ownerInteractiveWorkBusy(deps: HandlerDeps): boolean {
+  const isOwnerWork = (origin: "user" | "system" | undefined): boolean => origin !== "system";
+  if (deps.queue.getGlobalQueue().some((message) => isOwnerWork(message.origin))) return true;
+  const currentGlobal = deps.queue.getCurrentGlobalMessage();
+  if (currentGlobal !== undefined && isOwnerWork(currentGlobal.origin)) return true;
+  return deps.queue.getSessionNames().some((session) => {
+    if (deps.queue.getSessionQueue(session).some((message) => isOwnerWork(message.origin))) {
+      return true;
+    }
+    const current = deps.queue.getCurrentSessionMessage(session);
+    return current !== undefined && isOwnerWork(current.origin);
+  });
 }
 
 export async function reconcileLoopSupervisorWorkOrders(input: {

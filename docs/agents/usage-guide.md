@@ -338,7 +338,8 @@ for one accidentally exited current project use
     `tcb control <project> <esc|enter|resume|restart|…>` — a control key
     (`--yes` is required for dangerous actions in scripts).
 - **CLI — admin**: `run` · `setup` / `setup:lark` · `doctor` · `dashboard` · `sysload`
-  · `power status|schedule install|schedule remove` ·
+  · `power status|history|schedule install|schedule remove` ·
+  `automation capacity status|history` ·
   `resource status|incidents|mode|profile` · `tui` · `recover` · `logs` · `install` ·
   `service <install|uninstall|status|pause|resume|restart|logs>`.
   (`npm run dev|tui|doctor|service:*` for dev.)

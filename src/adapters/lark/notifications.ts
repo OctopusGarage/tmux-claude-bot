@@ -1,7 +1,5 @@
 import type { LarkChannel } from "@larksuiteoapi/node-sdk";
-import { renderNotice } from "../../core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import { messages } from "../../core/i18n/index.js";
 import { boundLarkGroupForSession } from "../../core/notifications/target-resolver.js";
 import { opportunityDigestCard } from "./cards.js";
 import { type LarkMediaClient, sendLarkAttachment } from "./media.js";
@@ -15,15 +13,6 @@ export function registerLarkNotifications(
   cfg: LarkConfig,
   channel: LarkChannel,
 ): void {
-  deps.notifier.register(async (notice) => {
-    await deps.notifications.notify({
-      channel: "lark",
-      source: "batch-scheduler",
-      title: "Batch scheduler",
-      body: renderNotice(notice, messages("lark")),
-    });
-  });
-
   if ([...cfg.allowedOpenIds][0] !== undefined) {
     deps.notifications.register("lark", async (message, req) => {
       const target = boundLarkGroupForSession(req?.session);

@@ -6,7 +6,7 @@ control them from Telegram, Feishu/Lark, a local CLI, or the terminal UI.
 ## Primary Documentation
 
 - [Documentation map](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/README.md): Maintained documentation inventory, source-of-truth categories, and cleanup rules.
-- [User manual](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/manual.md): Complete user guide for install, setup, chat usage, CLI usage, autopilot, and batch scheduling.
+- [User manual](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/manual.md): Complete user guide for install, setup, chat usage, CLI usage, Autopilot, and managed automation.
 - [CLI reference](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/cli-reference.md): Maintained `tcb` command, subcommand, and option surface.
 - [Chat command reference](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/commands.md): Telegram and Feishu/Lark command list and behavior.
 - [Terminal UI guide](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/tui.md): `tcb tui` layout, keys, and workflows.

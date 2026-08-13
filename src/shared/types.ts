@@ -85,7 +85,6 @@ export type AppConfig = {
    * quiet window and relies on one separately verified macOS wake event. */
   hostPower: HostPowerConfig;
   lark?: LarkConfig | undefined;
-  scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
   resourceGuardian: {
     enabled: boolean;
     mode: "observe" | "protect";

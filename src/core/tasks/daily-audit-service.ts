@@ -12,7 +12,7 @@ import type { NotificationGateway } from "../notifications/gateway.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildDailyAuditRepairPrompt } from "../prompts/repair-prompts.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
-import { nextFire } from "../scheduler/scheduling.js";
+import { nextFire } from "../scheduling/occurrence.js";
 import {
   buildDailyTaskAuditNotification,
   runDailyTaskAudit,

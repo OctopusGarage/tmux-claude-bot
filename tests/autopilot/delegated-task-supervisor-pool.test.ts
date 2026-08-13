@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentCapacityStore } from "../../src/core/automation/capacity-store.js";
 import {
   formatActiveDelegateCancel,
   formatActiveDelegateCompletion,
@@ -358,6 +359,37 @@ describe("active delegated task supervisor pool", () => {
     expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "scheduled_task_ledger.json"))).toBe(
       false,
     );
+  });
+
+  it("waits when official agent capacity is exhausted, including operator delegation", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const now = Date.parse("2026-08-13T10:00:00Z");
+    new AgentCapacityStore().recordObservation({
+      agent: "codex",
+      authentication: "subscription",
+      state: "exhausted",
+      fiveHourPct: 100,
+      weeklyPct: 50,
+      resetAt: now + 60_000,
+      observedAt: now,
+      nextProbeAt: now + 60_000,
+      latestReason: "official-limit-signal",
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await expect(
+        startActiveDelegatedTask(deps(1), {
+          session: "tmux_proj_unmapped",
+          requirement: "finish the confirmed task",
+        }),
+      ).resolves.toEqual({
+        status: "blocked",
+        reason: "automation admission deferred: capacity-exhausted",
+        showQueue: false,
+      });
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("defers quiet-hours background delegation before durable side effects", async () => {

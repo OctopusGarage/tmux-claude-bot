@@ -126,7 +126,13 @@ function tempFile(text: string): { file: string; projectDir: string; stateDir: s
   const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
   const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-state-"));
   const file = join(dir, "loop.yml");
-  writeFileSync(file, text.replaceAll("__PROJECT_DIR__", projectDir));
+  const resolved = text.replaceAll("__PROJECT_DIR__", projectDir);
+  writeFileSync(
+    file,
+    /^scheduler:/m.test(resolved)
+      ? resolved
+      : `scheduler:\n  jitter:\n    enabled: false\n${resolved}`,
+  );
   process.env.TCB_STATE_DIR = stateDir;
   return { file, projectDir, stateDir };
 }

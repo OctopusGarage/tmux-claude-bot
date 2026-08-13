@@ -189,6 +189,8 @@ export function dashboardLabelsForMessages(m: Messages): DashboardLabels {
           return m.dashboardAttentionRuntimeFinding(presentation.project, presentation.findingKind);
         case "resource-pressure":
           return m.dashboardAttentionResourcePressure(presentation.pressure, presentation.circuit);
+        case "agent-capacity":
+          return m.dashboardAttentionAgentCapacity(presentation.agent, presentation.state);
         case "power-policy":
           return m.dashboardAttentionPowerPolicy(
             presentation.mode,

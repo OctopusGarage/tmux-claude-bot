@@ -1,7 +1,6 @@
 import type { AppConfig } from "../shared/types.js";
 import type { ConfigResolver } from "./agents/agent-config-resolver.js";
 import type { AgentRunner } from "./agents/runner.js";
-import type { NotifierRegistry } from "./autopilot/notifier.js";
 import type { MessageQueue } from "./command/queue.js";
 import type { NotificationGateway } from "./notifications/gateway.js";
 import type { OwnerActivityTracker } from "./notifications/owner-activity.js";
@@ -29,8 +28,6 @@ export type HandlerDeps = {
   /** Event-driven "is this transcript being written" signal, sourced from
    * fs.watch over the agents' transcript roots. */
   activity: ActivityWatcher;
-  /** Proactive owner-notification fan-out; adapters register their push fn. */
-  notifier: NotifierRegistry;
   /** Local send-only notification gateway for scripts/projects via control socket. */
   notifications: NotificationGateway;
   /** Last owner chat surface that sent an accepted inbound message. */

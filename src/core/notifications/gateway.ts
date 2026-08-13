@@ -9,7 +9,6 @@ export type NotificationLevel = "info" | "success" | "warning" | "error";
 
 export const NOTIFICATION_SOURCE_CATALOG = [
   "autopilot-delegate",
-  "batch-scheduler",
   "daily-audit",
   "daily-task-audit",
   "long-task-monitor",

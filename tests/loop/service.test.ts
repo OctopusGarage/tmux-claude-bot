@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,11 +6,33 @@ import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
 import { listLoopReports } from "../../src/core/loop/report.js";
 import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
-import { runLoopServiceTick, runLoopServiceTickAsync } from "../../src/core/loop/service.js";
+import {
+  runLoopServiceTickAsync as runLoopServiceTickAsyncProduction,
+  runLoopServiceTick as runLoopServiceTickProduction,
+} from "../../src/core/loop/service.js";
 import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
 import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
+
+function ensureFixedScheduler(configFile: string): void {
+  const text = readFileSync(configFile, "utf8");
+  if (!/^scheduler:/m.test(text)) {
+    writeFileSync(configFile, `scheduler:\n  jitter:\n    enabled: false\n${text}`);
+  }
+}
+
+const runLoopServiceTick = (input: Parameters<typeof runLoopServiceTickProduction>[0]) => {
+  ensureFixedScheduler(input.configFile);
+  return runLoopServiceTickProduction(input);
+};
+
+const runLoopServiceTickAsync = async (
+  input: Parameters<typeof runLoopServiceTickAsyncProduction>[0],
+) => {
+  ensureFixedScheduler(input.configFile);
+  return runLoopServiceTickAsyncProduction(input);
+};
 
 afterEach(() => {
   if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;

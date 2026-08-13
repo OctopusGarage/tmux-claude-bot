@@ -37,7 +37,6 @@ export type ViewName =
   | "restore"
   | "autopilot"
   | "goals"
-  | "batch"
   | "opportunity"
   | "prompts";
 
@@ -74,7 +73,6 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   restore: "restore",
   autopilot: "autopilot",
   goals: "goals",
-  batch: "batch",
   opportunity: "opportunity",
   prompts: "prompts",
 };

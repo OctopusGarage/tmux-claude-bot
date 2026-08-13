@@ -31,6 +31,7 @@ tmux-claude-bot service
         +-- ledger, reports, logs, notifications
         +-- localization and copy catalogs
         +-- input enhancement for voice and prompt translation
+        +-- durable occurrence windows and agent-capacity admission
         +-- Resource Guardian host-pressure admission circuit
         +-- Daily Task Audit and Runtime Guardian
 ```
@@ -62,8 +63,11 @@ All intelligent automation should use one pipeline:
 ```text
 trigger
   -> resolve intent
+  -> resolve the persisted occurrence window
   -> check conflicts and queue state
-  -> check Resource Guardian admission before durable reservation
+  -> check owner activity, agent capacity, quiet hours, and Resource Guardian
+     admission before durable reservation
+  -> revalidate admission immediately before agent-backed dispatch
   -> sync configured base branch
   -> run preflight
   -> materialize WorkOrder
@@ -96,6 +100,7 @@ system gate.
 | Opportunity Discovery | Read-only proposal generation and owner discussion entry points. | Implementation, branches, commits, PRs, or merge decisions. |
 | PR review | Loop-created PR review or repository-wide open-PR processing. | Broad redesign or product judgment. |
 | Daily Task Audit | Retrospective task audit, final owner summary, and evidence-led self-repair dispatch. | General target-project maintenance. |
+| Autonomous admission | Persisted occurrence windows, owner-activity deferral, local agent-capacity classification, conservative leases, and two-stage admission. | Prompt rewriting, provider-limit bypass, direct provider APIs, or user-queue reordering. |
 | Resource Guardian | Host resource pressure sampling, sustained incident policy, background admission circuit, bounded bot-owned emergency action, and stable-recovery repair admission. | General scheduling, target-project repair, or process ownership inferred from names, commands, or paths. |
 | Runtime Guardian | Near-real-time self-healing for tmux-claude-bot runtime artifacts. | Target-project code maintenance. |
 | Notification gateway | Channel selection, project-bound Lark routing, delivery evidence, attachments. | Per-adapter business-specific bypasses. |
@@ -229,7 +234,7 @@ entry must be non-empty.
 Resource Guardian protects the host from sustained CPU and load pressure. It
 samples typed evidence, opens or closes the background admission circuit, and
 must run its admission check before durable reservation by Loop Engineering,
-Batch Scheduler, Daily Task Audit, Runtime Guardian, or other background work.
+Daily Task Audit, Runtime Guardian, or other background work.
 In protect mode it may reduce only revalidated bot-owned emergency load; it
 must not infer ownership from process names, commands, or paths alone. After a
 stable recovery window it may dispatch at most one governed repair WorkOrder

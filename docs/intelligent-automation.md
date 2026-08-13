@@ -1,5 +1,37 @@
 # Intelligent Automation
 
+## Autonomous work rhythm
+
+Recurring autonomous work uses a durable occurrence window rather than changing
+the prompt or pretending to be a person. For each scheduled occurrence, Loop
+Engineering draws one cryptographically random offset within the configured
+task-family window and persists the resulting `notBefore` time. Restarts reuse
+that exact decision. The scheduler normally coalesces missed occurrences to the
+latest one instead of replaying a burst after sleep or downtime.
+
+Admission is revalidated before reservation and immediately before agent-backed
+execution. It considers quiet hours, recent owner activity, an active user queue,
+the Resource Guardian circuit, and the running agent's locally observable usage
+capacity. Official exhausted-capacity evidence pauses both operator and background
+agent work until the known reset or the next bounded local probe; it never switches
+accounts, bypasses a provider limit, or calls a model-provider API. Constrained
+capacity reserves the remaining budget for operator work. Unknown capacity permits
+at most one autonomous start, spaces starts by 30 minutes, and blocks repair chains.
+
+Prompt text remains governed and stable. Dynamic fields may truthfully describe
+the current task, evidence, and limits, but prompts are never paraphrased or padded
+to imitate human behavior. The persisted capacity and occurrence state is projected
+through the canonical Runtime Overview, so CLI, Control, TUI, chat, Observer MCP,
+and Home read the same decision evidence.
+
+The default execution window is enabled with a 60-minute task-family maximum;
+an explicit `scheduler.jitter.enabled: false` is the fixed-time opt-out. A
+secret-free daily JSONL journal records planned, superseded, deferred, admitted,
+settled, and capacity-transition evidence for 30 days. `tcb automation capacity
+status` and bounded `history` are the administrative projection. Meaningful
+capacity transitions notify the operator; repeated identical observations do
+not create repeated notifications.
+
 ## Recovery state-machine guarantees
 
 Supervisor delivery has a bounded worker-consumption watchdog. A prompt that
@@ -601,12 +633,10 @@ Lifecycle matrix:
 | Runtime Guardian | Near-real-time watcher for bot-owned runtime artifacts that can delegate tmux-claude-bot self-repair. | Target-project maintenance or a replacement for system gates. |
 | `pullRequestReview` | Project/workspace loop-created PR review. | Repository-wide open PR processing. |
 | `prReview.repositories` | Repository-wide all-open-PR queue processing. | Only loop-created PRs. |
-| Batch Scheduler | Generic batch plan scheduler controlled by `BATCH_SCHEDULER_*`. | Autopilot. |
 
 Legacy Autopilot keep-alive and goal-cycle code has been removed. New
 user-facing delegation buttons, commands, opportunity handoffs, or scheduled
-flows must route through Supervisor-backed WorkOrders. Batch scheduling uses
-`BATCH_SCHEDULER_*` and must not use `AUTOPILOT_SCHEDULER_*` aliases.
+flows must route through Supervisor-backed WorkOrders.
 
 ## Execution Flow
 
@@ -978,10 +1008,7 @@ admission the authoritative check before project-path lookup, worktree
 preparation, supervisor reservation, or durable WorkOrder/ledger/worker-lease
 writes. Loop Engineering checks every due target before it can create a ledger,
 WorkOrder, worker lease, or scheduler fire anchor; denied work stays due and
-does not consume a retry. Batch Scheduler checks every queued-to-running
-transition while continuing to reconcile work that is already running; denied
-queued work remains claimable without consuming a retry. Daily Task Audit,
-Runtime Guardian, and Project Recovery send their
+does not consume a retry. Daily Task Audit, Runtime Guardian, and Project Recovery send their
 automated delegations as background work. `resourceForce` is an internal,
 reserved input to the authoritative gate; current chat, control, and CLI
 surfaces expose no force option, and default operator work remains subject to a

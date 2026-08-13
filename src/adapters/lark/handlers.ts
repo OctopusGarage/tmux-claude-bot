@@ -23,7 +23,6 @@ import {
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
 import { rewriteUserPromptByAck } from "../../core/read/user-prompt-intake.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
-import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -436,11 +435,6 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               await sendText(channel, msg.chatId, formatActiveDelegateStart(result));
               break;
             }
-            case "batch":
-              // Host-wide op — p2p owner only (same gate as dashboard/logs).
-              if (msg.chatType === "p2p")
-                await sendText(channel, msg.chatId, runBatchCommand(parsed.arg ?? ""));
-              break;
             case "opportunity": {
               if (msg.chatType !== "p2p" && !isProjectGroup(msg.chatId)) break;
               const result = await runOpportunityCommand(

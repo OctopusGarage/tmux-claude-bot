@@ -1,8 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AutomationOccurrenceStore } from "../../src/core/automation/occurrence-window.js";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import { runLoopSchedulerTick } from "../../src/core/loop/scheduler.js";
 
-const configText = `
+const originalStateDir = process.env.TCB_STATE_DIR;
+
+beforeEach(() => {
+  process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-scheduler-"));
+});
+
+afterEach(() => {
+  if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+  else process.env.TCB_STATE_DIR = originalStateDir;
+});
+
+const projectConfigText = `
 projects:
   - id: due
     name: Due
@@ -24,6 +39,12 @@ projects:
     assessment:
       command: npm run assess
 `;
+
+const configText = `
+scheduler:
+  jitter:
+    enabled: false
+${projectConfigText}`;
 
 describe("runLoopSchedulerTick", () => {
   it("reports due projects without advancing completion anchors", () => {
@@ -780,9 +801,8 @@ workspaces:
     const config = parseLoopConfigYaml(`scheduler:
   jitter:
     enabled: true
-    seed: local-stable
     architectureMaxDelayMinutes: 10
-${configText}
+${projectConfigText}
 workspaces:
   - id: geo
     name: Geo Workspace
@@ -824,16 +844,20 @@ workspaces:
     );
   });
 
-  it("delays due jobs until their deterministic jitter effective time", () => {
+  it("delays due jobs until their persisted occurrence-window time", () => {
     const config = parseLoopConfigYaml(`scheduler:
   jitter:
     enabled: true
-    seed: local-stable
     architectureMaxDelayMinutes: 10
-${configText}`);
+${projectConfigText}`);
     const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
     const beforeJitter = scheduledAt + 60_000;
-    const afterJitter = scheduledAt + 180_000;
+    new AutomationOccurrenceStore({ randomOffset: () => 180_000 }).plan({
+      key: "due:architecture",
+      scheduledAt,
+      windowMs: 10 * 60_000,
+      now: scheduledAt,
+    });
 
     const early = runLoopSchedulerTick({
       config,
@@ -842,14 +866,6 @@ ${configText}`);
         due: Date.parse("2026-07-16T10:05:00Z"),
       },
     });
-    const due = runLoopSchedulerTick({
-      config,
-      now: afterJitter,
-      lastFired: {
-        due: Date.parse("2026-07-16T10:05:00Z"),
-      },
-    });
-
     expect(early.due).toBe(0);
     expect(early.skipped).toContainEqual(
       expect.objectContaining({
@@ -863,6 +879,15 @@ ${configText}`);
     expect(early.skipped.find((item) => item.projectId === "due")?.effectiveAt).toBeGreaterThan(
       beforeJitter,
     );
+    const effectiveAt = early.skipped.find((item) => item.projectId === "due")?.effectiveAt;
+    expect(effectiveAt).toBeTypeOf("number");
+    const due = runLoopSchedulerTick({
+      config,
+      now: (effectiveAt as number) + 1,
+      lastFired: {
+        due: Date.parse("2026-07-16T10:05:00Z"),
+      },
+    });
     expect(due.due).toBe(1);
     expect(due.dueProjects[0]).toMatchObject({
       projectId: "due",
@@ -876,7 +901,6 @@ ${configText}`);
     const config = parseLoopConfigYaml(`scheduler:
   jitter:
     enabled: true
-    seed: local-stable
     architectureMaxDelayMinutes: 30
 projects:
   - id: due
@@ -917,7 +941,7 @@ projects:
 
   it("uses per-job jitter overrides before global defaults", () => {
     const config = parseLoopConfigYaml(
-      configText
+      projectConfigText
         .replace(
           'schedule: "*/5 * * * *"',
           ['schedule: "*/5 * * * *"', "    scheduleJitterMinutes: 0"].join("\n"),
@@ -928,7 +952,6 @@ projects:
             "scheduler:",
             "  jitter:",
             "    enabled: true",
-            "    seed: local-stable",
             "    architectureMaxDelayMinutes: 10",
             "projects:",
           ].join("\n"),

@@ -1,10 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LoopConfig } from "../../src/core/loop/config.js";
 import type { LoopJitterJobKind } from "../../src/core/loop/schedule-jitter.js";
 import {
   loopScheduleJitterMaxMs,
   loopScheduleJitterMs,
 } from "../../src/core/loop/schedule-jitter.js";
+
+const originalStateDir = process.env.TCB_STATE_DIR;
+let stateDir: string;
+
+beforeEach(() => {
+  stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-jitter-"));
+  process.env.TCB_STATE_DIR = stateDir;
+});
+
+afterEach(() => {
+  if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+  else process.env.TCB_STATE_DIR = originalStateDir;
+});
 
 function config(overrides: Partial<LoopConfig["scheduler"]["jitter"]> = {}): LoopConfig {
   return {
@@ -93,7 +109,7 @@ describe("loop schedule jitter", () => {
     ).toBe(0);
   });
 
-  it("produces deterministic jitter within the allowed max delay", () => {
+  it("persists a stable jitter within the allowed max delay", () => {
     const input = {
       config: config(),
       jobKey: "project-a:test-coverage",
@@ -107,5 +123,8 @@ describe("loop schedule jitter", () => {
     expect(second).toBe(first);
     expect(first).toBeGreaterThanOrEqual(0);
     expect(first).toBeLessThanOrEqual(loopScheduleJitterMaxMs(input));
+    const stateFile = join(stateDir, "automation-admission", "occurrences.json");
+    expect(existsSync(stateFile)).toBe(true);
+    expect(readFileSync(stateFile, "utf8")).toContain("project-a:test-coverage");
   });
 });

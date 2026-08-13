@@ -268,7 +268,6 @@ const scheduledTaskSchema = z.object({
   taskId: z.string(),
   source: z.enum([
     "loop-engineering",
-    "batch-scheduler",
     "article-monitor",
     "radar-monitor",
     "external-monitor",

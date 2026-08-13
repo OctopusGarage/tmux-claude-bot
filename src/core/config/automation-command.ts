@@ -11,7 +11,7 @@ type CommandResult =
   | { exitCode: number; stdout: string; stderr?: never }
   | { exitCode: number; stderr: string; stdout?: never };
 
-export type AutomationId = "loop" | "task-audit" | "runtime-guardian" | "batch";
+export type AutomationId = "loop" | "task-audit" | "runtime-guardian";
 
 type AutomationSpec = {
   id: AutomationId;
@@ -61,12 +61,6 @@ const AUTOMATIONS: AutomationSpec[] = [
     enableKey: "RUNTIME_GUARDIAN_ENABLED",
     tickKey: "RUNTIME_GUARDIAN_TICK_MS",
     defaultTickMs: "120000",
-  },
-  {
-    id: "batch",
-    label: "Batch Scheduler",
-    tickKey: "BATCH_SCHEDULER_TICK_MS",
-    defaultTickMs: "8000",
   },
 ];
 
@@ -143,7 +137,7 @@ function writePauseState(state: Record<string, Record<string, string>>): void {
 
 function findAutomation(id: string | undefined): AutomationSpec | string {
   if (id === undefined)
-    return "Usage: automation <pause|resume> <loop|task-audit|runtime-guardian|batch> [--json]";
+    return "Usage: automation <pause|resume> <loop|task-audit|runtime-guardian> [--json]";
   return AUTOMATIONS.find((spec) => spec.id === id) ?? `unknown automation target "${id}"`;
 }
 
@@ -241,7 +235,7 @@ export function runAutomationCommand(args: string[]): CommandResult {
     return {
       exitCode: 1,
       stderr:
-        "Usage: automation status [--json] | automation pause <loop|task-audit|runtime-guardian|batch> [--json] | automation resume <loop|task-audit|runtime-guardian|batch> [--json]",
+        "Usage: automation status [--json] | automation pause <loop|task-audit|runtime-guardian> [--json] | automation resume <loop|task-audit|runtime-guardian> [--json]",
     };
   } catch (err) {
     return { exitCode: 1, stderr: err instanceof Error ? err.message : String(err) };

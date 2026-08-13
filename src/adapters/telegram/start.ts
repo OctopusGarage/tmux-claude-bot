@@ -2,7 +2,6 @@ import { type FileFlavor, hydrateFiles } from "@grammyjs/files";
 import { Bot, type Context, GrammyError } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
-import { renderNotice } from "../../core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { markCleanShutdown } from "../../core/infra/lifecycle.js";
@@ -213,20 +212,9 @@ export async function startTelegram(
     }
   }
 
-  // Register the Telegram owner as the proactive-notification channel so the
-  // autopilot (and any other notifier.broadcast caller) can DM the owner.
+  // Register the Telegram owner as the notification-gateway target.
   const owner = [...config.telegramAllowedUserIds][0];
   if (owner !== undefined) {
-    deps.notifier.register((notice) => {
-      return deps.notifications
-        .notify({
-          channel: "telegram",
-          source: "batch-scheduler",
-          title: "Batch scheduler",
-          body: renderNotice(notice, messages("telegram")),
-        })
-        .then(() => {});
-    });
     deps.notifications.register("telegram", (message, req) => {
       const reply_markup =
         req?.source === "opportunity-discovery" && req.opportunities?.length

@@ -67,7 +67,7 @@ export function registerConfigurationCommands(program: Command): void {
 
   automation
     .command("status")
-    .description("show Loop Engineering, task audit, runtime guardian, and batch scheduler state")
+    .description("show Loop Engineering, task audit, and runtime guardian state")
     .option("--json", "output automation status as JSON")
     .action(async (options: JsonOption) => {
       await printResult(async () => {
@@ -79,7 +79,7 @@ export function registerConfigurationCommands(program: Command): void {
   for (const action of ["pause", "resume"] as const) {
     automation
       .command(`${action} <target>`)
-      .description(`${action} loop, task-audit, runtime-guardian, or batch automation`)
+      .description(`${action} loop, task-audit, or runtime-guardian automation`)
       .option("--json", "output toggle result as JSON")
       .action(async (target: string, options: JsonOption) => {
         await printResult(async () => {
@@ -88,4 +88,32 @@ export function registerConfigurationCommands(program: Command): void {
         });
       });
   }
+
+  const capacity = automation
+    .command("capacity")
+    .description("inspect agent capacity and autonomous admission evidence");
+  capacity
+    .command("status")
+    .option("--json", "output agent capacity status as JSON")
+    .action(async (options: JsonOption) => {
+      await printResult(async () => {
+        const { runAgentCapacityCommand } = await import("../core/automation/capacity-command.js");
+        return runAgentCapacityCommand(["status", ...(options.json ? ["--json"] : [])]);
+      });
+    });
+  capacity
+    .command("history")
+    .option("--since <time>", "look back from now (ISO, epoch ms, or 30m|2h|1d)", "24h")
+    .option("--json", "output bounded admission history as JSON")
+    .action(async (options: { since: string; json?: boolean }) => {
+      await printResult(async () => {
+        const { runAgentCapacityCommand } = await import("../core/automation/capacity-command.js");
+        return runAgentCapacityCommand([
+          "history",
+          "--since",
+          options.since,
+          ...(options.json ? ["--json"] : []),
+        ]);
+      });
+    });
 }

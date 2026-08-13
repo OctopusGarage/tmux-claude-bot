@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { AutomationOccurrenceStore } from "../../src/core/automation/occurrence-window.js";
 import {
   discoverLaunchdScheduledTasks,
   discoverLoopEngineeringScheduledTasks,
@@ -1174,6 +1175,7 @@ projects:
 
   it("does not report a jitter-delayed loop job before its effective audit window", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-jitter-"));
+    process.env.TCB_STATE_DIR = root;
     const configFile = join(root, "loop.yml");
     writeFileSync(
       configFile,
@@ -1198,6 +1200,13 @@ projects:
 `,
       "utf8",
     );
+    const scheduledAt = Date.parse("2026-07-28T15:59:00Z");
+    new AutomationOccurrenceStore({ randomOffset: () => 2 * 60 * 60_000 }).plan({
+      key: "late:architecture",
+      scheduledAt,
+      windowMs: 4 * 60 * 60_000,
+      now: scheduledAt,
+    });
 
     const records = discoverLoopEngineeringScheduledTasks({
       configFile,
@@ -1210,6 +1219,7 @@ projects:
 
   it("reports a loop job whose jitter-delayed effective time enters the audit window", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-discovery-jitter-in-window-"));
+    process.env.TCB_STATE_DIR = root;
     const configFile = join(root, "loop.yml");
     writeFileSync(
       configFile,
@@ -1235,6 +1245,12 @@ projects:
       "utf8",
     );
     const scheduledAt = Date.parse("2026-07-27T15:59:00Z");
+    new AutomationOccurrenceStore({ randomOffset: () => 2 * 60 * 60_000 }).plan({
+      key: "late:architecture",
+      scheduledAt,
+      windowMs: 4 * 60 * 60_000,
+      now: scheduledAt,
+    });
 
     const records = discoverLoopEngineeringScheduledTasks({
       configFile,

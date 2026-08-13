@@ -31,7 +31,6 @@ const blankTolerantNonNegativeInt = (def: number): z.ZodType<number> =>
 const blankTolerantString = (def: string): z.ZodType<string> =>
   z.preprocess((v) => (v === "" ? undefined : v), z.string().min(1).default(def));
 
-const optionalRawEnv = z.preprocess((v) => (v === undefined ? "" : v), z.string().default(""));
 const worktreeIsolationSchema = (def: "isolated" | "source" | "auto") =>
   z.preprocess(
     (v) => (v === "" ? undefined : v),
@@ -151,10 +150,6 @@ export const envSchema = z.object({
   LARK_VOICE_TRANSLATE_FROM: z.string().default(""),
   LARK_VOICE_TRANSLATE_TO: z.string().default(""),
   ARGOS_TRANSLATE_PYTHON: z.string().default(""),
-  // --- Batch scheduler. BATCH_SCHEDULER_TICK_MS=0 disables the loop. ---
-  BATCH_SCHEDULER_TICK_MS: optionalRawEnv,
-  BATCH_SCHEDULER_QUOTA_PCT: optionalRawEnv,
-  BATCH_SCHEDULER_REPROBE_MS: optionalRawEnv,
   // --- Resource guardian. Observes host pressure and optionally protects
   // background admission. Existing installations remain disabled by default. ---
   RESOURCE_GUARDIAN_ENABLED: z.preprocess(
@@ -414,11 +409,6 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       quietEnd: parsed.TCB_QUIET_HOURS_END,
     },
     lark,
-    scheduler: {
-      tickMs: blankTolerantNonNegativeInt(8000).parse(parsed.BATCH_SCHEDULER_TICK_MS),
-      quotaPct: blankTolerantPositiveInt(99).parse(parsed.BATCH_SCHEDULER_QUOTA_PCT),
-      reprobeMs: blankTolerantPositiveInt(1_800_000).parse(parsed.BATCH_SCHEDULER_REPROBE_MS),
-    },
     resourceGuardian: {
       enabled: parsed.RESOURCE_GUARDIAN_ENABLED === "true",
       mode: parsed.RESOURCE_GUARDIAN_MODE,

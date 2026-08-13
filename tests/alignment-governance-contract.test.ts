@@ -87,7 +87,6 @@ describe("alignment governance contract", () => {
       "tcb resource status|incidents|mode|profile",
       "existing sysload",
       "Loop Engineering gates each due target",
-      "Batch Scheduler gates each",
       "default disabled",
       "after notification",
     ]) {
@@ -262,7 +261,6 @@ describe("alignment governance contract", () => {
       "Project/session intake and recovery",
       "Session control and evidence",
       "Prompt Library",
-      "Batch Scheduler",
       "Host power and quiet hours",
       "Home Operator and AI tool installation",
       "Governed prompts and capability dependencies",
@@ -275,7 +273,6 @@ describe("alignment governance contract", () => {
       "macOS owns sleep",
       "MCP is a typed AI boundary, not a mirror of every CLI command",
       "Global skill publication is explicit opt-in",
-      "plan-file administration stays local",
     ]) {
       expect(matrix, `missing intentional surface boundary: ${phrase}`).toContain(phrase);
     }

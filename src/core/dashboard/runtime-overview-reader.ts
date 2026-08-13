@@ -1,3 +1,4 @@
+import type { AgentCapacityView } from "../automation/capacity.js";
 import {
   type ActiveWorkItem,
   type AttentionItem,
@@ -45,6 +46,19 @@ export type RepositoryReviewOverview = {
   retryEpoch: number;
 };
 
+export type AgentCapacityOverview = {
+  enabled: boolean;
+  agent: AgentCapacityView["agent"];
+  authentication: AgentCapacityView["authentication"];
+  state: AgentCapacityView["state"];
+  observedAt: number;
+  retryAt: number | null;
+  activeAutonomousLeases: number;
+  plannedOccurrences: number;
+  nextOccurrenceAt: number | null;
+  ownerLastActivityAt: number | null;
+};
+
 export type RuntimeOverviewReaders = {
   automation():
     | Array<{
@@ -67,15 +81,6 @@ export type RuntimeOverviewReaders = {
       >;
   workOrders(): WorkOrderOverviewRead | Promise<WorkOrderOverviewRead>;
   repositoryReviews(): RepositoryReviewOverview[] | Promise<RepositoryReviewOverview[]>;
-  batch():
-    | {
-        enabled: boolean;
-        active?: { id: string; label: string; status: string; startedAt: number };
-      }
-    | Promise<{
-        enabled: boolean;
-        active?: { id: string; label: string; status: string; startedAt: number };
-      }>;
   dailyAudit():
     | {
         enabled: boolean;
@@ -131,6 +136,7 @@ export type RuntimeOverviewReaders = {
         degraded: boolean;
         samplingDegraded: boolean;
       }>;
+  agentCapacity?(): AgentCapacityOverview | Promise<AgentCapacityOverview>;
   power():
     | {
         mode: string;
@@ -299,20 +305,35 @@ export async function readRuntimeOverview(input: {
     automationRead,
     workOrdersRead,
     repositoryReviewsRead,
-    batchRead,
     dailyAuditRead,
     runtimeGuardianRead,
     resourceGuardianRead,
+    agentCapacityRead,
     powerRead,
     operatorRead,
   ] = await Promise.all([
     collect(input.readers.automation, collectorTimeoutMs),
     collect(input.readers.workOrders, collectorTimeoutMs),
     collect(input.readers.repositoryReviews, collectorTimeoutMs),
-    collect(input.readers.batch, collectorTimeoutMs),
     collect(input.readers.dailyAudit, collectorTimeoutMs),
     collect(input.readers.runtimeGuardian, collectorTimeoutMs),
     collect(input.readers.resourceGuardian, collectorTimeoutMs),
+    collect(
+      input.readers.agentCapacity ??
+        (() => ({
+          enabled: false,
+          agent: "claude" as const,
+          authentication: "unknown" as const,
+          state: "unknown" as const,
+          observedAt: 0,
+          retryAt: null,
+          activeAutonomousLeases: 0,
+          plannedOccurrences: 0,
+          nextOccurrenceAt: null,
+          ownerLastActivityAt: null,
+        })),
+      collectorTimeoutMs,
+    ),
     collect(input.readers.power, collectorTimeoutMs),
     collect(input.readers.operator, collectorTimeoutMs),
   ]);
@@ -457,11 +478,6 @@ export async function readRuntimeOverview(input: {
           .filter((outcome) => outcome.domain === "daily-audit")
           .sort((left, right) => right.endedAt - left.endedAt)[0]
       : undefined;
-    const batchLastOutcome = dailyAuditRead.ok
-      ? (dailyAuditRead.value.outcomes ?? [])
-          .filter((outcome) => outcome.domain === "batch-scheduler")
-          .sort((left, right) => right.endedAt - left.endedAt)[0]
-      : undefined;
     automation = automationRead.value.map((item) => ({
       id: item.id,
       label: item.label,
@@ -473,19 +489,13 @@ export async function readRuntimeOverview(input: {
           ? activeCount
           : item.id === "task-audit" && dailyAuditRead.ok
             ? (dailyAuditRead.value.summary?.active ?? 0)
-            : item.id === "batch" && batchRead.ok && batchRead.value.active !== undefined
-              ? 1
-              : 0,
+            : 0,
       ...(item.dependencies === undefined ? {} : { dependencies: item.dependencies }),
       ...(item.id === "loop" && loopLastOutcome !== undefined
         ? { lastOutcome: { status: loopLastOutcome.status, endedAt: loopLastOutcome.endedAt } }
         : item.id === "task-audit" && auditLastOutcome !== undefined
           ? { lastOutcome: { status: auditLastOutcome.status, endedAt: auditLastOutcome.endedAt } }
-          : item.id === "batch" && batchLastOutcome !== undefined
-            ? {
-                lastOutcome: { status: batchLastOutcome.status, endedAt: batchLastOutcome.endedAt },
-              }
-            : {}),
+          : {}),
     }));
     const dependencyProblems = automationRead.value.filter(
       (item) => item.enabled && Object.values(item.dependencies ?? {}).some((ready) => !ready),
@@ -512,31 +522,6 @@ export async function readRuntimeOverview(input: {
   } else {
     degradedDomains.push("automation");
     runtimeDomains.push(failedDomain("automation", "Automation", automationRead.errorKind));
-  }
-
-  if (batchRead.ok) {
-    const value = batchRead.value;
-    if (value.active !== undefined) {
-      activeWork.push({
-        id: `batch:${value.active.id}`,
-        kind: "work-order",
-        label: value.active.label,
-        status: "running",
-        startedAt: value.active.startedAt,
-        taskKind: "batch",
-      });
-    }
-    runtimeDomains.push(
-      domain(
-        "batch",
-        "Batch Scheduler",
-        value.enabled ? "healthy" : "disabled",
-        value.active === undefined ? "idle" : `active: ${value.active.status}`,
-      ),
-    );
-  } else {
-    degradedDomains.push("batch");
-    runtimeDomains.push(failedDomain("batch", "Batch Scheduler", batchRead.errorKind));
   }
 
   if (dailyAuditRead.ok) {
@@ -646,6 +631,41 @@ export async function readRuntimeOverview(input: {
     degradedDomains.push("resource-guardian");
     runtimeDomains.push(
       failedDomain("resource-guardian", "Resource Guardian", resourceGuardianRead.errorKind),
+    );
+  }
+
+  if (agentCapacityRead.ok) {
+    const value = agentCapacityRead.value;
+    if (value.enabled && value.state === "unknown") degradedDomains.push("agent-capacity");
+    if (value.enabled && (value.state === "constrained" || value.state === "exhausted")) {
+      attention.push({
+        id: `agent-capacity:${value.agent}`,
+        domain: "agent-capacity",
+        severity: value.state === "exhausted" ? "error" : "warning",
+        observedAt: value.observedAt,
+        summary: `${value.agent} capacity is ${value.state}`,
+        nextAction: "tcb dashboard --json",
+        presentation: { kind: "agent-capacity", agent: value.agent, state: value.state },
+      });
+    }
+    runtimeDomains.push(
+      domain(
+        "agent-capacity",
+        "Agent Capacity",
+        !value.enabled
+          ? "disabled"
+          : value.state === "available"
+            ? "healthy"
+            : value.state === "unknown"
+              ? "degraded"
+              : "attention",
+        `${value.agent} ${value.authentication}; ${value.state}; ${value.activeAutonomousLeases} active, ${value.plannedOccurrences} planned${value.nextOccurrenceAt === null ? "" : `; next ${new Date(value.nextOccurrenceAt).toISOString()}`}`,
+      ),
+    );
+  } else {
+    degradedDomains.push("agent-capacity");
+    runtimeDomains.push(
+      failedDomain("agent-capacity", "Agent Capacity", agentCapacityRead.errorKind),
     );
   }
 

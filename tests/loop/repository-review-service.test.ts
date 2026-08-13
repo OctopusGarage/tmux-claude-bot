@@ -1,12 +1,22 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RepositoryReviewQueue } from "../../src/core/loop/repository-review-queue.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
-import { runLoopServiceTickAsync } from "../../src/core/loop/service.js";
+import { runLoopServiceTickAsync as runLoopServiceTickAsyncProduction } from "../../src/core/loop/service.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
+
+const runLoopServiceTickAsync = async (
+  input: Parameters<typeof runLoopServiceTickAsyncProduction>[0],
+) => {
+  const text = readFileSync(input.configFile, "utf8");
+  if (!/^scheduler:/m.test(text)) {
+    writeFileSync(input.configFile, `scheduler:\n  jitter:\n    enabled: false\n${text}`);
+  }
+  return runLoopServiceTickAsyncProduction(input);
+};
 
 afterEach(() => {
   if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;

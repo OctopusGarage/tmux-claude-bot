@@ -3,15 +3,23 @@ import { basename, resolve } from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
-import { admitAutomationWork } from "../automation/admission.js";
+import { AgentCapacityStore } from "../automation/capacity-store.js";
+import {
+  type AutonomousAdmissionLease,
+  AutonomousWorkCoordinator,
+} from "../automation/coordinator.js";
 import {
   findProjectAutomationConflict,
   listReservedLoopSupervisorWorkOrders,
 } from "../automation/project-conflicts.js";
+import type { QueuedMessage } from "../command/queue-message.js";
 import type { HandlerDeps } from "../deps.js";
 import { createLoopSupervisorTaskRunner } from "../loop/agent-queue.js";
 import { type LoopProjectConfig, parseLoopConfigYaml } from "../loop/config.js";
-import { prepareLoopExecutionWorktrees } from "../loop/execution-worktree.js";
+import {
+  cleanupLoopExecutionWorktree,
+  prepareLoopExecutionWorktrees,
+} from "../loop/execution-worktree.js";
 import { recoverInvalidOutputFromFinalSummaryAsync } from "../loop/final-summary-recovery.js";
 import {
   runGitCommand,
@@ -298,24 +306,33 @@ export async function startActiveDelegatedTask(
     };
   }
 
-  const admission = admitAutomationWork(
-    {
-      source: "autopilot-delegate",
-      trigger: input.resourceTrigger ?? "operator",
-      weight: "heavy",
-      ...(input.resourceForce !== undefined ? { forced: input.resourceForce } : {}),
-      now: Date.now(),
-    },
-    { hostPower: deps.config.hostPower },
-  );
-  if (!admission.allowed) {
-    return {
-      status: "blocked",
-      reason: `automation admission deferred: ${admission.reason}`,
-      showQueue: false,
-    };
+  const agent =
+    (await deps.configResolver.detectAgentKind?.(input.session).catch(() => null)) ??
+    deps.config.loopEngineering.supervisor.agent;
+  const coordinator = new AutonomousWorkCoordinator({ capacity: new AgentCapacityStore() });
+  const precheck = () =>
+    coordinator.precheck(
+      {
+        id: `precheck:${input.session}`,
+        source: "autopilot-delegate",
+        trigger: input.resourceTrigger ?? "operator",
+        weight: "heavy",
+        agent,
+        ...(input.resourceForce !== undefined ? { forced: input.resourceForce } : {}),
+        ...(input.resourceTrigger === "resource-repair" ? { repairDepth: 1 } : {}),
+      },
+      activeDelegatedAdmissionContext(deps),
+    );
+  if (input.trustedRunId === undefined) {
+    const admission = precheck();
+    if (!admission.allowed) {
+      return {
+        status: "blocked",
+        reason: `automation admission deferred: ${admission.reason}`,
+        showQueue: false,
+      };
+    }
   }
-
   const projectPath = getPathBySession(input.session);
   if (projectPath === null) {
     return {
@@ -351,6 +368,17 @@ export async function startActiveDelegatedTask(
         reportDir:
           existing.workOrder.finalSummaryPath?.replace(/\/supervisor-final-summary\.json$/, "") ??
           null,
+      };
+    }
+  }
+
+  if (input.trustedRunId !== undefined) {
+    const admission = precheck();
+    if (!admission.allowed) {
+      return {
+        status: "blocked",
+        reason: `automation admission deferred: ${admission.reason}`,
+        showQueue: false,
       };
     }
   }
@@ -391,9 +419,6 @@ export async function startActiveDelegatedTask(
         };
       }
     }
-    const agent =
-      (await deps.configResolver.detectAgentKind?.(input.session).catch(() => null)) ??
-      deps.config.loopEngineering.supervisor.agent;
     const now = Date.now();
     const projectId = projectIdForSession(input.session, projectPath);
     const runId = input.trustedRunId ?? `${now}-${projectId}-active-delegate`;
@@ -433,73 +458,118 @@ export async function startActiveDelegatedTask(
         showQueue: false,
       };
     }
-    const supervisorSession = await reserveFirstAvailableSupervisor(
-      deps,
-      candidates,
-      workOrder,
-      now,
+    const finalAdmission = coordinator.admit(
+      activeDelegatedIntent(workOrder, input.resourceTrigger ?? "operator", input.resourceForce),
+      activeDelegatedAdmissionContext(deps),
     );
-    const queuedSupervisorSession = supervisorSession ?? queueCandidates[0];
-    if (queuedSupervisorSession === undefined) {
+    if (!finalAdmission.allowed) {
+      cleanupPreparedDelegatedWorktree(workOrder);
       return {
         status: "blocked",
-        reason: `failed to reserve loop supervisor sessions: ${candidates.join(", ")}`,
-        showQueue: true,
+        reason: `automation admission deferred: ${finalAdmission.reason}`,
+        showQueue: false,
       };
     }
-    const assignedSupervisorSession = queuedSupervisorSession;
-    if (
-      supervisorSession === null &&
-      !(await startLoopSupervisor(deps, undefined, assignedSupervisorSession))
-    ) {
-      return {
-        status: "blocked",
-        reason: `failed to ensure queued loop supervisor session ${assignedSupervisorSession}`,
-        showQueue: true,
-      };
-    }
+    let admissionHandedOff = false;
+    try {
+      const supervisorSession = await reserveFirstAvailableSupervisor(
+        deps,
+        candidates,
+        workOrder,
+        now,
+      );
+      const queuedSupervisorSession = supervisorSession ?? queueCandidates[0];
+      if (queuedSupervisorSession === undefined) {
+        return {
+          status: "blocked",
+          reason: `failed to reserve loop supervisor sessions: ${candidates.join(", ")}`,
+          showQueue: true,
+        };
+      }
+      const assignedSupervisorSession = queuedSupervisorSession;
+      if (
+        supervisorSession === null &&
+        !(await startLoopSupervisor(deps, undefined, assignedSupervisorSession))
+      ) {
+        return {
+          status: "blocked",
+          reason: `failed to ensure queued loop supervisor session ${assignedSupervisorSession}`,
+          showQueue: true,
+        };
+      }
 
-    writeLoopSupervisorWorkOrderState({
-      workOrder,
-      supervisorSession: assignedSupervisorSession,
-      status: supervisorSession === null ? "queued" : "dispatching",
-      now,
-    });
-    const taskLedger = new DailyTaskLedger();
-    const taskLedgerId = activeDelegatedTaskLedgerId(runId);
-    taskLedger.expect({
-      taskId: taskLedgerId,
-      source: "autopilot-delegate",
-      name: `${workOrder.projectName} active delegated task`,
-      scheduledAt: now,
-      summary: `Autopilot active delegation queued for ${workOrder.projectPath}.`,
-    });
-    taskLedger.start(taskLedgerId, now);
-    log.info("active delegated task queued", {
-      data: {
+      writeLoopSupervisorWorkOrderState({
+        workOrder,
+        supervisorSession: assignedSupervisorSession,
+        status: supervisorSession === null ? "queued" : "dispatching",
+        now,
+      });
+      const taskLedger = new DailyTaskLedger();
+      const taskLedgerId = activeDelegatedTaskLedgerId(runId);
+      taskLedger.expect({
+        taskId: taskLedgerId,
+        source: "autopilot-delegate",
+        name: `${workOrder.projectName} active delegated task`,
+        scheduledAt: now,
+        summary: `Autopilot active delegation queued for ${workOrder.projectPath}.`,
+      });
+      taskLedger.start(taskLedgerId, now);
+      log.info("active delegated task queued", {
+        data: {
+          runId,
+          projectId,
+          projectPath,
+          session: input.session,
+          supervisorSession: assignedSupervisorSession,
+          prEnabled: projectPolicy?.pullRequest.enabled ?? false,
+          prBase: projectPolicy?.pullRequest.base,
+          prSwitchBack: projectPolicy?.pullRequest.switchBack,
+          prAutoMerge: projectPolicy?.pullRequest.autoMerge,
+          opportunityIds: input.opportunityIds ?? [],
+        },
+      });
+
+      admissionHandedOff = launchActiveDelegatedTask(
+        deps,
+        workOrder,
+        assignedSupervisorSession,
+        now,
+        finalAdmission.lease,
+      );
+      if (!admissionHandedOff) {
+        return {
+          status: "blocked",
+          reason: "automation admission lease could not be handed to the delegated task",
+          showQueue: true,
+        };
+      }
+
+      return {
+        status: "queued",
         runId,
         projectId,
-        projectPath,
-        session: input.session,
         supervisorSession: assignedSupervisorSession,
-        prEnabled: projectPolicy?.pullRequest.enabled ?? false,
-        prBase: projectPolicy?.pullRequest.base,
-        prSwitchBack: projectPolicy?.pullRequest.switchBack,
-        prAutoMerge: projectPolicy?.pullRequest.autoMerge,
-        opportunityIds: input.opportunityIds ?? [],
-      },
-    });
-
-    launchActiveDelegatedTask(deps, workOrder, assignedSupervisorSession, now);
-
-    return {
-      status: "queued",
-      runId,
-      projectId,
-      supervisorSession: assignedSupervisorSession,
-      reportDir:
-        workOrder.finalSummaryPath?.replace(/\/supervisor-final-summary\.json$/, "") ?? null,
-    };
+        reportDir:
+          workOrder.finalSummaryPath?.replace(/\/supervisor-final-summary\.json$/, "") ?? null,
+      };
+    } finally {
+      if (!admissionHandedOff) {
+        coordinator.settle(finalAdmission.lease, { settleOccurrence: false });
+        const supervisorLeases = readLoopSupervisorWorkerLeaseState();
+        if (supervisorLeases.leases.some((lease) => lease.workOrderId === workOrder.id)) {
+          writeLoopSupervisorWorkerLeaseState(
+            releaseLoopSupervisorWorker({
+              state: supervisorLeases,
+              workOrderId: workOrder.id,
+              result: "success",
+              now: Date.now(),
+              retainFailureForMs: 0,
+            }),
+          );
+        }
+        cleanupPreparedDelegatedWorktree(workOrder);
+      }
+    }
   } finally {
     startingActiveDelegationProjects.delete(reservationKey);
   }
@@ -519,20 +589,24 @@ export function resumeQueuedActiveDelegatedTasks(deps: HandlerDeps): number {
       (record.state.status === "queued" || record.state.status === "dispatching") &&
       !activeLeaseIds.has(record.workOrder.id),
   );
+  let resumed = 0;
   for (const record of queued) {
-    launchActiveDelegatedTask(
-      deps,
-      record.workOrder,
-      record.state.supervisorSession,
-      record.state.updatedAt,
-    );
+    if (
+      launchActiveDelegatedTask(
+        deps,
+        record.workOrder,
+        record.state.supervisorSession,
+        record.state.updatedAt,
+      )
+    )
+      resumed += 1;
   }
-  if (queued.length > 0) {
+  if (resumed > 0) {
     log.info("resumed queued active delegated tasks after startup", {
-      data: { count: queued.length, runIds: queued.map((record) => record.workOrder.id) },
+      data: { count: resumed, runIds: queued.map((record) => record.workOrder.id) },
     });
   }
-  return queued.length;
+  return resumed;
 }
 
 /** Reconcile worker leases before resuming delegations after a process restart. */
@@ -639,7 +713,24 @@ function launchActiveDelegatedTask(
   workOrder: LoopWorkOrder,
   supervisorSession: string,
   startedAt: number,
-): void {
+  heldLease?: AutonomousAdmissionLease,
+): boolean {
+  const coordinator = new AutonomousWorkCoordinator({ capacity: new AgentCapacityStore() });
+  const admission =
+    heldLease === undefined
+      ? coordinator.admit(
+          activeDelegatedIntent(workOrder, "reconcile"),
+          activeDelegatedAdmissionContext(deps),
+        )
+      : null;
+  if (admission !== null && !admission.allowed) {
+    log.info("active delegated task resume deferred by automation admission", {
+      data: { runId: workOrder.id, reason: admission.reason },
+    });
+    return false;
+  }
+  const lease = heldLease ?? (admission?.allowed === true ? admission.lease : undefined);
+  if (lease === undefined) return false;
   const projectPath = workOrder.projectPath;
   const controller = new AbortController();
   activeDelegatedTasks.set(projectPath, { workOrder, controller });
@@ -692,10 +783,12 @@ function launchActiveDelegatedTask(
       }
     })
     .finally(() => {
+      coordinator.settle(lease);
       if (activeDelegatedTasks.get(projectPath)?.workOrder.id === workOrder.id) {
         activeDelegatedTasks.delete(projectPath);
       }
     });
+  return true;
 }
 
 function findLoopProjectPolicy(deps: HandlerDeps, projectPath: string): LoopProjectConfig | null {
@@ -838,6 +931,22 @@ async function finishActiveDelegatedTask(
 ): Promise<void> {
   const endedAt = Date.now();
   const result = gate.result;
+  if (result.status !== "completed") {
+    new AutonomousWorkCoordinator({
+      capacity: new AgentCapacityStore(),
+      onCapacityTransition: (transition) =>
+        deps.notifications.notify({
+          source: "autopilot-delegate",
+          level: transition.to === "available" ? "info" : "warning",
+          session: workOrder.notificationSession ?? supervisorSession,
+          title:
+            transition.to === "exhausted"
+              ? `${transition.agent} capacity exhausted`
+              : `${transition.agent} capacity ${transition.to}`,
+          body: `Capacity changed from ${transition.from} to ${transition.to}. ${transition.reason}`,
+        }),
+    }).recordLimitSignal(workOrder.agent, result.output, "autopilot-delegate");
+  }
   const completion = completeLoopSupervisorRun({
     workOrder,
     supervisorSession,
@@ -928,6 +1037,91 @@ async function finishActiveDelegatedTask(
       `Summary: ${completionNotification.summary}`,
     ].join("\n"),
   });
+}
+
+function activeDelegatedIntent(
+  workOrder: LoopWorkOrder,
+  trigger: "operator" | "background" | "resource-repair" | "reconcile",
+  forced?: boolean,
+) {
+  return {
+    id: workOrder.id,
+    source: "autopilot-delegate" as const,
+    trigger,
+    weight: "heavy" as const,
+    agent: workOrder.agent,
+    ...(forced === undefined ? {} : { forced }),
+    ...(trigger === "resource-repair" ? { repairDepth: 1 } : {}),
+  };
+}
+
+function activeDelegatedAdmissionContext(deps: HandlerDeps) {
+  return {
+    hostPower: deps.config.hostPower,
+    ownerLastActivityAt: ownerLastActivityAt(deps),
+    interactiveBusy: ownerInteractiveWorkBusy(deps),
+  };
+}
+
+function cleanupPreparedDelegatedWorktree(workOrder: LoopWorkOrder): void {
+  if (
+    workOrder.executionIsolation?.preparedBy !== "system-git-worktree" ||
+    workOrder.executionIsolation.worktreeIsolation !== "isolated"
+  ) {
+    return;
+  }
+  const cleaned = cleanupLoopExecutionWorktree({
+    worktree: workOrder.projectPath,
+    runGit: runGitCommand,
+    ...(workOrder.executionIsolation.sourceWorktree === undefined
+      ? {}
+      : { sourceWorktree: workOrder.executionIsolation.sourceWorktree }),
+    ...(workOrder.commitPolicy.branch === undefined
+      ? {}
+      : { expectedBranch: workOrder.commitPolicy.branch }),
+  });
+  if (!cleaned) {
+    log.warn("failed to clean prepared delegated worktree after admission deferral", {
+      data: { runId: workOrder.id, projectPath: workOrder.projectPath },
+    });
+  }
+}
+
+function ownerInteractiveWorkBusy(deps: HandlerDeps): boolean {
+  const ownerWork = (message: QueuedMessage | undefined): boolean =>
+    message !== undefined && message.origin !== "system";
+  const queue = deps.queue;
+  const getGlobalQueue = Reflect.get(queue, "getGlobalQueue") as
+    | (() => readonly QueuedMessage[])
+    | undefined;
+  const getCurrentGlobalMessage = Reflect.get(queue, "getCurrentGlobalMessage") as
+    | (() => QueuedMessage | undefined)
+    | undefined;
+  const getSessionNames = Reflect.get(queue, "getSessionNames") as (() => string[]) | undefined;
+  const getSessionQueue = Reflect.get(queue, "getSessionQueue") as
+    | ((session: string) => readonly QueuedMessage[])
+    | undefined;
+  const getCurrentSessionMessage = Reflect.get(queue, "getCurrentSessionMessage") as
+    | ((session: string) => QueuedMessage | undefined)
+    | undefined;
+
+  if (getGlobalQueue?.call(queue).some(ownerWork)) return true;
+  if (ownerWork(getCurrentGlobalMessage?.call(queue))) return true;
+  return (getSessionNames?.call(queue) ?? []).some(
+    (session) =>
+      getSessionQueue?.call(queue, session).some(ownerWork) === true ||
+      ownerWork(getCurrentSessionMessage?.call(queue, session)),
+  );
+}
+
+function ownerLastActivityAt(deps: HandlerDeps): number | null {
+  // Keep this boundary compatible with older embedded HandlerDeps providers that
+  // predate owner activity tracking, even though current production composition
+  // always supplies the tracker.
+  const tracker = Reflect.get(deps, "ownerActivity") as
+    | { lastObservedAt(): number | null }
+    | undefined;
+  return tracker?.lastObservedAt() ?? null;
 }
 
 function activeDelegatedTaskLedgerId(runId: string): string {

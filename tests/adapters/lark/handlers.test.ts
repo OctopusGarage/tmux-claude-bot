@@ -645,22 +645,6 @@ describe("makeMessageHandler", () => {
 
       expect(p2pChannel.texts()).toContain(messages("lark").promptsDisabled);
     });
-
-    it("/batch is restricted to p2p owner chats", async () => {
-      const groupChannel = fakeChannel();
-      const groupDeps = fakeDeps();
-      await makeMessageHandler(
-        groupChannel,
-        groupDeps,
-      )(fakeMessage({ chatType: "group" as never, content: "/batch report" }));
-      expect(groupChannel.sent).toHaveLength(0);
-
-      const p2pChannel = fakeChannel();
-      const p2pDeps = fakeDeps();
-      await makeMessageHandler(p2pChannel, p2pDeps)(fakeMessage({ content: "/batch report" }));
-
-      expect(p2pChannel.texts().some((t) => t.includes("No active batch run"))).toBe(true);
-    });
   });
 
   it("a reply to a session-bound bot message overrides the current session", async () => {

@@ -415,7 +415,6 @@ Send any text → forwarded to the agent → reply`,
   homeOperatorDisabled: "Home operator session is not enabled",
   homeOperatorSwitched: "🏠 Switched to the home operator session",
   cmdDashboard: "View the global dashboard (overview of all sessions)",
-  cmdBatch: "Batch scheduler: view status or control a batch run (start/pause/resume/stop/report)",
   cmdAutopilot: "Delegate the current session's work to the Loop Supervisor",
   cmdOpportunity: "Review and discuss proactive opportunity suggestions",
   cmdSysload: "Show machine load, heat, runaway processes, and Resource Guardian",
@@ -450,10 +449,10 @@ Send any text → forwarded to the agent → reply`,
       "work-orders": "WorkOrders",
       "repository-reviews": "Repository PR Reviews",
       automation: "Automation",
-      batch: "Batch Scheduler",
       "daily-task-audit": "Daily Task Audit",
       "runtime-guardian": "Runtime Guardian",
       "resource-guardian": "Resource Guardian",
+      "agent-capacity": "Agent Capacity",
       power: "Service and Power",
       "operator-ai": "Operator and AI Interfaces",
     })[id] ?? id,
@@ -477,6 +476,8 @@ Send any text → forwarded to the agent → reply`,
     `${project} has a Runtime Guardian finding`,
   dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) =>
     "Resource Guardian needs attention",
+  dashboardAttentionAgentCapacity: (agent: string, state: string) =>
+    `${agent} capacity is ${state}`,
   dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
     "Power policy needs attention",
   dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
@@ -488,10 +489,6 @@ Send any text → forwarded to the agent → reply`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "Delegate the current session context to the Loop Supervisor. Start immediately when the scope is already clear, or review the plan first when you want an explicit checklist and stop conditions before execution.",
-  batchRunStarted: (planId, tasks) => `🚀 Batch run started: plan ${planId}, ${tasks} task(s)`,
-  batchPoolPaused: (agent, resumeAt) =>
-    `⏸ Batch pool paused [${agent}]: quota reached, resuming at ${resumeAt}`,
-  batchRunComplete: (summary) => `✅ Batch run complete\n${summary}`,
   autopilotUsage: (raw) =>
     `Unknown subcommand "${raw}". Usage: /autopilot [requirement] or /autopilot delegate [requirement]`,
   autopilotPlanPreviewBody:
