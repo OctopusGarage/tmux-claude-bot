@@ -85,6 +85,7 @@ export function prepareLoopExecutionWorktrees(input: {
 type LoopExecutionWorktreeCleanupInput = {
   worktree: string;
   sourceWorktree?: string;
+  expectedBranch?: string;
 };
 
 type MissingWorktreeRegistrations = Map<string, Set<string> | null>;
@@ -128,8 +129,16 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
     });
     return "failed";
   }
+  if (input.expectedBranch !== undefined && !isBotOwnedLoopBranch(input.expectedBranch)) {
+    log.warn("loop refused to remove an unexpected local branch", {
+      data: { worktree, branch: input.expectedBranch },
+    });
+    return "failed";
+  }
   if (!existsSync(worktree)) {
-    if (reconciledMissingWorktrees.has(worktree)) return "already-clean";
+    if (reconciledMissingWorktrees.has(worktree) && input.expectedBranch === undefined) {
+      return "already-clean";
+    }
     if (input.sourceWorktree === undefined) {
       log.warn("loop cannot reconcile missing worktree without its source repository", {
         data: { worktree },
@@ -145,6 +154,17 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
     });
     if (registered === null) return "failed";
     if (!registered.has(worktree)) {
+      if (input.expectedBranch !== undefined) {
+        if (
+          !cleanupExactLocalLoopBranch({
+            sourceWorktree,
+            branch: input.expectedBranch,
+            runGit,
+          })
+        ) {
+          return "failed";
+        }
+      }
       reconciledMissingWorktrees.add(worktree);
       log.info("loop missing worktree registration is already reconciled", {
         data: { worktree, sourceWorktree },
@@ -166,6 +186,16 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
       return "failed";
     }
     registered.delete(worktree);
+    if (
+      input.expectedBranch !== undefined &&
+      !cleanupExactLocalLoopBranch({
+        sourceWorktree,
+        branch: input.expectedBranch,
+        runGit,
+      })
+    ) {
+      return "failed";
+    }
     reconciledMissingWorktrees.add(worktree);
     log.info("loop removed missing worktree registration", {
       data: { worktree, sourceWorktree },
@@ -173,6 +203,25 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
     return "removed";
   }
   reconciledMissingWorktrees.delete(worktree);
+  let branchHead: string | undefined;
+  if (input.expectedBranch !== undefined) {
+    if (input.sourceWorktree === undefined) {
+      log.warn("loop cannot remove a local branch without its source repository", {
+        data: { worktree, branch: input.expectedBranch },
+      });
+      return "failed";
+    }
+    const sourceTopLevel = verifiedSourceTopLevel(input.sourceWorktree, runGit);
+    if (
+      sourceTopLevel.status !== 0 ||
+      resolvePath(sourceTopLevel.stdout.trim()) !== resolvePath(input.sourceWorktree)
+    ) {
+      log.warn("loop refused local branch cleanup from an unverified source repository", {
+        data: { worktree, sourceWorktree: input.sourceWorktree },
+      });
+      return "failed";
+    }
+  }
   const topLevel = runGit({ cwd: worktree, args: ["rev-parse", "--show-toplevel"] });
   if (topLevel.status !== 0 || resolvePath(topLevel.stdout.trim()) !== worktree) {
     log.warn("loop refused to remove path that is not the expected git worktree", {
@@ -182,6 +231,51 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
       },
     });
     return "failed";
+  }
+  if (input.expectedBranch !== undefined) {
+    const currentBranch = runGit({ cwd: worktree, args: ["branch", "--show-current"] });
+    const currentBranchName = currentBranch.stdout.trim();
+    if (
+      currentBranch.status !== 0 ||
+      (currentBranchName !== "" && currentBranchName !== input.expectedBranch)
+    ) {
+      log.warn("loop refused to remove a worktree on an unexpected branch", {
+        data: {
+          worktree,
+          expectedBranch: input.expectedBranch,
+          actualBranch: currentBranchName,
+        },
+      });
+      return "failed";
+    }
+    const head = runGit({ cwd: worktree, args: ["rev-parse", "--verify", "HEAD"] });
+    if (head.status !== 0 || !isGitObjectId(head.stdout.trim())) {
+      log.warn("loop refused to remove a worktree whose HEAD could not be verified", {
+        data: { worktree, branch: input.expectedBranch },
+      });
+      return "failed";
+    }
+    branchHead = head.stdout.trim();
+    if (currentBranchName === input.expectedBranch) {
+      const detached = runGit({ cwd: worktree, args: ["switch", "--detach", branchHead] });
+      if (detached.status !== 0) {
+        log.warn("loop failed to detach a terminal worktree before local branch cleanup", {
+          data: { worktree, branch: input.expectedBranch },
+        });
+        return "failed";
+      }
+    }
+    if (
+      input.sourceWorktree !== undefined &&
+      !cleanupExactLocalLoopBranch({
+        sourceWorktree: resolvePath(input.sourceWorktree),
+        branch: input.expectedBranch,
+        expectedSha: branchHead,
+        runGit,
+      })
+    ) {
+      return "failed";
+    }
   }
   const removed = runGit({
     cwd: worktree,
@@ -199,6 +293,58 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
   reconciledMissingWorktrees.add(worktree);
   log.info("loop removed expired isolated worktree", { data: { worktree } });
   return "removed";
+}
+
+function cleanupExactLocalLoopBranch(input: {
+  sourceWorktree: string;
+  branch: string;
+  expectedSha?: string;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): boolean {
+  const listed = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["worktree", "list", "--porcelain"],
+  });
+  if (listed.status !== 0) return false;
+  if (listed.stdout.split(/\r?\n/).includes(`branch refs/heads/${input.branch}`)) {
+    log.warn("loop refused to remove a local branch still owned by a worktree", {
+      data: { sourceWorktree: input.sourceWorktree, branch: input.branch },
+    });
+    return false;
+  }
+  const ref = `refs/heads/${input.branch}`;
+  const observed = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["show-ref", "--verify", "--hash", ref],
+  });
+  if (observed.status !== 0) return observed.status === 1 && observed.stdout.trim() === "";
+  const observedSha = observed.stdout.trim();
+  if (!isGitObjectId(observedSha)) return false;
+  if (input.expectedSha !== undefined && observedSha !== input.expectedSha) {
+    log.warn("loop refused to remove a local branch whose SHA changed", {
+      data: { sourceWorktree: input.sourceWorktree, branch: input.branch },
+    });
+    return false;
+  }
+  const deleted = input.runGit({
+    cwd: input.sourceWorktree,
+    args: ["update-ref", "-d", ref, observedSha],
+  });
+  return deleted.status === 0;
+}
+
+function isBotOwnedLoopBranch(branch: string): boolean {
+  return (
+    branch.startsWith("loop/") &&
+    !branch.startsWith("loop//") &&
+    !branch.endsWith("/") &&
+    !branch.includes("..") &&
+    !/[~^:?*[\\\s]/.test(branch)
+  );
+}
+
+function isGitObjectId(value: string): boolean {
+  return /^[a-fA-F0-9]{40,64}$/.test(value);
 }
 
 function readMissingWorktreeRegistrations(input: {

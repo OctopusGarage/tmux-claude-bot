@@ -42,6 +42,34 @@ describe("RepairCoordinator", () => {
     expect(createRepairDedupeKey(second)).toContain("active-delegated-task");
   });
 
+  it("keeps one active runtime repair when diagnostic evidence formatting changes", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const first = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "gate failed | artifact exists",
+      taskId: "run-1",
+      summary: "gate failed; artifact exists",
+      now: 1_000,
+    });
+    const rediscovered = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "gate failed; artifact exists",
+      taskId: "run-1",
+      summary: "gate failed; artifact exists",
+      now: 2_000,
+    });
+
+    expect(rediscovered.id).toBe(first.id);
+    expect(rediscovered.status).toBe("pending");
+    expect(coordinator.list()).toHaveLength(1);
+  });
+
   it("claims due items in priority order and leaves later items pending", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     coordinator.enqueue({
@@ -385,6 +413,54 @@ describe("RepairCoordinator", () => {
         expect.objectContaining({ id: projectRepair.id, status: "leased" }),
       ]),
     );
+  });
+
+  it("keeps aggregate repair findings that share only a derived WorkOrder task ID", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const fluent = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "fluent failure",
+      taskId: "run-fluent",
+      now: 1_000,
+    });
+    const english = coordinator.enqueue({
+      projectId: "english-pilot",
+      projectPath: "/repo/english-pilot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "english failure",
+      taskId: "run-english",
+      now: 1_001,
+    });
+    coordinator.claimIds([fluent.id, english.id], {
+      now: 1_002,
+      leaseId: "aggregate",
+      limit: 2,
+    });
+    coordinator.markRunning(fluent.id, "aggregate", 1_003);
+    coordinator.markRunning(english.id, "aggregate", 1_003);
+    coordinator.attachWorkOrder(fluent.id, "aggregate-repair", 1_004);
+    coordinator.attachWorkOrder(english.id, "aggregate-repair", 1_004);
+    coordinator.linkTaskIds(fluent.id, ["autopilot:aggregate-repair"], 1_002);
+    coordinator.linkTaskIds(english.id, ["autopilot:aggregate-repair"], 1_002);
+
+    expect(coordinator.reconcileDuplicateTaskIds(2_000)).toBe(0);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: fluent.id, status: "running" }),
+      expect.objectContaining({ id: english.id, status: "running" }),
+    ]);
+
+    coordinator.releaseForRetry(fluent.id, 2_001, { detachWorkOrder: true });
+    coordinator.releaseForRetry(english.id, 2_001, { detachWorkOrder: true });
+    expect(coordinator.reconcileDuplicateTaskIds(2_002)).toBe(0);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: fluent.id, status: "retry-wait" }),
+      expect.objectContaining({ id: english.id, status: "retry-wait" }),
+    ]);
+    expect(coordinator.list().every((record) => record.workOrderId === undefined)).toBe(true);
   });
 
   it("supersedes a stale terminal project-recovery record when the same task reopens", () => {

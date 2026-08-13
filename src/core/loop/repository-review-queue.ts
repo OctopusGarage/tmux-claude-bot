@@ -26,6 +26,13 @@ export type RepositoryReviewQueueItem = {
   leaseOwner?: string;
   leaseUntil?: number;
   lastError?: string;
+  retryEpoch?: number;
+  migration?: {
+    previousStatus: "manual-review" | "dead-letter";
+    previousAttempt: number;
+    reason: string;
+    migratedAt: number;
+  };
 };
 
 type EnqueueInput = {
@@ -248,6 +255,82 @@ export class RepositoryReviewQueue {
 
   manualReview(id: string, owner: string, now: number, reason: string): boolean {
     return this.complete(id, owner, now, "manual-review", reason);
+  }
+
+  reopenTerminal(id: string, input: { now: number; reason: string }): boolean {
+    const item = this.items.get(id);
+    if (
+      item === undefined ||
+      (item.status !== "manual-review" && item.status !== "dead-letter") ||
+      !this.canRecoverTerminal(id)
+    ) {
+      return false;
+    }
+    const reopened: RepositoryReviewQueueItem = {
+      ...item,
+      status: "retry-wait",
+      attempt: 0,
+      retryEpoch: (item.retryEpoch ?? 0) + 1,
+      updatedAt: input.now,
+      nextAttemptAt: input.now,
+      lastError: input.reason,
+      migration: {
+        previousStatus: item.status,
+        previousAttempt: item.attempt,
+        reason: input.reason,
+        migratedAt: input.now,
+      },
+    };
+    delete reopened.leaseOwner;
+    delete reopened.leaseUntil;
+    this.items.set(id, reopened);
+    return true;
+  }
+
+  completeRecoveredTerminal(id: string, input: { now: number; reason: string }): boolean {
+    const item = this.items.get(id);
+    if (
+      item === undefined ||
+      (item.status !== "manual-review" && item.status !== "dead-letter") ||
+      !this.canRecoverTerminal(id)
+    ) {
+      return false;
+    }
+    const completed: RepositoryReviewQueueItem = {
+      ...item,
+      status: "completed",
+      updatedAt: input.now,
+      nextAttemptAt: input.now,
+      lastError: input.reason,
+      migration: {
+        previousStatus: item.status,
+        previousAttempt: item.attempt,
+        reason: input.reason,
+        migratedAt: input.now,
+      },
+    };
+    delete completed.leaseOwner;
+    delete completed.leaseUntil;
+    this.items.set(id, completed);
+    return true;
+  }
+
+  canRecoverTerminal(id: string): boolean {
+    const item = this.items.get(id);
+    return (
+      item !== undefined &&
+      (item.status === "manual-review" || item.status === "dead-letter") &&
+      item.migration === undefined &&
+      !this.items
+        .sortedEntries()
+        .some(
+          ([otherId, other]) =>
+            otherId !== id &&
+            other.repositoryId === item.repositoryId &&
+            other.scheduledAt > item.scheduledAt &&
+            !isTerminal(other.status),
+        )
+    );
   }
 
   complete(

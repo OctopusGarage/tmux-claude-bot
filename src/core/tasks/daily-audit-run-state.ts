@@ -25,12 +25,12 @@ export function reconcileDailyAuditRunState(input: {
   input.ledger.reconcileTerminalStatuses(input.now);
   input.coordinator.reconcileExpiredLeases(input.now);
   input.coordinator.reconcileDuplicateTaskIds(input.now);
+  input.reconcileRepairState({ ledger: input.ledger as DailyTaskLedger, now: input.now });
   input.coordinator.importPending(input.ledger.listAll(), {
     projectId: "tmux-claude-bot",
     projectPath: input.repoPath,
     now: input.now,
   });
-  input.reconcileRepairState({ ledger: input.ledger as DailyTaskLedger, now: input.now });
   input.coordinator.reconcileFromLedger(input.ledger.listAll(), input.now);
   return staleAudits;
 }

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -114,6 +114,57 @@ describe("config and automation commands", () => {
     expect(runConfigCommand([]).stderr).toContain("Usage: config");
   });
 
+  it("validates generic config values by their declared domain without rewriting strings", async () => {
+    const dir = join(tmpdir(), `tcb-config-validation-${Date.now()}`);
+    process.env.TCB_STATE_DIR = dir;
+    writeEnv(
+      dir,
+      [
+        "HOME_OPERATOR_DIR=/tmp/operator",
+        "HOME_OPERATOR_AGENT=claude",
+        "LOOP_ENGINEERING_TICK_MS=300000",
+        "TASK_AUDIT_ENABLED=false",
+        "TCB_KEEP_AWAKE_MODE=off",
+        "UI_LANG=zh",
+        "PROMPT_TRANSLATE_MODE=off",
+      ].join("\n"),
+    );
+    const { runConfigCommand } = await import("../src/core/config/command.js");
+
+    expect(runConfigCommand(["set", "HOME_OPERATOR_DIR", "on", "--json"])).toMatchObject({
+      exitCode: 0,
+    });
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("HOME_OPERATOR_DIR=on");
+
+    expect(runConfigCommand(["set", "TASK_AUDIT_ENABLED", "yes", "--json"])).toMatchObject({
+      exitCode: 0,
+      stdout: expect.stringContaining('"value":"true"'),
+    });
+    for (const [key, value] of [
+      ["LOOP_ENGINEERING_TICK_MS", "later"],
+      ["LOOP_ENGINEERING_TICK_MS", "1.5"],
+      ["HOME_OPERATOR_AGENT", "gemini"],
+      ["UI_LANG", "klingon"],
+      ["PROMPT_TRANSLATE_MODE", "remote-api"],
+      ["RUNTIME_GUARDIAN_ENABLED", "maybe"],
+      ["TCB_KEEP_AWAKE_MODE", "sometimes"],
+    ] as const) {
+      expect(runConfigCommand(["set", key, value])).toMatchObject({ exitCode: 1 });
+    }
+
+    const persisted = readFileSync(join(dir, ".env"), "utf8");
+    expect(persisted).toContain("LOOP_ENGINEERING_TICK_MS=300000");
+    expect(persisted).toContain("HOME_OPERATOR_AGENT=claude");
+    expect(persisted).toContain("UI_LANG=zh");
+    expect(persisted).toContain("PROMPT_TRANSLATE_MODE=off");
+    expect(persisted).toContain("TCB_KEEP_AWAKE_MODE=off");
+
+    expect(runConfigCommand(["set", "TCB_KEEP_AWAKE_MODE", "scheduled"])).toMatchObject({
+      exitCode: 0,
+    });
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("TCB_KEEP_AWAKE_MODE=scheduled");
+  });
+
   it("summarizes and toggles high-cost automation without losing previous tick values", async () => {
     const dir = join(tmpdir(), `tcb-automation-command-test-${Date.now()}`);
     process.env.TCB_STATE_DIR = dir;
@@ -131,6 +182,7 @@ describe("config and automation commands", () => {
       ].join("\n"),
     );
     const { runAutomationCommand } = await import("../src/core/config/command.js");
+    const { readAutomationStatuses } = await import("../src/core/config/automation-command.js");
 
     const status = runAutomationCommand(["status", "--json"]);
     expect(status.exitCode).toBe(0);
@@ -145,6 +197,7 @@ describe("config and automation commands", () => {
       expect.objectContaining({ id: "runtime-guardian", enabled: false, tickMs: 34567 }),
       expect.objectContaining({ id: "batch", enabled: true, tickMs: 45678 }),
     ]);
+    expect(readAutomationStatuses()).toEqual(JSON.parse(stdoutOf(status)));
 
     const pause = runAutomationCommand(["pause", "loop", "--json"]);
     expect(pause.exitCode).toBe(0);
@@ -163,6 +216,21 @@ describe("config and automation commands", () => {
       changed: true,
     });
     expect(readFileSync(join(dir, ".env"), "utf8")).toContain("LOOP_ENGINEERING_TICK_MS=12345");
+  });
+
+  it("does not pause automation when its resume state cannot be persisted", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-automation-pause-failure-"));
+    process.env.TCB_STATE_DIR = dir;
+    writeEnv(dir, "LOOP_ENGINEERING_CONFIG_FILE=/tmp/loop.yml\nLOOP_ENGINEERING_TICK_MS=12345\n");
+    mkdirSync(join(dir, "automation-pauses.json"));
+    const { runAutomationCommand } = await import("../src/core/config/command.js");
+
+    try {
+      expect(runAutomationCommand(["pause", "loop"]).exitCode).toBe(1);
+      expect(readFileSync(join(dir, ".env"), "utf8")).toContain("LOOP_ENGINEERING_TICK_MS=12345");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("allows the Loop supervisor dependency to be changed through config commands", async () => {

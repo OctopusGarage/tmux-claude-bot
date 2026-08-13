@@ -432,6 +432,73 @@ export const ja: Messages = {
   cmdSysload: "マシンの負荷・発熱・暴走プロセス・Resource Guardian を表示",
   sysloadTitle: "🖥 システム負荷",
   dashboardTitle: "📊 ダッシュボード",
+  dashboardOverallHealth: "全体の健全性",
+  dashboardAttention: "要確認",
+  dashboardActiveWork: "実行中の作業",
+  dashboardAutomation: "自動化",
+  dashboardOperatorAi: "Operator と AI インターフェース",
+  dashboardRuntimeDomains: "ランタイム領域",
+  dashboardRecentOutcomes: "最近の結果",
+  dashboardProjectSessions: "プロジェクトセッション",
+  dashboardNone: "なし",
+  dashboardMore: "その他",
+  dashboardEnabled: "有効",
+  dashboardIdle: "待機中",
+  dashboardShown: "表示",
+  dashboardHealthy: "正常",
+  dashboardSession: "セッション",
+  dashboardSkills: "スキル",
+  dashboardMcpProfiles: "MCP プロファイル",
+  dashboardPromptLibrary: "プロンプトライブラリ",
+  dashboardSessions: "セッション",
+  dashboardRunning: "実行中",
+  dashboardBusy: "処理中",
+  dashboardQueue: "キュー",
+  dashboardUp: "稼働",
+  dashboardNoAdapters: "アダプターなし",
+  dashboardRuntimeDomain: (id: string) =>
+    ({
+      "work-orders": "ワークオーダー",
+      "repository-reviews": "リポジトリ PR レビュー",
+      automation: "自動化",
+      batch: "バッチスケジューラー",
+      "daily-task-audit": "日次タスク監査",
+      "runtime-guardian": "ランタイムガーディアン",
+      "resource-guardian": "リソースガーディアン",
+      power: "サービスと電源",
+      "operator-ai": "オペレーターと AI インターフェース",
+    })[id] ?? id,
+  dashboardHealthHealthy: "正常",
+  dashboardHealthAttention: "要確認",
+  dashboardHealthDegraded: "縮退",
+  dashboardAttentionOperatorSession: "Home Operator セッションに確認が必要です",
+  dashboardAttentionOperatorSkills: (installed: number, expected: number) =>
+    `Home Operator スキル準備済み ${installed}/${expected}`,
+  dashboardAttentionOperatorMcp: (installed: number, expected: number) =>
+    `管理対象 MCP プロファイル準備済み ${installed}/${expected}`,
+  dashboardAttentionOperatorPrompt: "設定済みのプロンプトライブラリを利用できません",
+  dashboardAttentionWorkOrderFailed: (project: string, _taskKind: string) =>
+    `${project} のワークオーダーが失敗しました`,
+  dashboardAttentionWorkOrderAbandoned: (project: string) =>
+    `${project} の WorkOrder が放棄されています`,
+  dashboardAttentionWorkOrderStale: (project: string) =>
+    `${project} の WorkOrder 配信が古くなっています`,
+  dashboardAttentionAutomationDependency: (automation: string) =>
+    `${automation} に無効な依存関係があります`,
+  dashboardAttentionDailyAudit: (count: number) =>
+    `${count} 件の Daily Task Audit に確認が必要です`,
+  dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
+    `${project} にランタイムガーディアンの検出事項があります`,
+  dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) =>
+    "リソースガーディアンの確認が必要です",
+  dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
+    "電源ポリシーの確認が必要です",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} は自動再試行中です（エポック ${retryEpoch}）`
+      : status === "manual-review"
+        ? `${project} に検証済みの人手境界があります`
+        : `${project} のリポジトリ PR レビュー再試行上限に達しました`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "現在のセッション文脈を Loop Supervisor に委任します。範囲が明確ならすぐ委任し、先にチェックリストと停止条件を確認したい場合は計画を確認してから進めます。",

@@ -1,13 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { appStateFile } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
-import { readConfigEnvironment, writeConfigEnvironment } from "./env-store.js";
+import {
+  readConfigEnvironment,
+  withConfigEnvironmentLock,
+  writeConfigEnvironment,
+} from "./env-store.js";
 
 type CommandResult =
   | { exitCode: number; stdout: string; stderr?: never }
   | { exitCode: number; stderr: string; stdout?: never };
 
-type AutomationId = "loop" | "task-audit" | "runtime-guardian" | "batch";
+export type AutomationId = "loop" | "task-audit" | "runtime-guardian" | "batch";
 
 type AutomationSpec = {
   id: AutomationId;
@@ -19,7 +23,7 @@ type AutomationSpec = {
   dependencyKeys?: string[];
 };
 
-type AutomationStatus = {
+export type AutomationStatus = {
   id: AutomationId;
   label: string;
   enabled: boolean;
@@ -28,6 +32,12 @@ type AutomationStatus = {
   keys: string[];
   dependencies?: Record<string, boolean>;
 };
+
+/** Read the canonical Automation Family configuration without rendering CLI prose. */
+export function readAutomationStatuses(): AutomationStatus[] {
+  const env = readEnvMap();
+  return AUTOMATIONS.map((spec) => automationStatusFor(spec, env));
+}
 
 const AUTOMATIONS: AutomationSpec[] = [
   {
@@ -157,6 +167,13 @@ function toggleAutomation(
   spec: AutomationSpec,
   enabled: boolean,
 ): { status: AutomationStatus; changed: boolean } {
+  return withConfigEnvironmentLock(() => toggleAutomationLocked(spec, enabled));
+}
+
+function toggleAutomationLocked(
+  spec: AutomationSpec,
+  enabled: boolean,
+): { status: AutomationStatus; changed: boolean } {
   const env = readEnvMap();
   const before = automationStatusFor(spec, env);
   const pauseState = readPauseState();
@@ -178,8 +195,16 @@ function toggleAutomation(
     if (spec.enableKey !== undefined) values[spec.enableKey] = "false";
   }
 
-  writeEnvValues(values);
-  writePauseState(pauseState);
+  if (enabled) {
+    // Restoring the environment is idempotent; only remove its recovery state
+    // after the restored values are durable.
+    writeEnvValues(values);
+    writePauseState(pauseState);
+  } else {
+    // Preserve the values needed by resume before disabling the automation.
+    writePauseState(pauseState);
+    writeEnvValues(values);
+  }
   const after = automationStatusFor(spec, readEnvMap());
   return {
     status: after,
@@ -193,8 +218,7 @@ export function runAutomationCommand(args: string[]): CommandResult {
     if (action === "status") {
       const json = jsonFlag(args.slice(1));
       if (typeof json === "string") return { exitCode: 1, stderr: json };
-      const env = readEnvMap();
-      const statuses = AUTOMATIONS.map((spec) => automationStatusFor(spec, env));
+      const statuses = readAutomationStatuses();
       return {
         exitCode: 0,
         stdout: json ? JSON.stringify(statuses) : renderAutomationStatus(statuses),

@@ -449,6 +449,36 @@ describe("keep-awake check (macOS)", () => {
     ).toBe(true);
   });
 
+  it("recognizes scheduled mode without applying always-mode lid advice", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () => envWith([["TCB_KEEP_AWAKE_MODE", "scheduled"]]),
+        caffeinateActive: async () => false,
+        clamshellClosed: async () => true,
+      }),
+    );
+    expect(
+      report.checks.some(
+        (c) => c.status === "info" && c.text.includes("scheduled host power policy"),
+      ),
+    ).toBe(true);
+    expect(report.checks.some((c) => c.text.includes("keep-awake off"))).toBe(false);
+    expect(report.checks.some((c) => c.text.includes("lid is CLOSED"))).toBe(false);
+  });
+
+  it("rejects an invalid explicit host power mode", async () => {
+    asDarwin();
+    const report = await runDoctorChecks(
+      healthyProbes({
+        readEnv: () => envWith([["TCB_KEEP_AWAKE_MODE", "sometimes"]]),
+      }),
+    );
+    const check = report.checks.find((c) => c.text.includes("host power mode is invalid"));
+    expect(check?.status).toBe("bad");
+    expect(check?.fix).toContain("tcb config set TCB_KEEP_AWAKE_MODE");
+  });
+
   it("flag on + lid CLOSED + disablesleep off → fail (Mac will sleep)", async () => {
     asDarwin();
     const report = await runDoctorChecks(
@@ -461,6 +491,7 @@ describe("keep-awake check (macOS)", () => {
     expect(report.checks.some((c) => c.status === "bad" && c.text.includes("lid is CLOSED"))).toBe(
       true,
     );
+    expect(report.checks.some((c) => c.fix?.includes("sudo pmset -a disablesleep"))).toBe(false);
     expect(report.failures).toBeGreaterThan(0);
   });
 
@@ -490,9 +521,10 @@ describe("keep-awake check (macOS)", () => {
     );
     expect(
       report.checks.some(
-        (c) => c.status === "info" && c.text.includes("closing the lid will sleep"),
+        (c) => c.status === "info" && c.text.includes("closing the lid will let macOS sleep"),
       ),
     ).toBe(true);
+    expect(report.checks.some((c) => c.text.includes("sudo pmset"))).toBe(false);
     expect(report.checks.some((c) => c.status === "bad")).toBe(false);
   });
 

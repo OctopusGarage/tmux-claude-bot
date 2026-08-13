@@ -27,6 +27,7 @@ import {
 } from "../../core/tasks/project-recovery-dispatch.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { createControlDiagnosticsHandlers } from "./operations-diagnostics.js";
+import { createControlObservationHandlers } from "./operations-observation.js";
 import { createControlProjectSessionHandlers } from "./operations-project-sessions.js";
 import type { ControlOperationHandler, ControlOperationHandlers } from "./operations-types.js";
 import type { ControlRequest, ServerMessage } from "./protocol.js";
@@ -50,6 +51,9 @@ export const controlOperationNames = [
   "inputs",
   "promptTranslate",
   "taskAudit",
+  "loopReports",
+  "dailyTaskAuditStatus",
+  "runtimeGuardianFindings",
   "notify",
   "autopilot",
   "sendAttachment",
@@ -62,6 +66,7 @@ export function createControlOperationHandlers(
   return {
     ...createControlDiagnosticsHandlers(deps),
     ...createControlProjectSessionHandlers(deps),
+    ...createControlObservationHandlers(deps),
     send: async (req, { ok, fail }) => {
       if (isOperator(req.session, deps.config.projectSessionPrefix)) {
         fail("cannot send to the operator session");

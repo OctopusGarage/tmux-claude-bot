@@ -9,6 +9,13 @@ export type LarkConfig = {
 
 export type RuntimeGuardianMode = "observe" | "fast-heal";
 export type WorktreeIsolationMode = "isolated" | "source" | "auto";
+export type HostPowerMode = "off" | "always" | "scheduled";
+export type HostPowerConfig = {
+  mode: HostPowerMode;
+  timezone: string;
+  quietStart: string;
+  quietEnd: string;
+};
 
 /** Which coding agent a start command launches. Absent => "claude" (back-compat). */
 export type AgentKind = "claude" | "codex";
@@ -74,9 +81,9 @@ export type AppConfig = {
   sessionIdleReaper: { tickMs: number; maxIdleMs: number; loopWorkerMaxIdleMs: number };
   /** Run reboot recovery automatically on boot (idempotent); default true. */
   autoRecover: boolean;
-  /** macOS: keep the Mac awake on AC power while the bot runs. Opt-in; works
-   * for any launch path. */
-  keepAwake: boolean;
+  /** Host reachability policy. Scheduled mode releases the assertion for the
+   * quiet window and relies on one separately verified macOS wake event. */
+  hostPower: HostPowerConfig;
   lark?: LarkConfig | undefined;
   scheduler: { tickMs: number; quotaPct: number; reprobeMs: number };
   resourceGuardian: {

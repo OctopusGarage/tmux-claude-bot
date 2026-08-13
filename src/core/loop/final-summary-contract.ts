@@ -5,6 +5,7 @@ import type {
   LoopSupervisorLearning,
   LoopSupervisorPullRequestDecision,
   LoopSupervisorPullRequestDecisionOutcome,
+  LoopSupervisorPullRequestHumanBoundary,
   LoopSupervisorReviewEvidence,
   LoopSupervisorReviewGate,
   LoopSupervisorReviewGateDeterministicGateObject,
@@ -55,16 +56,15 @@ const PULL_REQUEST_OUTCOMES = new Set<LoopSupervisorPullRequestDecisionOutcome>(
   "manual-review",
 ]);
 const PULL_REQUEST_CLOSE_REASONS = new Set(["duplicate", "obsolete", "non-actionable", "invalid"]);
-const MANUAL_REVIEW_BOUNDARY_PATTERNS = [
-  /\b(?:access|permission|maintainer|ownership)\b/i,
-  /\bprotected branch\b/i,
-  /\bexternal fork\b/i,
-  /\bproduct (?:decision|requirement|direction)\b/i,
-  /\b(?:data )?migration\b/i,
-  /\bsecurity[- ]design\b/i,
-  /\bsecurity (?:decision|exception|waiver)\b/i,
-  /\b(?:legal|compliance)\b/i,
-];
+const PULL_REQUEST_HUMAN_BOUNDARIES = new Set<LoopSupervisorPullRequestHumanBoundary>([
+  "ownership",
+  "protected-branch-policy",
+  "product-decision",
+  "migration-decision",
+  "security-decision",
+  "legal-compliance",
+  "organization-policy",
+]);
 
 export type RepositoryPullRequestReviewDisposition =
   | "completed"
@@ -267,13 +267,9 @@ export function repositoryPullRequestReviewDisposition(
 ): RepositoryPullRequestReviewDisposition {
   const decisions = summary.pullRequestDecisions;
   if (decisions === undefined) return "invalid";
-  // A generic architecture/design review is not a human decision boundary. It
-  // must return to the repair queue so the next worker can continue the bounded
-  // conflict resolution or produce concrete evidence for a real owner blocker.
   if (
     decisions.some(
-      (decision) =>
-        decision.outcome === "manual-review" && !hasManualReviewBoundaryEvidence(decision),
+      (decision) => decision.outcome === "manual-review" && decision.boundary === undefined,
     )
   ) {
     return "retry";
@@ -287,11 +283,6 @@ export function repositoryPullRequestReviewDisposition(
   )
     ? "completed"
     : "invalid";
-}
-
-function hasManualReviewBoundaryEvidence(decision: LoopSupervisorPullRequestDecision): boolean {
-  const text = [...decision.evidence, decision.nextStep].join(" ");
-  return MANUAL_REVIEW_BOUNDARY_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDecision[] | null {
@@ -308,6 +299,17 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
       return null;
     }
     const outcome = item.outcome as LoopSupervisorPullRequestDecisionOutcome;
+    const boundary = item.boundary;
+    if (
+      (boundary !== undefined &&
+        (typeof boundary !== "string" ||
+          !PULL_REQUEST_HUMAN_BOUNDARIES.has(
+            boundary as LoopSupervisorPullRequestHumanBoundary,
+          ))) ||
+      (outcome !== "manual-review" && boundary !== undefined)
+    ) {
+      return null;
+    }
     const reason = item.reason;
     if (outcome === "closed") {
       if (typeof reason !== "string" || !PULL_REQUEST_CLOSE_REASONS.has(reason)) return null;
@@ -324,6 +326,9 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
       number: item.number as number,
       repository: item.repository.trim(),
       outcome,
+      ...(boundary === undefined
+        ? {}
+        : { boundary: boundary as LoopSupervisorPullRequestHumanBoundary }),
       evidence,
       nextStep,
     };

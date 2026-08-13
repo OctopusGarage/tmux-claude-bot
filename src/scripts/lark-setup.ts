@@ -4,19 +4,13 @@
  * (LARK_* keys) using the same atomic 0600 writer as `npm run setup`. The
  * scanning user is auto-added to the allowlist. Run via `npm run setup:lark`.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { runLarkOnboardingWizard } from "../adapters/lark/onboarding-wizard.js";
 import type { Lang } from "../core/i18n/index.js";
 import { parseSetupLang, SETUP_LANG_PROMPT, setupMessages } from "../core/i18n/setup.js";
-import { serializeEnv } from "../core/infra/onboarding.js";
+import { writeConfigEnvironment } from "../core/infra/config-environment.js";
 import { managedRestartCommand } from "../core/platform/service-hints.js";
-import { appStateFile } from "../shared/state-dir.js";
 
-// `.env` lives in the state dir (not cwd) — kept out of the deploy's rsync --delete.
-const ENV_PATH = appStateFile(".env");
 const RESTART_CMD = managedRestartCommand();
 
 const C = {
@@ -28,16 +22,11 @@ const C = {
 
 /**
  * Upsert the LARK_* values into the existing `.env`, preserving every other
- * line and comment. serializeEnv treats the current file as the template, so it
- * replaces existing LARK_* lines and appends any that are missing.
+ * line and comment. The shared writer rereads the latest file while holding the
+ * cross-process lock, then replaces existing LARK_* lines or appends them.
  */
-async function writeEnv(values: Record<string, string>): Promise<void> {
-  await mkdir(dirname(ENV_PATH), { recursive: true }); // state dir may not exist yet
-  const current = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, "utf8") : "";
-  const tmp = `${ENV_PATH}.tmp`;
-  await writeFile(tmp, serializeEnv(current, values), "utf8");
-  await chmod(tmp, 0o600);
-  await rename(tmp, ENV_PATH);
+function writeEnv(values: Record<string, string>): void {
+  writeConfigEnvironment(values);
 }
 
 async function askLang(): Promise<Lang> {
@@ -58,7 +47,7 @@ async function main(): Promise<void> {
 
   const values = await runLarkOnboardingWizard(C, M);
   values.UI_LANG = lang;
-  await writeEnv(values);
+  writeEnv(values);
 
   console.log("");
   C.ok(M.larkAppCreated);

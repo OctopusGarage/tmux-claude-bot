@@ -50,6 +50,61 @@ Identify bot processes with both the project path and entrypoint
 (`dist/cli.js` or `src/index.ts`). Do not use broad process patterns such as
 `node` or `tsx` alone.
 
+### Host power and quiet hours
+
+Keep host power policy separate from automation admission. `off` lets macOS
+apply its normal idle-sleep, battery, lid, display, and Power Nap rules.
+`always` is the explicit reachability trade-off that holds `caffeinate -s` on
+AC power. `scheduled` holds that assertion during the service window, releases
+it for natural sleep after active work drains, and relies on one explicit fixed
+daily `wake` installed by the operator. The runtime verifies that event before
+release and fails awake when it is missing or conflicting.
+
+The supported operator sequence is `tcb config set TCB_KEEP_AWAKE_MODE
+scheduled`, `tcb power schedule install`, service restart, then `tcb power
+status`. The default Singapore timeline is quiet at 02:00, fixed wake at 09:15,
+and background resume at 09:30. `tcb power status` must distinguish a verified
+schedule from one that is not required in `off`/`always`, and must surface the
+AC-only assertion as degraded on battery. Doctor validates the selected mode;
+time-dependent schedule, phase, and power-source diagnosis remains owned by the
+dedicated power command.
+
+The configured IANA timezone is policy truth and must not be required to equal
+the macOS host timezone. Convert its wake time to the host's local wall clock
+before inspecting or installing the `pmset repeat` event, and show both times in
+status. Read the macOS system timezone independently of any process `TZ`
+environment variable. A different fixed-offset timezone is valid; reject only a seasonal or
+otherwise changing offset that one fixed repeating event cannot preserve.
+
+Quiet hours remain a workload policy, not a request to sleep. A quiet-hours decision
+may defer a new Loop, Batch, Daily Task Audit repair, Runtime Guardian repair,
+Project Recovery, Opportunity Discovery, or similar autonomous start. It must
+not force the machine to sleep, schedule a wake, terminate an agent, or treat
+system sleep as task cancellation. Existing processes are allowed to freeze and
+resume with the operating system. User-initiated work that arrives while the
+host is awake remains interactive; a sleeping host is not remotely reachable
+through its outbound chat connections.
+
+Keep the implementation deliberately small:
+
+- calculate the configured quiet window from the requested IANA timezone;
+- apply the decision at the existing pre-reservation admission seam;
+- leave deferred work due without consuming a retry or fire anchor;
+- collapse missed recurring intervals instead of replaying every slot after
+  wake and a short reconnect warmup;
+- rely on the existing Telegram polling supervision and Feishu/Lark sleep/network
+  reconnect watchdog when the process resumes.
+
+Runtime code must not mutate `pmset`. The dedicated operator command may install
+or remove only the exact fixed repeating `wake` event after conflict checks; it
+is the sole privileged boundary. Do not add forced sleep, `wakeorpoweron`,
+dynamic or periodic wakes, a root helper, passwordless sudo, screen/HID presence
+emulation, an agent-hibernation protocol, or a durable host-power state machine.
+Telegram retains pending updates according to its provider contract.
+Feishu/Lark long-connection events that occur while the host sleeps are
+best-effort and may be missed; that limitation is intentionally accepted for
+this operating mode.
+
 ## Sensitive Data And Paths
 
 Never hardcode personal paths, usernames, credentials, tokens, or private
@@ -92,6 +147,21 @@ recorded for that WorkOrder. If the source repository or registration cannot be
 verified, retain the evidence and fail closed instead of guessing. Source
 worktrees are never cleanup targets.
 
+An isolated worktree's local `loop/*` branch is part of the same resource. For
+a verified terminal WorkOrder, cleanup records the exact HEAD, detaches the
+worktree, compare-and-deletes that exact local ref, and only then removes the
+worktree. This ordering is restart-safe. If the directory disappeared first,
+the eligible terminal WorkOrder and verified missing registration authorize a
+fresh exact-SHA compare-and-delete of its uniquely named branch; never delete a
+local ref from a name-only sweep.
+
+A crash between `git worktree add` and durable WorkOrder persistence can leave
+an isolated worktree with no registry record. Periodic reconciliation removes
+such an orphan only after the default 72-hour failure-evidence window, after
+proving that no WorkOrder resource path or worker lease references it, and after
+the normal state-owned-path and exact Git-toplevel checks pass. A young,
+referenced, leased, non-directory, or unverifiable path must remain untouched.
+
 ## Logging And Artifacts
 
 Long-running workflows must be diagnosable from persisted logs and artifacts
@@ -117,8 +187,8 @@ The alignment matrix and drift checklist live in `docs/automation-alignment.md`.
 Keep these documents aligned with code and tests when changing:
 
 - Loop Engineering task families: architecture, bug-fix, test-coverage,
-  security-maintenance, harness-auto, opportunity-discovery, PR review, and
-  workspace tasks.
+  security-maintenance, harness-auto, opportunity-discovery,
+  automationGovernanceReview, PR review, and workspace tasks.
 - Autopilot active delegation.
 - Daily Task Audit and auto-repair.
 - Runtime Guardian and fast-heal repair.
@@ -129,6 +199,24 @@ Treat Runtime Guardian readiness failures as transient admission deferrals.
 Do not mark findings handled or start the repository repair cooldown before a
 dispatch is attempted; durable Repair Coordinator `nextAttemptAt` remains the
 authoritative retry clock for an already admitted repair.
+After dispatch, persist the delegated WorkOrder id and ledger task id on each
+claimed queue record. Prefer a current non-terminal record over terminal
+historical duplicates so successful reconciliation cannot leave a fresh repair
+pending or running forever. Keep Runtime Guardian rediscovery keyed to the
+durable task identity; evidence formatting changes must update the active record
+rather than create a replacement on every tick.
+Do not deduplicate independent findings through their shared derived
+`autopilot:<workOrderId>` link. An aggregate repair must retain and terminalize
+every attached queue record from the same authoritative WorkOrder result, and a
+failed aggregate must retry each sibling after its WorkOrder attachment clears.
+If an older release already marked those detached, due siblings `superseded`,
+the normal reconciliation tick restores the newest evidence-bound group; never
+repair this condition by hand-editing `repair_queue.json`. Keep the original
+runtime task id authoritative for rediscovery and admission; `autopilot:` links
+are execution evidence only.
+Reconcile a terminal Runtime Guardian repair WorkOrder on every tick: completion
+terminalizes the queue record as fixed; any other terminal outcome clears the
+stale WorkOrder link and consumes one bounded retry attempt.
 
 Do not add feature-specific side channels that bypass WorkOrder state,
 system-gate artifacts, notification gateway routing, or conflict checks unless
@@ -146,7 +234,13 @@ restart and the next audit does not create a duplicate WorkOrder.
 During service startup, settle durable Loop final summaries before restoring
 supervisor control messages or resuming active delegations. Treat a valid final
 summary as authoritative replay-suppression evidence even when the prior process
-stopped before removing its persisted queue item.
+stopped before removing its persisted queue item. Validate an active delegation
+against the supervisor session named by its durable lease; do not substitute a
+derived WorkOrder worker-session name and falsely fail a live queue consumer.
+Process existence alone is not turn ownership: after the startup grace, the
+leased pane must still expose the shared active-turn or confirmation-gate signal.
+An idle long-lived supervisor is an orphaned dispatch and must release its lease
+for bounded automatic recovery rather than block the project indefinitely.
 Project recovery reconciliation applies the same passing-summary terminalization
 to both scheduled Loop records and Autopilot delegation records; neither source
 should require a second worker solely because its earlier state file remained
@@ -172,6 +266,15 @@ acceptance. Keep these responsibilities separate:
   `dispatching` past the five-minute grace, reconciliation must settle both the
   failed reservation and any leaked active lease; otherwise an idle supervisor
   pane can block that project forever.
+- Diagnose readiness from the newest lifecycle evidence, not any matching text
+  left in pane scrollback. In Codex, either a later `Context … Goal achieved`
+  footer or the current `Worked for <duration>` completion banner supersedes an
+  earlier visible `esc to interrupt` line; a later working marker supersedes
+  that completion again.
+- Treat a final-summary file as intermediate evidence while the owning
+  supervisor queue is still busy. Periodic reconciliation must defer both
+  outcome settlement and abandoned-resource cleanup until that live queue owner
+  finishes; startup recovery remains authoritative after the old owner is gone.
 
 If target-project code, tests, PR body, branch state, or local verification are
 wrong, let the supervisor repair the target project through the configured
@@ -237,6 +340,26 @@ GH_TOKEN="$(gh auth token --user <account>)" gh ...
 This applies to `gh api`, `gh pr`, `gh run`, `gh repo`, and security-alert
 checks, even when the task does not create a PR. Do not rely on the global
 active `gh` account for configured projects.
+
+Repository PR self-healing must remain narrower than general GitHub
+administration. It may approve or rerun an exact head workflow and may enable
+private-fork workflow execution only with write tokens, secrets, and variables
+disabled. Re-read repository permission, PR identity, head SHA, and workflow
+policy before mutation; persist sanitized intent first and outcome second. A
+prose mention of access or permission is not a human boundary: only the closed
+structured boundary-code contract may terminalize an occurrence as
+`manual-review`.
+
+For Loop-created remote refs, keep the source repository setting
+`delete_branch_on_merge` enabled. The runtime fallback reconciler runs at service
+startup and every 30 minutes; it must stay bounded to configured
+`loop/<project-id>/...` prefixes and use the configured account. Do not replace
+it with an unguarded `git push --delete` sweep. Merged PR state is authoritative,
+while a closed unmerged PR needs one of the structured close reasons from its
+terminal supervisor summary. Exact head SHA, protected/default/base/switch-back
+exclusions, live WorkOrder and active-lease ownership, durable intent, and an
+immediate second observation are mandatory before deletion. Remote cleanup does
+not shorten the independent local failure-worktree retention window.
 
 ## Verification And Coverage
 

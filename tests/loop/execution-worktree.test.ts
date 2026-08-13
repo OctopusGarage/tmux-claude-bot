@@ -100,6 +100,222 @@ describe("loop execution worktrees", () => {
     ]);
   });
 
+  it("atomically detaches and removes the exact local Loop branch before its worktree", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = join(stateDir, "source");
+    const worktree = join(stateDir, "loop-worktrees", "hub", "completed-run");
+    const branch = "loop/hub/architecture/completed-run";
+    const sha = "a".repeat(40);
+    mkdirSync(sourceWorktree, { recursive: true });
+    mkdirSync(worktree, { recursive: true });
+    const calls: string[] = [];
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        sourceWorktree,
+        expectedBranch: branch,
+        runGit: (invocation) => {
+          const command = `${invocation.cwd}:${invocation.args.join(" ")}`;
+          calls.push(command);
+          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "branch --show-current") {
+            return { status: 0, stdout: `${branch}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "rev-parse --verify HEAD") {
+            return { status: 0, stdout: `${sha}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return {
+              status: 0,
+              stdout: `worktree ${sourceWorktree}\nbranch refs/heads/dev\n`,
+              stderr: "",
+            };
+          }
+          if (invocation.args.join(" ").startsWith("show-ref ")) {
+            return { status: 0, stdout: `${sha}\n`, stderr: "" };
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      }),
+    ).toBe(true);
+    expect(calls).toEqual([
+      `${sourceWorktree}:rev-parse --show-toplevel`,
+      `${worktree}:rev-parse --show-toplevel`,
+      `${worktree}:branch --show-current`,
+      `${worktree}:rev-parse --verify HEAD`,
+      `${worktree}:switch --detach ${sha}`,
+      `${sourceWorktree}:worktree list --porcelain`,
+      `${sourceWorktree}:show-ref --verify --hash refs/heads/${branch}`,
+      `${sourceWorktree}:update-ref -d refs/heads/${branch} ${sha}`,
+      `${worktree}:worktree remove --force ${worktree}`,
+    ]);
+  });
+
+  it("compare-and-deletes the exact authorized branch after its worktree is already absent", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = join(stateDir, "source");
+    const worktree = join(stateDir, "loop-worktrees", "hub", "completed-run");
+    const branch = "loop/hub/architecture/completed-run";
+    const sha = "b".repeat(40);
+    mkdirSync(sourceWorktree, { recursive: true });
+    const calls: string[] = [];
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        sourceWorktree,
+        expectedBranch: branch,
+        runGit: (invocation) => {
+          const command = `${invocation.cwd}:${invocation.args.join(" ")}`;
+          calls.push(command);
+          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: `${sourceWorktree}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return {
+              status: 0,
+              stdout: `worktree ${sourceWorktree}\nbranch refs/heads/dev\n`,
+              stderr: "",
+            };
+          }
+          if (invocation.args.join(" ").startsWith("show-ref ")) {
+            return { status: 0, stdout: `${sha}\n`, stderr: "" };
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      }),
+    ).toBe(true);
+    expect(calls).toEqual([
+      `${sourceWorktree}:rev-parse --show-toplevel`,
+      `${sourceWorktree}:worktree list --porcelain`,
+      `${sourceWorktree}:worktree list --porcelain`,
+      `${sourceWorktree}:show-ref --verify --hash refs/heads/${branch}`,
+      `${sourceWorktree}:update-ref -d refs/heads/${branch} ${sha}`,
+    ]);
+  });
+
+  it("treats an absent worktree and absent local Loop branch as already clean", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = join(stateDir, "source");
+    const worktree = join(stateDir, "loop-worktrees", "hub", "completed-run");
+    const branch = "loop/hub/architecture/completed-run";
+    mkdirSync(sourceWorktree, { recursive: true });
+    const calls: string[] = [];
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        sourceWorktree,
+        expectedBranch: branch,
+        runGit: (invocation) => {
+          calls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
+          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: `${sourceWorktree}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return {
+              status: 0,
+              stdout: `worktree ${sourceWorktree}\nbranch refs/heads/dev\n`,
+              stderr: "",
+            };
+          }
+          return { status: 1, stdout: "", stderr: "" };
+        },
+      }),
+    ).toBe(true);
+    expect(calls).toEqual([
+      `${sourceWorktree}:rev-parse --show-toplevel`,
+      `${sourceWorktree}:worktree list --porcelain`,
+      `${sourceWorktree}:worktree list --porcelain`,
+      `${sourceWorktree}:show-ref --verify --hash refs/heads/${branch}`,
+    ]);
+  });
+
+  it("finishes cleanup after a crash left a detached terminal worktree", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = join(stateDir, "source");
+    const worktree = join(stateDir, "loop-worktrees", "hub", "completed-run");
+    const branch = "loop/hub/architecture/completed-run";
+    const sha = "c".repeat(40);
+    mkdirSync(sourceWorktree, { recursive: true });
+    mkdirSync(worktree, { recursive: true });
+    const calls: string[] = [];
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        sourceWorktree,
+        expectedBranch: branch,
+        runGit: (invocation) => {
+          const command = `${invocation.cwd}:${invocation.args.join(" ")}`;
+          calls.push(command);
+          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "branch --show-current") {
+            return { status: 0, stdout: "\n", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "rev-parse --verify HEAD") {
+            return { status: 0, stdout: `${sha}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return {
+              status: 0,
+              stdout: `worktree ${sourceWorktree}\nbranch refs/heads/dev\n`,
+              stderr: "",
+            };
+          }
+          if (invocation.args.join(" ").startsWith("show-ref ")) {
+            return { status: 1, stdout: "", stderr: "" };
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      }),
+    ).toBe(true);
+    expect(calls).toEqual([
+      `${sourceWorktree}:rev-parse --show-toplevel`,
+      `${worktree}:rev-parse --show-toplevel`,
+      `${worktree}:branch --show-current`,
+      `${worktree}:rev-parse --verify HEAD`,
+      `${sourceWorktree}:worktree list --porcelain`,
+      `${sourceWorktree}:show-ref --verify --hash refs/heads/${branch}`,
+      `${worktree}:worktree remove --force ${worktree}`,
+    ]);
+  });
+
+  it("fails closed before removal when the worktree is on a different branch", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = join(stateDir, "source");
+    const worktree = join(stateDir, "loop-worktrees", "hub", "failed-run");
+    mkdirSync(sourceWorktree, { recursive: true });
+    mkdirSync(worktree, { recursive: true });
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        sourceWorktree,
+        expectedBranch: "loop/hub/architecture/failed-run",
+        runGit: (invocation) => {
+          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "branch --show-current") {
+            return { status: 0, stdout: "dev\n", stderr: "" };
+          }
+          throw new Error("branch mismatch must block destructive commands");
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("refuses source and outside paths before invoking destructive git commands", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
     process.env.TCB_STATE_DIR = stateDir;

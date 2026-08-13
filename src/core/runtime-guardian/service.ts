@@ -5,6 +5,11 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
+import {
+  reconcileLoopSupervisorWorkOrders,
+  runGitCommand,
+  runShellCommand,
+} from "../loop/service.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildRuntimeGuardianRepairPrompt } from "../prompts/repair-prompts.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
@@ -22,6 +27,8 @@ import {
 const log = createLogger("runtime-guardian");
 
 export { buildRuntimeGuardianRepairPrompt, discoverRuntimeGuardianFindings };
+
+type LoopSupervisorReconcileInput = Parameters<typeof reconcileLoopSupervisorWorkOrders>[0];
 
 export type RuntimeGuardianTickResult =
   | { fired: false; reason: "disabled" | "no-findings" | "cooldown" }
@@ -235,6 +242,36 @@ export async function runRuntimeGuardianTick(input: {
   }
 }
 
+export async function reconcileRuntimeGuardianBeforeDiscovery(
+  input: Pick<
+    LoopSupervisorReconcileInput,
+    | "configFile"
+    | "now"
+    | "runCommand"
+    | "runGit"
+    | "cleanupCompletedWorkerSession"
+    | "workerSessionExists"
+  > & {
+    reconcileAutopilot?: typeof reconcileAutopilotDelegatedTasks;
+    reconcileLoop?: typeof reconcileLoopSupervisorWorkOrders;
+  },
+): Promise<void> {
+  const cleanupWorkerSession = input.cleanupCompletedWorkerSession ?? (async () => undefined);
+  await (input.reconcileAutopilot ?? reconcileAutopilotDelegatedTasks)({
+    cleanupWorkerSession,
+  });
+  await (input.reconcileLoop ?? reconcileLoopSupervisorWorkOrders)({
+    configFile: input.configFile,
+    now: input.now,
+    runCommand: input.runCommand,
+    ...(input.runGit === undefined ? {} : { runGit: input.runGit }),
+    cleanupCompletedWorkerSession: cleanupWorkerSession,
+    ...(input.workerSessionExists === undefined
+      ? {}
+      : { workerSessionExists: input.workerSessionExists }),
+  });
+}
+
 function runtimeFindingKey(finding: RuntimeGuardianFinding): string {
   return `${finding.kind}|${finding.projectId}|${finding.runId}`;
 }
@@ -299,6 +336,7 @@ export async function dispatchRuntimeGuardianRepair(
   setPathForSession(session, request.repoPath);
   const now = Date.now();
   const coordinator = new RepairCoordinator();
+  const leaseId = `runtime-guardian:${now}`;
   let delegated: Awaited<ReturnType<typeof startActiveDelegatedTask>> | undefined;
   const admission = await admitRecoveryFindings({
     findings: request.findings.map((finding) => ({
@@ -314,7 +352,7 @@ export async function dispatchRuntimeGuardianRepair(
     })),
     coordinator,
     now,
-    leaseId: `runtime-guardian:${now}`,
+    leaseId,
     dispatch: async () => {
       delegated = await startActiveDelegatedTask(deps, {
         session,
@@ -337,6 +375,17 @@ export async function dispatchRuntimeGuardianRepair(
   ) {
     return { status: "blocked", detail: admission.detail };
   }
+  for (const record of coordinator
+    .list()
+    .filter(
+      (record) =>
+        record.source === "runtime-guardian" &&
+        record.status === "running" &&
+        record.leaseId === leaseId,
+    )) {
+    coordinator.attachWorkOrder(record.id, delegated.runId, now);
+    coordinator.linkTaskIds(record.id, [`autopilot:${delegated.runId}`], now);
+  }
   return {
     status: "queued",
     detail: admission.detail,
@@ -350,28 +399,43 @@ function runtimeGuardianRepairWorktreeIsolation(
   return config.mode === "fast-heal" ? "source" : "isolated";
 }
 
-export function startRuntimeGuardian(deps: HandlerDeps): () => void {
+export function startRuntimeGuardian(
+  deps: HandlerDeps,
+  options: {
+    now?: () => number;
+    setInterval?: typeof setInterval;
+    clearInterval?: typeof clearInterval;
+    runTick?: typeof runRuntimeGuardianTick;
+    reconcileBeforeDiscovery?: typeof reconcileRuntimeGuardianBeforeDiscovery;
+  } = {},
+): () => void {
   const config = deps.config.runtimeGuardian;
   if (!config.enabled || config.tickMs === 0) {
     log.info("runtime guardian disabled");
     return () => {};
   }
+  const now = options.now ?? Date.now;
   const tick = (): void => {
-    void runRuntimeGuardianTick({
-      now: Date.now(),
+    void (options.runTick ?? runRuntimeGuardianTick)({
+      now: now(),
       config,
       dispatchRepair: (request) => dispatchRuntimeGuardianRepair(deps, request),
       reconcile: async () => {
-        await reconcileAutopilotDelegatedTasks({
-          cleanupWorkerSession: async (session) => {
+        await (options.reconcileBeforeDiscovery ?? reconcileRuntimeGuardianBeforeDiscovery)({
+          configFile: deps.config.loopEngineering.configFile,
+          now: now(),
+          runCommand: runShellCommand,
+          runGit: runGitCommand,
+          cleanupCompletedWorkerSession: async (session) => {
             await deps.bridge.killSession(session);
             cleanupWorkerSessionRecords(session);
           },
+          workerSessionExists: (session) => deps.bridge.hasSession(session),
         });
       },
     }).catch((err) => log.warn("runtime guardian tick failed", { err }));
   };
-  const timer = setInterval(tick, config.tickMs);
+  const timer = (options.setInterval ?? setInterval)(tick, config.tickMs);
   (timer as { unref?: () => void }).unref?.();
   void tick();
   log.info("runtime guardian started", {
@@ -384,7 +448,7 @@ export function startRuntimeGuardian(deps: HandlerDeps): () => void {
       repairBranch: config.repairBranch,
     },
   });
-  return () => clearInterval(timer);
+  return () => (options.clearInterval ?? clearInterval)(timer);
 }
 
 function runtimeGuardianRepoPath(config: AppConfig["runtimeGuardian"]): string {

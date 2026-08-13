@@ -172,6 +172,43 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
+  it("does not recover final-summary evidence while its supervisor prompt is still active", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = workOrder(stateDir, projectDir);
+    const runDir = writeUnfinishedRun(stateDir, order);
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: order.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_000,
+        },
+      ],
+    });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 2_000,
+      runCommand: () => {
+        throw new Error("active supervisor work must remain authoritative");
+      },
+      supervisorSessionBusy: () => true,
+    });
+
+    expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "in-flight"',
+    );
+    expect(listLoopReports()).toEqual([]);
+  });
+
   it("recovers a dispatch-failed work order when the supervisor final summary arrives late", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;

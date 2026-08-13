@@ -337,12 +337,22 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
     info("prompt translation disabled (PROMPT_TRANSLATE_MODE off)");
   }
 
-  // 7. keep-awake (macOS only). Opt-in flag + a live probe of the bot's caffeinate
-  // assertion, so this reports whether it's ACTUALLY asserting now, not just
-  // whether the flag is set.
+  // 7. Host power policy (macOS only). Scheduled mode has time-dependent
+  // assertion and wake verification, so its detailed diagnosis belongs to
+  // `tcb power status`; Doctor only validates the configured mode here.
   if (process.platform === "darwin") {
-    const keepAwake = envMap?.get("TCB_KEEP_AWAKE");
-    if (keepAwake === "1" || keepAwake === "true") {
+    const explicitMode = envMap?.get("TCB_KEEP_AWAKE_MODE");
+    const legacyKeepAwake = envMap?.get("TCB_KEEP_AWAKE");
+    const hostPowerMode =
+      explicitMode ?? (legacyKeepAwake === "1" || legacyKeepAwake === "true" ? "always" : "off");
+    if (hostPowerMode !== "off" && hostPowerMode !== "always" && hostPowerMode !== "scheduled") {
+      bad(
+        `host power mode is invalid (${hostPowerMode})`,
+        "run: tcb config set TCB_KEEP_AWAKE_MODE off|always|scheduled",
+      );
+    } else if (hostPowerMode === "scheduled") {
+      info("scheduled host power policy configured — run: tcb power status");
+    } else if (hostPowerMode === "always") {
       if (await probes.caffeinateActive()) {
         ok("keep-awake on and active (caffeinate -s asserting on AC power)");
       } else {
@@ -351,10 +361,8 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
         );
       }
 
-      // caffeinate -s does NOT cover a closed lid; only `pmset disablesleep`
-      // does. Surface the real lid + disablesleep state so closing the lid
-      // without disablesleep — which WILL sleep the Mac and drop the bot — is a
-      // hard fail rather than a silent surprise.
+      // Surface the real lid state without prescribing a permanent clamshell
+      // override; the supported lower-energy policy is scheduled natural sleep.
       const closed = await probes.clamshellClosed();
       if (closed !== null) {
         if (await probes.sleepDisabled()) {
@@ -362,12 +370,10 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
         } else if (closed) {
           bad(
             "lid is CLOSED and clamshell sleep is not disabled — the Mac will sleep and drop the bot",
-            "run: sudo pmset -a disablesleep 1   (or open the lid)",
+            "open the lid, or use: tcb config set TCB_KEEP_AWAKE_MODE scheduled",
           );
         } else {
-          info(
-            "lid open, but clamshell sleep is not disabled — closing the lid will sleep the Mac (sudo pmset -a disablesleep 1)",
-          );
+          info("lid open; closing the lid will let macOS sleep normally");
         }
       }
     } else {

@@ -116,6 +116,46 @@ describe("loadScriptConfig without args", () => {
 });
 
 describe("loadConfig (real schema)", () => {
+  it("defaults host power to off with the Singapore quiet window", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).hostPower).toEqual({
+      mode: "off",
+      timezone: "Asia/Singapore",
+      quietStart: "02:00",
+      quietEnd: "09:30",
+    });
+  });
+
+  it("maps legacy keep-awake values when the new mode is absent", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_KEEP_AWAKE: "1" }).hostPower.mode).toBe(
+      "always",
+    );
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_KEEP_AWAKE: "0" }).hostPower.mode).toBe("off");
+  });
+
+  it("parses strict scheduled host-power configuration", () => {
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        TCB_KEEP_AWAKE_MODE: "scheduled",
+        TCB_QUIET_HOURS_TIMEZONE: "Asia/Singapore",
+        TCB_QUIET_HOURS_START: "02:00",
+        TCB_QUIET_HOURS_END: "09:30",
+      }).hostPower,
+    ).toEqual({
+      mode: "scheduled",
+      timezone: "Asia/Singapore",
+      quietStart: "02:00",
+      quietEnd: "09:30",
+    });
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_KEEP_AWAKE_MODE: "sometimes" }),
+    ).toThrow();
+    expect(() => loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_QUIET_HOURS_START: "2am" })).toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_QUIET_HOURS_TIMEZONE: "Mars/Olympus" }),
+    ).toThrow();
+  });
+
   it("keeps resource guardian disabled in observe mode by default", () => {
     expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).resourceGuardian).toEqual({
       enabled: false,

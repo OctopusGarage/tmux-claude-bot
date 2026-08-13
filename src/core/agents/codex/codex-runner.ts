@@ -1,7 +1,7 @@
 import type { OutputProcessor } from "../../session/output.js";
 import type { TmuxBridge } from "../../session/tmux.js";
 import type { ConfigResolver } from "../agent-config-resolver.js";
-import { AgentRunnerBase } from "../runner-base.js";
+import { AgentRunnerBase, paneHasActiveTurn } from "../runner-base.js";
 
 export function paneLooksReady(pane: string): boolean {
   // Positive marker (codex's interactive composer `›` has rendered) AND no
@@ -10,7 +10,7 @@ export function paneLooksReady(pane: string): boolean {
   // gate and avoids declaring ready before codex can accept input (which would
   // drop the first message typed in). The trust gate is handled earlier in the
   // wait loop, so its `›` selector never reaches here as a false "ready".
-  return pane.includes("›") && !pane.includes("esc to interrupt");
+  return pane.includes("›") && !paneHasActiveTurn(pane);
 }
 
 export type CodexRunnerOptions = {

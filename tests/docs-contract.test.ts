@@ -294,6 +294,37 @@ describe("docs contract", () => {
     ]) {
       expect(llms, `missing ${doc} in llms.txt`).toContain(doc);
     }
+    expect(llms).toContain("Resource Guardian");
+    expect(llms).toContain("Runtime Guardian");
+    expect(llms).toMatch(/Automation capability matrix[^\n]*MCP/);
+  });
+
+  it("keeps the documentation map complete for Guardian and MCP surfaces", () => {
+    const map = read("docs/README.md");
+
+    expect(map).toMatch(/intelligent-automation\.md[^\n]*Resource Guardian/);
+    expect(map).toMatch(/intelligent-automation\.md[^\n]*Runtime Guardian/);
+    expect(map).toMatch(/automation-capability-matrix\.md[^\n]*MCP/);
+  });
+
+  it("documents one canonical Runtime Overview across human and AI entry points", () => {
+    const usage = read("docs/agents/usage-guide.md");
+    const alignment = read("docs/automation-alignment.md");
+    const matrix = read("docs/automation-capability-matrix.md");
+    const skill = read("skills/tcb-home-operator/SKILL.md");
+    const llms = read("llms.txt");
+
+    for (const doc of [usage, alignment, matrix, llms]) {
+      expect(doc).toContain("Runtime Overview");
+    }
+    for (const doc of [usage, skill]) {
+      expect(doc).toContain("tcb.observer.status");
+      expect(doc).toContain("tcb dashboard --json");
+    }
+    expect(alignment).toContain("same neutral snapshot");
+    expect(alignment).toContain("must not inspect private global MCP client configuration");
+    expect(alignment).toContain("diagnostic only");
+    expect(matrix).toContain("no overview surface mutates state");
   });
 
   it("keeps maintained docs in English", () => {

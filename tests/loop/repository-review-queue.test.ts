@@ -304,4 +304,75 @@ describe("repository review queue", () => {
       lastError: "migration decision required",
     });
   });
+
+  it("reopens a false terminal occurrence with a fresh bounded retry epoch", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "false-manual" }));
+    store.lease(created.id, "worker", 100, 50);
+    store.manualReview(created.id, "worker", 110, "prose-only permission claim");
+
+    expect(
+      store.reopenTerminal(created.id, {
+        now: 200,
+        reason: "open PR has no structured human boundary",
+      }),
+    ).toBe(true);
+    expect(store.listReady(200)).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        status: "retry-wait",
+        attempt: 0,
+        retryEpoch: 1,
+        migration: {
+          previousStatus: "manual-review",
+          previousAttempt: 1,
+          reason: "open PR has no structured human boundary",
+          migratedAt: 200,
+        },
+      }),
+    ]);
+    expect(store.reopenTerminal(created.id, { now: 300, reason: "must not migrate twice" })).toBe(
+      false,
+    );
+  });
+
+  it("does not reopen non-terminal, completed, already migrated, or superseded occurrences", () => {
+    const store = queue();
+    const pending = store.enqueue(item({ repositoryId: "pending" }));
+    const completed = store.enqueue(item({ repositoryId: "completed", scheduledAt: 101 }));
+    store.lease(completed.id, "worker", 101, 50);
+    store.complete(completed.id, "worker", 102, "completed");
+    const old = store.enqueue(item({ repositoryId: "same", scheduledAt: 102 }));
+    store.lease(old.id, "worker", 102, 50);
+    store.manualReview(old.id, "worker", 103, "false boundary");
+    store.enqueue(item({ repositoryId: "same", scheduledAt: 103 }));
+
+    expect(store.reopenTerminal(pending.id, { now: 200, reason: "no" })).toBe(false);
+    expect(store.reopenTerminal(completed.id, { now: 200, reason: "no" })).toBe(false);
+    expect(store.reopenTerminal(old.id, { now: 200, reason: "superseded" })).toBe(false);
+  });
+
+  it("settles a false terminal occurrence when every referenced PR is already terminal", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "already-merged" }));
+    store.lease(created.id, "worker", 100, 50);
+    store.manualReview(created.id, "worker", 110, "prose-only permission claim");
+
+    expect(
+      store.completeRecoveredTerminal(created.id, {
+        now: 200,
+        reason: "referenced PR is merged",
+      }),
+    ).toBe(true);
+    expect(store.list({ all: true }).find((entry) => entry.id === created.id)).toMatchObject({
+      status: "completed",
+      lastError: "referenced PR is merged",
+      migration: {
+        previousStatus: "manual-review",
+        previousAttempt: 1,
+        reason: "referenced PR is merged",
+        migratedAt: 200,
+      },
+    });
+  });
 });

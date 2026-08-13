@@ -29,6 +29,7 @@ import { writeLoopSupervisorWorkOrderState } from "./supervisor-state.js";
 import {
   loopSupervisorControlRestore,
   restoredLoopSupervisorMessage,
+  shouldDiscardRestoredLoopSupervisorMessage,
 } from "./supervisor-work-restore.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
@@ -447,7 +448,11 @@ export function restoreLoopControlQueue(deps: ControlRestoreQueueDeps): number {
     loadPersisted: () => deps.queue.loadPersisted(),
     enqueue: (message) => deps.queue.enqueue(message),
     keepPersistedCarryover: (messages) => deps.queue.keepPersistedCarryover(messages),
-    restore: (persisted) => restoredLoopSupervisorMessage(persisted),
+    restore: (persisted) => {
+      const message = restoredLoopSupervisorMessage(persisted);
+      if (message !== null) return message;
+      return shouldDiscardRestoredLoopSupervisorMessage(persisted) ? "discard" : null;
+    },
   });
   return restored.restored;
 }

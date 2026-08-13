@@ -12,6 +12,22 @@ export type LoopBacklogItem = {
   closedAt?: number;
 };
 
+export type LoopBacklogQuery = {
+  limit?: number;
+  projectId?: string;
+  status?: LoopBacklogItem["status"] | "all";
+};
+
+export type LoopBacklogQueryResult = {
+  items: LoopBacklogItem[];
+  total: number;
+  limit: number;
+  truncated: boolean;
+};
+
+const DEFAULT_BACKLOG_LIMIT = 20;
+const MAX_BACKLOG_LIMIT = 100;
+
 function itemId(projectId: string, text: string): string {
   const digest = createHash("sha256").update(`${projectId}\0${text}`).digest("hex").slice(0, 12);
   return `${projectId}-${digest}`;
@@ -65,6 +81,29 @@ export class LoopBacklogStore {
       .map(([, item]) => item)
       .filter((item) => opts.all === true || item.status === "open")
       .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+  }
+
+  query(query: LoopBacklogQuery = {}): LoopBacklogQueryResult {
+    const requestedLimit = query.limit ?? DEFAULT_BACKLOG_LIMIT;
+    const limit = Math.min(
+      MAX_BACKLOG_LIMIT,
+      Math.max(
+        1,
+        Math.floor(Number.isFinite(requestedLimit) ? requestedLimit : DEFAULT_BACKLOG_LIMIT),
+      ),
+    );
+    const status = query.status ?? "open";
+    const items = this.list({ all: true }).filter(
+      (item) =>
+        (status === "all" || item.status === status) &&
+        (query.projectId === undefined || item.projectId === query.projectId),
+    );
+    return {
+      items: items.slice(0, limit),
+      total: items.length,
+      limit,
+      truncated: items.length > limit,
+    };
   }
 
   close(id: string, now: number): boolean {

@@ -43,6 +43,15 @@ describe("Loop WorkOrder settlement", () => {
     ).toBe("loop:project:security-maintenance:123");
   });
 
+  it("keeps active delegated tasks out of the scheduled architecture job key", () => {
+    const delegated = workOrder({
+      task: { kind: "active-delegated-task" } as NonNullable<LoopWorkOrder["task"]>,
+    });
+
+    expect(loopWorkOrderJobKey(delegated)).toBe("project:active-delegated-task");
+    expect(loopLedgerTaskId(delegated)).toBe("loop:project:active-delegated-task:123");
+  });
+
   it("uses workspace job keys for recovered workspace task-family WorkOrders", () => {
     const workspaceWorkOrder = (task: NonNullable<LoopWorkOrder["task"]>): LoopWorkOrder =>
       workOrder({

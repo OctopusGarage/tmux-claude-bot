@@ -140,16 +140,43 @@ recent input, `a` attach into the real session pane, `q` quit. Press `?` for all
 
 ---
 
-## 5. Keeping the Mac awake
+## 5. Host power and scheduled natural sleep
 
-A sleeping Mac drops the bot off your phone (nothing can wake an outbound long-poll).
-Opt in during setup (or `tcb setup --reconfigure`): while the bot runs it holds a
-`caffeinate -s` assertion, which prevents system sleep only while the Mac is on AC
-power. It does **not** keep the Mac awake on battery power and does **not** cover a
-closed lid — for that also run `sudo pmset -a disablesleep 1`. `tcb doctor` reports
-whether keep-awake is on and active, **and** reads the actual lid state — if the lid is
-closed while `pmset disablesleep` is off (so the Mac will sleep and drop the bot) it
-fails the check with the fix command.
+Host power has three explicit modes. `off` leaves idle sleep entirely to macOS.
+`always` retains the legacy AC-only `caffeinate -s` assertion. `scheduled` keeps the
+service reachable outside quiet hours, then releases that assertion after active work
+drains so macOS may sleep naturally. It never forces sleep and never disables normal
+battery, lid, display, or idle-sleep policy.
+
+The default scheduled window uses `Asia/Singapore`: quiet begins at 02:00, macOS gets
+one fixed daily `wake` event at 09:15, and autonomous background admission resumes at
+09:30 after a reconnect warmup. Install it explicitly:
+
+```bash
+tcb config set TCB_KEEP_AWAKE_MODE scheduled
+tcb power schedule install
+tcb service restart
+tcb power status
+```
+
+The install command is the only privileged boundary. It inspects the existing repeating
+schedule, converts the policy wake into the macOS host clock, refuses conflicts, invokes
+`sudo pmset` only for that exact daily wake, and re-reads the schedule before reporting
+success. The configured IANA timezone remains authoritative: for example, 09:15
+Asia/Singapore is installed as 10:15 on an Asia/Tokyo host. The runtime itself only reads
+the macOS system timezone; a shell or service `TZ` environment variable does not redefine
+the host clock. It otherwise only reads `pmset`. If verification later becomes missing or conflicting, the bot fails awake and
+notifies the operator instead of silently entering an unreachable sleep. A fixed daily
+event is refused only when the policy-to-host offset changes seasonally and therefore
+cannot be represented faithfully by one repeating wall-clock time. Remove only the
+matching managed event with `tcb power schedule remove`.
+
+`caffeinate -s` works only on AC power; `tcb power status` reports battery operation as
+degraded when keep-awake is expected. A closed lid still follows normal macOS behavior.
+The fixed event is `wake`, not `wakeorpoweron`, so it does not power on a shut-down Mac.
+Telegram may deliver provider-retained updates after wake. Feishu/Lark events during
+sleep are best-effort and may be missed; that trade-off is intentional in scheduled
+mode.
 
 ---
 
@@ -171,9 +198,9 @@ For the complete maintained CLI command and option surface, see
 | `tcb run` | run the bot in the foreground (what the service runs) |
 | `tcb setup` / `tcb setup:lark` | guided setup wizard / add Feishu via QR |
 | `tcb doctor` | health checks against the install |
-| `tcb config list\|get\|set` | inspect personal `.env` configuration with secrets redacted, and edit allowlisted non-secret keys |
+| `tcb config list\|get\|set` | inspect personal `.env` configuration with secrets redacted, and edit allowlisted, domain-validated non-secret keys |
 | `tcb automation status\|pause\|resume` | inspect or toggle high-cost background automation: Loop Engineering, Daily Task Audit, Runtime Guardian, and Batch Scheduler |
-| `tcb dashboard` | global status snapshot of all sessions (`--json` for raw) |
+| `tcb dashboard` | unified Runtime Overview plus Project Sessions (`--json`, `--problems`, `--project <id>`, `--limit <1-100>`) |
 | `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
 | `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
 | `tcb loop validate\|tick\|run <file>` / `tcb loop targets\|reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, pause/resume configured targets, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |
@@ -184,6 +211,12 @@ For the complete maintained CLI command and option surface, see
 | `tcb logs` | query structured logs; use `--since 30m`, `--component <prefix>`, `--run-id <id>`, `--grep <text>`, and `-n <count>` to keep current-run diagnostics quiet |
 | `tcb install` | provision the managed service into the stable dir |
 | `tcb service <install\|uninstall\|status\|pause\|resume\|restart\|logs>` | manage the auto-restarting service |
+
+Dashboard filters apply to both text and JSON. `--project` narrows Project
+Sessions and project-owned attention/work/outcomes while retaining global health
+evidence; `--problems` suppresses nonproblem collections (the stable JSON schema
+still retains its required scalar/interface fields); `--limit` is enforced before
+bounded sections are serialized.
 
 ### Resource Guardian rollout
 
@@ -242,8 +275,11 @@ tcb notify --channel lark --title "Radar ready" --body "Daily report attached" \
 
 Use `tcb config list --json` before editing `.env` by hand. It redacts tokens
 and app secrets, and `tcb config set <key> <value>` only accepts allowlisted
-non-secret keys. Use `tcb setup --reconfigure` or `tcb setup:lark` for Telegram
-tokens, Feishu/Lark app credentials, and owner identifiers.
+non-secret keys. Generic writes validate booleans, non-negative timing values,
+UI languages, agent choices, and translation modes before changing the durable
+configuration; string values such as paths and commands are preserved exactly.
+Use `tcb setup --reconfigure` or `tcb setup:lark` for Telegram tokens,
+Feishu/Lark app credentials, and owner identifiers.
 
 When Loop targets use `runner.kind: agent-supervised`, enable their shared
 supervisor through the command surface:
@@ -778,8 +814,9 @@ Useful commands:
 - `tcb loop targets disable <file> <project|workspace|repo> <id> [--json]`
 - `tcb loop targets enable <file> <project|workspace|repo> <id> [--json]`
 - `tcb loop run <file> <projectId> [--json]` for command-backed/manual runs
-- `tcb loop reports list [--json]` for command-backed reports and supervisor reports
-- `tcb loop backlog list [--all] [--json]`
+- `tcb loop reports list [--project <id>] [--status <passed|failed>] [--limit <1-100>] [--json]`
+  for a bounded command-backed and supervisor report history
+- `tcb loop backlog list [--project <id>] [--status <open|closed|all>] [--limit <1-100>] [--json]`
 - `tcb loop skills refresh <file> [--write] [--json]`
 - `tcb capabilities status --task architecture [--json]` to see the external
   skills/tools a task family expects
@@ -916,7 +953,8 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
   (multiple cause a Telegram 409); check network/proxy reachability.
 - **"No session" / can't talk to a project** → `/resume` if it was accidentally
   exited, `/start` for a new agent session, or switch/open the project.
-- **Mac keeps sleeping** → enable keep-awake (§5); lid-closed needs `pmset disablesleep`.
+- **Mac sleeps at the wrong time** → inspect mode, phase, power source, and the
+  fixed wake with `tcb power status`; see §5 for the scheduled setup sequence.
 - **TUI says "can't reach the control socket"** → the bot isn't running; start the
   service.
 - **Machine warm / slow** → `/sysload` or `tcb sysload` to spot a runaway process.

@@ -114,8 +114,8 @@ describe("project automation conflicts", () => {
     });
   });
 
-  it("does not reserve a work order after its final summary is already present", () => {
-    const summaryDir = join(stateDir, "loop-runs", "completed-run");
+  it("keeps a work order reserved while its final summary awaits terminal settlement", () => {
+    const summaryDir = join(stateDir, "loop-runs", "tmux-claude-bot", "completed-run");
     const finalSummaryPath = join(summaryDir, "supervisor-final-summary.json");
     writeLoopSupervisorWorkOrderState({
       workOrder: {
@@ -158,6 +158,9 @@ describe("project automation conflicts", () => {
       }),
     );
 
-    expect(findProjectAutomationConflict(sourceDir)).toBeNull();
+    expect(findProjectAutomationConflict(sourceDir)).toMatchObject({
+      runId: "completed-run",
+      status: "in-flight",
+    });
   });
 });

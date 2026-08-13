@@ -139,6 +139,16 @@ export class RepairCoordinator {
     let existing = this.list().find(
       (record) => record.dedupeKey === dedupeKey && !isTerminal(record.status),
     );
+    if (existing === undefined && input.source === "runtime-guardian") {
+      existing = this.list().find(
+        (record) =>
+          record.source === "runtime-guardian" &&
+          record.projectId === input.projectId &&
+          record.taskFamily === input.taskFamily &&
+          record.linkedTaskIds.includes(input.taskId) &&
+          !isTerminal(record.status),
+      );
+    }
     if (existing === undefined && input.source === "project-recovery") {
       const stale = this.list().find(
         (record) =>
@@ -356,13 +366,20 @@ export class RepairCoordinator {
     return updated;
   }
 
-  releaseForRetry(id: string, now: number): RepairQueueRecord | undefined {
+  releaseForRetry(
+    id: string,
+    now: number,
+    options: { detachWorkOrder?: boolean } = {},
+  ): RepairQueueRecord | undefined {
     const record = this.store.get(id);
     if (record === undefined) return undefined;
     const attempt = record.attempt + 1;
     const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
+    const retryBase = options.detachWorkOrder
+      ? (({ workOrderId: _workOrderId, ...withoutWorkOrder }) => withoutWorkOrder)(withoutLease)
+      : withoutLease;
     const updated: RepairQueueRecord = {
-      ...withoutLease,
+      ...retryBase,
       status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
       attempt,
       nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
@@ -397,9 +414,21 @@ export class RepairCoordinator {
       }
     }
     const superseded = new Set<string>();
-    for (const records of byTaskId.values()) {
+    for (const [taskId, records] of byTaskId) {
       const unique = [...new Map(records.map((record) => [record.id, record])).values()];
       if (unique.length < 2) continue;
+      const derivedWorkOrderId = taskId.startsWith("autopilot:")
+        ? taskId.slice("autopilot:".length)
+        : undefined;
+      if (
+        derivedWorkOrderId !== undefined &&
+        unique.every(
+          (record) =>
+            record.workOrderId === derivedWorkOrderId ||
+            record.linkedTaskIds.some((linkedTaskId) => linkedTaskId !== taskId),
+        )
+      )
+        continue;
       unique.sort(compareDuplicatePriority);
       const winner = unique[0];
       if (winner === undefined) continue;

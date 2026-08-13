@@ -1148,6 +1148,10 @@ prReview:
     );
     expect(prompt).toContain("merge the PR with GitHub CLI using --rebase");
     expect(prompt).toContain("required reviews are missing");
+    expect(prompt).toContain("boundary code");
+    expect(prompt).toContain("organization-policy");
+    expect(prompt).toContain("action_required");
+    expect(prompt).toContain("system-repairable");
     expect(prompt).toContain("state=MERGED");
     expect(prompt).toContain("stop waiting on mergeability");
     expect(prompt).toContain("Draft is a review state, not an exclusion");
@@ -2395,6 +2399,15 @@ prReview:
     expect(prompt).toContain("Fix only the listed validation failures");
     expect(prompt).toContain("do not start a new task, branch, or PR");
     expect(prompt).toContain("Keep the original WorkOrder id, branch, PR, and final marker");
+    expect(prompt).toContain(
+      "Do not stash, restore, switch, checkout, reset, clean, commit, or otherwise modify the original source worktree",
+    );
+    expect(prompt).toContain(
+      "Treat source-worktree dirtiness as concurrent external owner activity",
+    );
+    expect(prompt).toContain(
+      "Retain every previously reported verified commit in the revised commits list",
+    );
     expect(prompt).toContain(finalMarkerForWorkOrder("1752643800000-datavibe"));
   });
 

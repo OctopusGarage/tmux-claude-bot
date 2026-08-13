@@ -1403,6 +1403,8 @@ export function buildLoopSupervisorRevisionPrompt(input: {
     "- Fix only the listed validation failures; do not start a new task, branch, or PR.",
     "- Re-run the minimum verification needed for the repaired validation failure.",
     "- Keep the original WorkOrder id, branch, PR, and final marker.",
+    "- Treat source-worktree dirtiness as concurrent external owner activity. Do not stash, restore, switch, checkout, reset, clean, commit, or otherwise modify the original source worktree; all repair mutations must remain inside the WorkOrder projectPath. Re-inspect the source worktree and report blocked if it remains dirty so the system can retry after its owner finishes.",
+    "- Retain every previously reported verified commit in the revised commits list, and append any new verified commits; do not replace prior commit evidence with an empty list merely because this revision created no commit.",
     "- If you cannot safely repair the issue, report blocked with a concrete reason.",
     "- Do not call model-provider APIs.",
     "- Do not add model SDKs, model API keys, or direct model HTTP integrations.",

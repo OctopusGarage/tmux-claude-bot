@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": ["src/scripts/*.ts"],
   "project": ["src/**/*.{ts,tsx}"],
-  "ignoreBinaries": ["caffeinate", "shellcheck"],
+  "ignoreBinaries": ["pmset", "shellcheck"],
   "ignoreExportsUsedInFile": true,
   "vitest": {
     "config": ["vitest.config.ts"],
