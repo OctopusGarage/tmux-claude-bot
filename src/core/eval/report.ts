@@ -195,7 +195,7 @@ function isNonBlockingReadOnlyPreflightObservation(
   }
   if (!/(opportunity[- ]discovery|discovery)/.test(text)) return false;
 
-  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText).join("\n");
+  const passedGateText = gates.map(passedGateEvidenceText).filter(Boolean).join("\n");
   return /(opportunity|report|summary|json)/.test(passedGateText);
 }
 
@@ -298,6 +298,11 @@ function isPassedStructuredGate(
 
 function gateText(gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>): string {
   return [gate.name, gate.command, gate.evidence].filter(Boolean).join("\n").toLowerCase();
+}
+
+function passedGateEvidenceText(gate: LoopSupervisorReviewGateDeterministicGate): string {
+  if (typeof gate === "string") return gate.toLowerCase();
+  return gate.result === "passed" ? gateText(gate) : "";
 }
 
 function isEnvironmentRepairEvidence(text: string): boolean {
