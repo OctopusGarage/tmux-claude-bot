@@ -646,6 +646,7 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
 
 function finalSummaryContractLines(): string[] {
   return [
+    "- A verified no-delta result is successful completion even when commit and PR policy are enabled. Do not create an empty commit or no-op PR; report commits: [] and record the clean worktree plus passing verification as deterministic evidence.",
     "- The JSON file must contain fields: status, projectId, actionsTaken, delegatedTasks, finalVerification, reviewGate, commits, followUps. delegatedTasks must be an array of strings, or objects with only projectId and status.",
     "- The JSON file may contain learning with fields: regressionCandidates, capabilityEvalCandidates, monitorOrTraceCandidates, documentationCandidates. learning must classify follow-up candidates without making capability evals blocking acceptance gates.",
     "- If the WorkOrder has planning, include planReview with fields: checklistCompleted, targetScoreMet, stopConditionReached, overOptimizationAvoided, verificationCompleted, remainingRisks.",
@@ -1043,6 +1044,13 @@ function syncRepositoryCommands(
       gitInWorktree(path, `switch ${executionBranch}`),
     ].join(", then ");
   }
+  if (isolation?.preparedBy === "system-git-worktree") {
+    return [
+      `${gitInWorktree(path, "status --short")} must be clean`,
+      gitInWorktree(path, `fetch origin ${branch}`),
+      gitInWorktree(path, `switch --detach origin/${branch}`),
+    ].join(", then ");
+  }
   return [
     `${gitInWorktree(path, "status --short")} must be clean`,
     gitInWorktree(path, `fetch origin ${branch}`),
@@ -1395,6 +1403,8 @@ export function buildLoopSupervisorRevisionPrompt(input: {
     "- Fix only the listed validation failures; do not start a new task, branch, or PR.",
     "- Re-run the minimum verification needed for the repaired validation failure.",
     "- Keep the original WorkOrder id, branch, PR, and final marker.",
+    "- Treat source-worktree dirtiness as concurrent external owner activity. Do not stash, restore, switch, checkout, reset, clean, commit, or otherwise modify the original source worktree; all repair mutations must remain inside the WorkOrder projectPath. Re-inspect the source worktree and report blocked if it remains dirty so the system can retry after its owner finishes.",
+    "- Retain every previously reported verified commit in the revised commits list, and append any new verified commits; do not replace prior commit evidence with an empty list merely because this revision created no commit.",
     "- If you cannot safely repair the issue, report blocked with a concrete reason.",
     "- Do not call model-provider APIs.",
     "- Do not add model SDKs, model API keys, or direct model HTTP integrations.",

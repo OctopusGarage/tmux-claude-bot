@@ -626,6 +626,7 @@ describe("repository PR decision contract", () => {
               number: 1,
               repository: "OctopusGarage/repo",
               outcome: "manual-review",
+              boundary: "migration-decision",
               evidence: ["migration semantics require owner decision"],
               nextStep: "ask the repository owner to choose a migration policy",
             },
@@ -639,6 +640,91 @@ describe("repository PR decision contract", () => {
     expect(manual.ok && repositoryPullRequestReviewDisposition(manual.summary)).toBe(
       "manual-review",
     );
+  });
+
+  it("requires a structured human boundary instead of inferring one from prose", () => {
+    const permissionProse = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-permission-prose]${JSON.stringify(
+        summary({
+          status: "blocked",
+          pullRequestDecisions: [
+            {
+              number: 22,
+              repository: "OctopusGarage/fluent-frame",
+              outcome: "manual-review",
+              evidence: [
+                "workflow conclusion is action_required even though the configured actor has admin permission",
+              ],
+              nextStep: "retry after the system repairs the workflow policy",
+            },
+          ],
+        }),
+      )}`,
+      "run-permission-prose",
+    );
+    const explicitBoundary = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-explicit-boundary]${JSON.stringify(
+        summary({
+          status: "blocked",
+          pullRequestDecisions: [
+            {
+              number: 23,
+              repository: "OctopusGarage/fluent-frame",
+              outcome: "manual-review",
+              boundary: "organization-policy",
+              evidence: ["organization policy denies fork workflow execution"],
+              nextStep: "ask an organization owner to change the policy",
+            },
+          ],
+        }),
+      )}`,
+      "run-explicit-boundary",
+    );
+
+    expect(
+      permissionProse.ok && repositoryPullRequestReviewDisposition(permissionProse.summary),
+    ).toBe("retry");
+    expect(
+      explicitBoundary.ok && repositoryPullRequestReviewDisposition(explicitBoundary.summary),
+    ).toBe("manual-review");
+  });
+
+  it("rejects unknown boundaries and boundaries attached to non-manual decisions", () => {
+    for (const [runId, pullRequestDecisions] of [
+      [
+        "unknown-boundary",
+        [
+          {
+            number: 22,
+            repository: "OctopusGarage/fluent-frame",
+            outcome: "manual-review",
+            boundary: "github-is-weird",
+            evidence: ["unknown boundary"],
+            nextStep: "ask a human",
+          },
+        ],
+      ],
+      [
+        "retry-boundary",
+        [
+          {
+            number: 22,
+            repository: "OctopusGarage/fluent-frame",
+            outcome: "retry",
+            boundary: "organization-policy",
+            evidence: ["transient failure"],
+            nextStep: "retry",
+          },
+        ],
+      ],
+    ] as const) {
+      expect(
+        parseSupervisorFinalSummary(
+          `[LOOP_SUPERVISOR_DONE:${runId}]${JSON.stringify(summary({ pullRequestDecisions }))}`,
+          runId,
+        ),
+      ).toMatchObject({ ok: false, reason: "invalid-summary" });
+    }
   });
 
   it("downgrades generic architecture review to retry instead of a human terminal", () => {

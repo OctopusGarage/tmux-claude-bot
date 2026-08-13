@@ -104,13 +104,32 @@ export function summarizeDeterministicGates(
   });
 }
 
+export function isPreMutationDependencyGate(
+  gate: LoopSupervisorReviewGateDeterministicGate,
+): boolean {
+  if (typeof gate === "string") return false;
+  if (gate.result !== "failed") return false;
+  const normalized = [gate.name, gate.command, gate.evidence]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  return (
+    normalized.includes("preflight") &&
+    /\bbefore[\s_-]+repair\b/.test(normalized) &&
+    (normalized.includes("node_modules") ||
+      normalized.includes("local node") ||
+      normalized.includes("tool binaries") ||
+      normalized.includes(".venv") ||
+      normalized.includes("venv") ||
+      normalized.includes("vendor/bin"))
+  );
+}
+
 function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome {
   const reviewDecision = summary.reviewGate?.decision;
-  const failedGate = summary.reviewGate?.deterministicGates.some(
-    (gate, index, gates) =>
-      typeof gate !== "string" &&
-      gate.result === "failed" &&
-      !isRepairedInitialPreflightGate(gate, gates.slice(index + 1)),
+  const failedGate = hasUnresolvedFailedDeterministicGate(
+    summary.reviewGate?.deterministicGates ?? [],
+    summary,
   );
   if (failedGate === true) {
     return baseOutcome(summary, reviewDecision, "failed", "deterministic-gate-failed");
@@ -136,19 +155,162 @@ function evalOutcomeForSummary(summary: LoopSupervisorFinalSummary): EvalOutcome
   return baseOutcome(summary, reviewDecision, "unknown", "insufficient-eval-signal");
 }
 
-function isRepairedInitialPreflightGate(
-  gate: LoopSupervisorReviewGateDeterministicGate,
-  laterGates: LoopSupervisorReviewGateDeterministicGate[],
+function hasUnresolvedFailedDeterministicGate(
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
 ): boolean {
-  if (typeof gate === "string") return false;
-  const name = gate.name.toLowerCase();
-  if (!name.includes("preflight") || !name.includes("initial")) return false;
-  return laterGates.some((laterGate) => {
-    if (typeof laterGate === "string") return false;
-    if (laterGate.result !== "passed") return false;
-    const laterName = laterGate.name.toLowerCase();
-    return laterName.includes("post-repair") || laterName.includes("environment-repair");
-  });
+  return gates.some(
+    (gate, index) =>
+      typeof gate !== "string" &&
+      gate.result === "failed" &&
+      !isPreMutationDependencyGate(gate) &&
+      !isResolvedPreflightRepairObservation(gates, index) &&
+      !isNonBlockingReadOnlyPreflightObservation(gate, gates, summary) &&
+      !isResolvedProtectedWorktreeBaseSwitchObservation(gate, gates, summary) &&
+      !isResolvedSourceWorktreeControlObservation(gate, gates, summary) &&
+      !isBoundedArchitectureTargetResidual(gate, gates, summary),
+  );
+}
+
+function isNonBlockingReadOnlyPreflightObservation(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = [
+    gateText(gate),
+    ...summary.actionsTaken,
+    ...(summary.reviewGate?.preMutationReview ?? []),
+    ...(summary.reviewGate?.postMutationReview ?? []),
+    ...(summary.reviewGate?.notes ?? []),
+  ]
+    .join("\n")
+    .toLowerCase();
+  if (!text.includes("preflight")) return false;
+  if (!text.includes("read-only")) return false;
+  if (!/(non[- ]blocking|did not block|does not block|recorded as a .*signal)/.test(text)) {
+    return false;
+  }
+  if (!/(opportunity[- ]discovery|discovery)/.test(text)) return false;
+
+  const passedGateText = gates.map(passedGateEvidenceText).filter(Boolean).join("\n");
+  return /(opportunity|report|summary|json)/.test(passedGateText);
+}
+
+function isResolvedProtectedWorktreeBaseSwitchObservation(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = gateText(gate);
+  if (!text.includes("literal switch-main base sync")) return false;
+  if (!text.includes("switch main")) return false;
+  if (!text.includes("already checked out")) return false;
+  if (!text.includes("original worktree was not mutated")) return false;
+
+  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText);
+  return (
+    passedGateText.some((passed) => passed.includes("safe work-order branch reset")) &&
+    passedGateText.some((passed) => passed.includes("base freshness")) &&
+    passedGateText.some((passed) => passed.includes("final clean worktree"))
+  );
+}
+
+function isResolvedSourceWorktreeControlObservation(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = gateText(gate);
+  if (!text.includes("ordinary source cli control check")) return false;
+  if (!text.includes("not used for final acceptance")) return false;
+  if (!text.includes("forbids source-worktree mutation")) return false;
+
+  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText);
+  return (
+    passedGateText.some((passed) => passed.includes("local verification")) &&
+    passedGateText.some((passed) => passed.includes("isolated cli control check")) &&
+    passedGateText.some((passed) => passed.includes("clean isolated worktree"))
+  );
+}
+
+function isCompletedPassingSummary(summary: LoopSupervisorFinalSummary): boolean {
+  return (
+    summary.status === "completed" &&
+    summary.finalVerification === "passed" &&
+    summary.reviewGate?.decision === "pass"
+  );
+}
+
+function isBoundedArchitectureTargetResidual(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = gateText(gate);
+  if (!text.includes("architecture assessment")) return false;
+  if (!text.includes("score")) return false;
+  if (!text.includes("target")) return false;
+  if (!/(not met|below target|remained|remaining risk)/.test(text)) return false;
+  if (!/(maxrounds|max rounds|bounded)/.test(text)) return false;
+
+  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText);
+  const hasVerificationGate = passedGateText.some((passed) =>
+    /(typecheck|test|verify|ci|check)/.test(passed),
+  );
+  const hasCleanOrPublicationGate = passedGateText.some((passed) =>
+    /(clean worktree|pr merge|mergeability|ci|statuscheck|status check)/.test(passed),
+  );
+  return hasVerificationGate && hasCleanOrPublicationGate;
+}
+
+function isResolvedPreflightRepairObservation(
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  failedGateIndex: number,
+): boolean {
+  const failedGate = gates[failedGateIndex];
+  if (failedGate === undefined) return false;
+  if (typeof failedGate === "string" || failedGate.result !== "failed") return false;
+  if (!gateText(failedGate).includes("preflight")) return false;
+  const laterPassedGateText = gates
+    .slice(failedGateIndex + 1)
+    .filter(isPassedStructuredGate)
+    .map(gateText);
+  return (
+    laterPassedGateText.some(isEnvironmentRepairEvidence) &&
+    laterPassedGateText.some(isPostRepairPreflightEvidence)
+  );
+}
+
+function isPassedStructuredGate(
+  gate: LoopSupervisorReviewGateDeterministicGate,
+): gate is Exclude<LoopSupervisorReviewGateDeterministicGate, string> {
+  return typeof gate !== "string" && gate.result === "passed";
+}
+
+function gateText(gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>): string {
+  return [gate.name, gate.command, gate.evidence].filter(Boolean).join("\n").toLowerCase();
+}
+
+function passedGateEvidenceText(gate: LoopSupervisorReviewGateDeterministicGate): string {
+  if (typeof gate === "string") return gate.toLowerCase();
+  return gate.result === "passed" ? gateText(gate) : "";
+}
+
+function isEnvironmentRepairEvidence(text: string): boolean {
+  return /\b(environment[- ]repair|preflight[- ]repair|npm ci|npm install|uv sync)\b/.test(text);
+}
+
+function isPostRepairPreflightEvidence(text: string): boolean {
+  return text.includes("preflight") && /\b(after[- ]repair|post[- ]repair)\b/.test(text);
 }
 
 function baseOutcome(

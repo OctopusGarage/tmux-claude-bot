@@ -231,6 +231,12 @@ export class MessageQueue {
     return true;
   }
 
+  /** One lifecycle predicate for host-power drain decisions. Unlike `isEmpty`,
+   * this remains true after a message is dequeued and while its handler runs. */
+  hasPendingOrRunning(): boolean {
+    return !this.isEmpty() || this.processingGlobal || this.processingSessions.size > 0;
+  }
+
   size(sessionName?: string): number {
     if (sessionName) {
       return this.sessionQueues.get(sessionName)?.size() ?? 0;

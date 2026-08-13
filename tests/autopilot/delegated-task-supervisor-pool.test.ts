@@ -44,6 +44,12 @@ function config(poolSize: number): AppConfig {
     projectSessionPrefix: "tmux_proj_",
     startCommands: [],
     claudeStartCommand: "claude",
+    hostPower: {
+      mode: "off",
+      timezone: "Asia/Singapore",
+      quietStart: "02:00",
+      quietEnd: "09:30",
+    },
     loopEngineering: {
       configFile: "",
       supervisor: {
@@ -341,9 +347,44 @@ describe("active delegated task supervisor pool", () => {
       }),
     ).resolves.toEqual({
       status: "blocked",
-      reason: "resource admission deferred: critical host pressure",
+      reason: "automation admission deferred: critical host pressure",
       showQueue: false,
     });
+
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+    expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "loop-runs"))).toBe(false);
+    expect(existsSync(join(process.env.TCB_STATE_DIR ?? "", "scheduled_task_ledger.json"))).toBe(
+      false,
+    );
+  });
+
+  it("defers quiet-hours background delegation before durable side effects", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const d = deps(1);
+    d.config.hostPower = {
+      mode: "scheduled",
+      timezone: "Asia/Singapore",
+      quietStart: "02:00",
+      quietEnd: "09:30",
+    };
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-16T20:10:00Z"));
+    try {
+      await expect(
+        startActiveDelegatedTask(d, {
+          session: "tmux_proj_unmapped",
+          requirement: "repair the failed task",
+          resourceTrigger: "background",
+        }),
+      ).resolves.toEqual({
+        status: "blocked",
+        reason: "automation admission deferred: quiet-hours",
+        showQueue: false,
+      });
+    } finally {
+      now.mockRestore();
+    }
 
     expect(startLoopSupervisor).not.toHaveBeenCalled();
     expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
@@ -383,7 +424,7 @@ describe("active delegated task supervisor pool", () => {
       }),
     ).resolves.toEqual({
       status: "blocked",
-      reason: "resource admission deferred: emergency host pressure",
+      reason: "automation admission deferred: emergency host pressure",
       showQueue: false,
     });
   });
@@ -466,6 +507,93 @@ describe("active delegated task supervisor pool", () => {
     expect(resumeQueuedActiveDelegatedTasks(d)).toBe(1);
   });
 
+  it("reconciles restart liveness against the leased supervisor session", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-live-supervisor-"));
+    const order = {
+      ...workOrder({ id: "live-supervisor-after-restart", projectPath: projectDir }),
+      workerSession: "tmux_proj_loop-worker-derived-name",
+    };
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const d = deps(1);
+    d.bridge = {
+      hasSession: vi.fn(async (session: string) => session === "tmux_proj_loop-supervisor-1"),
+      capturePane: vi.fn(async () => "• Working (2s • esc to interrupt)"),
+    } as unknown as HandlerDeps["bridge"];
+    d.configResolver = {
+      isCodexRunning: vi.fn(async () => true),
+    } as unknown as HandlerDeps["configResolver"];
+
+    vi.useFakeTimers();
+    const reconciliation = reconcileAndResumeActiveDelegatedTasksAfterRestart(d);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(await reconciliation).toBe(0);
+    vi.useRealTimers();
+    expect(
+      listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
+    ).toBe(true);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
+  });
+
+  it("releases an in-flight lease when only an idle supervisor process survived restart", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-idle-supervisor-"));
+    const order = workOrder({ id: "idle-supervisor-after-restart", projectPath: projectDir });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const d = deps(1);
+    d.bridge = {
+      hasSession: vi.fn(async () => true),
+      capturePane: vi.fn(async () => "› Ready for the next prompt"),
+    } as unknown as HandlerDeps["bridge"];
+    d.configResolver = {
+      isCodexRunning: vi.fn(async () => true),
+    } as unknown as HandlerDeps["configResolver"];
+
+    vi.useFakeTimers();
+    const reconciliation = reconcileAndResumeActiveDelegatedTasksAfterRestart(d);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(await reconciliation).toBe(0);
+    vi.useRealTimers();
+    expect(
+      listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
+    ).toBe(false);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("retained");
+  });
+
   it("reconciles an active lease whose worker disappeared during restart", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-orphan-"));
     const order = workOrder({ id: "orphaned-after-restart", projectPath: projectDir });
@@ -525,7 +653,10 @@ describe("active delegated task supervisor pool", () => {
       ],
     });
     const d = deps(1);
-    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.bridge = {
+      hasSession: vi.fn(async () => true),
+      capturePane: vi.fn(async () => "• Working (2s • esc to interrupt)"),
+    } as unknown as HandlerDeps["bridge"];
     d.configResolver = {
       isCodexRunning: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
     } as unknown as HandlerDeps["configResolver"];
@@ -566,6 +697,7 @@ describe("active delegated task supervisor pool", () => {
         sessionChecks += 1;
         return sessionChecks > 2;
       }),
+      capturePane: vi.fn(async () => "• Working (2s • esc to interrupt)"),
     } as unknown as HandlerDeps["bridge"];
     d.configResolver = {
       isCodexRunning: vi.fn().mockResolvedValue(true),

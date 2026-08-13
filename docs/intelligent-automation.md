@@ -18,6 +18,10 @@ never duplicated, and later findings are attached as deferred work. A recovery
 is closed only from an authoritative `supervisor-final-summary.json` reporting
 completed with a passing decision. Queue and ledger state are reconciled
 together so a successful environment repair does not remain falsely pending.
+When a ledger `reportPath` names a run directory, recovery classification reads
+the final supervisor summary and system gate inside that directory. It must not
+discard those artifacts and turn recoverable orchestration evidence into a
+generic owner decision.
 Failed Autopilot delegations for configured projects follow the same recovery
 path as Loop Engineering failures; invalid or missing supervisor summaries are
 retryable orchestration evidence. Capacity, active-project, or supervisor
@@ -26,8 +30,16 @@ blocked outcomes.
 If any live WorkOrder already owns the project, project recovery defers without
 claiming the queue record or consuming a retry attempt; admission resumes after
 that WorkOrder reaches a terminal state.
+A `dispatching` WorkOrder must advance to queued/in-flight once its prompt is
+consumed. Remaining in `dispatching` beyond the five-minute reservation grace
+is abandoned even if its supervisor lease leaked; the stale lease is settled
+with the failed WorkOrder instead of keeping the project blocked indefinitely.
 Scheduled and forced Daily Audit invocations are serialized by a process-local
 mutex, preventing overlapping audits from creating duplicate recovery attempts.
+Actively discovered scheduled occurrences are persisted as expected ledger
+records before repair admission. If they are missing, the worker receives the
+same durable task ids and the eventual repair outcome closes those occurrences;
+an in-memory-only missing item must not be rediscovered and delegated forever.
 Closing an abandoned WorkOrder advances the scheduler checkpoint for its
 occurrence, preventing an immediate duplicate dispatch; a valid delegated final
 summary is authoritative even if the WorkOrder state is still `in-flight`.
@@ -45,10 +57,15 @@ blocked; an agent cannot safely repair an unidentifiable task.
 Repository-wide PR review has a narrower decision contract: every in-scope PR
 must be recorded as `merged`, `closed`, `retry`, or `manual-review`. `retry`
 remains claimable through the review queue and backoff path; `manual-review` is
-the explicit human terminal state. A PR may be closed automatically only with
+the explicit human terminal state only when accompanied by a validated
+structured boundary code. Evidence prose cannot create that state. A PR may be closed automatically only with
 an evidence-backed `duplicate`, `obsolete`, `non-actionable`, or `invalid`
 reason. Draft, conflict, age, pending checks, and ordinary repair failures are
 not close reasons by themselves.
+A supervised repair or recovery that proves the repository already healthy is a
+successful no-delta completion. Even when commit and PR policy are enabled, it
+must record a clean worktree, passing deterministic verification, and
+`commits: []`; it must not manufacture an empty commit or no-op PR.
 An open project-recovery lease linked only to terminal WorkOrders is released
 before the next admission pass when no live WorkOrder remains; an unknown live
 recovery is still deferred to preserve the one-project mutation invariant.
@@ -74,6 +91,9 @@ target worktrees, branch-policy conflicts, GitHub permission failures, and
 network/TLS failures are terminalized as blocked; stale invalid-output records
 are reconciled from later gate artifacts as fixed or not-reproducible. Only
 confirmed bot-owned runtime findings enter the bot self-repair WorkOrder.
+A completed repair WorkOrder fixes its durable queue record. A failed, timed-out,
+or cancelled repair WorkOrder is detached and returned to bounded retry so a
+service restart cannot leave global repair ownership stuck in `running`.
 
 Every terminal supervised WorkOrder also has a cleanup closure. Successful runs
 release the worker and immediately remove their bot-owned isolated execution
@@ -87,6 +107,12 @@ cleanup, absence is not cleanup proof. Terminal reconciliation uses the
 WorkOrder's verified source repository to remove only that exact stale Git
 worktree registration, then releases the matching worker lease. It never
 guesses another repository and never removes a source worktree.
+If the service dies after creating an isolated worktree but before persisting its
+WorkOrder, periodic reconciliation can still close the orphan. It waits through
+the default 72-hour evidence window, proves that every durable WorkOrder resource
+path and worker lease is unrelated, and then applies the same state-boundary and
+Git-toplevel verification before removal. This recovery never shortens normal
+failure retention or treats a source worktree as an orphan.
 
 ## State And Outcome Vocabulary
 
@@ -96,7 +122,10 @@ problem; its `repairStatus` describes whether recovery is still open. A queue
 record with `pending`, `leased`, `running`, or `retry-wait` is still in progress
 and must not be reported as resolved. `retry-wait` means the bounded backoff has
 not expired yet; once `nextAttemptAt` is due, the record is immediately eligible
-for the next available repair worker.
+for the next available repair worker. The shared retry budget is three failed
+attempts. Reaching that budget, including when loading a legacy record that has
+already exceeded it, terminalizes the queue record as `dead-letter` before any
+consumer can claim it again.
 
 Terminal repair outcomes are `fixed`, `blocked`, `not-reproducible`,
 `superseded`, and `dead-letter` for queue records. Ledger repair outcomes also
@@ -113,13 +142,18 @@ Repository PR review queue records additionally expose `manual-review` as a
 terminal status distinct from retryable `retry-wait`. The queue may complete
 only after all structured PR decisions are terminal (`merged` or allowlisted
 `closed`), or retain the item as `manual-review` when every unresolved decision
-explicitly requires an owner at a concrete ownership, permission, product,
-migration, security-design, legal, or compliance boundary. Generic architecture
+explicitly requires an owner under a structured ownership, protected-branch,
+product, migration, security, legal/compliance, or organization-policy boundary. Generic architecture
 or design review, diff size, Draft state, merge conflicts, and ordinary code
 repair are not human boundaries: the contract downgrades those claims to
 `retry`, returning the item to the shared repair queue. Missing or malformed PR
 decisions are orchestration failures and return to retry, never to a false
-completed state.
+completed state. `action_required`, supported workflow approval, safe
+private-fork workflow configuration, conflicts, pending checks, and transient
+GitHub failures are system-repairable states. The system binds recovery to the
+configured GitHub account, re-observes the exact head SHA before mutation,
+records durable intent and outcome evidence, and never enables fork access to
+write tokens, secrets, or variables.
 
 Security Maintenance assessments use the same deterministic contract everywhere:
 the configured command must emit a JSON object with numeric `riskScore` from
@@ -127,7 +161,11 @@ the configured command must emit a JSON object with numeric `riskScore` from
 optional string arrays `findings` and `suggestedBotImprovements` are retained as
 assessment notes. Non-zero exit status, invalid JSON, or a missing numeric
 `riskScore` blocks dispatch without repository mutation. The default action and
-critical thresholds are 70 and 90, respectively.
+critical thresholds are 70 and 90, respectively. The bundled dependency
+assessment supports npm and pnpm lockfiles. For Python projects it prefers the
+target's `.venv/bin/pip-audit`, then falls back to `pip-audit` on `PATH`; each
+external audit has a bounded runtime so assessment cannot become an unbounded
+resource consumer.
 
 This document is the maintenance map for tmux-claude-bot's intelligent
 automation features. It defines the names, ownership boundaries, execution flow,
@@ -219,15 +257,30 @@ expiry and retry backoff, and reconciles each linked task into a terminal or
 retryable repair status. This is the only service-owned consumer of durable
 repair backlog state; manual force-triggering is an operator diagnostic, not a
 required recovery path.
-On process startup, queued or dispatching Autopilot WorkOrders are reattached
+On process startup, Loop reconciliation is an explicit barrier: durable final
+summaries and terminal resources are settled before persisted supervisor prompts
+are restored and before Autopilot recovery may resume a delegation. Persisted
+prompts whose WorkOrder already has a valid final summary are discarded rather
+than replayed. After that barrier, queued or dispatching Autopilot WorkOrders are reattached
 to the current background executor when no active worker lease exists. Active
-leases are checked against the WorkOrder's actual isolated worker session and
-agent; an active supervisor-pool lease without that worker is recorded as a
-bounded invalid-output failure, released, and handed back to project recovery.
+leases are checked against their actual queue-consuming supervisor session and
+agent; the WorkOrder's derived worker-session name is not substituted for that
+lease owner. Because supervisor agents remain alive between turns, process
+liveness is necessary but not sufficient: the leased pane must also retain an
+active-turn or confirmation-gate signal after the startup grace. A lease whose
+consumer is gone or idle is recorded as a bounded invalid-output failure,
+released, and handed back to project recovery.
 A service restart or machine reboot must therefore preserve live delegations,
 and automatically requeue delegations whose worker disappeared, instead of
-leaving a WorkOrder permanently queued or falsely treating the pool session as
-the worker.
+leaving a WorkOrder permanently queued or falsely failing a live pool session.
+During normal finalization, a valid final summary can precede `system-gate.json`
+and terminal WorkOrder state. That settling WorkOrder continues to reserve its
+project: delegated-task reconciliation waits for the gate, and project recovery
+cannot release or claim another recovery for the same project during the gap.
+Agent lifecycle detection must not treat a stale Codex `esc to interrupt` line
+as newer than a subsequent `Goal achieved` footer or `Worked for <duration>`
+completion banner. This keeps final-summary consumption prompt without
+weakening active-turn protection.
 Terminal ledger invariants are enforced during every audit tick: successful or
 skipped tasks always carry `repairStatus=not-needed`, while failed tasks retain
 their explicit repair outcome.
@@ -387,6 +440,14 @@ transients are platform failures, not target-project code failures. Treat errors
 such as `Selected model is at capacity. Please try a different model.` as
 retryable agent transient evidence unless later system-gate evidence proves a
 project problem.
+Interactive readiness is also ordered evidence: a completed Codex goal footer
+may follow and supersede a stale visible working marker, while a newer working
+marker means the turn is active again. This prevents completed supervisor panes
+from holding repair delivery open until the outer timeout.
+Likewise, a supervisor final summary is not terminal by itself while the live
+queue turn that produced it is still running. Periodic reconciliation defers
+that WorkOrder and its abandoned-resource cleanup until the queue owner settles;
+after a restart, durable summary recovery proceeds because no live owner remains.
 
 Responsibility is layered:
 
@@ -477,6 +538,10 @@ centralized.
   supervisor or worker must verify `git -C <projectPath> rev-parse --show-toplevel`
   matches the configured path. Workspace WorkOrders must perform the same check
   for every repository they touch.
+- If that check fails only because a normal checkout with its own `.git/`
+  directory was accidentally configured with `core.bare=true`, preparation may
+  restore `core.bare=false` and repeat the exact-path check. A genuine bare
+  repository or any other Git failure remains blocked.
 - In isolated execution, the worker must stay on the WorkOrder branch and must
   not checkout, rebase, or mutate the shared base/switch-back branch or the
   original source worktree. Preparation may fetch a remote ref for the isolated
@@ -579,6 +644,19 @@ pending, the worktree is dirty, the branch is wrong, or the PR body needs cleanu
 the bot should send a bounded revision prompt and re-run the gate. Non-recoverable
 platform failures, such as missing GitHub permission, should fail with a concrete
 blocker.
+
+PR publication is also system-owned when the project explicitly enables it. A
+verified supervised result with commits may finish before the agent creates a
+PR, especially when the service restarts between final-summary and gate writes.
+The gate therefore pushes the exact WorkOrder branch and creates the configured
+base PR when lookup confirms that it is missing, then continues through the
+same commit, CI, mergeability, merge, and switch-back checks. Authentication,
+permission, network, and ambiguous lookup failures remain blockers rather than
+authorization to create anything.
+Restart recovery uses the same bounded supervisor revision contract for
+recoverable acceptance failures before it writes terminal state. A process
+reload may change who drives finalization, but it must not weaken the gate or
+turn a correctable summary/PR gap into another self-repair WorkOrder.
 
 Every supervised run must persist system gate evidence beside the supervisor
 report as `system-gate.json`. This artifact records whether the gate accepted the
@@ -805,9 +883,20 @@ idempotent queue item per repository review occurrence and releases the
 scheduler immediately. Independent consumers lease pending items when a
 supervisor is available, enforce the existing per-project conflict rule, and
 reuse the normal WorkOrder, system gate, final-summary, merge, and cleanup path.
-Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`, and
-`blocked`; expired leases return to `pending`, transient supervisor failures use
-bounded backoff, and a service restart does not lose an uncompleted review.
+Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`,
+`blocked`, `manual-review`, and `dead-letter`; expired leases return to
+`pending`, transient supervisor failures use bounded backoff, and a service
+restart does not lose an uncompleted review. Infrastructure retries have a
+five-attempt budget; reaching it, including while loading an over-budget legacy
+record, terminalizes the occurrence as `dead-letter` before another lease. When
+historical `manual-review` or `dead-letter` evidence has no valid structured
+human boundary and the PR remains open, the repository-review consumer may
+reopen it once as `retry-wait`. Reopening increments a retry epoch, resets only
+that epoch's bounded attempt counter, retains migration evidence, and yields to
+any newer or active occurrence for the same repository.
+An isolated repository-review WorkOrder synchronizes to a detached remote base
+when it does not own an execution branch. It never checks out or pulls the base
+branch already owned by the source worktree.
 Before a repository-review WorkOrder enters `dispatching`, it must hold the
 matching active supervisor-worker lease. Recovery may mark a queue occurrence
 `running` only when that same lease remains active; an unleased dispatch
@@ -817,6 +906,18 @@ Supervisor capacity and project-conflict planning must include active worker
 leases even when their WorkOrder artifact has already become terminal, so no
 new review can select a supervisor that is still executing another task.
 This prevents an unrelated long WorkOrder from starving repository PR review.
+
+Loop-owned remote branches follow the terminal PR lifecycle, not the local
+worktree retention lifecycle. Repositories should enable GitHub's native
+delete-on-merge for the normal merge path. A service-startup and 30-minute
+fallback reconciliation scans only configured `loop/<project-id>/...` prefixes
+and deletes a ref only after exact repository, branch, PR head SHA, terminal PR,
+protected/base branch, and live WorkOrder/lease checks pass twice. A closed but
+unmerged PR needs a structured close reason (`duplicate`, `obsolete`,
+`non-actionable`, or `invalid`) in durable supervisor evidence. Every mutation
+writes an intent before deletion and a sanitized outcome afterward. This allows
+a failed WorkOrder's local isolated worktree to remain available for forensic
+retention without leaking its terminal remote branch indefinitely.
 
 ## Daily Task Audit And Auto Repair
 
@@ -962,7 +1063,30 @@ isolated worktrees do not carry ignored dependency directories.
 `observe` records the finding without repair delegation.
 By default it only considers terminal artifacts updated within
 `RUNTIME_GUARDIAN_LOOKBACK_MS` so enabling it does not replay historical
-pre-guardian backlog as fresh runtime incidents.
+pre-guardian backlog as fresh runtime incidents. The lookback bounds new artifact
+discovery only: a finding already admitted to the durable Repair Coordinator
+remains eligible when its `nextAttemptAt` becomes due, even after the underlying
+artifact ages out of discovery. Runtime Guardian projects those due records back
+into bounded findings before deciding that a tick has no work. That durable due
+time is authoritative over the outer repository discovery cooldown. A clean
+worktree or branch readiness failure does not consume either cooldown or mark
+the finding handled, so the next tick retries automatically after the operator
+or another workflow restores readiness.
+When admission creates a fresh record beside a terminal historical duplicate,
+the fresh non-terminal record is authoritative. Successful delegation attaches
+the new WorkOrder id and delegated ledger task id to every claimed record;
+terminal WorkOrder or ledger reconciliation then closes those records without
+another discovery or manual force. Repeated discovery of the same runtime task
+reuses its active queue record even if evidence punctuation or presentation
+changes, so diagnostic text cannot produce unbounded superseded queue history.
+When one repair WorkOrder covers multiple findings, its derived Autopilot task
+link is shared settlement evidence rather than a dedupe key. Each finding keeps
+its queue record and all attached siblings reconcile from the aggregate outcome;
+failed aggregate retries retain those links without collapsing sibling findings.
+The reconciler also migrates due siblings misclassified as `superseded` by older
+dedupe behavior, reopening only the newest aggregate group whose original task
+identities have no active owner. Admission projects the original task identity,
+never the appended aggregate execution link, back into a Runtime Guardian finding.
 `RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
 source-worktree execution so managed-dev self-repair can take effect quickly; set
 it to `isolated` for PR-style conservative repair.

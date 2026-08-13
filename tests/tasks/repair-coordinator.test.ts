@@ -42,6 +42,34 @@ describe("RepairCoordinator", () => {
     expect(createRepairDedupeKey(second)).toContain("active-delegated-task");
   });
 
+  it("keeps one active runtime repair when diagnostic evidence formatting changes", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const first = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "gate failed | artifact exists",
+      taskId: "run-1",
+      summary: "gate failed; artifact exists",
+      now: 1_000,
+    });
+    const rediscovered = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "gate failed; artifact exists",
+      taskId: "run-1",
+      summary: "gate failed; artifact exists",
+      now: 2_000,
+    });
+
+    expect(rediscovered.id).toBe(first.id);
+    expect(rediscovered.status).toBe("pending");
+    expect(coordinator.list()).toHaveLength(1);
+  });
+
   it("claims due items in priority order and leaves later items pending", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     coordinator.enqueue({
@@ -135,6 +163,58 @@ describe("RepairCoordinator", () => {
       nextAttemptAt: 2_101 + 30_000,
     });
     expect(coordinator.claimDue({ now: 2_102, leaseId: "lease-2", limit: 1 })).toEqual([]);
+  });
+
+  it("dead-letters a repair after the shared retry limit instead of scheduling forever", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const item = coordinator.enqueue({
+      projectId: "project-a",
+      projectPath: "/repo/a",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "persistent-failure",
+      taskId: "run-1",
+      now: 1_000,
+    });
+
+    let now = 2_000;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      expect(
+        coordinator.claimIds([item.id], { now, leaseId: `lease-${attempt}`, limit: 1 }),
+      ).toHaveLength(1);
+      coordinator.releaseForRetry(item.id, now + 1);
+      now += 2_000_000;
+    }
+
+    expect(coordinator.list()[0]).toMatchObject({ status: "dead-letter", attempt: 3 });
+    expect(coordinator.claimDue({ now: now + 2_000_000, leaseId: "too-late", limit: 1 })).toEqual(
+      [],
+    );
+  });
+
+  it("dead-letters an exhausted persisted repair before a consumer can reclaim it", () => {
+    const store = new InMemoryRepairQueueStore();
+    store.set("repair-legacy", {
+      id: "repair-legacy",
+      dedupeKey: "project-a|/repo/a|terminal-system-gate-failure|legacy",
+      projectId: "project-a",
+      projectPath: "/repo/a",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "legacy",
+      linkedTaskIds: ["run-legacy"],
+      summaries: ["legacy retry"],
+      status: "retry-wait",
+      priority: 100,
+      attempt: 14,
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      nextAttemptAt: 3_000,
+    });
+    const coordinator = new RepairCoordinator(store);
+
+    expect(coordinator.claimDue({ now: 4_000, leaseId: "new", limit: 1 })).toEqual([]);
+    expect(coordinator.list()[0]).toMatchObject({ status: "dead-letter", attempt: 14 });
   });
 
   it("imports bot-owned historical failures but does not claim unrelated projects", () => {
@@ -333,6 +413,54 @@ describe("RepairCoordinator", () => {
         expect.objectContaining({ id: projectRepair.id, status: "leased" }),
       ]),
     );
+  });
+
+  it("keeps aggregate repair findings that share only a derived WorkOrder task ID", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const fluent = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "fluent failure",
+      taskId: "run-fluent",
+      now: 1_000,
+    });
+    const english = coordinator.enqueue({
+      projectId: "english-pilot",
+      projectPath: "/repo/english-pilot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "english failure",
+      taskId: "run-english",
+      now: 1_001,
+    });
+    coordinator.claimIds([fluent.id, english.id], {
+      now: 1_002,
+      leaseId: "aggregate",
+      limit: 2,
+    });
+    coordinator.markRunning(fluent.id, "aggregate", 1_003);
+    coordinator.markRunning(english.id, "aggregate", 1_003);
+    coordinator.attachWorkOrder(fluent.id, "aggregate-repair", 1_004);
+    coordinator.attachWorkOrder(english.id, "aggregate-repair", 1_004);
+    coordinator.linkTaskIds(fluent.id, ["autopilot:aggregate-repair"], 1_002);
+    coordinator.linkTaskIds(english.id, ["autopilot:aggregate-repair"], 1_002);
+
+    expect(coordinator.reconcileDuplicateTaskIds(2_000)).toBe(0);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: fluent.id, status: "running" }),
+      expect.objectContaining({ id: english.id, status: "running" }),
+    ]);
+
+    coordinator.releaseForRetry(fluent.id, 2_001, { detachWorkOrder: true });
+    coordinator.releaseForRetry(english.id, 2_001, { detachWorkOrder: true });
+    expect(coordinator.reconcileDuplicateTaskIds(2_002)).toBe(0);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: fluent.id, status: "retry-wait" }),
+      expect.objectContaining({ id: english.id, status: "retry-wait" }),
+    ]);
+    expect(coordinator.list().every((record) => record.workOrderId === undefined)).toBe(true);
   });
 
   it("supersedes a stale terminal project-recovery record when the same task reopens", () => {

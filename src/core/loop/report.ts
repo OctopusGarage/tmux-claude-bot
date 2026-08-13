@@ -2,7 +2,13 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS, loopRunDir, loopRunsRoot } from "./artifacts.js";
-import { type LoopReportRecord, listLoopReportRecords } from "./report-catalog.js";
+import {
+  type LoopReportQuery,
+  type LoopReportQueryResult,
+  type LoopReportRecord,
+  listLoopReportRecords,
+  queryLoopReportRecords,
+} from "./report-catalog.js";
 import type { LoopRunSummary } from "./run.js";
 
 export type { LoopReportRecord };
@@ -95,4 +101,9 @@ export function writeLoopRunReport(
 
 export function listLoopReports(): LoopReportRecord[] {
   return listLoopReportRecords(reportsRoot());
+}
+
+/** Bounded, filtered, path-safe report view for operator and agent surfaces. */
+export function queryLoopReports(query: LoopReportQuery = {}): LoopReportQueryResult {
+  return queryLoopReportRecords(reportsRoot(), query);
 }

@@ -145,3 +145,33 @@ describe("logger (ambient context, component, err/data)", () => {
     expect((rec.data as { _serializeError?: string })._serializeError).toContain("circular");
   });
 });
+
+describe("logger state-directory isolation", () => {
+  it("resolves the state log directory when each record is written", async () => {
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    const originalLogDir = process.env.TCB_LOG_DIR;
+    const firstStateDir = fs.mkdtempSync(join(os.tmpdir(), "tcb-logger-first-state-"));
+    const secondStateDir = fs.mkdtempSync(join(os.tmpdir(), "tcb-logger-second-state-"));
+    try {
+      delete process.env.TCB_LOG_DIR;
+      process.env.TCB_STATE_DIR = firstStateDir;
+      vi.resetModules();
+      const { logger: stateAwareLogger } = await import("../src/shared/utils/logger.js");
+
+      process.env.TCB_STATE_DIR = secondStateDir;
+      stateAwareLogger.info("after state-dir change");
+
+      const secondLogDir = join(secondStateDir, "logs");
+      expect(fs.readdirSync(secondLogDir)).toEqual([expect.stringMatching(/^tcb-\d{8}\.jsonl$/)]);
+      expect(fs.existsSync(join(firstStateDir, "logs"))).toBe(false);
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      if (originalLogDir === undefined) delete process.env.TCB_LOG_DIR;
+      else process.env.TCB_LOG_DIR = originalLogDir;
+      fs.rmSync(firstStateDir, { recursive: true, force: true });
+      fs.rmSync(secondStateDir, { recursive: true, force: true });
+      vi.resetModules();
+    }
+  });
+});

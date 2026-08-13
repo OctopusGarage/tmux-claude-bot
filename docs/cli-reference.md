@@ -13,6 +13,7 @@ family registrars.
 - `tcb doctor`
 - `tcb config`
 - `tcb automation`
+- `tcb power`
 - `tcb resource`
 - `tcb capabilities`
 - `tcb install`
@@ -57,6 +58,9 @@ family registrars.
 - `tcb automation status`
 - `tcb automation pause <loop|task-audit|runtime-guardian|batch>`
 - `tcb automation resume <loop|task-audit|runtime-guardian|batch>`
+- `tcb power status`
+- `tcb power schedule install`
+- `tcb power schedule remove`
 - `tcb resource status`
 - `tcb resource incidents`
 - `tcb resource mode <observe|protect>`
@@ -74,11 +78,11 @@ family registrars.
 - `tcb loop validate <file>`
 - `tcb loop tick <file>`
 - `tcb loop run <file> <projectId>`
-- `tcb loop reports list`
+- `tcb loop reports list [--project <id>] [--status <passed|failed>] [--limit <1-100>]`
 - `tcb loop targets list <file>`
 - `tcb loop targets enable <file> <project|workspace|repo> <id>`
 - `tcb loop targets disable <file> <project|workspace|repo> <id>`
-- `tcb loop backlog list`
+- `tcb loop backlog list [--project <id>] [--status <open|closed|all>] [--limit <1-100>]`
 - `tcb loop backlog close <id>`
 - `tcb loop skills list`
 - `tcb loop skills sync <file>`
@@ -132,6 +136,8 @@ family registrars.
 - `--now`
 - `--output`
 - `--profile`
+- `--problems`
+- `--project`
 - `--reconfigure`
 - `--repair-status`
 - `--report`
@@ -158,9 +164,18 @@ family registrars.
 
 - `tcb autopilot <project>` means supervisor-backed delegation only.
 - `tcb config list` and `tcb config get` redact secrets by default. Generic
-  `config set` accepts only allowlisted non-secret keys; use `tcb setup
-  --reconfigure`, `tcb setup:lark`, or a dedicated command for tokens, app
-  secrets, and owner ids.
+  `config set` accepts only allowlisted non-secret keys and validates each
+  value's domain before persistence; opaque strings such as paths and commands
+  are not coerced. Use `tcb setup --reconfigure`, `tcb setup:lark`, or a
+  dedicated command for tokens, app secrets, and owner ids.
+- `tcb config set TCB_KEEP_AWAKE_MODE <off|always|scheduled>` is the safe mode
+  switch. Restart the service after changing it. In `scheduled` mode, install
+  and verify the exact fixed wake separately with `tcb power schedule install`;
+  `tcb power status [--json]` reports phase, power source, degradation, and
+  whether that schedule is verified or not required. The configured policy
+  timezone is authoritative; schedule inspection and installation translate it
+  to the macOS system clock and display both times. Shell and service `TZ`
+  environment variables do not redefine the host timezone.
 - `tcb automation ...` is the supported top-level control for high-cost
   background loops. `pause` records the previous tick/enabled values in state so
   `resume` can restore the prior cadence instead of guessing a default.

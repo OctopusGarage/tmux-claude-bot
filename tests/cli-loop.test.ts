@@ -425,16 +425,36 @@ describe("CLI loop command", () => {
     writeFileSync(file, runnableConfigWithEvalText.replace("__PROJECT_DIR__", projectDir));
 
     const runResult = runCli(["loop", "run", file, "hub"], stateDir);
-    const reportsResult = runCli(["loop", "reports", "list", "--json"], stateDir);
-    const backlogResult = runCli(["loop", "backlog", "list", "--json"], stateDir);
+    const reportsResult = runCli(
+      [
+        "loop",
+        "reports",
+        "list",
+        "--project",
+        "hub",
+        "--status",
+        "passed",
+        "--limit",
+        "1",
+        "--json",
+      ],
+      stateDir,
+    );
+    const backlogResult = runCli(
+      ["loop", "backlog", "list", "--project", "hub", "--status", "open", "--limit", "1", "--json"],
+      stateDir,
+    );
 
     expect(runResult.status).toBe(0);
-    const reports = JSON.parse(reportsResult.stdout) as Array<{
-      projectId: string;
-      status: string;
-    }>;
-    expect(reports).toEqual([expect.objectContaining({ projectId: "hub", status: "passed" })]);
-    const backlog = JSON.parse(backlogResult.stdout) as Array<{ id: string; text: string }>;
+    const reports = JSON.parse(reportsResult.stdout) as {
+      items: Array<{ projectId: string; status: string }>;
+    };
+    expect(reports.items).toEqual([
+      expect.objectContaining({ projectId: "hub", status: "passed" }),
+    ]);
+    const backlog = (
+      JSON.parse(backlogResult.stdout) as { items: Array<{ id: string; text: string }> }
+    ).items;
     expect(backlog).toEqual([expect.objectContaining({ text: "Improve loop reports." })]);
 
     const closeResult = runCli(
@@ -443,6 +463,6 @@ describe("CLI loop command", () => {
     );
     const afterCloseResult = runCli(["loop", "backlog", "list", "--json"], stateDir);
     expect(closeResult.status).toBe(0);
-    expect(JSON.parse(afterCloseResult.stdout)).toEqual([]);
+    expect(JSON.parse(afterCloseResult.stdout)).toMatchObject({ items: [], total: 0 });
   }, 20_000);
 });

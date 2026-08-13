@@ -157,25 +157,10 @@ else
   HUSKY=0 npm prune --omit=dev
 fi
 
-# Global launchers so the documented commands ('tmux-claude-bot tui', 'tcb tui',
-# 'tcb dashboard', ...) work from anywhere - a thin wrapper that execs the bundled
-# CLI. Same ~/.local/bin launcher pattern as the sibling net-auto-switch install.
-# Two names: the full 'tmux-claude-bot' and the short 'tcb' the docs use.
+# Global launchers follow the same production bundle and state directory as the
+# managed service. Service mode changes refresh them through the same helper.
+scripts/install-cli-launchers.sh
 BIN_DIR="$HOME/.local/bin"
-NODE_BIN="$(command -v node)"
-mkdir -p "$BIN_DIR"
-cat >"$BIN_DIR/tmux-claude-bot" <<EOF_RUNNER
-#!/usr/bin/env bash
-set -euo pipefail
-# Pin to THIS install's state dir (the launchd/systemd service uses the same
-# state/ subdir) so the CLI always reaches the managed bot's control socket,
-# regardless of any stray TCB_STATE_DIR in the caller's environment.
-export TCB_STATE_DIR="$PROJECT_DIR/state"
-exec "$NODE_BIN" "$PROJECT_DIR/dist/cli.js" "\$@"
-EOF_RUNNER
-chmod +x "$BIN_DIR/tmux-claude-bot"
-ln -sf tmux-claude-bot "$BIN_DIR/tcb"
-info "Installed launchers 'tcb' and 'tmux-claude-bot' in $BIN_DIR"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) warn "Add $BIN_DIR to your PATH to use them globally:  export PATH=\"$BIN_DIR:\$PATH\"" ;;

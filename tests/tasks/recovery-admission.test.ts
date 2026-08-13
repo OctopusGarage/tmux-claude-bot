@@ -41,6 +41,61 @@ describe("recovery admission", () => {
     expect(coordinator.list()).toEqual([expect.objectContaining({ status: "running" })]);
   });
 
+  it("claims the new active record when an equivalent historical repair is terminal", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const historical = coordinator.enqueue({ ...finding(), now: 1 });
+    coordinator.markTerminal(historical.id, "superseded", 2);
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, detail: "run-2" }));
+
+    const result = await admitRecoveryFindings({
+      findings: [finding()],
+      coordinator,
+      now: 3,
+      leaseId: "admission:retry",
+      dispatch,
+    });
+
+    expect(result).toMatchObject({ disposition: "queued", admitted: 1, claimed: 1 });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: historical.id, status: "superseded" }),
+      expect.objectContaining({ status: "running", linkedTaskIds: ["run-1"] }),
+    ]);
+  });
+
+  it("claims an active runtime repair by task identity after evidence formatting changes", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const existing = coordinator.enqueue({
+      ...finding({
+        source: "runtime-guardian",
+        fingerprint: "gate failed | artifact exists",
+        taskId: "runtime-run-1",
+      }),
+      now: 1,
+    });
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, detail: "run-2" }));
+
+    const result = await admitRecoveryFindings({
+      findings: [
+        finding({
+          source: "runtime-guardian",
+          fingerprint: "gate failed; artifact exists",
+          taskId: "runtime-run-1",
+        }),
+      ],
+      coordinator,
+      now: 2,
+      leaseId: "admission:runtime",
+      dispatch,
+    });
+
+    expect(result).toMatchObject({ disposition: "queued", admitted: 1, claimed: 1 });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: existing.id, status: "running" }),
+    ]);
+  });
+
   it("returns an immediate capacity deferral to the queue without incrementing retry", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
 

@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
+import {
+  buildEvalReportFromSupervisorSummary,
+  isPreMutationDependencyGate,
+} from "../eval/report.js";
 import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
 import {
   listStaleDispatchingLoopSupervisorWorkOrders,
@@ -139,7 +143,9 @@ function systemGateFailure(
     disposition === undefined &&
     hasRawSuccessfulSummary(finalSummaryPath) &&
     failures.length > 0 &&
-    failures.every(isLegacyIsolatedBranchMismatchFailure)
+    failures.every((failure) =>
+      isIgnorableLegacySuccessfulSummaryFailure(record, finalSummaryPath, failure),
+    )
   ) {
     return null;
   }
@@ -200,11 +206,15 @@ function invalidOutput(
     return null;
   const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
   if (
-    (hasSuccessfulSummary(record) || hasRawSuccessfulSummary(finalSummaryPath)) &&
+    parsed.ok &&
+    parsed.summary.status === "completed" &&
+    parsed.summary.finalVerification === "passed" &&
     existsSync(gatePath)
   ) {
     return null;
   }
+  if (!parsed.ok && hasRawSuccessfulSummary(finalSummaryPath)) return null;
+  if (isRestartRecoveredActiveDelegationInvalidOutput(record)) return null;
   return findingFor(record, "terminal-invalid-output", "medium", [
     `terminal failed work-order has resultStatus=invalid-output: ${record.workOrder.id}`,
     `runDir: ${record.runDir}`,
@@ -298,14 +308,6 @@ function readJson(path: string): Record<string, unknown> | null {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function hasSuccessfulSummary(record: TerminalWorkOrder): boolean {
-  const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
-  return (
-    parsed.ok &&
-    parsed.summary.status === "completed" &&
-    parsed.summary.finalVerification === "passed"
-  );
-}
 function hasRawSuccessfulSummary(finalSummaryPath: string): boolean {
   const summary = readJson(finalSummaryPath);
   if (summary === null) return false;
@@ -318,6 +320,69 @@ function hasRawSuccessfulSummary(finalSummaryPath: string): boolean {
 }
 function isLegacyIsolatedBranchMismatchFailure(failure: string): boolean {
   return /^isolated worktree is on "[^"]*", expected WorkOrder branch "[^"]+"$/.test(failure);
+}
+function isLegacySystemGitEnoentFailure(failure: string): boolean {
+  return (
+    failure === "git status failed: spawnSync git ENOENT" ||
+    failure === "isolated worktree branch check failed: spawnSync git ENOENT"
+  );
+}
+function isLegacyPrAutoMergeHeadBehindBaseFailure(failure: string): boolean {
+  const detail = failure.toLowerCase();
+  return (
+    failure.startsWith("PR auto-merge failed:") &&
+    /head branch is not up to date with (?:the )?base(?: branch)?/.test(detail)
+  );
+}
+function isIgnorableLegacySuccessfulSummaryFailure(
+  record: TerminalWorkOrder,
+  finalSummaryPath: string,
+  failure: string,
+): boolean {
+  return (
+    isLegacyIsolatedBranchMismatchFailure(failure) ||
+    isLegacySystemGitEnoentFailure(failure) ||
+    isLegacyPrAutoMergeHeadBehindBaseFailure(failure) ||
+    legacyPreMutationEvalFailure(record, finalSummaryPath, [failure])
+  );
+}
+function legacyPreMutationEvalFailure(
+  record: TerminalWorkOrder,
+  finalSummaryPath: string,
+  failures: string[],
+): boolean {
+  if (
+    !failures.every((failure) => failure === "eval outcome is failed: deterministic-gate-failed")
+  ) {
+    return false;
+  }
+  const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
+  if (parsed.ok) {
+    return (
+      buildEvalReportFromSupervisorSummary({
+        workOrderId: record.workOrder.id,
+        taskId: record.workOrder.task?.kind ?? "architecture",
+        summary: parsed.summary,
+      }).outcome.status === "passed"
+    );
+  }
+  const summary = readJson(finalSummaryPath);
+  const reviewGate = isRecord(summary?.reviewGate) ? summary.reviewGate : null;
+  const deterministicGates = Array.isArray(reviewGate?.deterministicGates)
+    ? reviewGate.deterministicGates
+    : [];
+  const failedGates = deterministicGates.filter(
+    (gate) => isRecord(gate) && gate.result === "failed",
+  );
+  return failedGates.length > 0 && failedGates.every((gate) => isPreMutationDependencyGate(gate));
+}
+function isRestartRecoveredActiveDelegationInvalidOutput(record: TerminalWorkOrder): boolean {
+  if (record.workOrder.task?.kind !== "active-delegated-task") return false;
+  return (record.state.revisionReasons ?? []).some(
+    (reason) =>
+      reason === "supervisor worker lease has no live worker session after restart" ||
+      reason === "supervisor worker lease has no active queue turn after restart",
+  );
 }
 function readSummaryEvidence(runDir: string): string {
   try {

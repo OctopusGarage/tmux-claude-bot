@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerCapabilityCommands } from "./cli/capability-commands.js";
 import { registerConfigurationCommands } from "./cli/configuration-commands.js";
+import { registerPowerCommands } from "./cli/power-commands.js";
 import { registerResourceCommands } from "./cli/resource-commands.js";
 import { createResourceGuardianStore } from "./core/resource-guardian/store.js";
 import { SCHEDULED_TASK_SOURCES } from "./core/tasks/task-ledger.js";
@@ -102,6 +103,8 @@ program
 
 registerConfigurationCommands(program);
 
+registerPowerCommands(program);
+
 registerResourceCommands(program);
 
 registerCapabilityCommands(program);
@@ -152,19 +155,39 @@ for (const action of ["status", "pause", "resume", "restart", "logs"] as const) 
 
 program
   .command("dashboard")
-  .description("Show a global status dashboard of all sessions")
+  .description("Show the unified Runtime Overview and Project Sessions")
   .option("--json", "output the raw snapshot as JSON")
-  .action(async (o) => {
+  .option("--problems", "show only health and attention")
+  .option("--project <id>", "narrow active work, outcomes, and sessions by project")
+  .option("--limit <n>", "maximum items per bounded overview section", "10")
+  .action(async (o: { json?: boolean; problems?: boolean; project?: string; limit: string }) => {
     try {
       // stdout stays clean for the snapshot (esp. --json) via the CLI-wide
       // TCB_LOG_QUIET default set at the top of this file.
       const { bootstrap } = await import("./bootstrap.js");
       const { buildDashboard } = await import("./core/dashboard/dashboard.js");
       const { formatDashboardText } = await import("./core/dashboard/dashboard-view.js");
+      const { tildeifyHomeDeep } = await import("./shared/utils/path.js");
+      const limit = Number(o.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+        throw new Error("--limit must be an integer from 1 to 100");
+      }
       const deps = bootstrap();
-      const snap = await buildDashboard(deps);
+      const snap = await buildDashboard(deps, {
+        overviewOptions: {
+          attentionLimit: limit,
+          activeWorkLimit: limit,
+          recentOutcomeLimit: limit,
+          ...(o.problems ? { problemsOnly: true } : {}),
+          ...(o.project === undefined ? {} : { project: o.project }),
+        },
+      });
       process.stdout.write(
-        o.json ? `${JSON.stringify(snap, null, 2)}\n` : `${formatDashboardText(snap)}\n`,
+        o.json
+          ? `${JSON.stringify(tildeifyHomeDeep(snap), null, 2)}\n`
+          : `${formatDashboardText(snap, {
+              ...(o.problems ? { problemsOnly: true } : {}),
+            })}\n`,
       );
       process.exit(0); // bootstrap starts a live fs.watch (activity watcher) that would otherwise hang the process
     } catch (err) {
@@ -433,7 +456,7 @@ program
     const { operatorHomeDir, provisionOperatorHome } = await import(
       "./core/projects/operator-home.js"
     );
-    const { tildeifyHome } = await import("./shared/utils/path.js");
+    const { tildeifyHome, tildeifyHomeDeep } = await import("./shared/utils/path.js");
     const operatorHome =
       opts.dir ??
       operatorHomeDir({
@@ -455,7 +478,7 @@ program
       });
       const result = { operatorHome, removedGlobal, skills, mcp };
       if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(tildeifyHomeDeep(result), null, 2));
       } else {
         console.log(`Installed default AI tool surfaces in ${tildeifyHome(operatorHome)}.`);
         console.log(
@@ -487,7 +510,7 @@ program
     const skillStatus = skillInstallStatus({ home: operatorHome, scope: "operator-home" });
     const result = { operatorHome, expected, global, skillStatus };
     if (opts.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(tildeifyHomeDeep(result), null, 2));
     } else {
       console.log(`Operator home: ${tildeifyHome(operatorHome)}`);
       for (const item of expected) {
@@ -1001,10 +1024,20 @@ const loopReports = loop.command("reports").description("list Loop Engineering r
 loopReports
   .command("list")
   .description("list recorded Loop Engineering run reports")
+  .option("--project <id>", "filter reports by project id")
+  .option("--status <passed|failed>", "filter reports by terminal status")
+  .option("--limit <number>", "maximum reports to return (1-100)")
   .option("--json", "output reports as JSON")
-  .action(async (o: { json?: boolean }) => {
+  .action(async (o: { project?: string; status?: string; limit?: string; json?: boolean }) => {
     const { runLoopCommand } = await import("./core/loop/loop-command.js");
-    const result = runLoopCommand(["reports", "list", ...(o.json ? ["--json"] : [])]);
+    const result = runLoopCommand([
+      "reports",
+      "list",
+      ...(o.project === undefined ? [] : ["--project", o.project]),
+      ...(o.status === undefined ? [] : ["--status", o.status]),
+      ...(o.limit === undefined ? [] : ["--limit", o.limit]),
+      ...(o.json ? ["--json"] : []),
+    ]);
     if (result.exitCode === 0) {
       console.log(result.stdout);
     } else {
@@ -1062,22 +1095,36 @@ loopBacklog
   .command("list")
   .description("list Loop Engineering backlog items")
   .option("--all", "include closed backlog items")
+  .option("--project <id>", "filter backlog items by project id")
+  .option("--status <open|closed|all>", "filter backlog items by status")
+  .option("--limit <number>", "maximum backlog items to return (1-100)")
   .option("--json", "output backlog items as JSON")
-  .action(async (o: { all?: boolean; json?: boolean }) => {
-    const { runLoopCommand } = await import("./core/loop/loop-command.js");
-    const result = runLoopCommand([
-      "backlog",
-      "list",
-      ...(o.all ? ["--all"] : []),
-      ...(o.json ? ["--json"] : []),
-    ]);
-    if (result.exitCode === 0) {
-      console.log(result.stdout);
-    } else {
-      console.error(result.stderr);
-      process.exit(1);
-    }
-  });
+  .action(
+    async (o: {
+      all?: boolean;
+      project?: string;
+      status?: string;
+      limit?: string;
+      json?: boolean;
+    }) => {
+      const { runLoopCommand } = await import("./core/loop/loop-command.js");
+      const result = runLoopCommand([
+        "backlog",
+        "list",
+        ...(o.all ? ["--all"] : []),
+        ...(o.project === undefined ? [] : ["--project", o.project]),
+        ...(o.status === undefined ? [] : ["--status", o.status]),
+        ...(o.limit === undefined ? [] : ["--limit", o.limit]),
+        ...(o.json ? ["--json"] : []),
+      ]);
+      if (result.exitCode === 0) {
+        console.log(result.stdout);
+      } else {
+        console.error(result.stderr);
+        process.exit(1);
+      }
+    },
+  );
 
 loopBacklog
   .command("close <id>")

@@ -7,7 +7,10 @@ import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
 import { performStart } from "../../core/command/dispatch.js";
 import { buildQueueStatusLines } from "../../core/command/queue-status.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
-import { formatDashboardForChat } from "../../core/dashboard/dashboard-view.js";
+import {
+  dashboardLabelsForMessages,
+  formatDashboardForChat,
+} from "../../core/dashboard/dashboard-view.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
 import {
@@ -356,12 +359,12 @@ export async function sendDashboard(
   chatId: string,
 ): Promise<void> {
   const snap = await buildDashboard(deps);
-  const body = formatDashboardForChat(snap, { maxChars: 3500 });
-  await sendCard(
-    channel,
-    chatId,
-    viewCard(messages("lark").dashboardTitle, body, isProjectGroup(chatId)),
-  );
+  const m = messages("lark");
+  const body = formatDashboardForChat(snap, {
+    maxChars: 3500,
+    labels: dashboardLabelsForMessages(m),
+  });
+  await sendCard(channel, chatId, viewCard(m.dashboardTitle, body, isProjectGroup(chatId)));
 }
 
 /** Machine load / thermal / top CPU / runaway-orphan shells. Mirrors /dashboard;

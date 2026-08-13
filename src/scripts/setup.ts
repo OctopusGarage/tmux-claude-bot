@@ -5,9 +5,8 @@
  * to edit an existing config, `--yes` for non-interactive).
  */
 import { existsSync, readFileSync } from "node:fs";
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Bot } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -19,11 +18,11 @@ import {
   type SetupMessages,
   setupMessages,
 } from "../core/i18n/setup.js";
+import { writeConfigEnvironment } from "../core/infra/config-environment.js";
 import {
   maskToken,
   parseEnv,
   pollForCaptureIds,
-  serializeEnv,
   validateTokenShape,
 } from "../core/infra/onboarding.js";
 import { appStateFile } from "../shared/state-dir.js";
@@ -136,7 +135,7 @@ async function main(): Promise<void> {
       C.err(M0.yesNeedsToken);
       process.exit(1);
     }
-    await writeEnv(template, { ...Object.fromEntries(existing), ...values });
+    writeEnv(template, values);
     C.ok(M0.wroteEnvNonInteractive);
     if (
       values.TELEGRAM_BOT_TOKEN &&
@@ -317,7 +316,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    await writeEnv(template, { ...Object.fromEntries(existing), ...values });
+    writeEnv(template, values);
     C.ok(M.wroteEnv(ENV_PATH));
     if (values.TELEGRAM_BOT_TOKEN) {
       C.info(M.telegramIds(values.TELEGRAM_ALLOWED_USER_IDS || M.telegramIdsNone));
@@ -330,12 +329,8 @@ async function main(): Promise<void> {
   }
 }
 
-async function writeEnv(template: string, values: Record<string, string>): Promise<void> {
-  await mkdir(dirname(ENV_PATH), { recursive: true }); // state dir may not exist yet
-  const tmp = `${ENV_PATH}.tmp`;
-  await writeFile(tmp, serializeEnv(template, values), "utf8");
-  await chmod(tmp, 0o600);
-  await rename(tmp, ENV_PATH);
+function writeEnv(template: string, values: Record<string, string>): void {
+  writeConfigEnvironment(values, template);
 }
 
 main().catch((e) => {

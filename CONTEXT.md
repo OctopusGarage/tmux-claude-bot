@@ -197,6 +197,38 @@ _Avoid_: reconnect, recover group
 
 ### System Boundaries
 
+**Runtime Overview**:
+The canonical read model that summarizes overall health, Attention Items,
+Active Work, Automation Families, Project Sessions, Operator and AI Interfaces,
+and recent outcomes across tmux-claude-bot.
+_Avoid_: super dashboard, all-status blob, operations dump
+
+**Runtime Domain**:
+One authoritative operational area projected into the Runtime Overview, such as
+Automation, Resource Guardian, or Operator and AI Interfaces.
+_Avoid_: component, subsystem row, status provider
+
+**Attention Item**:
+A bounded, evidence-backed condition that requires operator awareness and has a
+stable severity, source, summary, and next action.
+_Avoid_: alert string, dashboard warning, arbitrary error
+
+**Active Work**:
+Currently owned execution, including busy interactive Project Sessions and
+non-terminal WorkOrders. A live but idle session is not Active Work.
+_Avoid_: running session, active project, process list
+
+**Recent Outcome**:
+A bounded terminal result projected from existing durable WorkOrder, report, or
+task-ledger evidence. It is not a separate persisted record.
+_Avoid_: dashboard history, result cache, outcome log
+
+**AI Interface**:
+A role-scoped agent entry managed or consumed by the product, such as the Home
+Operator Session, an operator skill, a managed MCP profile, or a product MCP
+dependency.
+_Avoid_: AI component, tool plugin, global agent access
+
 **Adapter**:
 The chat-app-specific edge that receives messages and renders replies.
 _Avoid_: channel implementation, frontend

@@ -108,6 +108,7 @@ type PendingLedgerRecord = {
 
 const DEFAULT_LEASE_MS = 30 * 60_000;
 const MAX_BACKOFF_MS = 30 * 60_000;
+export const REPAIR_MAX_ATTEMPTS = 3;
 
 export function createRepairDedupeKey(input: {
   projectId: string;
@@ -138,6 +139,16 @@ export class RepairCoordinator {
     let existing = this.list().find(
       (record) => record.dedupeKey === dedupeKey && !isTerminal(record.status),
     );
+    if (existing === undefined && input.source === "runtime-guardian") {
+      existing = this.list().find(
+        (record) =>
+          record.source === "runtime-guardian" &&
+          record.projectId === input.projectId &&
+          record.taskFamily === input.taskFamily &&
+          record.linkedTaskIds.includes(input.taskId) &&
+          !isTerminal(record.status),
+      );
+    }
     if (existing === undefined && input.source === "project-recovery") {
       const stale = this.list().find(
         (record) =>
@@ -258,6 +269,7 @@ export class RepairCoordinator {
   }
 
   claimDue(input: RepairClaimInput): RepairQueueRecord[] {
+    this.deadLetterExhausted(input.now);
     const claimed = this.list()
       .filter(
         (record) =>
@@ -289,6 +301,7 @@ export class RepairCoordinator {
   }
 
   claimIds(ids: readonly string[], input: RepairClaimInput): RepairQueueRecord[] {
+    this.deadLetterExhausted(input.now);
     const wanted = new Set(ids);
     const due = this.list()
       .filter(
@@ -353,16 +366,23 @@ export class RepairCoordinator {
     return updated;
   }
 
-  releaseForRetry(id: string, now: number): RepairQueueRecord | undefined {
+  releaseForRetry(
+    id: string,
+    now: number,
+    options: { detachWorkOrder?: boolean } = {},
+  ): RepairQueueRecord | undefined {
     const record = this.store.get(id);
     if (record === undefined) return undefined;
     const attempt = record.attempt + 1;
     const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
+    const retryBase = options.detachWorkOrder
+      ? (({ workOrderId: _workOrderId, ...withoutWorkOrder }) => withoutWorkOrder)(withoutLease)
+      : withoutLease;
     const updated: RepairQueueRecord = {
-      ...withoutLease,
-      status: "retry-wait",
+      ...retryBase,
+      status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
       attempt,
-      nextAttemptAt: now + repairBackoffMs(attempt),
+      nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
       updatedAt: now,
     };
     this.store.set(id, updated);
@@ -394,9 +414,21 @@ export class RepairCoordinator {
       }
     }
     const superseded = new Set<string>();
-    for (const records of byTaskId.values()) {
+    for (const [taskId, records] of byTaskId) {
       const unique = [...new Map(records.map((record) => [record.id, record])).values()];
       if (unique.length < 2) continue;
+      const derivedWorkOrderId = taskId.startsWith("autopilot:")
+        ? taskId.slice("autopilot:".length)
+        : undefined;
+      if (
+        derivedWorkOrderId !== undefined &&
+        unique.every(
+          (record) =>
+            record.workOrderId === derivedWorkOrderId ||
+            record.linkedTaskIds.some((linkedTaskId) => linkedTaskId !== taskId),
+        )
+      )
+        continue;
       unique.sort(compareDuplicatePriority);
       const winner = unique[0];
       if (winner === undefined) continue;
@@ -463,12 +495,26 @@ export class RepairCoordinator {
       const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
       const updated: RepairQueueRecord = {
         ...withoutLease,
-        status: "retry-wait",
+        status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
         attempt,
-        nextAttemptAt: now + repairBackoffMs(attempt),
+        nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
         updatedAt: now,
       };
       this.store.set(record.id, updated);
+      count++;
+    }
+    return count;
+  }
+
+  private deadLetterExhausted(now: number): number {
+    let count = 0;
+    for (const record of this.list()) {
+      if (
+        (record.status !== "pending" && record.status !== "retry-wait") ||
+        record.attempt < REPAIR_MAX_ATTEMPTS
+      )
+        continue;
+      this.markTerminal(record.id, "dead-letter", now);
       count++;
     }
     return count;

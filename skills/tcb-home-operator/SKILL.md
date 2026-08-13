@@ -1,6 +1,6 @@
 ---
 name: tcb-home-operator
-description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Operated through the `tcb` CLI.
+description: Use when the user wants to run, check on, or steer a background coding agent (Claude Code / Codex) in a managed session on this machine — send a prompt, check status, switch or start a project, peek at a pane, or stop work — or refers to "the bot" or a project session by name. Prefer managed MCP observation and use the `tcb` CLI for fallbacks and local administration.
 ---
 
 # Operating tmux-claude-bot
@@ -12,7 +12,24 @@ inspect it with `tcb service status`; use `tcb service resume` when it is paused
 `tcb service restart` when it needs a clean restart. You are the **operator**, a
 separate process — not one of the managed sessions.
 
-## Start from docs, then use the CLI
+## Start from the Runtime Overview
+
+For status and discovery, call `tcb.observer.status` first when the managed
+Observer/Home MCP profile is available. Its `data.overview` is the canonical,
+bounded Runtime Overview; use its `attention`, `activeWork`, `runtimeDomains`,
+and `nextSuggestedAction` before opening a narrower evidence tool. Use
+`tcb.observer.loop_reports_list`, `tcb.observer.daily_task_audit`,
+`tcb.observer.runtime_guardian_findings`, session logs, or queue/project tools
+only when that evidence is relevant.
+
+If MCP is unavailable, fall back to `tcb dashboard --json`, then dedicated
+read-only CLI commands. Do not read files under the state directory directly,
+parse human-formatted CLI prose, invoke a generic MCP shell wrapper, or copy
+Dashboard health rules into this skill. Mutations still require explicit owner
+intent and an explicit target identity; status discovery grants no mutation
+authority.
+
+## Continue from maintained docs
 
 For user-facing usage, read `docs/agents/usage-guide.md` first, then
 `docs/manual.md`, `docs/commands.md`, or `docs/tui.md` for exact syntax. Do not
@@ -34,8 +51,9 @@ prompts.
 - **Look** — `tcb peek <project>` prints a snapshot of its session pane.
 - **Start / switch a project** — `tcb open <project>` (works for stopped projects too).
 - **Control keys** — `tcb control <project> <esc|enter|interrupt|restart|clear|compact|up|down|tab>`.
-- **Status / health** — `tcb dashboard` (all sessions), `tcb sysload` (machine load /
-  heat / runaway processes / Resource Guardian), `tcb resource status` and
+- **Status / health** — `tcb.observer.status` first; `tcb dashboard --json` is the
+  CLI fallback. Use `tcb dashboard` for a human view and `tcb sysload` for machine load /
+  heat / runaway processes / Resource Guardian, `tcb resource status` and
   `tcb resource incidents --limit 20` (Guardian detail), `tcb doctor` (install health).
 - **Delegate clarified work** — `tcb autopilot <project> [requirement]`. Use this
   after the user has clarified a task and wants the supervisor to finish
@@ -56,7 +74,8 @@ matches; pick the right one or ask the user.
 ## Mapping requests → commands
 
 - "Tell geo-backend to fix the failing test" → `tcb send geo-backend "fix the failing test"`, then relay the reply.
-- "What's running / what's busy?" → `tcb sessions` (or `tcb dashboard` for detail).
+- "What's running / what's busy?" → `tcb.observer.status`; if MCP is unavailable,
+  use `tcb dashboard --json` (or `tcb sessions` for a narrow session list).
 - "Start / switch to <project>" → `tcb open <project>`.
 - "Stop what it's doing / interrupt it" → `tcb control <project> esc`.
 - "Show me what it's doing" → `tcb peek <project>`.
@@ -80,12 +99,16 @@ matches; pick the right one or ask the user.
 ## Modern automation shortcuts
 
 - Clarified current task -> `tcb autopilot <project> "[requirement]"`.
-- Proactive suggestions -> `/opportunity list|show|discuss|dismiss` in chat;
+- Proactive suggestions -> `/opportunity list|show|discuss|dismiss|snooze` in chat;
   execute approved work through Autopilot/supervisor delegation.
 - Yesterday's schedules -> `tcb task audit --force`.
 - Loop config health -> `tcb loop validate <config> --json`.
-- Loop run history -> `tcb loop reports list --json` and
-  `tcb loop backlog list --all --json`.
+- Loop run history -> `tcb.observer.loop_reports_list` first; CLI fallback:
+  `tcb loop reports list --limit 20 --json` and
+  `tcb loop backlog list --status all --limit 20 --json`.
+- Home AI-surface health -> `tcb ai-tools status`; refresh the operator-workspace
+  skill and Observer/Home MCP descriptors with `tcb ai-tools install`. Global
+  skill publication is a separate explicit opt-in, never the managed default.
 
 ## Sending an image or file to the user
 

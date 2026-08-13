@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -66,6 +66,35 @@ describe("supervisor work restore", () => {
 
   it("returns null for control messages without valid supervisor restore metadata", () => {
     expect(restoredLoopSupervisorMessage(persisted({ kind: "other" }))).toBeNull();
+  });
+
+  it("does not replay persisted work that already has a valid final summary", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-restore-complete-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const completedWorkOrder = {
+      ...workOrder,
+      finalSummaryPath: join(stateDir, "supervisor-final-summary.json"),
+    };
+    writeFileSync(
+      completedWorkOrder.finalSummaryPath,
+      JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["already completed"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      }),
+    );
+
+    expect(
+      restoredLoopSupervisorMessage(
+        persisted(
+          loopSupervisorControlRestore(completedWorkOrder, "tmux_proj_loop-supervisor", 1_000),
+        ),
+      ),
+    ).toBeNull();
   });
 
   it("completes restored supervisor work through reports and backlog", () => {

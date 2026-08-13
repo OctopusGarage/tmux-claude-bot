@@ -8,7 +8,10 @@ export type RepositoryReviewQueueStatus =
   | "retry-wait"
   | "completed"
   | "blocked"
-  | "manual-review";
+  | "manual-review"
+  | "dead-letter";
+
+export const REPOSITORY_REVIEW_MAX_ATTEMPTS = 5;
 
 export type RepositoryReviewQueueItem = {
   id: string;
@@ -23,6 +26,13 @@ export type RepositoryReviewQueueItem = {
   leaseOwner?: string;
   leaseUntil?: number;
   lastError?: string;
+  retryEpoch?: number;
+  migration?: {
+    previousStatus: "manual-review" | "dead-letter";
+    previousAttempt: number;
+    reason: string;
+    migratedAt: number;
+  };
 };
 
 type EnqueueInput = {
@@ -66,6 +76,7 @@ export class RepositoryReviewQueue {
 
   list(options: { all?: boolean } = {}): RepositoryReviewQueueItem[] {
     const now = Date.now();
+    this.deadLetterExhausted(now);
     this.reclaimExpiredLeases(now);
     return this.items
       .sortedEntries()
@@ -78,6 +89,7 @@ export class RepositoryReviewQueue {
 
   listReady(now: number, limit = Number.POSITIVE_INFINITY): RepositoryReviewQueueItem[] {
     this.migrateLegacyBlocked(now);
+    this.deadLetterExhausted(now);
     this.reclaimExpiredLeases(now);
     return this.items
       .sortedEntries()
@@ -112,6 +124,7 @@ export class RepositoryReviewQueue {
   }
 
   lease(id: string, owner: string, now: number, leaseMs: number): RepositoryReviewQueueItem | null {
+    this.deadLetterExhausted(now);
     this.reclaimExpiredLeases(now);
     const item = this.items.get(id);
     if (
@@ -161,6 +174,7 @@ export class RepositoryReviewQueue {
     error: string,
     nextAttemptAt: number,
   ): boolean {
+    this.deadLetterExhausted(now);
     const id = queueId(repositoryId, scheduledAt);
     const item = this.items.get(id);
     if (
@@ -172,9 +186,9 @@ export class RepositoryReviewQueue {
     }
     const retrying: RepositoryReviewQueueItem = {
       ...item,
-      status: "retry-wait",
+      status: item.attempt >= REPOSITORY_REVIEW_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
       updatedAt: now,
-      nextAttemptAt,
+      nextAttemptAt: item.attempt >= REPOSITORY_REVIEW_MAX_ATTEMPTS ? now : nextAttemptAt,
       lastError: error,
     };
     delete retrying.leaseOwner;
@@ -224,9 +238,9 @@ export class RepositoryReviewQueue {
     }
     const retrying: RepositoryReviewQueueItem = {
       ...item,
-      status: "retry-wait",
+      status: item.attempt >= REPOSITORY_REVIEW_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
       updatedAt: now,
-      nextAttemptAt,
+      nextAttemptAt: item.attempt >= REPOSITORY_REVIEW_MAX_ATTEMPTS ? now : nextAttemptAt,
       lastError: error,
     };
     delete retrying.leaseOwner;
@@ -241,6 +255,82 @@ export class RepositoryReviewQueue {
 
   manualReview(id: string, owner: string, now: number, reason: string): boolean {
     return this.complete(id, owner, now, "manual-review", reason);
+  }
+
+  reopenTerminal(id: string, input: { now: number; reason: string }): boolean {
+    const item = this.items.get(id);
+    if (
+      item === undefined ||
+      (item.status !== "manual-review" && item.status !== "dead-letter") ||
+      !this.canRecoverTerminal(id)
+    ) {
+      return false;
+    }
+    const reopened: RepositoryReviewQueueItem = {
+      ...item,
+      status: "retry-wait",
+      attempt: 0,
+      retryEpoch: (item.retryEpoch ?? 0) + 1,
+      updatedAt: input.now,
+      nextAttemptAt: input.now,
+      lastError: input.reason,
+      migration: {
+        previousStatus: item.status,
+        previousAttempt: item.attempt,
+        reason: input.reason,
+        migratedAt: input.now,
+      },
+    };
+    delete reopened.leaseOwner;
+    delete reopened.leaseUntil;
+    this.items.set(id, reopened);
+    return true;
+  }
+
+  completeRecoveredTerminal(id: string, input: { now: number; reason: string }): boolean {
+    const item = this.items.get(id);
+    if (
+      item === undefined ||
+      (item.status !== "manual-review" && item.status !== "dead-letter") ||
+      !this.canRecoverTerminal(id)
+    ) {
+      return false;
+    }
+    const completed: RepositoryReviewQueueItem = {
+      ...item,
+      status: "completed",
+      updatedAt: input.now,
+      nextAttemptAt: input.now,
+      lastError: input.reason,
+      migration: {
+        previousStatus: item.status,
+        previousAttempt: item.attempt,
+        reason: input.reason,
+        migratedAt: input.now,
+      },
+    };
+    delete completed.leaseOwner;
+    delete completed.leaseUntil;
+    this.items.set(id, completed);
+    return true;
+  }
+
+  canRecoverTerminal(id: string): boolean {
+    const item = this.items.get(id);
+    return (
+      item !== undefined &&
+      (item.status === "manual-review" || item.status === "dead-letter") &&
+      item.migration === undefined &&
+      !this.items
+        .sortedEntries()
+        .some(
+          ([otherId, other]) =>
+            otherId !== id &&
+            other.repositoryId === item.repositoryId &&
+            other.scheduledAt > item.scheduledAt &&
+            !isTerminal(other.status),
+        )
+    );
   }
 
   complete(
@@ -281,7 +371,7 @@ export class RepositoryReviewQueue {
       }
       const recovered: RepositoryReviewQueueItem = {
         ...item,
-        status: "pending",
+        status: item.attempt >= REPOSITORY_REVIEW_MAX_ATTEMPTS ? "dead-letter" : "pending",
         updatedAt: now,
         nextAttemptAt: now,
         lastError: item.lastError ?? "repository review lease expired",
@@ -289,6 +379,17 @@ export class RepositoryReviewQueue {
       delete recovered.leaseOwner;
       delete recovered.leaseUntil;
       this.items.set(item.id, recovered);
+    }
+  }
+
+  private deadLetterExhausted(now: number): void {
+    for (const [id, item] of this.items.sortedEntries()) {
+      if (
+        (item.status !== "pending" && item.status !== "retry-wait") ||
+        item.attempt < REPOSITORY_REVIEW_MAX_ATTEMPTS
+      )
+        continue;
+      this.items.set(id, { ...item, status: "dead-letter", updatedAt: now, nextAttemptAt: now });
     }
   }
 }
@@ -307,5 +408,10 @@ function leaseOwnerProcessExited(owner: string | undefined): boolean {
 }
 
 function isTerminal(status: RepositoryReviewQueueStatus): boolean {
-  return status === "completed" || status === "blocked" || status === "manual-review";
+  return (
+    status === "completed" ||
+    status === "blocked" ||
+    status === "manual-review" ||
+    status === "dead-letter"
+  );
 }

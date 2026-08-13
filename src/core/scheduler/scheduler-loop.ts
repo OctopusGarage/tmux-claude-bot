@@ -1,11 +1,11 @@
 import { createLogger } from "../../shared/utils/logger.js";
 import { profileFor } from "../agents/registry.js";
 import type { AgentKind } from "../agents/types.js";
+import { admitAutomationWork } from "../automation/admission.js";
 import type { AutopilotNotice } from "../autopilot/notifier.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
-import { admitResourceWork } from "../resource-guardian/admission.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import { accountQuotaHit, pausePool, resumeAtFrom, resumePool } from "./quota.js";
 import { renderSummary } from "./report.js";
@@ -412,12 +412,15 @@ export function startScheduler(deps: HandlerDeps): () => void {
       readUsage,
       isGated: (session) =>
         isSessionGated(session) ||
-        !admitResourceWork({
-          source: "batch-scheduler",
-          trigger: "background",
-          weight: "heavy",
-          now: tickNow,
-        }).allowed,
+        !admitAutomationWork(
+          {
+            source: "batch-scheduler",
+            trigger: "background",
+            weight: "heavy",
+            now: tickNow,
+          },
+          { hostPower: deps.config.hostPower },
+        ).allowed,
       quotaPct,
       reprobeMs,
       save: (run, p) => {

@@ -10,7 +10,10 @@ import {
 import { buildHelpBody, getTelegramActions } from "../../core/command/action-registry.js";
 import { startDisposition } from "../../core/command/dispatch.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
-import { formatDashboardForChat } from "../../core/dashboard/dashboard-view.js";
+import {
+  dashboardLabelsForMessages,
+  formatDashboardForChat,
+} from "../../core/dashboard/dashboard-view.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang, setUiLang, UI_LANGS } from "../../core/i18n/index.js";
 import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
@@ -440,8 +443,13 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   // separator-based, not column-aligned, so it needs no monospace).
   bot.command("dashboard", async (ctx) => {
     const snap = await buildDashboard(deps);
-    const body = formatDashboardForChat(snap, { maxChars: 3500, showGroups: false });
-    await reply(ctx, "view", messages("telegram").dashboardTitle, {
+    const m = messages("telegram");
+    const body = formatDashboardForChat(snap, {
+      maxChars: 3500,
+      showGroups: false,
+      labels: dashboardLabelsForMessages(m),
+    });
+    await reply(ctx, "view", m.dashboardTitle, {
       body,
       replyTarget,
     });

@@ -286,6 +286,69 @@ describe("runDailyTaskAuditServiceTick", () => {
     });
   });
 
+  it("persists discovered missing tasks so the repair worker receives and settles them", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-discovered-repair-"));
+    const notifications = new NotificationGateway();
+    notifications.register(
+      "lark",
+      vi.fn(async () => undefined),
+    );
+    const ledger = new DailyTaskLedger();
+    const dispatchRepair = vi.fn(async () => ({
+      status: "queued" as const,
+      detail: "runId=repair-missing-1",
+      runId: "repair-missing-1",
+    }));
+
+    await runDailyTaskAuditServiceTick({
+      now: Date.parse("2026-07-28T02:05:00Z"),
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: true,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications,
+      ledger,
+      dispatchRepair,
+      discover: ({ window }) => [
+        {
+          taskId: "loop:geo:security-maintenance:1",
+          source: "loop-engineering",
+          name: "geo security-maintenance",
+          scheduledAt: window.start,
+          status: "expected",
+          updatedAt: window.start,
+        },
+      ],
+      force: true,
+    });
+
+    expect(dispatchRepair).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({
+            taskId: "loop:geo:security-maintenance:1",
+            status: "missing",
+          }),
+        ],
+      }),
+    );
+    expect(ledger.listAll()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          taskId: "loop:geo:security-maintenance:1",
+          status: "expected",
+          repairStatus: "running",
+        }),
+      ]),
+    );
+  });
+
   it("finishes the audit when repair dispatch fails", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-repair-fails-"));
     const notifications = new NotificationGateway();

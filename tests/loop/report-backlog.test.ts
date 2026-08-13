@@ -165,4 +165,19 @@ describe("loop reports and backlog", () => {
       expect.objectContaining({ id: first?.id, status: "closed", closedAt: 3_000 }),
     ]);
   });
+
+  it("bounds and filters backlog queries while preserving the reconciliation list", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-backlog-query-"));
+    const store = new LoopBacklogStore();
+    store.addFollowUps("alpha", ["first", "second"], 1_000, "run-a");
+    store.addFollowUps("beta", ["third"], 2_000, "run-b");
+
+    expect(store.query({ projectId: "alpha", limit: 1 })).toEqual({
+      items: [expect.objectContaining({ projectId: "alpha" })],
+      total: 2,
+      limit: 1,
+      truncated: true,
+    });
+    expect(store.list()).toHaveLength(3);
+  });
 });

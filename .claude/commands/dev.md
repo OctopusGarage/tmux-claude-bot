@@ -14,7 +14,7 @@ For deploying a release use `/deploy`; to cut one use `/release`.
 Argument: `$ARGUMENTS` — `start` (default), `stop`, or `status`.
 
 Constants: launchd label `com.octopusgarage.tmux-claude-bot` · deploy dir
-`~/.tmux-claude-bot` (its `.env` is the single source of config) · clone code.
+`~/.tmux-claude-bot` · deployed config `<state-dir>/.env` · clone code.
 
 ## status
 
@@ -25,8 +25,9 @@ Constants: launchd label `com.octopusgarage.tmux-claude-bot` · deploy dir
 ## start
 
 1. Launch `./dev.sh` in the background. It will, in order: **pause** the managed
-   service (if loaded), then run `tsx watch` with `TCB_ENV_FILE=~/.tmux-claude-bot/.env`
-   (clone code + prod config, hot-reload).
+   service (if loaded), then run `tsx watch` with the deployed
+   `TCB_ENV_FILE=<state-dir>/.env` selected by `dev.sh` (clone code + prod config,
+   hot-reload). Pre-state-split installs retain the bounded legacy fallback.
 2. Tail the dev output until `Connected to Telegram` (and `[lark] connected` if
    Feishu is configured); surface any error.
 3. Tell the user: edits save -> reload instantly; **stop with `/dev stop`** (so

@@ -38,9 +38,11 @@ interactive agents you already use.
   chat credentials.
 - Provides Loop Engineering for recurring project health work: architecture,
   bug-fix, test-coverage, security-maintenance, harness-auto, opportunity
-  discovery, and PR review.
+  discovery, automationGovernanceReview, and PR review.
 - Provides Autopilot for owner-confirmed active delegation into the same
   supervisor-backed WorkOrder pipeline.
+- Provides Resource Guardian to observe sustained host pressure, gate new
+  background work, and reduce only revalidated bot-owned emergency load.
 - Provides Daily Task Audit and Runtime Guardian so the bot can detect failed
   scheduled work and repair tmux-claude-bot-owned runtime issues.
 
@@ -116,6 +118,7 @@ Important automation modules:
 | Opportunity Discovery | Read-only suggestions that can later be discussed and delegated. |
 | PR Review | Review and merge loop-created PRs or configured repository-wide open PRs. |
 | Daily Task Audit | Daily audit of bot-hosted schedules with optional self-repair. |
+| Resource Guardian | Host-pressure observation, background admission, and bounded bot-owned emergency protection. |
 | Runtime Guardian | Near-real-time self-healing for tmux-claude-bot runtime artifacts. |
 
 See [docs/intelligent-automation.md](docs/intelligent-automation.md) and
@@ -150,7 +153,7 @@ Start here:
 - [docs/intelligent-automation-architecture.md](docs/intelligent-automation-architecture.md)
   - automation architecture, gates, and drift controls
 - [docs/automation-capability-matrix.md](docs/automation-capability-matrix.md) -
-  CLI, TUI, Telegram, Feishu/Lark, and skill parity matrix
+  CLI, TUI, Telegram, Feishu/Lark, MCP, and skill parity matrix
 - [docs/TESTING.md](docs/TESTING.md) - local verification and testing standard
 
 ## Development

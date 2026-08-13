@@ -2,6 +2,7 @@ import { startControlServer } from "./adapters/control/server.js";
 import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
+import { reconcileAndResumeActiveDelegatedTasksAfterRestart } from "./core/autopilot/delegated-task.js";
 import {
   acquireInstanceLock,
   InstanceLockHeldError,
@@ -11,8 +12,8 @@ import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.
 import { startLoopEngineering } from "./core/loop/service.js";
 import { startLoopSupervisors } from "./core/loop/supervisor-session.js";
 import { startLongTaskMonitor } from "./core/notifications/long-task-monitor.js";
-import { startKeepAwake, stopKeepAwake } from "./core/platform/keep-awake.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
+import { startHostPowerManager } from "./core/power/power-manager.js";
 import { startOperator } from "./core/projects/operator-home.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { autoRecoverOnBoot } from "./core/recovery/recover.js";
@@ -33,6 +34,7 @@ const log = createLogger("boot");
 const fatalLog = createLogger("index");
 let shuttingDown = false;
 let stopResourceGuardian = (): void => {};
+let stopHostPowerManager = (): void => {};
 
 // Refuse to start beside another running instance — two pollers on one
 // Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
@@ -53,11 +55,6 @@ try {
 
 const deps = bootstrap();
 const { config, currentProject, bridge } = deps;
-
-// Keep the Mac awake on AC power (macOS, opt-in) for the bot's lifetime. In the
-// bot process — not the launchd wrapper — so it covers every launch path
-// identically (dev tsx, managed service, manual run).
-startKeepAwake(config.keepAwake);
 
 async function init(): Promise<void> {
   // Restore every channel's current session (Telegram + Feishu may differ).
@@ -109,8 +106,8 @@ process.once("SIGINT", markCleanShutdown);
 process.once("SIGTERM", markCleanShutdown);
 process.once("SIGINT", releaseInstanceLock);
 process.once("SIGTERM", releaseInstanceLock);
-process.once("SIGINT", stopKeepAwake);
-process.once("SIGTERM", stopKeepAwake);
+process.once("SIGINT", () => stopHostPowerManager());
+process.once("SIGTERM", () => stopHostPowerManager());
 process.once("SIGINT", () => stopResourceGuardian());
 process.once("SIGTERM", () => stopResourceGuardian());
 
@@ -152,10 +149,28 @@ await init();
 startRunningSweep(deps, config.runningSweepMs);
 startSessionIdleReaper(deps, config.sessionIdleReaper);
 
-startScheduler(deps);
-startLoopEngineering(deps, config.loopEngineering);
+let loopStartupReady = true;
+try {
+  await startLoopEngineering(deps, config.loopEngineering);
+} catch (err) {
+  loopStartupReady = false;
+  log.error("loop engineering startup reconciliation failed; automatic recovery remains paused", {
+    err,
+  });
+}
 // Boot the background Loop Supervisor session. No-op unless explicitly enabled.
 void startLoopSupervisors(deps);
+// Active delegation recovery must observe the Loop startup barrier. Otherwise a
+// restart can resume a WorkOrder before its already-written final summary has
+// been reconciled and settled.
+if (loopStartupReady) {
+  try {
+    await reconcileAndResumeActiveDelegatedTasksAfterRestart(deps);
+  } catch (err) {
+    log.error("active delegation startup recovery failed", { err });
+  }
+}
+startScheduler(deps);
 // Boot the home operator session (provision home dir + create session + start agent).
 // Fire-and-forget — must not block boot. No-op when HOME_OPERATOR_ENABLED=false.
 void startOperator(deps);
@@ -177,6 +192,7 @@ let notificationDrivenServicesStarted = false;
 const startNotificationDrivenServices = (): void => {
   if (notificationDrivenServicesStarted) return;
   notificationDrivenServicesStarted = true;
+  stopHostPowerManager = startHostPowerManager(deps);
   stopResourceGuardian = startResourceGuardian(deps);
   startRuntimeGuardian(deps);
   startDailyTaskAudit(deps);

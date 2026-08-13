@@ -13,6 +13,20 @@ AI-facing tool surface, not a bypass around the bot's control service.
 The Home profile intentionally does not expose arbitrary shell execution, direct
 file edits, PR merge operations, or WorkOrder internals.
 
+`tcb.observer.status` is the canonical agent-facing Runtime Overview. It returns
+the complete bounded Dashboard snapshot, stable evidence, structured `scope`, `errorKind`,
+and `nextSuggestedAction`. The Home profile inherits this tool; there is no
+duplicate `tcb.home.status`. Use `tcb.observer.loop_reports_list` for narrower
+history with optional `projectId`, `status`, and `limit` (default 20, maximum
+100). Loop reports, Daily Task Audit, and Runtime Guardian drill-downs are read
+through the running bot's Control socket; the MCP process does not open durable
+state directly. Daily Task Audit includes `recentTotal`, `recentLimit`, and
+`recentTruncated` alongside its bounded records. Runtime Guardian findings accept
+`limit` (default 50, maximum 100) and return `total`, `limit`, and `truncated`.
+Every Observer and Home tool advertises an MCP `outputSchema`; successful and
+blocked calls therefore share a validated envelope while each tool keeps a typed
+`data` payload and an explicit scope object.
+
 ## Install Profile Descriptors
 
 Generate or refresh local profile descriptor files in the Home Operator

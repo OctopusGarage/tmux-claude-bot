@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath } from "../../src/core/loop/artifacts.js";
-import { listLoopReportRecords } from "../../src/core/loop/report-catalog.js";
+import {
+  listLoopReportRecords,
+  queryLoopReportRecords,
+} from "../../src/core/loop/report-catalog.js";
 
 describe("listLoopReportRecords", () => {
   it("projects command and supervisor report files into one report record list", async () => {
@@ -78,6 +81,13 @@ describe("listLoopReportRecords", () => {
       }),
     ]);
     expect(records[1]?.evalReportPath).toBeUndefined();
+
+    expect(queryLoopReportRecords(root, { projectId: "hub", status: "passed", limit: 1 })).toEqual({
+      items: [expect.objectContaining({ runId: "run-supervisor" })],
+      total: 2,
+      limit: 1,
+      truncated: true,
+    });
   });
 
   it("builds canonical loop run artifact paths", () => {

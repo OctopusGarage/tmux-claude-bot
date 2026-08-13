@@ -136,6 +136,89 @@ describe("project recovery service", () => {
     );
   });
 
+  it("does not dispatch while a nonterminal WorkOrder final summary awaits settlement", async () => {
+    process.env.TCB_STATE_DIR = join(tmpdir(), `project-recovery-settling-${Date.now()}`);
+    const now = Date.now();
+    const runId = "settling-recovery";
+    const runDir = join(process.env.TCB_STATE_DIR, "loop-runs", "geo", runId);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: {
+        id: runId,
+        projectId: "geo",
+        projectName: "Geo",
+        projectPath: "/repo/geo",
+        scheduledAt: now,
+        requiredFinalMarker: "[done]",
+        finalSummaryPath: join(runDir, "supervisor-final-summary.json"),
+        task: { kind: "active-delegated-task" },
+      } as never,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now,
+    });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "geo",
+        actionsTaken: [],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "project-recovery",
+      taskFamily: "bug-fix",
+      fingerprint: "worker-handoff",
+      taskId: "loop:geo:bug-fix:settling",
+      now,
+    });
+    const dispatch = vi.fn();
+    const updateRepairStatus = vi.fn();
+
+    const result = await runProjectRecoveryPass({
+      now: now + 1,
+      records: [
+        {
+          taskId: "loop:geo:bug-fix:settling",
+          source: "loop-engineering",
+          name: "geo bug-fix",
+          status: "failed",
+          summary: "supervisor-failed because worker handoff failed",
+          scheduledAt: now,
+          updatedAt: now,
+          repairStatus: "pending",
+        },
+      ],
+      config: {
+        projects: [{ id: "geo", name: "Geo", path: "/repo/geo" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ deferred: 1, dispatched: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "pending",
+      attempt: 0,
+    });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:geo:bug-fix:settling",
+      "pending",
+      expect.stringContaining("active WorkOrder"),
+    );
+  });
+
   it("releases a recovery lease when every linked WorkOrder is already terminal", async () => {
     process.env.TCB_STATE_DIR = join(tmpdir(), `project-recovery-terminal-${Date.now()}`);
     writeLoopSupervisorWorkOrderState({
@@ -246,6 +329,64 @@ describe("project recovery service", () => {
     expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
     expect(updateRepairStatus).toHaveBeenCalledWith(
       "loop:geo:bug-fix:3",
+      "fixed",
+      expect.stringContaining("authoritative supervisor final summary"),
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "fixed",
+    });
+  });
+
+  it("closes a failed Autopilot record from its passing authoritative final summary", async () => {
+    const runDir = join(tmpdir(), `project-recovery-autopilot-summary-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "bot",
+        actionsTaken: ["verified existing repair"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: { decision: "pass" },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "bot",
+      projectPath: "/repo/bot",
+      source: "project-recovery",
+      taskFamily: "active delegated task",
+      fingerprint: "missing-system-gate",
+      taskId: "autopilot:completed-before-restart",
+      now: 1_000,
+    });
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:completed-before-restart",
+          source: "autopilot-delegate",
+          name: "bot active delegated task",
+          status: "failed",
+          error: "missing system gate during the earlier reconciliation pass",
+          reportPath: runDir,
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "pending",
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:completed-before-restart",
       "fixed",
       expect.stringContaining("authoritative supervisor final summary"),
     );
@@ -550,6 +691,56 @@ describe("project recovery service", () => {
       expect.stringContaining("needs-owner-decision"),
     );
     expect(coordinator.list()).toHaveLength(1);
+  });
+
+  it("classifies recovery evidence from a run directory instead of falling back to owner decision", async () => {
+    const root = join(tmpdir(), `project-recovery-directory-evidence-${Date.now()}`);
+    const reportPath = join(root, "run");
+    process.env.TCB_STATE_DIR = join(root, "state");
+    await mkdir(reportPath, { recursive: true });
+    await writeFile(
+      join(reportPath, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["recovered a failed worktree branch preparation"],
+      }),
+    );
+    await writeFile(
+      join(reportPath, "system-gate.json"),
+      JSON.stringify({ accepted: false, resultStatus: "supervisor-failed" }),
+    );
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "recovery-2" }));
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:run-1-geo-active-delegate",
+          source: "autopilot-delegate",
+          name: "geo active delegated task",
+          status: "failed",
+          error: "terminal summary status=blocked",
+          summary:
+            "Recovery classification: needs-owner-decision; failure evidence is not specific enough",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "blocked",
+          reportPath,
+        },
+      ],
+      config: {
+        projects: [{ id: "geo", name: "Geo", path: "/repo/geo" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      updateRepairStatus: vi.fn(),
+      dispatch,
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ ownerDecision: 0, enqueued: 1, dispatched: 1 });
+    expect(dispatch).toHaveBeenCalledOnce();
   });
 
   it("queues and dispatches failed Autopilot delegations for configured projects", async () => {

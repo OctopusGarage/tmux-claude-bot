@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
+import { admitAutomationWork } from "../automation/admission.js";
 import {
   findProjectAutomationConflict,
   listReservedLoopSupervisorWorkOrders,
@@ -48,7 +50,6 @@ import {
 import { markImplementedOpportunitiesForCompletedDelegation } from "../opportunities/delegation-completion.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
-import { admitResourceWork } from "../resource-guardian/admission.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 
 const log = createLogger("autopilot.delegated-task");
@@ -297,17 +298,20 @@ export async function startActiveDelegatedTask(
     };
   }
 
-  const admission = admitResourceWork({
-    source: "autopilot-delegate",
-    trigger: input.resourceTrigger ?? "operator",
-    weight: "heavy",
-    ...(input.resourceForce !== undefined ? { forced: input.resourceForce } : {}),
-    now: Date.now(),
-  });
+  const admission = admitAutomationWork(
+    {
+      source: "autopilot-delegate",
+      trigger: input.resourceTrigger ?? "operator",
+      weight: "heavy",
+      ...(input.resourceForce !== undefined ? { forced: input.resourceForce } : {}),
+      now: Date.now(),
+    },
+    { hostPower: deps.config.hostPower },
+  );
   if (!admission.allowed) {
     return {
       status: "blocked",
-      reason: `resource admission deferred: ${admission.reason}`,
+      reason: `automation admission deferred: ${admission.reason}`,
       showQueue: false,
     };
   }
@@ -548,8 +552,12 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
   for (const lease of leaseState.leases.filter((candidate) => candidate.status === "active")) {
     const record = activeDelegated.get(lease.workOrderId);
     if (record === undefined) continue;
-    const workerSession = record.workOrder.workerSession ?? lease.workerSession;
-    if (await workerAgentIsRunningAfterStartupGrace(deps, record.workOrder.agent, workerSession)) {
+    // The supervisor lease names the session that consumes this WorkOrder. The
+    // WorkOrder's workerSession is a derived cleanup/resource identity and may
+    // never have been created for queue-driven active delegations.
+    if (
+      await workerAgentOwnsTurnAfterStartupGrace(deps, record.workOrder.agent, lease.workerSession)
+    ) {
       continue;
     }
 
@@ -559,7 +567,7 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
       status: "failed",
       now,
       resultStatus: "invalid-output",
-      revisionReasons: ["supervisor worker lease has no live worker session after restart"],
+      revisionReasons: ["supervisor worker lease has no active queue turn after restart"],
     });
     const taskLedger = new DailyTaskLedger();
     const taskLedgerId = activeDelegatedTaskLedgerId(record.workOrder.id);
@@ -568,7 +576,7 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
       taskLedger.fail(taskLedgerId, {
         endedAt: now,
         error: "orphaned-supervisor-worker",
-        summary: "Recovered an active delegation whose worker session no longer exists.",
+        summary: "Recovered an active delegation whose supervisor no longer owns an active turn.",
       });
     }
     writeLoopSupervisorWorkerLeaseState(
@@ -595,7 +603,7 @@ export async function reconcileAndResumeActiveDelegatedTasksAfterRestart(
   return resumeQueuedActiveDelegatedTasks(deps);
 }
 
-async function workerAgentIsRunningAfterStartupGrace(
+async function workerAgentOwnsTurnAfterStartupGrace(
   deps: HandlerDeps,
   agent: LoopWorkOrder["agent"],
   workerSession: string,
@@ -614,7 +622,10 @@ async function workerAgentIsRunningAfterStartupGrace(
       agent === "codex"
         ? await deps.configResolver.isCodexRunning(workerSession)
         : await deps.configResolver.isClaudeRunning(workerSession);
-    if (agentRunning) return true;
+    if (agentRunning) {
+      const pane = await deps.bridge.capturePane(workerSession).catch(() => "");
+      if (paneHasActiveTurn(pane) || paneNeedsConfirm(pane)) return true;
+    }
     const remaining = deadline - Date.now();
     if (remaining <= 0) return false;
     await new Promise((resolve) =>

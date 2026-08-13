@@ -160,6 +160,7 @@ INTENT MODULES
  - securityMaintenance
  - harnessAuto
  - opportunityDiscovery
+ - automationGovernanceReview
  - pullRequestReview
 
  Autopilot
@@ -268,9 +269,9 @@ SYSTEM GATE
 STATE, LOGS, AND EVIDENCE
 --------------------------------------------------------------------------------
 
- ~/.tmux-claude-bot/
+ <state-dir>
 --------------------------------------------------------------------------------
- config / state
+ .env and runtime state
  logs/
  loop-runs/
  task ledger
@@ -367,7 +368,7 @@ Runtime Guardian
 CONFIGURATION, STATE, AND LOCAL TRUTH
 --------------------------------------------------------------------------------
 
- ~/.tmux-claude-bot/state
+ <state-dir>
 --------------------------------------------------------------------------------
  - .env and environment-derived runtime settings
  - loop configuration and schedule state
@@ -378,6 +379,8 @@ CONFIGURATION, STATE, AND LOCAL TRUTH
  - operator home directory when not explicitly configured
 
  Rules:
+ - defaults to ~/.tmux-claude-bot/state; TCB_STATE_DIR may override it
+ - runtime state lives in the state directory, not the install root
  - source code and docs carry product behavior
  - local state carries active user configuration
  - deploys must not overwrite live state

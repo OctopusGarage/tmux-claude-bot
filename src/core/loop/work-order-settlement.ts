@@ -5,6 +5,8 @@ import type { LoopWorkOrder } from "./work-order.js";
 export function loopWorkOrderJobKey(workOrder: LoopWorkOrder): string {
   if (workOrder.task?.kind === "repository-pull-request-review")
     return `pr-review:${workOrder.projectId}`;
+  if (workOrder.task?.kind === "active-delegated-task")
+    return `${workOrder.projectId}:active-delegated-task`;
   if (workOrder.task?.kind === "workspace-architecture")
     return `workspace:${workOrder.projectId}:architecture`;
   const workspacePrefix = workOrder.workspace === undefined ? "" : "workspace:";

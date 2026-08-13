@@ -1,8 +1,15 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import type { DashboardSnapshot } from "../../core/dashboard/dashboard.js";
+import type { queryLoopReports } from "../../core/loop/report.js";
 import type { NotificationRequest } from "../../core/notifications/gateway.js";
+import type { RuntimeGuardianFinding } from "../../core/runtime-guardian/findings.js";
 import type { DailyTaskAuditServiceTickResult } from "../../core/tasks/daily-audit-service.js";
+import type {
+  ScheduledTaskRecord,
+  TaskAuditSummary,
+  TaskWindow,
+} from "../../core/tasks/task-ledger.js";
 import type { AgentKind } from "../../shared/types.js";
 import {
   type ControlCallerProvenance,
@@ -274,6 +281,51 @@ export class ControlClient extends EventEmitter {
     opts: { now?: number; force?: boolean } = {},
   ): Promise<DailyTaskAuditServiceTickResult> {
     return this.req({ op: "taskAudit", ...opts }) as Promise<DailyTaskAuditServiceTickResult>;
+  }
+  loopReports(
+    opts: { limit?: number; projectId?: string; status?: "passed" | "failed" } = {},
+  ): Promise<ReturnType<typeof queryLoopReports>> {
+    return this.req({ op: "loopReports", ...opts }) as Promise<ReturnType<typeof queryLoopReports>>;
+  }
+  dailyTaskAuditStatus(opts: { now?: number } = {}): Promise<{
+    observedAt: number;
+    lastFiredAt: number | null;
+    summary: TaskAuditSummary;
+    recentWindow: TaskWindow;
+    recentRecords: ScheduledTaskRecord[];
+    recentLimit: number;
+    recentTotal: number;
+    recentTruncated: boolean;
+  }> {
+    return this.req({ op: "dailyTaskAuditStatus", ...opts }) as Promise<{
+      observedAt: number;
+      lastFiredAt: number | null;
+      summary: TaskAuditSummary;
+      recentWindow: TaskWindow;
+      recentRecords: ScheduledTaskRecord[];
+      recentLimit: number;
+      recentTotal: number;
+      recentTruncated: boolean;
+    }>;
+  }
+  runtimeGuardianFindings(
+    opts: { now?: number; lookbackHours?: number; limit?: number } = {},
+  ): Promise<{
+    observedAt: number;
+    lookbackHours: number;
+    findings: RuntimeGuardianFinding[];
+    total: number;
+    limit: number;
+    truncated: boolean;
+  }> {
+    return this.req({ op: "runtimeGuardianFindings", ...opts }) as Promise<{
+      observedAt: number;
+      lookbackHours: number;
+      findings: RuntimeGuardianFinding[];
+      total: number;
+      limit: number;
+      truncated: boolean;
+    }>;
   }
   notify(req: NotificationRequest): Promise<NotifyControlResponse> {
     return this.req({ op: "notify", ...req }) as Promise<NotifyControlResponse>;

@@ -444,6 +444,68 @@ export const zh = {
   cmdSysload: "查看本机负载、发热、跑飞进程和资源守护状态",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
+  dashboardOverallHealth: "总体健康",
+  dashboardAttention: "待处理",
+  dashboardActiveWork: "进行中的工作",
+  dashboardAutomation: "自动化",
+  dashboardOperatorAi: "Operator 与 AI 接口",
+  dashboardRuntimeDomains: "运行域",
+  dashboardRecentOutcomes: "最近结果",
+  dashboardProjectSessions: "项目会话",
+  dashboardNone: "无",
+  dashboardMore: "更多",
+  dashboardEnabled: "已启用",
+  dashboardIdle: "空闲",
+  dashboardShown: "已显示",
+  dashboardHealthy: "健康",
+  dashboardSession: "会话",
+  dashboardSkills: "技能",
+  dashboardMcpProfiles: "MCP 配置",
+  dashboardPromptLibrary: "提示词库",
+  dashboardSessions: "会话",
+  dashboardRunning: "运行中",
+  dashboardBusy: "忙碌",
+  dashboardQueue: "队列",
+  dashboardUp: "运行",
+  dashboardNoAdapters: "无适配器",
+  dashboardRuntimeDomain: (id: string) =>
+    ({
+      "work-orders": "工作单",
+      "repository-reviews": "仓库 PR 审查",
+      automation: "自动化",
+      batch: "批处理调度",
+      "daily-task-audit": "每日任务审计",
+      "runtime-guardian": "运行时守护",
+      "resource-guardian": "资源守护",
+      power: "服务与电源",
+      "operator-ai": "操作员与 AI 接口",
+    })[id] ?? id,
+  dashboardHealthHealthy: "健康",
+  dashboardHealthAttention: "需处理",
+  dashboardHealthDegraded: "降级",
+  dashboardAttentionOperatorSession: "Home Operator 会话需要处理",
+  dashboardAttentionOperatorSkills: (installed: number, expected: number) =>
+    `Home Operator 技能已就绪 ${installed}/${expected}`,
+  dashboardAttentionOperatorMcp: (installed: number, expected: number) =>
+    `受管 MCP 配置已就绪 ${installed}/${expected}`,
+  dashboardAttentionOperatorPrompt: "已配置的提示词库当前不可用",
+  dashboardAttentionWorkOrderFailed: (project: string, _taskKind: string) =>
+    `${project} 的工作单失败`,
+  dashboardAttentionWorkOrderAbandoned: (project: string) => `${project} 的 WorkOrder 已失去接管`,
+  dashboardAttentionWorkOrderStale: (project: string) => `${project} 的 WorkOrder 派发已过期`,
+  dashboardAttentionAutomationDependency: (automation: string) => `${automation} 存在未启用的依赖`,
+  dashboardAttentionDailyAudit: (count: number) => `${count} 项 Daily Task Audit 需要处理`,
+  dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
+    `${project} 存在运行时守护发现`,
+  dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) => "资源守护需要处理",
+  dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
+    "电源策略需要处理",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} 正在自动重试（轮次 ${retryEpoch}）`
+      : status === "manual-review"
+        ? `${project} 存在已验证的人工边界`
+        : `${project} 的仓库 PR 审查重试额度已耗尽`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "把当前会话上下文托管给 Loop Supervisor。范围已经清楚时可以直接托管；需要先看清任务清单、验收标准和停止条件时，先看计划再确认推进。",

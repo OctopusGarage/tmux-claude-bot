@@ -79,6 +79,48 @@ describe("install scripts preserve an existing shared venv", () => {
 });
 
 describe("managed install and release script contracts", () => {
+  it("keeps the global CLI launcher aligned with the active dev or production service", async () => {
+    const home = await mkdtemp(nodePath.join(tmpdir(), "tcb-cli-launcher-"));
+    const installedHome = nodePath.join(home, "installed");
+    const launcherInstaller = nodePath.join(ROOT, "scripts", "install-cli-launchers.sh");
+    try {
+      await execFile(launcherInstaller, ["--dev"], {
+        env: { ...process.env, HOME: home, TMUX_CLAUDE_BOT_DIR: installedHome },
+      });
+      const launcherPath = nodePath.join(home, ".local", "bin", "tmux-claude-bot");
+      const devLauncher = readFileSync(launcherPath, "utf8");
+      expect(devLauncher).toContain(`export TCB_STATE_DIR="${installedHome}/state"`);
+      expect(devLauncher).toContain(`${ROOT}/node_modules/.bin/tsx`);
+      expect(devLauncher).toContain(`${ROOT}/src/cli.ts`);
+
+      await execFile(launcherInstaller, [], { env: { ...process.env, HOME: home } });
+      const productionLauncher = readFileSync(launcherPath, "utf8");
+      expect(productionLauncher).toContain(`export TCB_STATE_DIR="${ROOT}/state"`);
+      expect(productionLauncher).toContain(`${ROOT}/dist/cli.js`);
+      expect(productionLauncher).not.toContain("src/cli.ts");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes CLI launchers whenever the managed service mode changes", () => {
+    const installScript = readFileSync(nodePath.join(ROOT, "install.sh"), "utf8");
+    const launchdInstaller = readFileSync(
+      nodePath.join(ROOT, "scripts", "install-launchd.sh"),
+      "utf8",
+    );
+    const systemdInstaller = readFileSync(
+      nodePath.join(ROOT, "scripts", "install-systemd.sh"),
+      "utf8",
+    );
+
+    expect(installScript).toContain("scripts/install-cli-launchers.sh");
+    for (const serviceInstaller of [launchdInstaller, systemdInstaller]) {
+      expect(serviceInstaller).toContain("install-cli-launchers.sh");
+      expect(serviceInstaller).toContain('LAUNCHER_ARGS=("--dev")');
+    }
+  });
+
   it("keeps managed install isolated while refreshing MCP profile descriptors", () => {
     const installScript = readFileSync(nodePath.join(ROOT, "install.sh"), "utf8");
 

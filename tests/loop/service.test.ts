@@ -18,6 +18,47 @@ afterEach(() => {
 });
 
 describe("runLoopServiceTick", () => {
+  it("leaves a quiet-hours due target unreserved and due", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-quiet-hours-state-"));
+    const file = join(mkdtempSync(join(tmpdir(), "tcb-loop-quiet-hours-")), "loop.yml");
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${mkdtempSync(join(tmpdir(), "tcb-loop-quiet-hours-project-"))}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: npm run assess
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const runCommand = vi.fn();
+
+    const result = runLoopServiceTick({
+      configFile: file,
+      now: Date.parse("2026-07-16T20:10:00Z"),
+      schedulerStore,
+      runCommand,
+      hostPower: {
+        mode: "scheduled",
+        timezone: "Asia/Singapore",
+        quietStart: "02:00",
+        quietEnd: "09:30",
+      },
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(schedulerStore.getLastFired()).toEqual({});
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+  });
+
   it("defers a due system target synchronously before creating durable execution state", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(
       join(tmpdir(), "tcb-loop-system-resource-gated-state-"),

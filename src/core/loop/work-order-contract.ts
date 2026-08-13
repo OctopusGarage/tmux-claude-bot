@@ -17,10 +17,20 @@ export type LoopSupervisorPullRequestCloseReason =
   | "non-actionable"
   | "invalid";
 
+export type LoopSupervisorPullRequestHumanBoundary =
+  | "ownership"
+  | "protected-branch-policy"
+  | "product-decision"
+  | "migration-decision"
+  | "security-decision"
+  | "legal-compliance"
+  | "organization-policy";
+
 export type LoopSupervisorPullRequestDecision = {
   number: number;
   repository: string;
   outcome: LoopSupervisorPullRequestDecisionOutcome;
+  boundary?: LoopSupervisorPullRequestHumanBoundary;
   reason?: LoopSupervisorPullRequestCloseReason;
   evidence: string[];
   nextStep: string;

@@ -220,6 +220,10 @@ describe("loop supervisor work order", () => {
       'status must be exactly one of: "completed", "blocked", "failed", "timeout", "cancelled"',
     );
     expect(prompt).toContain('Use "completed" for successful no-op runs');
+    expect(prompt).toContain(
+      "A verified no-delta result is successful completion even when commit and PR policy are enabled",
+    );
+    expect(prompt).toContain("Do not create an empty commit or no-op PR");
     expect(prompt).toContain('finalVerification must be one string only: "passed"');
     expect(prompt).toContain("reviewGate must be an object");
     expect(prompt).toContain("preMutationReview must list the evidence checked before editing");
@@ -1144,6 +1148,10 @@ prReview:
     );
     expect(prompt).toContain("merge the PR with GitHub CLI using --rebase");
     expect(prompt).toContain("required reviews are missing");
+    expect(prompt).toContain("boundary code");
+    expect(prompt).toContain("organization-policy");
+    expect(prompt).toContain("action_required");
+    expect(prompt).toContain("system-repairable");
     expect(prompt).toContain("state=MERGED");
     expect(prompt).toContain("stop waiting on mergeability");
     expect(prompt).toContain("Draft is a review state, not an exclusion");
@@ -1652,6 +1660,62 @@ prReview:
     expect(prompt).toContain("gh pr list --repo OctopusGarage/app --state open --base main");
     expect(prompt).toContain("git -C '/repo/app' switch dev");
     expect(prompt).toContain("git -C '/repo/app' pull --rebase origin dev");
+  });
+
+  it("syncs an isolated repository review without checking out the source worktree branch", () => {
+    const reviewConfig = parseLoopConfigYaml(`
+projects:
+  - id: placeholder
+    name: Placeholder
+    path: /repo/app
+    agent: codex
+    goal: Keep the placeholder valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: release-prs
+      name: Release PRs
+      path: /repo/app
+      repo: OctopusGarage/app
+      agent: codex
+      schedule: "0 2 * * *"
+      switchBack: dev
+`);
+    const repository = reviewConfig.prReview.repositories[0];
+    if (repository === undefined) throw new Error("expected repository review config");
+    const built = buildRepositoryPullRequestReviewWorkOrder({
+      config: reviewConfig,
+      repository,
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-release-prs-repo-pr-review",
+    });
+    const isolation = built.executionIsolation;
+    if (isolation === undefined) throw new Error("expected repository review execution isolation");
+    const prompt = buildLoopSupervisorPrompt({
+      ...built,
+      projectPath: "/state/loop-worktrees/release-prs/run",
+      executionIsolation: {
+        ...isolation,
+        expectedWorktree: "/state/loop-worktrees/release-prs/run",
+        sourceWorktree: "/repo/app",
+        worktreeIsolation: "isolated",
+        preparedBy: "system-git-worktree",
+      },
+    });
+
+    expect(prompt).toContain(
+      "git -C '/state/loop-worktrees/release-prs/run' switch --detach origin/dev",
+    );
+    expect(prompt).not.toContain("git -C '/state/loop-worktrees/release-prs/run' switch dev");
+    expect(prompt).not.toContain(
+      "git -C '/state/loop-worktrees/release-prs/run' pull --rebase origin dev",
+    );
   });
 
   it("syncs the configured switchBack branch when a PR policy defines one", () => {
@@ -2335,6 +2399,15 @@ prReview:
     expect(prompt).toContain("Fix only the listed validation failures");
     expect(prompt).toContain("do not start a new task, branch, or PR");
     expect(prompt).toContain("Keep the original WorkOrder id, branch, PR, and final marker");
+    expect(prompt).toContain(
+      "Do not stash, restore, switch, checkout, reset, clean, commit, or otherwise modify the original source worktree",
+    );
+    expect(prompt).toContain(
+      "Treat source-worktree dirtiness as concurrent external owner activity",
+    );
+    expect(prompt).toContain(
+      "Retain every previously reported verified commit in the revised commits list",
+    );
     expect(prompt).toContain(finalMarkerForWorkOrder("1752643800000-datavibe"));
   });
 

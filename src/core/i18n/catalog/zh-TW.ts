@@ -411,6 +411,68 @@ export const zhTW: Messages = {
   cmdSysload: "查看本機負載、發熱、失控程序和資源守護狀態",
   sysloadTitle: "🖥 系統負載",
   dashboardTitle: "📊 儀表板",
+  dashboardOverallHealth: "整體健康",
+  dashboardAttention: "待處理",
+  dashboardActiveWork: "進行中的工作",
+  dashboardAutomation: "自動化",
+  dashboardOperatorAi: "Operator 與 AI 介面",
+  dashboardRuntimeDomains: "執行領域",
+  dashboardRecentOutcomes: "最近結果",
+  dashboardProjectSessions: "專案工作階段",
+  dashboardNone: "無",
+  dashboardMore: "更多",
+  dashboardEnabled: "已啟用",
+  dashboardIdle: "閒置",
+  dashboardShown: "已顯示",
+  dashboardHealthy: "健康",
+  dashboardSession: "工作階段",
+  dashboardSkills: "技能",
+  dashboardMcpProfiles: "MCP 設定檔",
+  dashboardPromptLibrary: "提示詞庫",
+  dashboardSessions: "工作階段",
+  dashboardRunning: "執行中",
+  dashboardBusy: "忙碌",
+  dashboardQueue: "佇列",
+  dashboardUp: "運行",
+  dashboardNoAdapters: "無介面卡",
+  dashboardRuntimeDomain: (id: string) =>
+    ({
+      "work-orders": "工作單",
+      "repository-reviews": "儲存庫 PR 審查",
+      automation: "自動化",
+      batch: "批次排程",
+      "daily-task-audit": "每日任務稽核",
+      "runtime-guardian": "執行階段守護",
+      "resource-guardian": "資源守護",
+      power: "服務與電源",
+      "operator-ai": "操作員與 AI 介面",
+    })[id] ?? id,
+  dashboardHealthHealthy: "健康",
+  dashboardHealthAttention: "需處理",
+  dashboardHealthDegraded: "降級",
+  dashboardAttentionOperatorSession: "Home Operator 工作階段需要處理",
+  dashboardAttentionOperatorSkills: (installed: number, expected: number) =>
+    `Home Operator 技能已就緒 ${installed}/${expected}`,
+  dashboardAttentionOperatorMcp: (installed: number, expected: number) =>
+    `受管 MCP 設定檔已就緒 ${installed}/${expected}`,
+  dashboardAttentionOperatorPrompt: "已設定的提示詞庫目前不可用",
+  dashboardAttentionWorkOrderFailed: (project: string, _taskKind: string) =>
+    `${project} 的工作單失敗`,
+  dashboardAttentionWorkOrderAbandoned: (project: string) => `${project} 的 WorkOrder 已失去接管`,
+  dashboardAttentionWorkOrderStale: (project: string) => `${project} 的 WorkOrder 派發已過期`,
+  dashboardAttentionAutomationDependency: (automation: string) => `${automation} 有未啟用的依賴`,
+  dashboardAttentionDailyAudit: (count: number) => `${count} 項 Daily Task Audit 需要處理`,
+  dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
+    `${project} 有執行階段守護發現`,
+  dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) => "資源守護需要處理",
+  dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
+    "電源策略需要處理",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} 正在自動重試（輪次 ${retryEpoch}）`
+      : status === "manual-review"
+        ? `${project} 存在已驗證的人工邊界`
+        : `${project} 的儲存庫 PR 審查重試額度已耗盡`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
     "把目前工作階段上下文交給 Loop Supervisor。範圍已清楚時可直接託管；需要先看清任務清單、驗收標準和停止條件時，先看計劃再確認推進。",

@@ -242,6 +242,52 @@ describe("repository review queue", () => {
     });
   });
 
+  it("dead-letters an occurrence after the bounded infrastructure retry budget", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "persistent-failure" }));
+    let now = 100;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      expect(store.lease(created.id, "worker", now, 50)).not.toBeNull();
+      expect(store.fail(created.id, "worker", now + 1, "worker setup failed", now + 2)).toBe(true);
+      now += 100;
+    }
+
+    expect(store.list({ all: true }).find((entry) => entry.id === created.id)).toMatchObject({
+      status: "dead-letter",
+      attempt: 5,
+      lastError: "worker setup failed",
+    });
+    expect(store.listReady(now + 1_000)).toEqual([]);
+  });
+
+  it("dead-letters a legacy over-budget retry before another worker can lease it", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-pr-review-queue-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    writeFileSync(
+      join(stateDir, "repository-pr-review-queue.json"),
+      JSON.stringify({
+        legacy: {
+          id: "legacy",
+          repositoryId: "repo-prs",
+          scheduledAt: 100,
+          priority: 100,
+          status: "retry-wait",
+          attempt: 107,
+          createdAt: 100,
+          updatedAt: 110,
+          nextAttemptAt: 100,
+          lastError: "recovered supervisor work order result: blocked",
+        },
+      }),
+    );
+    const store = new RepositoryReviewQueue();
+
+    expect(store.listReady(200)).toEqual([]);
+    expect(store.list({ all: true })).toEqual([
+      expect.objectContaining({ id: "legacy", status: "dead-letter", attempt: 107 }),
+    ]);
+  });
+
   it("keeps retryable review work claimable and records explicit manual review separately", () => {
     const store = queue();
     const retry = store.enqueue(item({ repositoryId: "retryable" }));
@@ -256,6 +302,77 @@ describe("repository review queue", () => {
     expect(store.list({ all: true }).find((entry) => entry.id === manual.id)).toMatchObject({
       status: "manual-review",
       lastError: "migration decision required",
+    });
+  });
+
+  it("reopens a false terminal occurrence with a fresh bounded retry epoch", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "false-manual" }));
+    store.lease(created.id, "worker", 100, 50);
+    store.manualReview(created.id, "worker", 110, "prose-only permission claim");
+
+    expect(
+      store.reopenTerminal(created.id, {
+        now: 200,
+        reason: "open PR has no structured human boundary",
+      }),
+    ).toBe(true);
+    expect(store.listReady(200)).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        status: "retry-wait",
+        attempt: 0,
+        retryEpoch: 1,
+        migration: {
+          previousStatus: "manual-review",
+          previousAttempt: 1,
+          reason: "open PR has no structured human boundary",
+          migratedAt: 200,
+        },
+      }),
+    ]);
+    expect(store.reopenTerminal(created.id, { now: 300, reason: "must not migrate twice" })).toBe(
+      false,
+    );
+  });
+
+  it("does not reopen non-terminal, completed, already migrated, or superseded occurrences", () => {
+    const store = queue();
+    const pending = store.enqueue(item({ repositoryId: "pending" }));
+    const completed = store.enqueue(item({ repositoryId: "completed", scheduledAt: 101 }));
+    store.lease(completed.id, "worker", 101, 50);
+    store.complete(completed.id, "worker", 102, "completed");
+    const old = store.enqueue(item({ repositoryId: "same", scheduledAt: 102 }));
+    store.lease(old.id, "worker", 102, 50);
+    store.manualReview(old.id, "worker", 103, "false boundary");
+    store.enqueue(item({ repositoryId: "same", scheduledAt: 103 }));
+
+    expect(store.reopenTerminal(pending.id, { now: 200, reason: "no" })).toBe(false);
+    expect(store.reopenTerminal(completed.id, { now: 200, reason: "no" })).toBe(false);
+    expect(store.reopenTerminal(old.id, { now: 200, reason: "superseded" })).toBe(false);
+  });
+
+  it("settles a false terminal occurrence when every referenced PR is already terminal", () => {
+    const store = queue();
+    const created = store.enqueue(item({ repositoryId: "already-merged" }));
+    store.lease(created.id, "worker", 100, 50);
+    store.manualReview(created.id, "worker", 110, "prose-only permission claim");
+
+    expect(
+      store.completeRecoveredTerminal(created.id, {
+        now: 200,
+        reason: "referenced PR is merged",
+      }),
+    ).toBe(true);
+    expect(store.list({ all: true }).find((entry) => entry.id === created.id)).toMatchObject({
+      status: "completed",
+      lastError: "referenced PR is merged",
+      migration: {
+        previousStatus: "manual-review",
+        previousAttempt: 1,
+        reason: "referenced PR is merged",
+        migratedAt: 200,
+      },
     });
   });
 });

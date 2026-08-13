@@ -241,6 +241,12 @@ describe("runDailyTaskAudit", () => {
     expect(result.repairCandidates.map((item) => item.taskId)).toEqual([
       "launchd:com.example.daily:2026-07-27 SGT",
     ]);
+    expect(ledger.listAll()).toEqual([
+      expect.objectContaining({
+        taskId: "launchd:com.example.daily:2026-07-27 SGT",
+        status: "expected",
+      }),
+    ]);
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         level: "warning",

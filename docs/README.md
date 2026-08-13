@@ -25,11 +25,11 @@ behavior.
 
 | Document | Purpose |
 | --- | --- |
-| `intelligent-automation.md` | Business truth for Loop Engineering, task families, Autopilot, Opportunity Discovery, PR review, Daily Task Audit, and Runtime Guardian. |
+| `intelligent-automation.md` | Business truth for Loop Engineering, task families, Autopilot, Opportunity Discovery, PR review, Daily Task Audit, Resource Guardian, and Runtime Guardian. |
 | `intelligent-automation-architecture.md` | End-to-end automation architecture, session model, WorkOrder pipeline, gates, and drift controls. |
 | `intelligent-automation-ascii-architecture.md` | ASCII architecture diagram for the automation platform and self-healing loops. |
 | `automation-alignment.md` | Rule placement, cross-surface alignment checklist, and drift governance. |
-| `automation-capability-matrix.md` | CLI/TUI/Telegram/Feishu/Home-operator feature parity matrix. |
+| `automation-capability-matrix.md` | CLI/TUI/Telegram/Feishu/MCP/Home-operator feature parity matrix. |
 | `ai-tool-surface-governance.md` | Role-based governance for AI-facing CLI, MCP, and skill surfaces. |
 | `agent-role-workspaces.md` | Agent role workspace, session, skill, and MCP scope rules for Home Operator, Loop Supervisor, Loop Worker, project agents, and timer services. |
 | `agent-maintenance-guidelines.md` | Runtime, logging, notification, GitHub, service, and verification maintenance guidance. |

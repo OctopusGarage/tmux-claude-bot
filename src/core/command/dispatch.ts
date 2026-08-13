@@ -489,10 +489,7 @@ async function waitUntilInputReadyForMessage(
     return;
   }
   const deadline = Date.now() + maxWaitMs;
-  const retryDelayMs =
-    Number.isFinite(deps.config.maxWaitDoneMs) && deps.config.maxWaitDoneMs > 0
-      ? deps.config.maxWaitDoneMs
-      : 1000;
+  const retryDelayMs = 1000;
   let attempts = 0;
   let lastError: unknown = new Error("agent input surface not ready before retry deadline");
   while (Date.now() < deadline) {

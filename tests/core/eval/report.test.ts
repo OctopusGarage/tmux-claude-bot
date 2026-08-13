@@ -139,41 +139,316 @@ describe("eval report", () => {
     });
   });
 
-  it("accepts repaired initial preflight failures when final verification passes", () => {
+  it("does not fail the eval report for a repaired preflight observation", () => {
     const report = buildEvalReportFromSupervisorSummary({
       summary: summary({
         reviewGate: {
-          preMutationReview: [],
-          postMutationReview: [],
-          aiReview: "passed",
+          preMutationReview: ["local Node tools were initially missing"],
+          postMutationReview: ["npm ci restored local tooling and final checks passed"],
+          aiReview: "not-applicable",
           deterministicGates: [
             {
-              name: "initial-preflight",
+              name: "preflight-before-repair",
+              command: "test -d node_modules && test -x node_modules/.bin/tsc",
               result: "failed",
-              command: "test -x .venv/bin/pytest",
-              evidence: "pytest was initially missing",
+              evidence: "node_modules and tool binaries were absent",
             },
             {
               name: "environment-repair",
+              command: "npm ci",
               result: "passed",
-              command: "uv sync",
-              evidence: "installed locked local tooling",
+              evidence: "installed dependencies without tracked changes",
             },
             {
-              name: "post-repair-preflight",
+              name: "preflight-after-repair",
+              command: "test -d node_modules && test -x node_modules/.bin/tsc",
               result: "passed",
-              command: "test -x .venv/bin/pytest",
-              evidence: "pytest is available",
+              evidence: "required tool binaries are executable",
             },
             {
-              name: "final-clean-worktree",
+              name: "typecheck",
+              command: "npm run lint:types",
               result: "passed",
-              command: "git status --short",
-              evidence: "clean",
+              evidence: "tsc --noEmit exited 0",
+            },
+          ],
+          decision: "pass",
+          notes: ["The failed preflight was repaired before final verification."],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("accepts repaired preflight observations without a before-repair label", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["initial tool preflight failed"],
+          postMutationReview: [
+            "npm install repaired dependencies and post-repair preflight passed",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight",
+              command: "test -x node_modules/.bin/vitest",
+              result: "failed",
+              evidence: "vitest executable was absent",
+            },
+            {
+              name: "environment repair",
+              command: "npm install",
+              result: "passed",
+              evidence: "dependency installation completed",
+            },
+            {
+              name: "post-repair preflight",
+              command: "test -x node_modules/.bin/vitest",
+              result: "passed",
+              evidence: "preflight passed after repair",
             },
           ],
           decision: "pass",
           notes: [],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("does not fail eval for a non-blocking read-only opportunity-discovery preflight observation", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      taskId: "opportunity-discovery",
+      summary: summary({
+        reviewGate: {
+          preMutationReview: [
+            "A target dependency preflight failed before read-only opportunity discovery.",
+          ],
+          postMutationReview: [
+            "Opportunity discovery was read-only; the dependency preflight was recorded as a non-blocking discovery signal.",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "target dependency preflight",
+              command: "tcb opportunity smoke --read-only",
+              result: "failed",
+              evidence:
+                "preflight command exited 1; explicitly non-blocking read-only opportunity-discovery signal only.",
+            },
+            {
+              name: "opportunity summary parse",
+              result: "passed",
+              evidence: "opportunity summary parsed as completed/passed/pass",
+            },
+          ],
+          decision: "pass",
+          notes: ["The failed preflight did not block read-only discovery acceptance."],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("does not fail eval for a documented non-blocking read-only preflight-executables observation", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      taskId: "opportunity-discovery",
+      summary: summary({
+        actionsTaken: ["completed read-only opportunity discovery and wrote the report"],
+        reviewGate: {
+          preMutationReview: ["preflight-executables failed before the read-only discovery run."],
+          postMutationReview: [
+            "The preflight-executables failure was explicitly non-blocking for read-only discovery; report and clean-worktree gates passed.",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight-executables",
+              command: "test -x node_modules/.bin/tsx",
+              result: "failed",
+              evidence:
+                "Local executable preflight failed; non-blocking for read-only opportunity discovery.",
+            },
+            "report gate passed: supervisor-final-summary and opportunity report parsed successfully",
+            "clean-worktree gate passed: no tracked changes",
+          ],
+          decision: "pass",
+          notes: [
+            "preflight-executables is a setup observation only and did not block read-only discovery acceptance.",
+          ],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("does not fail eval for a protected-worktree base switch observation superseded by safe reset", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["checked isolated worktree before mutation"],
+          postMutationReview: [
+            "No product-code mutation occurred; only ignored local environment state was created.",
+          ],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "fetch origin main",
+              command: "git fetch origin main",
+              result: "passed",
+              evidence: "Fetched origin/main.",
+            },
+            {
+              name: "literal switch-main base sync",
+              command: "git -C <expected-worktree> switch main",
+              result: "failed",
+              evidence:
+                "Git failed with `fatal: 'main' is already checked out at '/repo/knowledge-engine'`; the original worktree was not mutated.",
+            },
+            {
+              name: "safe work-order branch reset",
+              command: "git switch -C <work-order-branch> origin/main",
+              result: "passed",
+              evidence: "WorkOrder branch reset to origin/main.",
+            },
+            {
+              name: "base freshness",
+              command: "git rev-parse HEAD origin/main",
+              result: "passed",
+              evidence: "HEAD matched origin/main.",
+            },
+            {
+              name: "final clean worktree",
+              command: "git status --short",
+              result: "passed",
+              evidence: "No tracked diff.",
+            },
+          ],
+          decision: "pass",
+          notes: [
+            "The literal `git switch main` instruction remains incompatible with the protected original worktree already checking out main. Freshness was established by fetch plus resetting the WorkOrder branch from origin/main.",
+          ],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("does not fail eval for a source-worktree control check excluded from final acceptance", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["verified prior evidence in the isolated worktree"],
+          postMutationReview: [
+            "Regression risk: npm run verify:local passed in the isolated worktree; no runtime behavior changed because no source patch was made.",
+          ],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "local verification",
+              command: "npm run verify:local",
+              result: "passed",
+              evidence: "verify-local ok",
+            },
+            {
+              name: "ordinary source CLI control check",
+              command:
+                "TCB_STATE_DIR=... /repo/tmux-claude-bot/node_modules/.bin/tsx /repo/tmux-claude-bot/src/cli.ts dashboard --json",
+              result: "failed",
+              evidence:
+                "Failed to transform unrelated reserved source worktree file src/core/loop/service.ts because 'await' can only be used inside an async function. This was not used for final acceptance because this WorkOrder forbids source-worktree mutation.",
+            },
+            {
+              name: "isolated CLI control check",
+              command: "node_modules/.bin/tsx src/cli.ts dashboard --json",
+              result: "passed",
+              evidence: "Dashboard command passed in the isolated worktree.",
+            },
+            {
+              name: "clean isolated worktree",
+              command: "git status --short",
+              result: "passed",
+              evidence: "No tracked diff.",
+            },
+          ],
+          decision: "pass",
+          notes: [
+            "The ordinary source worktree currently contains unrelated uncommitted changes and a TypeScript syntax error. It was checked only as external risk context and was not mutated.",
+          ],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("does not fail the eval report for an architecture target residual after bounded verified work", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      summary: summary({
+        reviewGate: {
+          preMutationReview: ["confirmed bounded architecture slice"],
+          postMutationReview: ["typecheck, tests, CI, PR mergeability, and merge gates passed"],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "round verification typecheck",
+              command: "pnpm run typecheck",
+              result: "passed",
+              evidence: "exit 0",
+            },
+            {
+              name: "round verification tests",
+              command: "pnpm test",
+              result: "passed",
+              evidence: "all tests passed",
+            },
+            {
+              name: "architecture assessment",
+              command: "node $LOOP_BOT_ROOT/scripts/loop-architecture-assess.mjs",
+              result: "failed",
+              evidence: "score remained 85 after maxRounds=3, target 95 not met",
+            },
+            {
+              name: "PR merge",
+              command: "gh pr merge 20 --auto --squash",
+              result: "passed",
+              evidence: "PR state MERGED",
+            },
+          ],
+          decision: "pass",
+          notes: [
+            "Deterministic code/test/CI/merge gates passed, but target architecture score was not met within maxRounds. This is recorded as remaining risk rather than hidden.",
+          ],
         },
       }),
     });

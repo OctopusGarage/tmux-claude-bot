@@ -8,7 +8,6 @@ import { ClaudeRunner } from "./core/agents/claude/claude-runner.js";
 import { parseCodexFlavorAliases } from "./core/agents/codex/codex-flavor-alias.js";
 import { CodexRunner } from "./core/agents/codex/codex-runner.js";
 import { AgentRunnerDispatcher } from "./core/agents/runner-dispatcher.js";
-import { reconcileAndResumeActiveDelegatedTasksAfterRestart } from "./core/autopilot/delegated-task.js";
 import { NotifierRegistry } from "./core/autopilot/notifier.js";
 import { agentIsIdle } from "./core/command/agent-ready.js";
 import { executeMessage } from "./core/command/dispatch.js";
@@ -163,11 +162,6 @@ export function bootstrap(): HandlerDeps {
   // work the bot didn't start (the user driving it on the desktop), instead of
   // typing into a mid-render pane. The bot's own work is already serialized.
   queue.setReadinessProbe((session) => agentIsIdle(deps, session));
-
-  void reconcileAndResumeActiveDelegatedTasksAfterRestart(deps).catch((err) => {
-    // Startup recovery must not prevent the bot from accepting ordinary work.
-    console.error("active delegation startup recovery failed", normalizeError(err).message);
-  });
 
   return deps;
 }

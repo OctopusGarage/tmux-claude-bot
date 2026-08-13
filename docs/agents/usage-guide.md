@@ -69,24 +69,32 @@ id for that project. Use `/start` only when they want a fresh agent session.
 exactly ONE bot process (two cause a Telegram 409); (3) check network/proxy can reach
 the chat API; (4) on macOS, was it asleep? — see keep-awake.
 
-**Keep the Mac awake so it stays reachable** → a sleeping Mac drops the bot (an
-outbound long-poll can't be woken). Enable in setup or `tcb setup --reconfigure`: while
-the bot runs it holds `caffeinate -s`, which prevents system sleep only on AC power. On
-battery, the Mac may sleep normally. A **closed lid** still sleeps — for that they ALSO
-need `sudo pmset -a disablesleep 1` (persistent, drains battery; warn them). `tcb doctor`
-shows if it's active.
+**Balance reachability with natural Mac sleep** → `off` leaves sleep to macOS;
+`always` holds the legacy AC-only assertion; `scheduled` releases it during the
+default 02:00–09:30 quiet window after active work drains. Use the scheduled setup
+sequence in the CLI admin section below and diagnose it with `tcb power status`.
+A closed lid and battery operation continue to follow normal macOS behavior.
 
 **Use it from the PC terminal** → `tcb tui` (managed) or `npm run tui` (dev). Needs the
 bot running. Keys: `j/k` move, `i` compose a prompt (multi-line paste works), `c`
 controls, `s` projects (switch/start), `R` recover, `l` logs, `m` machine load, `u`
 re-run input, `a` attach to the real session pane, `q` quit, `?` for all keys. Detail: tui.md.
 
-**Check status / "is something wrong?"** → `/dashboard` or `tcb dashboard` (every
-session, busy/idle, queue, version); `/sysload` or `tcb sysload` (machine load, heat,
-runaway processes, Resource Guardian state); `tcb resource status` or
+**Check status / "is something wrong?"** → use the canonical **Runtime Overview**:
+call `tcb.observer.status` from an Observer/Home MCP session, or run
+`tcb dashboard --json` when MCP is unavailable. The same snapshot backs `/dashboard`,
+the TUI overview (`o`), and `tcb dashboard`; it puts health and bounded attention
+items before active work. Use `/sysload` or `tcb sysload` for machine load, heat,
+runaway processes, and Resource Guardian state; `tcb resource status` or
 `tcb resource incidents --limit 20` for Guardian detail; `/logs` or
 `tcb logs --since 1h --run-id <id>`; `tcb doctor`
 (install health).
+
+**Inspect or change personal configuration safely** → use `tcb config list|get|set`
+instead of editing the durable `.env` directly. Reads redact secrets; generic
+writes accept only allowlisted non-secret keys, validate typed values before
+persistence, and preserve path/command strings without boolean coercion. Use setup
+or a dedicated command for credentials, owner identifiers, and guarded settings.
 
 **Enable Resource Guardian observation** → run
 `tcb config set RESOURCE_GUARDIAN_ENABLED true`, then
@@ -276,6 +284,14 @@ Coordinator: retryable failures are recreated through the configured project's
 own WorkOrder policy, while external waits and owner decisions remain visible
 without unsafe edits.
 
+**Install or inspect Home Operator AI surfaces** → use `tcb ai-tools status`
+first. `tcb ai-tools install` provisions the bundled Home Operator skill plus
+Observer/Home MCP descriptors into `<state-dir>/home` and removes stale global
+skill copies. A global discovery copy is separate and explicit:
+`tcb skill install --scope global`. Installation location is not mutation
+authority; Observer stays read-only, and Home operations still require an
+explicit session plus the control service's normal conflict and WorkOrder gates.
+
 **Evaluate system prompts** → use `tcb prompts governed list --json` to see every
 repo-owned governed prompt, `tcb prompts governed show <promptId>` to inspect
 owner and safety metadata, `tcb prompts governed render <promptId>` to inspect
@@ -317,9 +333,21 @@ for one accidentally exited current project use
     `tcb control <project> <esc|enter|resume|restart|…>` — a control key
     (`--yes` is required for dangerous actions in scripts).
 - **CLI — admin**: `run` · `setup` / `setup:lark` · `doctor` · `dashboard` · `sysload`
-  · `resource status|incidents|mode|profile` · `tui` · `recover` · `logs` · `install` ·
+  · `power status|schedule install|schedule remove` ·
+  `resource status|incidents|mode|profile` · `tui` · `recover` · `logs` · `install` ·
   `service <install|uninstall|status|pause|resume|restart|logs>`.
   (`npm run dev|tui|doctor|service:*` for dev.)
+
+  To enable the default 02:00–09:30 Asia/Singapore natural-sleep window, run
+  `tcb config set TCB_KEEP_AWAKE_MODE scheduled`, then
+  `tcb power schedule install`, restart the service, and verify with
+  `tcb power status`. The managed wake is 09:15, providing a 15-minute reconnect
+  warmup. Schedule conflicts fail closed; do not overwrite them manually.
+- **AI status inspection**: prefer `tcb.observer.status` for a typed, read-only
+  Runtime Overview. Home inherits this Observer tool and adds only controlled send
+  and delegation tools; it does not define a second status contract. Fall back to
+  `tcb dashboard --json`, never direct reads of runtime state files or parsing of
+  human-formatted dashboard text.
 - **TUI keys**: see [tui.md](../tui.md).
 
 ---

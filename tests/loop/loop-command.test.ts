@@ -197,16 +197,21 @@ describe("runLoopCommand", () => {
     expect(run.stdout).toContain("loop run completed: hub passed, commands 2, committed false");
 
     const reports = runLoopCommand(["reports", "list", "--json"]);
-    expect(JSON.parse(reports.stdout ?? "[]")).toEqual([
-      expect.objectContaining({ projectId: "hub", status: "passed" }),
-    ]);
+    expect(JSON.parse(reports.stdout ?? "{}")).toMatchObject({
+      items: [expect.objectContaining({ projectId: "hub", status: "passed" })],
+      total: 1,
+      truncated: false,
+    });
 
-    const backlog = JSON.parse(
-      runLoopCommand(["backlog", "list", "--json"]).stdout ?? "[]",
-    ) as Array<{
-      id: string;
-      text: string;
-    }>;
+    const backlogResult = JSON.parse(
+      runLoopCommand(["backlog", "list", "--json"]).stdout ?? "{}",
+    ) as {
+      items: Array<{
+        id: string;
+        text: string;
+      }>;
+    };
+    const backlog = backlogResult.items;
     expect(backlog).toEqual([expect.objectContaining({ text: "Improve loop reports." })]);
     expect(runLoopCommand(["backlog", "list", "--all"]).stdout).toContain("loop backlog: 1");
 
@@ -257,13 +262,15 @@ describe("runLoopCommand", () => {
       })}\n`,
     );
 
-    const jsonReports = JSON.parse(runLoopCommand(["reports", "list", "--json"]).stdout ?? "[]");
-    expect(jsonReports).toEqual([
-      expect.objectContaining({
-        runId: "run-supervisor",
-        evalOutcome: { status: "passed", finalVerification: "passed" },
-      }),
-    ]);
+    const jsonReports = JSON.parse(runLoopCommand(["reports", "list", "--json"]).stdout ?? "{}");
+    expect(jsonReports).toMatchObject({
+      items: [
+        expect.objectContaining({
+          runId: "run-supervisor",
+          evalOutcome: { status: "passed", finalVerification: "passed" },
+        }),
+      ],
+    });
     expect(runLoopCommand(["reports", "list"]).stdout).toContain(
       "- hub: passed run-supervisor eval=passed",
     );

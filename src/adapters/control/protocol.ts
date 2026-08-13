@@ -61,6 +61,9 @@ export type ControlRequest = {
   | { op: "inputs"; session: string }
   | { op: "promptTranslate"; arg: string }
   | { op: "taskAudit"; now?: number; force?: boolean }
+  | { op: "loopReports"; limit?: number; projectId?: string; status?: "passed" | "failed" }
+  | { op: "dailyTaskAuditStatus"; now?: number }
+  | { op: "runtimeGuardianFindings"; now?: number; lookbackHours?: number; limit?: number }
   | {
       op: "notify";
       title: string;

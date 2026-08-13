@@ -37,6 +37,10 @@ isolated Home Operator workspace, installs the default Home Operator skill
 there, removes stale global skill copies, and refreshes MCP profile descriptors
 there.
 
+The service-mode installer also refreshes the global launchers: managed dev
+uses the source CLI from the active checkout, while managed prod uses the
+installed bundle. Both continue to use the managed state directory.
+
 Re-running the same command updates the managed copy while preserving `.env` and
 runtime state. Pin a release with `TMUX_CLAUDE_BOT_VERSION=vX.Y.Z`.
 

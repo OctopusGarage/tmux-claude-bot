@@ -42,12 +42,14 @@ describe("CLI ai-tools command", () => {
     expect(result.stderr).toBe("");
     const parsed = JSON.parse(result.stdout) as {
       operatorHome: string;
-      removedGlobal: Array<{ removed: boolean }>;
+      removedGlobal: Array<{ path: string; removed: boolean }>;
       skills: Array<{ scope: string; tool: string; path: string }>;
       mcp: Array<{ profile: string; path: string }>;
     };
     expect(parsed.operatorHome).toBe(join(stateDir, "home"));
     expect(parsed.removedGlobal.filter((item) => item.removed).length).toBe(2);
+    expect(parsed.removedGlobal.every((item) => item.path.startsWith("~/"))).toBe(true);
+    expect(result.stdout).not.toContain(home);
     expect(parsed.skills.map((item) => `${item.scope}/${item.tool}`).sort()).toEqual([
       "operator-home/claude",
       "operator-home/codex",
@@ -71,10 +73,12 @@ describe("CLI ai-tools command", () => {
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
       expected: Array<{ surface: string; installed: boolean }>;
-      global: Array<{ installed: boolean }>;
+      global: Array<{ path: string; installed: boolean }>;
     };
     expect(parsed.expected).toHaveLength(4);
     expect(parsed.expected.every((item) => item.installed)).toBe(true);
     expect(parsed.global.every((item) => !item.installed)).toBe(true);
+    expect(parsed.global.every((item) => item.path.startsWith("~/"))).toBe(true);
+    expect(result.stdout).not.toContain(home);
   }, 15_000);
 });
