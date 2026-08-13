@@ -60,7 +60,7 @@ export type DailyTaskAuditServiceTickResult =
       failures: number;
       repairDispatch: string;
       projectRecovery: string;
-      notificationStatus: "sent" | "partial" | "failed";
+      notificationStatus: "sent" | "partial" | "failed" | "suppressed";
     }
   | { fired: false; reason: "disabled" | "not-due" | "invalid-schedule" | "in-progress" };
 
@@ -214,8 +214,13 @@ async function runDailyTaskAuditServiceTickInternal(
     status: notificationResult.status,
     deliveries: notificationResult.deliveries,
   };
-  if (notificationResult.status === "sent") {
-    log.info("daily task audit final notification sent", { data: notificationLog });
+  if (notificationResult.status === "sent" || notificationResult.status === "suppressed") {
+    log.info(
+      notificationResult.status === "sent"
+        ? "daily task audit final notification sent"
+        : "daily task audit final notification suppressed by policy",
+      { data: notificationLog },
+    );
   } else {
     log.warn("daily task audit final notification incomplete", { data: notificationLog });
   }

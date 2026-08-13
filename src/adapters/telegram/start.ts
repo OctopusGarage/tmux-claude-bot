@@ -43,7 +43,7 @@ export function isFatalPollingError(err: unknown): boolean {
 
 export async function startTelegram(
   deps: HandlerDeps,
-  opts: { recoveredFromCrash?: boolean; onNotificationsReady?: () => void } = {},
+  opts: { onNotificationsReady?: () => void } = {},
 ): Promise<void> {
   const { config, queue } = deps;
 
@@ -192,23 +192,6 @@ export async function startTelegram(
         break; // proceed to the supervised loop (it keeps retrying); never exit the process
       }
       await sleep(delayMs);
-    }
-  }
-
-  // launchd KeepAlive restarts crashes silently — after an unclean exit, tell the
-  // owner the bot auto-recovered (repeated alerts = a crash-loop to investigate).
-  // Best-effort; never blocks startup. Disable with TCB_STARTUP_NOTIFY=0.
-  if (opts.recoveredFromCrash && process.env.TCB_STARTUP_NOTIFY !== "0") {
-    const owner = [...config.telegramAllowedUserIds][0];
-    if (owner !== undefined) {
-      try {
-        await bot.api.sendMessage(
-          owner,
-          messages("telegram").crashRecovered(new Date().toLocaleString()),
-        );
-      } catch (err) {
-        log.warn(`owner crash-alert failed: ${err instanceof Error ? err.message : err}`);
-      }
     }
   }
 

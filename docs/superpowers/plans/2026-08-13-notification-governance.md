@@ -18,10 +18,10 @@
 - Test: `tests/core/notifications/policy-store.test.ts`
 - Test: `tests/core/notifications/gateway.test.ts`
 
-- [ ] Add failing tests for durable state-change and once-per-window suppression, per-channel partial retry, corrupt-state fail-open, source metadata without visible `source:`, and always-send compatibility.
-- [ ] Run `npx vitest run tests/core/notifications/policy-store.test.ts tests/core/notifications/gateway.test.ts` and confirm the new contracts fail.
-- [ ] Implement a bounded atomic policy store and gateway planning/recording around successful channel delivery.
-- [ ] Run the focused suites and confirm they pass.
+- [x] Add failing tests for durable state-change and once-per-window suppression, per-channel partial retry, corrupt-state fail-open, source metadata without visible `source:`, and always-send compatibility.
+- [x] Run `npx vitest run tests/core/notifications/policy-store.test.ts tests/core/notifications/gateway.test.ts` and confirm the new contracts fail.
+- [x] Implement a bounded atomic policy store and gateway planning/recording around successful channel delivery.
+- [x] Run the focused suites and confirm they pass.
 
 ### Task 2: Power, audit, resource, and capacity producer policy
 
@@ -39,10 +39,10 @@
 - Test: `tests/resource-guardian/service.test.ts`
 - Test: `tests/core/automation/coordinator.test.ts`
 
-- [ ] Add failing tests that battery-only power is informational, actionable power failures are once per quiet cycle, healthy audits suppress delivery without failing settlement, Resource Guardian ignores elevated/intermediate phases and pairs recovery, and capacity transitions use durable state-change metadata.
-- [ ] Run the focused suites and confirm the policy assertions fail.
-- [ ] Add producer delivery metadata and concise copy; treat a suppressed audit notification as a successful audit outcome.
-- [ ] Run the focused suites and confirm they pass.
+- [x] Add failing tests that battery-only power is informational, actionable power failures are once per quiet cycle, healthy audits suppress delivery without failing settlement, Resource Guardian ignores elevated/intermediate phases and pairs recovery, and capacity transitions use durable state-change metadata.
+- [x] Run the focused suites and confirm the policy assertions fail.
+- [x] Add producer delivery metadata and concise copy; treat a suppressed audit notification as a successful audit outcome.
+- [x] Run the focused suites and confirm they pass.
 
 ### Task 3: Remove duplicate generic and startup notifications
 
@@ -56,10 +56,10 @@
 - Test: `tests/core/lifecycle.test.ts`
 - Test: `tests/adapters/telegram/start-notifications.test.ts`
 
-- [ ] Add failing tests that reserved infrastructure sessions never produce generic long-task notifications and that one durable crash occurrence routes through the shared gateway.
-- [ ] Run the focused suites and confirm the new contracts fail.
-- [ ] Filter reserved infrastructure sessions and move crash recovery delivery out of adapters into one preferred-channel gateway request with fallback semantics.
-- [ ] Run the focused suites and confirm they pass.
+- [x] Add failing tests that reserved infrastructure sessions never produce generic long-task notifications and that one durable crash occurrence routes through the shared gateway.
+- [x] Run the focused suites and confirm the new contracts fail.
+- [x] Filter reserved infrastructure sessions and move crash recovery delivery out of adapters into one preferred-channel gateway request with fallback semantics.
+- [x] Run the focused suites and confirm they pass.
 
 ### Task 4: Alignment and full verification
 
@@ -70,7 +70,7 @@
 - Modify: `docs/agent-maintenance-guidelines.md`
 - Modify: `docs/manual.md`
 
-- [ ] Document notification classes, source decisions, durable per-channel suppression, concise rendering, and explicit-send exemption.
-- [ ] Run `npx biome check` on touched files, production and test typechecks, and all focused notification suites.
-- [ ] Run `npm run verify:local` and require `verify-local ok`.
-- [ ] Review `git diff --check`, status, and unpushed commit boundaries before reporting completion.
+- [x] Document notification classes, source decisions, durable per-channel suppression, concise rendering, and explicit-send exemption.
+- [x] Run `npx biome check` on touched files, production and test typechecks, and all focused notification suites.
+- [x] Run `npm run verify:local` and require `verify-local ok`.
+- [x] Review `git diff --check`, status, and unpushed commit boundaries before reporting completion.

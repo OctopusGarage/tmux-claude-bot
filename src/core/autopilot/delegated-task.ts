@@ -435,6 +435,10 @@ export async function startActiveDelegatedTask(
       runId,
       timeoutMs: DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS,
       projectSessionPrefix: deps.config.projectSessionPrefix,
+      notificationMode:
+        input.resourceTrigger === "background" || input.resourceTrigger === "resource-repair"
+          ? "autonomous"
+          : "interactive",
       ...(projectPolicy !== null ? { projectPolicy } : {}),
     });
     const preparationFailures: string[] = [];
@@ -944,6 +948,12 @@ async function finishActiveDelegatedTask(
               ? `${transition.agent} capacity exhausted`
               : `${transition.agent} capacity ${transition.to}`,
           body: `Capacity changed from ${transition.from} to ${transition.to}. ${transition.reason}`,
+          delivery: {
+            mode: "state-change",
+            topic: `agent-capacity:${transition.agent}`,
+            state: transition.to,
+            ...(transition.to === "available" ? { notifyInitial: false } : {}),
+          },
         }),
     }).recordLimitSignal(workOrder.agent, result.output, "autopilot-delegate");
   }
@@ -1025,6 +1035,7 @@ async function finishActiveDelegatedTask(
           resultStatus: result.status,
           gateFailures: gate.failures,
         });
+  if (workOrder.notificationMode === "autonomous") return;
   void deps.notifications.notify({
     source: "autopilot-delegate",
     level: completionNotification.level,

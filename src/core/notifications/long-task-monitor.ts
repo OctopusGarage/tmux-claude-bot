@@ -3,6 +3,7 @@ import { readAgentRecentConversations } from "../agents/read.js";
 import type { DashboardSnapshot } from "../dashboard/dashboard.js";
 import { buildDashboard } from "../dashboard/dashboard.js";
 import type { HandlerDeps } from "../deps.js";
+import { isReservedInfrastructureSession } from "../projects/operator.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { ConversationRound } from "../read/transcript.js";
 import { notificationRequestForEvent } from "./events.js";
@@ -36,6 +37,7 @@ export type LongTaskMonitorOptions = {
   ownerActivity: OwnerActivityTracker;
   latestHistory?: LatestHistoryProvider;
   thresholdMs?: number;
+  projectSessionPrefix?: string;
 };
 
 const log = createLogger("notifications.long-task-monitor");
@@ -47,6 +49,7 @@ export class LongTaskMonitor {
   private readonly latestHistory: LatestHistoryProvider;
   private readonly thresholdMs: number;
   private readonly watched = new Map<string, WatchedTask>();
+  private readonly projectSessionPrefix: string;
 
   constructor(opts: LongTaskMonitorOptions) {
     this.snapshot = opts.snapshot;
@@ -54,6 +57,7 @@ export class LongTaskMonitor {
     this.ownerActivity = opts.ownerActivity;
     this.latestHistory = opts.latestHistory ?? (async () => null);
     this.thresholdMs = opts.thresholdMs ?? LONG_TASK_THRESHOLD_MS;
+    this.projectSessionPrefix = opts.projectSessionPrefix ?? "tmux_proj_";
   }
 
   async tick(): Promise<void> {
@@ -62,7 +66,8 @@ export class LongTaskMonitor {
     const snap = await this.snapshot();
     const seen = new Set<string>();
     for (const row of snap.sessions) {
-      if (row.operator) continue;
+      if (row.operator || isReservedInfrastructureSession(row.session, this.projectSessionPrefix))
+        continue;
       seen.add(row.session);
       const watched = this.watched.get(row.session);
       if (!row.busy) {
@@ -133,6 +138,7 @@ export class LongTaskMonitor {
       durationMs: task.lastTaskMs,
       latestHistory,
     });
+    if (request === null) return;
     const plan = resolveNotificationTargetPlan({
       registeredChannels: channels,
       session: task.session,
@@ -163,6 +169,9 @@ export function startLongTaskMonitor(
     snapshot: () => buildDashboard(deps),
     notifications: deps.notifications,
     ownerActivity: deps.ownerActivity,
+    projectSessionPrefix:
+      (deps as { config?: { projectSessionPrefix?: string } }).config?.projectSessionPrefix ??
+      "tmux_proj_",
     latestHistory: async (session, task) => {
       const projectPath = getPathBySession(session) ?? session;
       return latestAssistantForTaskWindow(

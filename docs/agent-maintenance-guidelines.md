@@ -341,6 +341,19 @@ When adding a new task kind, define how it conflicts with:
 For project-scoped notifications, always carry project/session identity through
 the notification request.
 
+Classify proactive delivery before calling the gateway. Interactive results and
+explicit `tcb notify` requests are always-send. Autonomous success and expected
+environmental state are observable but silent. Action-required events use a
+stable topic plus state or occurrence/window identity so successful delivery is
+deduplicated per channel across process restarts. Never implement recurring
+notification suppression with an in-memory timestamp alone.
+
+Keep visible notification copy to a short title and at most one to three useful
+lines. Do not render the structured source, incident id, circuit name, run id,
+or raw path unless the operator must act on that exact value. Failed delivery
+must remain retryable, and policy-store corruption must fail open for actionable
+alerts.
+
 Feishu/Lark must prefer the project-bound group for that session and fall back
 to the owner only when no bound group exists. Telegram is owner-directed unless
 a feature has an explicit Telegram project-chat target. Channel selection should

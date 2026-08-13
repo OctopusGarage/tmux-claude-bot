@@ -366,7 +366,7 @@ describe("resource guardian coordinator", () => {
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "resource-guardian",
-        title: "Resource pressure: recovering → healthy",
+        title: "Resource pressure recovered",
       }),
     );
     expect(
@@ -735,7 +735,7 @@ describe("resource guardian coordinator", () => {
       pressure: "elevated",
       circuit: "heavy-closed",
     });
-    expect(store.operations.slice(0, 3)).toEqual(["current", "incident", "notify"]);
+    expect(store.operations.slice(0, 3)).toEqual(["current", "incident", "incident"]);
     expect(store.current.circuit).toMatchObject({
       pressure: "elevated",
       admission: "heavy-closed",
@@ -1048,7 +1048,7 @@ describe("resource guardian coordinator", () => {
 
     await coordinator.run(now);
     for (now = 15_000; now <= 75_000; now += 15_000) await coordinator.run(now);
-    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
     const expected = notificationRequestForEvent({
       kind: "resource.pressure-transition",
       oldState: "healthy",
@@ -1058,11 +1058,11 @@ describe("resource guardian coordinator", () => {
       circuit: "heavy-closed",
       actionSummary: "protect mode closed heavy background admission",
     });
-    expect(notify).toHaveBeenLastCalledWith(expected);
+    expect(expected).toBeNull();
 
     now += 15_000;
     await coordinator.run(now);
-    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
     expect(store.incidents.get("incident-notify")?.actions).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: "notification" })]),
     );
@@ -1130,10 +1130,9 @@ describe("resource guardian coordinator", () => {
         notifiedPhase: "stale-hold-expired",
       },
     });
-    expect(notify).toHaveBeenCalledTimes(2);
-    expect(notify.mock.calls[0]?.[0]).toMatchObject({ title: "Resource sampling degraded" });
-    expect(notify.mock.calls[1]?.[0]).toMatchObject({
-      title: "Resource sampling stale hold expired",
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0]?.[0]).toMatchObject({
+      title: "Resource monitoring unavailable",
     });
 
     await coordinator.run(1_000 + 17 * minute);
@@ -1146,7 +1145,7 @@ describe("resource guardian coordinator", () => {
         sampling: { consecutiveFailures: 3, notifiedPhase: "stale-hold-expired" },
       },
     });
-    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenCalledTimes(1);
   });
 
   it("persists bounded redacted sampling health for healthy/open failures without spam", async () => {
@@ -1180,7 +1179,7 @@ describe("resource guardian coordinator", () => {
     expect(error.length).toBeLessThanOrEqual(500);
     expect(error).not.toContain(homedir());
     expect(error).not.toContain("super-secret-value");
-    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("persists a sampling failure from the store's conservative invalid-state fallback", async () => {
@@ -1273,9 +1272,9 @@ describe("resource guardian coordinator", () => {
     await coordinator.run(30);
     expect(store.current.view.sampling.consecutiveFailures).toBe(2);
     expect(store.current.view.sampling.notifiedPhase).toBe("sampling-failed");
-    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
     await coordinator.run(40);
-    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("requires incident evidence before stale fallback protection can open", async () => {
@@ -1608,7 +1607,7 @@ describe("resource guardian coordinator", () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it("contains sampling and notification failures without reopening a closed circuit", async () => {
+  it("records non-actionable pressure without attempting notification", async () => {
     const store = new MemoryStore();
     let now = 0;
     const notify = vi.fn(async () => {
@@ -1634,8 +1633,8 @@ describe("resource guardian coordinator", () => {
       expect.arrayContaining([
         expect.objectContaining({
           kind: "notification",
-          outcome: "failed",
-          reason: expect.stringMatching(/sender down/),
+          outcome: "skipped",
+          reason: expect.stringMatching(/not actionable/),
         }),
       ]),
     );

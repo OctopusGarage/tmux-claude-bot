@@ -694,19 +694,23 @@ async function notifyTransition(input: {
   let outcome: ResourceIncidentAction["outcome"] = "failed";
   let reason = input.actionSummary;
   try {
-    const result = await input.notify(
-      notificationRequestForEvent({
-        kind: "resource.pressure-transition",
-        oldState: input.oldState,
-        newState: input.newState,
-        incidentId: input.incident?.id ?? null,
-        hostCpuPct: input.hostCpuPct,
-        circuit: input.circuit,
-        actionSummary: input.actionSummary,
-      }),
-    );
-    outcome = result.status;
-    reason = `${input.actionSummary}; notification ${result.status}`;
+    const request = notificationRequestForEvent({
+      kind: "resource.pressure-transition",
+      oldState: input.oldState,
+      newState: input.newState,
+      incidentId: input.incident?.id ?? null,
+      hostCpuPct: input.hostCpuPct,
+      circuit: input.circuit,
+      actionSummary: input.actionSummary,
+    });
+    if (request === null) {
+      outcome = "skipped";
+      reason = `${input.actionSummary}; notification not actionable`;
+    } else {
+      const result = await input.notify(request);
+      outcome = notificationOutcome(result.status);
+      reason = `${input.actionSummary}; notification ${result.status}`;
+    }
   } catch (error) {
     reason = `${input.actionSummary}; notification failed: ${safeErrorMessage(error)}`;
   }
@@ -737,18 +741,22 @@ async function notifySamplingDegraded(input: {
   let outcome: ResourceIncidentAction["outcome"] = "failed";
   let reason = `${input.phase} notification failed`;
   try {
-    const result = await input.notify(
-      notificationRequestForEvent({
-        kind: "resource.sampling-degraded",
-        phase: input.phase,
-        incidentId: input.incidentId,
-        error: input.error,
-        consecutiveFailures: input.consecutiveFailures,
-        circuit: input.circuit,
-      }),
-    );
-    outcome = result.status;
-    reason = `${input.phase} notification ${result.status}`;
+    const request = notificationRequestForEvent({
+      kind: "resource.sampling-degraded",
+      phase: input.phase,
+      incidentId: input.incidentId,
+      error: input.error,
+      consecutiveFailures: input.consecutiveFailures,
+      circuit: input.circuit,
+    });
+    if (request === null) {
+      outcome = "skipped";
+      reason = `${input.phase} notification not actionable`;
+    } else {
+      const result = await input.notify(request);
+      outcome = notificationOutcome(result.status);
+      reason = `${input.phase} notification ${result.status}`;
+    }
   } catch (error) {
     reason = `${input.phase} notification failed: ${safeErrorMessage(error)}`;
   }
@@ -771,16 +779,20 @@ async function notifyResourceActionFailed(input: {
   const safeReason = sanitizeResourceActionReason(input.reason);
   let reason = safeReason;
   try {
-    const result = await input.notify(
-      notificationRequestForEvent({
-        kind: "resource.action-failed",
-        incidentId: input.incidentId,
-        circuit: input.circuit,
-        reason: safeReason,
-      }),
-    );
-    outcome = result.status;
-    reason = `${safeReason}; notification ${result.status}`;
+    const request = notificationRequestForEvent({
+      kind: "resource.action-failed",
+      incidentId: input.incidentId,
+      circuit: input.circuit,
+      reason: safeReason,
+    });
+    if (request === null) {
+      outcome = "skipped";
+      reason = `${safeReason}; notification not actionable`;
+    } else {
+      const result = await input.notify(request);
+      outcome = notificationOutcome(result.status);
+      reason = `${safeReason}; notification ${result.status}`;
+    }
   } catch (error) {
     reason = `${safeReason}; notification failed: ${sanitizeResourceActionReason(error)}`;
   }
@@ -788,6 +800,12 @@ async function notifyResourceActionFailed(input: {
   const nextIncident = structuredClone(input.incident);
   nextIncident.actions.push({ kind: "notification", at: input.at, outcome, reason });
   return writeIncidentBestEffort(input.store, nextIncident) ? nextIncident : null;
+}
+
+function notificationOutcome(
+  status: NotificationResult["status"],
+): ResourceIncidentAction["outcome"] {
+  return status === "suppressed" ? "skipped" : status;
 }
 
 function isActive(input: { isActive?: () => boolean }): boolean {

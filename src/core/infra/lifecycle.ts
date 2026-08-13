@@ -12,10 +12,15 @@ const marker = (): string => appStateFile(".running");
  * restarts are silent and a crash-loop goes unnoticed.
  */
 export function detectUncleanRestart(): boolean {
+  return detectUncleanRestartIdentity() !== null;
+}
+
+/** Return the previous liveness marker as a stable crash-occurrence identity. */
+export function detectUncleanRestartIdentity(): string | null {
   const path = marker();
-  let unclean = false;
+  let previous: string | null = null;
   try {
-    unclean = fs.existsSync(path);
+    previous = fs.readFileSync(path, "utf8").trim() || null;
   } catch {
     /* unreadable → treat as clean */
   }
@@ -24,7 +29,7 @@ export function detectUncleanRestart(): boolean {
   } catch {
     /* best-effort; missing marker just means the next crash won't be flagged */
   }
-  return unclean;
+  return previous;
 }
 
 /** Remove the liveness marker so the next startup is not flagged as a crash. */

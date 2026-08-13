@@ -6,13 +6,11 @@ import {
   LoggerLevel,
 } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
-import { messages } from "../../core/i18n/index.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { makeCardActionHandler } from "./card-actions.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
 import { registerLarkNotifications } from "./notifications.js";
-import { notifyLarkOwner } from "./resource.js";
 
 const log = createLogger("lark.start");
 
@@ -66,7 +64,7 @@ export function larkChannelOptions(
  * path is unaffected. A connection failure here is logged and never crashes the
  * process — it must not take down the Telegram bot.
  */
-export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolean } = {}): void {
+export function startLark(deps: HandlerDeps): void {
   const cfg = deps.config.lark;
   if (!cfg) {
     log.info("disabled — skipping (run `npm run setup:lark` to onboard via QR scan)");
@@ -97,14 +95,6 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
     .connect()
     .then(() => {
       log.info(`connected (domain=${cfg.domain}, app=${cfg.appId})`);
-      // Mirror Telegram: after a launchd auto-recovery, DM the owner that the bot
-      // restarted from a crash. Best-effort. Disable with TCB_STARTUP_NOTIFY=0.
-      if (opts.recoveredFromCrash && process.env.TCB_STARTUP_NOTIFY !== "0") {
-        void notifyLarkOwner(
-          cfg,
-          messages("lark").crashRecovered(new Date().toLocaleString()),
-        ).catch((err) => log.warn("owner crash-alert failed", { err }));
-      }
     })
     .catch((err) => log.error("connect failed", { err }));
 }

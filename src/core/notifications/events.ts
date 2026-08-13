@@ -48,7 +48,7 @@ export type NotificationEvent =
 
 export function notificationRequestForEvent(
   event: NotificationEvent,
-): Omit<NotificationRequest, "channel"> {
+): Omit<NotificationRequest, "channel"> | null {
   if (event.kind === "resource.pressure-transition") {
     return resourcePressureTransitionRequest(event);
   }
@@ -66,49 +66,55 @@ function resourceActionFailedRequest(
     level: "error",
     source: "resource-guardian",
     title: "Resource action failed",
-    body: [
-      `incident: ${event.incidentId ?? "none"}`,
-      `circuit: ${event.circuit}`,
-      `reason: ${event.reason}`,
-    ].join("\n"),
+    body: `${event.reason} · check tcb resource status`,
+    delivery: {
+      mode: "state-change",
+      topic: "resource-guardian:action",
+      state: event.incidentId ?? event.reason,
+    },
   };
 }
 
 function resourceSamplingDegradedRequest(
   event: ResourceSamplingDegradedEvent,
-): Omit<NotificationRequest, "channel"> {
+): Omit<NotificationRequest, "channel"> | null {
+  if (event.phase !== "stale-hold-expired") return null;
   return {
     level: "warning",
     source: "resource-guardian",
-    title:
-      event.phase === "stale-hold-expired"
-        ? "Resource sampling stale hold expired"
-        : "Resource sampling degraded",
-    body: [
-      `phase: ${event.phase}`,
-      `incident: ${event.incidentId ?? "none"}`,
-      `failures: ${event.consecutiveFailures}`,
-      `circuit: ${event.circuit}`,
-      `error: ${event.error}`,
-    ].join("\n"),
+    title: "Resource monitoring unavailable",
+    body: `Safety hold expired after ${event.consecutiveFailures} failed samples · check tcb resource status`,
+    delivery: {
+      mode: "state-change",
+      topic: "resource-guardian:sampling",
+      state: `stale-hold-expired:${event.incidentId ?? "untracked"}`,
+    },
   };
 }
 
 function resourcePressureTransitionRequest(
   event: ResourcePressureTransitionEvent,
-): Omit<NotificationRequest, "channel"> {
+): Omit<NotificationRequest, "channel"> | null {
+  if (event.newState === "elevated") return null;
   const level =
     event.newState === "healthy" ? "success" : event.newState === "emergency" ? "error" : "warning";
   return {
     level,
     source: "resource-guardian",
-    title: `Resource pressure: ${event.oldState} → ${event.newState}`,
-    body: [
-      `incident: ${event.incidentId ?? "none"}`,
-      `host CPU: ${event.hostCpuPct}%`,
-      `circuit: ${event.circuit}`,
-      `action: ${event.actionSummary}`,
-    ].join("\n"),
+    title:
+      event.newState === "healthy"
+        ? "Resource pressure recovered"
+        : `Resource pressure ${event.newState}`,
+    body:
+      event.newState === "healthy"
+        ? "Background work resumed"
+        : `CPU ${event.hostCpuPct}% · background work paused`,
+    delivery: {
+      mode: "state-change",
+      topic: "resource-guardian:pressure",
+      state: event.newState,
+      ...(event.newState === "healthy" ? { notifyInitial: false } : {}),
+    },
   };
 }
 

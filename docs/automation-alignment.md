@@ -610,7 +610,10 @@ complete:
     isolation, GitHub account binding, verification gates, final notification,
     and audit visibility.
 13. For notification features, prove Telegram and Feishu/Lark capability parity,
-    and prove Lark project-bound group routing when a session is known.
+    prove Lark project-bound group routing when a session is known, and prove
+    durable per-channel suppression does not hide failed delivery or an
+    actionable state change. Bot-owned copy must remain concise; diagnostic
+    identifiers belong in structured evidence rather than routine chat text.
 14. Mark historical documents as historical when they no longer describe current
     behavior.
 
@@ -654,6 +657,16 @@ Autopilot completion notifications must distinguish a supervisor execution
 failure from a completed supervisor run rejected by a system acceptance gate.
 The latter must identify the acceptance failure and must not claim that the
 delegated work itself did not complete.
+
+Notification alignment invariant: interactive results and explicit operator
+notifications remain always-send; successful autonomous work and expected
+environment state remain in observability surfaces. Daily Task Audit all-clear,
+ordinary battery operation, Resource Guardian elevated/intermediate sampling,
+and domain-owned supervisor sessions are silent. Actionable power failures are
+bounded by quiet-cycle identity; critical/emergency resource pressure, terminal
+sampling safety loss, action failure, capacity exhaustion, and paired recovery
+use durable state-change delivery. One crash identity routes through one owner
+channel with fallback rather than independent adapter alerts.
 
 Live operator configuration examples must stay synthetic. Maintained docs and
 source must not contain real operator home paths, GitHub accounts, active

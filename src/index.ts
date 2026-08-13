@@ -8,10 +8,11 @@ import {
   InstanceLockHeldError,
   releaseInstanceLock,
 } from "./core/infra/instance-lock.js";
-import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
+import { detectUncleanRestartIdentity, markCleanShutdown } from "./core/infra/lifecycle.js";
 import { startLoopEngineering } from "./core/loop/service.js";
 import { startLoopSupervisors } from "./core/loop/supervisor-session.js";
 import { startLongTaskMonitor } from "./core/notifications/long-task-monitor.js";
+import { notifyCrashRecovery } from "./core/notifications/startup-notification.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
 import { startHostPowerManager } from "./core/power/power-manager.js";
 import { startOperator } from "./core/projects/operator-home.js";
@@ -93,7 +94,7 @@ async function init(): Promise<void> {
 
 // Did the previous run exit cleanly? If not, launchd auto-recovered a crash —
 // the adapters alert the owner once connected. Clean shutdowns clear the marker.
-const recoveredFromCrash = detectUncleanRestart();
+const recoveredCrashIdentity = detectUncleanRestartIdentity();
 function noteShutdownSignal(signal: "SIGINT" | "SIGTERM"): void {
   shuttingDown = true;
   log.info("shutdown signal received", { data: { signal } });
@@ -190,6 +191,7 @@ let notificationDrivenServicesStarted = false;
 const startNotificationDrivenServices = (): void => {
   if (notificationDrivenServicesStarted) return;
   notificationDrivenServicesStarted = true;
+  void notifyCrashRecovery(deps.notifications, recoveredCrashIdentity);
   stopHostPowerManager = startHostPowerManager(deps);
   stopResourceGuardian = startResourceGuardian(deps);
   startRuntimeGuardian(deps);
@@ -199,12 +201,11 @@ const startNotificationDrivenServices = (): void => {
 
 // Lark connects over a WebSocket (non-blocking); start it first. No-op unless
 // config.lark is set.
-startLark(deps, { recoveredFromCrash });
+startLark(deps);
 
 if (telegramEnabled) {
   // grammy's long-poll loop blocks until the bot is stopped; this runs last.
   await startTelegram(deps, {
-    recoveredFromCrash,
     onNotificationsReady: startNotificationDrivenServices,
   });
   startNotificationDrivenServices();

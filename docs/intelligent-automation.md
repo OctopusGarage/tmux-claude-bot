@@ -1192,10 +1192,19 @@ identical UI.
 
 Project-related notifications should route to the bound project group when the
 channel supports it, then fall back to owner/private targets according to the
-notification gateway policy. All long-running automation should write structured
-logs and final notifications that include enough identifiers to trace the run:
-project id, task kind, run id, PR URL when present, result status, verification,
-and report path.
+notification gateway policy. Chat is an escalation and interactive-result
+surface, not a duplicate event log: successful unattended work and expected
+environmental state stay in Runtime Overview, CLI history, ledgers, reports, and
+logs. Actionable failures notify on first observation or material state change;
+recovery notifies only after a delivered unhealthy alert. Explicit operator
+notifications and interactive task results remain visible.
+
+Bot-owned notification requests use durable per-channel delivery metadata.
+Successful delivery advances the bounded policy state; a failed channel remains
+retryable without duplicating channels that already succeeded. Visible copy is
+limited to a short title and one actionable fact. Source, incident, circuit,
+run, and path identifiers remain structured diagnostic evidence rather than
+routine chat text.
 
 ## Current Config Shape
 

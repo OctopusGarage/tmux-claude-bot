@@ -12,16 +12,7 @@ describe("notification event contracts", () => {
       circuit: "background-closed",
     });
 
-    expect(request).toMatchObject({
-      level: "warning",
-      source: "resource-guardian",
-      title: "Resource sampling degraded",
-    });
-    expect(request.body).toContain("phase: sampling-failed");
-    expect(request.body).toContain("incident: resource-43");
-    expect(request.body).toContain("failures: 2");
-    expect(request.body).toContain("circuit: background-closed");
-    expect(request.body).toContain("error: probe unavailable");
+    expect(request).toBeNull();
   });
 
   it("renders resource pressure transitions with shared channel semantics", () => {
@@ -38,12 +29,15 @@ describe("notification event contracts", () => {
     expect(request).toMatchObject({
       level: "warning",
       source: "resource-guardian",
-      title: "Resource pressure: elevated → critical",
+      title: "Resource pressure critical",
     });
-    expect(request.body).toContain("incident: resource-42");
-    expect(request.body).toContain("host CPU: 94.25%");
-    expect(request.body).toContain("circuit: background-closed");
-    expect(request.body).toContain("action: protect mode closed background admission");
+    if (request === null) throw new Error("expected actionable transition");
+    expect(request.body).toBe("CPU 94.25% · background work paused");
+    expect(request.delivery).toEqual({
+      mode: "state-change",
+      topic: "resource-guardian:pressure",
+      state: "critical",
+    });
   });
 
   it("renders resource action failures without pretending they are pressure transitions", () => {
@@ -59,8 +53,44 @@ describe("notification event contracts", () => {
       source: "resource-guardian",
       title: "Resource action failed",
     });
-    expect(request.body).toContain("incident: resource-44");
-    expect(request.body).toContain("reason: TERM rejected");
+    if (request === null) throw new Error("expected actionable failure");
+    expect(request.body).toBe("TERM rejected · check tcb resource status");
+  });
+
+  it("keeps elevated pressure as status evidence instead of a notification", () => {
+    expect(
+      notificationRequestForEvent({
+        kind: "resource.pressure-transition",
+        oldState: "healthy",
+        newState: "elevated",
+        incidentId: "resource-41",
+        hostCpuPct: 82,
+        circuit: "open",
+        actionSummary: "observing",
+      }),
+    ).toBeNull();
+  });
+
+  it("only emits healthy recovery through stateful pairing", () => {
+    const request = notificationRequestForEvent({
+      kind: "resource.pressure-transition",
+      oldState: "critical",
+      newState: "healthy",
+      incidentId: "resource-42",
+      hostCpuPct: 25,
+      circuit: "open",
+      actionSummary: "background admission restored",
+    });
+    expect(request).toMatchObject({
+      title: "Resource pressure recovered",
+      delivery: {
+        mode: "state-change",
+        topic: "resource-guardian:pressure",
+        state: "healthy",
+        notifyInitial: false,
+      },
+    });
+    if (request === null) throw new Error("expected recovery transition");
   });
 
   it("renders long task completion with task identity and latest assistant evidence", () => {
@@ -79,6 +109,7 @@ describe("notification event contracts", () => {
       session: "tmux_proj_api",
       title: "Long task finished: api",
     });
+    if (request === null) throw new Error("expected long-task result");
     expect(request.body).toContain("duration: 9m 18s");
     expect(request.body).toContain("latest history:");
     expect(request.body).toContain("Implemented the API guard");
@@ -94,6 +125,7 @@ describe("notification event contracts", () => {
       latestHistory: "x".repeat(2_000),
     });
 
+    if (request === null) throw new Error("expected long-task result");
     const body = request.body ?? "";
     expect(body).toContain("[truncated]");
     expect(body.length).toBeLessThan(2_000);

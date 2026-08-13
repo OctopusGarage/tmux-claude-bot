@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { normalizeError } from "../../shared/utils/error.js";
 import { tildeifyHome } from "../../shared/utils/path.js";
 import { type AttachmentKind, validateAttachment } from "../attachments/classify.js";
+import { NotificationPolicyStore } from "./policy-store.js";
 
 export type NotificationChannel = "telegram" | "lark";
 export type NotificationChannelSelection = NotificationChannel | "both";
@@ -30,7 +31,22 @@ export interface NotificationRequest {
   session?: string;
   attachments?: NotificationAttachment[];
   opportunities?: NotificationOpportunity[];
+  delivery?: NotificationDeliveryPolicy;
 }
+
+export type NotificationDeliveryPolicy =
+  | {
+      mode: "state-change";
+      topic: string;
+      state: string;
+      notifyInitial?: boolean;
+    }
+  | {
+      mode: "once-per-window";
+      topic: string;
+      window: string;
+      state?: string;
+    };
 
 export interface NotificationOpportunity {
   id: string;
@@ -55,6 +71,7 @@ export interface NotificationDelivery {
   ok: boolean;
   error?: string;
   messageSent?: boolean;
+  suppressed?: boolean;
   failedStage?:
     | "sender-missing"
     | "message"
@@ -64,7 +81,7 @@ export interface NotificationDelivery {
 }
 
 export interface NotificationResult {
-  status: "sent" | "partial" | "failed";
+  status: "sent" | "partial" | "failed" | "suppressed";
   deliveries: NotificationDelivery[];
 }
 
@@ -80,6 +97,12 @@ export type NotificationAttachmentSendFn = (
 
 export type NotificationOptions = {
   statInfo?: (p: string) => { size: number; isFile: boolean } | null;
+};
+
+export type NotificationGatewayOptions = {
+  stateDir?: string;
+  now?: () => number;
+  policyStore?: NotificationPolicyStore;
 };
 
 const CHANNELS: NotificationChannel[] = ["telegram", "lark"];
@@ -98,6 +121,16 @@ const LEVEL_PREFIX: Record<NotificationLevel, string> = {
 export class NotificationGateway {
   private readonly senders = new Map<NotificationChannel, NotificationSendFn>();
   private readonly attachmentSenders = new Map<NotificationChannel, NotificationAttachmentSendFn>();
+  private readonly policyStore: NotificationPolicyStore;
+
+  constructor(options: NotificationGatewayOptions = {}) {
+    this.policyStore =
+      options.policyStore ??
+      new NotificationPolicyStore({
+        ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+        ...(options.now === undefined ? {} : { now: options.now }),
+      });
+  }
 
   register(channel: NotificationChannel, fn: NotificationSendFn): void {
     this.senders.set(channel, fn);
@@ -120,6 +153,9 @@ export class NotificationGateway {
     const attachments = req.attachments?.filter((a) => a.path.trim()) ?? [];
     const deliveries = await Promise.all(
       channels.map(async (channel): Promise<InternalNotificationDelivery> => {
+        if (!this.shouldDeliver(req, channel)) {
+          return { channel, ok: true, messageSent: false, suppressed: true };
+        }
         const sender = this.senders.get(channel);
         if (!sender)
           return {
@@ -169,6 +205,7 @@ export class NotificationGateway {
               };
             }
           }
+          this.recordDelivered(req, channel);
           return { channel, ok: true, messageSent };
         } catch (err) {
           return {
@@ -181,17 +218,45 @@ export class NotificationGateway {
         }
       }),
     );
-    const ok = deliveries.filter((d) => d.ok).length;
+    const attempted = deliveries.filter((delivery) => !delivery.suppressed);
+    const ok = attempted.filter((delivery) => delivery.ok).length;
     const publicDeliveries = deliveries.map((delivery): NotificationDelivery => {
+      if (delivery.suppressed) return { channel: delivery.channel, ok: true, suppressed: true };
       if (delivery.ok) return { channel: delivery.channel, ok: true };
       return delivery;
     });
-    if (ok === deliveries.length) return { status: "sent", deliveries: publicDeliveries };
+    if (attempted.length === 0) return { status: "suppressed", deliveries: publicDeliveries };
+    if (ok === attempted.length) return { status: "sent", deliveries: publicDeliveries };
     if (ok > 0) return { status: "partial", deliveries: publicDeliveries };
-    if (deliveries.some((delivery) => delivery.messageSent)) {
+    if (attempted.some((delivery) => delivery.messageSent)) {
       return { status: "partial", deliveries: publicDeliveries };
     }
     return { status: "failed", deliveries: publicDeliveries };
+  }
+
+  private shouldDeliver(req: NotificationRequest, channel: NotificationChannel): boolean {
+    const delivery = req.delivery;
+    if (delivery === undefined) return true;
+    const fingerprint =
+      delivery.mode === "state-change"
+        ? delivery.state
+        : `${delivery.window}:${delivery.state ?? "occurrence"}`;
+    return this.policyStore.shouldDeliver(
+      delivery.topic,
+      fingerprint,
+      channel,
+      delivery.mode === "once-per-window" || (delivery.notifyInitial ?? true),
+    );
+  }
+
+  private recordDelivered(req: NotificationRequest, channel: NotificationChannel): void {
+    const delivery = req.delivery;
+    if (delivery === undefined) return;
+    const fingerprint =
+      delivery.mode === "state-change"
+        ? delivery.state
+        : `${delivery.window}:${delivery.state ?? "occurrence"}`;
+    this.policyStore.recordDelivered(delivery.topic, fingerprint, channel);
   }
 
   private resolveChannels(
@@ -216,11 +281,9 @@ function defaultStatInfo(p: string): { size: number; isFile: boolean } | null {
 export function formatNotification(req: NotificationRequest): string {
   const level = req.level ?? "info";
   const title = req.title.trim();
-  const lines = [`${LEVEL_PREFIX[level]} ${title}`];
-  if (req.source?.trim()) lines.push(`source: ${req.source.trim()}`);
-  const head = lines.join("\n");
+  const head = `${LEVEL_PREFIX[level]} ${title}`;
   const body = req.body?.trimEnd();
-  return tildeifyHome(body ? `${head}\n\n${body}` : head);
+  return tildeifyHome(body ? `${head}\n${body}` : head);
 }
 
 function messageForChannel(channel: NotificationChannel, message: string): string {

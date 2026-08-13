@@ -2,7 +2,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { detectUncleanRestart, markCleanShutdown } from "../../src/core/infra/lifecycle.js";
+import {
+  detectUncleanRestart,
+  detectUncleanRestartIdentity,
+  markCleanShutdown,
+} from "../../src/core/infra/lifecycle.js";
 
 describe("lifecycle crash detection", () => {
   let dir: string;
@@ -25,6 +29,11 @@ describe("lifecycle crash detection", () => {
   it("flags a restart when the previous run left the marker (crash / SIGKILL)", () => {
     detectUncleanRestart(); // run 1 writes the marker and never clears it
     expect(detectUncleanRestart()).toBe(true); // run 2 sees the stale marker
+  });
+
+  it("returns the previous run identity for one restart notification", () => {
+    expect(detectUncleanRestartIdentity()).toBeNull();
+    expect(detectUncleanRestartIdentity()).toMatch(/^\d+ /);
   });
 
   it("a clean shutdown clears the flag", () => {

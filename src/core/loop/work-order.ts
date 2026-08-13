@@ -336,6 +336,7 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
   projectSessionPrefix?: string;
   projectPolicy?: LoopProjectConfig;
   planning?: LoopWorkOrderPlanning;
+  notificationMode?: "interactive" | "autonomous";
 }): LoopWorkOrder {
   const projectPolicy = input.projectPolicy;
   return {
@@ -363,6 +364,7 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
       ? { relatedOpportunityIds: [...input.opportunityIds] }
       : {}),
     notificationSession: input.session,
+    ...(input.notificationMode === undefined ? {} : { notificationMode: input.notificationMode }),
     ...(input.projectSessionPrefix !== undefined
       ? {
           workerSession: loopWorkerRunSessionName(

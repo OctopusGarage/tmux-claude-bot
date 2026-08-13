@@ -116,7 +116,6 @@ describe("runDailyTaskAuditServiceTick", () => {
     const send = vi.fn(async () => {});
     notifications.register("lark", send);
     const ledger = new DailyTaskLedger();
-
     const first = await runDailyTaskAuditServiceTick({
       now: Date.parse("2026-07-28T02:05:00Z"),
       config: {
@@ -152,7 +151,7 @@ describe("runDailyTaskAuditServiceTick", () => {
 
     expect(first).toMatchObject({ fired: true });
     expect(second).toMatchObject({ fired: false, reason: "not-due" });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
     expect(
       ledger.listForWindow({
         start: Date.parse("2026-07-28T00:00:00Z"),
@@ -192,7 +191,7 @@ describe("runDailyTaskAuditServiceTick", () => {
       fired: true,
       scheduledAt: Date.parse("2026-07-28T02:00:00Z"),
     });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("can be forced to run immediately even when the schedule is not due", async () => {
@@ -222,7 +221,7 @@ describe("runDailyTaskAuditServiceTick", () => {
       fired: true,
       scheduledAt: Date.parse("2026-07-28T01:30:00Z"),
     });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("dispatches repair when auto repair is enabled and the audit finds failures", async () => {
@@ -663,6 +662,17 @@ describe("runDailyTaskAuditServiceTick", () => {
     });
     notifications.register("lark", send);
     const ledger = new DailyTaskLedger();
+    const failedAt = Date.parse("2026-07-27T01:00:00Z");
+    ledger.expect({
+      taskId: "loop:notification-failure",
+      source: "loop-engineering",
+      name: "notification failure fixture",
+      scheduledAt: failedAt,
+    });
+    ledger.fail("loop:notification-failure", {
+      endedAt: failedAt + 1_000,
+      error: "system gate failed",
+    });
 
     const first = await runDailyTaskAuditServiceTick({
       now: Date.parse("2026-07-28T02:05:00Z"),

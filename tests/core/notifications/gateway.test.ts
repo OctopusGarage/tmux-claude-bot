@@ -1,4 +1,6 @@
-import { homedir } from "node:os";
+import { mkdtempSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 
@@ -25,11 +27,11 @@ describe("NotificationGateway", () => {
       ],
     });
     expect(telegram).toHaveBeenCalledWith(
-      "✅ Deploy finished\nsource: deploy\n\nstaging is live",
+      "✅ Deploy finished\nstaging is live",
       expect.objectContaining({ source: "deploy" }),
     );
     expect(lark).toHaveBeenCalledWith(
-      "✅ Deploy finished\nsource: deploy\n\nstaging is live",
+      "✅ Deploy finished\nstaging is live",
       expect.objectContaining({ source: "deploy" }),
     );
   });
@@ -139,7 +141,7 @@ describe("NotificationGateway", () => {
 
   it("sends notification attachments through the selected channel sender", async () => {
     const gateway = new NotificationGateway();
-    const telegram = vi.fn(async () => {});
+    const telegram = vi.fn(async (_message: string, _request?: unknown) => {});
     const attach = vi.fn(async () => {});
     gateway.register("telegram", telegram);
     gateway.registerAttachment("telegram", attach);
@@ -325,5 +327,72 @@ describe("NotificationGateway", () => {
     });
     expect(telegram).toHaveBeenCalledTimes(1);
     expect(attach).not.toHaveBeenCalled();
+  });
+
+  it("suppresses an identical state across gateway restarts", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-notification-gateway-"));
+    const firstSender = vi.fn(async () => {});
+    const first = new NotificationGateway({ stateDir, now: () => 1_000 });
+    first.register("telegram", firstSender);
+    const request = {
+      title: "Wake schedule needs attention",
+      delivery: {
+        mode: "state-change" as const,
+        topic: "power:wake-schedule",
+        state: "missing",
+      },
+    };
+
+    await expect(first.notify(request)).resolves.toMatchObject({ status: "sent" });
+    const restoredSender = vi.fn(async () => {});
+    const restored = new NotificationGateway({ stateDir, now: () => 2_000 });
+    restored.register("telegram", restoredSender);
+
+    await expect(restored.notify(request)).resolves.toEqual({
+      status: "suppressed",
+      deliveries: [{ channel: "telegram", ok: true, suppressed: true }],
+    });
+    expect(firstSender).toHaveBeenCalledTimes(1);
+    expect(restoredSender).not.toHaveBeenCalled();
+  });
+
+  it("retries only a failed channel after partial stateful delivery", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-notification-gateway-"));
+    const telegram = vi.fn(async () => {});
+    const lark = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce();
+    const gateway = new NotificationGateway({ stateDir, now: () => 1_000 });
+    gateway.register("telegram", telegram);
+    gateway.register("lark", lark);
+    const request = {
+      channel: "both" as const,
+      title: "Resource pressure critical",
+      delivery: {
+        mode: "state-change" as const,
+        topic: "resource:pressure",
+        state: "critical",
+      },
+    };
+
+    await expect(gateway.notify(request)).resolves.toMatchObject({ status: "partial" });
+    await expect(gateway.notify(request)).resolves.toMatchObject({ status: "sent" });
+    expect(telegram).toHaveBeenCalledTimes(1);
+    expect(lark).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps explicit notifications always-send compatible", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-notification-gateway-"));
+    const telegram = vi.fn(async (_message: string, _request?: unknown) => {});
+    const gateway = new NotificationGateway({ stateDir });
+    gateway.register("telegram", telegram);
+
+    await gateway.notify({ title: "Operator message", source: "tmux-claude-bot" });
+    await gateway.notify({ title: "Operator message", source: "tmux-claude-bot" });
+
+    expect(telegram).toHaveBeenCalledTimes(2);
+    expect(telegram.mock.calls[0]?.[0]).not.toContain("source:");
+    expect(telegram.mock.calls[0]?.[1]).toMatchObject({ source: "tmux-claude-bot" });
   });
 });

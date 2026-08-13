@@ -173,7 +173,10 @@ cannot be represented faithfully by one repeating wall-clock time. Remove only t
 matching managed event with `tcb power schedule remove`.
 
 `caffeinate -s` works only on AC power; `tcb power status` reports battery operation as
-degraded when keep-awake is expected. A closed lid still follows normal macOS behavior.
+degraded when keep-awake is expected, but ordinary battery operation is informational and
+does not generate a proactive warning. Missing, conflicting, or unverifiable wake policy
+still alerts once per quiet-window cycle until fixed. A closed lid still follows normal
+macOS behavior.
 The fixed event is `wake`, not `wakeorpoweron`, so it does not power on a shut-down Mac.
 Telegram may deliver provider-retained updates after wake. Feishu/Lark events during
 sleep are best-effort and may be missed; that trade-off is intentional in scheduled

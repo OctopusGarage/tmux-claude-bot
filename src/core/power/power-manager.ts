@@ -18,7 +18,10 @@ export type HostPowerManagerOptions = {
   hasProtectedWork(): Promise<ProtectedWorkSnapshot>;
   inspectSchedule(): PowerScheduleInspection;
   readPowerSource(): MacPowerSource;
-  notifyDegraded(reason: string): Promise<void>;
+  notifyDegraded(
+    reason: string,
+    delivery: { topic: string; state: string; window?: string },
+  ): Promise<void>;
   recordEvent(event: PowerEvent): void;
   setInterval(tick: () => void, delayMs: number): TimerHandle;
   clearInterval(timer: TimerHandle): void;
@@ -41,7 +44,7 @@ export function createHostPowerManager(
   let timer: TimerHandle | undefined;
   let inFlight: Promise<void> | undefined;
   let stopped = false;
-  let lastDegradedReason: string | undefined;
+  let lastDegradedKey: string | undefined;
   let lastPhase: ReturnType<typeof resolveHostPowerPhase> | null = null;
   let assertionHeld = options.keepAwake.active();
   let lastDelayKey: string | undefined;
@@ -61,19 +64,29 @@ export function createHostPowerManager(
     lastDelayKey = undefined;
   };
 
-  const notifyDegradation = async (reason: string): Promise<void> => {
-    if (reason === lastDegradedReason) return;
-    lastDegradedReason = reason;
-    recordEvent({ at: options.now(), kind: "degraded", reason });
-    log.warn("scheduled natural sleep is degraded; failing awake", { data: { reason } });
-    await options.notifyDegraded(reason).catch((error) => {
+  const notifyDegradation = async (
+    reason: string,
+    delivery: { topic: string; state: string; window?: string },
+  ): Promise<void> => {
+    const key = `${delivery.topic}\0${delivery.state}\0${delivery.window ?? "state"}`;
+    if (key !== lastDegradedKey) {
+      lastDegradedKey = key;
+      recordEvent({ at: options.now(), kind: "degraded", reason });
+      log.warn("scheduled natural sleep is degraded; failing awake", { data: { reason } });
+    }
+    // Retry the delivery boundary on every reconciliation. The gateway suppresses
+    // channels that already succeeded, while a failed channel remains retryable.
+    await options.notifyDegraded(reason, delivery).catch((error) => {
       log.warn("power degradation notification failed", { err: safeError(error) });
     });
   };
 
   const acquireOrNotify = async (at: number): Promise<void> => {
     if (!options.keepAwake.acquire()) {
-      await notifyDegradation("caffeinate assertion could not be acquired");
+      await notifyDegradation("caffeinate assertion could not be acquired", {
+        topic: "power:keep-awake",
+        state: "acquire-failed",
+      });
       return;
     }
     if (assertionHeld !== true) {
@@ -84,14 +97,14 @@ export function createHostPowerManager(
     try {
       source = options.readPowerSource();
     } catch (error) {
-      await notifyDegradation(`power-source probe failed: ${safeError(error)}`);
+      await notifyDegradation(`power-source probe failed: ${safeError(error)}`, {
+        topic: "power:power-source-probe",
+        state: "failed",
+      });
       return;
     }
-    if (source === "battery") {
-      await notifyDegradation("host is on battery; caffeinate -s does not prevent system sleep");
-      return;
-    }
-    lastDegradedReason = undefined;
+    if (source === "battery") return;
+    lastDegradedKey = undefined;
   };
 
   const failAwake = async (reason: string, at: number): Promise<void> => {
@@ -100,15 +113,14 @@ export function createHostPowerManager(
       assertionHeld = true;
       recordEvent({ at, kind: "keep-awake-acquired" });
     }
-    let fullReason = acquired ? reason : `${reason}; caffeinate assertion could not be acquired`;
-    try {
-      if (options.readPowerSource() === "battery") {
-        fullReason += "; host is on battery and the AC-only caffeinate assertion is ineffective";
-      }
-    } catch (error) {
-      fullReason += `; power-source probe failed: ${safeError(error)}`;
-    }
-    await notifyDegradation(fullReason);
+    const fullReason = acquired ? reason : `${reason}; caffeinate assertion could not be acquired`;
+    await notifyDegradation(fullReason, {
+      topic: reason.startsWith("protected-work probe failed")
+        ? "power:protected-work-probe"
+        : "power:wake-schedule",
+      state: reason.split(":", 1)[0] ?? reason,
+      window: quietCycleKey(config, at),
+    });
   };
 
   const reconcileOnce = async (): Promise<void> => {
@@ -117,7 +129,7 @@ export function createHostPowerManager(
     const phase = resolveHostPowerPhase(config, at);
     recordPhase(phase, at);
     if (config.mode === "off") {
-      lastDegradedReason = undefined;
+      lastDegradedKey = undefined;
       options.keepAwake.release();
       if (assertionHeld !== false) {
         assertionHeld = false;
@@ -151,7 +163,7 @@ export function createHostPowerManager(
         await failAwake(`${schedule.status}: ${schedule.detail}`, at);
         return;
       }
-      lastDegradedReason = undefined;
+      lastDegradedKey = undefined;
       lastDelayKey = undefined;
       options.keepAwake.release();
       if (assertionHeld !== false) {
@@ -197,12 +209,21 @@ export function startHostPowerManager(deps: HandlerDeps): () => void {
     hasProtectedWork: createProtectedWorkProbe(deps),
     inspectSchedule: () => inspectPowerSchedule(deps.config.hostPower),
     readPowerSource: readMacPowerSource,
-    notifyDegraded: async (reason) => {
+    notifyDegraded: async (reason, delivery) => {
       await deps.notifications.notify({
         level: "warning",
-        title: "Host power policy degraded",
-        body: `${reason}. Run tcb power status${deps.config.hostPower.mode === "scheduled" ? " and resolve any wake-schedule finding before the quiet window" : ""}.`,
+        title: "Power setup needs attention",
+        body: `${concisePowerReason(reason)} · run tcb power status`,
         source: "tmux-claude-bot",
+        delivery:
+          delivery.window === undefined
+            ? { mode: "state-change", topic: delivery.topic, state: delivery.state }
+            : {
+                mode: "once-per-window",
+                topic: delivery.topic,
+                window: delivery.window,
+                state: delivery.state,
+              },
       });
     },
     recordEvent: createPowerEventRecorder(),
@@ -211,4 +232,24 @@ export function startHostPowerManager(deps: HandlerDeps): () => void {
   });
   manager.start();
   return () => manager.stop();
+}
+
+function quietCycleKey(config: HostPowerConfig, at: number): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: config.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(at));
+}
+
+function concisePowerReason(reason: string): string {
+  if (reason.startsWith("missing:")) return "daily wake is not installed";
+  if (reason.startsWith("conflict:")) return "daily wake conflicts with another schedule";
+  if (reason.startsWith("dynamic-offset:")) return "daily wake does not match the configured time";
+  if (reason.startsWith("error:")) return "wake schedule could not be verified";
+  if (reason.startsWith("protected-work probe failed")) return "active-work safety check failed";
+  if (reason.includes("caffeinate assertion could not be acquired"))
+    return "keep-awake could not start";
+  return "power policy could not be verified";
 }

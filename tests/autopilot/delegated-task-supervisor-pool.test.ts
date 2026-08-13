@@ -943,6 +943,7 @@ describe("active delegated task supervisor pool", () => {
     const result = await startActiveDelegatedTask(d, {
       session: "tmux_proj_project",
       requirement: "finish the confirmed task",
+      resourceTrigger: "background",
     });
 
     expect(result).toMatchObject({
@@ -977,6 +978,7 @@ describe("active delegated task supervisor pool", () => {
       }),
     );
     expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("recovers active delegation when a valid final summary file lands after output capture settles", async () => {

@@ -63,6 +63,38 @@ describe("LongTaskMonitor", () => {
     expect(snapshots).not.toHaveBeenCalled();
   });
 
+  it("does not watch reserved automation infrastructure sessions", async () => {
+    const telegram = vi.fn(async () => {});
+    const gateway = new NotificationGateway();
+    gateway.register("telegram", telegram);
+    const snapshots = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [
+          row({
+            session: "tmux_proj_loop-worker-api-run-1",
+            label: "loop worker",
+            sessionKind: "regular",
+          }),
+        ],
+        global: {},
+        generatedAt: 0,
+      })
+      .mockResolvedValueOnce({ sessions: [], global: {}, generatedAt: FIVE_MIN });
+    const monitor = new LongTaskMonitor({
+      snapshot: snapshots as never,
+      notifications: gateway,
+      ownerActivity: new OwnerActivityTracker(),
+      thresholdMs: FIVE_MIN,
+      projectSessionPrefix: "tmux_proj_",
+    });
+
+    await monitor.tick();
+    await monitor.tick();
+
+    expect(telegram).not.toHaveBeenCalled();
+  });
+
   it("notifies once when a task was busy beyond the threshold and later becomes idle", async () => {
     const telegram = vi.fn(async (_message: string, _req?: unknown) => {});
     const gateway = new NotificationGateway();

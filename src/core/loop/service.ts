@@ -1793,6 +1793,12 @@ export async function startLoopEngineering(
             ? []
             : [`Next probe: ${new Date(transition.resetAt).toISOString()}`]),
         ].join("\n"),
+        delivery: {
+          mode: "state-change",
+          topic: `agent-capacity:${transition.agent}`,
+          state: transition.to,
+          ...(transition.to === "available" ? { notifyInitial: false } : {}),
+        },
       }),
   });
   const automationAgent = deps.config.loopEngineering.supervisor.agent;

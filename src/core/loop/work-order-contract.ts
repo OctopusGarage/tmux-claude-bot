@@ -283,6 +283,7 @@ export type LoopWorkOrder = {
   planning?: LoopWorkOrderPlanning;
   relatedOpportunityIds?: string[];
   notificationSession?: string;
+  notificationMode?: "interactive" | "autonomous";
   workerSession?: string;
   agent: LoopProjectConfig["agent"];
   goal: string;

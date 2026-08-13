@@ -75,7 +75,8 @@ export function buildDailyTaskAuditNotification(input: {
     ...(input.repairDispatch !== undefined ? { repairDispatch: input.repairDispatch } : {}),
   });
   const intent = buildAutomationNotificationIntent({
-    title: `Daily task audit · ${input.summary.window?.label ?? "unknown window"}`,
+    title:
+      activeIssues.length > 0 ? "Daily task audit needs attention" : "Daily task audit healthy",
     status: activeIssues.length > 0 ? "attention" : "ok",
     summary: body.split("\n"),
   });
@@ -85,6 +86,18 @@ export function buildDailyTaskAuditNotification(input: {
     source: "daily-task-audit",
     title: intent.title,
     body: intent.sections.flatMap((section) => section.lines).join("\n"),
+    delivery: {
+      mode: "state-change",
+      topic: "daily-task-audit:health",
+      state:
+        activeIssues.length === 0
+          ? "healthy"
+          : `attention:${activeIssues
+              .map((item) => `${item.name}:${item.status}:${item.failureKind ?? "unknown"}`)
+              .sort()
+              .join("|")}`,
+      ...(activeIssues.length === 0 ? { notifyInitial: false } : {}),
+    },
   };
 }
 
@@ -112,7 +125,7 @@ export function renderDailyTaskAudit(
   }
   if (activeIssues.length > 0) {
     lines.push("", "Issues:");
-    const visibleIssues = activeIssues.slice(0, 8);
+    const visibleIssues = activeIssues.slice(0, 3);
     for (const item of visibleIssues) {
       lines.push(
         `• ${item.name} · ${item.status}${item.failureKind ? ` · ${item.failureKind}` : ""}`,

@@ -144,9 +144,9 @@ describe("runDailyTaskAudit", () => {
     );
 
     expect(body).toContain("issue 0 · failed");
-    expect(body).toContain("issue 7 · failed");
-    expect(body).not.toContain("issue 8 · failed");
-    expect(body).toContain("• …and 2 more");
+    expect(body).toContain("issue 2 · failed");
+    expect(body).not.toContain("issue 3 · failed");
+    expect(body).toContain("• …and 7 more");
   });
 
   it("builds an ok notification for an unknown empty window", () => {
@@ -171,7 +171,13 @@ describe("runDailyTaskAudit", () => {
       channel: "telegram",
       level: "success",
       source: "daily-task-audit",
-      title: "Daily task audit · unknown window",
+      title: "Daily task audit healthy",
+      delivery: {
+        mode: "state-change",
+        topic: "daily-task-audit:health",
+        state: "healthy",
+        notifyInitial: false,
+      },
     });
     expect(notification.body).toContain("No scheduled task records found.");
   });
@@ -208,7 +214,7 @@ describe("runDailyTaskAudit", () => {
       expect.objectContaining({
         channel: "lark",
         level: "warning",
-        title: "Daily task audit · 2026-07-27 SGT",
+        title: "Daily task audit needs attention",
         body: expect.stringContaining("Counts: 1 success · 1 failed · 0 missing · 0 running"),
       }),
     );

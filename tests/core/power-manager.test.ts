@@ -133,7 +133,7 @@ describe("host power manager", () => {
   });
 
   it.each(["missing", "conflict", "dynamic-offset", "error"] as const)(
-    "fails awake and notifies once when wake verification is %s",
+    "fails awake and retries the policy-gated delivery when wake verification is %s",
     async (status) => {
       const notifyDegraded = vi.fn(async () => {});
       const { manager, keepAwake } = harness({
@@ -149,12 +149,14 @@ describe("host power manager", () => {
       await manager.reconcile();
       expect(keepAwake.acquire).toHaveBeenCalledTimes(2);
       expect(keepAwake.release).not.toHaveBeenCalled();
-      expect(notifyDegraded).toHaveBeenCalledTimes(1);
+      expect(notifyDegraded).toHaveBeenCalledTimes(2);
     },
   );
 
   it("reports both wake and AC-only failures when fail-awake runs on battery", async () => {
-    const notifyDegraded = vi.fn(async () => {});
+    const notifyDegraded = vi.fn(
+      async (_reason: string, _delivery: { topic: string; state: string; window?: string }) => {},
+    );
     const { manager } = harness({
       readPowerSource: () => "battery",
       inspectSchedule: () => ({
@@ -169,7 +171,8 @@ describe("host power manager", () => {
     });
     await manager.reconcile();
     expect(notifyDegraded).toHaveBeenCalledWith(
-      "missing: managed daily wake is not installed; host is on battery and the AC-only caffeinate assertion is ineffective",
+      "missing: managed daily wake is not installed",
+      expect.objectContaining({ topic: "power:wake-schedule" }),
     );
   });
 
@@ -183,7 +186,10 @@ describe("host power manager", () => {
     });
     await manager.reconcile();
     expect(keepAwake.acquire).toHaveBeenCalledTimes(1);
-    expect(notifyDegraded).toHaveBeenCalledWith(expect.stringMatching(/registry unavailable/));
+    expect(notifyDegraded).toHaveBeenCalledWith(
+      expect.stringMatching(/registry unavailable/),
+      expect.objectContaining({ topic: "power:protected-work-probe" }),
+    );
   });
 
   it("releases in off mode and acquires in always mode", async () => {
@@ -228,7 +234,10 @@ describe("host power manager", () => {
       now: () => atSingapore("2026-08-11T12:00:00"),
     });
     await manager.reconcile();
-    expect(notifyDegraded).toHaveBeenCalledWith("caffeinate assertion could not be acquired");
+    expect(notifyDegraded).toHaveBeenCalledWith("caffeinate assertion could not be acquired", {
+      topic: "power:keep-awake",
+      state: "acquire-failed",
+    });
   });
 
   it("reports AC-only keep-awake as degraded while the host is on battery", async () => {
@@ -240,8 +249,55 @@ describe("host power manager", () => {
     });
     await manager.reconcile();
     expect(keepAwake.acquire).toHaveBeenCalledTimes(1);
+    expect(notifyDegraded).not.toHaveBeenCalled();
+  });
+
+  it("classifies actionable power failures with a stable quiet-cycle delivery key", async () => {
+    const notifyDegraded = vi.fn(async () => {});
+    const { manager } = harness({
+      inspectSchedule: () => ({
+        status: "missing" as const,
+        wakeAt: "09:15",
+        timezone: "Asia/Singapore",
+        detail: "managed daily wake is not installed",
+      }),
+      notifyDegraded,
+    });
+
+    await manager.reconcile();
+
     expect(notifyDegraded).toHaveBeenCalledWith(
-      "host is on battery; caffeinate -s does not prevent system sleep",
+      "missing: managed daily wake is not installed",
+      expect.objectContaining({ topic: "power:wake-schedule", window: "2026-08-11" }),
     );
+  });
+
+  it("allows the same actionable wake failure once in each later quiet cycle", async () => {
+    let now = atSingapore("2026-08-11T04:00:00");
+    const notifyDegraded = vi.fn(
+      async (_reason: string, _delivery: { topic: string; state: string; window?: string }) => {},
+    );
+    const { manager } = harness({
+      now: () => now,
+      inspectSchedule: () => ({
+        status: "missing" as const,
+        wakeAt: "09:15",
+        timezone: "Asia/Singapore",
+        detail: "managed daily wake is not installed",
+      }),
+      notifyDegraded,
+    });
+
+    await manager.reconcile();
+    await manager.reconcile();
+    now = atSingapore("2026-08-12T04:00:00");
+    await manager.reconcile();
+
+    expect(notifyDegraded).toHaveBeenCalledTimes(3);
+    expect(notifyDegraded.mock.calls.map((call) => call[1].window)).toEqual([
+      "2026-08-11",
+      "2026-08-11",
+      "2026-08-12",
+    ]);
   });
 });
