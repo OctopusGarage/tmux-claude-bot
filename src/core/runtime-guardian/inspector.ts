@@ -113,6 +113,9 @@ function systemGateFailure(
   const failures = Array.isArray(parsed.failures)
     ? parsed.failures.filter((value): value is string => typeof value === "string")
     : [];
+  const recoverableFailures = Array.isArray(parsed.recoverableFailures)
+    ? parsed.recoverableFailures.filter((value): value is string => typeof value === "string")
+    : [];
   const structured = Array.isArray(parsed.findings) ? parsed.findings : [];
   const structuredDisposition =
     structured
@@ -128,6 +131,14 @@ function systemGateFailure(
   const disposition =
     structuredDisposition ??
     (failures.some(isTargetOrExternalSystemGateFailure) ? "target-or-external-blocker" : undefined);
+  if (
+    disposition === undefined &&
+    failures.length > 0 &&
+    recoverableFailures.length === failures.length &&
+    failures.every((failure) => recoverableFailures.includes(failure))
+  ) {
+    return null;
+  }
   if (
     disposition === undefined &&
     hasRawSuccessfulSummary(finalSummaryPath) &&
