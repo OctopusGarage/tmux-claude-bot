@@ -235,7 +235,8 @@ export function readLoopSupervisorWorkOrderRegistry(
         state.status === "failed" &&
         state.resultStatus !== undefined &&
         RECOVERABLE_FAILED_RESULTS.has(state.resultStatus) &&
-        parseSupervisorFinalSummaryFile(workOrder).ok,
+        parseSupervisorFinalSummaryFile(workOrder).ok &&
+        !existsSync(loopRunArtifactPath(state.projectId, state.runId, "systemGate")),
     ),
     abandoned: nonTerminal.filter(
       ({ state, workOrder }) => !unfinishedWorkOrderCanStillProgress(state, workOrder, now),

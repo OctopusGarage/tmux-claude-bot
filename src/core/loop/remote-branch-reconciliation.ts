@@ -48,7 +48,7 @@ type LoopRemoteBranchEvidenceTarget = {
   repository: string;
   branch: string;
   sha: string;
-  pullRequestNumber: number;
+  pullRequestNumber?: number;
 };
 
 export type LoopRemoteBranchEvidenceWriter = {
@@ -70,13 +70,14 @@ export type LoopRemoteBranchEvidenceWriter = {
 };
 
 type CleanupPlan =
-  | { kind: "delete"; pullRequestNumber: number; reason: string }
+  | { kind: "delete"; pullRequestNumber?: number; reason: string }
   | { kind: "skip"; reason: string };
 
 export function planLoopRemoteBranchCleanup(input: {
   target: LoopRemoteBranchTarget;
   observation: LoopRemoteBranchObservation;
   liveBranches: ReadonlySet<string>;
+  terminalBranches?: ReadonlySet<string>;
   closedReasons: ReadonlyMap<string, LoopRemoteBranchCloseReason>;
 }): CleanupPlan {
   const { target, observation } = input;
@@ -104,7 +105,11 @@ export function planLoopRemoteBranchCleanup(input: {
   if (exactPullRequests.some((pullRequest) => pullRequest.state === "open")) {
     return { kind: "skip", reason: "open-pull-request" };
   }
-  if (exactPullRequests.length === 0) return { kind: "skip", reason: "pull-request-missing" };
+  if (exactPullRequests.length === 0) {
+    return input.terminalBranches?.has(observation.branch) === true
+      ? { kind: "delete", reason: "terminal-work-order-without-pull-request" }
+      : { kind: "skip", reason: "pull-request-missing" };
+  }
 
   const matching = exactPullRequests.filter(
     (pullRequest) => pullRequest.headSha === observation.sha,
@@ -142,6 +147,7 @@ export function createLoopRemoteBranchReconciler(input: {
   reconcile(options: {
     targets: readonly LoopRemoteBranchTarget[];
     liveBranches: ReadonlySet<string>;
+    terminalBranches?: ReadonlySet<string>;
     closedReasons: ReadonlyMap<string, LoopRemoteBranchCloseReason>;
     now: number;
     limitPerRepository?: number;
@@ -157,6 +163,7 @@ export function createLoopRemoteBranchReconciler(input: {
         failed: 0,
       };
       const limit = options.limitPerRepository ?? 100;
+      const terminalBranches = options.terminalBranches ?? new Set<string>();
       for (const target of options.targets) {
         let branches: Array<{ branch: string }>;
         try {
@@ -178,6 +185,7 @@ export function createLoopRemoteBranchReconciler(input: {
               target,
               observation: initial,
               liveBranches: options.liveBranches,
+              terminalBranches,
               closedReasons: options.closedReasons,
             });
             if (plan.kind === "skip") {
@@ -189,7 +197,9 @@ export function createLoopRemoteBranchReconciler(input: {
               repository: target.repository,
               branch,
               sha: initial.sha,
-              pullRequestNumber: plan.pullRequestNumber,
+              ...(plan.pullRequestNumber === undefined
+                ? {}
+                : { pullRequestNumber: plan.pullRequestNumber }),
             };
             if (input.evidence.lookup(evidenceTarget) === "succeeded") {
               summary.skipped += 1;
@@ -215,6 +225,7 @@ export function createLoopRemoteBranchReconciler(input: {
               target,
               observation: current,
               liveBranches: options.liveBranches,
+              terminalBranches,
               closedReasons: options.closedReasons,
             });
             if (

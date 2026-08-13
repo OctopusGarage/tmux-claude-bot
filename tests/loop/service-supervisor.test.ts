@@ -15,6 +15,7 @@ import {
   runLoopServiceTickAsync as runLoopServiceTickAsyncProduction,
   runSupervisedSystemGateOutcome,
   startLoopEngineering,
+  supervisorRevisionFailures,
   writeSupervisedSystemGateArtifact,
 } from "../../src/core/loop/service.js";
 import { readActiveLoopSupervisorResources } from "../../src/core/loop/supervisor-active-resources.js";
@@ -1228,7 +1229,7 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
-  it("syncs an isolated repository PR review without mutating the source switch-back branch", () => {
+  it("does not reject isolated completion when concurrent user edits make the source worktree dirty", () => {
     const invocations: Array<{ cwd: string; args: string[] }> = [];
     const outcome = runSupervisedSystemGateOutcome({
       project: {
@@ -1314,7 +1315,7 @@ prReview:
         }
         if (invocation.cwd === "/tmp/alcove-source") {
           if (invocation.args.join(" ") === "status --porcelain") {
-            return { status: 0, stdout: "", stderr: "" };
+            return { status: 0, stdout: "M src/user-edit.ts\n", stderr: "" };
           }
           if (invocation.args.join(" ") === "branch --show-current") {
             return { status: 0, stdout: "dev\n", stderr: "" };
@@ -1329,12 +1330,16 @@ prReview:
     expect(outcome.failures).toEqual([]);
     expect(invocations).toEqual([
       { cwd: "/tmp/alcove-isolated", args: ["status", "--porcelain"] },
-      { cwd: "/tmp/alcove-source", args: ["status", "--porcelain"] },
       { cwd: "/tmp/alcove-source", args: ["branch", "--show-current"] },
       { cwd: "/tmp/alcove-isolated", args: ["fetch", "origin", "dev"] },
       { cwd: "/tmp/alcove-isolated", args: ["switch", "--detach", "FETCH_HEAD"] },
     ]);
     expect(outcome.evidence).toContain("isolated repository review synced to origin/dev");
+  });
+
+  it("does not request a supervisor revision for terminal pull request state", () => {
+    expect(supervisorRevisionFailures(["PR state is CLOSED"])).toEqual([]);
+    expect(supervisorRevisionFailures(["PR state is MERGED"])).toEqual([]);
   });
 
   it("restores a clean isolated worker to the WorkOrder branch before accepting completion", async () => {

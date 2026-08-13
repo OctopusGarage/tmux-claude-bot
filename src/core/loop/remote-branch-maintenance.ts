@@ -13,12 +13,13 @@ import { LoopRemoteBranchReconciliationStore } from "./remote-branch-reconciliat
 import type { LoopGitInvocation, LoopRunCommandInvocation, LoopRunCommandResult } from "./run.js";
 import { readLoopSupervisorWorkerLeaseState } from "./supervisor-pool.js";
 import { readLoopSupervisorWorkOrderRegistry } from "./supervisor-state.js";
-import { parseSupervisorFinalSummaryFile } from "./work-order.js";
+import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
 type Reconciler = {
   reconcile(input: {
     targets: readonly LoopRemoteBranchTarget[];
     liveBranches: ReadonlySet<string>;
+    terminalBranches: ReadonlySet<string>;
     closedReasons: ReadonlyMap<string, LoopRemoteBranchCloseReason>;
     now: number;
     limitPerRepository?: number;
@@ -103,6 +104,7 @@ export function createLoopRemoteBranchMaintenance(input: {
 
 export function readLoopRemoteBranchOwnership(now: number): {
   liveBranches: Set<string>;
+  terminalBranches: Set<string>;
   closedReasons: Map<string, LoopRemoteBranchCloseReason>;
 } {
   const registry = readLoopSupervisorWorkOrderRegistry(now);
@@ -120,18 +122,12 @@ export function readLoopRemoteBranchOwnership(now: number): {
   for (const workOrderId of liveIds) {
     const workOrder = recordsById.get(workOrderId)?.workOrder;
     if (workOrder === undefined) continue;
-    const branch = workOrder.commitPolicy.branch;
-    if (branch !== undefined) liveBranches.add(branch);
-    if (workOrder.workspace !== undefined) {
-      const taskKind =
-        workOrder.task?.kind === "workspace-architecture"
-          ? "architecture"
-          : (workOrder.task?.kind ?? "architecture");
-      for (const repository of workOrder.workspace.repositories) {
-        if (!repository.pullRequest.enabled) continue;
-        liveBranches.add(`loop/${repository.id}/${taskKind}/${workOrder.id}`);
-      }
-    }
+    for (const branch of remoteBranchesForWorkOrder(workOrder)) liveBranches.add(branch);
+  }
+
+  const terminalBranches = new Set<string>();
+  for (const { workOrder } of registry.terminal) {
+    for (const branch of remoteBranchesForWorkOrder(workOrder)) terminalBranches.add(branch);
   }
 
   const closedReasons = new Map<string, LoopRemoteBranchCloseReason>();
@@ -143,7 +139,23 @@ export function readLoopRemoteBranchOwnership(now: number): {
       closedReasons.set(`${decision.repository}#${decision.number}`, decision.reason);
     }
   }
-  return { liveBranches, closedReasons };
+  return { liveBranches, terminalBranches, closedReasons };
+}
+
+function remoteBranchesForWorkOrder(workOrder: LoopWorkOrder): string[] {
+  const branches: string[] = [];
+  if (workOrder.commitPolicy.branch !== undefined) branches.push(workOrder.commitPolicy.branch);
+  if (workOrder.workspace === undefined) return branches;
+  const taskKind =
+    workOrder.task?.kind === "workspace-architecture"
+      ? "architecture"
+      : (workOrder.task?.kind ?? "architecture");
+  for (const repository of workOrder.workspace.repositories) {
+    if (repository.pullRequest.enabled) {
+      branches.push(`loop/${repository.id}/${taskKind}/${workOrder.id}`);
+    }
+  }
+  return branches;
 }
 
 function configuredTargets(

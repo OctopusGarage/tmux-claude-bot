@@ -195,16 +195,22 @@ creates the configured-base PR, then applies the normal commit, CI,
 mergeability, auto-merge, and switch-back gates. This deterministic step must
 also work during restart recovery so a service reload after final-summary write
 cannot strand a verified commit in an isolated worktree.
+Concurrent owner edits in the source checkout do not invalidate an isolated
+worker's clean target worktree. The system gate verifies the isolated target and
+the configured source branch, but it must not attribute unrelated source
+worktree dirtiness to the WorkOrder.
 If GitHub rejects auto-merge because the PR head is behind the base branch, the
 system gate must use GitHub's same-PR branch update mechanism and retry
 auto-merge before treating the finalization as failed.
 Bot-owned remote branches have a separate terminal lifecycle from local
 forensic worktrees. GitHub delete-on-merge is the normal path; Loop startup and
 a bounded 30-minute maintenance cadence reconcile configured
-`loop/<project-id>/...` refs left behind after terminal PRs. Deletion requires an
-exact PR-head SHA match, no open PR, no live WorkOrder or active lease, exclusion
-of protected/default/base/switch-back branches, last-moment revalidation, and a
-durable sanitized intent/outcome. A merged PR is authoritative; a merely closed
+`loop/<project-id>/...` refs left behind after terminal PRs or terminal
+WorkOrders that never obtained a PR. Deletion requires an exact observed ref SHA,
+no open PR, no live WorkOrder or active lease, exclusion of
+protected/default/base/switch-back branches, last-moment revalidation, and a
+durable sanitized intent/outcome. A no-PR ref additionally requires exact durable
+terminal WorkOrder branch ownership. A merged PR is authoritative; a merely closed
 PR additionally requires a structured allowlisted close reason from a terminal
 supervisor summary, or an allowlisted reason recorded at or after closure by a
 repository owner, member, or collaborator. Free-form or unauthorized comments
@@ -214,6 +220,9 @@ If restart recovery finds a genuinely recoverable summary or system-gate
 failure, it must reserve the original supervisor session and run the same
 bounded revision contract as the uninterrupted path before terminal settlement;
 it must not convert a correctable finalization gap into a terminal repair loop.
+Once `system-gate.json` is durable, the same terminal failed WorkOrder is not
+periodically reprocessed. Closed or merged PR state is terminal external evidence,
+not authorization to revise and recreate the old branch.
 Daily Audit ticks, forced audits, and startup-triggered audits share a process
 mutex; an overlapping tick exits as `in-progress` before it can mutate ledger or
 repair-queue state.

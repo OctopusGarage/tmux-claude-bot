@@ -674,6 +674,10 @@ pending, the worktree is dirty, the branch is wrong, or the PR body needs cleanu
 the bot should send a bounded revision prompt and re-run the gate. Non-recoverable
 platform failures, such as missing GitHub permission, should fail with a concrete
 blocker.
+For isolated execution, "the worktree" means the isolated target. Concurrent
+owner edits in the source checkout are independent activity: the gate verifies
+the configured source branch but does not fail the WorkOrder merely because that
+source checkout became dirty after dispatch.
 
 PR publication is also system-owned when the project explicitly enables it. A
 verified supervised result with commits may finish before the agent creates a
@@ -687,6 +691,9 @@ Restart recovery uses the same bounded supervisor revision contract for
 recoverable acceptance failures before it writes terminal state. A process
 reload may change who drives finalization, but it must not weaken the gate or
 turn a correctable summary/PR gap into another self-repair WorkOrder.
+Durable `system-gate.json` evidence makes that terminal reconciliation
+idempotent. A closed or merged PR is a terminal external blocker and must not
+trigger a revision that pushes the old branch again.
 
 Every supervised run must persist system gate evidence beside the supervisor
 report as `system-gate.json`. This artifact records whether the gate accepted the
@@ -937,12 +944,13 @@ leases even when their WorkOrder artifact has already become terminal, so no
 new review can select a supervisor that is still executing another task.
 This prevents an unrelated long WorkOrder from starving repository PR review.
 
-Loop-owned remote branches follow the terminal PR lifecycle, not the local
+Loop-owned remote branches follow the terminal WorkOrder/PR lifecycle, not the local
 worktree retention lifecycle. Repositories should enable GitHub's native
 delete-on-merge for the normal merge path. A service-startup and 30-minute
 fallback reconciliation scans only configured `loop/<project-id>/...` prefixes
-and deletes a ref only after exact repository, branch, PR head SHA, terminal PR,
-protected/base branch, and live WorkOrder/lease checks pass twice. A closed but
+and deletes a ref only after exact repository, branch, observed SHA,
+protected/base branch, and live WorkOrder/lease checks pass twice. A terminal
+WorkOrder may authorize cleanup when its exact branch has no PR; a closed but
 unmerged PR needs a structured close reason (`duplicate`, `obsolete`,
 `non-actionable`, or `invalid`) in durable supervisor evidence. Every mutation
 writes an intent before deletion and a sanitized outcome afterward. This allows

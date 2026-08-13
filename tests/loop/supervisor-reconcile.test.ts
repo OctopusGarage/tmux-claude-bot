@@ -231,6 +231,20 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
+  it("does not reprocess a terminal failed work order after system-gate evidence is durable", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const order = workOrder(stateDir, projectDir);
+    const runDir = writeRecoverableFailedRun(stateDir, order);
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({ accepted: false, resultStatus: "supervisor-failed" })}\n`,
+    );
+
+    expect(readLoopSupervisorWorkOrderRegistry(2_000).recoverableFailed).toEqual([]);
+  });
+
   it("fails and records a stale dispatching work order even when its lease is already gone", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;

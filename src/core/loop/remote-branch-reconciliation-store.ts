@@ -11,7 +11,7 @@ export type LoopRemoteBranchReconciliationEvidence = {
   repository: string;
   branch: string;
   sha: string;
-  pullRequestNumber: number;
+  pullRequestNumber?: number;
   action: "delete-remote-branch";
   cleanupReason: string;
   status: LoopRemoteBranchEvidenceStatus;
@@ -34,7 +34,9 @@ export class LoopRemoteBranchReconciliationStore implements LoopRemoteBranchEvid
       repository: input.repository,
       branch: input.branch,
       sha: input.sha,
-      pullRequestNumber: input.pullRequestNumber,
+      ...(input.pullRequestNumber === undefined
+        ? {}
+        : { pullRequestNumber: input.pullRequestNumber }),
       action: "delete-remote-branch",
       cleanupReason: input.reason,
       status: "intent",
@@ -81,12 +83,18 @@ function evidenceId(input: {
   repository: string;
   branch: string;
   sha: string;
-  pullRequestNumber: number;
+  pullRequestNumber?: number;
   now: number;
 }): string {
   return createHash("sha256")
     .update(
-      [input.repository, input.branch, input.sha, input.pullRequestNumber, input.now].join("\0"),
+      [
+        input.repository,
+        input.branch,
+        input.sha,
+        input.pullRequestNumber ?? "none",
+        input.now,
+      ].join("\0"),
     )
     .digest("hex")
     .slice(0, 24);

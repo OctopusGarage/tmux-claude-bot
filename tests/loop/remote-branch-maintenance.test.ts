@@ -78,6 +78,7 @@ projects:
         },
       ],
       liveBranches: new Set(),
+      terminalBranches: new Set(),
       closedReasons: new Map(),
       now: 1000,
       limitPerRepository: 100,
@@ -226,6 +227,7 @@ workspaces:
 
     expect(readLoopRemoteBranchOwnership(101)).toEqual({
       liveBranches: new Set([branch]),
+      terminalBranches: new Set(),
       closedReasons: new Map(),
     });
   });
@@ -300,5 +302,40 @@ workspaces:
         "loop/example-frontend/architecture/100-workspace-worker",
       ]),
     );
+  });
+
+  it("projects terminal WorkOrder branches as cleanup evidence", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-terminal-branch-ownership-"));
+    const branch = "loop/example-project/architecture/100-worker";
+    const workOrder = {
+      id: "100-worker",
+      scheduledAt: 100,
+      projectId: "example-project",
+      projectName: "Example Project",
+      projectPath: "/repo/example-project",
+      agent: "codex",
+      goal: "Maintain the project.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: true, perRound: false, branch },
+      requiredFinalMarker: "[DONE]",
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "loop-supervisor-1",
+      status: "failed",
+      resultStatus: "supervisor-failed",
+      now: 100,
+    });
+
+    expect(readLoopRemoteBranchOwnership(101).terminalBranches).toEqual(new Set([branch]));
   });
 });

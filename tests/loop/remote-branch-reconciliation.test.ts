@@ -49,6 +49,31 @@ describe("Loop remote branch cleanup policy", () => {
     ).toEqual({ kind: "delete", pullRequestNumber: 22, reason: "merged-pull-request" });
   });
 
+  it("accepts an exact terminal WorkOrder branch that never obtained a PR", () => {
+    const withoutPullRequest = observation({ pullRequests: [] });
+    expect(
+      planLoopRemoteBranchCleanup({
+        target,
+        observation: withoutPullRequest,
+        liveBranches: new Set(),
+        terminalBranches: new Set([withoutPullRequest.branch]),
+        closedReasons: new Map(),
+      }),
+    ).toEqual({ kind: "delete", reason: "terminal-work-order-without-pull-request" });
+  });
+
+  it("refuses a branch without a PR when no terminal WorkOrder owns it", () => {
+    expect(
+      planLoopRemoteBranchCleanup({
+        target,
+        observation: observation({ pullRequests: [] }),
+        liveBranches: new Set(),
+        terminalBranches: new Set(),
+        closedReasons: new Map(),
+      }),
+    ).toEqual({ kind: "skip", reason: "pull-request-missing" });
+  });
+
   it("refuses an observation from another repository", () => {
     expect(
       planLoopRemoteBranchCleanup({

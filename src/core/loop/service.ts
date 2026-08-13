@@ -2471,7 +2471,7 @@ export function runSupervisedSystemGateOutcome(input: {
         evidence.push(
           sourceWorktree === undefined
             ? `target branch switched back to ${input.project.pullRequest.switchBack}`
-            : `source worktree remained clean on ${input.project.pullRequest.switchBack}`,
+            : `source worktree remained on ${input.project.pullRequest.switchBack}`,
         );
       }
 
@@ -2793,6 +2793,7 @@ export function supervisorRevisionFailures(failures: string[]): string[] {
 
 function isRecoverableSupervisorGateFailure(failure: string): boolean {
   if (failure.startsWith("GitHub account ")) return false;
+  if (failure.startsWith("PR state is ")) return false;
   if (failure.startsWith("missing git adapter")) return false;
   if (failure.startsWith("missing git adapter for supervised PR file hygiene gate")) return false;
   if (failure.startsWith("pullRequest.enabled requires commit.branch")) return false;
@@ -2990,19 +2991,6 @@ function switchBackWorktreeGate(input: {
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): string[] {
   const failures: string[] = [];
-  if (input.isolated) {
-    const status = input.runGit({ cwd: input.path, args: ["status", "--porcelain"] });
-    if (status.status !== 0) {
-      failures.push(
-        `source git status failed: ${status.stderr || status.stdout || "unknown error"}`,
-      );
-    } else if (status.stdout.trim().length > 0) {
-      failures.push(
-        `source worktree is dirty after supervisor completion: ${status.stdout.trim()}`,
-      );
-    }
-  }
-
   const branch = input.runGit({ cwd: input.path, args: ["branch", "--show-current"] });
   if (branch.status !== 0) {
     failures.push(
