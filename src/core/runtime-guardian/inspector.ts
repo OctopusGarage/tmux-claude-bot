@@ -113,6 +113,9 @@ function systemGateFailure(
   const failures = Array.isArray(parsed.failures)
     ? parsed.failures.filter((value): value is string => typeof value === "string")
     : [];
+  const recoverableFailures = Array.isArray(parsed.recoverableFailures)
+    ? parsed.recoverableFailures.filter((value): value is string => typeof value === "string")
+    : [];
   const structured = Array.isArray(parsed.findings) ? parsed.findings : [];
   const structuredDisposition =
     structured
@@ -128,6 +131,14 @@ function systemGateFailure(
   const disposition =
     structuredDisposition ??
     (failures.some(isTargetOrExternalSystemGateFailure) ? "target-or-external-blocker" : undefined);
+  if (
+    disposition === undefined &&
+    failures.length > 0 &&
+    recoverableFailures.length === failures.length &&
+    failures.every((failure) => recoverableFailures.includes(failure))
+  ) {
+    return null;
+  }
   if (
     disposition === undefined &&
     hasRawSuccessfulSummary(finalSummaryPath) &&
@@ -195,11 +206,14 @@ function invalidOutput(
     return null;
   const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
   if (
-    (hasSuccessfulSummary(record) || hasRawSuccessfulSummary(finalSummaryPath)) &&
+    parsed.ok &&
+    parsed.summary.status === "completed" &&
+    parsed.summary.finalVerification === "passed" &&
     existsSync(gatePath)
   ) {
     return null;
   }
+  if (!parsed.ok && hasRawSuccessfulSummary(finalSummaryPath)) return null;
   if (isRestartRecoveredActiveDelegationInvalidOutput(record)) return null;
   return findingFor(record, "terminal-invalid-output", "medium", [
     `terminal failed work-order has resultStatus=invalid-output: ${record.workOrder.id}`,
@@ -293,14 +307,6 @@ function readJson(path: string): Record<string, unknown> | null {
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasSuccessfulSummary(record: TerminalWorkOrder): boolean {
-  const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
-  return (
-    parsed.ok &&
-    parsed.summary.status === "completed" &&
-    parsed.summary.finalVerification === "passed"
-  );
 }
 function hasRawSuccessfulSummary(finalSummaryPath: string): boolean {
   const summary = readJson(finalSummaryPath);

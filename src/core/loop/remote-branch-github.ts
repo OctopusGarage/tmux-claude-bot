@@ -74,17 +74,29 @@ export function createLoopRemoteBranchGitHub(input: {
           `api 'repos/${target.repository}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=100'`,
         ),
       );
+      const pullRequests = pulls
+        .map((pullRequest) => parsePullRequest(pullRequest, target.repository))
+        .filter(
+          (pullRequest): pullRequest is NonNullable<typeof pullRequest> => pullRequest !== null,
+        );
+      for (const pullRequest of pullRequests) {
+        if (pullRequest.state !== "closed" || pullRequest.closedAt === undefined) continue;
+        const comments = array(
+          runJson(
+            target,
+            `api 'repos/${target.repository}/issues/${pullRequest.number}/comments?per_page=100'`,
+          ),
+        );
+        const closeReason = externalCloseReason(comments, pullRequest.closedAt);
+        if (closeReason !== undefined) pullRequest.externalCloseReason = closeReason;
+      }
       return {
         repository: target.repository,
         branch,
         sha: requiredString(record(ref.object).sha, "GitHub branch SHA"),
         protected: branchData.protected === true,
         defaultBranch: requiredString(repository.default_branch, "repository default branch"),
-        pullRequests: pulls
-          .map((pullRequest) => parsePullRequest(pullRequest, target.repository))
-          .filter(
-            (pullRequest): pullRequest is NonNullable<typeof pullRequest> => pullRequest !== null,
-          ),
+        pullRequests,
       } satisfies LoopRemoteBranchObservation;
     },
     delete: async (target, branch, expectedSha) => {
@@ -158,7 +170,41 @@ function parsePullRequest(
     headBranch: requiredString(head.ref, "pull request head branch"),
     headSha: requiredString(head.sha, "pull request head SHA"),
     baseBranch: requiredString(base.ref, "pull request base branch"),
+    ...(state === "closed"
+      ? { closedAt: requiredString(pullRequest.closed_at, "pull request closed timestamp") }
+      : {}),
   };
+}
+
+function externalCloseReason(
+  comments: unknown[],
+  closedAt: string,
+): LoopRemoteBranchObservation["pullRequests"][number]["externalCloseReason"] {
+  const closedAtMs = Date.parse(closedAt);
+  if (!Number.isFinite(closedAtMs)) throw new Error("invalid pull request closed timestamp");
+  let reason: LoopRemoteBranchObservation["pullRequests"][number]["externalCloseReason"];
+  for (const value of comments) {
+    const comment = record(value);
+    if (!isRepositoryAuthorized(comment.author_association)) continue;
+    const createdAt = Date.parse(requiredString(comment.created_at, "issue comment timestamp"));
+    if (!Number.isFinite(createdAt) || createdAt < closedAtMs) continue;
+    const parsed = parseCloseReason(requiredString(comment.body, "issue comment body"));
+    if (parsed !== undefined) reason = parsed;
+  }
+  return reason;
+}
+
+function isRepositoryAuthorized(value: unknown): boolean {
+  return value === "OWNER" || value === "MEMBER" || value === "COLLABORATOR";
+}
+
+function parseCloseReason(
+  body: string,
+): LoopRemoteBranchObservation["pullRequests"][number]["externalCloseReason"] {
+  const match = /^(duplicate|obsolete|non-actionable|invalid)(?=\s|[-—:])/i.exec(body.trim());
+  return match?.[1]?.toLowerCase() as
+    | LoopRemoteBranchObservation["pullRequests"][number]["externalCloseReason"]
+    | undefined;
 }
 
 function assertTarget(target: LoopRemoteBranchTarget): void {

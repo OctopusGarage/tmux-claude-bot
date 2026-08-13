@@ -227,6 +227,82 @@ describe("eval report", () => {
     });
   });
 
+  it("does not fail eval for a non-blocking read-only opportunity-discovery preflight observation", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      taskId: "opportunity-discovery",
+      summary: summary({
+        reviewGate: {
+          preMutationReview: [
+            "A target dependency preflight failed before read-only opportunity discovery.",
+          ],
+          postMutationReview: [
+            "Opportunity discovery was read-only; the dependency preflight was recorded as a non-blocking discovery signal.",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "target dependency preflight",
+              command: "tcb opportunity smoke --read-only",
+              result: "failed",
+              evidence:
+                "preflight command exited 1; explicitly non-blocking read-only opportunity-discovery signal only.",
+            },
+            {
+              name: "opportunity summary parse",
+              result: "passed",
+              evidence: "opportunity summary parsed as completed/passed/pass",
+            },
+          ],
+          decision: "pass",
+          notes: ["The failed preflight did not block read-only discovery acceptance."],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
+  it("does not fail eval for a documented non-blocking read-only preflight-executables observation", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      taskId: "opportunity-discovery",
+      summary: summary({
+        actionsTaken: ["completed read-only opportunity discovery and wrote the report"],
+        reviewGate: {
+          preMutationReview: ["preflight-executables failed before the read-only discovery run."],
+          postMutationReview: [
+            "The preflight-executables failure was explicitly non-blocking for read-only discovery; report and clean-worktree gates passed.",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight-executables",
+              command: "test -x node_modules/.bin/tsx",
+              result: "failed",
+              evidence:
+                "Local executable preflight failed; non-blocking for read-only opportunity discovery.",
+            },
+            "report gate passed: supervisor-final-summary and opportunity report parsed successfully",
+            "clean-worktree gate passed: no tracked changes",
+          ],
+          decision: "pass",
+          notes: [
+            "preflight-executables is a setup observation only and did not block read-only discovery acceptance.",
+          ],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
   it("does not fail eval for a protected-worktree base switch observation superseded by safe reset", () => {
     const report = buildEvalReportFromSupervisorSummary({
       summary: summary({
