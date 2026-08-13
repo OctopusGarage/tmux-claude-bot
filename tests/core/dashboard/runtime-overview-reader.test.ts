@@ -154,6 +154,34 @@ describe("Runtime Overview reader", () => {
     expect(overview.health.status).toBe("attention");
   });
 
+  it("points Runtime Guardian findings at the bounded findings drilldown", async () => {
+    const overview = await readRuntimeOverview({
+      now: 2_000,
+      sessions: [],
+      readers: readers({
+        runtimeGuardian: () => ({
+          enabled: true,
+          findings: [
+            {
+              id: "terminal-invalid-output:run-1",
+              projectId: "alpha",
+              kind: "terminal-invalid-output",
+              severity: "high",
+              observedAt: 1_900,
+            },
+          ],
+        }),
+      }),
+    });
+
+    expect(overview.attention.items).toContainEqual(
+      expect.objectContaining({
+        id: "runtime-guardian:terminal-invalid-output:run-1",
+        nextAction: "tcb runtime-guardian findings --project alpha --limit 20",
+      }),
+    );
+  });
+
   it("distinguishes automatic repository review recovery from real manual and exhausted work", async () => {
     const overview = await readRuntimeOverview({
       now: 2_000,

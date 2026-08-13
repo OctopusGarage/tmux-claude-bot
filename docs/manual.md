@@ -201,6 +201,7 @@ For the complete maintained CLI command and option surface, see
 | `tcb config list\|get\|set` | inspect personal `.env` configuration with secrets redacted, and edit allowlisted, domain-validated non-secret keys |
 | `tcb automation status\|pause\|resume` | inspect or toggle high-cost background automation: Loop Engineering, Daily Task Audit, Runtime Guardian, and Batch Scheduler |
 | `tcb dashboard` | unified Runtime Overview plus Project Sessions (`--json`, `--problems`, `--project <id>`, `--limit <1-100>`) |
+| `tcb runtime-guardian findings` | read-only Runtime Guardian finding drilldown (`--project <id>`, `--limit <n>`, `--lookback-hours <n>`, `--json`) |
 | `tcb autopilot <project> [delegate [requirement]\|cancel]` | delegate clarified current work to the Loop Supervisor, or cancel active delegated work (`--json` for raw usage/result) |
 | `tcb batch <load\|export\|start\|status\|report\|pause\|resume\|stop>` | manage batch scheduler plans and runs |
 | `tcb loop validate\|tick\|run <file>` / `tcb loop targets\|reports\|backlog\|skills …` | validate a Loop Engineering config, check due projects, pause/resume configured targets, run command-backed projects, list reports/backlog, refresh catalog skills to pinned refs, or reconcile approved skills (`--json` for raw; `tick` also supports `--now`) |

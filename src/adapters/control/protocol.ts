@@ -63,7 +63,13 @@ export type ControlRequest = {
   | { op: "taskAudit"; now?: number; force?: boolean }
   | { op: "loopReports"; limit?: number; projectId?: string; status?: "passed" | "failed" }
   | { op: "dailyTaskAuditStatus"; now?: number }
-  | { op: "runtimeGuardianFindings"; now?: number; lookbackHours?: number; limit?: number }
+  | {
+      op: "runtimeGuardianFindings";
+      now?: number;
+      lookbackHours?: number;
+      limit?: number;
+      projectId?: string;
+    }
   | {
       op: "notify";
       title: string;

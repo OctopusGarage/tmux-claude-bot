@@ -128,7 +128,7 @@ export function createControlObservationHandlers(
             ? { repoPath: deps.config.runtimeGuardian.repoPath }
             : {}),
         }),
-      );
+      ).filter((finding) => req.projectId === undefined || finding.projectId === req.projectId);
       ok({
         observedAt: observationTime,
         lookbackHours,

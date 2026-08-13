@@ -19,6 +19,7 @@ family registrars.
 - `tcb install`
 - `tcb service`
 - `tcb dashboard`
+- `tcb runtime-guardian`
 - `tcb autopilot <project> [delegate [requirement]|cancel]`
 - `tcb sysload`
 - `tcb tui`
@@ -65,6 +66,7 @@ family registrars.
 - `tcb resource incidents`
 - `tcb resource mode <observe|protect>`
 - `tcb resource profile <balanced|conservative>`
+- `tcb runtime-guardian findings [--project <id>] [--limit <n>] [--lookback-hours <n>]`
 - `tcb batch load <file>`
 - `tcb batch export <id> [file]`
 - `tcb batch start [id]`
@@ -130,6 +132,7 @@ family registrars.
 - `--level`
 - `--limit`
 - `--lines`
+- `--lookback-hours`
 - `--name`
 - `--n`
 - `--no-wait`
@@ -183,6 +186,9 @@ family registrars.
   surface. Mode/profile use their dedicated commands; generic config accepts
   only the Guardian enabled/tick keys, and protect requires an enabled running
   Guardian.
+- `tcb runtime-guardian findings` is a read-only Control-backed drilldown for
+  current Runtime Guardian findings. It does not dispatch repairs or expose
+  mutation buttons.
 - `tcb loop run` is for deterministic command-backed/manual runs; managed
   agent-supervised WorkOrders are driven by the scheduler and Loop Supervisor.
 - `tcb loop targets ...` is the supported way to inspect, pause, and resume

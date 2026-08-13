@@ -123,6 +123,49 @@ describe("control operation registry", () => {
     });
   });
 
+  it("filters Runtime Guardian findings by project before applying the result limit", async () => {
+    const ok = vi.fn();
+    const findings = [
+      {
+        kind: "terminal-invalid-output" as const,
+        severity: "high" as const,
+        runId: "beta-run",
+        projectId: "beta",
+        projectPath: "/synthetic/beta",
+        evidence: [],
+      },
+      {
+        kind: "missing-system-gate" as const,
+        severity: "medium" as const,
+        runId: "alpha-run",
+        projectId: "alpha",
+        projectPath: "/synthetic/alpha",
+        evidence: [],
+      },
+    ];
+    const handlers = createControlObservationHandlers(
+      { config: { runtimeGuardian: { repoPath: "" } } } as HandlerDeps,
+      { runtimeGuardianFindings: () => findings },
+    );
+
+    await handlers.runtimeGuardianFindings(
+      { id: 1, op: "runtimeGuardianFindings", now: 100, projectId: "alpha", limit: 20 },
+      {
+        ok,
+        fail: vi.fn(),
+        send: vi.fn(),
+        isOperatorHomeCaller: false,
+      },
+    );
+
+    expect(ok).toHaveBeenCalledWith(
+      expect.objectContaining({
+        total: 1,
+        findings: [expect.objectContaining({ projectId: "alpha", runId: "alpha-run" })],
+      }),
+    );
+  });
+
   it("groups Project Session lifecycle operations behind one handler family", () => {
     const handlers = createControlProjectSessionHandlers({} as HandlerDeps);
 

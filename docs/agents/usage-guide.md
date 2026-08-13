@@ -234,6 +234,9 @@ delivery that is queued but never consumed times out as retryable; project
 recovery is deduplicated per project while an active recovery exists; and only
 an authoritative passing supervisor final summary closes the ledger and queue.
 An existing active recovery is reported as deferred rather than launched again.
+Runtime Guardian dashboard attention items drill into current findings with
+`tcb runtime-guardian findings --project <id> --limit 20`; this is a read-only
+Control-backed observation path and does not dispatch repairs.
 
 **Hand off a clarified interactive task** → use `/autopilot [requirement]`,
 `/autopilot delegate [requirement]`, or `tcb autopilot <project> "[requirement]"`.
