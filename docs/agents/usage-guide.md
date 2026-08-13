@@ -72,7 +72,9 @@ the chat API; (4) on macOS, was it asleep? — see keep-awake.
 **Balance reachability with natural Mac sleep** → `off` leaves sleep to macOS;
 `always` holds the legacy AC-only assertion; `scheduled` releases it during the
 default 02:00–09:30 quiet window after active work drains. Use the scheduled setup
-sequence in the CLI admin section below and diagnose it with `tcb power status`.
+sequence in the CLI admin section below, diagnose current configuration with
+`tcb power status`, and audit the last quiet window with
+`tcb power history --since 24h`.
 A closed lid and battery operation continue to follow normal macOS behavior.
 
 **Use it from the PC terminal** → `tcb tui` (managed) or `npm run tui` (dev). Needs the

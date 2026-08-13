@@ -60,6 +60,7 @@ family registrars.
 - `tcb automation pause <loop|task-audit|runtime-guardian|batch>`
 - `tcb automation resume <loop|task-audit|runtime-guardian|batch>`
 - `tcb power status`
+- `tcb power history`
 - `tcb power schedule install`
 - `tcb power schedule remove`
 - `tcb resource status`
@@ -179,6 +180,10 @@ family registrars.
   timezone is authoritative; schedule inspection and installation translate it
   to the macOS system clock and display both times. Shell and service `TZ`
   environment variables do not redefine the host timezone.
+- `tcb power history [--since <ISO|epoch|30m|2h|1d>] [--json]` audits recent
+  phase/assertion transitions alongside read-only macOS Sleep/DarkWake/Wake
+  evidence. It defaults to 24 hours, rejects lookbacks over 30 days, retains the
+  newest 200 events, and reports missing evidence as `incomplete`.
 - `tcb automation ...` is the supported top-level control for high-cost
   background loops. `pause` records the previous tick/enabled values in state so
   `resume` can restore the prior cadence instead of guessing a default.

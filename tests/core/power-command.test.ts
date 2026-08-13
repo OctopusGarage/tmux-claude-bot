@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { runPowerCommand } from "../../src/core/platform/power-command.js";
 import type { PowerScheduleProbe } from "../../src/core/platform/power-schedule.js";
+import type { PowerHistoryReport } from "../../src/core/power/power-history.js";
 import type { HostPowerConfig } from "../../src/shared/types.js";
 
 const config: HostPowerConfig = {
@@ -21,6 +22,50 @@ function probe(outputs: string[]): PowerScheduleProbe {
 }
 
 describe("power command", () => {
+  it("reads bounded JSON history with the same relative-time syntax as logs", () => {
+    const now = Date.parse("2026-08-12T10:00:00+08:00");
+    const readHistory = vi.fn(
+      (input: { since: number; until: number }): PowerHistoryReport => ({
+        window: { since: input.since, until: input.until },
+        policy: {
+          mode: "scheduled",
+          timezone: "Asia/Singapore",
+          quietStart: "02:00",
+          wakeAt: "09:15",
+          quietEnd: "09:30",
+        },
+        status: "complete",
+        systemEvidence: { status: "available", detail: "read-only pmset power history" },
+        checks: [],
+        events: [],
+        invalidApplicationRecords: 0,
+        truncated: false,
+      }),
+    );
+    const result = runPowerCommand(["history", "--since", "24h", "--json"], {
+      config,
+      now: () => now,
+      readHistory,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout ?? "null").status).toBe("complete");
+    expect(readHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ since: now - 86_400_000, until: now, config }),
+    );
+  });
+
+  it.each(["later", "31d"])("rejects invalid or excessive history window %s", (since) => {
+    const readHistory = vi.fn();
+    const result = runPowerCommand(["history", "--since", since], {
+      config,
+      now: () => Date.parse("2026-08-12T10:00:00+08:00"),
+      readHistory,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(readHistory).not.toHaveBeenCalled();
+  });
+
   it("does not inspect a wake schedule when the current mode does not require one", () => {
     const scheduleProbe = probe([]);
     const result = runPowerCommand(["status", "--json"], {

@@ -5,6 +5,7 @@ import { createKeepAwakeController, type KeepAwakeController } from "../platform
 import { resolveHostPowerPhase } from "../platform/power-policy.js";
 import { inspectPowerSchedule, type PowerScheduleInspection } from "../platform/power-schedule.js";
 import { type MacPowerSource, readMacPowerSource } from "../platform/power-source.js";
+import { createPowerEventRecorder, type PowerEvent } from "./power-event-journal.js";
 import { createProtectedWorkProbe, type ProtectedWorkSnapshot } from "./protected-work.js";
 
 const log = createLogger("power.manager");
@@ -18,6 +19,7 @@ export type HostPowerManagerOptions = {
   inspectSchedule(): PowerScheduleInspection;
   readPowerSource(): MacPowerSource;
   notifyDegraded(reason: string): Promise<void>;
+  recordEvent(event: PowerEvent): void;
   setInterval(tick: () => void, delayMs: number): TimerHandle;
   clearInterval(timer: TimerHandle): void;
 };
@@ -40,21 +42,43 @@ export function createHostPowerManager(
   let inFlight: Promise<void> | undefined;
   let stopped = false;
   let lastDegradedReason: string | undefined;
+  let lastPhase: ReturnType<typeof resolveHostPowerPhase> | null = null;
+  let assertionHeld = options.keepAwake.active();
+  let lastDelayKey: string | undefined;
   const isStopped = (): boolean => stopped;
+  const recordEvent = (event: PowerEvent): void => {
+    try {
+      options.recordEvent(event);
+    } catch (error) {
+      log.warn("power event recorder failed", { err: safeError(error) });
+    }
+  };
+
+  const recordPhase = (phase: ReturnType<typeof resolveHostPowerPhase>, at: number): void => {
+    if (lastPhase === phase) return;
+    recordEvent({ at, kind: "phase-transition", from: lastPhase, to: phase });
+    lastPhase = phase;
+    lastDelayKey = undefined;
+  };
 
   const notifyDegradation = async (reason: string): Promise<void> => {
     if (reason === lastDegradedReason) return;
     lastDegradedReason = reason;
+    recordEvent({ at: options.now(), kind: "degraded", reason });
     log.warn("scheduled natural sleep is degraded; failing awake", { data: { reason } });
     await options.notifyDegraded(reason).catch((error) => {
       log.warn("power degradation notification failed", { err: safeError(error) });
     });
   };
 
-  const acquireOrNotify = async (): Promise<void> => {
+  const acquireOrNotify = async (at: number): Promise<void> => {
     if (!options.keepAwake.acquire()) {
       await notifyDegradation("caffeinate assertion could not be acquired");
       return;
+    }
+    if (assertionHeld !== true) {
+      assertionHeld = true;
+      recordEvent({ at, kind: "keep-awake-acquired" });
     }
     let source: MacPowerSource = "unknown";
     try {
@@ -70,8 +94,12 @@ export function createHostPowerManager(
     lastDegradedReason = undefined;
   };
 
-  const failAwake = async (reason: string): Promise<void> => {
+  const failAwake = async (reason: string, at: number): Promise<void> => {
     const acquired = options.keepAwake.acquire();
+    if (acquired && assertionHeld !== true) {
+      assertionHeld = true;
+      recordEvent({ at, kind: "keep-awake-acquired" });
+    }
     let fullReason = acquired ? reason : `${reason}; caffeinate assertion could not be acquired`;
     try {
       if (options.readPowerSource() === "battery") {
@@ -85,35 +113,53 @@ export function createHostPowerManager(
 
   const reconcileOnce = async (): Promise<void> => {
     if (stopped) return;
-    const phase = resolveHostPowerPhase(config, options.now());
+    const at = options.now();
+    const phase = resolveHostPowerPhase(config, at);
+    recordPhase(phase, at);
     if (config.mode === "off") {
       lastDegradedReason = undefined;
       options.keepAwake.release();
+      if (assertionHeld !== false) {
+        assertionHeld = false;
+        recordEvent({ at, kind: "keep-awake-released" });
+      }
       return;
     }
     if (config.mode === "always" || phase === "service" || phase === "wake-warmup") {
-      await acquireOrNotify();
+      lastDelayKey = undefined;
+      await acquireOrNotify(at);
       return;
     }
     try {
       const protectedWork = await options.hasProtectedWork();
       if (isStopped()) return;
       if (protectedWork.active) {
-        await acquireOrNotify();
-        log.info("quiet-hours release delayed for protected work", {
-          data: { reasons: protectedWork.reasons },
-        });
+        const reasons = [...new Set(protectedWork.reasons)].sort();
+        const delayKey = reasons.join("\0");
+        if (lastDelayKey !== delayKey) {
+          recordEvent({ at, kind: "quiet-release-delayed", reasons });
+          lastDelayKey = delayKey;
+          log.info("quiet-hours release delayed for protected work", {
+            data: { reasons },
+          });
+        }
+        await acquireOrNotify(at);
         return;
       }
       const schedule = options.inspectSchedule();
       if (schedule.status !== "verified") {
-        await failAwake(`${schedule.status}: ${schedule.detail}`);
+        await failAwake(`${schedule.status}: ${schedule.detail}`, at);
         return;
       }
       lastDegradedReason = undefined;
+      lastDelayKey = undefined;
       options.keepAwake.release();
+      if (assertionHeld !== false) {
+        assertionHeld = false;
+        recordEvent({ at, kind: "keep-awake-released" });
+      }
     } catch (error) {
-      await failAwake(`protected-work probe failed: ${safeError(error)}`);
+      await failAwake(`protected-work probe failed: ${safeError(error)}`, at);
     }
   };
 
@@ -159,6 +205,7 @@ export function startHostPowerManager(deps: HandlerDeps): () => void {
         source: "tmux-claude-bot",
       });
     },
+    recordEvent: createPowerEventRecorder(),
     setInterval: (tick, delayMs) => setInterval(tick, delayMs),
     clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
   });

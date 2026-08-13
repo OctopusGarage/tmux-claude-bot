@@ -26,6 +26,23 @@ export function registerPowerCommands(program: Command): void {
       });
     });
 
+  power
+    .command("history")
+    .description("audit recent TCB keep-awake and macOS sleep/wake evidence")
+    .option("--since <time>", "look back from now (ISO, epoch ms, or 30m|2h|1d)", "24h")
+    .option("--json", "output JSON")
+    .action(async (options: { since: string; json?: boolean }) => {
+      await printResult(async () => {
+        const { runPowerCommand } = await import("../core/platform/power-command.js");
+        return runPowerCommand([
+          "history",
+          "--since",
+          options.since,
+          ...(options.json ? ["--json"] : []),
+        ]);
+      });
+    });
+
   const schedule = power.command("schedule").description("manage the exact fixed daily wake");
   for (const action of ["install", "remove"] as const) {
     schedule.command(action).action(async () => {

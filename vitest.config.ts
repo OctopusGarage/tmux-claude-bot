@@ -4,6 +4,10 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Keep full local/coverage gates within the host's CPU and memory envelope.
+    // Several suites spawn real child processes, so one worker per logical CPU
+    // causes scheduler starvation and false 30-second timeouts under coverage.
+    maxWorkers: 4,
     setupFiles: ["tests/setup.ts"],
     testTimeout: 30_000,
     exclude: [

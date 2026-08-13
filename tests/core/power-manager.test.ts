@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { PowerEvent } from "../../src/core/power/power-event-journal.js";
 import { createHostPowerManager } from "../../src/core/power/power-manager.js";
 import type { HostPowerConfig } from "../../src/shared/types.js";
 
@@ -11,6 +12,7 @@ const scheduled: HostPowerConfig = {
 const atSingapore = (iso: string): number => Date.parse(`${iso}+08:00`);
 
 function harness(overrides: Record<string, unknown> = {}) {
+  const events: PowerEvent[] = [];
   const keepAwake = {
     acquire: vi.fn(() => true),
     release: vi.fn(),
@@ -31,11 +33,12 @@ function harness(overrides: Record<string, unknown> = {}) {
     })),
     readPowerSource: vi.fn(() => "ac" as const),
     notifyDegraded: vi.fn(async () => {}),
+    recordEvent: vi.fn((event: PowerEvent) => events.push(event)),
     setInterval: vi.fn(() => ({ unref: vi.fn() })),
     clearInterval: vi.fn(),
     ...overrides,
   };
-  return { manager: createHostPowerManager(scheduled, options), keepAwake, options };
+  return { manager: createHostPowerManager(scheduled, options), keepAwake, options, events };
 }
 
 describe("host power manager", () => {
@@ -66,6 +69,67 @@ describe("host power manager", () => {
     expect(keepAwake.acquire).toHaveBeenCalledTimes(1);
     await manager.reconcile();
     expect(keepAwake.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("records phase and assertion transitions without polling duplicates", async () => {
+    let now = atSingapore("2026-08-11T12:00:00");
+    const { manager, events } = harness({ now: () => now });
+
+    await manager.reconcile();
+    await manager.reconcile();
+    now = atSingapore("2026-08-12T04:00:00");
+    await manager.reconcile();
+    await manager.reconcile();
+    now = atSingapore("2026-08-12T09:15:00");
+    await manager.reconcile();
+    now = atSingapore("2026-08-12T09:30:00");
+    await manager.reconcile();
+
+    expect(events).toEqual([
+      {
+        at: atSingapore("2026-08-11T12:00:00"),
+        kind: "phase-transition",
+        from: null,
+        to: "service",
+      },
+      { at: atSingapore("2026-08-11T12:00:00"), kind: "keep-awake-acquired" },
+      {
+        at: atSingapore("2026-08-12T04:00:00"),
+        kind: "phase-transition",
+        from: "service",
+        to: "natural-sleep",
+      },
+      { at: atSingapore("2026-08-12T04:00:00"), kind: "keep-awake-released" },
+      {
+        at: atSingapore("2026-08-12T09:15:00"),
+        kind: "phase-transition",
+        from: "natural-sleep",
+        to: "wake-warmup",
+      },
+      { at: atSingapore("2026-08-12T09:15:00"), kind: "keep-awake-acquired" },
+      {
+        at: atSingapore("2026-08-12T09:30:00"),
+        kind: "phase-transition",
+        from: "wake-warmup",
+        to: "service",
+      },
+    ]);
+  });
+
+  it("records one quiet-hours delay per stable protected-work reason set", async () => {
+    const { manager, events } = harness({
+      hasProtectedWork: async () => ({ active: true, reasons: ["worker", "message-queue"] }),
+    });
+    await manager.reconcile();
+    await manager.reconcile();
+
+    expect(events.filter((event) => event.kind === "quiet-release-delayed")).toEqual([
+      {
+        at: atSingapore("2026-08-11T04:00:00"),
+        kind: "quiet-release-delayed",
+        reasons: ["message-queue", "worker"],
+      },
+    ]);
   });
 
   it.each(["missing", "conflict", "dynamic-offset", "error"] as const)(

@@ -157,6 +157,7 @@ tcb config set TCB_KEEP_AWAKE_MODE scheduled
 tcb power schedule install
 tcb service restart
 tcb power status
+tcb power history --since 24h
 ```
 
 The install command is the only privileged boundary. It inspects the existing repeating
@@ -177,6 +178,14 @@ The fixed event is `wake`, not `wakeorpoweron`, so it does not power on a shut-d
 Telegram may deliver provider-retained updates after wake. Feishu/Lark events during
 sleep are best-effort and may be missed; that trade-off is intentional in scheduled
 mode.
+
+Use `tcb power history --since 24h` after a quiet window to audit what actually
+happened. It correlates TCB phase and keep-awake transitions with read-only macOS
+Sleep, DarkWake, and full Wake evidence. `--json` returns the same bounded typed
+report for automation. The default lookback is 24 hours, the maximum is 30 days,
+and output keeps the newest 200 events. A released assertion followed by no sleep
+is reported as `not-observed`, because macOS owns the sleep decision; missing TCB
+or host evidence is `incomplete`, never inferred as success from configuration.
 
 ---
 

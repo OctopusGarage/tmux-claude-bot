@@ -131,7 +131,7 @@ export function argsToFilter(
   return f;
 }
 
-function parseSince(value: string, now: number): number {
+export function parseSince(value: string, now: number): number {
   const trimmed = value.trim();
   const relative = /^(\d+)([mhd])$/.exec(trimmed);
   if (relative !== null) {

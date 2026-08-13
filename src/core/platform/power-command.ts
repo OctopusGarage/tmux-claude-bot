@@ -1,5 +1,7 @@
 import { loadConfig } from "../../shared/config.js";
 import type { HostPowerConfig } from "../../shared/types.js";
+import { parseSince } from "../logs/log-query.js";
+import { type PowerHistoryReport, readPowerHistory } from "../power/power-history.js";
 import { resolveHostPowerPhase, wakeTimeFor } from "./power-policy.js";
 import {
   createPowerScheduleProbe,
@@ -18,6 +20,7 @@ type PowerCommandOptions = {
   now?: () => number;
   probe?: PowerScheduleProbe;
   readPowerSource?: () => MacPowerSource;
+  readHistory?: typeof readPowerHistory;
 };
 
 export type PowerStatusView = {
@@ -89,6 +92,55 @@ function statusResult(view: PowerStatusView, json: boolean): CommandResult {
           `wake schedule: ${view.schedule.status} (${view.schedule.detail})`,
         ].join("\n"),
   };
+}
+
+function renderHistory(report: PowerHistoryReport): string {
+  return [
+    `power history: ${report.status} (${new Date(report.window.since).toISOString()} .. ${new Date(report.window.until).toISOString()})`,
+    `system evidence: ${report.systemEvidence.status} (${report.systemEvidence.detail})`,
+    ...report.checks.map((item) => `- ${item.code}: ${item.status} (${item.detail})`),
+    `events: ${report.events.length}${report.truncated ? " (newest 200; truncated)" : ""}`,
+    ...report.events.map(
+      (event) =>
+        `- ${new Date(event.at).toISOString()} ${event.source}/${event.code}: ${event.detail}`,
+    ),
+  ].join("\n");
+}
+
+function historyResult(
+  config: HostPowerConfig,
+  args: string[],
+  options: PowerCommandOptions,
+): CommandResult {
+  const now = (options.now ?? Date.now)();
+  let json = false;
+  let since = now - 86_400_000;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    if (arg === "--since") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        return { exitCode: 1, stderr: "power history --since requires a value" };
+      }
+      try {
+        since = parseSince(value, now);
+      } catch (error) {
+        return commandError(error);
+      }
+      index += 1;
+      continue;
+    }
+    return { exitCode: 1, stderr: `unknown power history option "${arg ?? ""}"` };
+  }
+  if (since > now || now - since > 30 * 86_400_000) {
+    return { exitCode: 1, stderr: "power history --since must be within the last 30 days" };
+  }
+  const report = (options.readHistory ?? readPowerHistory)({ config, since, until: now });
+  return { exitCode: 0, stdout: json ? JSON.stringify(report) : renderHistory(report) };
 }
 
 function requireScheduled(config: HostPowerConfig): CommandResult | null {
@@ -172,12 +224,14 @@ export function runPowerCommand(args: string[], options: PowerCommandOptions = {
       subcommand === "--json",
     );
   }
+  if (action === "history") return historyResult(config, args.slice(1), options);
   if (action === "schedule" && rest.length === 0) {
     if (subcommand === "install") return installSchedule(config, probe);
     if (subcommand === "remove") return removeSchedule(config, probe);
   }
   return {
     exitCode: 1,
-    stderr: "Usage: power status [--json] | power schedule <install|remove>",
+    stderr:
+      "Usage: power status [--json] | power history [--since <time>] [--json] | power schedule <install|remove>",
   };
 }

@@ -69,6 +69,14 @@ AC-only assertion as degraded on battery. Doctor validates the selected mode;
 time-dependent schedule, phase, and power-source diagnosis remains owned by the
 dedicated power command.
 
+After a quiet window, use `tcb power history --since 24h` to distinguish current
+policy from historical execution. The bounded report reads the low-frequency
+typed power-event journal and correlates it with a fixed read-only `pmset -g log`
+probe. It must preserve partial evidence, treat natural sleep as optional after
+release, distinguish DarkWake from full Wake, and mark missing evidence
+`incomplete`. Do not copy raw `pmset` logs into state or scan high-volume general
+application logs for this report.
+
 The configured IANA timezone is policy truth and must not be required to equal
 the macOS host timezone. Convert its wake time to the host's local wall clock
 before inspecting or installing the `pmset repeat` event, and show both times in
