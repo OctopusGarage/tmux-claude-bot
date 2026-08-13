@@ -430,6 +430,66 @@ describe("repository PR decision contract", () => {
     expect(repositoryPullRequestReviewDisposition(recovered)).toBe("retry");
   });
 
+  it("recovers omitted PR decisions as empty when actions prove there were no in-scope PRs", () => {
+    const workOrder = {
+      task: { kind: "repository-pull-request-review", repo: "OctopusGarage/repo" },
+    } as LoopWorkOrder;
+    const input = summary({
+      status: "blocked",
+      pullRequestDecisions: undefined,
+      actionsTaken: [
+        "The final open PR inventory for OctopusGarage/repo remained empty on recheck.",
+        "gh pr list --repo OctopusGarage/repo --state open --limit 100 returned [].",
+      ],
+    }) as unknown as LoopSupervisorFinalSummary;
+
+    const recovered = recoverNonTerminalPullRequestDecisions(workOrder, input);
+
+    expect(recovered.pullRequestDecisions).toEqual([]);
+    expect(validateSupervisorFinalSummaryForWorkOrder(workOrder, recovered)).toBe(true);
+  });
+
+  it("does not use empty PR inventory evidence when explicit PR decisions are also present", () => {
+    const workOrder = {
+      task: { kind: "repository-pull-request-review", repo: "OctopusGarage/repo" },
+    } as LoopWorkOrder;
+    const input = summary({
+      status: "blocked",
+      pullRequestDecisions: undefined,
+      actionsTaken: [
+        "PR #9 reviewed; decision=retry because required checks are pending",
+        "The final open PR inventory for OctopusGarage/repo remained empty on recheck.",
+      ],
+    }) as unknown as LoopSupervisorFinalSummary;
+
+    const recovered = recoverNonTerminalPullRequestDecisions(workOrder, input);
+
+    expect(recovered.pullRequestDecisions).toEqual([
+      {
+        number: 9,
+        repository: "OctopusGarage/repo",
+        outcome: "retry",
+        evidence: ["PR #9 reviewed; decision=retry because required checks are pending"],
+        nextStep: "re-evaluate this pull request on the next retry",
+      },
+    ]);
+  });
+
+  it("does not treat unrelated zero values in PR inventory text as an empty PR set", () => {
+    const workOrder = {
+      task: { kind: "repository-pull-request-review", repo: "OctopusGarage/repo" },
+    } as LoopWorkOrder;
+    const input = summary({
+      status: "blocked",
+      pullRequestDecisions: undefined,
+      actionsTaken: [
+        "The open PR inventory for OctopusGarage/repo found PR #12 with 0 failing checks.",
+      ],
+    }) as unknown as LoopSupervisorFinalSummary;
+
+    expect(recoverNonTerminalPullRequestDecisions(workOrder, input)).toBe(input);
+  });
+
   it("never infers terminal outcomes from action text", () => {
     const workOrder = {
       task: { kind: "repository-pull-request-review", repo: "YS-Insight/geo-backend" },
