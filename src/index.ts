@@ -25,6 +25,7 @@ import { startRuntimeGuardian } from "./core/runtime-guardian/service.js";
 import { startDailyTaskAudit } from "./core/tasks/daily-audit-service.js";
 import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
+import { appVersion } from "./shared/version.js";
 
 const AUTO_START_DELAY_MS = 1000;
 // Delay auto-recovery a few seconds after boot so init()/adapters settle first.
@@ -41,7 +42,14 @@ let stopHostPowerManager = (): void => {};
 // ("Process Management") for the launchd KeepAlive trap this guards against.
 try {
   acquireInstanceLock();
-  log.info("instance lock acquired", { data: { pid: process.pid } });
+  log.info("service process started", {
+    data: {
+      pid: process.pid,
+      version: appVersion(),
+      node: process.version,
+      platform: process.platform,
+    },
+  });
 } catch (err) {
   if (err instanceof InstanceLockHeldError) {
     log.error(
@@ -116,13 +124,11 @@ process.on("uncaughtException", (err) => {
     fatalLog.info(`ignored shutdown abort: ${err.message}`);
     return;
   }
-  fatalLog.error(`uncaughtException: ${err.stack ?? err.message}`);
+  fatalLog.error("uncaught exception", { err });
   process.exit(1); // launchd restarts → startup flags the unclean exit → owner alert
 });
 process.on("unhandledRejection", (reason) => {
-  fatalLog.error(
-    `unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : reason}`,
-  );
+  fatalLog.error("unhandled rejection", { err: reason });
 });
 
 function isAbortLikeError(err: unknown): err is Error {

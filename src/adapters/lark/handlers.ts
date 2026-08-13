@@ -477,9 +477,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
     try {
       await handle(msg);
     } catch (err) {
-      log.error(
-        `handler error chat=${msg.chatId}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
-      );
+      log.error("message handler failed", { err, chatId: msg.chatId });
       try {
         await sendText(channel, msg.chatId, messages("lark").handlerError);
       } catch {

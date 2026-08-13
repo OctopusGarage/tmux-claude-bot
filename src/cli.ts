@@ -21,7 +21,7 @@ import { registerRuntimeGuardianCommands } from "./cli/runtime-guardian-commands
 import { createResourceGuardianStore } from "./core/resource-guardian/store.js";
 import { SCHEDULED_TASK_SOURCES } from "./core/tasks/task-ledger.js";
 import { appStateDir } from "./shared/state-dir.js";
-import { tildeifyHome } from "./shared/utils/path.js";
+import { tildeifyHome, tildeifyHomeDeep } from "./shared/utils/path.js";
 import { appVersion } from "./shared/version.js";
 
 // Operational logs mirror to stdout only for the bot itself (the `run` command,
@@ -634,15 +634,33 @@ program
   .option("--since <time>", "ISO time, epoch ms, or relative duration such as 30m, 2h, 1d")
   .option("--days <n>", "how many daily files back to read", "1")
   .option("-n, --n <count>", "keep the last N")
+  .option("--summary", "summarize volume, integrity, components, and repeated WARN/ERROR issues")
   .option("--json", "output JSON lines")
   .action(async (o) => {
-    const { argsToFilter, queryLogs } = await import("./core/logs/log-query.js");
-    const recs = queryLogs(argsToFilter(o), Number.parseInt(o.days, 10));
+    const {
+      argsToFilter,
+      filterRecords,
+      formatLogSummary,
+      parseLogDays,
+      readLogReport,
+      summarizeLogs,
+    } = await import("./core/logs/log-query.js");
+    const days = parseLogDays(o.days);
+    const filter = argsToFilter({ ...o, n: o.n ?? (o.summary ? undefined : "200") });
+    const read = readLogReport(days);
+    const recs = filterRecords(read.records, filter);
+    if (o.summary) {
+      const summary = summarizeLogs(recs, read);
+      process.stdout.write(
+        `${o.json ? JSON.stringify(tildeifyHomeDeep(summary), null, 2) : tildeifyHome(formatLogSummary(summary))}\n`,
+      );
+      return;
+    }
     for (const r of recs) {
-      if (o.json) process.stdout.write(`${JSON.stringify(r)}\n`);
+      if (o.json) process.stdout.write(`${JSON.stringify(tildeifyHomeDeep(r))}\n`);
       else
         process.stdout.write(
-          `${r.ts} ${r.level} ${r.component ?? "-"} ${r.traceId ?? "-"} ${r.msg}\n`,
+          `${tildeifyHome(`${r.ts} ${r.level} ${r.component ?? "-"} ${r.traceId ?? "-"} ${r.msg}`)}\n`,
         );
     }
   });

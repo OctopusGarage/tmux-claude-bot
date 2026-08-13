@@ -203,6 +203,23 @@ without replaying the task. Record at least:
 Use structured logs through the existing logger helpers. Do not rely only on
 free-form chat text for operational state.
 
+Treat log levels as an operational contract. `INFO` records lifecycle and
+meaningful state transitions; routine polls, unchanged deferrals, liveness
+checks, and scheduler heartbeats belong at `DEBUG`. A transient retry loop logs
+the first failure, keeps repeated identical failures at `DEBUG`, and records one
+recovery or terminal summary. Long-lived failures may emit a bounded periodic
+warning with the suppressed-repeat count. Pass failures through `err` rather
+than embedding stacks in `msg`, and put identifiers and measurements in
+structured `data`.
+
+The shared logger recursively redacts credential-shaped keys and common secret
+forms, bounds messages, stacks, collections, and structured payloads, and adds
+the emitting process id. Do not bypass it for runtime diagnostics. JSONL logs
+retain a 30-day age window with a 256 MiB total-size target; today's active
+file is never removed by the size cap. `tcb logs` defaults to the newest 200
+matching records. Use `tcb logs --summary --since 1h` for volume, integrity,
+component, and repeated WARN/ERROR triage before widening a query.
+
 ## Intelligent Automation Reference
 
 The authoritative automation model lives in `docs/intelligent-automation.md`.

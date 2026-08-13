@@ -14,18 +14,21 @@ describe("timeApi", () => {
     expect(r).toBe(42);
   });
 
-  it("logs an info line with the label and a dur_ms field on success", async () => {
+  it("logs structured success timing at debug level", async () => {
     await timeApi("sendMessage", () => Promise.resolve("ok"));
-    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("sendMessage"));
-    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("dur_ms="));
+    expect(logger.debug).toHaveBeenCalledWith("external call completed", {
+      data: { label: "sendMessage", durationMs: expect.any(Number) },
+    });
   });
 
-  it("logs a warn with dur_ms and rethrows on failure", async () => {
+  it("logs structured failure timing and rethrows", async () => {
     const boom = new Error("ECONNRESET");
     await expect(timeApi("answerCallbackQuery", () => Promise.reject(boom))).rejects.toThrow(
       "ECONNRESET",
     );
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("answerCallbackQuery"));
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("dur_ms="));
+    expect(logger.warn).toHaveBeenCalledWith("external call failed", {
+      err: boom,
+      data: { label: "answerCallbackQuery", durationMs: expect.any(Number) },
+    });
   });
 });

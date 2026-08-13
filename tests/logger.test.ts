@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createWarningCoalescer } from "../src/shared/utils/log-coalescer.js";
 import { logger, redactSecrets } from "../src/shared/utils/logger.js";
 
 describe("redactSecrets", () => {
@@ -32,6 +33,15 @@ describe("redactSecrets", () => {
     const msg = "[smart-fetch] recovered via direct after preferred route failed";
     expect(redactSecrets(msg)).toBe(msg);
   });
+
+  it("redacts common authorization, query-secret, and URL-credential forms", () => {
+    const out = redactSecrets(
+      "Authorization: Bearer synthetic-access https://user:synthetic-pass@example.test/x?api_key=synthetic-key",
+    );
+    expect(out).not.toContain("synthetic-access");
+    expect(out).not.toContain("synthetic-pass");
+    expect(out).not.toContain("synthetic-key");
+  });
 });
 
 describe("logger write", () => {
@@ -51,6 +61,28 @@ describe("logger write", () => {
 
   it("calls debug without throwing", () => {
     expect(() => logger.debug("debug message")).not.toThrow();
+  });
+});
+
+describe("createWarningCoalescer", () => {
+  it("keeps the first and periodic warning while demoting identical repeats", () => {
+    let now = 1_000;
+    const sink = { warn: vi.fn(), debug: vi.fn() };
+    const warn = createWarningCoalescer(sink, { intervalMs: 5_000, now: () => now });
+
+    warn("project:failure", "system gate failed", { data: { projectId: "project" } });
+    now += 1_000;
+    warn("project:failure", "system gate failed", { data: { projectId: "project" } });
+    now += 5_000;
+    warn("project:failure", "system gate failed", { data: { projectId: "project" } });
+
+    expect(sink.warn).toHaveBeenCalledTimes(2);
+    expect(sink.warn).toHaveBeenLastCalledWith("system gate failed", {
+      data: { projectId: "project", repeatedSinceLastWarning: 1 },
+    });
+    expect(sink.debug).toHaveBeenCalledWith("system gate failed", {
+      data: { projectId: "project", coalesced: true, repeatedSinceLastWarning: 1 },
+    });
   });
 });
 
@@ -109,7 +141,40 @@ describe("logger (ambient context, component, err/data)", () => {
       chatId: "c1",
       channel: "lark",
       data: { len: 3 },
+      pid: process.pid,
     });
+  });
+
+  it("recursively redacts sensitive structured keys without hiding safe counters", async () => {
+    const { logger: freshLogger } = await import("../src/shared/utils/logger.js");
+    freshLogger.info("structured", {
+      data: {
+        apiKey: "synthetic-key",
+        nested: {
+          authorization: "Bearer synthetic-access",
+          refresh_token: "synthetic-refresh",
+          tokenCount: 42,
+          endpoint: "https://user:synthetic-pass@example.test/path",
+        },
+      },
+    });
+    const data = readRecords()[0]?.data as Record<string, unknown>;
+    expect(data.apiKey).toBe("<redacted>");
+    expect(data.nested).toEqual({
+      authorization: "<redacted>",
+      refresh_token: "<redacted>",
+      tokenCount: 42,
+      endpoint: "https://user:<redacted>@example.test/path",
+    });
+  });
+
+  it("bounds oversized structured payloads", async () => {
+    const { logger: freshLogger } = await import("../src/shared/utils/logger.js");
+    freshLogger.info("oversized", { data: { output: "x".repeat(100_000) } });
+    const record = readRecords()[0];
+    if (record === undefined) throw new Error("expected one log record");
+    expect(JSON.stringify(record.data).length).toBeLessThan(40_000);
+    expect((record.data as { output: string }).output).toContain("[truncated");
   });
 
   it("works with no ambient context (fields omitted)", async () => {
@@ -171,6 +236,42 @@ describe("logger state-directory isolation", () => {
       else process.env.TCB_LOG_DIR = originalLogDir;
       fs.rmSync(firstStateDir, { recursive: true, force: true });
       fs.rmSync(secondStateDir, { recursive: true, force: true });
+      vi.resetModules();
+    }
+  });
+
+  it("caps archived log bytes while preserving today's active file", async () => {
+    const originalLogDir = process.env.TCB_LOG_DIR;
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "tcb-logger-retention-"));
+    const stamp = (daysAgo: number): string => {
+      const date = new Date();
+      date.setDate(date.getDate() - daysAgo);
+      return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, "0"),
+        String(date.getDate()).padStart(2, "0"),
+      ].join("");
+    };
+    const oldest = join(dir, `tcb-${stamp(2)}.jsonl`);
+    const newer = join(dir, `tcb-${stamp(1)}.jsonl`);
+    try {
+      fs.writeFileSync(oldest, "");
+      fs.truncateSync(oldest, 140 * 1024 * 1024);
+      fs.writeFileSync(newer, "");
+      fs.truncateSync(newer, 140 * 1024 * 1024);
+      process.env.TCB_LOG_DIR = dir;
+      vi.resetModules();
+      const { logger: retentionLogger } = await import("../src/shared/utils/logger.js");
+
+      retentionLogger.info("trigger retention");
+
+      expect(fs.existsSync(oldest)).toBe(false);
+      expect(fs.existsSync(newer)).toBe(true);
+      expect(fs.readdirSync(dir)).toContain(`tcb-${stamp(0)}.jsonl`);
+    } finally {
+      if (originalLogDir === undefined) delete process.env.TCB_LOG_DIR;
+      else process.env.TCB_LOG_DIR = originalLogDir;
+      fs.rmSync(dir, { recursive: true, force: true });
       vi.resetModules();
     }
   });

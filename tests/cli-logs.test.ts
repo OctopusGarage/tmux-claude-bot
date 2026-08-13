@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { argsToFilter } from "../src/core/logs/log-query.js";
+import { argsToFilter, parseLogDays } from "../src/core/logs/log-query.js";
 
 describe("argsToFilter", () => {
   it("maps CLI options to a LogFilter", () => {
@@ -32,6 +32,7 @@ describe("argsToFilter", () => {
 
   it("rejects an unknown level instead of silently letting all levels through", () => {
     expect(() => argsToFilter({ level: "inof" })).toThrow(/invalid --level/);
+    expect(() => argsToFilter({ level: "toString" })).toThrow(/invalid --level/);
   });
 
   it("rejects a non-numeric N instead of silently disabling the cap", () => {
@@ -50,5 +51,12 @@ describe("argsToFilter", () => {
 
   it("rejects an invalid --since value", () => {
     expect(() => argsToFilter({ since: "recently" })).toThrow(/invalid --since/);
+  });
+
+  it("bounds the number of daily log files queried", () => {
+    expect(parseLogDays("7")).toBe(7);
+    expect(() => parseLogDays("0")).toThrow(/invalid --days/);
+    expect(() => parseLogDays("31")).toThrow(/invalid --days/);
+    expect(() => parseLogDays("many")).toThrow(/invalid --days/);
   });
 });

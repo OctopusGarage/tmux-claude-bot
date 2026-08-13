@@ -6,6 +6,13 @@ import { currentLogContext } from "./log-context.js";
 // Logs live under the app state home so they follow TCB_STATE_DIR like every
 // other state dir; TCB_LOG_DIR still overrides for explicit redirection / tests.
 const MAX_ARCHIVE_DAYS = 30;
+const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
+const MAX_MESSAGE_CHARS = 4_000;
+const MAX_ERROR_STACK_CHARS = 16_000;
+const MAX_DATA_BYTES = 32 * 1024;
+const MAX_VALUE_DEPTH = 8;
+const MAX_COLLECTION_ITEMS = 100;
+const REDACTED = "<redacted>";
 
 export type LogCtx = {
   session?: string;
@@ -76,6 +83,21 @@ function cleanOldLogs(dir: string): void {
         fs.unlinkSync(nodePath.join(dir, entry));
       }
     }
+    const retained = fs
+      .readdirSync(dir)
+      .filter((entry) => entry.startsWith("tcb-") && entry.endsWith(".jsonl"))
+      .map((entry) => {
+        const path = nodePath.join(dir, entry);
+        return { entry, path, bytes: fs.statSync(path).size };
+      })
+      .sort((left, right) => left.entry.localeCompare(right.entry));
+    let totalBytes = retained.reduce((sum, item) => sum + item.bytes, 0);
+    for (const item of retained) {
+      if (totalBytes <= MAX_ARCHIVE_BYTES) break;
+      if (item.entry.startsWith(`tcb-${today}`)) continue;
+      fs.unlinkSync(item.path);
+      totalBytes -= item.bytes;
+    }
   } catch {
     // ignore
   }
@@ -93,18 +115,98 @@ export function redactSecrets(message: string): string {
   ]) {
     if (secret) out = out.split(secret).join("<redacted-token>");
   }
-  return out.replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot<redacted-token>");
+  return out
+    .replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot<redacted-token>")
+    .replace(/(https?:\/\/[^\s/:@]+:)[^\s/@]+@/gi, `$1${REDACTED}@`)
+    .replace(/((?:proxy-)?authorization\s*:\s*)(?:bearer|basic)\s+[^\s,;]+/gi, `$1${REDACTED}`)
+    .replace(
+      /([?&](?:access_token|refresh_token|token|api[_-]?key|secret|password)=)[^&\s]+/gi,
+      `$1${REDACTED}`,
+    )
+    .replace(
+      /((?:access[_-]?token|refresh[_-]?token|api[_-]?key|app[_-]?secret|password)\s*[=:]\s*)(?!<redacted)[^\s,;]+/gi,
+      `$1${REDACTED}`,
+    );
 }
 
 function errToObj(err: unknown): { name: string; message: string; stack?: string } {
   if (err instanceof Error) {
     return {
       name: err.name,
-      message: redactSecrets(err.message),
-      ...(err.stack ? { stack: redactSecrets(err.stack) } : {}),
+      message: truncate(redactSecrets(err.message), MAX_MESSAGE_CHARS),
+      ...(err.stack ? { stack: truncate(redactSecrets(err.stack), MAX_ERROR_STACK_CHARS) } : {}),
     };
   }
-  return { name: "NonError", message: redactSecrets(String(err)) };
+  return {
+    name: "NonError",
+    message: truncate(redactSecrets(String(err)), MAX_MESSAGE_CHARS),
+  };
+}
+
+function truncate(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…[truncated ${value.length - max} chars]`;
+}
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = key.replace(/[-_]/g, "").toLowerCase();
+  return (
+    normalized === "token" ||
+    normalized.endsWith("token") ||
+    normalized === "secret" ||
+    normalized.endsWith("secret") ||
+    normalized === "password" ||
+    normalized.endsWith("password") ||
+    normalized === "authorization" ||
+    normalized === "cookie" ||
+    normalized.endsWith("cookie") ||
+    normalized === "apikey" ||
+    normalized === "credential" ||
+    normalized === "credentials"
+  );
+}
+
+function sanitizeValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
+  if (typeof value === "string") return truncate(redactSecrets(value), MAX_MESSAGE_CHARS);
+  if (typeof value === "bigint") return value.toString();
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_VALUE_DEPTH) return "[MaxDepth]";
+  if (seen.has(value)) throw new TypeError("circular log data");
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const items = value
+        .slice(0, MAX_COLLECTION_ITEMS)
+        .map((item) => sanitizeValue(item, depth + 1, seen));
+      if (value.length > MAX_COLLECTION_ITEMS) {
+        items.push(`[Truncated ${value.length - MAX_COLLECTION_ITEMS} items]`);
+      }
+      return items;
+    }
+    const entries = Object.entries(value).slice(0, MAX_COLLECTION_ITEMS);
+    const output: Record<string, unknown> = {};
+    for (const [key, item] of entries) {
+      output[key] = isSensitiveKey(key) ? REDACTED : sanitizeValue(item, depth + 1, seen);
+    }
+    if (Object.keys(value).length > MAX_COLLECTION_ITEMS) {
+      output._truncatedKeys = Object.keys(value).length - MAX_COLLECTION_ITEMS;
+    }
+    return output;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function sanitizeData(data: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = sanitizeValue(data, 0, new WeakSet()) as Record<string, unknown>;
+  const json = JSON.stringify(sanitized);
+  const bytes = Buffer.byteLength(json);
+  if (bytes <= MAX_DATA_BYTES) return sanitized;
+  return {
+    _truncated: true,
+    _originalBytes: bytes,
+    preview: truncate(json, MAX_DATA_BYTES - 200),
+  };
 }
 
 function write(
@@ -119,8 +221,9 @@ function write(
   const entry: Record<string, unknown> = {
     ts: new Date().toISOString(),
     level,
+    pid: process.pid,
     ...(component ? { component } : {}),
-    msg: redactSecrets(message),
+    msg: truncate(redactSecrets(message), MAX_MESSAGE_CHARS),
   };
   const traceId = ambient.traceId;
   const session = ctx?.session ?? ambient.session;
@@ -134,9 +237,11 @@ function write(
     // Never let a non-serializable payload (circular ref, BigInt) throw into the
     // caller — logging is best-effort. Fall back to a marker on failure.
     try {
-      entry.data = JSON.parse(redactSecrets(JSON.stringify(ctx.data)));
+      entry.data = sanitizeData(ctx.data);
     } catch (e) {
-      entry.data = { _serializeError: String(e) };
+      entry.data = {
+        _serializeError: truncate(redactSecrets(String(e)), MAX_MESSAGE_CHARS),
+      };
     }
   }
   if (ctx?.err !== undefined) entry.err = errToObj(ctx.err);
@@ -166,7 +271,7 @@ function write(
   }
 }
 
-type ComponentLogger = {
+export type ComponentLogger = {
   debug: (msg: string, ctx?: LogCtx) => void;
   info: (msg: string, ctx?: LogCtx) => void;
   warn: (msg: string, ctx?: LogCtx) => void;

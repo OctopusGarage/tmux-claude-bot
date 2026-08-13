@@ -248,7 +248,10 @@ export function createConfigResolver(
         : (parseClaudeConfigDir(await probe.readProcEnv(pid)) ?? opts.defaultRoot);
     const entry: CacheEntry = { agentPid: pid, kind, home, checkedAt: probe.now() };
     cache.set(session, entry);
-    log.info(`session=${session} ${kind}Pid=${pid} home=${home}`);
+    log.debug("agent runtime resolved", {
+      session,
+      data: { kind, pid, home },
+    });
     return { entry, paneQueryable: true };
   };
 

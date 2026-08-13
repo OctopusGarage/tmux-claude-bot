@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { filterRecords, type LogRecord } from "../src/core/logs/log-query.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  filterRecords,
+  formatLogSummary,
+  type LogRecord,
+  readLogReport,
+  summarizeLogs,
+} from "../src/core/logs/log-query.js";
 
 const recs: LogRecord[] = [
   {
@@ -67,5 +76,58 @@ describe("filterRecords", () => {
   });
   it("limits newest-last with n", () => {
     expect(filterRecords(recs, { session: "s1", n: 1 }).map((r) => r.msg)).toEqual(["noise"]);
+  });
+});
+
+describe("summarizeLogs", () => {
+  it("builds a bounded diagnostic summary with top components and repeated issues", () => {
+    const repeated = recs[1];
+    if (repeated === undefined) throw new Error("missing repeated issue fixture");
+    const summary = summarizeLogs(
+      [
+        ...recs,
+        { ...repeated, ts: "2026-06-18T01:00:03Z" },
+        { ...repeated, ts: "2026-06-18T01:00:04Z" },
+      ],
+      { files: 2, bytes: 2048, malformedLines: 1 },
+    );
+
+    expect(summary).toMatchObject({
+      records: 5,
+      files: 2,
+      bytes: 2048,
+      malformedLines: 1,
+      levels: { DEBUG: 1, INFO: 1, WARN: 0, ERROR: 3 },
+      topIssues: [{ level: "ERROR", component: "b", message: "boom", count: 3 }],
+    });
+    expect(formatLogSummary(summary)).toContain("3 ERROR");
+    expect(formatLogSummary(summary)).toContain("1 malformed");
+  });
+});
+
+describe("readLogReport", () => {
+  const originalLogDir = process.env.TCB_LOG_DIR;
+  afterEach(() => {
+    if (originalLogDir === undefined) delete process.env.TCB_LOG_DIR;
+    else process.env.TCB_LOG_DIR = originalLogDir;
+  });
+
+  it("reports malformed complete records but ignores a torn live tail", () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "tcb-log-report-"));
+    process.env.TCB_LOG_DIR = dir;
+    const valid = JSON.stringify({
+      ts: "2026-06-18T01:00:00Z",
+      level: "INFO",
+      component: "boot",
+      msg: "started",
+    });
+    fs.writeFileSync(join(dir, "tcb-20260618.jsonl"), `${valid}\nnot-json\n{"torn":`);
+
+    expect(readLogReport(1)).toMatchObject({
+      records: [expect.objectContaining({ msg: "started" })],
+      files: 1,
+      malformedLines: 1,
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

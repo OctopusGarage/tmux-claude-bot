@@ -212,10 +212,18 @@ async function withSendRetry(
       return;
     } catch (err) {
       if (isRetryableError(err) && n < MAX_RETRIES) {
-        log.warn(
-          `${label} network error on attempt ${n}/${MAX_RETRIES}, retrying in 1s: ${describe(err)}`,
-        );
-        await sleep(retryDelayMs(err));
+        const delayMs = retryDelayMs(err);
+        log.warn("Telegram send attempt failed; retry scheduled", {
+          err,
+          data: {
+            operation: label,
+            attempt: n,
+            maxAttempts: MAX_RETRIES,
+            retryDelayMs: delayMs,
+            reason: describe(err),
+          },
+        });
+        await sleep(delayMs);
         continue;
       }
       await onFinalError(err);
@@ -246,9 +254,10 @@ export async function reply(
     (sentMsg) => {
       const telegramMsgId = messageIdOf(sentMsg);
       sentId = telegramMsgId;
-      log.info(
-        `sent to chat=${chatId} replyTo=${msgId} telegramMsgId=${telegramMsgId} len=${text.length}`,
-      );
+      log.info("Telegram reply sent", {
+        chatId,
+        data: { replyTo: msgId, telegramMessageId: telegramMsgId, textLength: text.length },
+      });
       if (telegramMsgId !== null && opts.replyTarget && opts.session) {
         opts.replyTarget.record(telegramMsgId, opts.session);
       }
@@ -264,22 +273,31 @@ export async function reply(
         typeof (err as Record<string, unknown>).description === "string" &&
         String((err as Record<string, unknown>).description).includes("can't parse");
       if (isParseError) {
-        log.warn(`Markdown parse failed for chat=${chatId}, retrying without parse_mode`);
+        log.warn("Telegram Markdown parse failed; retrying as plain text", { chatId });
         const fallbackExtra = { ...sendExtra };
         delete fallbackExtra.parse_mode;
         // Strip the MarkdownV2 markup so the fallback shows clean text.
         const plain = stripMarkdownV2(text);
         try {
           await timeApi("reply(fallback)", () => ctx.reply(plain, fallbackExtra));
-          log.info(`fallback sent to chat=${chatId} replyTo=${msgId}`);
+          log.info("Telegram plain-text fallback sent", {
+            chatId,
+            data: { replyTo: msgId },
+          });
           return;
         } catch (fallbackErr) {
-          log.error(`fallback reply failed ${describe(fallbackErr)} chat=${chatId}`);
+          log.error("Telegram plain-text fallback failed", {
+            err: fallbackErr,
+            chatId,
+            data: { replyTo: msgId, reason: describe(fallbackErr) },
+          });
         }
       }
-      log.error(
-        `reply failed ${describe(err)} chat=${chatId} replyTo=${msgId} text_len=${text.length}`,
-      );
+      log.error("Telegram reply failed", {
+        err,
+        chatId,
+        data: { replyTo: msgId, textLength: text.length, reason: describe(err) },
+      });
     },
   );
   return sentId;
@@ -306,7 +324,11 @@ export async function send(
       }
     },
     async (err) => {
-      log.error(`send failed ${describe(err)}`);
+      log.error("Telegram proactive send failed", {
+        err,
+        chatId,
+        data: { textLength: text.length, reason: describe(err) },
+      });
     },
   );
 }

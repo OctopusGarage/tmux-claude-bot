@@ -221,7 +221,7 @@ For the complete maintained CLI command and option surface, see
 | `tcb resource status\|incidents\|mode\|profile` | inspect Resource Guardian state or bounded incident history, and set its local operator mode/profile |
 | `tcb tui` | the terminal control panel (needs the bot running) |
 | `tcb recover` | relaunch agents that were running before a reboot |
-| `tcb logs` | query structured logs; use `--since 30m`, `--component <prefix>`, `--run-id <id>`, `--grep <text>`, and `-n <count>` to keep current-run diagnostics quiet |
+| `tcb logs` | query structured logs; defaults to the newest 200 matches. Start with `--summary --since 1h`, then narrow with `--component <prefix>`, `--run-id <id>`, `--grep <text>`, and `-n <count>`; `--days` is bounded to 1–30 |
 | `tcb install` | provision the managed service into the stable dir |
 | `tcb service <install\|uninstall\|status\|pause\|resume\|restart\|logs>` | manage the auto-restarting service |
 
@@ -977,7 +977,10 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
 - **Logs** → `tcb logs --since 1h --run-id <id>` (CLI) or `/logs` (chat,
   owner-only). Chat `/logs` defaults to current-session WARN/ERROR records from
   the last hour; use `/logs N` for the last N current-session records or
-  `/logs t_<trace>` for one trace.
+  `/logs t_<trace>` for one trace. For an unfamiliar incident, begin with
+  `tcb logs --summary --since 1h`; it reports record volume, malformed complete
+  lines, top components, and repeated WARN/ERROR signatures without dumping the
+  whole day.
 - **After `tcb adopt`, typing prints raw escape sequences** (e.g. `d0;1:3u`, `s5;1:3u`)
   → the orphaned claude/codex process was killed by signal before it could reset the
   terminal's enhanced keyboard mode. Run one of these in the affected terminal:

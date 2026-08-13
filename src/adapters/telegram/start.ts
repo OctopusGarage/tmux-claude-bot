@@ -110,7 +110,7 @@ export async function startTelegram(
     try {
       await err.ctx.reply(messages("telegram").handlerErrorTelegram);
     } catch (replyErr) {
-      log.error(`failed to send handler-error reply: ${String(replyErr)}`);
+      log.error("failed to send handler-error reply", { err: replyErr });
     }
   });
 

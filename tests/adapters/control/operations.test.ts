@@ -16,6 +16,7 @@ import { createControlProjectSessionHandlers } from "../../../src/adapters/contr
 import type { ControlRequest } from "../../../src/adapters/control/protocol.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import type { ScheduledTaskRecord } from "../../../src/core/tasks/task-ledger.js";
+import { currentLogContext } from "../../../src/shared/utils/log-context.js";
 
 describe("control operation registry", () => {
   it("groups dashboard and diagnostic reads behind one handler family", () => {
@@ -258,5 +259,46 @@ describe("control operation registry", () => {
         isOperatorHomeCaller: true,
       },
     });
+  });
+
+  it("establishes a fresh trace and session context for each Control request", async () => {
+    const send = vi.fn();
+    const req = { id: 101, op: "peek", session: "worker-a", lines: 10 } satisfies ControlRequest;
+    let observed = {};
+
+    await handleControlRequest({} as HandlerDeps, req, send, {
+      ...createControlOperationHandlers({} as HandlerDeps, send),
+      peek: async (_req, ctx) => {
+        observed = currentLogContext();
+        ctx.ok("done");
+      },
+    });
+
+    expect(observed).toMatchObject({ session: "worker-a" });
+    expect(observed).toHaveProperty("traceId", expect.stringMatching(/^t_[a-f0-9]{8}$/));
+    expect(currentLogContext()).toEqual({});
+  });
+
+  it("carries the Control request trace into queued prompt execution", async () => {
+    const enqueue = vi.fn(() => "queued" as const);
+    const send = vi.fn();
+    const deps = {
+      config: { projectSessionPrefix: "tmux_" },
+      queue: { enqueue },
+    } as unknown as HandlerDeps;
+
+    await handleControlRequest(
+      deps,
+      { id: 102, op: "send", session: "worker-a", text: "hello" },
+      send,
+    );
+
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionName: "worker-a",
+        channel: "control",
+        traceId: expect.stringMatching(/^t_[a-f0-9]{8}$/),
+      }),
+    );
   });
 });

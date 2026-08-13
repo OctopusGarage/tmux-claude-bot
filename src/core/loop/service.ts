@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { HostPowerConfig, WorktreeIsolationMode } from "../../shared/types.js";
+import { createWarningCoalescer } from "../../shared/utils/log-coalescer.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import type { AgentKind } from "../agents/types.js";
 import { admitAutomationWork } from "../automation/admission.js";
@@ -112,6 +114,7 @@ import type { LoopSupervisorFinalSummary } from "./work-order-contract.js";
 import { workerLeaseOutcome } from "./work-order-settlement.js";
 
 const log = createLogger("loop.service");
+const logSystemGateFailure = createWarningCoalescer(log, { intervalMs: 5 * 60_000 });
 const DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS = 7_200_000;
 const DEFAULT_SUPERVISED_PR_CHECK_POLL_ATTEMPTS = 30;
 const DEFAULT_SUPERVISED_PR_CHECK_POLL_INTERVAL_SECONDS = 30;
@@ -148,7 +151,7 @@ function logSchedulerTick(input: {
   now: number;
   scheduler: ReturnType<typeof runLoopSchedulerTick>;
 }): void {
-  log.info("loop engineering scheduler tick", {
+  log.debug("loop engineering scheduler tick", {
     data: {
       configFile: input.configFile,
       cronInterpretation: "utc",
@@ -1175,7 +1178,7 @@ export async function runLoopServiceTickAsync(input: {
           : await asyncFilter(reservedSupervisorSessions, input.isSupervisorSessionAvailable);
       if (idleSupervisorSessions.length === 0) {
         const readyCount = repositoryReviewQueue.listReady(tickNow).length;
-        log.info("loop engineering repository review queue waiting for supervisor capacity", {
+        log.debug("loop engineering repository review queue waiting for supervisor capacity", {
           data: {
             readyCount,
             activeSupervisorSessions: [...active.supervisorSessions],
@@ -1214,7 +1217,7 @@ export async function runLoopServiceTickAsync(input: {
         activeResourcePaths: active.resourcePaths,
       });
       if (plan.ready.length === 0) {
-        log.info("loop engineering repository review queue deferred by resource planner", {
+        log.debug("loop engineering repository review queue deferred by resource planner", {
           data: {
             queueItems: queueItems.map((item) => ({
               id: item.id,
@@ -1565,7 +1568,7 @@ function activeLoopSupervisorWork(configFile: string): {
 } {
   const { supervisorSessions, projectPaths, resourcePaths } = readActiveLoopSupervisorResources();
   if (supervisorSessions.size > 0) {
-    log.info("loop engineering active supervisor work detected", {
+    log.debug("loop engineering active supervisor work detected", {
       data: {
         configFile,
         activeSupervisorSessions: [...supervisorSessions],
@@ -2658,8 +2661,17 @@ export function runSupervisedSystemGateOutcome(input: {
 
   if (failures.length === 0) return { result: input.result, failures: [], evidence };
   const reason = `supervised system gate failed: ${failures.join("; ")}`;
-  log.warn("loop engineering supervised system gate failed", {
-    data: { projectId: input.project.id, projectName: input.project.name, failures, evidence },
+  const failureSignature = createHash("sha256")
+    .update(JSON.stringify([input.project.id, failures]))
+    .digest("hex");
+  logSystemGateFailure(failureSignature, "loop engineering supervised system gate failed", {
+    data: {
+      projectId: input.project.id,
+      projectName: input.project.name,
+      failures: failures.slice(0, 10),
+      failureCount: failures.length,
+      evidenceCount: evidence.length,
+    },
   });
   return {
     result: {

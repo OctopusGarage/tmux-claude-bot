@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { appStateFile } from "../../shared/state-dir.js";
-import { iterJsonlObjects } from "../read/jsonl.js";
 
 export type LogRecord = {
   ts: string;
   level: "DEBUG" | "INFO" | "WARN" | "ERROR";
+  pid?: number;
   component?: string;
   msg: string;
   traceId?: string;
@@ -30,6 +30,32 @@ export type LogFilter = {
 };
 
 const ORDER: Record<LogRecord["level"], number> = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+const MAX_LOG_DAYS = 30;
+const SUMMARY_LIMIT = 10;
+
+export type LogReadReport = {
+  records: LogRecord[];
+  files: number;
+  bytes: number;
+  malformedLines: number;
+};
+
+export type LogSummary = {
+  records: number;
+  files: number;
+  bytes: number;
+  malformedLines: number;
+  from: string | null;
+  to: string | null;
+  levels: Record<LogRecord["level"], number>;
+  topComponents: Array<{ component: string; count: number }>;
+  topIssues: Array<{
+    level: "WARN" | "ERROR";
+    component: string;
+    message: string;
+    count: number;
+  }>;
+};
 
 export function filterRecords(records: LogRecord[], f: LogFilter): LogRecord[] {
   const grep = f.grep?.toLowerCase();
@@ -55,8 +81,8 @@ function logDir(): string {
   return process.env.TCB_LOG_DIR ?? appStateFile("logs");
 }
 
-/** Read records from the daily files covering the last `days` days (inclusive). */
-export function readRecords(days = 1): LogRecord[] {
+/** Read records plus integrity evidence from the newest bounded daily files. */
+export function readLogReport(days = 1): LogReadReport {
   const LOG_DIR = logDir();
   let files: string[];
   try {
@@ -65,10 +91,12 @@ export function readRecords(days = 1): LogRecord[] {
       .filter((f) => f.startsWith("tcb-") && f.endsWith(".jsonl"))
       .sort();
   } catch {
-    return [];
+    return { records: [], files: 0, bytes: 0, malformedLines: 0 };
   }
   const recent = files.slice(Math.max(0, files.length - days));
-  const out: LogRecord[] = [];
+  const records: LogRecord[] = [];
+  let bytes = 0;
+  let malformedLines = 0;
   for (const file of recent) {
     let raw: string;
     try {
@@ -76,15 +104,150 @@ export function readRecords(days = 1): LogRecord[] {
     } catch {
       continue;
     }
-    // The logger appends to today's file live, so the tail can be a torn line;
-    // iterJsonlObjects carries that skip-the-partial-line policy in one place.
-    for (const rec of iterJsonlObjects<LogRecord>(raw)) out.push(rec);
+    bytes += Buffer.byteLength(raw);
+    // The current file can end in a torn append. Exclude only that incomplete
+    // final line from integrity counts; malformed complete lines remain visible.
+    const lines = raw.split("\n");
+    if (!raw.endsWith("\n")) lines.pop();
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      try {
+        const record = parseLogRecord(JSON.parse(trimmed));
+        if (record === null) malformedLines += 1;
+        else records.push(record);
+      } catch {
+        malformedLines += 1;
+      }
+    }
   }
-  return out;
+  return { records, files: recent.length, bytes, malformedLines };
+}
+
+/** Compatibility reader for callers that only need records. */
+export function readRecords(days = 1): LogRecord[] {
+  return readLogReport(days).records;
 }
 
 export function queryLogs(filter: LogFilter, days = 1): LogRecord[] {
   return filterRecords(readRecords(days), filter);
+}
+
+function parseLogRecord(value: unknown): LogRecord | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.ts !== "string" ||
+    !Number.isFinite(Date.parse(record.ts)) ||
+    typeof record.level !== "string" ||
+    !Object.hasOwn(ORDER, record.level) ||
+    typeof record.msg !== "string"
+  ) {
+    return null;
+  }
+  return record as LogRecord;
+}
+
+export function parseLogDays(value: string): number {
+  if (!/^\d+$/.test(value.trim())) {
+    throw new Error(`invalid --days "${value}" (expected an integer from 1 to ${MAX_LOG_DAYS})`);
+  }
+  const days = Number.parseInt(value, 10);
+  if (days < 1 || days > MAX_LOG_DAYS) {
+    throw new Error(`invalid --days "${value}" (expected an integer from 1 to ${MAX_LOG_DAYS})`);
+  }
+  return days;
+}
+
+export function summarizeLogs(
+  records: readonly LogRecord[],
+  read: Pick<LogReadReport, "files" | "bytes" | "malformedLines"> = {
+    files: 0,
+    bytes: 0,
+    malformedLines: 0,
+  },
+): LogSummary {
+  const levels: LogSummary["levels"] = { DEBUG: 0, INFO: 0, WARN: 0, ERROR: 0 };
+  const components = new Map<string, number>();
+  const issues = new Map<string, LogSummary["topIssues"][number]>();
+  let from: string | null = null;
+  let to: string | null = null;
+  for (const record of records) {
+    levels[record.level] += 1;
+    const component = record.component ?? "-";
+    components.set(component, (components.get(component) ?? 0) + 1);
+    if (from === null || record.ts < from) from = record.ts;
+    if (to === null || record.ts > to) to = record.ts;
+    if (record.level === "WARN" || record.level === "ERROR") {
+      const key = `${record.level}\0${component}\0${record.msg}`;
+      const previous = issues.get(key);
+      if (previous === undefined) {
+        issues.set(key, {
+          level: record.level,
+          component,
+          message: summaryMessage(record.msg),
+          count: 1,
+        });
+      } else {
+        previous.count += 1;
+      }
+    }
+  }
+  const byCountThenName =
+    <T extends { count: number }>(label: (value: T) => string): ((left: T, right: T) => number) =>
+    (left, right) =>
+      right.count - left.count || label(left).localeCompare(label(right));
+  return {
+    records: records.length,
+    files: read.files,
+    bytes: read.bytes,
+    malformedLines: read.malformedLines,
+    from,
+    to,
+    levels,
+    topComponents: [...components.entries()]
+      .map(([component, count]) => ({ component, count }))
+      .sort(byCountThenName((item) => item.component))
+      .slice(0, SUMMARY_LIMIT),
+    topIssues: [...issues.values()]
+      .sort(byCountThenName((item) => `${item.level}:${item.component}:${item.message}`))
+      .slice(0, SUMMARY_LIMIT),
+  };
+}
+
+export function formatLogSummary(summary: LogSummary): string {
+  const range = summary.from === null ? "no records" : `${summary.from} → ${summary.to}`;
+  const lines = [
+    `logs: ${summary.records} records · ${summary.files} file(s) · ${formatBytes(summary.bytes)} · ${range}`,
+    `levels: ${summary.levels.ERROR} ERROR · ${summary.levels.WARN} WARN · ${summary.levels.INFO} INFO · ${summary.levels.DEBUG} DEBUG`,
+    `integrity: ${summary.malformedLines} malformed complete line(s)`,
+  ];
+  if (summary.topComponents.length > 0) {
+    lines.push(
+      "top components:",
+      ...summary.topComponents.map((item) => `  ${item.count} ${item.component}`),
+    );
+  }
+  if (summary.topIssues.length > 0) {
+    lines.push(
+      "top WARN/ERROR issues:",
+      ...summary.topIssues.map(
+        (item) => `  ${item.count} ${item.level} ${item.component} · ${item.message}`,
+      ),
+    );
+  }
+  return lines.join("\n");
+}
+
+function summaryMessage(message: string): string {
+  const singleLine = message.replace(/\s+/g, " ").trim();
+  return singleLine.length <= 240 ? singleLine : `${singleLine.slice(0, 240)}…`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 export function argsToFilter(
@@ -113,7 +276,7 @@ export function argsToFilter(
     // undefined, so the comparison never excludes anything and ALL levels leak
     // through as if unfiltered. Reject it instead.
     const lvl = o.level.toUpperCase();
-    if (!(lvl in ORDER))
+    if (!Object.hasOwn(ORDER, lvl))
       throw new Error(`invalid --level "${o.level}" (expected DEBUG|INFO|WARN|ERROR)`);
     f.levelMin = lvl as LogRecord["level"];
   }

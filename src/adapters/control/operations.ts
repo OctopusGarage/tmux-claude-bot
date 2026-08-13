@@ -25,6 +25,11 @@ import {
   createProjectRecoveryDelegator,
   dispatchProjectRecovery,
 } from "../../core/tasks/project-recovery-dispatch.js";
+import {
+  currentLogContext,
+  newTraceId,
+  runWithLogContext,
+} from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { createControlDiagnosticsHandlers } from "./operations-diagnostics.js";
 import { createControlObservationHandlers } from "./operations-observation.js";
@@ -157,24 +162,30 @@ export async function handleControlRequest(
   send: (msg: ServerMessage) => void,
   handlers: ControlOperationHandlers = createControlOperationHandlers(deps, send),
 ): Promise<void> {
-  const ok = (data: unknown): void => send({ id: req.id, ok: true, data });
-  const fail = (error: string): void => send({ id: req.id, ok: false, error });
-  try {
-    const handler = handlers[req.op] as ControlOperationHandler<ControlRequest> | undefined;
-    if (handler === undefined) {
-      fail(`unknown op: ${(req as { op: string }).op}`);
-      return;
-    }
-    await handler(req, {
-      send,
-      ok,
-      fail,
-      ...(req.caller !== undefined ? { caller: req.caller } : {}),
-      isOperatorHomeCaller: isOperatorHomePath(deps.config, req.caller?.cwd),
-    });
-  } catch (err) {
-    fail(err instanceof Error ? err.message : String(err));
-  }
+  const session = "session" in req && typeof req.session === "string" ? req.session : undefined;
+  await runWithLogContext(
+    { traceId: newTraceId(), ...(session !== undefined ? { session } : {}) },
+    async () => {
+      const ok = (data: unknown): void => send({ id: req.id, ok: true, data });
+      const fail = (error: string): void => send({ id: req.id, ok: false, error });
+      try {
+        const handler = handlers[req.op] as ControlOperationHandler<ControlRequest> | undefined;
+        if (handler === undefined) {
+          fail(`unknown op: ${(req as { op: string }).op}`);
+          return;
+        }
+        await handler(req, {
+          send,
+          ok,
+          fail,
+          ...(req.caller !== undefined ? { caller: req.caller } : {}),
+          isOperatorHomeCaller: isOperatorHomePath(deps.config, req.caller?.cwd),
+        });
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
 }
 
 export async function handleSendAttachment(
@@ -225,6 +236,7 @@ async function enqueueControl(
   fail: (error: string) => void,
   opts: { origin?: "user" | "system" } = {},
 ): Promise<void> {
+  const traceId = currentLogContext().traceId;
   const prepared =
     action === "text"
       ? await prepareUserPromptDelivery("control", text, "text")
@@ -239,10 +251,12 @@ async function enqueueControl(
       ? userPromptQueueFields(prepared)
       : { text: prepared.text }),
     chatId: "control",
+    channel: "control",
     sessionName: session,
     action,
     origin: opts.origin ?? "user",
     ephemeral: true,
+    ...(traceId !== undefined ? { traceId } : {}),
     resolve: (output) => send({ event: "reply", session, output }),
     reject: (err) => send({ event: "error", session, error: err.message }),
     notify: (t) => send({ event: "notify", session, text: t }),

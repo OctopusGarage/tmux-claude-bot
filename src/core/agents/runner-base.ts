@@ -1,10 +1,12 @@
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import type { OutputProcessor } from "../session/output.js";
 import type { TmuxBridge } from "../session/tmux.js";
 import type { ConfigResolver } from "./agent-config-resolver.js";
 import { pollUntilIdle, pollUntilReady, type ReadyVerdict } from "./pane-poll.js";
 import type { AgentRunner } from "./runner.js";
+
+const log = createLogger("agents.runner");
 
 /** Grace period after `/exit` before relaunching on a restart. */
 const EXIT_GRACE_MS = 2000;
@@ -174,24 +176,35 @@ export abstract class AgentRunnerBase implements AgentRunner {
   protected async waitReadyBestEffort(sessionName?: string): Promise<void> {
     try {
       await this.waitUntilReady(sessionName);
-      logger.info(`${this.logTag} agent ready`);
+      log.info("agent launch ready", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        data: { agent: this.logTag },
+      });
     } catch (err) {
-      logger.warn(
-        `${this.logTag} post-launch: trust-clear/readiness did not complete: ${err instanceof Error ? err.message : err}`,
-      );
+      log.warn("agent launch readiness did not complete", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        err,
+        data: { agent: this.logTag },
+      });
     }
   }
 
   async checkIfRunning(sessionName?: string): Promise<boolean> {
     const session = await this.bridge.resolveSessionName(sessionName);
     const running = await this.isRunning(session);
-    logger.info(`${this.logTag} checkIfRunning session=${session} → ${running} (process-based)`);
+    log.debug("agent liveness checked", {
+      session,
+      data: { agent: this.logTag, running, evidence: "process" },
+    });
     return running;
   }
 
   async start(sessionName?: string, command?: string): Promise<void> {
     if (await this.checkIfRunning(sessionName)) return;
-    logger.info(`${this.logTag} starting agent`, { data: { resume: "fresh" } });
+    log.info("agent starting", {
+      ...(sessionName === undefined ? {} : { session: sessionName }),
+      data: { agent: this.logTag, resume: "fresh" },
+    });
     await this.bridge.sendKeys(command ?? this.command, sessionName);
     await this.waitReadyBestEffort(sessionName);
   }
@@ -202,8 +215,9 @@ export abstract class AgentRunnerBase implements AgentRunner {
     command?: string,
   ): Promise<void> {
     if (await this.checkIfRunning(sessionName)) return;
-    logger.info(`${this.logTag} starting agent`, {
-      data: { resume: "exact-id", sessionId },
+    log.info("agent starting", {
+      ...(sessionName === undefined ? {} : { session: sessionName }),
+      data: { agent: this.logTag, resume: "exact-id", sessionId },
     });
     await this.bridge.sendKeys(this.resumeCommand(command ?? this.command, sessionId), sessionName);
     await this.waitReadyBestEffort(sessionName);
@@ -289,12 +303,18 @@ export abstract class AgentRunnerBase implements AgentRunner {
 
   async exit(sessionName?: string): Promise<void> {
     // Ctrl-C interrupts any in-flight turn, then `/exit` quits. Both agents.
-    logger.info(`${this.logTag} exiting agent`);
+    log.info("agent exiting", {
+      ...(sessionName === undefined ? {} : { session: sessionName }),
+      data: { agent: this.logTag },
+    });
     await this.bridge.sendExit(sessionName);
   }
 
   async gracefulRestart(sessionName?: string): Promise<void> {
-    logger.info(`${this.logTag} restarting agent`, { data: { resume: "fresh" } });
+    log.info("agent restarting", {
+      ...(sessionName === undefined ? {} : { session: sessionName }),
+      data: { agent: this.logTag, resume: "fresh" },
+    });
     await this.bridge.sendExit(sessionName);
     await sleep(EXIT_GRACE_MS);
     await this.start(sessionName);
@@ -313,8 +333,13 @@ export abstract class AgentRunnerBase implements AgentRunner {
       (await this.configResolver.resolveLiveTranscript?.(resolved))?.sessionId ??
       this.configResolver.lastLiveSessionId?.(resolved) ??
       null;
-    logger.info(`${this.logTag} restarting agent`, {
-      data: { resume: sessionId ? "exact-id" : "continue", ...(sessionId ? { sessionId } : {}) },
+    log.info("agent restarting", {
+      session: resolved,
+      data: {
+        agent: this.logTag,
+        resume: sessionId ? "exact-id" : "continue",
+        ...(sessionId ? { sessionId } : {}),
+      },
     });
     await this.bridge.sendExit(sessionName);
     await sleep(EXIT_GRACE_MS);

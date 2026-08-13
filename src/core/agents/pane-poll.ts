@@ -1,7 +1,9 @@
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import type { OutputProcessor } from "../session/output.js";
 import type { TmuxBridge } from "../session/tmux.js";
+
+const log = createLogger("agents.pane-poll");
 
 /** What a per-agent readiness classifier wants the poll loop to do for a pane:
  * `"ready"` (stop, done) | `"wait"` (keep polling) | `{ sendRawKey(s) }` (send
@@ -55,30 +57,54 @@ export async function pollUntilReady(opts: {
     opts;
   const maxIterations = Math.ceil(maxWaitReadyMs / pollIntervalMs);
   const sess = sessionName ?? "default";
-  logger.info(`${logTag} waitUntilReady start session=${sess} maxIterations=${maxIterations}`);
+  log.debug("agent readiness wait started", {
+    session: sess,
+    data: { agent: logTag, maxIterations, pollIntervalMs },
+  });
   let lastPane: string | null = null;
   let stable = 0;
+  let captureFailures = 0;
+  let lastCaptureError: unknown;
   for (let i = 0; i < maxIterations; i++) {
     let pane: string;
     try {
       pane = await bridge.capturePane(sessionName);
     } catch (err) {
-      logger.error(
-        `${logTag} waitUntilReady capturePane failed iter=${i}: ${err instanceof Error ? err.message : err}`,
-      );
+      captureFailures += 1;
+      lastCaptureError = err;
+      const context = {
+        session: sess,
+        err,
+        data: { agent: logTag, iteration: i, failures: captureFailures },
+      };
+      if (captureFailures === 1)
+        log.warn("agent pane capture failed during readiness wait", context);
+      else log.debug("agent pane capture still failing during readiness wait", context);
       await sleep(pollIntervalMs);
       continue;
     }
+    if (captureFailures > 0) {
+      log.info("agent pane capture recovered", {
+        session: sess,
+        data: { agent: logTag, failures: captureFailures, iteration: i },
+      });
+      captureFailures = 0;
+      lastCaptureError = undefined;
+    }
     const verdict = classify(pane);
     if (verdict === "ready") {
-      logger.info(`${logTag} waitUntilReady session=${sess} ready (marker) at iter=${i}`);
+      log.info("agent ready", {
+        session: sess,
+        data: { agent: logTag, evidence: "marker", iteration: i },
+      });
       return;
     }
     if (typeof verdict === "object") {
       const keys = "sendRawKeys" in verdict ? verdict.sendRawKeys : [verdict.sendRawKey];
-      logger.info(
-        `${logTag} waitUntilReady session=${sess} sending ${keys.join(",")} at iter=${i}`,
-      );
+      log.info("agent readiness gate action", {
+        session: sess,
+        data: { agent: logTag, keys, iteration: i },
+      });
       for (const key of keys) await bridge.sendRawKey(key, sessionName);
       stable = 0; // a gate that auto-clears must never count toward "stable = ready"
       lastPane = pane;
@@ -96,9 +122,10 @@ export async function pollUntilReady(opts: {
     if (sr && lastPane !== null && pane === lastPane) {
       stable++;
       if (stable >= sr.ticks && nonBlankLineCount(pane) >= sr.minLines && (await sr.isAlive())) {
-        logger.info(
-          `${logTag} waitUntilReady session=${sess} ready (stable x${stable}, process alive, marker absent) at iter=${i}`,
-        );
+        log.info("agent ready", {
+          session: sess,
+          data: { agent: logTag, evidence: "stable-pane", stable, iteration: i },
+        });
         return;
       }
     } else {
@@ -107,9 +134,11 @@ export async function pollUntilReady(opts: {
     lastPane = pane;
     await sleep(pollIntervalMs);
   }
-  logger.error(
-    `${logTag} waitUntilReady session=${sess} TIMEOUT after ${maxIterations} iterations`,
-  );
+  log.error("agent readiness wait timed out", {
+    session: sess,
+    ...(lastCaptureError === undefined ? {} : { err: lastCaptureError }),
+    data: { agent: logTag, maxIterations, captureFailures },
+  });
   throw new Error(notReadyError);
 }
 
@@ -145,26 +174,49 @@ export async function pollUntilIdle(opts: {
   let lastContent = "";
   const maxIterations = Math.ceil(maxWaitDoneMs / pollIntervalMs);
   const sess = sessionName ?? "default";
-  logger.info(
-    `${logTag} waitUntilDone start session=${sess} maxIterations=${maxIterations} pollMs=${pollIntervalMs}`,
-  );
+  log.debug("agent completion wait started", {
+    session: sess,
+    data: { agent: logTag, maxIterations, pollIntervalMs },
+  });
+  let captureFailures = 0;
+  let totalCaptureFailures = 0;
+  let lastCaptureError: unknown;
 
   for (let i = 0; i < maxIterations; i++) {
     let pane: string;
     try {
       pane = await bridge.capturePane(sessionName);
     } catch (err) {
-      logger.error(
-        `${logTag} waitUntilDone capturePane failed iter=${i}: ${err instanceof Error ? err.message : err}`,
-      );
+      captureFailures += 1;
+      totalCaptureFailures += 1;
+      lastCaptureError = err;
+      const context = {
+        session: sess,
+        err,
+        data: { agent: logTag, iteration: i, failures: captureFailures },
+      };
+      if (captureFailures === 1)
+        log.warn("agent pane capture failed during completion wait", context);
+      else log.debug("agent pane capture still failing during completion wait", context);
       await sleep(pollIntervalMs);
       continue;
+    }
+    if (captureFailures > 0) {
+      log.info("agent pane capture recovered", {
+        session: sess,
+        data: { agent: logTag, failures: captureFailures, iteration: i },
+      });
+      captureFailures = 0;
+      lastCaptureError = undefined;
     }
 
     const action = activePaneAction?.(pane);
     if (action && action !== "wait") {
       const keys = "sendRawKeys" in action ? action.sendRawKeys : [action.sendRawKey];
-      logger.info(`${logTag} waitUntilDone session=${sess} sending ${keys.join(",")} at iter=${i}`);
+      log.info("agent completion gate action", {
+        session: sess,
+        data: { agent: logTag, keys, iteration: i },
+      });
       for (const key of keys) await bridge.sendRawKey(key, sessionName);
       identicalCount = 0;
       lastContent = pane;
@@ -174,7 +226,10 @@ export async function pollUntilIdle(opts: {
 
     if (isActiveTurn?.(pane)) {
       if (i % 30 === 0 || identicalCount > 0) {
-        logger.info(`${logTag} waitUntilDone session=${sess} iter=${i} active turn marker`);
+        log.debug("agent turn remains active", {
+          session: sess,
+          data: { agent: logTag, iteration: i },
+        });
       }
       identicalCount = 0;
       lastContent = pane;
@@ -188,22 +243,30 @@ export async function pollUntilIdle(opts: {
       if (i % 30 === 0 || identicalCount >= idlePollTicks) {
         const lines = pane.split("\n").filter((l) => l.trim().length > 0);
         const lastLine = lines[lines.length - 1] ?? "";
-        logger.info(
-          `${logTag} waitUntilDone session=${sess} iter=${i} identical=${identicalCount} last="${lastLine.trim().slice(0, 80)}"`,
-        );
+        log.debug("agent pane remains stable", {
+          session: sess,
+          data: {
+            agent: logTag,
+            iteration: i,
+            identicalCount,
+            lastLine: lastLine.trim().slice(0, 80),
+          },
+        });
       }
       if (identicalCount >= idlePollTicks) {
         const processed = output.process(pane);
-        logger.info(
-          `${logTag} waitUntilDone session=${sess} idle detected after ${i} iterations, output_len=${processed.length}`,
-        );
+        log.info("agent completion detected", {
+          session: sess,
+          data: { agent: logTag, iteration: i, outputLength: processed.length },
+        });
         return { done: true, output: processed };
       }
     } else {
       if (identicalCount > 0) {
-        logger.info(
-          `${logTag} waitUntilDone session=${sess} iter=${i} content changed, reset idleCount`,
-        );
+        log.debug("agent pane changed", {
+          session: sess,
+          data: { agent: logTag, iteration: i, previousIdenticalCount: identicalCount },
+        });
       }
       identicalCount = 0;
     }
@@ -214,8 +277,15 @@ export async function pollUntilIdle(opts: {
 
   // Round exhausted — hand back what we have; the caller owns the messaging.
   const processed = output.process(lastContent);
-  logger.warn(
-    `${logTag} waitUntilDone session=${sess} TIMEOUT after ${maxIterations} iterations, output_len=${processed.length}`,
-  );
+  log.warn("agent completion wait timed out", {
+    session: sess,
+    ...(lastCaptureError === undefined ? {} : { err: lastCaptureError }),
+    data: {
+      agent: logTag,
+      maxIterations,
+      outputLength: processed.length,
+      totalCaptureFailures,
+    },
+  });
   return { done: false, output: processed };
 }

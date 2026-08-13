@@ -160,6 +160,10 @@ family registrars.
 ## Notes
 
 - `tcb autopilot <project>` means supervisor-backed delegation only.
+- `tcb logs` returns at most the newest 200 matches unless `-n` is supplied.
+  `--summary` provides bounded volume, integrity, component, and repeated
+  WARN/ERROR triage; combine it with `--since`, `--component`, or `--run-id`.
+  `--days` accepts 1 through 30.
 - `tcb config list` and `tcb config get` redact secrets by default. Generic
   `config set` accepts only allowlisted non-secret keys and validates each
   value's domain before persistence; opaque strings such as paths and commands

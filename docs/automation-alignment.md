@@ -517,6 +517,7 @@ feature, review this matrix in the same slice:
 | TUI action | TUI keymap/help text, control client protocol, user docs, tests. If intentionally unsupported, document the reason. |
 | Localized user-facing copy | `Messages` catalog, `SetupMessages` catalog, `UI_LANGS`, Telegram/Lark cards/keyboards/messages, CLI/TUI/help copy when user-facing, setup/onboarding copy, iconography terms, and i18n tests. |
 | Notification workflow | Notification event catalog when available, `NotificationGateway`, Telegram sender, Lark sender, project-bound Lark group routing, attachment behavior, delivery evidence, Daily Task Audit visibility, tests. |
+| Runtime logging and diagnosis | Shared structured logger, ingress trace context, process/session/run identifiers, secret redaction, bounded retention, retry-loop coalescing, `tcb logs` filters/summary, chat log projection, maintenance docs, logger/query tests. |
 | Loop task family | Config schema, task-family governance registry, scheduler, WorkOrder builder, supervisor prompt, execution worktree policy, conflict model, system gate, report/ledger, docs, tests. |
 | Workspace task | Project-level behavior plus workspace repository path policy, per-repo PR/branch policy, cross-repo verification, docs/tests proving the task is not architecture-only. |
 | Repository-wide PR review | `prReview.repositories` config, GitHub account binding, durable PR review queue, per-PR lease/retry/recovery, Draft/conflict takeover and ready/merge/close decision policy, repair policy, mergeability/CI checks, switch-back, docs/tests. |
@@ -614,7 +615,11 @@ complete:
     durable per-channel suppression does not hide failed delivery or an
     actionable state change. Bot-owned copy must remain concise; diagnostic
     identifiers belong in structured evidence rather than routine chat text.
-14. Mark historical documents as historical when they no longer describe current
+14. For runtime logging, prove sensitive structured values are redacted, record
+    size and archive retention are bounded, polling noise stays at `DEBUG`, and
+    repeated transient failures preserve first-failure plus terminal/recovery
+    evidence without one WARN/ERROR per retry.
+15. Mark historical documents as historical when they no longer describe current
     behavior.
 
 If an item cannot be aligned in the same slice, document the gap with an owner,

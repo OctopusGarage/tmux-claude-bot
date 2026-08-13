@@ -192,9 +192,9 @@ export class MessageQueue {
    * (e.g. a blocked debounce scope) must release them on "duplicate". */
   enqueue(msg: QueuedMessage): "queued" | "duplicate" | false {
     if (msg.action === "text" && this.hasDuplicateText(msg.chatId, msg.text)) {
-      log.info(
-        `dedup: skipping identical text from chatId=${msg.chatId} session=${msg.sessionName ?? "global"}`,
-      );
+      log.info("duplicate message skipped", {
+        data: { chatId: msg.chatId, session: msg.sessionName ?? "global", action: msg.action },
+      });
       return "duplicate";
     }
 
@@ -205,18 +205,26 @@ export class MessageQueue {
         this.sessionQueues.set(msg.sessionName, queue);
       }
       if (!queue.enqueue(msg)) {
-        log.warn(`enqueue rejected: session=${msg.sessionName} queue full`);
+        log.warn("message enqueue rejected: session queue full", {
+          data: { session: msg.sessionName, action: msg.action, messageId: msg.id },
+        });
         return false;
       }
-      log.info(`enqueued session=${msg.sessionName} action=${msg.action} msgId=${msg.id}`);
+      log.info("message enqueued", {
+        data: { session: msg.sessionName, action: msg.action, messageId: msg.id },
+      });
       this.persist();
       void this.processSession(msg.sessionName);
     } else {
       if (!this.globalQueue.enqueue(msg)) {
-        log.warn(`enqueue rejected: global queue full`);
+        log.warn("message enqueue rejected: global queue full", {
+          data: { action: msg.action, messageId: msg.id },
+        });
         return false;
       }
-      log.info(`enqueued global action=${msg.action} msgId=${msg.id}`);
+      log.info("global message enqueued", {
+        data: { action: msg.action, messageId: msg.id },
+      });
       this.persist();
       void this.processGlobal();
     }
@@ -402,10 +410,17 @@ export class MessageQueue {
         },
         () => this.handler?.(msg) ?? Promise.resolve(),
       );
-      log.info(`handler completed session=${label} msgId=${msg.id}`);
+      log.info("queue handler completed", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        data: { queue: label, messageId: msg.id, action: msg.action },
+      });
     } catch (err) {
       const e = normalizeError(err);
-      log.error(`handler threw session=${label} msgId=${msg.id}: ${e.message}`);
+      log.error("queue handler threw", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        err: e,
+        data: { queue: label, messageId: msg.id, action: msg.action },
+      });
       msg.reject(e); // one-shot: a no-op if the handler already settled
     } finally {
       if (sessionName !== undefined) this.observer.finished(sessionName, msg);
@@ -420,14 +435,18 @@ export class MessageQueue {
    */
   private async processSession(sessionName: string, gated = true): Promise<void> {
     if (this.processingSessions.has(sessionName)) {
-      log.info(`processSession already processing session=${sessionName}`);
+      log.debug("session queue already processing", { session: sessionName });
       return;
     }
 
     if (this.processingSessions.size >= this.maxConcurrentSessions) {
-      log.info(
-        `concurrent limit reached (${this.processingSessions.size}/${this.maxConcurrentSessions}), deferring session=${sessionName}`,
-      );
+      log.debug("session queue deferred by concurrency limit", {
+        session: sessionName,
+        data: {
+          active: this.processingSessions.size,
+          limit: this.maxConcurrentSessions,
+        },
+      });
       // Two deferred timers for the same session can both fire when a slot frees,
       // but this is NOT a double-processing bug: the guard above and the
       // `processingSessions.add` below are synchronously contiguous (no `await`
@@ -477,7 +496,9 @@ export class MessageQueue {
       return;
     }
     this.currentSessionMessage.set(sessionName, msg);
-    log.info(`processing session=${sessionName} action=${msg.action} msgId=${msg.id}`);
+    log.info("message processing started", {
+      data: { session: sessionName, action: msg.action, messageId: msg.id },
+    });
     if (msg.started?.() === false) {
       this.processingSessions.delete(sessionName);
       this.currentSessionMessage.delete(sessionName);
@@ -488,7 +509,7 @@ export class MessageQueue {
     this.writePersistedNow();
 
     if (!this.handler) {
-      log.error(`handler not set session=${sessionName}`);
+      log.error("queue handler is not configured", { data: { session: sessionName } });
       this.processingSessions.delete(sessionName);
       this.currentSessionMessage.delete(sessionName);
       msg.reject(new Error("Queue handler not set"));
@@ -511,22 +532,24 @@ export class MessageQueue {
 
   private async processGlobal(): Promise<void> {
     if (this.processingGlobal) {
-      log.info("processGlobal already running");
+      log.debug("global queue processor already running");
       return;
     }
     this.processingGlobal = true;
-    log.info("processGlobal started");
+    log.debug("global queue processor started");
 
     try {
       while (!this.globalQueue.isEmpty()) {
         const msg = this.globalQueue.dequeue();
         if (!msg) break;
         this.currentGlobalMessage = msg;
-        log.info(`processing global action=${msg.action} msgId=${msg.id}`);
+        log.info("global message processing started", {
+          data: { action: msg.action, messageId: msg.id },
+        });
         this.writePersistedNow();
 
         if (!this.handler) {
-          log.error("handler not set for global message");
+          log.error("global queue handler is not configured");
           this.currentGlobalMessage = undefined;
           msg.reject(new Error("Queue handler not set"));
           continue;
@@ -538,7 +561,7 @@ export class MessageQueue {
     } finally {
       this.processingGlobal = false;
       this.persist();
-      log.info("processGlobal finished");
+      log.debug("global queue processor finished");
     }
   }
 
