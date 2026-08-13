@@ -1,6 +1,10 @@
 import { resolve as resolvePath } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildNotifyRequest, confirmCliDangerousControl, matchRef } from "../../src/cli/control.js";
+import {
+  formatRuntimeGuardianFindings,
+  readRuntimeGuardianFindingsForCli,
+} from "../../src/cli/runtime-guardian-commands.js";
 
 type Item = { key: string; label: string };
 const items: Item[] = [
@@ -167,5 +171,83 @@ describe("buildNotifyRequest", () => {
     await expect(buildNotifyRequest([], {})).rejects.toThrow(/--title/);
     await expect(buildNotifyRequest(["x"], { channel: "email" })).rejects.toThrow(/channel/);
     await expect(buildNotifyRequest(["x"], { level: "fatal" })).rejects.toThrow(/level/);
+  });
+});
+
+describe("formatRuntimeGuardianFindings", () => {
+  it("renders a bounded read-only findings drilldown without repair actions", () => {
+    const text = formatRuntimeGuardianFindings({
+      observedAt: 2_000,
+      lookbackHours: 24,
+      limit: 20,
+      total: 1,
+      truncated: false,
+      findings: [
+        {
+          kind: "terminal-invalid-output",
+          severity: "high",
+          runId: "run-1",
+          projectId: "alpha",
+          projectPath: "/tmp/alpha",
+          evidence: ["final summary was invalid"],
+          runDir: "/tmp/run-1",
+        },
+      ],
+    });
+
+    expect(text).toContain("Runtime Guardian findings: 1");
+    expect(text).toContain("alpha · terminal-invalid-output · high");
+    expect(text).toContain("runId: run-1");
+    expect(text).toContain("evidence: final summary was invalid");
+    expect(text).not.toMatch(/repair|fix|dispatch|button/i);
+  });
+
+  it("renders the empty state for a project-specific drilldown", () => {
+    expect(
+      formatRuntimeGuardianFindings({
+        observedAt: 2_000,
+        lookbackHours: 24,
+        limit: 20,
+        total: 0,
+        truncated: false,
+        findings: [],
+      }),
+    ).toBe("Runtime Guardian findings: none in the last 24h");
+  });
+});
+
+describe("readRuntimeGuardianFindingsForCli", () => {
+  it("parses CLI options and asks Control for a project-filtered bounded read", async () => {
+    const runtimeGuardianFindings = vi.fn(async () => ({
+      observedAt: 2_000,
+      lookbackHours: 48,
+      limit: 20,
+      total: 0,
+      truncated: false,
+      findings: [],
+    }));
+
+    await expect(
+      readRuntimeGuardianFindingsForCli(
+        { runtimeGuardianFindings },
+        { project: "alpha", limit: "20", lookbackHours: "48" },
+      ),
+    ).resolves.toMatchObject({ lookbackHours: 48, limit: 20 });
+
+    expect(runtimeGuardianFindings).toHaveBeenCalledWith({
+      projectId: "alpha",
+      limit: 20,
+      lookbackHours: 48,
+    });
+  });
+
+  it("rejects invalid numeric CLI options before reading Control", async () => {
+    const runtimeGuardianFindings = vi.fn();
+
+    await expect(
+      readRuntimeGuardianFindingsForCli({ runtimeGuardianFindings }, { limit: "0" }),
+    ).rejects.toThrow(/--limit/);
+
+    expect(runtimeGuardianFindings).not.toHaveBeenCalled();
   });
 });

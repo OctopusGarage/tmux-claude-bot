@@ -309,7 +309,7 @@ export class ControlClient extends EventEmitter {
     }>;
   }
   runtimeGuardianFindings(
-    opts: { now?: number; lookbackHours?: number; limit?: number } = {},
+    opts: { now?: number; lookbackHours?: number; limit?: number; projectId?: string } = {},
   ): Promise<{
     observedAt: number;
     lookbackHours: number;

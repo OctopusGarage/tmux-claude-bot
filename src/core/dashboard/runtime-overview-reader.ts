@@ -582,7 +582,7 @@ export async function readRuntimeOverview(input: {
         severity: finding.severity === "high" ? "error" : "warning",
         observedAt: finding.observedAt,
         summary: `${finding.projectId}: ${finding.kind}`,
-        nextAction: "tcb logs --grep runtime-guardian --since 24h",
+        nextAction: `tcb runtime-guardian findings --project ${finding.projectId} --limit 20`,
         projectId: finding.projectId,
         presentation: {
           kind: "runtime-finding",
