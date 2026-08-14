@@ -59,7 +59,11 @@ export function classifyHistoricalFailure(
     .filter((value): value is string => value !== undefined)
     .join(" ")
     .toLowerCase();
-  if (/(invalid[- ]summary|missing[- ]final[- ]summary|invalid[- ]output)/.test(evidence)) {
+  if (
+    /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery)/.test(
+      evidence,
+    )
+  ) {
     return {
       classification: "retryable",
       reason: "supervisor completion evidence is invalid or incomplete and can be retried",

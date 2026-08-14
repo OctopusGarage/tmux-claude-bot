@@ -34,6 +34,15 @@ describe("project recovery", () => {
         failureKind: "invalid-final-summary",
       }),
     ).toMatchObject({ classification: "retryable" });
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "blocked",
+        failureKind: "invalid-final-summary",
+        summary:
+          "Authoritative supervisor final summary reports incomplete recovery (status=blocked).",
+      }),
+    ).toMatchObject({ classification: "retryable" });
   });
 
   it("classifies CI and merge decisions without dispatching them", () => {

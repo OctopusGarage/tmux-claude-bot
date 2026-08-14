@@ -431,11 +431,7 @@ async function runConfiguredProjectRecovery(input: {
     .listAll()
     .filter(
       (record): record is ScheduledTaskRecord & { repairStatus: "pending" | "blocked" } =>
-        (record.repairStatus === "pending" ||
-          (record.repairStatus === "blocked" &&
-            record.summary?.includes(
-              "Recovery classification: needs-owner-decision; failure evidence is not specific enough",
-            ) === true)) &&
+        (record.repairStatus === "pending" || shouldReconsiderBlockedRecovery(record)) &&
         (record.source === "loop-engineering" || record.source === "autopilot-delegate") &&
         ["failed", "missing", "running-timeout"].includes(record.status),
     );
@@ -475,6 +471,16 @@ function verifyRecoveryProjectPath(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function shouldReconsiderBlockedRecovery(record: ScheduledTaskRecord): boolean {
+  if (record.repairStatus !== "blocked") return false;
+  const summary = record.summary?.toLowerCase() ?? "";
+  if (summary.includes("recovery classification: recovery attempt limit reached")) return false;
+  if (summary.includes("recovery classification: dead-letter")) return false;
+  if (summary.includes("recovery classification: needs-owner-decision")) return false;
+  if (summary.includes("configured project is unavailable or ambiguous")) return false;
+  return true;
 }
 
 function appendProjectRecoveryDispatch(
