@@ -1526,6 +1526,58 @@ projects:
     expect(coordinator.list()[0]).toMatchObject({ status: "not-reproducible" });
   });
 
+  it("marks stale invalid-output with parser-invalid raw blocked final summary as blocked", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "knowledge-engine",
+      "run-raw-blocked-queue",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-raw-blocked-queue",
+        "/repo/knowledge-engine",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "knowledge-engine",
+      projectName: "Knowledge Engine",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "knowledge-engine",
+        actionsTaken: [{ delegationBrief: { objective: "Recover a historical task." } }],
+        delegatedTasks: [],
+        finalVerification: "not-run",
+        commits: [],
+        followUps: ["retry as a bounded target-project WorkOrder"],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "invalid-summary",
+      taskId: "run-raw-blocked-queue",
+      now: 1_000,
+    });
+    coordinator.releaseForRetry(queued.id, 1_001);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "blocked" });
+  });
+
   it("marks stale invalid-output with derived supervisor report evidence as not reproducible", () => {
     const runDir = join(
       process.env.TCB_STATE_DIR ?? "",

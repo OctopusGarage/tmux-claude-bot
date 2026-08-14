@@ -85,7 +85,7 @@ export function reconcileRuntimeGuardianQueue(input: {
     if (evidence === false || evidence === undefined) continue;
     input.coordinator.markTerminal(
       record.id,
-      evidence === "fixed" ? "fixed" : "not-reproducible",
+      evidence === "fixed" ? "fixed" : evidence === "blocked" ? "blocked" : "not-reproducible",
       input.now,
     );
     reconciled++;
@@ -226,7 +226,7 @@ function isRuntimeGuardianFindingKind(value: string): value is RuntimeGuardianFi
 function readPassingTerminalArtifacts(
   runDir: string,
   workOrder?: LoopWorkOrder,
-): "fixed" | "not-reproducible" | false {
+): "fixed" | "not-reproducible" | "blocked" | false {
   const candidate =
     workOrder ?? (readJsonRecord(join(runDir, "work-order.json")) as LoopWorkOrder | null);
   if (candidate === null) return false;
@@ -235,6 +235,7 @@ function readPassingTerminalArtifacts(
   const summary = readJsonRecord(join(runDir, "supervisor-final-summary.json"));
   if (summary === null)
     return hasDerivedPassingTerminalArtifacts(runDir) ? "not-reproducible" : false;
+  if (summary.status === "blocked") return "blocked";
   const success =
     summary.status === "completed" &&
     summary.finalVerification === "passed" &&
