@@ -110,6 +110,20 @@ const TELEGRAM_MESSAGE_LIMIT = 4096;
 const TELEGRAM_SAFE_MESSAGE_LIMIT = 3900;
 const TELEGRAM_TRUNCATION_NOTICE =
   "\n\n[truncated for Telegram; see the linked report/logs for full details]";
+const NOTIFICATION_MESSAGE_LIMIT = 1500;
+const NOTIFICATION_TRUNCATION_NOTICE =
+  "\n\n[truncated; see the linked report/logs for full details]";
+const SUPERVISOR_AUDIT_MARKERS = [
+  "delegationBrief:",
+  "currentAssessment=",
+  "taskChecklist=",
+  "acceptanceCriteria=",
+  "stopConditions=",
+  "nonGoals=",
+  "riskReview=",
+  "verificationPlan=",
+  "Opened dedicated worker",
+];
 
 const LEVEL_PREFIX: Record<NotificationLevel, string> = {
   info: "ℹ️",
@@ -282,12 +296,32 @@ export function formatNotification(req: NotificationRequest): string {
   const level = req.level ?? "info";
   const title = req.title.trim();
   const head = `${LEVEL_PREFIX[level]} ${title}`;
-  const body = req.body?.trimEnd();
-  return tildeifyHome(body ? `${head}\n${body}` : head);
+  const body = sanitizeNotificationBody(req.body);
+  return truncateNotificationMessage(tildeifyHome(body ? `${head}\n${body}` : head));
 }
 
 function messageForChannel(channel: NotificationChannel, message: string): string {
   if (channel !== "telegram" || message.length <= TELEGRAM_MESSAGE_LIMIT) return message;
   const maxBody = Math.max(0, TELEGRAM_SAFE_MESSAGE_LIMIT - TELEGRAM_TRUNCATION_NOTICE.length);
   return `${message.slice(0, maxBody).trimEnd()}${TELEGRAM_TRUNCATION_NOTICE}`;
+}
+
+function sanitizeNotificationBody(body: string | undefined): string | null {
+  const trimmed = body?.trimEnd();
+  if (!trimmed) return null;
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => !isSupervisorAuditLine(line));
+  return lines.join("\n").trimEnd() || null;
+}
+
+function isSupervisorAuditLine(line: string): boolean {
+  return SUPERVISOR_AUDIT_MARKERS.some((marker) => line.includes(marker));
+}
+
+function truncateNotificationMessage(message: string): string {
+  if (message.length <= NOTIFICATION_MESSAGE_LIMIT) return message;
+  const maxBody = Math.max(0, NOTIFICATION_MESSAGE_LIMIT - NOTIFICATION_TRUNCATION_NOTICE.length);
+  return `${message.slice(0, maxBody).trimEnd()}${NOTIFICATION_TRUNCATION_NOTICE}`;
 }

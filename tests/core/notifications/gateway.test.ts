@@ -66,7 +66,7 @@ describe("NotificationGateway", () => {
     });
   });
 
-  it("truncates long Telegram notifications before sending", async () => {
+  it("truncates noisy notification bodies for every channel before sending", async () => {
     const gateway = new NotificationGateway();
     const telegram = vi.fn(async (_message: string) => {});
     const lark = vi.fn(async (_message: string) => {});
@@ -82,9 +82,36 @@ describe("NotificationGateway", () => {
     expect(result.status).toBe("sent");
     const telegramMessage = telegram.mock.calls[0]?.[0] ?? "";
     const larkMessage = lark.mock.calls[0]?.[0] ?? "";
-    expect(telegramMessage).toContain("truncated for Telegram");
-    expect(telegramMessage.length).toBeLessThanOrEqual(4096);
-    expect(larkMessage.length).toBeGreaterThan(5000);
+    expect(telegramMessage).toContain("truncated");
+    expect(larkMessage).toContain("truncated");
+    expect(telegramMessage.length).toBeLessThanOrEqual(1600);
+    expect(larkMessage.length).toBeLessThanOrEqual(1600);
+  });
+
+  it("removes supervisor audit details from notification text at the gateway boundary", async () => {
+    const gateway = new NotificationGateway();
+    const lark = vi.fn(async (_message: string) => {});
+    gateway.register("lark", lark);
+
+    await gateway.notify({
+      channel: "lark",
+      title: "Delegated task completed",
+      body: [
+        "Project: english-pilot",
+        "Summary: Opened dedicated worker tmux_proj_loop-worker-project-run at ~/.tmux-claude-bot/state/loop-worktrees/project/run and compacted it before delegation.; delegationBrief: objective=implement daemon delivery; currentAssessment=real bounded gap; taskChecklist=repair npm env, read docs, TDD red tests; acceptanceCriteria=daemon unavailable/actionable blocker; stopConditions=unclear scope; nonGoals=no broad rewrite; riskReview=secret leakage; verificationPlan=targeted tests, typecheck, full tests, lint, coverage, build, CI/mergeability.",
+        "Report: ~/.tmux-claude-bot/state/loop-runs/project/run/supervisor.md",
+      ].join("\n"),
+    });
+
+    const message = lark.mock.calls[0]?.[0] ?? "";
+    expect(message).toContain("Project: english-pilot");
+    expect(message).toContain(
+      "Report: ~/.tmux-claude-bot/state/loop-runs/project/run/supervisor.md",
+    );
+    expect(message).not.toContain("Opened dedicated worker");
+    expect(message).not.toContain("delegationBrief:");
+    expect(message).not.toContain("taskChecklist=");
+    expect(message).not.toContain("currentAssessment=");
   });
 
   it("shortens home paths in notification text before sending", async () => {

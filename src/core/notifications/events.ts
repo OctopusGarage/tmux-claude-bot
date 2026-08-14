@@ -137,7 +137,7 @@ function longTaskFinishedRequest(
   };
 }
 
-const HISTORY_SNIPPET_LIMIT = 1800;
+const HISTORY_SNIPPET_LIMIT = 700;
 
 function formatHistorySnippet(text: string | null): string | null {
   const trimmed = text?.trim();

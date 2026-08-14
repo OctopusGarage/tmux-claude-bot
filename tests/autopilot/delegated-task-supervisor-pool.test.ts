@@ -1077,6 +1077,104 @@ describe("active delegated task supervisor pool", () => {
     );
   });
 
+  it("sends a concise active delegation completion notification instead of the audit trail", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));
+    setPathForSession("tmux_proj_project", projectDir);
+    startLoopSupervisor.mockResolvedValueOnce(true);
+    const notify = vi.fn(async () => ({ status: "sent", deliveries: [] }));
+    const d = deps(1);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.notifications = { notify } as unknown as HandlerDeps["notifications"];
+    d.queue = {
+      cancelQueued: vi.fn(),
+      enqueue: vi.fn((message: any) => {
+        if (message.action !== "text") {
+          message.resolve("compacted");
+          return "queued";
+        }
+        const marker = message.text.match(/\[LOOP_SUPERVISOR_DONE:([^\]]+)\]/)?.[1];
+        if (marker === undefined) throw new Error("missing final marker in prompt");
+        message.started?.();
+        queueMicrotask(() =>
+          message.resolve(
+            [
+              `[LOOP_SUPERVISOR_DONE:${marker}]`,
+              JSON.stringify({
+                status: "completed",
+                projectId: "project",
+                actionsTaken: [
+                  "Opened dedicated worker tmux_proj_loop-worker-project-run-1 at ~/.tmux-claude-bot/state/loop-worktrees/project/run-1 and compacted it before delegation.",
+                  "delegationBrief: objective=implement daemon delivery; currentAssessment=real bounded gap; taskChecklist=repair npm env, read docs, TDD red tests, implement narrow control method/CLI path; acceptanceCriteria=daemon unavailable/actionable blocker, fake success; stopConditions=unclear scope; nonGoals=no broad rewrite; riskReview=secret leakage; verificationPlan=targeted tests, typecheck, full tests, lint, coverage, build, CI/mergeability.",
+                  "Pushed branch and opened PR #22 https://github.com/OctopusGarage/project/pull/22 against dev with a human-authored body.",
+                  "All CI checks completed successfully; PR #22 was squash-merged per policy into dev as d61a3dd0a43e84938e2f9c931327af176c61a19b.",
+                ],
+                delegatedTasks: [{ projectId: "project", status: "completed" }],
+                finalVerification: "passed",
+                reviewGate: {
+                  preMutationReview: ["bounded requirement confirmed"],
+                  postMutationReview: ["diff and CI reviewed"],
+                  aiReview: "passed",
+                  deterministicGates: [
+                    { name: "typecheck", result: "passed" },
+                    { name: "CI", result: "passed" },
+                  ],
+                  decision: "pass",
+                  notes: [],
+                },
+                planReview: {
+                  checklistCompleted: true,
+                  targetScoreMet: false,
+                  stopConditionReached: false,
+                  overOptimizationAvoided: true,
+                  verificationCompleted: true,
+                  remainingRisks: ["Real provider behavior remains runtime-dependent."],
+                },
+                commits: [
+                  "310b5147ef69fe9ca7fdb508add0dcda2cb1507d feat: deliver reviews through daemon",
+                  "d61a3dd0a43e84938e2f9c931327af176c61a19b squash merge PR #22",
+                ],
+                followUps: [
+                  "Assessment scored 98/100 due to generic future architecture opportunities.",
+                ],
+              }),
+            ].join("\n"),
+          ),
+        );
+        return "queued";
+      }),
+    } as unknown as HandlerDeps["queue"];
+
+    const result = await startActiveDelegatedTask(d, {
+      session: "tmux_proj_project",
+      requirement: "finish the confirmed task",
+    });
+
+    if (result.status !== "queued" || result.reportDir === null) throw new Error("expected queued");
+    await waitForFile(join(result.reportDir, "system-gate.json"), 3000);
+
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "info",
+        title: "Delegated task completed",
+        body: expect.stringContaining("Project:"),
+      }),
+    );
+    const notificationCalls = notify.mock.calls as unknown as Array<[{ body?: unknown }]>;
+    const notified = notificationCalls.at(-1)?.[0];
+    const body = String(notified?.body ?? "");
+    expect(body).toContain("Result: completed, verified, merged");
+    expect(body).toContain("PR: #22 merged");
+    expect(body).toContain("Commit: d61a3dd0");
+    expect(body).toContain("Verification: passed");
+    expect(body).toContain("Follow-up: Assessment scored 98/100");
+    expect(body).toContain("Report:");
+    expect(body).not.toContain("delegationBrief:");
+    expect(body).not.toContain("taskChecklist=");
+    expect(body).not.toContain("Opened dedicated worker");
+    expect(body.length).toBeLessThan(700);
+  });
+
   it("keeps recoverable failed supervisor work orders reserved during allocation", async () => {
     const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));

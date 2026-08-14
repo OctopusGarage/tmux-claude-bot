@@ -52,6 +52,7 @@ import {
 } from "../loop/supervisor-state.js";
 import {
   buildActiveDelegatedTaskWorkOrder,
+  type LoopSupervisorFinalSummary,
   type LoopWorkOrder,
   type LoopWorktreeIsolationMode,
 } from "../loop/work-order.js";
@@ -1029,7 +1030,7 @@ async function finishActiveDelegatedTask(
       ? {
           level: "info" as const,
           title: "Delegated task completed",
-          summary: result.summary.actionsTaken.join("; ") || "completed",
+          summary: formatCompletedActiveDelegateSummary(result.summary),
         }
       : formatActiveDelegateCompletion({
           resultStatus: result.status,
@@ -1044,10 +1045,95 @@ async function finishActiveDelegatedTask(
     body: [
       `Project: ${workOrder.projectName}`,
       `Run: ${workOrder.id}`,
+      ...formatCompletedActiveDelegateNotificationDetails(
+        result.status === "completed" ? result.summary : null,
+      ),
       `Report: ${completion.report.markdownPath}`,
-      `Summary: ${completionNotification.summary}`,
+      ...(result.status === "completed" ? [] : [`Summary: ${completionNotification.summary}`]),
     ].join("\n"),
   });
+}
+
+function formatCompletedActiveDelegateSummary(summary: LoopSupervisorFinalSummary): string {
+  return formatCompletedActiveDelegateResult(summary);
+}
+
+function formatCompletedActiveDelegateNotificationDetails(
+  summary: LoopSupervisorFinalSummary | null,
+): string[] {
+  if (summary === null) return [];
+  const lines = [
+    `Result: ${formatCompletedActiveDelegateResult(summary)}`,
+    ...formatPullRequestLine(summary),
+    ...formatCommitLine(summary),
+    `Verification: ${summary.finalVerification}`,
+    ...formatFollowUpLine(summary),
+  ];
+  return lines;
+}
+
+function formatCompletedActiveDelegateResult(summary: LoopSupervisorFinalSummary): string {
+  const result = ["completed"];
+  if (summary.finalVerification === "passed") result.push("verified");
+  const pr = activeDelegatePullRequestSummary(summary);
+  if (pr?.outcome === "merged" || hasSquashMergeCommit(summary)) result.push("merged");
+  return result.join(", ");
+}
+
+function formatPullRequestLine(summary: LoopSupervisorFinalSummary): string[] {
+  const pr = activeDelegatePullRequestSummary(summary);
+  if (pr !== null) {
+    return [`PR: #${pr.number} ${pr.outcome}`];
+  }
+  const actionPr = firstActionPullRequest(summary.actionsTaken);
+  return actionPr === null ? [] : [`PR: #${actionPr.number} ${actionPr.state}`];
+}
+
+function formatCommitLine(summary: LoopSupervisorFinalSummary): string[] {
+  const commit = summary.commits.at(-1) ?? summary.commits.at(0);
+  if (commit === undefined) return [];
+  const hash = commit.match(/\b[0-9a-f]{7,40}\b/i)?.[0];
+  return hash === undefined ? [] : [`Commit: ${hash.slice(0, 8)}`];
+}
+
+function formatFollowUpLine(summary: LoopSupervisorFinalSummary): string[] {
+  const followUp = summary.followUps.find((item) => item.trim().length > 0);
+  if (followUp === undefined) return [];
+  return [`Follow-up: ${truncateNotificationLine(followUp, 160)}`];
+}
+
+function activeDelegatePullRequestSummary(
+  summary: LoopSupervisorFinalSummary,
+): { number: number; outcome: string } | null {
+  const decision = summary.pullRequestDecisions?.find((item) => Number.isInteger(item.number));
+  if (decision !== undefined) return { number: decision.number, outcome: decision.outcome };
+  return null;
+}
+
+function firstActionPullRequest(actions: string[]): { number: number; state: string } | null {
+  const candidates: Array<{ number: number; state: string }> = [];
+  for (const action of actions) {
+    const match = action.match(/\bPR\s+#(?<number>\d+)\b/i);
+    if (match?.groups?.number === undefined) continue;
+    const lower = action.toLowerCase();
+    const state = lower.includes("merged")
+      ? "merged"
+      : lower.includes("opened")
+        ? "opened"
+        : "updated";
+    candidates.push({ number: Number(match.groups.number), state });
+  }
+  return candidates.find((candidate) => candidate.state === "merged") ?? candidates[0] ?? null;
+}
+
+function hasSquashMergeCommit(summary: LoopSupervisorFinalSummary): boolean {
+  return summary.commits.some((commit) => /\bsquash merge PR #\d+\b/i.test(commit));
+}
+
+function truncateNotificationLine(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 function activeDelegatedIntent(

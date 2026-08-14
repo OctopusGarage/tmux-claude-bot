@@ -128,6 +128,6 @@ describe("notification event contracts", () => {
     if (request === null) throw new Error("expected long-task result");
     const body = request.body ?? "";
     expect(body).toContain("[truncated]");
-    expect(body.length).toBeLessThan(2_000);
+    expect(body.length).toBeLessThan(900);
   });
 });
