@@ -2741,6 +2741,58 @@ projects:
     expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
   });
 
+  it("does not rediscover terminal invalid-output when the durable summary is explicitly blocked", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "fluent-frame",
+      "run-invalid-output-explicitly-blocked",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-invalid-output-explicitly-blocked", projectDir, summaryPath),
+      projectId: "fluent-frame",
+      projectName: "Fluent Frame",
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "fluent-frame",
+        actionsTaken: ["confirmed no bounded target-project bug was proven"],
+        delegatedTasks: [{ projectId: "fluent-frame", status: "blocked" }],
+        finalVerification: "failed",
+        reviewGate: {
+          preMutationReview: ["checked the original invalid-output evidence"],
+          postMutationReview: ["no source diff was produced"],
+          aiReview: "not-run",
+          deterministicGates: [
+            {
+              name: "worker compact/send execution",
+              result: "failed",
+              evidence: "the worker did not consume queued work",
+            },
+          ],
+          decision: "block",
+          notes: [],
+        },
+        commits: [],
+        followUps: ["retry after resolving the delivery blocker"],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
   it("builds a repair prompt that prevents target-repo edits and PR handling", () => {
     const prompt = buildRuntimeGuardianRepairPrompt({
       repoPath: "/repo/tmux-claude-bot",
