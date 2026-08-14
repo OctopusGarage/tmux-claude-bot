@@ -2135,6 +2135,82 @@ prReview:
     });
   });
 
+  it("accepts valid blocked supervisor summaries when system-gate checks find no failures", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "blocked" as const,
+      output: "supervisor reported a concrete blocker",
+      summary: {
+        status: "blocked" as const,
+        projectId: "hub",
+        actionsTaken: ["confirmed worker prompt delivery failed after recovery"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        reviewGate: {
+          preMutationReview: [
+            "Confirmed the supervisor final summary is parseable and reports status=blocked.",
+          ],
+          postMutationReview: [
+            "No source mutation was made because worker prompt delivery remained blocked.",
+          ],
+          aiReview: "not-run" as const,
+          deterministicGates: [
+            {
+              name: "worker-prompt-delivery",
+              result: "failed" as const,
+              evidence: "Dedicated worker remained idle and could not consume prompts.",
+            },
+          ],
+          decision: "block" as const,
+          notes: ["This is an authoritative blocked outcome, not invalid output."],
+          evidence: [
+            {
+              questionInvestigated: "Did the supervisor provide a valid terminal summary?",
+              conclusion: "The final summary parsed and reported the concrete blocker.",
+              evidence: ["supervisor-final-summary.json"],
+              uncertainty: "None for output parsing.",
+              recommendedNextStep: "Repair worker prompt delivery before retrying.",
+            },
+          ],
+        },
+        commits: [],
+        followUps: ["Repair worker prompt delivery before retrying."],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-blocked",
+        projectId: "hub",
+        task: { kind: "active-delegated-task" },
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [],
+        evidence: ["supervisor reviewGate decision=block"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "blocked",
+      accepted: true,
+      evalReport: {
+        outcome: {
+          status: "failed",
+          finalVerification: "failed",
+          reviewDecision: "block",
+          reason: "deterministic-gate-failed",
+        },
+      },
+      failures: [],
+      findings: [],
+    });
+  });
+
   it("classifies non-revisionable PR and GitHub system-gate failures as external blockers", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
     const result = {
