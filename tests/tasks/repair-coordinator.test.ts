@@ -455,6 +455,31 @@ describe("RepairCoordinator", () => {
     expect(coordinator.list()).toEqual([expect.objectContaining({ status: "blocked" })]);
   });
 
+  it("keeps recovery queues open when a linked recovery task is still settling", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const item = coordinator.enqueue({
+      projectId: "net-auto-switch-all-prs",
+      projectPath: "/repo/net-auto-switch",
+      source: "project-recovery",
+      taskFamily: "repository-pull-request-review",
+      fingerprint: "invalid-final-summary",
+      taskId: "autopilot:old-net-auto-switch",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(item.id, ["autopilot:running-net-auto-switch"], 1_001);
+
+    expect(
+      coordinator.reconcileFromLedger(
+        [
+          { taskId: "autopilot:old-net-auto-switch", repairStatus: "blocked" },
+          { taskId: "autopilot:running-net-auto-switch", status: "running" },
+        ],
+        2_000,
+      ),
+    ).toBe(0);
+    expect(coordinator.list()).toEqual([expect.objectContaining({ status: "pending" })]);
+  });
+
   it("supersedes duplicate active repairs for the same task in favor of project recovery", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const botRepair = coordinator.enqueue({

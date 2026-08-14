@@ -444,10 +444,12 @@ export class RepairCoordinator {
   }
 
   reconcileFromLedger(
-    records: readonly Pick<PendingLedgerRecord, "taskId" | "repairStatus">[],
+    records: readonly (Pick<PendingLedgerRecord, "taskId" | "repairStatus"> & {
+      status?: string;
+    })[],
     now: number,
   ): number {
-    const byTaskId = new Map(records.map((record) => [record.taskId, record.repairStatus]));
+    const byTaskId = new Map(records.map((record) => [record.taskId, record]));
     let reconciled = 0;
     for (const queueRecord of this.list()) {
       // A pending record can become obsolete while another linked recovery
@@ -456,8 +458,11 @@ export class RepairCoordinator {
       // again on a later audit.
       if (!new Set(["pending", "leased", "running", "retry-wait"]).has(queueRecord.status))
         continue;
-      const outcomes = queueRecord.linkedTaskIds
-        .map((taskId) => byTaskId.get(taskId))
+      const linkedRecords = queueRecord.linkedTaskIds.map((taskId) => byTaskId.get(taskId));
+      if (linkedRecords.some((record) => record !== undefined && record.repairStatus === undefined))
+        continue;
+      const outcomes = linkedRecords
+        .map((record) => record?.repairStatus)
         .filter((status): status is string => status !== undefined);
       const knownOutcomesAreTerminal = outcomes.every((status) =>
         new Set(["fixed", "not-needed", "blocked", "not-reproducible", "superseded"]).has(status),
