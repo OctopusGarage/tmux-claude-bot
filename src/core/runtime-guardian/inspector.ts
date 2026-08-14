@@ -223,6 +223,7 @@ function invalidOutput(
     return null;
   const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
   if (parsed.ok && parsed.summary.status === "blocked") return null;
+  if (!parsed.ok && hasRawBlockedSummary(finalSummaryPath)) return null;
   if (
     parsed.ok &&
     parsed.summary.status === "completed" &&
@@ -339,6 +340,10 @@ function hasRawSuccessfulSummary(finalSummaryPath: string): boolean {
     summary.finalVerification === "passed" &&
     reviewGate?.decision === "pass"
   );
+}
+function hasRawBlockedSummary(finalSummaryPath: string): boolean {
+  const summary = readJson(finalSummaryPath);
+  return summary?.status === "blocked";
 }
 function hasDerivedSuccessfulSummary(runDir: string): boolean {
   const report = readJson(join(runDir, "supervisor-summary.json"));

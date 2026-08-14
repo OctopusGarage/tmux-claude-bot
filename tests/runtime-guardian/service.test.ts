@@ -966,7 +966,14 @@ projects:
       JSON.stringify({
         status: "blocked",
         projectId: "knowledge-engine",
-        actionsTaken: ["confirmed target project remained blocked"],
+        actionsTaken: [
+          {
+            delegationBrief: {
+              objective: "Recover historical scheduled task completion evidence.",
+              currentAssessment: "The target project remained blocked.",
+            },
+          },
+        ],
         delegatedTasks: [],
         finalVerification: "not-run",
         reviewGate: {
