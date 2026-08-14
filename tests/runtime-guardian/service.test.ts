@@ -31,6 +31,7 @@ import {
   InMemoryRepairQueueStore,
   RepairCoordinator,
 } from "../../src/core/tasks/repair-coordinator.js";
+import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 import { loadConfig } from "../../src/shared/config.js";
 import type { AppConfig } from "../../src/shared/types.js";
 import { fakeDeps } from "../adapters/lark/_fakes.js";
@@ -848,6 +849,99 @@ projects:
     });
 
     expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover terminal system-gate failures after the daily ledger marks the run fixed", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "english-pilot", "run-fixed");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-fixed",
+        "/repo/english-pilot",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "english-pilot",
+      projectName: "English Pilot",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        repairDisposition: "target-or-external-blocker",
+        failures: [
+          "git status failed: spawnSync /usr/bin/git ENOENT",
+          "GitHub account Kingson4Wu permission check failed: spawnSync sh ENOENT",
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:english-pilot:bug-fix:1",
+      source: "loop-engineering",
+      name: "english-pilot bug-fix",
+      scheduledAt: 1,
+    });
+    ledger.fail("loop:english-pilot:bug-fix:1", {
+      endedAt: 2,
+      error: "supervisor-failed",
+      reportPath: join(runDir, "supervisor.md"),
+    });
+    ledger.markRepairStatus("loop:english-pilot:bug-fix:1", {
+      repairStatus: "fixed",
+      updatedAt: 3,
+      summary: "Closed from the authoritative supervisor final summary; recovery completed.",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover invalid-output artifacts after the daily ledger marks them superseded", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "fluent-frame",
+      "run-superseded",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-superseded", "/repo/fluent-frame"),
+      projectId: "fluent-frame",
+      projectName: "Fluent Frame",
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:fluent-frame:active-delegated-task:1",
+      source: "loop-engineering",
+      name: "fluent-frame active-delegated-task",
+      scheduledAt: 1,
+    });
+    ledger.fail("loop:fluent-frame:active-delegated-task:1", {
+      endedAt: 2,
+      error: "invalid-output",
+      reportPath: runDir,
+    });
+    ledger.markRepairStatus("loop:fluent-frame:active-delegated-task:1", {
+      repairStatus: "superseded",
+      updatedAt: 3,
+      summary: "Superseded by later successful task.",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
   });
 
   it("does not rediscover non-blocking read-only opportunity-discovery preflight eval failures after successful final summary evidence", () => {
