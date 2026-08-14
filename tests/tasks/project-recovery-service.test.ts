@@ -20,6 +20,72 @@ afterEach(() => {
 });
 
 describe("project recovery service", () => {
+  it("uses WorkOrder evidence to recover active-delegate records for repository targets", async () => {
+    const stateDir = join(tmpdir(), `project-recovery-work-order-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    const reportPath = join(stateDir, "loop-runs", "net-auto-switch", "run-1");
+    await mkdir(reportPath, { recursive: true });
+    await writeFile(
+      join(reportPath, "work-order.json"),
+      JSON.stringify({
+        id: "run-1",
+        projectId: "net-auto-switch",
+        task: {
+          kind: "active-delegated-task",
+          requirement:
+            "Historical scheduled task recovery for a configured project.\nProject: net-auto-switch-all-prs\nRepository: /repo/net-auto-switch\n",
+        },
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "run-2" }));
+    const updateRepairStatus = vi.fn();
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:run-1",
+          source: "autopilot-delegate",
+          name: "net-auto-switch active delegated task",
+          status: "failed",
+          error: "blocked",
+          failureKind: "invalid-final-summary",
+          summary:
+            "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous.",
+          reportPath,
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "blocked",
+        },
+      ],
+      config: {
+        projects: [],
+        repositories: [{ id: "net-auto-switch-all-prs", path: "/repo/net-auto-switch" }],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ unconfigured: 0, dispatched: 1 });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({
+          kind: "repository",
+          id: "net-auto-switch-all-prs",
+        }),
+      }),
+    );
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:run-1",
+      "running",
+      "Project recovery delegated run run-2.",
+    );
+  });
+
   it("defers a second recovery instead of creating a same-project duplicate", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const active = coordinator.enqueue({

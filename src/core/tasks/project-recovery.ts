@@ -105,7 +105,7 @@ export function classifyHistoricalFailure(
 
 export function resolveConfiguredRecoveryTarget(
   config: ConfiguredRecoveryConfig,
-  input: Pick<HistoricalRecoveryInput, "taskId" | "name">,
+  input: Pick<HistoricalRecoveryInput, "taskId" | "name" | "artifactText">,
   canonicalize: (path: string) => string,
 ): ConfiguredRecoveryTarget | null {
   const candidates: ConfiguredRecoveryTarget[] = [
@@ -128,7 +128,8 @@ export function resolveConfiguredRecoveryTarget(
       path: workspace.root,
     })),
   ];
-  const identity = `${input.taskId} ${input.name}`.toLowerCase();
+  const explicitTargetIds = extractExplicitTargetIds(input.artifactText);
+  const identity = `${input.taskId} ${input.name} ${explicitTargetIds.join(" ")}`.toLowerCase();
   const matches = candidates
     .filter((candidate) => identity.includes(candidate.id.toLowerCase()))
     .map((candidate) => ({ ...candidate, path: canonicalize(candidate.path) }))
@@ -142,4 +143,11 @@ export function resolveConfiguredRecoveryTarget(
     return null;
   }
   return best;
+}
+
+function extractExplicitTargetIds(artifactText: string | undefined): string[] {
+  if (artifactText === undefined) return [];
+  return [...artifactText.matchAll(/(?:Project|Workspace|Repository target):\s*([^\s,;"\\]+)/gim)]
+    .map((match) => match[1]?.trim())
+    .filter((value): value is string => value !== undefined && value.length > 0);
 }

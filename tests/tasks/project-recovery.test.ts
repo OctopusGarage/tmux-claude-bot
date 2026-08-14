@@ -136,6 +136,24 @@ describe("project recovery", () => {
     ).toMatchObject({ kind: "workspace", id: "geo" });
   });
 
+  it("resolves active delegated recovery targets from explicit WorkOrder evidence", () => {
+    expect(
+      resolveConfiguredRecoveryTarget(
+        {
+          projects: [],
+          repositories: [{ id: "net-auto-switch-all-prs", path: "/repo/net-auto-switch" }],
+          workspaces: [],
+        },
+        {
+          taskId: "autopilot:1786701483506-net-auto-switch-active-delegate",
+          name: "net-auto-switch active delegated task",
+          artifactText: "Historical scheduled task recovery.\nProject: net-auto-switch-all-prs\n",
+        },
+        (path) => path,
+      ),
+    ).toMatchObject({ kind: "repository", id: "net-auto-switch-all-prs" });
+  });
+
   it("rejects equally specific configured targets", () => {
     expect(
       resolveConfiguredRecoveryTarget(

@@ -103,7 +103,7 @@ export async function runProjectRecoveryPass(input: {
       result.superseded++;
       continue;
     }
-    const target = resolveConfiguredRecoveryTarget(input.config, record, input.canonicalize);
+    const target = resolveConfiguredRecoveryTarget(input.config, recoveryInput, input.canonicalize);
     if (target === null || input.verifyProjectPath?.(target.path) === false) {
       input.updateRepairStatus(
         record.taskId,
@@ -434,6 +434,7 @@ function readRecoveryArtifact(reportPath: string): string | undefined {
       join(reportPath, "supervisor-final-summary.json"),
       join(reportPath, "supervisor-summary.json"),
       join(reportPath, "system-gate.json"),
+      join(reportPath, "work-order.json"),
     ].flatMap((path) => {
       try {
         return [readFileSync(path, "utf8")];
