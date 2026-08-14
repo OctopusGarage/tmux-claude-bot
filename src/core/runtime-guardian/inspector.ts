@@ -222,6 +222,7 @@ function invalidOutput(
   if (record.state.status !== "failed" || record.state.resultStatus !== "invalid-output")
     return null;
   const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
+  if (parsed.ok && parsed.summary.status === "blocked") return null;
   if (
     parsed.ok &&
     parsed.summary.status === "completed" &&

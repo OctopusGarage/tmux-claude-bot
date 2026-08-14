@@ -944,6 +944,60 @@ projects:
     expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
   });
 
+  it("does not rediscover invalid-output artifacts with an authoritative blocked final summary", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "knowledge-engine",
+      "run-blocked-summary",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-blocked-summary",
+        "/repo/knowledge-engine",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "knowledge-engine",
+      projectName: "Knowledge Engine",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "knowledge-engine",
+        actionsTaken: ["confirmed target project remained blocked"],
+        delegatedTasks: [],
+        finalVerification: "not-run",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "target verification",
+              result: "failed",
+              evidence: "target project command failed",
+            },
+          ],
+          decision: "block",
+          notes: [],
+        },
+        commits: [],
+        followUps: ["retry as a bounded target-project WorkOrder"],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
+  });
+
   it("does not rediscover non-blocking read-only opportunity-discovery preflight eval failures after successful final summary evidence", () => {
     const runDir = join(
       process.env.TCB_STATE_DIR ?? "",
@@ -2594,7 +2648,7 @@ projects:
     ]);
   });
 
-  it("keeps terminal invalid-output findings when the durable summary is not successful", () => {
+  it("does not rediscover terminal invalid-output findings when the durable summary is blocked", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(
       process.env.TCB_STATE_DIR ?? "",
@@ -2625,12 +2679,7 @@ projects:
       })}\n`,
     );
 
-    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
-      expect.objectContaining({
-        kind: "terminal-invalid-output",
-        runId: order.id,
-      }),
-    ]);
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
   });
 
   it("builds a repair prompt that prevents target-repo edits and PR handling", () => {
