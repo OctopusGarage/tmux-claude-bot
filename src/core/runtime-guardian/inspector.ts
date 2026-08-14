@@ -15,6 +15,7 @@ import {
   type LoopSupervisorReviewGateDeterministicGate,
   parseSupervisorFinalSummaryFile,
 } from "../loop/work-order.js";
+import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import type { RuntimeGuardianFinding, RuntimeGuardianRepairDisposition } from "./findings.js";
 
 type TerminalWorkOrder = ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number];
@@ -70,6 +71,7 @@ function inspectTerminalRecord(
   input: { now: number; lookbackMs: number },
 ): void {
   if (outsideLookback(record.state.updatedAt, input)) return;
+  if (hasTerminalLedgerClosure(record)) return;
   const gatePath = join(record.runDir, "system-gate.json");
   const finalSummaryPath =
     record.workOrder.finalSummaryPath ?? join(record.runDir, "supervisor-final-summary.json");
@@ -95,6 +97,21 @@ function inspectTerminalRecord(
       ]),
     );
   }
+}
+
+const CLOSED_LEDGER_REPAIR_STATUSES = new Set([
+  "fixed",
+  "not-needed",
+  "not-reproducible",
+  "superseded",
+]);
+
+function hasTerminalLedgerClosure(record: TerminalWorkOrder): boolean {
+  const runId = record.workOrder.id;
+  return new DailyTaskLedger().listAll().some((entry) => {
+    if (!CLOSED_LEDGER_REPAIR_STATUSES.has(entry.repairStatus ?? "")) return false;
+    return entry.taskId.includes(runId) || entry.reportPath?.includes(runId) === true;
+  });
 }
 
 function systemGateFailure(
