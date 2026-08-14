@@ -1045,6 +1045,79 @@ projects:
     expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
   });
 
+  it("does not rediscover stale invalid-output when derived supervisor report evidence passed", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "english-pilot",
+      "run-derived-success",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-derived-success",
+        "/repo/english-pilot",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "english-pilot",
+      projectName: "English Pilot",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      JSON.stringify({
+        workOrderId: order.id,
+        runId: order.id,
+        project: {
+          id: "english-pilot",
+          name: "English Pilot",
+          path: "/repo/english-pilot",
+          agent: "codex",
+        },
+        status: "completed",
+        result: {
+          status: "completed",
+          output: "recovered supervisor final summary from strict final-summary path",
+          summary: {
+            status: "completed",
+            projectId: "english-pilot",
+            actionsTaken: ["verified and merged the delegated fix"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: ["confirmed runtime artifact issue"],
+              postMutationReview: ["verified PR and CI"],
+              aiReview: "passed",
+              deterministicGates: [],
+              decision: "pass",
+              notes: [],
+            },
+            commits: ["abc123"],
+            followUps: [],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(runDir, "eval-report.json"),
+      JSON.stringify({
+        outcome: {
+          status: "passed",
+          finalVerification: "passed",
+          reviewDecision: "pass",
+        },
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
   it("does not rediscover parser-invalid stale invalid-output when raw final summary evidence passed without gate evidence", () => {
     const runDir = join(
       process.env.TCB_STATE_DIR ?? "",
@@ -1235,6 +1308,82 @@ projects:
       taskFamily: "terminal-invalid-output",
       fingerprint: "invalid-summary",
       taskId: "run-legacy-raw",
+      now: 1_000,
+    });
+    coordinator.releaseForRetry(queued.id, 1_001);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "not-reproducible" });
+  });
+
+  it("marks stale invalid-output with derived supervisor report evidence as not reproducible", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "english-pilot",
+      "run-derived-success-queue",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-derived-success-queue",
+        "/repo/english-pilot",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "english-pilot",
+      projectName: "English Pilot",
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        result: {
+          status: "completed",
+          summary: {
+            status: "completed",
+            projectId: "english-pilot",
+            actionsTaken: ["verified and merged the delegated fix"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: ["confirmed runtime artifact issue"],
+              postMutationReview: ["verified PR and CI"],
+              aiReview: "passed",
+              deterministicGates: [],
+              decision: "pass",
+              notes: [],
+            },
+            commits: ["abc123"],
+            followUps: [],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(runDir, "eval-report.json"),
+      JSON.stringify({
+        outcome: {
+          status: "passed",
+          finalVerification: "passed",
+          reviewDecision: "pass",
+        },
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "english-pilot",
+      projectPath: "/repo/english-pilot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "derived-success",
+      taskId: "run-derived-success-queue",
       now: 1_000,
     });
     coordinator.releaseForRetry(queued.id, 1_001);

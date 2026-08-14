@@ -213,7 +213,11 @@ function invalidOutput(
   ) {
     return null;
   }
-  if (!parsed.ok && hasRawSuccessfulSummary(finalSummaryPath)) return null;
+  if (
+    !parsed.ok &&
+    (hasRawSuccessfulSummary(finalSummaryPath) || hasDerivedSuccessfulSummary(record.runDir))
+  )
+    return null;
   if (isRestartRecoveredActiveDelegationInvalidOutput(record)) return null;
   return findingFor(record, "terminal-invalid-output", "medium", [
     `terminal failed work-order has resultStatus=invalid-output: ${record.workOrder.id}`,
@@ -316,6 +320,25 @@ function hasRawSuccessfulSummary(finalSummaryPath: string): boolean {
     summary.status === "completed" &&
     summary.finalVerification === "passed" &&
     reviewGate?.decision === "pass"
+  );
+}
+function hasDerivedSuccessfulSummary(runDir: string): boolean {
+  const report = readJson(join(runDir, "supervisor-summary.json"));
+  const result = isRecord(report?.result) ? report.result : null;
+  const summary = isRecord(result?.summary) ? result.summary : null;
+  const reviewGate = isRecord(summary?.reviewGate) ? summary.reviewGate : null;
+  const evalReport = readJson(join(runDir, "eval-report.json"));
+  const outcome = isRecord(evalReport?.outcome) ? evalReport.outcome : null;
+  if (result === null || summary === null || outcome === null) return false;
+  return (
+    report?.status === "completed" &&
+    result.status === "completed" &&
+    summary.status === "completed" &&
+    summary.finalVerification === "passed" &&
+    reviewGate?.decision === "pass" &&
+    outcome.status === "passed" &&
+    outcome.finalVerification === "passed" &&
+    outcome.reviewDecision === "pass"
   );
 }
 function isLegacyIsolatedBranchMismatchFailure(failure: string): boolean {

@@ -233,7 +233,8 @@ function readPassingTerminalArtifacts(
   const parsed = parseSupervisorFinalSummaryFile(candidate);
   const gate = readJsonRecord(join(runDir, "system-gate.json"));
   const summary = readJsonRecord(join(runDir, "supervisor-final-summary.json"));
-  if (summary === null) return false;
+  if (summary === null)
+    return hasDerivedPassingTerminalArtifacts(runDir) ? "not-reproducible" : false;
   const success =
     summary.status === "completed" &&
     summary.finalVerification === "passed" &&
@@ -241,6 +242,25 @@ function readPassingTerminalArtifacts(
     summary.reviewGate.decision === "pass";
   if (success) return parsed.ok ? "fixed" : "not-reproducible";
   return gate?.accepted === true && !parsed.ok ? "not-reproducible" : false;
+}
+function hasDerivedPassingTerminalArtifacts(runDir: string): boolean {
+  const report = readJsonRecord(join(runDir, "supervisor-summary.json"));
+  const result = isRecord(report?.result) ? report.result : null;
+  const summary = isRecord(result?.summary) ? result.summary : null;
+  const reviewGate = isRecord(summary?.reviewGate) ? summary.reviewGate : null;
+  const evalReport = readJsonRecord(join(runDir, "eval-report.json"));
+  const outcome = isRecord(evalReport?.outcome) ? evalReport.outcome : null;
+  if (result === null || summary === null || outcome === null) return false;
+  return (
+    report?.status === "completed" &&
+    result.status === "completed" &&
+    summary.status === "completed" &&
+    summary.finalVerification === "passed" &&
+    reviewGate?.decision === "pass" &&
+    outcome.status === "passed" &&
+    outcome.finalVerification === "passed" &&
+    outcome.reviewDecision === "pass"
+  );
 }
 function readJsonRecord(path: string): Record<string, unknown> | null {
   if (!existsSync(path)) return null;
