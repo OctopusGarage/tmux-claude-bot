@@ -157,14 +157,16 @@ export class RepairCoordinator {
           record.linkedTaskIds.includes(input.taskId),
       );
       if (stale !== undefined) {
-        const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = stale;
-        existing = {
-          ...withoutLease,
-          status: "pending",
-          attempt: 0,
-          nextAttemptAt: input.now,
-          updatedAt: input.now,
-        };
+        existing = reopenProjectRecoveryRecord(stale, input.now);
+        this.store.set(existing.id, existing);
+      }
+    }
+    if (existing === undefined && input.source === "project-recovery") {
+      const stale = this.list()
+        .filter((record) => isRecoverableProjectRecoveryTerminal(record, input))
+        .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)[0];
+      if (stale !== undefined) {
+        existing = reopenProjectRecoveryRecord(stale, input.now);
         this.store.set(existing.id, existing);
       }
     }
@@ -523,6 +525,48 @@ export class RepairCoordinator {
 
 function isTerminal(status: RepairQueueStatus): boolean {
   return ["fixed", "blocked", "not-reproducible", "superseded", "dead-letter"].includes(status);
+}
+
+function reopenProjectRecoveryRecord(record: RepairQueueRecord, now: number): RepairQueueRecord {
+  const {
+    leaseId: _leaseId,
+    leaseExpiresAt: _leaseExpiresAt,
+    workOrderId: _workOrderId,
+    ...withoutLease
+  } = record;
+  return {
+    ...withoutLease,
+    status: "pending",
+    attempt: 0,
+    nextAttemptAt: now,
+    updatedAt: now,
+  };
+}
+
+function isRecoverableProjectRecoveryTerminal(
+  record: RepairQueueRecord,
+  input: RepairEnqueueInput,
+): boolean {
+  if (record.source !== "project-recovery" || record.projectId !== input.projectId) return false;
+  if (record.status !== "blocked" || record.attempt >= REPAIR_MAX_ATTEMPTS) return false;
+  const evidence = [...record.summaries, input.summary, record.fingerprint, input.fingerprint]
+    .filter((value): value is string => value !== undefined)
+    .join(" ")
+    .toLowerCase();
+  if (evidence.includes("recovery attempt limit reached")) return false;
+  if (evidence.includes("dead-letter")) return false;
+  if (evidence.includes("needs-owner-decision") && !hasRecoverableProjectRecoveryEvidence(evidence))
+    return false;
+  return hasRecoverableProjectRecoveryEvidence(evidence);
+}
+
+function hasRecoverableProjectRecoveryEvidence(evidence: string): boolean {
+  return (
+    evidence.includes("can be retried") ||
+    evidence.includes("invalid-final-summary") ||
+    evidence.includes("invalid final summary") ||
+    evidence.includes("incomplete recovery")
+  );
 }
 
 function compareDuplicatePriority(a: RepairQueueRecord, b: RepairQueueRecord): number {

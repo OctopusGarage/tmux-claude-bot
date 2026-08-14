@@ -70,6 +70,78 @@ describe("RepairCoordinator", () => {
     expect(coordinator.list()).toHaveLength(1);
   });
 
+  it("reopens a recoverable blocked project recovery for the same configured target", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const stale = coordinator.enqueue({
+      projectId: "net-auto-switch-all-prs",
+      projectPath: "/repo/net-auto-switch",
+      source: "project-recovery",
+      taskFamily: "repository-pull-request-review",
+      fingerprint: "old invalid final summary",
+      taskId: "autopilot:old-net-auto-switch",
+      summary:
+        "Authoritative supervisor final summary reports incomplete recovery (status=blocked).",
+      now: 1_000,
+    });
+    coordinator.markTerminal(stale.id, "blocked", 1_500);
+
+    const reopened = coordinator.enqueue({
+      projectId: "net-auto-switch-all-prs",
+      projectPath: "/repo/net-auto-switch",
+      source: "project-recovery",
+      taskFamily: "net-auto-switch active delegated task",
+      fingerprint: "supervisor completion evidence is invalid or incomplete and can be retried",
+      taskId: "autopilot:new-net-auto-switch",
+      summary:
+        "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. supervisor completion evidence is invalid or incomplete and can be retried",
+      now: 2_000,
+    });
+
+    expect(reopened.id).toBe(stale.id);
+    expect(reopened).toMatchObject({
+      status: "pending",
+      attempt: 0,
+      nextAttemptAt: 2_000,
+    });
+    expect(reopened.linkedTaskIds).toEqual([
+      "autopilot:old-net-auto-switch",
+      "autopilot:new-net-auto-switch",
+    ]);
+    expect(coordinator.list()).toHaveLength(1);
+  });
+
+  it("keeps owner-decision project recovery blocks terminal", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const terminal = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "project-recovery",
+      taskFamily: "active delegated task",
+      fingerprint: "requires project owner decision",
+      taskId: "autopilot:old-alcove",
+      summary: "Recovery classification: needs-owner-decision; evidence requires a project-owner.",
+      now: 1_000,
+    });
+    coordinator.markTerminal(terminal.id, "blocked", 1_500);
+
+    const next = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "project-recovery",
+      taskFamily: "active delegated task",
+      fingerprint: "requires project owner decision",
+      taskId: "autopilot:new-alcove",
+      summary: "Recovery classification: needs-owner-decision; evidence requires a project-owner.",
+      now: 2_000,
+    });
+
+    expect(next.id).not.toBe(terminal.id);
+    expect(coordinator.list()).toHaveLength(2);
+    expect(coordinator.list().find((record) => record.id === terminal.id)).toMatchObject({
+      status: "blocked",
+    });
+  });
+
   it("claims due items in priority order and leaves later items pending", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     coordinator.enqueue({
