@@ -2721,6 +2721,22 @@ function publishMissingSupervisedPullRequest(input: {
     return { lookup: input.lookup, published: false };
   }
 
+  const allStateLookup = lookupSupervisedPullRequestByHeadInAllStates({
+    project: input.project,
+    commitBranch: input.commitBranch,
+    runCommand: input.runCommand,
+  });
+  if (allStateLookup.status === "found") {
+    return { lookup: allStateLookup.lookup, published: false };
+  }
+  if (allStateLookup.status === "failed") {
+    return {
+      lookup: input.lookup,
+      published: false,
+      failure: allStateLookup.failure,
+    };
+  }
+
   const push = input.runGit({
     cwd: input.project.path,
     args: ["push", "-u", "origin", input.commitBranch],
@@ -2777,6 +2793,79 @@ function publishMissingSupervisedPullRequest(input: {
         ? `PR lookup after publication failed: ${lookup.stderr || lookup.stdout || "unknown error"}`
         : `PR creation failed: ${create.stderr || create.stdout || "unknown error"}`,
   };
+}
+
+function lookupSupervisedPullRequestByHeadInAllStates(input: {
+  project: SupervisedSystemGateProject;
+  commitBranch: string;
+  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+}):
+  | { status: "found"; lookup: LoopRunCommandResult }
+  | { status: "missing" }
+  | { status: "failed"; failure: string } {
+  const list = input.runCommand({
+    kind: "pr",
+    command: [
+      ghCommandPrefix(input.project),
+      "pr list",
+      "--state",
+      "all",
+      "--head",
+      shellQuoteLocal(input.commitBranch),
+      "--json",
+      "number",
+      "--limit",
+      "1",
+    ].join(" "),
+    cwd: input.project.path,
+    env: {},
+  });
+  if (list.status !== 0) {
+    return {
+      status: "failed",
+      failure: `PR all-state lookup failed: ${list.stderr || list.stdout || "unknown error"}`,
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(list.stdout);
+  } catch {
+    return { status: "failed", failure: "PR all-state lookup returned invalid JSON" };
+  }
+  if (!Array.isArray(parsed)) {
+    return { status: "failed", failure: "PR all-state lookup returned invalid JSON" };
+  }
+  if (parsed.length === 0) return { status: "missing" };
+
+  const first = parsed[0];
+  if (first === null || typeof first !== "object") {
+    return { status: "failed", failure: "PR all-state lookup returned invalid PR data" };
+  }
+  const number = (first as { number?: unknown }).number;
+  if (typeof number !== "number" || !Number.isSafeInteger(number) || number < 1) {
+    return { status: "failed", failure: "PR all-state lookup returned invalid PR number" };
+  }
+
+  const lookup = input.runCommand({
+    kind: "pr",
+    command: [
+      ghCommandPrefix(input.project),
+      "pr view",
+      shellQuoteLocal(String(number)),
+      "--json",
+      "url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
+    ].join(" "),
+    cwd: input.project.path,
+    env: {},
+  });
+  if (lookup.status !== 0) {
+    return {
+      status: "failed",
+      failure: `PR all-state view failed: ${lookup.stderr || lookup.stdout || "unknown error"}`,
+    };
+  }
+  return { status: "found", lookup };
 }
 
 function isMissingSupervisedPullRequest(result: LoopRunCommandResult): boolean {
