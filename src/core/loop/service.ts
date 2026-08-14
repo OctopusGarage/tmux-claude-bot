@@ -2311,7 +2311,7 @@ export function writeSupervisedSystemGateArtifact(input: {
         workOrderId: input.workOrder.id,
         projectId: input.workOrder.projectId,
         resultStatus: input.result.status,
-        accepted: input.result.status === "completed" && input.gate.failures.length === 0,
+        accepted: isAcceptedSupervisorSystemGateResult(input.result, input.gate.failures),
         supervisorReviewGate:
           "summary" in input.result ? (input.result.summary.reviewGate ?? null) : null,
         evalReport,
@@ -2326,6 +2326,14 @@ export function writeSupervisedSystemGateArtifact(input: {
       2,
     )}\n`,
   );
+}
+
+function isAcceptedSupervisorSystemGateResult(
+  result: LoopSupervisedRunResult,
+  failures: string[],
+): boolean {
+  if (failures.length > 0) return false;
+  return result.status === "completed" || result.status === "blocked";
 }
 
 function systemGateFindings(
