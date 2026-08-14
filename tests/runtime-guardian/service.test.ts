@@ -795,6 +795,61 @@ projects:
     expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
   });
 
+  it("does not rediscover absolute-path legacy executable ENOENT system-gate failures after successful final summary evidence", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "alcove", "run-abs-enoent");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-abs-enoent",
+        "/repo/alcove-isolated",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["verified the repair"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          "git status failed: spawnSync /usr/bin/git ENOENT",
+          "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+          "GitHub account Kingson4Wu permission check failed: spawnSync sh ENOENT",
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
   it("does not rediscover non-blocking read-only opportunity-discovery preflight eval failures after successful final summary evidence", () => {
     const runDir = join(
       process.env.TCB_STATE_DIR ?? "",

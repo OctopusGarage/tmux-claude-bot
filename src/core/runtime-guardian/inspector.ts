@@ -178,7 +178,7 @@ function failedEval(record: TerminalWorkOrder, gatePath: string): RuntimeGuardia
 
 function isTargetOrExternalSystemGateFailure(failure: string): boolean {
   return (
-    failure.startsWith("GitHub account ") ||
+    (failure.startsWith("GitHub account ") && !isLegacyExecutableEnoentFailure(failure)) ||
     failure.startsWith("PR lookup failed:") ||
     failure.startsWith("PR lookup after body cleanup failed:") ||
     failure.startsWith("PR lookup while waiting for checks failed:") ||
@@ -347,8 +347,13 @@ function isLegacyIsolatedBranchMismatchFailure(failure: string): boolean {
 function isLegacySystemGitEnoentFailure(failure: string): boolean {
   return (
     failure === "git status failed: spawnSync git ENOENT" ||
-    failure === "isolated worktree branch check failed: spawnSync git ENOENT"
+    failure === "git status failed: spawnSync /usr/bin/git ENOENT" ||
+    failure === "isolated worktree branch check failed: spawnSync git ENOENT" ||
+    failure === "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT"
   );
+}
+function isLegacyExecutableEnoentFailure(failure: string): boolean {
+  return /\bspawnSync (?:git|sh|\/usr\/bin\/git|\/bin\/sh|\/usr\/bin\/sh) ENOENT$/.test(failure);
 }
 function isLegacyPrAutoMergeHeadBehindBaseFailure(failure: string): boolean {
   const detail = failure.toLowerCase();
@@ -365,6 +370,7 @@ function isIgnorableLegacySuccessfulSummaryFailure(
   return (
     isLegacyIsolatedBranchMismatchFailure(failure) ||
     isLegacySystemGitEnoentFailure(failure) ||
+    isLegacyExecutableEnoentFailure(failure) ||
     isLegacyPrAutoMergeHeadBehindBaseFailure(failure) ||
     legacyPreMutationEvalFailure(record, finalSummaryPath, [failure])
   );
