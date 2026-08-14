@@ -48,17 +48,26 @@ export function classifyHistoricalFailure(
       reason: "a later successful task supersedes this failure",
     };
   }
+  const evidence = [input.error, input.failureKind, input.summary, input.artifactText]
+    .filter((value): value is string => value !== undefined)
+    .join(" ")
+    .toLowerCase();
+  if (
+    /(supervisor lease|interactive-agent-busy|automation admission deferred|already has active automation|active workorder|active recovery|queue full|supervisor.*busy|no available)/.test(
+      evidence,
+    )
+  ) {
+    return {
+      classification: "retryable",
+      reason: "local automation capacity or supervisor lease evidence is retryable",
+    };
+  }
   if (input.attempt >= MAX_RECOVERY_ATTEMPTS) {
     return {
       classification: "dead-letter",
       reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
     };
   }
-
-  const evidence = [input.error, input.failureKind, input.summary, input.artifactText]
-    .filter((value): value is string => value !== undefined)
-    .join(" ")
-    .toLowerCase();
   if (
     /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery|can be retried)/.test(
       evidence,

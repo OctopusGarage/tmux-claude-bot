@@ -113,6 +113,45 @@ describe("recovery admission", () => {
     ]);
   });
 
+  it("treats supervisor lease and interactive agent admission failures as immediate deferrals", async () => {
+    for (const detail of [
+      "queued task could not acquire its supervisor lease",
+      "automation admission deferred: interactive-agent-busy",
+    ]) {
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+
+      const result = await dispatchRecoveryQueue({
+        coordinator,
+        now: 1_000,
+        leaseId: "admission:1",
+        projectId: "bot",
+        limit: 1,
+        resolve: (records) => [...records],
+        dispatch: async () => ({ status: "blocked", detail }),
+        onQueued: () => {},
+      });
+
+      expect(result).toMatchObject({ disposition: "not-needed", claimed: 0 });
+
+      coordinator.enqueue({ ...finding(), now: 999 });
+      const retryResult = await dispatchRecoveryQueue({
+        coordinator,
+        now: 1_000,
+        leaseId: "admission:1",
+        projectId: "bot",
+        limit: 1,
+        resolve: (records) => [...records],
+        dispatch: async () => ({ status: "blocked", detail }),
+        onQueued: () => {},
+      });
+
+      expect(retryResult).toMatchObject({ disposition: "deferred", claimed: 1 });
+      expect(coordinator.list()).toEqual([
+        expect.objectContaining({ status: "pending", attempt: 0, nextAttemptAt: 1_000 }),
+      ]);
+    }
+  });
+
   it("returns a normal blocked admission to backoff retry", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const result = await admitRecoveryFindings({

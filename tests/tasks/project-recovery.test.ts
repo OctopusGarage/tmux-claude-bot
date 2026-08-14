@@ -111,6 +111,31 @@ describe("project recovery", () => {
     expect(classifyHistoricalFailure({ ...base, attempt: 3 }).classification).toBe("dead-letter");
   });
 
+  it("keeps supervisor lease and admission capacity failures retryable past the retry budget", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "queued task could not acquire its supervisor lease",
+        summary: "Recovery classification: needs-owner-decision",
+        attempt: 3,
+      }),
+    ).toMatchObject({
+      classification: "retryable",
+      reason: expect.stringContaining("capacity"),
+    });
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        summary:
+          "Recovery dispatch deferred: automation admission deferred: interactive-agent-busy",
+        attempt: 3,
+      }),
+    ).toMatchObject({
+      classification: "retryable",
+      reason: expect.stringContaining("capacity"),
+    });
+  });
+
   it("resolves repository and workspace targets", () => {
     expect(
       resolveConfiguredRecoveryTarget(

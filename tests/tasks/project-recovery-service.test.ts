@@ -968,6 +968,56 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
+  it("closes stale blocked originals when their linked project recovery delegation succeeds", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+    const queueRecord = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "unknown",
+      taskId: "autopilot:lease-failure",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queueRecord.id, ["autopilot:successful-recovery"], 1_001);
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:lease-failure",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          scheduledAt: 1,
+          status: "failed",
+          repairStatus: "blocked",
+          error: "queued task could not acquire its supervisor lease",
+          updatedAt: 1_003,
+        },
+        {
+          taskId: "autopilot:successful-recovery",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          scheduledAt: 1_004,
+          status: "success",
+          repairStatus: "not-needed",
+          updatedAt: 1_999,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:lease-failure",
+      "fixed",
+      expect.stringContaining("project recovery delegation"),
+    );
+    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
   it("closes the original task when a later recovery succeeds after an earlier failed attempt", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();
@@ -1032,6 +1082,58 @@ describe("project recovery service", () => {
       expect.any(String),
     );
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
+  it("closes a pending project recovery when an unlinked successful recovery summary names the original task", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+    const queueRecord = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "project-recovery",
+      taskFamily: "knowledge-engine security-maintenance",
+      fingerprint: "unknown",
+      taskId: "loop:knowledge-engine:security-maintenance:1786636200000",
+      now: 1_000,
+    });
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:knowledge-engine:security-maintenance:1786636200000",
+          source: "loop-engineering",
+          name: "knowledge-engine security-maintenance",
+          scheduledAt: 1,
+          status: "failed",
+          repairStatus: "pending",
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:successful-recovery",
+          source: "autopilot-delegate",
+          name: "knowledge-engine active delegated task",
+          scheduledAt: 1_600,
+          status: "success",
+          repairStatus: "not-needed",
+          updatedAt: 1_999,
+          summary:
+            "Per-original-task final repair status: loop:knowledge-engine:security-maintenance:1786636200000 completed-no-delta.",
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:knowledge-engine:security-maintenance:1786636200000",
+      "fixed",
+      expect.stringContaining("project recovery delegation"),
+    );
+    expect(coordinator.list().find((record) => record.id === queueRecord.id)).toMatchObject({
+      status: "fixed",
+    });
   });
 
   it("keeps external waits pending without dispatching them", async () => {

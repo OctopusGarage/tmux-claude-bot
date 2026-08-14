@@ -112,10 +112,12 @@ describe("MessageQueue", () => {
       expect(rejected?.message).toBe("boom");
     });
 
-    it("rejects a dequeued message when its start hook cannot acquire a lease", async () => {
+    it("keeps a queued message pending when its start hook cannot acquire a lease", async () => {
       const queue = new MessageQueue(10);
       const handled: string[] = [];
       const rejections: string[] = [];
+      let canStart = false;
+      queue.setReadinessProbe(async () => true, 5);
       queue.setHandler(async (msg) => {
         handled.push(msg.id);
         msg.resolve("ok");
@@ -126,12 +128,18 @@ describe("MessageQueue", () => {
           id: "lease-blocked",
           reject: (error) => rejections.push(error.message),
         }),
-        started: () => false,
+        started: () => canStart,
       });
 
-      await waitFor(() => rejections.length === 1);
-      expect(rejections).toEqual(["queued task could not acquire its supervisor lease"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(rejections).toEqual([]);
       expect(handled).toEqual([]);
+      expect(queue.size("s1")).toBe(1);
+
+      canStart = true;
+      await waitFor(() => handled.length === 1);
+      expect(rejections).toEqual([]);
+      expect(handled).toEqual(["lease-blocked"]);
       expect(queue.size("s1")).toBe(0);
     });
 

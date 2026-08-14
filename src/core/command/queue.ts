@@ -489,6 +489,16 @@ export class MessageQueue {
       return;
     }
 
+    if (head?.started?.() === false) {
+      log.debug("session queue deferred by start hook", {
+        session: sessionName,
+        data: { action: head.action, messageId: head.id },
+      });
+      this.processingSessions.delete(sessionName);
+      setTimeout(() => void this.processSession(sessionName), this.readyRecheckMs);
+      return;
+    }
+
     const msg = queue.dequeue();
     if (!msg) {
       this.processingSessions.delete(sessionName);
@@ -499,13 +509,6 @@ export class MessageQueue {
     log.info("message processing started", {
       data: { session: sessionName, action: msg.action, messageId: msg.id },
     });
-    if (msg.started?.() === false) {
-      this.processingSessions.delete(sessionName);
-      this.currentSessionMessage.delete(sessionName);
-      msg.reject(new Error("queued task could not acquire its supervisor lease"));
-      void this.processSession(sessionName, false);
-      return;
-    }
     this.writePersistedNow();
 
     if (!this.handler) {

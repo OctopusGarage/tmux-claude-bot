@@ -199,5 +199,7 @@ export async function dispatchRecoveryQueue<T>(input: {
 }
 
 function isImmediateDeferral(detail: string): boolean {
-  return /(capacity|active automation|queue full|supervisor.*busy|no available)/i.test(detail);
+  return /(capacity|active automation|queue full|supervisor.*(busy|lease)|interactive-agent-busy|automation admission deferred|no available)/i.test(
+    detail,
+  );
 }

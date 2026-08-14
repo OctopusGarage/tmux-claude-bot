@@ -583,12 +583,13 @@ describe("createLoopSupervisorTaskRunner", () => {
       signal: new AbortController().signal,
       workOrder,
       deferLeaseUntilConsumption: true,
+      timeoutMs: 20,
     });
 
     expect(result).toEqual({
       status: 1,
       stdout: "",
-      stderr: "queued task could not acquire its supervisor lease",
+      stderr: "loop supervisor worker did not consume queued task before deadline",
     });
     expect(handled).toEqual([]);
     expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([

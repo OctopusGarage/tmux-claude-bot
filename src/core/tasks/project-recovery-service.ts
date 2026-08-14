@@ -294,23 +294,33 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     const linked = queueRecord.linkedTaskIds
       .map((taskId) => byTaskId.get(taskId))
       .filter((record): record is ScheduledTaskRecord => record !== undefined);
-    const recoverySucceeded = linked.some(
+    const originals = linked.filter(
+      (record) =>
+        record.status !== "success" &&
+        ["failed", "missing", "running-timeout"].includes(record.status) &&
+        (record.repairStatus === "pending" ||
+          record.repairStatus === "running" ||
+          record.repairStatus === "blocked"),
+    );
+    const linkedRecoverySucceeded = linked.some(
       (record) =>
         record.source === "autopilot-delegate" &&
         record.taskId !== queueRecord.linkedTaskIds[0] &&
         record.status === "success",
     );
+    const summaryMatchedRecoverySucceeded = input.records.some(
+      (record) =>
+        record.source === "autopilot-delegate" &&
+        record.status === "success" &&
+        record.summary !== undefined &&
+        originals.some((original) => record.summary?.includes(original.taskId)),
+    );
+    const recoverySucceeded = linkedRecoverySucceeded || summaryMatchedRecoverySucceeded;
     const recoveryFailed = linked.some(
       (record) =>
         record.source === "autopilot-delegate" &&
         record.taskId !== queueRecord.linkedTaskIds[0] &&
         ["failed", "missing", "running-timeout"].includes(record.status),
-    );
-    const originals = linked.filter(
-      (record) =>
-        record.status !== "success" &&
-        ["failed", "missing", "running-timeout"].includes(record.status) &&
-        (record.repairStatus === "pending" || record.repairStatus === "running"),
     );
     if (!recoverySucceeded && (!recoveryFailed || originals.length === 0)) continue;
     result.checked++;
