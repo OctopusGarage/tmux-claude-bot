@@ -317,9 +317,9 @@ describe("runDailyTaskAuditServiceTick", () => {
       dispatchRepair,
       discover: ({ window }) => [
         {
-          taskId: "loop:geo:security-maintenance:1",
-          source: "loop-engineering",
-          name: "geo security-maintenance",
+          taskId: "launchd:radar:daily:1",
+          source: "launchd",
+          name: "radar daily",
           scheduledAt: window.start,
           status: "expected",
           updatedAt: window.start,
@@ -332,7 +332,7 @@ describe("runDailyTaskAuditServiceTick", () => {
       expect.objectContaining({
         items: [
           expect.objectContaining({
-            taskId: "loop:geo:security-maintenance:1",
+            taskId: "launchd:radar:daily:1",
             status: "missing",
           }),
         ],
@@ -341,7 +341,7 @@ describe("runDailyTaskAuditServiceTick", () => {
     expect(ledger.listAll()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          taskId: "loop:geo:security-maintenance:1",
+          taskId: "launchd:radar:daily:1",
           status: "expected",
           repairStatus: "running",
         }),
@@ -438,6 +438,49 @@ describe("runDailyTaskAuditServiceTick", () => {
       status: "pending",
       nextAttemptAt: 3,
     });
+  });
+
+  it("keeps loop engineering candidates out of generic daily repair", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-loop-owned-"));
+    const ledger = new DailyTaskLedger();
+    const dispatchRepair = vi.fn(async () => ({
+      status: "queued" as const,
+      detail: "runId=generic-repair",
+      runId: "generic-repair",
+    }));
+
+    await runDailyTaskAuditServiceTick({
+      now: 3,
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: true,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications: new NotificationGateway(),
+      ledger,
+      dispatchRepair,
+      discover: ({ window }) => [
+        {
+          taskId: "loop:alcove:security-maintenance:1",
+          source: "loop-engineering",
+          name: "alcove security-maintenance",
+          scheduledAt: window.start,
+          status: "failed",
+          error: "project Security Maintenance pre-score blocked dispatch",
+          updatedAt: window.start,
+        },
+      ],
+      force: true,
+    });
+
+    const { RepairCoordinator } = await import("../../src/core/tasks/repair-coordinator.js");
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(new RepairCoordinator().list()).toEqual([]);
   });
 
   it("does not let generic daily repair dispatch claim project-recovery records", async () => {
@@ -582,10 +625,10 @@ projects:
     const queueRecord = coordinator.enqueue({
       projectId: "tmux-claude-bot",
       projectPath: "/repo/tmux-claude-bot",
-      source: "loop-engineering",
+      source: "launchd",
       taskFamily: "missing-run",
       fingerprint: "no explicit run record",
-      taskId: "loop:missing-run",
+      taskId: "launchd:missing-run",
       now: 1,
     });
     const result = await runDailyTaskAuditServiceTick({

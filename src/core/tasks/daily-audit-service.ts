@@ -181,7 +181,9 @@ async function runDailyTaskAuditServiceTickInternal(
         }),
       ]),
   });
-  for (const item of result.repairCandidates) {
+  for (const item of result.repairCandidates.filter(
+    (candidate) => !isProjectRecoveryOwnedSource(candidate.source),
+  )) {
     coordinator.enqueue({
       projectId: "tmux-claude-bot",
       projectPath: repoPath,
@@ -282,7 +284,12 @@ async function dispatchRepairQueue(input: {
     // Project-recovery records have their own admission path above. Letting the
     // generic repair dispatcher claim them creates a second recovery loop that
     // can redispatch the same historical delegation after it already finished.
-    excludeSources: ["runtime-guardian", "project-recovery"],
+    excludeSources: [
+      "runtime-guardian",
+      "project-recovery",
+      "loop-engineering",
+      "autopilot-delegate",
+    ],
     resolve: (claimed) =>
       claimed.flatMap((queueRecord) =>
         queueRecord.linkedTaskIds.flatMap((taskId) => {
@@ -323,6 +330,10 @@ async function dispatchRepairQueue(input: {
     : admission.detail === "dispatch failed"
       ? "failed"
       : `${admission.disposition} - ${admission.detail}`;
+}
+
+function isProjectRecoveryOwnedSource(source: string): boolean {
+  return source === "loop-engineering" || source === "autopilot-delegate";
 }
 
 function dueScheduledAt(
