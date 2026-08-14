@@ -60,7 +60,7 @@ export function classifyHistoricalFailure(
     .join(" ")
     .toLowerCase();
   if (
-    /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery)/.test(
+    /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery|can be retried)/.test(
       evidence,
     )
   ) {

@@ -580,7 +580,7 @@ projects:
       repairStatus: "blocked",
       updatedAt: 1_786_629_020_000,
       summary:
-        "Authoritative supervisor final summary reports incomplete recovery (status=blocked).",
+        "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. supervisor completion evidence is invalid or incomplete and can be retried",
     });
     const dispatchProjectRecovery = vi.fn(async () => ({
       status: "queued" as const,

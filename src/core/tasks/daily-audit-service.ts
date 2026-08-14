@@ -489,9 +489,26 @@ function shouldReconsiderBlockedRecovery(record: ScheduledTaskRecord): boolean {
   const summary = record.summary?.toLowerCase() ?? "";
   if (summary.includes("recovery classification: recovery attempt limit reached")) return false;
   if (summary.includes("recovery classification: dead-letter")) return false;
-  if (summary.includes("recovery classification: needs-owner-decision")) return false;
-  if (summary.includes("configured project is unavailable or ambiguous")) return false;
+  if (
+    summary.includes("recovery classification: needs-owner-decision") &&
+    !isRecoverableConfiguredTargetSummary(summary)
+  )
+    return false;
+  if (
+    summary.includes("configured project is unavailable or ambiguous") &&
+    !isRecoverableConfiguredTargetSummary(summary)
+  )
+    return false;
   return true;
+}
+
+function isRecoverableConfiguredTargetSummary(summary: string): boolean {
+  return (
+    summary.includes("can be retried") ||
+    summary.includes("invalid-final-summary") ||
+    summary.includes("invalid final summary") ||
+    summary.includes("incomplete recovery")
+  );
 }
 
 function appendProjectRecoveryDispatch(
