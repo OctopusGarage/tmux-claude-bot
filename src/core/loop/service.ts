@@ -2558,8 +2558,15 @@ export function runSupervisedSystemGateOutcome(input: {
         if (publication.published) {
           evidence.push("published missing supervised pull request");
         }
+        if (publication.skippedNoDelta) {
+          evidence.push(
+            `PR gate skipped because WorkOrder branch ${commitBranch} has no commits over origin/${input.project.pullRequest.base}`,
+          );
+        }
         const pr = publication.lookup;
-        if (publication.failure !== undefined) {
+        if (publication.skippedNoDelta) {
+          // No PR can be created for a branch that is already equal to the base branch.
+        } else if (publication.failure !== undefined) {
           failures.push(publication.failure);
         } else if (pr.status !== 0) {
           failures.push(`PR lookup failed: ${pr.stderr || pr.stdout || "unknown error"}`);
@@ -2708,6 +2715,32 @@ function lookupSupervisedPullRequest(input: {
   });
 }
 
+function workOrderBranchDelta(input: {
+  project: SupervisedSystemGateProject;
+  commitBranch: string;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): { status: "commits" | "none" } | { status: "unknown"; evidence?: string } {
+  const range = `origin/${input.project.pullRequest.base}..${input.commitBranch}`;
+  const result = input.runGit({
+    cwd: input.project.path,
+    args: ["rev-list", "--count", range],
+  });
+  if (result.status !== 0) {
+    return {
+      status: "unknown",
+      evidence: `PR branch delta check skipped: ${result.stderr || result.stdout || "unknown error"}`,
+    };
+  }
+  const count = Number.parseInt(result.stdout.trim(), 10);
+  if (!Number.isFinite(count)) {
+    return {
+      status: "unknown",
+      evidence: `PR branch delta check returned invalid count: ${result.stdout.trim() || "<empty>"}`,
+    };
+  }
+  return count === 0 ? { status: "none" } : { status: "commits" };
+}
+
 function publishMissingSupervisedPullRequest(input: {
   project: SupervisedSystemGateProject;
   workOrder: LoopWorkOrder;
@@ -2716,7 +2749,12 @@ function publishMissingSupervisedPullRequest(input: {
   lookup: LoopRunCommandResult;
   runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
-}): { lookup: LoopRunCommandResult; published: boolean; failure?: string } {
+}): {
+  lookup: LoopRunCommandResult;
+  published: boolean;
+  skippedNoDelta?: boolean;
+  failure?: string;
+} {
   if (!isMissingSupervisedPullRequest(input.lookup)) {
     return { lookup: input.lookup, published: false };
   }
@@ -2735,6 +2773,15 @@ function publishMissingSupervisedPullRequest(input: {
       published: false,
       failure: allStateLookup.failure,
     };
+  }
+
+  const branchDelta = workOrderBranchDelta({
+    project: input.project,
+    commitBranch: input.commitBranch,
+    runGit: input.runGit,
+  });
+  if (branchDelta.status === "none") {
+    return { lookup: input.lookup, published: false, skippedNoDelta: true };
   }
 
   const push = input.runGit({

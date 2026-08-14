@@ -752,6 +752,9 @@ prReview:
         if (command === `push -u origin ${branch}`) {
           return { status: 0, stdout: "", stderr: "" };
         }
+        if (command === `rev-list --count origin/main..${branch}`) {
+          return { status: 0, stdout: "1\n", stderr: "" };
+        }
         if (command === "show --format= --name-only abc123") {
           return { status: 0, stdout: "src/runtime.ts\n", stderr: "" };
         }
@@ -770,6 +773,129 @@ prReview:
       `gh pr list --state all --head '${branch}' --json number --limit 1`,
       expect.stringContaining(`gh pr create --base 'main' --head '${branch}'`),
       `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`,
+    ]);
+  });
+
+  it("accepts no-delta recovery when supervisor summary retains old commit refs", () => {
+    const branch = "loop/hub/active-delegate/run-1";
+    const prCommands: string[] = [];
+
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-worktree",
+        commit: { enabled: true, perRound: false, branch },
+        pullRequest: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-worktree",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, branch },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-worktree",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          sourceWorktree: "/tmp/hub-source",
+          cleanup: { success: "release-worker", failure: "retain-for-ttl" },
+          preparedBy: "system-git-worktree",
+        },
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "hub",
+          requirement: "Repair the confirmed runtime issue.",
+          requireReview: true,
+          requireTests: true,
+          requireCoverageReview: true,
+          allowAiEval: true,
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["confirmed existing merged PR already fixed the issue"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: ["abc123 fix: old merged repair"],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed"],
+            postMutationReview: ["verified no current delta"],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: ["successful no-delta recovery"],
+          },
+        },
+      },
+      runCommand: (invocation) => {
+        prCommands.push(invocation.command);
+        if (
+          invocation.command === `gh pr list --state all --head '${branch}' --json number --limit 1`
+        ) {
+          return { status: 0, stdout: "[]", stderr: "" };
+        }
+        if (invocation.command.includes("gh pr create")) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "PR creation should not run for no-delta recovery",
+          };
+        }
+        return {
+          status: 1,
+          stdout: "",
+          stderr: `no pull requests found for branch "${branch}"`,
+        };
+      },
+      runGit: (invocation) => {
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (command === "branch --show-current") {
+          return {
+            status: 0,
+            stdout: invocation.cwd === "/tmp/hub-source" ? "main\n" : `${branch}\n`,
+            stderr: "",
+          };
+        }
+        if (command === `rev-list --count origin/main..${branch}`) {
+          return { status: 0, stdout: "0\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${command}`);
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain(
+      `PR gate skipped because WorkOrder branch ${branch} has no commits over origin/main`,
+    );
+    expect(prCommands).toEqual([
+      `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`,
+      `gh pr list --state all --head '${branch}' --json number --limit 1`,
     ]);
   });
 
@@ -901,6 +1027,9 @@ prReview:
         }
         if (command === "show --format= --name-only abc123") {
           return { status: 0, stdout: "src/runtime.ts\n", stderr: "" };
+        }
+        if (command === `rev-list --count origin/main..${branch}`) {
+          return { status: 0, stdout: "1\n", stderr: "" };
         }
         throw new Error(`unexpected git args: ${command}`);
       },
