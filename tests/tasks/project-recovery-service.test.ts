@@ -92,7 +92,7 @@ describe("project recovery service", () => {
     const reportDir = join(stateDir, "loop-runs", "net-auto-switch", "run-md");
     await mkdir(reportDir, { recursive: true });
     const reportPath = join(reportDir, "supervisor.md");
-    await writeFile(reportPath, "Supervisor failed before final summary.");
+    await writeFile(reportPath, "Supervisor failed before final summary.\n".repeat(2_000));
     await writeFile(
       join(reportDir, "work-order.json"),
       JSON.stringify({
