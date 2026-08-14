@@ -86,6 +86,64 @@ describe("project recovery service", () => {
     );
   });
 
+  it("uses sidecar WorkOrder evidence when reportPath points at supervisor markdown", async () => {
+    const stateDir = join(tmpdir(), `project-recovery-markdown-report-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    const reportDir = join(stateDir, "loop-runs", "net-auto-switch", "run-md");
+    await mkdir(reportDir, { recursive: true });
+    const reportPath = join(reportDir, "supervisor.md");
+    await writeFile(reportPath, "Supervisor failed before final summary.");
+    await writeFile(
+      join(reportDir, "work-order.json"),
+      JSON.stringify({
+        id: "run-md",
+        task: {
+          kind: "active-delegated-task",
+          requirement:
+            "Historical scheduled task recovery for a configured project.\nProject: net-auto-switch-all-prs\nRepository: /repo/net-auto-switch\n",
+        },
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "run-next" }));
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:net-auto-switch:active-delegated-task:run-md",
+          source: "loop-engineering",
+          name: "net-auto-switch active-delegated-task",
+          status: "failed",
+          error: "blocked",
+          failureKind: "invalid-final-summary",
+          summary:
+            "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. supervisor completion evidence is invalid or incomplete and can be retried",
+          reportPath,
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "blocked",
+        },
+      ],
+      config: {
+        projects: [],
+        repositories: [{ id: "net-auto-switch-all-prs", path: "/repo/net-auto-switch" }],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus: vi.fn(),
+      dispatch,
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ unconfigured: 0, dispatched: 1 });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ id: "net-auto-switch-all-prs" }),
+      }),
+    );
+  });
+
   it("defers a second recovery instead of creating a same-project duplicate", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const active = coordinator.enqueue({

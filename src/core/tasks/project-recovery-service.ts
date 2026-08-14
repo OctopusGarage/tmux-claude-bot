@@ -427,21 +427,28 @@ function readJson(path: string): Record<string, unknown> | undefined {
 }
 
 function readRecoveryArtifact(reportPath: string): string | undefined {
-  try {
-    return readFileSync(reportPath, "utf8").slice(0, 32_000);
-  } catch {
-    const evidence = [
-      join(reportPath, "supervisor-final-summary.json"),
-      join(reportPath, "supervisor-summary.json"),
-      join(reportPath, "system-gate.json"),
-      join(reportPath, "work-order.json"),
-    ].flatMap((path) => {
+  const basePath =
+    reportPath.endsWith(".md") || reportPath.endsWith(".json") ? dirname(reportPath) : reportPath;
+  const paths = [
+    reportPath,
+    join(basePath, "supervisor-final-summary.json"),
+    join(basePath, "supervisor-summary.json"),
+    join(basePath, "system-gate.json"),
+    join(basePath, "work-order.json"),
+  ];
+  const seen = new Set<string>();
+  const evidence = paths
+    .filter((path) => {
+      if (seen.has(path)) return false;
+      seen.add(path);
+      return true;
+    })
+    .flatMap((path) => {
       try {
         return [readFileSync(path, "utf8")];
       } catch {
         return [];
       }
     });
-    return evidence.length === 0 ? undefined : evidence.join("\n").slice(0, 32_000);
-  }
+  return evidence.length === 0 ? undefined : evidence.join("\n").slice(0, 32_000);
 }
