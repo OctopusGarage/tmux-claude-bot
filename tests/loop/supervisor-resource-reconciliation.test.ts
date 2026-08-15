@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -251,5 +251,34 @@ describe("supervisor resource reconciliation", () => {
       `${expiredOrphan}:rev-parse --show-toplevel`,
       `${expiredOrphan}:worktree remove --force ${expiredOrphan}`,
     ]);
+  });
+
+  it("terminalizes abandoned dispatches as dispatch timeouts, not invalid output", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const scheduledAt = 1_000;
+    const order = workOrder(stateDir, { id: "abandoned-run" });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "dispatching",
+      now: scheduledAt,
+    });
+
+    await expect(
+      reconcileTerminalSupervisorResources({
+        now: scheduledAt + 13 * 60 * 60 * 1_000,
+      }),
+    ).resolves.toMatchObject({ abandonedWorkOrders: 1 });
+
+    const state = JSON.parse(
+      readFileSync(join(stateDir, "loop-runs", "app", "abandoned-run", "work-order-state.json"), {
+        encoding: "utf8",
+      }),
+    ) as { status?: string; resultStatus?: string };
+    expect(state).toMatchObject({
+      status: "failed",
+      resultStatus: "dispatch-timeout",
+    });
   });
 });

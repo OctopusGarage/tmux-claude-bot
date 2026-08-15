@@ -268,10 +268,11 @@ function reconcileAbandonedLoopSupervisorWorkOrders(
       supervisorSession: record.state.supervisorSession,
       startedAt: record.state.updatedAt,
       endedAt: now,
-      resultStatus: "invalid-output",
+      resultStatus: "dispatch-timeout",
       stateStatus: "failed",
       reportPath: record.runDir,
-      failureSummary: "Reconciled stale supervisor dispatch without an active worker lease.",
+      failureSummary:
+        "Reconciled stale supervisor dispatch timeout without an active worker lease.",
       advanceScheduler: true,
       ...(existing?.status === "failed" || existing?.status === "success"
         ? { skipLedger: true }

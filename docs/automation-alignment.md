@@ -232,8 +232,10 @@ mutex; an overlapping tick exits as `in-progress` before it can mutate ledger or
 repair-queue state.
 When an abandoned WorkOrder is closed, its scheduler `lastFired` checkpoint is
 advanced for that occurrence so a concurrent scheduler pass cannot immediately
-dispatch the same run again. Delegated-task reconciliation also accepts a valid
-final summary while the WorkOrder state file is still `in-flight`.
+dispatch the same run again. Abandoned dispatches terminalize as
+`dispatch-timeout`, not `invalid-output`, because no supervisor output contract
+was parsed and rejected. Delegated-task reconciliation also accepts a valid final
+summary while the WorkOrder state file is still `in-flight`.
 Service startup must await Loop WorkOrder reconciliation before restoring the
 persisted control queue or resuming active delegations. Queue restoration must
 also discard any supervisor prompt whose WorkOrder already has a valid final
