@@ -52,6 +52,7 @@ const REVIEW_GATE_DETERMINISTIC_GATE_RESULTS = new Set<
 const PULL_REQUEST_OUTCOMES = new Set<LoopSupervisorPullRequestDecisionOutcome>([
   "merged",
   "closed",
+  "approved",
   "retry",
   "manual-review",
 ]);
@@ -295,7 +296,17 @@ export function repositoryPullRequestReviewDisposition(
   ) {
     return "retry";
   }
+  if (
+    decisions.some(
+      (decision) =>
+        decision.outcome === "approved" &&
+        (decision.reviewedHeadSha === undefined || !isValidHeadSha(decision.reviewedHeadSha)),
+    )
+  ) {
+    return "invalid";
+  }
   if (decisions.some((decision) => decision.outcome === "retry")) return "retry";
+  if (decisions.some((decision) => decision.outcome === "approved")) return "retry";
   if (decisions.some((decision) => decision.outcome === "manual-review")) {
     return "manual-review";
   }
@@ -337,10 +348,21 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
     } else if (reason !== undefined && typeof reason !== "string") {
       return null;
     }
+    const reviewedHeadSha = item.reviewedHeadSha;
+    if (
+      outcome === "approved" &&
+      (typeof reviewedHeadSha !== "string" || !isValidHeadSha(reviewedHeadSha))
+    ) {
+      return null;
+    }
+    if (outcome !== "approved" && reviewedHeadSha !== undefined) return null;
     const evidence = parseStringArrayOrSingleton(item.evidence);
     const nextStep = typeof item.nextStep === "string" ? item.nextStep.trim() : "";
     if (evidence === null || nextStep === "") return null;
-    if ((outcome === "retry" || outcome === "manual-review") && evidence.length === 0) {
+    if (
+      (outcome === "approved" || outcome === "retry" || outcome === "manual-review") &&
+      evidence.length === 0
+    ) {
       return null;
     }
     const decision: LoopSupervisorPullRequestDecision = {
@@ -350,6 +372,7 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
       ...(boundary === undefined
         ? {}
         : { boundary: boundary as LoopSupervisorPullRequestHumanBoundary }),
+      ...(typeof reviewedHeadSha === "string" ? { reviewedHeadSha } : {}),
       evidence,
       nextStep,
     };
@@ -357,6 +380,10 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
     decisions.push(decision);
   }
   return decisions;
+}
+
+function isValidHeadSha(value: string): boolean {
+  return /^[a-fA-F0-9]{6,64}$/.test(value);
 }
 
 function parseLearning(value: unknown): LoopSupervisorLearning | null {

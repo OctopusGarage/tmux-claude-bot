@@ -906,6 +906,10 @@ actionable work with `gh pr close <number> --comment <reason>`, or records a
 specific human decision blocker. A new loop-created PR is ready by default; it
 may remain Draft only when a concrete incomplete-work or human-decision blocker
 is recorded.
+If the review worker cannot perform the ready transition itself, it records
+`outcome: "approved"` with `reviewedHeadSha` set to the exact reviewed head SHA;
+system recovery may then mark the Draft ready only after revalidating that head,
+successful current checks, clean mergeability, and mutation authority.
 
 Same-repository conflicting PRs are also active work: take over the existing head
 branch, sync the base, resolve bounded and reviewable conflicts, push, and repeat

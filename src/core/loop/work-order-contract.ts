@@ -8,6 +8,7 @@ export type SupervisorFinalStatus = "completed" | "failed" | "blocked" | "timeou
 export type LoopSupervisorPullRequestDecisionOutcome =
   | "merged"
   | "closed"
+  | "approved"
   | "retry"
   | "manual-review";
 
@@ -32,6 +33,7 @@ export type LoopSupervisorPullRequestDecision = {
   outcome: LoopSupervisorPullRequestDecisionOutcome;
   boundary?: LoopSupervisorPullRequestHumanBoundary;
   reason?: LoopSupervisorPullRequestCloseReason;
+  reviewedHeadSha?: string;
   evidence: string[];
   nextStep: string;
 };

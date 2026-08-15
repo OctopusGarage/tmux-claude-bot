@@ -100,6 +100,8 @@ export function createRepositoryPullRequestGitHub(input: {
             return { ok: false, reason: "unsafe private-fork workflow policy refused" };
           }
           command = forkPolicyPutCommand(target.repository, action.policy);
+        } else if (action.kind === "mark-ready") {
+          command = `pr ready ${target.number} --repo ${target.repository}`;
         } else if (action.kind === "approve-workflow") {
           assertNumber(action.runId, "workflow run id");
           command = `api --method POST repos/${target.repository}/actions/runs/${action.runId}/approve`;

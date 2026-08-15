@@ -5,7 +5,8 @@ import { JsonMapStore } from "../infra/json-map-store.js";
 export type RepositoryPullRequestRecoveryActionKind =
   | "approve-workflow"
   | "rerun-workflow"
-  | "configure-private-fork-workflows";
+  | "configure-private-fork-workflows"
+  | "mark-ready";
 
 export type RepositoryPullRequestRecoveryEvidence = {
   id: string;

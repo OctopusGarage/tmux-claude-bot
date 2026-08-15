@@ -137,6 +137,10 @@ retries use a five-attempt budget and legacy over-budget records terminalize as
 recovery may enable private-fork workflow execution only with write tokens and
 secrets disabled, revalidates the exact PR head before every action, and
 persists a sanitized intent before mutation plus its outcome afterward.
+Draft-to-ready recovery requires a structured `approved` PR decision whose
+`reviewedHeadSha` exactly matches the current PR head, completed successful head
+workflow runs, clean mergeability, and mutation authority; `approved` is
+retryable handoff evidence, not a completed repository-review outcome.
 Historical prose-only `manual-review` or repairable `dead-letter` records are
 reopened once with a fresh retry epoch only while the PR is open and no newer or
 active occurrence owns the repository.

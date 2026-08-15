@@ -702,6 +702,33 @@ describe("repository PR decision contract", () => {
     );
   });
 
+  it("accepts approved reviewed PR decisions as retryable handoff evidence", () => {
+    const approved = parseSupervisorFinalSummary(
+      `[LOOP_SUPERVISOR_DONE:run-approved]${JSON.stringify(
+        summary({
+          status: "blocked",
+          pullRequestDecisions: [
+            {
+              number: 1,
+              repository: "OctopusGarage/repo",
+              outcome: "approved",
+              reviewedHeadSha: "abc123",
+              evidence: ["reviewed diff, tests, checks, and mergeability"],
+              nextStep: "mark the draft PR ready for review",
+            },
+          ],
+        }),
+      )}`,
+      "run-approved",
+    );
+
+    expect(approved.ok && repositoryPullRequestReviewDisposition(approved.summary)).toBe("retry");
+    expect(approved.ok && approved.summary.pullRequestDecisions?.[0]).toMatchObject({
+      outcome: "approved",
+      reviewedHeadSha: "abc123",
+    });
+  });
+
   it("requires a structured human boundary instead of inferring one from prose", () => {
     const permissionProse = parseSupervisorFinalSummary(
       `[LOOP_SUPERVISOR_DONE:run-permission-prose]${JSON.stringify(

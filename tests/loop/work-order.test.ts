@@ -1138,6 +1138,8 @@ prReview:
     );
     expect(prompt).not.toContain("--base dev --limit 100");
     expect(prompt).toContain("open PR count and each in-scope PR number/base/head/decision");
+    expect(prompt).toContain("approved");
+    expect(prompt).toContain("reviewedHeadSha");
     expect(prompt).toContain(
       'Final status must be "completed" only when every pullRequestDecisions entry is merged',
     );

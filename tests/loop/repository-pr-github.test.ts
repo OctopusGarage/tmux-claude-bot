@@ -142,4 +142,24 @@ describe("repository PR GitHub adapter", () => {
     ).toEqual({ ok: false, reason: "unsafe private-fork workflow policy refused" });
     expect(commands).toEqual([]);
   });
+
+  it("marks a reviewed draft pull request ready through the configured account", () => {
+    const commands: string[] = [];
+    const github = createRepositoryPullRequestGitHub({
+      run: (command) => {
+        commands.push(command);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(
+      github.execute(
+        { repository: "OctopusGarage/fluent-frame", number: 22, headSha: "abc123" },
+        { kind: "mark-ready" },
+        "example-owner",
+      ),
+    ).toEqual({ ok: true });
+    expect(commands).toEqual([expect.stringContaining("gh auth token --user 'example-owner'")]);
+    expect(commands[0]).toContain("pr ready 22 --repo OctopusGarage/fluent-frame");
+  });
 });

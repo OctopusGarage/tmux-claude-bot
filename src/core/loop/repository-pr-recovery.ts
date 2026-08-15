@@ -1,6 +1,7 @@
 import type { RepositoryPullRequestRecoveryEvidenceWriter } from "./repository-pr-recovery-store.js";
 import type {
   LoopSupervisorFinalSummary,
+  LoopSupervisorPullRequestDecision,
   LoopSupervisorPullRequestHumanBoundary,
 } from "./work-order-contract.js";
 
@@ -47,7 +48,8 @@ export type RepositoryPullRequestObservation = {
 export type RepositoryPullRequestRecoveryAction =
   | { kind: "approve-workflow"; runId: number }
   | { kind: "rerun-workflow"; runId: number }
-  | { kind: "configure-private-fork-workflows"; policy: PrivateForkWorkflowPolicy };
+  | { kind: "configure-private-fork-workflows"; policy: PrivateForkWorkflowPolicy }
+  | { kind: "mark-ready" };
 
 export type RepositoryPullRequestRecoveryPlan =
   | { kind: "none"; reason: string }
@@ -60,6 +62,10 @@ export type RepositoryPullRequestRecoveryPlan =
   | { kind: "repair"; reason: string; actions: RepositoryPullRequestRecoveryAction[] };
 
 const MUTATION_PERMISSIONS = new Set<RepositoryPermission>(["write", "maintain", "admin"]);
+type RepositoryPullRequestReviewDecision = Pick<
+  LoopSupervisorPullRequestDecision,
+  "outcome" | "reviewedHeadSha"
+>;
 
 export function isSafePrivateForkWorkflowPolicy(policy: PrivateForkWorkflowPolicy): boolean {
   return (
@@ -73,6 +79,7 @@ export function isSafePrivateForkWorkflowPolicy(policy: PrivateForkWorkflowPolic
 /** Pure classification. All mutations are performed by the account-bound adapter. */
 export function planRepositoryPullRequestRecovery(
   observation: RepositoryPullRequestObservation,
+  decision?: RepositoryPullRequestReviewDecision,
 ): RepositoryPullRequestRecoveryPlan {
   if (observation.state === "merged") {
     return { kind: "none", reason: "pull request is already merged" };
@@ -122,12 +129,30 @@ export function planRepositoryPullRequestRecovery(
   if (headRuns.some((run) => run.status !== "completed")) {
     return { kind: "retry", reason: "head workflow checks are pending" };
   }
-  if (observation.isDraft) return { kind: "retry", reason: "pull request is still draft" };
   if (observation.mergeable === "conflicting" || observation.mergeStateStatus === "dirty") {
     return { kind: "retry", reason: "same-repository conflict remains repairable" };
   }
   if (observation.mergeable === "unknown") {
     return { kind: "retry", reason: "GitHub mergeability is transiently unknown" };
+  }
+  if (observation.isDraft) {
+    if (decision?.outcome !== "approved") {
+      return { kind: "retry", reason: "pull request draft requires approved review evidence" };
+    }
+    if (decision.reviewedHeadSha !== observation.headSha) {
+      return { kind: "retry", reason: "approved review does not match the current reviewed head" };
+    }
+    if (headRuns.length === 0) {
+      return { kind: "retry", reason: "head workflow checks are unavailable" };
+    }
+    if (headRuns.some((run) => !isSuccessfulWorkflowConclusion(run.conclusion))) {
+      return { kind: "retry", reason: "head workflow checks are not passing" };
+    }
+    return {
+      kind: "repair",
+      reason: "reviewed draft pull request is ready for review",
+      actions: [{ kind: "mark-ready" }],
+    };
   }
   return { kind: "none", reason: "no deterministic repository recovery action is required" };
 }
@@ -183,7 +208,7 @@ export function createRepositoryPullRequestRecoveryController(input: {
           number: decision.number,
           account: context.account,
         });
-        const plan = planRepositoryPullRequestRecovery(observed);
+        const plan = planRepositoryPullRequestRecovery(observed, decision);
         if (plan.kind === "manual-review") {
           manual = true;
           continue;
@@ -201,7 +226,7 @@ export function createRepositoryPullRequestRecoveryController(input: {
             number: decision.number,
             account: context.account,
           });
-          const freshPlan = planRepositoryPullRequestRecovery(fresh);
+          const freshPlan = planRepositoryPullRequestRecovery(fresh, decision);
           if (
             fresh.state !== "open" ||
             fresh.headSha !== observed.headSha ||
@@ -273,5 +298,13 @@ function sameRecoveryAction(
       JSON.stringify(left.policy) === JSON.stringify(right.policy)
     );
   }
-  return right.kind !== "configure-private-fork-workflows" && left.runId === right.runId;
+  if (left.kind === "mark-ready") return right.kind === "mark-ready";
+  return (
+    (right.kind === "approve-workflow" || right.kind === "rerun-workflow") &&
+    left.runId === right.runId
+  );
+}
+
+function isSuccessfulWorkflowConclusion(conclusion: string | null): boolean {
+  return conclusion === "success" || conclusion === "neutral" || conclusion === "skipped";
 }

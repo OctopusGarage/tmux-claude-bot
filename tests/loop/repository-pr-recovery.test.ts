@@ -94,6 +94,47 @@ describe("repository PR recovery policy", () => {
     ).toMatchObject({ kind: "repair", actions: [{ kind: "approve-workflow", runId: 201 }] });
   });
 
+  it("marks a reviewed clean draft ready only when the reviewed head matches", () => {
+    expect(
+      planRepositoryPullRequestRecovery(
+        observation({
+          isDraft: true,
+          mergeable: "mergeable",
+          mergeStateStatus: "clean",
+          workflowRuns: [
+            { id: 300, headSha: "abc123", status: "completed", conclusion: "success" },
+          ],
+        }),
+        {
+          outcome: "approved",
+          reviewedHeadSha: "abc123",
+        },
+      ),
+    ).toEqual({
+      kind: "repair",
+      reason: "reviewed draft pull request is ready for review",
+      actions: [{ kind: "mark-ready" }],
+    });
+
+    expect(
+      planRepositoryPullRequestRecovery(
+        observation({
+          headSha: "def456",
+          isDraft: true,
+          mergeable: "mergeable",
+          mergeStateStatus: "clean",
+          workflowRuns: [
+            { id: 301, headSha: "def456", status: "completed", conclusion: "success" },
+          ],
+        }),
+        {
+          outcome: "approved",
+          reviewedHeadSha: "abc123",
+        },
+      ),
+    ).toMatchObject({ kind: "retry", reason: expect.stringContaining("reviewed head") });
+  });
+
   it("keeps conflicts, drafts, pending checks, and transient observations retryable", () => {
     expect(planRepositoryPullRequestRecovery(observation())).toMatchObject({
       kind: "retry",
@@ -103,7 +144,7 @@ describe("repository PR recovery policy", () => {
       planRepositoryPullRequestRecovery(
         observation({ isDraft: true, mergeable: "mergeable", mergeStateStatus: "clean" }),
       ),
-    ).toMatchObject({ kind: "retry", reason: expect.stringContaining("draft") });
+    ).toMatchObject({ kind: "retry", reason: expect.stringContaining("review") });
     expect(
       planRepositoryPullRequestRecovery(
         observation({
@@ -113,6 +154,19 @@ describe("repository PR recovery policy", () => {
         }),
       ),
     ).toMatchObject({ kind: "retry", reason: expect.stringContaining("pending") });
+    expect(
+      planRepositoryPullRequestRecovery(
+        observation({
+          isDraft: true,
+          mergeable: "mergeable",
+          mergeStateStatus: "clean",
+          workflowRuns: [
+            { id: 301, headSha: "abc123", status: "completed", conclusion: "failure" },
+          ],
+        }),
+        { outcome: "approved", reviewedHeadSha: "abc123" },
+      ),
+    ).toMatchObject({ kind: "retry", reason: expect.stringContaining("not passing") });
   });
 
   it("uses manual review only for an observed lack of repository authority", () => {
@@ -220,6 +274,66 @@ describe("repository PR recovery controller", () => {
       "observe",
       "intent:rerun-workflow",
       "execute:rerun-workflow",
+      "outcome:succeeded",
+    ]);
+  });
+
+  it("marks an approved reviewed draft ready through a durable recovery action", () => {
+    const events: string[] = [];
+    const controller = createRepositoryPullRequestRecoveryController({
+      github: {
+        observe: () => {
+          events.push("observe");
+          return observation({
+            isDraft: true,
+            mergeable: "mergeable",
+            mergeStateStatus: "clean",
+            workflowRuns: [
+              { id: 301, headSha: "abc123", status: "completed", conclusion: "success" },
+            ],
+          });
+        },
+        execute: (_target, action) => {
+          events.push(`execute:${action.kind}`);
+          return { ok: true };
+        },
+      },
+      evidence: {
+        begin: (input) => {
+          events.push(`intent:${input.action}`);
+          return { id: "intent-ready" };
+        },
+        finish: (_id, input) => events.push(`outcome:${input.status}`),
+      },
+    });
+
+    expect(
+      controller.recover(
+        {
+          ...retrySummary,
+          pullRequestDecisions: [
+            {
+              number: 22,
+              repository: "OctopusGarage/fluent-frame",
+              outcome: "approved",
+              reviewedHeadSha: "abc123",
+              evidence: ["reviewed diff, tests, checks, and mergeability"],
+              nextStep: "mark ready for review",
+            },
+          ],
+        },
+        {
+          account: "example-owner",
+          cwd: "/repo/fluent-frame",
+          now: 1000,
+        },
+      ),
+    ).toMatchObject({ disposition: "retry", openPullRequests: 1, repaired: 1 });
+    expect(events).toEqual([
+      "observe",
+      "observe",
+      "intent:mark-ready",
+      "execute:mark-ready",
       "outcome:succeeded",
     ]);
   });
