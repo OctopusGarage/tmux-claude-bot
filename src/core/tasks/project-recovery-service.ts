@@ -397,7 +397,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     input.updateRepairStatus(
       record.taskId,
       "blocked",
-      `Authoritative supervisor final summary reports incomplete recovery (status=${String(summary.status ?? "unknown")}).`,
+      `Authoritative supervisor final summary reports blocked recovery (status=${String(summary.status ?? "unknown")}).`,
     );
     if (queueRecord !== undefined)
       input.coordinator.markTerminal(queueRecord.id, "blocked", input.now);
