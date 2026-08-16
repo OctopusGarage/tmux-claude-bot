@@ -719,6 +719,11 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
     expect(result).toEqual({ checked: 1, fixed: 0, blocked: 1 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:geo:bug-fix:6",
+      "blocked",
+      "Authoritative supervisor final summary reports blocked recovery (status=blocked).",
+    );
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
       status: "blocked",
     });
