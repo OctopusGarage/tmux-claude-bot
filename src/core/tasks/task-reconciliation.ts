@@ -1,8 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  readLoopSupervisorWorkerLeaseState,
+  releaseLoopSupervisorWorker,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../loop/supervisor-pool.js";
+import {
   listRecoverableFinalSummaryLoopSupervisorWorkOrders,
   listTerminalLoopSupervisorWorkOrders,
+  writeLoopSupervisorWorkOrderState,
 } from "../loop/supervisor-state.js";
 import { parseSupervisorFinalSummaryFile } from "../loop/work-order.js";
 import { RepairCoordinator } from "./repair-coordinator.js";
@@ -58,6 +64,9 @@ export async function reconcileAutopilotDelegatedTasks(
     result.checked += 1;
     const recoveredSuccessfully = summary.ok && summary.summary.status === "completed" && gate.ok;
     if (recoveredSuccessfully) {
+      if (!terminalRunIds.has(runId)) {
+        settleRecoveredFinalSummaryWorkOrder(actionable, now);
+      }
       ledger.finish(task.taskId, {
         endedAt: now,
         summary: "Reconciled from terminal supervisor artifacts.",
@@ -104,6 +113,32 @@ export async function reconcileAutopilotDelegatedTasks(
   }
 
   return result;
+}
+
+function settleRecoveredFinalSummaryWorkOrder(
+  actionable: ReturnType<typeof listRecoverableFinalSummaryLoopSupervisorWorkOrders>[number],
+  now: number,
+): void {
+  writeLoopSupervisorWorkOrderState({
+    workOrder: actionable.workOrder,
+    supervisorSession: actionable.state.supervisorSession,
+    status: "completed",
+    now,
+    resultStatus: "completed",
+  });
+  writeLoopSupervisorWorkerLeaseState(
+    releaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      workOrderId: actionable.workOrder.id,
+      result: "success",
+      now,
+      retainFailureForMs:
+        (actionable.workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) *
+        60 *
+        60 *
+        1000,
+    }),
+  );
 }
 
 function readAcceptedSystemGate(

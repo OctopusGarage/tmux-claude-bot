@@ -1,7 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { RepairCoordinator } from "../../src/core/tasks/repair-coordinator.js";
@@ -174,6 +178,40 @@ describe("autopilot delegated task reconciliation", () => {
     expect(
       new DailyTaskLedger().listAll().find((item) => item.taskId === `autopilot:${runId}`),
     ).toMatchObject({ status: "success", repairStatus: "not-needed" });
+  });
+
+  it("settles non-terminal state and active lease when restart finds accepted final artifacts", async () => {
+    const runId = arrangeTerminalRun("in-flight", true);
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-reconciliation",
+          workOrderId: runId,
+          projectId: "tmux-claude-bot",
+          projectPath: "/repo/tmux-claude-bot",
+          status: "active",
+          leasedAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+    startLedger(runId);
+
+    const result = await reconcileAutopilotDelegatedTasks({ now: 3 });
+
+    const statePath = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      runId,
+      "work-order-state.json",
+    );
+    expect(result.finished).toBe(1);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({
+      status: "completed",
+      resultStatus: "completed",
+    });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
   });
 
   it("keeps a running ledger entry reserved while its final summary awaits the system gate", async () => {
