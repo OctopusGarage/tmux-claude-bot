@@ -195,6 +195,7 @@ export const envSchema = z.object({
   // and consumes existing repair queues without creating daily-audit noise. ---
   SYSTEM_SELF_HEAL_ENABLED: blankTolerantString("true"),
   SYSTEM_SELF_HEAL_TICK_MS: blankTolerantNonNegativeInt(3_600_000),
+  SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED: blankTolerantString("true"),
   // --- Loop Engineering. Blank config file or tick 0 disables the managed loop. ---
   LOOP_ENGINEERING_CONFIG_FILE: z.string().default(""),
   LOOP_ENGINEERING_TICK_MS: blankTolerantNonNegativeInt(300000),
@@ -446,6 +447,9 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       enabled:
         parsed.SYSTEM_SELF_HEAL_ENABLED !== "false" && parsed.SYSTEM_SELF_HEAL_ENABLED !== "0",
       tickMs: parsed.SYSTEM_SELF_HEAL_TICK_MS,
+      agentSweepEnabled:
+        parsed.SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED !== "false" &&
+        parsed.SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED !== "0",
     },
     loopEngineering: {
       configFile: parsed.LOOP_ENGINEERING_CONFIG_FILE.trim(),

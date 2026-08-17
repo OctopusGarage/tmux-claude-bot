@@ -26,13 +26,16 @@ describe("system self-heal service", () => {
       config: {
         enabled: true,
         tickMs: 3_600_000,
+        agentSweepEnabled: true,
       },
       runAudit,
+      runAgentSweep: vi.fn(async () => "queued" as const),
     });
 
     expect(result).toEqual({
       fired: true,
       audit: { fired: false, reason: "not-due" },
+      agentSweep: "queued",
     });
     expect(runAudit).toHaveBeenCalledWith({ now: 1_000, force: false });
   });
@@ -42,6 +45,7 @@ describe("system self-heal service", () => {
     const runTick = vi.fn(async () => ({
       fired: true as const,
       audit: { fired: false as const, reason: "not-due" as const },
+      agentSweep: "queued" as const,
     }));
     const stop = startSystemSelfHeal(
       {
@@ -49,6 +53,7 @@ describe("system self-heal service", () => {
           systemSelfHeal: {
             enabled: true,
             tickMs: 3_600_000,
+            agentSweepEnabled: true,
           },
         },
       } as never,
@@ -87,6 +92,7 @@ describe("system self-heal service", () => {
         systemSelfHeal: {
           enabled: true,
           tickMs: 3_600_000,
+          agentSweepEnabled: true,
         },
         taskAudit: {
           enabled: false,
@@ -111,6 +117,7 @@ describe("system self-heal service", () => {
       return {
         fired: true as const,
         audit,
+        agentSweep: "disabled" as const,
       };
     });
 

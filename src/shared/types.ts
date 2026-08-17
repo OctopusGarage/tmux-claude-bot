@@ -115,6 +115,7 @@ export type AppConfig = {
   systemSelfHeal: {
     enabled: boolean;
     tickMs: number;
+    agentSweepEnabled: boolean;
   };
   loopEngineering: {
     configFile: string;

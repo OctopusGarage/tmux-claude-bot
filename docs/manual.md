@@ -916,6 +916,7 @@ TASK_AUDIT_REPAIR_BRANCH=dev
 TASK_AUDIT_REPAIR_WORKTREE_ISOLATION=isolated
 SYSTEM_SELF_HEAL_ENABLED=true
 SYSTEM_SELF_HEAL_TICK_MS=3600000
+SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true
 ```
 
 Run the same audit immediately through the running bot:
@@ -942,9 +943,13 @@ does not force the daily audit notification schedule, but it does reconcile
 terminal WorkOrders, ledger repair state, repair queue ownership, and configured
 project-recovery candidates. When existing evidence is enough to proceed, it
 uses the same repair queues, Loop Supervisor admission checks, worktree
-isolation, and verification policy as Daily Task Audit repair. Disable it only
-for deliberate maintenance windows with `SYSTEM_SELF_HEAL_ENABLED=false` or
-`SYSTEM_SELF_HEAL_TICK_MS=0`.
+isolation, and verification policy as Daily Task Audit repair. With
+`SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, the same tick also queues a broad
+active-agent self-heal prompt so automation can inspect across files, logs,
+state, queue artifacts, and PR/CI evidence instead of being limited to a fixed
+checklist. Disable the whole tick only for deliberate maintenance windows with
+`SYSTEM_SELF_HEAL_ENABLED=false` or `SYSTEM_SELF_HEAL_TICK_MS=0`; disable only
+the broad agent sweep with `SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=false`.
 
 The audit also checks its own previous execution. If the previous daily audit
 failed, timed out, could not dispatch auto-repair, or only partially delivered

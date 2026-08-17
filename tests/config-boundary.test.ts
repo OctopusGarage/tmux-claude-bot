@@ -53,10 +53,12 @@ describe("no env var crashes startup when left blank", () => {
         TELEGRAM_BOT_TOKEN: "t",
         SYSTEM_SELF_HEAL_ENABLED: "true",
         SYSTEM_SELF_HEAL_TICK_MS: "3600000",
+        SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED: "true",
       }).systemSelfHeal,
     ).toEqual({
       enabled: true,
       tickMs: 3_600_000,
+      agentSweepEnabled: true,
     });
 
     expect(
@@ -64,10 +66,12 @@ describe("no env var crashes startup when left blank", () => {
         TELEGRAM_BOT_TOKEN: "t",
         SYSTEM_SELF_HEAL_ENABLED: "false",
         SYSTEM_SELF_HEAL_TICK_MS: "0",
+        SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED: "false",
       }).systemSelfHeal,
     ).toEqual({
       enabled: false,
       tickMs: 0,
+      agentSweepEnabled: false,
     });
   });
 });
