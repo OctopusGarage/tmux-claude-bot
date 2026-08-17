@@ -290,15 +290,20 @@ export async function reconcileProjectRecoveryArtifacts(input: {
   const result: ProjectRecoveryArtifactReconciliationResult = { checked: 0, fixed: 0, blocked: 0 };
   const byTaskId = new Map(input.records.map((record) => [record.taskId, record]));
   for (const queueRecord of input.coordinator.list()) {
-    if (queueRecord.source !== "project-recovery" || isRepairTerminal(queueRecord.status)) continue;
+    if (isRepairTerminal(queueRecord.status)) continue;
+    const linked = queueRecord.linkedTaskIds
+      .map((taskId) => byTaskId.get(taskId))
+      .filter((record): record is ScheduledTaskRecord => record !== undefined);
+    const hasLinkedRecoveryArtifact = linked.some(
+      (record) =>
+        record.source === "autopilot-delegate" && record.taskId !== queueRecord.linkedTaskIds[0],
+    );
+    if (queueRecord.source !== "project-recovery" && !hasLinkedRecoveryArtifact) continue;
     if (isTerminalProjectRecoveryClosure(queueRecord)) {
       input.coordinator.markTerminal(queueRecord.id, "blocked", input.now);
       result.blocked++;
       continue;
     }
-    const linked = queueRecord.linkedTaskIds
-      .map((taskId) => byTaskId.get(taskId))
-      .filter((record): record is ScheduledTaskRecord => record !== undefined);
     const originals = linked.filter(
       (record) =>
         record.status !== "success" &&
