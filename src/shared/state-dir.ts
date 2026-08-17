@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 
@@ -46,7 +46,9 @@ const DEFAULT_STATE_DIR = nodePath.join(DEFAULT_APP_HOME, "state");
  *    overshot to `$HOME` once tsup flattened `src/core/x.ts` to `dist/x.js`.
  */
 export function appStateDir(): string {
-  return normalizeAppStateDir(stateDir(DEFAULT_STATE_DIR));
+  const dir = normalizeAppStateDir(stateDir(DEFAULT_STATE_DIR));
+  ensureSpotlightNeverIndex(dir);
+  return dir;
 }
 
 /** Absolute path of a state file under {@link appStateDir}. */
@@ -60,6 +62,17 @@ function normalizeAppStateDir(dir: string): string {
   if (hasPrimaryStateMarker(dir)) return dir;
   if (!looksLikeStateDir(nested)) return dir;
   return nested;
+}
+
+function ensureSpotlightNeverIndex(dir: string): void {
+  try {
+    mkdirSync(dir, { recursive: true });
+    const marker = nodePath.join(dir, ".metadata_never_index");
+    if (!existsSync(marker)) writeFileSync(marker, "");
+  } catch {
+    // Best effort only: state path resolution must not fail because macOS
+    // metadata indexing controls are unavailable or the directory is read-only.
+  }
 }
 
 function looksLikeStateDir(dir: string): boolean {

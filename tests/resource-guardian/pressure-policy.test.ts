@@ -18,6 +18,18 @@ const sample = (
   thermal,
 });
 
+const sampleWithLoad = (
+  capturedAt: number,
+  hostCpuPct: number,
+  loadPct: number,
+): ResourceSample => ({
+  capturedAt,
+  hostCpuPct,
+  loadPct,
+  eventLoopLagMs: 0,
+  thermal: "normal",
+});
+
 describe("pressure policy", () => {
   it("keeps a CPU burst shorter than the elevated sustain window healthy", () => {
     let memory = initialPressureMemory(0);
@@ -66,6 +78,20 @@ describe("pressure policy", () => {
     expect(memory.pressure).toBe("emergency");
     expect(memory.criticalSince).toBe(0);
     expect(memory.emergencySince).toBe(0);
+  });
+
+  it("treats sustained host load as pressure even when CPU usage is modest", () => {
+    let memory = initialPressureMemory(0);
+    memory = advancePressureState(memory, sampleWithLoad(0, 55, 220), "balanced");
+    memory = advancePressureState(memory, sampleWithLoad(60_000, 55, 220), "balanced");
+    expect(memory.pressure).toBe("elevated");
+
+    memory = advancePressureState(memory, sampleWithLoad(90_000, 55, 220), "balanced");
+    expect(memory.pressure).toBe("critical");
+
+    memory = advancePressureState(memory, sampleWithLoad(90_001, 55, 220), "balanced");
+    expect(memory.pressure).toBe("critical");
+    expect(memory.recoverySince).toBeNull();
   });
 
   it("enters emergency after sustained thermal pressure", () => {

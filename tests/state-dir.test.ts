@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,6 +44,15 @@ describe("appStateDir / appStateFile (single source of truth)", () => {
 
     expect(appStateDir()).toBe(join(appHome, "state"));
     expect(appStateFile("loop-runs")).toBe(join(appHome, "state", "loop-runs"));
+  });
+
+  it("marks the resolved state dir as excluded from Spotlight indexing", () => {
+    const stateHome = mkdtempSync(join(tmpdir(), "tcb-state-home-"));
+    tempDirs.push(stateHome);
+    process.env.TCB_STATE_DIR = stateHome;
+
+    expect(appStateDir()).toBe(stateHome);
+    expect(existsSync(join(stateHome, ".metadata_never_index"))).toBe(true);
   });
 
   it("falls back to the ~/.tmux-claude-bot/state subdir (never the install root, cwd or $HOME)", () => {

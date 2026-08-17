@@ -79,28 +79,33 @@ function resetHealthy(capturedAt: number): PressureMemory {
   return initialPressureMemory(capturedAt);
 }
 
+function pressurePctFor(sample: ResourceSample): number {
+  return Math.max(sample.hostCpuPct, sample.loadPct);
+}
+
 export function advancePressureState(
   previous: PressureMemory,
   sample: ResourceSample,
   profileName: ResourceGuardianProfile,
 ): PressureMemory {
   const profile = PRESSURE_PROFILES[profileName];
-  const { capturedAt, hostCpuPct } = sample;
+  const { capturedAt } = sample;
+  const pressurePct = pressurePctFor(sample);
   const next: PressureMemory = {
     ...previous,
     elevatedSince: sustainedSince(
       capturedAt,
-      hostCpuPct >= profile.elevatedCpuPct,
+      pressurePct >= profile.elevatedCpuPct,
       previous.elevatedSince,
     ),
     criticalSince: sustainedSince(
       capturedAt,
-      hostCpuPct >= profile.criticalCpuPct,
+      pressurePct >= profile.criticalCpuPct,
       previous.criticalSince,
     ),
     emergencySince: sustainedSince(
       capturedAt,
-      hostCpuPct >= profile.emergencyCpuPct,
+      pressurePct >= profile.emergencyCpuPct,
       previous.emergencySince,
     ),
     thermalSince: sustainedSince(
@@ -126,7 +131,7 @@ export function advancePressureState(
   if (previous.pressure === "elevated") {
     if (emergency) return { ...withPressure(next, "emergency", capturedAt), recoverySince: null };
     if (critical) return withPressure(next, "critical", capturedAt);
-    if (hostCpuPct < profile.elevatedCpuPct) return resetHealthy(capturedAt);
+    if (pressurePct < profile.elevatedCpuPct) return resetHealthy(capturedAt);
     return withPressure(next, "elevated", capturedAt);
   }
 
@@ -135,7 +140,7 @@ export function advancePressureState(
 
     // Thermal pressure is itself an active emergency signal; wait for it to
     // clear before allowing CPU recovery to make progress.
-    if (sample.thermal === "pressure" || hostCpuPct >= profile.recoveryCpuPct) {
+    if (sample.thermal === "pressure" || pressurePct >= profile.recoveryCpuPct) {
       return { ...withPressure(next, previous.pressure, capturedAt), recoverySince: null };
     }
 
@@ -152,7 +157,7 @@ export function advancePressureState(
   // A recovery interruption must return to a guarded state. A fresh low-CPU
   // interval starts the recovery clock again from its first sample.
   if (emergency) return { ...withPressure(next, "emergency", capturedAt), recoverySince: null };
-  if (hostCpuPct >= profile.recoveryCpuPct || sample.thermal === "pressure") {
+  if (pressurePct >= profile.recoveryCpuPct || sample.thermal === "pressure") {
     return { ...withPressure(next, "critical", capturedAt), recoverySince: null };
   }
 
