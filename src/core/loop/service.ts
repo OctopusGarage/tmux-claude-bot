@@ -6,6 +6,7 @@ import { appStateDir } from "../../shared/state-dir.js";
 import type { HostPowerConfig, WorktreeIsolationMode } from "../../shared/types.js";
 import { createWarningCoalescer } from "../../shared/utils/log-coalescer.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
 import type { AgentKind } from "../agents/types.js";
 import { admitAutomationWork } from "../automation/admission.js";
 import { observeAgentCapacity } from "../automation/capacity-probe.js";
@@ -1767,6 +1768,8 @@ export async function startLoopEngineering(
       cleanupWorkerSessionRecords(sessionName);
     },
     workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
+    workerSessionOwnsActiveTurn: (probe) =>
+      supervisorWorkerSessionOwnsActiveTurn(deps, probe.workerSession, probe.workOrder.agent),
   });
   if (startupReconciliation.checked > 0) {
     log.info("loop engineering supervisor work order reconcile complete", {
@@ -1884,6 +1887,8 @@ export async function startLoopEngineering(
           cleanupWorkerSessionRecords(sessionName);
         },
         workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
+        workerSessionOwnsActiveTurn: (probe) =>
+          supervisorWorkerSessionOwnsActiveTurn(deps, probe.workerSession, probe.workOrder.agent),
         supervisorSessionBusy: (sessionName) => supervisorSessionHasQueuedWork(deps, sessionName),
       });
       if (reconciled.checked > 0) {
@@ -2011,6 +2016,21 @@ function supervisorSessionHasQueuedWork(deps: HandlerDeps, sessionName: string):
   );
 }
 
+async function supervisorWorkerSessionOwnsActiveTurn(
+  deps: HandlerDeps,
+  sessionName: string,
+  agent: AgentKind,
+): Promise<boolean> {
+  if (!(await deps.bridge.hasSession(sessionName))) return false;
+  const agentRunning =
+    agent === "codex"
+      ? await deps.configResolver.isCodexRunning(sessionName)
+      : await deps.configResolver.isClaudeRunning(sessionName);
+  if (!agentRunning) return false;
+  const pane = await deps.bridge.capturePane(sessionName).catch(() => "");
+  return paneHasActiveTurn(pane) || paneNeedsConfirm(pane);
+}
+
 function ownerInteractiveWorkBusy(deps: HandlerDeps): boolean {
   const isOwnerWork = (origin: "user" | "system" | undefined): boolean => origin !== "system";
   if (deps.queue.getGlobalQueue().some((message) => isOwnerWork(message.origin))) return true;
@@ -2040,6 +2060,10 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
   }) => Promise<LoopSupervisedRunResult>;
   cleanupCompletedWorkerSession?: (sessionName: string) => Promise<void>;
   workerSessionExists?: (sessionName: string) => Promise<boolean>;
+  workerSessionOwnsActiveTurn?: (input: {
+    workerSession: string;
+    workOrder: LoopWorkOrder;
+  }) => Promise<boolean> | boolean;
   /** Live-process guard for periodic reconciliation. Startup callers omit this
    * so durable final summaries can recover work after the old process is gone. */
   supervisorSessionBusy?: (sessionName: string) => boolean;
@@ -2200,6 +2224,9 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
     ...(input.workerSessionExists === undefined
       ? {}
       : { workerSessionExists: input.workerSessionExists }),
+    ...(input.workerSessionOwnsActiveTurn === undefined
+      ? {}
+      : { workerSessionOwnsActiveTurn: input.workerSessionOwnsActiveTurn }),
   });
   checked += resources.abandonedWorkOrders;
   failed += resources.abandonedWorkOrders;

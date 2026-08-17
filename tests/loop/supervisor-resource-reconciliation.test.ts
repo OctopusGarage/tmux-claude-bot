@@ -256,7 +256,7 @@ describe("supervisor resource reconciliation", () => {
   it("terminalizes abandoned dispatches as dispatch timeouts, not invalid output", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-state-"));
     process.env.TCB_STATE_DIR = stateDir;
-    const scheduledAt = 1_000;
+    const scheduledAt = Date.now() - 13 * 60 * 60 * 1_000;
     const order = workOrder(stateDir, { id: "abandoned-run" });
     writeLoopSupervisorWorkOrderState({
       workOrder: order,
@@ -267,7 +267,7 @@ describe("supervisor resource reconciliation", () => {
 
     await expect(
       reconcileTerminalSupervisorResources({
-        now: scheduledAt + 13 * 60 * 60 * 1_000,
+        now: Date.now(),
       }),
     ).resolves.toMatchObject({ abandonedWorkOrders: 1 });
 
@@ -280,5 +280,61 @@ describe("supervisor resource reconciliation", () => {
       status: "failed",
       resultStatus: "dispatch-timeout",
     });
+  });
+
+  it("terminalizes queued active leases when the worker pane no longer owns an active turn", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const scheduledAt = Date.now() - 6 * 60 * 1_000;
+    const order = workOrder(stateDir, {
+      id: "queued-idle-run",
+      task: { kind: "active-delegated-task" },
+    } as Partial<LoopWorkOrder>);
+    mkdirSync(order.projectPath, { recursive: true });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "queued",
+      now: scheduledAt,
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: order.projectPath,
+          status: "active",
+          leasedAt: scheduledAt,
+          updatedAt: scheduledAt,
+        },
+      ],
+    });
+
+    await expect(
+      reconcileTerminalSupervisorResources({
+        now: Date.now(),
+        workerSessionOwnsActiveTurn: async () => false,
+      }),
+    ).resolves.toMatchObject({ abandonedWorkOrders: 1 });
+
+    const state = JSON.parse(
+      readFileSync(join(stateDir, "loop-runs", "app", "queued-idle-run", "work-order-state.json"), {
+        encoding: "utf8",
+      }),
+    ) as { status?: string; resultStatus?: string; revisionReasons?: string[] };
+    expect(state).toMatchObject({
+      status: "failed",
+      resultStatus: "dispatch-timeout",
+    });
+    expect(state.revisionReasons).toContain(
+      "active supervisor worker lease no longer owns an active queue turn",
+    );
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workOrderId: order.id,
+        status: "retained",
+      }),
+    ]);
   });
 });

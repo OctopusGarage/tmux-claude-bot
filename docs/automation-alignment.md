@@ -178,6 +178,13 @@ ledger evidence.
 Dispatching reservations without an active worker lease must be reconciled after
 the short dispatch grace period; active leases must prevent that recovery, and
 the recovery must not run target-project commands.
+Queued or dispatching WorkOrders with an active worker lease are still only
+reserved, not proven active: after the same dispatch grace period, Loop
+reconciliation must validate that the leased supervisor pane still owns an
+active agent turn or confirmation gate. If that signal is gone, the WorkOrder is
+terminalized as `dispatch-timeout`, the lease is settled as a failed worker
+lease, and recovery can requeue from authoritative artifacts rather than waiting
+for an operator to inspect tmux.
 Repository-review queue recovery may label an occurrence `running` only when
 its WorkOrder id and supervisor session match an active worker lease; a
 `dispatching` file alone is never a capacity reservation.

@@ -23,6 +23,7 @@ import {
   listAbandonedLoopSupervisorWorkOrders,
   listTerminalLoopSupervisorWorkOrders,
   readLoopSupervisorWorkOrderRegistry,
+  STALE_DISPATCHING_WORK_ORDER_MS,
   writeLoopSupervisorWorkOrderState,
 } from "./supervisor-state.js";
 import type { LoopWorkOrder } from "./work-order.js";
@@ -47,11 +48,22 @@ export async function reconcileTerminalSupervisorResources(input: {
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
   cleanupWorkerSession?: (sessionName: string) => Promise<void> | void;
   workerSessionExists?: (sessionName: string) => Promise<boolean> | boolean;
+  workerSessionOwnsActiveTurn?: (input: {
+    workerSession: string;
+    workOrder: LoopWorkOrder;
+  }) => Promise<boolean> | boolean;
 }): Promise<SupervisorResourceReconciliation> {
   const schedulerStore = new LoopSchedulerStore();
   const taskLedger = new DailyTaskLedger();
   const removedStaleLeases = reconcileStaleLoopSupervisorWorkerLeases();
   const settledTerminalLeases = reconcileTerminalLoopSupervisorWorkerLeases(input.now);
+  const abandonedActiveLeases = await reconcileAbandonedActiveLoopSupervisorWorkerLeases(
+    input.now,
+    taskLedger,
+    schedulerStore,
+    input.excludedWorkOrderIds,
+    input.workerSessionOwnsActiveTurn,
+  );
   const abandonedWorkOrders = reconcileAbandonedLoopSupervisorWorkOrders(
     input.now,
     taskLedger,
@@ -95,6 +107,11 @@ export async function reconcileTerminalSupervisorResources(input: {
       data: { settled: abandonedWorkOrders },
     });
   }
+  if (abandonedActiveLeases > 0) {
+    log.info("loop engineering abandoned active supervisor worker leases reconciled", {
+      data: { settled: abandonedActiveLeases },
+    });
+  }
   if (cleanedTerminalWorkerSessions > 0) {
     log.info("loop engineering terminal worker sessions cleaned up", {
       data: { cleaned: cleanedTerminalWorkerSessions },
@@ -117,13 +134,87 @@ export async function reconcileTerminalSupervisorResources(input: {
   }
   return {
     settledTerminalLeases,
-    abandonedWorkOrders,
+    abandonedWorkOrders: abandonedWorkOrders + abandonedActiveLeases,
     removedTerminalWorktrees,
     removedExpiredWorktrees,
     removedOrphanWorktrees,
     removedStaleLeases,
     cleanedTerminalWorkerSessions,
   };
+}
+
+async function reconcileAbandonedActiveLoopSupervisorWorkerLeases(
+  now: number,
+  taskLedger: DailyTaskLedger,
+  schedulerStore: LoopSchedulerStore,
+  excludedWorkOrderIds: ReadonlySet<string> = new Set(),
+  workerSessionOwnsActiveTurn?: (input: {
+    workerSession: string;
+    workOrder: LoopWorkOrder;
+  }) => Promise<boolean> | boolean,
+): Promise<number> {
+  if (workerSessionOwnsActiveTurn === undefined) return 0;
+  const activeLeasesByWorkOrder = new Map(
+    readLoopSupervisorWorkerLeaseState()
+      .leases.filter((lease) => lease.status === "active")
+      .map((lease) => [lease.workOrderId, lease]),
+  );
+  if (activeLeasesByWorkOrder.size === 0) return 0;
+
+  let settled = 0;
+  for (const record of readLoopSupervisorWorkOrderRegistry(now).unfinished) {
+    if (excludedWorkOrderIds.has(record.workOrder.id)) continue;
+    if (record.state.status !== "queued" && record.state.status !== "dispatching") continue;
+    if (now - record.state.updatedAt <= STALE_DISPATCHING_WORK_ORDER_MS) continue;
+    if (parseWorkerFinalSummaryExists(record.workOrder)) continue;
+    const lease = activeLeasesByWorkOrder.get(record.workOrder.id);
+    if (lease === undefined) continue;
+    if (
+      await workerSessionOwnsActiveTurn({
+        workerSession: lease.workerSession,
+        workOrder: record.workOrder,
+      })
+    ) {
+      continue;
+    }
+
+    const existing = taskLedger
+      .listAll()
+      .find((task) => task.taskId === loopLedgerTaskId(record.workOrder));
+    settleSupervisorWorkOrderOutcome({
+      workOrder: record.workOrder,
+      supervisorSession: record.state.supervisorSession,
+      startedAt: record.state.updatedAt,
+      endedAt: now,
+      resultStatus: "dispatch-timeout",
+      stateStatus: "failed",
+      reportPath: record.runDir,
+      failureSummary:
+        "Reconciled stale supervisor dispatch timeout after the active worker lease stopped owning an active turn.",
+      advanceScheduler: true,
+      ...(existing?.status === "failed" || existing?.status === "success"
+        ? { skipLedger: true }
+        : {}),
+      writeState: writeLoopSupervisorWorkOrderState,
+      settleLease: settleLoopSupervisorWorkerLeaseForStatus,
+      scheduler: schedulerStore,
+      ledger: taskLedger,
+    });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: record.workOrder,
+      supervisorSession: record.state.supervisorSession,
+      status: "failed",
+      now,
+      resultStatus: "dispatch-timeout",
+      revisionReasons: ["active supervisor worker lease no longer owns an active queue turn"],
+    });
+    settled++;
+  }
+  return settled;
+}
+
+function parseWorkerFinalSummaryExists(workOrder: LoopWorkOrder): boolean {
+  return workOrder.finalSummaryPath !== undefined && existsSync(workOrder.finalSummaryPath);
 }
 
 /**
