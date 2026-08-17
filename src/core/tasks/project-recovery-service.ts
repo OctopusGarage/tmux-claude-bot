@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
+import {
+  readLoopSupervisorWorkOrderRegistry,
+  type UnfinishedLoopSupervisorWorkOrder,
+} from "../loop/supervisor-state.js";
 import {
   type ConfiguredRecoveryConfig,
   type ConfiguredRecoveryTarget,
@@ -72,10 +75,11 @@ export async function runProjectRecoveryPass(input: {
   const targetById = new Map<string, ConfiguredRecoveryTarget>();
   const recordsByTarget = new Map<string, RecoveryRecord[]>();
   const workOrderRegistry = readLoopSupervisorWorkOrderRegistry(input.now);
-  const reservedWorkOrders = [
+  const reservedWorkOrders = dedupeWorkOrdersByRunDir([
     ...workOrderRegistry.unfinished,
     ...workOrderRegistry.recoverableFinalSummary,
-  ];
+    ...workOrderRegistry.recoverableFailed,
+  ]);
   const terminalWorkOrders = workOrderRegistry.terminal;
 
   for (const record of input.records) {
@@ -447,6 +451,12 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     result.blocked++;
   }
   return result;
+}
+
+function dedupeWorkOrdersByRunDir(
+  records: readonly UnfinishedLoopSupervisorWorkOrder[],
+): UnfinishedLoopSupervisorWorkOrder[] {
+  return [...new Map(records.map((record) => [record.runDir, record])).values()];
 }
 
 function isAcceptedBlockedNoRepairSummary(
