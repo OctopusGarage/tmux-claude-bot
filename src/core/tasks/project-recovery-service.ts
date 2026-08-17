@@ -291,6 +291,11 @@ export async function reconcileProjectRecoveryArtifacts(input: {
   const byTaskId = new Map(input.records.map((record) => [record.taskId, record]));
   for (const queueRecord of input.coordinator.list()) {
     if (queueRecord.source !== "project-recovery" || isRepairTerminal(queueRecord.status)) continue;
+    if (isTerminalProjectRecoveryClosure(queueRecord)) {
+      input.coordinator.markTerminal(queueRecord.id, "blocked", input.now);
+      result.blocked++;
+      continue;
+    }
     const linked = queueRecord.linkedTaskIds
       .map((taskId) => byTaskId.get(taskId))
       .filter((record): record is ScheduledTaskRecord => record !== undefined);
@@ -457,6 +462,14 @@ function isAcceptedBlockedNoRepairSummary(
 
 function isRepairTerminal(status: string): boolean {
   return ["fixed", "blocked", "not-reproducible", "superseded", "dead-letter"].includes(status);
+}
+
+function isTerminalProjectRecoveryClosure(record: { summaries: readonly string[] }): boolean {
+  const latest = record.summaries.at(-1)?.toLowerCase() ?? "";
+  return (
+    latest.includes("closed from the authoritative accepted blocked project recovery") &&
+    latest.includes("no retryable project repair remains")
+  );
 }
 
 function readFinalSummaryPath(reportPath: string): string | undefined {

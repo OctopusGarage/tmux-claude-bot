@@ -678,6 +678,34 @@ describe("project recovery service", () => {
     );
   });
 
+  it("terminalizes stale pending recoveries already closed by accepted blocked evidence", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "project-recovery",
+      taskFamily: "active delegated task",
+      fingerprint: "unknown",
+      taskId: "autopilot:blocked-recovery",
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+      now: 1_000,
+    });
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [],
+      coordinator,
+      updateRepairStatus: vi.fn(),
+    });
+
+    expect(result).toEqual({ checked: 0, fixed: 0, blocked: 1 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "blocked",
+      updatedAt: 2_000,
+    });
+  });
+
   it("does not classify a successful original task as an incomplete recovery", async () => {
     const root = join(tmpdir(), `project-recovery-success-${Date.now()}`);
     const runDir = join(root, "run");
