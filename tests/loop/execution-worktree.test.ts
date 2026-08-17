@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -417,6 +417,50 @@ describe("loop execution worktrees", () => {
             : { status: 1, stdout: "", stderr: "busy" },
       }),
     ).toBe(false);
+  });
+
+  it("removes a bot-owned detached standalone checkout when git worktree remove reports a main worktree", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const worktree = join(stateDir, "loop-worktrees", "hub", "standalone-run");
+    mkdirSync(join(worktree, ".git"), { recursive: true });
+    const calls: string[] = [];
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        runGit: (invocation) => {
+          calls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
+          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: `${worktree}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === `worktree remove --force ${worktree}`) {
+            return {
+              status: 128,
+              stdout: "",
+              stderr: `fatal: '${worktree}' is a main working tree\n`,
+            };
+          }
+          if (invocation.args.join(" ") === "branch --show-current") {
+            return { status: 0, stdout: "\n", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "status --porcelain") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          throw new Error(
+            `unexpected git invocation: ${invocation.cwd} ${invocation.args.join(" ")}`,
+          );
+        },
+      }),
+    ).toBe(true);
+
+    expect(existsSync(worktree)).toBe(false);
+    expect(calls).toEqual([
+      `${worktree}:rev-parse --show-toplevel`,
+      `${worktree}:worktree remove --force ${worktree}`,
+      `${worktree}:branch --show-current`,
+      `${worktree}:status --porcelain`,
+    ]);
   });
 });
 
