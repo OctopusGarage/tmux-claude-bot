@@ -1206,6 +1206,56 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
+  it("closes legacy loop-engineering queue records when their linked project recovery succeeds", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+    const queueRecord = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "loop-engineering",
+      taskFamily: "tmux-claude-bot architecture",
+      fingerprint: "unknown",
+      taskId: "loop:tmux-claude-bot:1000",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queueRecord.id, ["autopilot:successful-recovery"], 1_001);
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:tmux-claude-bot:1000",
+          source: "loop-engineering",
+          name: "tmux-claude-bot architecture",
+          scheduledAt: 1,
+          status: "failed",
+          repairStatus: "pending",
+          error: "assessment result did not include a numeric score",
+          updatedAt: 1_003,
+        },
+        {
+          taskId: "autopilot:successful-recovery",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          scheduledAt: 1_004,
+          status: "success",
+          repairStatus: "not-needed",
+          updatedAt: 1_999,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:tmux-claude-bot:1000",
+      "fixed",
+      expect.stringContaining("project recovery delegation"),
+    );
+    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
   it("closes the original task when a later recovery succeeds after an earlier failed attempt", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();
