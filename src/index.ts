@@ -23,6 +23,7 @@ import { startSessionIdleReaper } from "./core/recovery/session-idle-reaper.js";
 import { startResourceGuardian } from "./core/resource-guardian/service.js";
 import { startRuntimeGuardian } from "./core/runtime-guardian/service.js";
 import { startDailyTaskAudit } from "./core/tasks/daily-audit-service.js";
+import { startSystemSelfHeal } from "./core/tasks/system-self-heal-service.js";
 import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
 import { appVersion } from "./shared/version.js";
@@ -202,6 +203,7 @@ const startNotificationDrivenServices = (): void => {
   stopResourceGuardian = startResourceGuardian(deps);
   startRuntimeGuardian(deps);
   startDailyTaskAudit(deps);
+  startSystemSelfHeal(deps);
   startLongTaskMonitor(deps);
 };
 

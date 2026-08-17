@@ -46,6 +46,30 @@ describe("no env var crashes startup when left blank", () => {
       repairWorktreeIsolation: "source",
     });
   });
+
+  it("parses hourly system self-heal config", () => {
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        SYSTEM_SELF_HEAL_ENABLED: "true",
+        SYSTEM_SELF_HEAL_TICK_MS: "3600000",
+      }).systemSelfHeal,
+    ).toEqual({
+      enabled: true,
+      tickMs: 3_600_000,
+    });
+
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        SYSTEM_SELF_HEAL_ENABLED: "false",
+        SYSTEM_SELF_HEAL_TICK_MS: "0",
+      }).systemSelfHeal,
+    ).toEqual({
+      enabled: false,
+      tickMs: 0,
+    });
+  });
 });
 
 describe("repository state boundary", () => {

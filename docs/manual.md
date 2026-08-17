@@ -914,6 +914,8 @@ TASK_AUDIT_AUTO_REPAIR=true
 TASK_AUDIT_REPO_PATH=/path/to/tmux-claude-bot
 TASK_AUDIT_REPAIR_BRANCH=dev
 TASK_AUDIT_REPAIR_WORKTREE_ISOLATION=isolated
+SYSTEM_SELF_HEAL_ENABLED=true
+SYSTEM_SELF_HEAL_TICK_MS=3600000
 ```
 
 Run the same audit immediately through the running bot:
@@ -934,6 +936,15 @@ failure, fix only tmux-claude-bot bugs on the repair branch, run
 `npm run verify:local`, review the diff, and commit verified fixes.
 Target-project failures and external service, auth, or network failures are
 reported as blockers rather than patched blindly.
+
+The system self-heal tick is the hourly counterpart to the daily summary. It
+does not force the daily audit notification schedule, but it does reconcile
+terminal WorkOrders, ledger repair state, repair queue ownership, and configured
+project-recovery candidates. When existing evidence is enough to proceed, it
+uses the same repair queues, Loop Supervisor admission checks, worktree
+isolation, and verification policy as Daily Task Audit repair. Disable it only
+for deliberate maintenance windows with `SYSTEM_SELF_HEAL_ENABLED=false` or
+`SYSTEM_SELF_HEAL_TICK_MS=0`.
 
 The audit also checks its own previous execution. If the previous daily audit
 failed, timed out, could not dispatch auto-repair, or only partially delivered

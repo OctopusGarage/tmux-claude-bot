@@ -1,5 +1,5 @@
 import type { RepairCoordinator } from "./repair-coordinator.js";
-import type { DailyTaskLedger } from "./task-ledger.js";
+import type { DailyTaskLedger, ScheduledTaskRepairStatus } from "./task-ledger.js";
 
 const STALE_DAILY_AUDIT_RUN_MS = 30 * 60_000;
 
@@ -12,7 +12,11 @@ export function reconcileDailyAuditRunState(input: {
   ledger: Pick<DailyTaskLedger, "reconcileStaleRunning" | "reconcileTerminalStatuses" | "listAll">;
   coordinator: Pick<
     RepairCoordinator,
-    "reconcileExpiredLeases" | "reconcileDuplicateTaskIds" | "importPending" | "reconcileFromLedger"
+    | "reconcileExpiredLeases"
+    | "reconcileDuplicateTaskIds"
+    | "importPending"
+    | "reconcileFromLedger"
+    | "list"
   >;
   now: number;
   repoPath: string;
@@ -26,6 +30,11 @@ export function reconcileDailyAuditRunState(input: {
   input.coordinator.reconcileExpiredLeases(input.now);
   input.coordinator.reconcileDuplicateTaskIds(input.now);
   input.reconcileRepairState({ ledger: input.ledger as DailyTaskLedger, now: input.now });
+  reconcilePendingLedgerFromTerminalRepairQueue({
+    ledger: input.ledger as DailyTaskLedger,
+    coordinator: input.coordinator,
+    now: input.now,
+  });
   input.coordinator.importPending(input.ledger.listAll(), {
     projectId: "tmux-claude-bot",
     projectPath: input.repoPath,
@@ -43,4 +52,56 @@ export function reconcileDailyAuditRepairQueue(input: {
 }): void {
   input.coordinator.reconcileDuplicateTaskIds(input.now);
   input.coordinator.reconcileFromLedger(input.ledger.listAll(), input.now);
+}
+
+export function reconcilePendingLedgerFromTerminalRepairQueue(input: {
+  ledger: Pick<DailyTaskLedger, "listAll" | "markRepairStatus">;
+  coordinator: Pick<RepairCoordinator, "list">;
+  now: number;
+}): number {
+  const openTaskIds = new Set<string>();
+  const terminalByTaskId = new Map<string, ScheduledTaskRepairStatus>();
+  for (const record of input.coordinator.list()) {
+    if (isTerminalRepairStatus(record.status)) {
+      const repairStatus = ledgerRepairStatusForQueueStatus(record.status);
+      for (const taskId of record.linkedTaskIds) terminalByTaskId.set(taskId, repairStatus);
+      continue;
+    }
+    for (const taskId of record.linkedTaskIds) openTaskIds.add(taskId);
+  }
+
+  let updated = 0;
+  for (const record of input.ledger.listAll()) {
+    if (record.repairStatus !== "pending" && record.repairStatus !== "running") continue;
+    if (openTaskIds.has(record.taskId)) continue;
+    const repairStatus = terminalByTaskId.get(record.taskId);
+    if (repairStatus === undefined) continue;
+    input.ledger.markRepairStatus(record.taskId, {
+      repairStatus,
+      updatedAt: input.now,
+      summary: appendSummary(
+        record.summary,
+        `Synchronized from terminal repair queue state (${repairStatus}).`,
+      ),
+    });
+    updated++;
+  }
+  return updated;
+}
+
+function isTerminalRepairStatus(status: string): boolean {
+  return ["fixed", "blocked", "not-reproducible", "superseded", "dead-letter"].includes(status);
+}
+
+function ledgerRepairStatusForQueueStatus(status: string): ScheduledTaskRepairStatus {
+  if (status === "fixed") return "fixed";
+  if (status === "not-reproducible") return "not-reproducible";
+  if (status === "superseded") return "superseded";
+  return "blocked";
+}
+
+function appendSummary(current: string | undefined, addition: string): string {
+  if (current === undefined || current.trim().length === 0) return addition;
+  if (current.includes(addition)) return current;
+  return `${current}; ${addition}`;
 }

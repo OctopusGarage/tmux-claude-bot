@@ -988,6 +988,16 @@ delivered only a partial/failed notification is a first-class self-repair
 candidate. Self-repair records already marked `running` must not be dispatched
 again until their current repair resolves.
 
+System Self-Heal is the hourly deterministic trigger for this same repair
+surface. It is intentionally independent from the daily audit notification
+schedule: the tick runs reconciliation and due repair-queue consumption even
+when no daily summary is due, and it normalizes the audit config to avoid
+`TASK_AUDIT_ENABLED=false` or `TASK_AUDIT_TICK_MS=0` disabling core state
+reconciliation. It must still reuse Daily Task Audit repair dispatch, Project
+Recovery dispatch, Repair Coordinator leases, Resource Guardian admission, and
+the normal WorkOrder gates. It is not permission to bypass owner-decision,
+external-wait, capacity, clean-worktree, or verification blockers.
+
 Historical Loop failures use project-scoped recovery. The recovery classifier
 reads ledger evidence and supervisor artifacts, resolves only projects,
 repository-review targets, and workspaces present in the active Loop config, and
