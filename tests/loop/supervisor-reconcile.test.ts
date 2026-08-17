@@ -137,6 +137,21 @@ function writeRecoverableFailedRun(stateDir: string, order: LoopWorkOrder): stri
 }
 
 describe("loop supervisor work order reconciliation", () => {
+  it("does not classify a recoverable final summary as abandoned", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const order = workOrder(stateDir, projectDir);
+    writeUnfinishedRun(stateDir, order);
+
+    const registry = readLoopSupervisorWorkOrderRegistry(Date.now() + 24 * 60 * 60_000);
+
+    expect(registry.recoverableFinalSummary.map((record) => record.workOrder.id)).toContain(
+      order.id,
+    );
+    expect(registry.abandoned.map((record) => record.workOrder.id)).not.toContain(order.id);
+  });
+
   it("completes an in-flight work order from the final summary file after a bot restart", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;

@@ -239,7 +239,9 @@ export function readLoopSupervisorWorkOrderRegistry(
         !existsSync(loopRunArtifactPath(state.projectId, state.runId, "systemGate")),
     ),
     abandoned: nonTerminal.filter(
-      ({ state, workOrder }) => !unfinishedWorkOrderCanStillProgress(state, workOrder, now),
+      ({ state, workOrder }) =>
+        !parseSupervisorFinalSummaryFile(workOrder).ok &&
+        !unfinishedWorkOrderCanStillProgress(state, workOrder, now),
     ),
     staleDispatching: records.filter(
       ({ state }) =>
