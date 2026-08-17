@@ -136,7 +136,8 @@ async function dispatchAgentSelfHealSweep(
     session,
     requirement: buildAgentSelfHealRequirement(),
     worktreeIsolation: deps.config.taskAudit.repairWorktreeIsolation,
-    resourceTrigger: "background",
+    resourceTrigger: "operator",
+    resourceForce: true,
   });
   if (result.status === "blocked") {
     log.info("system self-heal agent sweep deferred", { data: { reason: result.reason } });

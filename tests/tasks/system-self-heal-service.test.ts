@@ -2,11 +2,22 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import type { HandlerDeps } from "../../src/core/deps.js";
 import {
   runSystemSelfHealTick,
   startSystemSelfHeal,
 } from "../../src/core/tasks/system-self-heal-service.js";
+
+vi.mock("../../src/core/autopilot/delegated-task.js", () => ({
+  startActiveDelegatedTask: vi.fn(async () => ({
+    status: "queued",
+    runId: "self-heal-run",
+    projectId: "tmux-claude-bot",
+    supervisorSession: "tmux_proj_loop-supervisor-1",
+    reportDir: null,
+  })),
+}));
 
 type StartSystemSelfHealOptions = NonNullable<Parameters<typeof startSystemSelfHeal>[1]>;
 type RunTickInput = Parameters<NonNullable<StartSystemSelfHealOptions["runTick"]>>[0];
@@ -129,5 +140,60 @@ describe("system self-heal service", () => {
     });
 
     await vi.waitFor(() => expect(audit).toEqual({ fired: false, reason: "not-due" }));
+  });
+
+  it("dispatches the agent sweep as an operator-forced delegation", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-system-self-heal-"));
+    const deps = {
+      config: {
+        projectSessionPrefix: "tmux_proj_",
+        systemSelfHeal: {
+          enabled: true,
+          tickMs: 3_600_000,
+          agentSweepEnabled: true,
+        },
+        taskAudit: {
+          enabled: false,
+          tickMs: 0,
+          schedule: "0 0 1 1 *",
+          repoPath: "/repo/tmux-claude-bot",
+          repairBranch: "dev",
+          autoRepair: false,
+          repairWorktreeIsolation: "isolated",
+          channel: "lark",
+        },
+        loopEngineering: {
+          configFile: undefined,
+          supervisor: {
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+      bridge: { killSession: vi.fn() },
+      notifications: { notify: vi.fn() },
+    } as unknown as HandlerDeps;
+    const runTick = vi.fn(async (input: RunTickInput) => ({
+      fired: true as const,
+      audit: { fired: false as const, reason: "not-due" as const },
+      agentSweep: await input.runAgentSweep(),
+    }));
+
+    startSystemSelfHeal(deps, {
+      now: () => 2_000,
+      runTick,
+      setInterval: () => 7 as never,
+      clearInterval: vi.fn(),
+    });
+
+    await vi.waitFor(() =>
+      expect(startActiveDelegatedTask).toHaveBeenCalledWith(
+        deps,
+        expect.objectContaining({
+          session: "tmux_proj_-repo-tmux-claude-bot",
+          resourceTrigger: "operator",
+          resourceForce: true,
+        }),
+      ),
+    );
   });
 });
