@@ -392,6 +392,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     if (summaryPath === undefined) continue;
     const summary = readJson(summaryPath);
     if (summary === undefined) continue;
+    const systemGate = readJson(join(dirname(summaryPath), "system-gate.json"));
     result.checked++;
     const queueRecord = input.coordinator
       .list()
@@ -415,6 +416,17 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       result.fixed++;
       continue;
     }
+    if (isAcceptedBlockedNoRepairSummary(summary, systemGate)) {
+      input.updateRepairStatus(
+        record.taskId,
+        "not-reproducible",
+        "Closed from the authoritative accepted recovery summary; recovery verified the original blocker but no project repair was applicable.",
+      );
+      if (queueRecord !== undefined)
+        input.coordinator.markTerminal(queueRecord.id, "not-reproducible", input.now);
+      result.blocked++;
+      continue;
+    }
     input.updateRepairStatus(
       record.taskId,
       "blocked",
@@ -425,6 +437,22 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     result.blocked++;
   }
   return result;
+}
+
+function isAcceptedBlockedNoRepairSummary(
+  summary: Record<string, unknown>,
+  systemGate: Record<string, unknown> | undefined,
+): boolean {
+  const reviewGate = summary.reviewGate;
+  return (
+    summary.status === "blocked" &&
+    summary.finalVerification === "passed" &&
+    reviewGate !== null &&
+    typeof reviewGate === "object" &&
+    (reviewGate as Record<string, unknown>).decision === "block" &&
+    systemGate?.accepted === true &&
+    systemGate.resultStatus === "blocked"
+  );
 }
 
 function isRepairTerminal(status: string): boolean {
