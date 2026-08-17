@@ -343,6 +343,91 @@ describe("project recovery service", () => {
     );
   });
 
+  it("does not dispatch while a failed WorkOrder final summary awaits settlement", async () => {
+    process.env.TCB_STATE_DIR = join(tmpdir(), `project-recovery-recoverable-failed-${Date.now()}`);
+    const now = Date.now();
+    const runId = "recoverable-failed-recovery";
+    const runDir = join(process.env.TCB_STATE_DIR, "loop-runs", "geo", runId);
+    const finalSummaryPath = join(runDir, "supervisor-final-summary.json");
+    writeLoopSupervisorWorkOrderState({
+      workOrder: {
+        id: runId,
+        projectId: "geo",
+        projectName: "Geo",
+        projectPath: "/repo/geo",
+        scheduledAt: now,
+        requiredFinalMarker: "[done]",
+        finalSummaryPath,
+        task: { kind: "active-delegated-task" },
+      } as never,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "failed",
+      resultStatus: "invalid-output",
+      now,
+    });
+    await writeFile(
+      finalSummaryPath,
+      JSON.stringify({
+        status: "completed",
+        projectId: "geo",
+        actionsTaken: [],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "project-recovery",
+      taskFamily: "bug-fix",
+      fingerprint: "worker-handoff",
+      taskId: "loop:geo:bug-fix:recoverable-failed",
+      now,
+    });
+    const dispatch = vi.fn();
+    const updateRepairStatus = vi.fn();
+
+    const result = await runProjectRecoveryPass({
+      now: now + 1,
+      records: [
+        {
+          taskId: "loop:geo:bug-fix:recoverable-failed",
+          source: "loop-engineering",
+          name: "geo bug-fix",
+          status: "failed",
+          summary: "supervisor-failed because worker handoff failed",
+          scheduledAt: now,
+          updatedAt: now,
+          repairStatus: "pending",
+        },
+      ],
+      config: {
+        projects: [{ id: "geo", name: "Geo", path: "/repo/geo" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ deferred: 1, dispatched: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "pending",
+      attempt: 0,
+    });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:geo:bug-fix:recoverable-failed",
+      "pending",
+      expect.stringContaining("active WorkOrder"),
+    );
+  });
+
   it("releases a recovery lease when every linked WorkOrder is already terminal", async () => {
     process.env.TCB_STATE_DIR = join(tmpdir(), `project-recovery-terminal-${Date.now()}`);
     writeLoopSupervisorWorkOrderState({
