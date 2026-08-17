@@ -337,6 +337,26 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       continue;
     }
     if (recoveryFailed) {
+      const acceptedBlockedRecoveries = linked.filter(
+        (record) =>
+          record.source === "autopilot-delegate" &&
+          record.taskId !== queueRecord.linkedTaskIds[0] &&
+          ["failed", "missing", "running-timeout"].includes(record.status) &&
+          acceptedBlockedRecoveryArtifact(record.reportPath),
+      );
+      if (acceptedBlockedRecoveries.length > 0) {
+        const summary =
+          "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.";
+        for (const original of originals) {
+          input.updateRepairStatus(original.taskId, "blocked", summary);
+        }
+        for (const recovery of acceptedBlockedRecoveries) {
+          input.updateRepairStatus(recovery.taskId, "blocked", summary);
+        }
+        input.coordinator.markTerminal(queueRecord.id, "blocked", input.now);
+        result.blocked++;
+        continue;
+      }
       for (const recovery of linked.filter(
         (record) =>
           record.source === "autopilot-delegate" &&
@@ -376,6 +396,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     const queueRecord = input.coordinator
       .list()
       .find((queued) => queued.linkedTaskIds.includes(record.taskId));
+    if (queueRecord !== undefined && isRepairTerminal(queueRecord.status)) continue;
     const reviewGate = summary.reviewGate;
     const passed =
       summary.status === "completed" &&
@@ -434,6 +455,16 @@ function readJson(path: string): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
+}
+
+function acceptedBlockedRecoveryArtifact(reportPath: string | undefined): boolean {
+  if (reportPath === undefined) return false;
+  const summaryPath = readFinalSummaryPath(reportPath);
+  if (summaryPath === undefined) return false;
+  const summary = readJson(summaryPath);
+  if (summary?.status !== "blocked") return false;
+  const systemGate = readJson(join(dirname(summaryPath), "system-gate.json"));
+  return systemGate?.accepted === true && systemGate.resultStatus === "blocked";
 }
 
 function readRecoveryArtifact(reportPath: string): string | undefined {
