@@ -193,6 +193,7 @@ if (config.autoRecover) {
 // Local control transport for the terminal TUI — a unix socket that drives this
 // same bot (one queue, no races). Non-blocking; best-effort.
 startControlServer(deps);
+startSystemSelfHeal(deps);
 
 let notificationDrivenServicesStarted = false;
 const startNotificationDrivenServices = (): void => {
@@ -203,7 +204,6 @@ const startNotificationDrivenServices = (): void => {
   stopResourceGuardian = startResourceGuardian(deps);
   startRuntimeGuardian(deps);
   startDailyTaskAudit(deps);
-  startSystemSelfHeal(deps);
   startLongTaskMonitor(deps);
 };
 

@@ -99,6 +99,7 @@ export function startSystemSelfHeal(
               },
             });
           },
+          skipScheduledAudit: true,
           force,
         }),
     }).catch((err) => log.warn("system self-heal tick failed", { err }));

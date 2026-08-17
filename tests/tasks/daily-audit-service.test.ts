@@ -166,6 +166,36 @@ describe("runDailyTaskAuditServiceTick", () => {
     });
   });
 
+  it("skips daily notification and discovery when only self-heal reconciliation is requested", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-self-heal-only-"));
+    const notifications = new NotificationGateway();
+    const send = vi.fn(async () => {});
+    notifications.register("lark", send);
+
+    const result = await runDailyTaskAuditServiceTick({
+      now: Date.parse("2026-08-17T02:00:00Z"),
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: false,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications,
+      discover: vi.fn(() => {
+        throw new Error("daily discovery should not run during self-heal reconciliation");
+      }),
+      force: true,
+      skipScheduledAudit: true,
+    });
+
+    expect(result).toEqual({ fired: false, reason: "not-due" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("catches the latest missed audit when first started after the schedule window", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-service-"));
     const notifications = new NotificationGateway();
