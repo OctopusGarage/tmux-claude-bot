@@ -729,6 +729,77 @@ describe("project recovery service", () => {
     });
   });
 
+  it("terminalizes accepted blocked recoveries that proved no project repair applies", async () => {
+    const root = join(tmpdir(), `project-recovery-not-reproducible-${Date.now()}`);
+    const runDir = join(root, "run");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "english-pilot",
+        actionsTaken: ["verified current gates and found no project-side bug"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          decision: "block",
+          deterministicGates: [{ name: "tests", result: "passed" }],
+        },
+        commits: [],
+        followUps: ["repair worker/control reconciliation in tmux-claude-bot"],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "english-pilot",
+      projectPath: "/repo/english-pilot",
+      source: "project-recovery",
+      taskFamily: "active delegated task",
+      fingerprint: "invalid-final-summary",
+      taskId: "autopilot:1786946946679-english-pilot-active-delegate",
+      now: 1_000,
+    });
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:1786946946679-english-pilot-active-delegate",
+          source: "autopilot-delegate",
+          name: "english-pilot active delegated task",
+          status: "failed",
+          failureKind: "invalid-final-summary",
+          reportPath: runDir,
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "running",
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 1 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:1786946946679-english-pilot-active-delegate",
+      "not-reproducible",
+      expect.stringContaining("no project repair was applicable"),
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "not-reproducible",
+    });
+  });
+
   it("does not mutate a running ledger item when its final artifact is absent", async () => {
     const updateRepairStatus = vi.fn();
     const result = await reconcileProjectRecoveryArtifacts({
