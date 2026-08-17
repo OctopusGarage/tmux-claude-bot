@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -282,6 +282,17 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
     args: ["worktree", "remove", "--force", worktree],
   });
   if (removed.status !== 0) {
+    if (
+      removeStandaloneBotCheckoutAfterMainWorktreeFailure({
+        worktree,
+        reason: removed.stderr || removed.stdout,
+        runGit,
+      })
+    ) {
+      reconciledMissingWorktrees.add(worktree);
+      log.info("loop removed standalone bot-owned checkout", { data: { worktree } });
+      return "removed";
+    }
     log.warn("loop failed to remove expired isolated worktree", {
       data: {
         worktree,
@@ -293,6 +304,31 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
   reconciledMissingWorktrees.add(worktree);
   log.info("loop removed expired isolated worktree", { data: { worktree } });
   return "removed";
+}
+
+function removeStandaloneBotCheckoutAfterMainWorktreeFailure(input: {
+  worktree: string;
+  reason: string;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): boolean {
+  if (!input.reason.includes("is a main working tree")) return false;
+  if (!statSync(join(input.worktree, ".git"), { throwIfNoEntry: false })?.isDirectory()) {
+    return false;
+  }
+  const branch = input.runGit({ cwd: input.worktree, args: ["branch", "--show-current"] });
+  if (branch.status !== 0 || branch.stdout.trim() !== "") return false;
+  const status = input.runGit({ cwd: input.worktree, args: ["status", "--porcelain"] });
+  if (status.status !== 0 || status.stdout.trim() !== "") return false;
+  try {
+    rmSync(input.worktree, { recursive: true, force: true });
+    return !existsSync(input.worktree);
+  } catch (err) {
+    log.warn("loop failed to remove standalone bot-owned checkout", {
+      err,
+      data: { worktree: input.worktree },
+    });
+    return false;
+  }
 }
 
 function cleanupExactLocalLoopBranch(input: {
