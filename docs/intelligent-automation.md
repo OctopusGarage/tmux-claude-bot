@@ -139,6 +139,10 @@ cleanup, absence is not cleanup proof. Terminal reconciliation uses the
 WorkOrder's verified source repository to remove only that exact stale Git
 worktree registration, then releases the matching worker lease. It never
 guesses another repository and never removes a source worktree.
+If an eligible bot-owned cleanup target has become a standalone detached
+checkout, cleanup may remove that state-owned directory only after Git reports
+`worktree remove` cannot handle it as a main worktree and the checkout is clean
+and branchless.
 If the service dies after creating an isolated worktree but before persisting its
 WorkOrder, periodic reconciliation can still close the orphan. It waits through
 the default 72-hour evidence window, proves that every durable WorkOrder resource
@@ -987,6 +991,19 @@ that failed, timed out, left `repair-dispatch=failed|blocked|unavailable`, or
 delivered only a partial/failed notification is a first-class self-repair
 candidate. Self-repair records already marked `running` must not be dispatched
 again until their current repair resolves.
+
+System Self-Heal is the hourly trigger for this same repair surface. It is
+intentionally independent from the daily audit notification schedule: the tick
+runs reconciliation and due repair-queue consumption even when no daily summary
+is due, and it normalizes the audit config to avoid `TASK_AUDIT_ENABLED=false`
+or `TASK_AUDIT_TICK_MS=0` disabling core state reconciliation. It then queues an
+active-agent self-heal sweep with a broad operator-equivalent prompt when
+`SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, so newly observed gaps are not
+limited to a hard-coded checklist. It must still reuse Daily Task Audit repair
+dispatch, Project Recovery dispatch, Repair Coordinator leases, Resource
+Guardian admission, and the normal WorkOrder gates. It is not permission to
+bypass owner-decision, external-wait, capacity, clean-worktree, or verification
+blockers.
 
 Historical Loop failures use project-scoped recovery. The recovery classifier
 reads ledger evidence and supervisor artifacts, resolves only projects,

@@ -99,6 +99,7 @@ export type DailyTaskAuditServiceTickInput = {
   loopConfigFile?: string;
   reconcile?: () => Promise<void> | void;
   force?: boolean;
+  skipScheduledAudit?: boolean;
 };
 
 export async function runDailyTaskAuditServiceTick(
@@ -143,6 +144,12 @@ async function runDailyTaskAuditServiceTickInternal(
     dispatch: input.dispatchProjectRecovery,
   });
   reconcileDailyAuditRepairQueue({ ledger, coordinator, now: input.now });
+  if (input.skipScheduledAudit) {
+    if (input.config.autoRepair && input.dispatchRepair !== undefined) {
+      await dispatchRepairQueue({ coordinator, ledger, input, repoPath });
+    }
+    return { fired: false, reason: "not-due" };
+  }
   const scheduledAt = input.force
     ? input.now
     : dueScheduledAt(input.config.schedule, store, input.now);

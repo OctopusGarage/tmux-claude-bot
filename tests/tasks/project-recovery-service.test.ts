@@ -594,6 +594,90 @@ describe("project recovery service", () => {
     );
   });
 
+  it("terminalizes accepted blocked delegated recovery instead of dispatching it again", async () => {
+    const runDir = join(tmpdir(), `project-recovery-accepted-blocked-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "geo",
+        actionsTaken: ["verified no project-owned source bug"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: { decision: "block" },
+        commits: [],
+        followUps: ["External system action is required before retrying."],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        workOrderId: "blocked-recovery",
+        projectId: "geo",
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "project-recovery",
+      taskFamily: "bug-fix",
+      fingerprint: "worker-not-consumed",
+      taskId: "loop:geo:bug-fix:9",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queue.id, ["autopilot:blocked-recovery"], 1_000);
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:geo:bug-fix:9",
+          source: "loop-engineering",
+          name: "geo bug-fix",
+          status: "failed",
+          repairStatus: "running",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:blocked-recovery",
+          source: "autopilot-delegate",
+          name: "geo active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          error: "active delegation ended with blocked",
+          reportPath: runDir,
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ fixed: 0, blocked: 1 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "blocked",
+    });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:geo:bug-fix:9",
+      "blocked",
+      expect.stringContaining("accepted blocked project recovery"),
+    );
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:blocked-recovery",
+      "blocked",
+      expect.stringContaining("accepted blocked project recovery"),
+    );
+  });
+
   it("does not classify a successful original task as an incomplete recovery", async () => {
     const root = join(tmpdir(), `project-recovery-success-${Date.now()}`);
     const runDir = join(root, "run");

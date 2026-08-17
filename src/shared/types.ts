@@ -112,6 +112,11 @@ export type AppConfig = {
     repairBranch: string;
     repairWorktreeIsolation: WorktreeIsolationMode;
   };
+  systemSelfHeal: {
+    enabled: boolean;
+    tickMs: number;
+    agentSweepEnabled: boolean;
+  };
   loopEngineering: {
     configFile: string;
     tickMs: number;

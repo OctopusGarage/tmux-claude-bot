@@ -284,6 +284,20 @@ machine-readable output). The command goes through the running bot's control
 socket, so it uses the same config, notification gateway, and auto-repair path as
 the scheduled service.
 
+`SYSTEM_SELF_HEAL_ENABLED=true` starts an hourly self-heal tick.
+It does not send the daily audit summary or wait for `TASK_AUDIT_SCHEDULE`; it
+reconciles terminal WorkOrders, task-ledger state, repair queue ownership, and
+project-recovery candidates, then consumes due repair queues through the normal
+Loop Supervisor admission gates. With
+`SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, it also queues a broad active-agent
+self-heal prompt equivalent to an operator asking it to check the last 24 hours,
+investigate across files/state/logs/PR evidence, fix safe bot-owned issues, and
+record real blockers. Set `SYSTEM_SELF_HEAL_TICK_MS=0` or
+`SYSTEM_SELF_HEAL_ENABLED=false` only when the operator intentionally wants to
+disable this background reconciliation; set
+`SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=false` only to keep deterministic repair
+while disabling the broad agent prompt.
+
 Historical Loop failures are classified by the project-scoped Recovery
 Coordinator: retryable failures are recreated through the configured project's
 own WorkOrder policy, while external waits and owner decisions remain visible

@@ -37,6 +37,7 @@ describe("daily audit run state", () => {
       reconcileDuplicateTaskIds: vi.fn(),
       importPending: vi.fn(),
       reconcileFromLedger: vi.fn(),
+      list: vi.fn(() => []),
     };
     const repairState = vi.fn();
 
@@ -102,5 +103,59 @@ describe("daily audit run state", () => {
         status: "pending",
       }),
     );
+  });
+
+  it("terminalizes pending ledger repairs when no open repair queue owner remains", () => {
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:english-pilot:active-delegated-task:1",
+      source: "loop-engineering",
+      name: "english-pilot active-delegated-task",
+      scheduledAt: 1_000,
+    });
+    ledger.fail("loop:english-pilot:active-delegated-task:1", {
+      endedAt: 2_000,
+      error: "dispatch-timeout",
+      summary:
+        "Recovery dispatch deferred: automation admission deferred: critical resource pressure",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "english-pilot",
+      projectPath: "/repo/english-pilot",
+      source: "project-recovery",
+      taskFamily: "english-pilot active-delegated-task",
+      fingerprint: "agent-timeout",
+      taskId: "loop:english-pilot:active-delegated-task:1",
+      now: 3_000,
+    });
+    coordinator.markTerminal(record.id, "blocked", 4_000);
+
+    reconcileDailyAuditRunState({
+      ledger,
+      coordinator,
+      now: 60 * 60_000,
+      repoPath: "/repo/tmux-claude-bot",
+      reconcileRepairState: () => {},
+    });
+
+    expect(
+      ledger
+        .listAll()
+        .find((entry) => entry.taskId === "loop:english-pilot:active-delegated-task:1"),
+    ).toMatchObject({
+      repairStatus: "blocked",
+      summary: expect.stringContaining("Synchronized from terminal repair queue state"),
+    });
+    expect(
+      coordinator
+        .list()
+        .filter(
+          (entry) =>
+            !["fixed", "blocked", "not-reproducible", "superseded", "dead-letter"].includes(
+              entry.status,
+            ),
+        ),
+    ).toEqual([]);
   });
 });
