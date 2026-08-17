@@ -235,11 +235,12 @@ function architectureDecision(
       `${label} Architecture score ${assessment.score} reached target ${assessment.targetScore}; skipped before WorkOrder dispatch. ${assessment.notes.join("; ")}`,
     );
   }
-  if (assessment.decision === "block" || assessment.score === null) {
+  if (assessment.decision === "block") {
     return blocked(
       `${label} Architecture pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
     );
   }
+  if (assessment.score === null) return { decision: "run" };
   return {
     decision: "run",
     assessment: {

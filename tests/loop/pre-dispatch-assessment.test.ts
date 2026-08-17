@@ -90,4 +90,38 @@ describe("resolveLoopPreDispatchAssessment", () => {
         "project Architecture score 96 reached target 95; skipped before WorkOrder dispatch. already good",
     });
   });
+
+  it("runs project architecture when assessment has actionable findings without a numeric score", () => {
+    const result = resolveLoopPreDispatchAssessment({
+      target: dueTarget({
+        due: {
+          projectId: "hub",
+          name: "Hub",
+          jobKey: "architecture:hub",
+          jobKind: "architecture",
+          scheduledAt: 1,
+          effectiveAt: 1,
+          jitterMs: 0,
+          action: "would-run",
+        } as LoopDueTarget["due"],
+      }),
+      botRoot: "/bot",
+      runCommand: () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          score: null,
+          findings: [
+            {
+              id: "slice-1",
+              title: "Improve module boundary",
+            },
+          ],
+          suggestedBotImprovements: [],
+        }),
+        stderr: "",
+      }),
+    });
+
+    expect(result).toEqual({ decision: "run" });
+  });
 });

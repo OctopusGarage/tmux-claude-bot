@@ -413,8 +413,8 @@ function parsePlanReview(value: unknown): LoopSupervisorPlanReview | null {
   const checklistCompleted = parseChecklistCompleted(value.checklistCompleted);
   const targetScoreMet = parseTargetScoreMet(value.targetScoreMet);
   const stopConditionReached = parseStopConditionReached(value.stopConditionReached);
-  const overOptimizationAvoided = parseBoolean(value.overOptimizationAvoided);
-  const verificationCompleted = parseVerificationCompleted(value.verificationCompleted);
+  const overOptimizationAvoided = parseCompletionEvidence(value.overOptimizationAvoided);
+  const verificationCompleted = parseCompletionEvidence(value.verificationCompleted);
   const remainingRisks = parseStringArrayOrSingleton(value.remainingRisks);
   if (
     checklistCompleted === null ||
@@ -446,11 +446,15 @@ function parseStopConditionReached(value: unknown): boolean | null {
   return typeof value === "string" && value.trim() !== "" ? true : null;
 }
 
-function parseVerificationCompleted(value: unknown): boolean | null {
+function parseCompletionEvidence(value: unknown): boolean | null {
   const booleanValue = parseBoolean(value);
   if (booleanValue !== null) return booleanValue;
-  if (typeof value !== "string") return null;
-  return /\b(?:skipped|not[- ]run)\b/i.test(value) ? false : null;
+  if (typeof value === "string") {
+    if (/\b(?:skipped|not[- ]run)\b/i.test(value)) return false;
+    return value.trim() !== "" ? true : null;
+  }
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null;
+  return value.length > 0;
 }
 
 function parseChecklistCompleted(value: unknown): boolean | null {

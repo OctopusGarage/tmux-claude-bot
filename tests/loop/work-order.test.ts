@@ -2073,6 +2073,71 @@ prReview:
     });
   });
 
+  it("normalizes explanatory plan review completion fields from supervisor summaries", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "completed",
+          projectId: "datavibe",
+          actionsTaken: ["verified no-delta recovery"],
+          delegatedTasks: [{ projectId: "datavibe", status: "completed" }],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["confirmed bounded task"],
+            postMutationReview: ["reviewed final state"],
+            aiReview: "passed",
+            deterministicGates: [
+              {
+                name: "project health",
+                command: "npm run verify:local",
+                result: "passed",
+                evidence: "all checks passed",
+              },
+            ],
+            decision: "pass",
+            notes: [],
+          },
+          planReview: {
+            checklistCompleted: [
+              "Verified isolated worktree and branch.",
+              "Ran deterministic gates and inspected tracked diff/status.",
+            ],
+            targetScoreMet: "not-applicable: configured assessment emitted score:null",
+            stopConditionReached:
+              "none: no wrong worktree, dirty tracked state, permissions failure, or unsafe action was required.",
+            overOptimizationAvoided:
+              "No architecture slice implementation was attempted because no project-caused source issue was proven.",
+            verificationCompleted: [
+              "Preflight executables passed after setup.",
+              "Final tracked worktree status clean.",
+            ],
+            remainingRisks: [
+              "The orchestrator may continue to classify score:null as a blocked pre-score.",
+            ],
+          },
+          commits: [],
+          followUps: [],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: {
+        planReview: {
+          checklistCompleted: true,
+          targetScoreMet: "not-applicable",
+          stopConditionReached: true,
+          overOptimizationAvoided: true,
+          verificationCompleted: true,
+        },
+      },
+    });
+  });
+
   it("normalizes a singleton remaining risk from a supervisor plan review", () => {
     const result = parseSupervisorFinalSummary(
       [

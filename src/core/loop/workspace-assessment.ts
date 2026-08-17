@@ -49,8 +49,24 @@ export function parseArchitectureAssessment(
       blockers: ["assessment command returned an invalid result"],
     };
   }
-  const record = parsed as { score?: unknown; suggestedBotImprovements?: unknown };
+  const record = parsed as {
+    score?: unknown;
+    findings?: unknown;
+    suggestedBotImprovements?: unknown;
+  };
+  const notes = Array.isArray(record.suggestedBotImprovements)
+    ? record.suggestedBotImprovements.filter((item): item is string => typeof item === "string")
+    : [];
   if (typeof record.score !== "number" || !Number.isFinite(record.score)) {
+    if (Array.isArray(record.findings) && record.findings.length > 0) {
+      return {
+        score: null,
+        targetScore,
+        decision: "run",
+        notes,
+        blockers: [],
+      };
+    }
     return {
       score: null,
       targetScore,
@@ -60,9 +76,6 @@ export function parseArchitectureAssessment(
     };
   }
   const score = Math.max(0, Math.min(100, record.score));
-  const notes = Array.isArray(record.suggestedBotImprovements)
-    ? record.suggestedBotImprovements.filter((item): item is string => typeof item === "string")
-    : [];
   return {
     score,
     targetScore,
