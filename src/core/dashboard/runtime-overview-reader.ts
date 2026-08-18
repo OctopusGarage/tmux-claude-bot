@@ -28,6 +28,7 @@ export type OverviewWorkOrder = {
   status: string;
   scheduledAt: number;
   updatedAt: number;
+  repairStatus?: string;
 };
 
 export type WorkOrderOverviewRead = {
@@ -168,6 +169,14 @@ type Collected<T> =
   | { ok: false; errorKind: Exclude<RuntimeDomainView["errorKind"], null> };
 
 const FAILED_WORK_ORDER_ATTENTION_MS = 24 * 60 * 60 * 1_000;
+const CLOSED_WORK_ORDER_REPAIR_STATUSES = new Set([
+  "fixed",
+  "not-needed",
+  "blocked",
+  "superseded",
+  "not-reproducible",
+  "dead-letter",
+]);
 
 async function collect<T>(reader: () => T | Promise<T>, timeoutMs: number): Promise<Collected<T>> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -234,6 +243,15 @@ function workOrderOutcome(record: OverviewWorkOrder): RecentOutcome {
     endedAt: record.updatedAt,
     projectId: record.projectId,
   };
+}
+
+function isOpenFailedWorkOrder(record: OverviewWorkOrder, now: number): boolean {
+  return (
+    record.status === "failed" &&
+    record.updatedAt <= now &&
+    now - record.updatedAt <= FAILED_WORK_ORDER_ATTENTION_MS &&
+    !CLOSED_WORK_ORDER_REPAIR_STATUSES.has(record.repairStatus ?? "pending")
+  );
 }
 
 function attentionForOperator(operator: OperatorInterfaceView, now: number): AttentionItem[] {
@@ -356,11 +374,8 @@ export async function readRuntimeOverview(input: {
 
   if (workOrdersRead.ok) {
     const value = workOrdersRead.value;
-    const recentFailedWorkOrders = value.terminal.filter(
-      (candidate) =>
-        candidate.status === "failed" &&
-        candidate.updatedAt <= input.now &&
-        input.now - candidate.updatedAt <= FAILED_WORK_ORDER_ATTENTION_MS,
+    const recentFailedWorkOrders = value.terminal.filter((candidate) =>
+      isOpenFailedWorkOrder(candidate, input.now),
     );
     activeWork.push(...value.unfinished.map(workOrderView));
     recentOutcomes.push(...value.terminal.map(workOrderOutcome));

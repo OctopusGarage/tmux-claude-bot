@@ -464,6 +464,12 @@ send/delegation without defining another status tool. A failed collector degrade
 only its runtime domain, and every presentation keeps attention, active work, and
 recent outcomes bounded. Managed MCP profiles may be checked for readiness, but
 the overview must not inspect private global MCP client configuration.
+Terminal failed WorkOrders are current attention only while their linked daily
+task ledger repair state remains open. Once reconciliation marks the matching
+`autopilot:<workOrderId>` or `loop:<projectId>:<taskKind>:<scheduledAt>` ledger
+record `fixed`, `not-needed`, `blocked`, `superseded`, `not-reproducible`, or
+`dead-letter`, the Runtime Overview may retain the run as a recent outcome but
+must not keep projecting it as unresolved WorkOrder attention.
 
 The Agent Capacity runtime domain is part of that same snapshot. Its durable
 record contains only agent kind, authentication category, normalized capacity
