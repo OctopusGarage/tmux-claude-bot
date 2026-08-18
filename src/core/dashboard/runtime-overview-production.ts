@@ -138,15 +138,17 @@ export function createRuntimeOverviewReaders(input: {
       workOrderCache = read.entry;
       return read.value;
     },
-    repositoryReviews: () =>
-      new RepositoryReviewQueue()
-        .list({ all: true })
-        .filter(
-          (item) =>
-            item.status === "retry-wait" ||
-            item.status === "manual-review" ||
-            item.status === "dead-letter",
-        )
+    repositoryReviews: () => {
+      const queueItems = new RepositoryReviewQueue().list({ all: true });
+      return queueItems
+        .filter((item) => {
+          if (item.status === "retry-wait") return true;
+          if (item.status !== "manual-review" && item.status !== "dead-letter") return false;
+          return !queueItems.some(
+            (other) =>
+              other.repositoryId === item.repositoryId && other.scheduledAt > item.scheduledAt,
+          );
+        })
         .map((item) => ({
           id: item.id,
           repositoryId: item.repositoryId,
@@ -154,7 +156,8 @@ export function createRuntimeOverviewReaders(input: {
           updatedAt: item.updatedAt,
           nextAttemptAt: item.nextAttemptAt,
           retryEpoch: item.retryEpoch ?? 0,
-        })),
+        }));
+    },
     dailyAudit: () => {
       const read = cachedDomain(dailyAuditCache, appStateDir(), now, () => {
         const window = {
