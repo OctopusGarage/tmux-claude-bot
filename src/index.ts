@@ -3,6 +3,7 @@ import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
 import { reconcileAndResumeActiveDelegatedTasksAfterRestart } from "./core/autopilot/delegated-task.js";
+import { shouldIgnoreUncaughtException } from "./core/infra/fatal-errors.js";
 import {
   acquireInstanceLock,
   InstanceLockHeldError,
@@ -121,8 +122,8 @@ process.once("SIGINT", () => stopResourceGuardian());
 process.once("SIGTERM", () => stopResourceGuardian());
 
 process.on("uncaughtException", (err) => {
-  if (shuttingDown && isAbortLikeError(err)) {
-    fatalLog.info(`ignored shutdown abort: ${err.message}`);
+  if (shouldIgnoreUncaughtException(err, shuttingDown)) {
+    fatalLog.warn(`ignored transient abort: ${err.message}`);
     return;
   }
   fatalLog.error("uncaught exception", { err });
@@ -131,10 +132,6 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   fatalLog.error("unhandled rejection", { err: reason });
 });
-
-function isAbortLikeError(err: unknown): err is Error {
-  return err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"));
-}
 
 // Each adapter is independently optional: Telegram is on when TELEGRAM_BOT_TOKEN is
 // set, Feishu/Lark when LARK_* is configured. LARK_ONLY forces Feishu-only even with
