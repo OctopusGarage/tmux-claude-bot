@@ -45,6 +45,23 @@ describe("project recovery", () => {
     ).toMatchObject({ classification: "retryable" });
   });
 
+  it("classifies missing architecture assessment scores as retryable automation contract failures", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "blocked",
+        summary:
+          "Architecture assessment result did not include a numeric score; worker reported score:null and targetScore=90.",
+        artifactText:
+          "The assessment command emitted actionable findings but no numeric score, so the WorkOrder stopped for an assessment score contract repair.",
+        attempt: 0,
+      }),
+    ).toMatchObject({
+      classification: "retryable",
+      reason: expect.stringContaining("assessment scoring contract"),
+    });
+  });
+
   it("classifies CI and merge decisions without dispatching them", () => {
     expect(
       classifyHistoricalFailure({
@@ -133,6 +150,20 @@ describe("project recovery", () => {
     ).toMatchObject({
       classification: "retryable",
       reason: expect.stringContaining("capacity"),
+    });
+  });
+
+  it("keeps assessment scoring contract failures retryable past the retry budget", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        summary: "Recovery blocked because the assessment result did not include a numeric score.",
+        artifactText: "score:null with guarded architecture findings",
+        attempt: 3,
+      }),
+    ).toMatchObject({
+      classification: "retryable",
+      reason: expect.stringContaining("assessment scoring contract"),
     });
   });
 

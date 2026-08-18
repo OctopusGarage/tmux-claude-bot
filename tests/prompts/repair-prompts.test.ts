@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDailyAuditRepairPrompt,
+  buildProjectRecoveryPrompt,
   buildResourceGuardianRepairPrompt,
   buildRuntimeGuardianRepairPrompt,
 } from "../../src/core/prompts/repair-prompts.js";
@@ -60,6 +61,27 @@ describe("repair prompts", () => {
     expect(prompt).toContain("commit only verified fixes");
     expect(prompt).toContain("Do not open a PR");
     expect(prompt).toContain("source=runtime-guardian");
+  });
+
+  it("turns scoreless assessment evidence into an assessment-contract recovery instruction", () => {
+    const prompt = buildProjectRecoveryPrompt({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      taskFamily: "architecture",
+      classification: "retryable",
+      reason: "assessment scoring contract failed",
+      taskIds: ["autopilot:knowledge-engine:1"],
+      evidence: [
+        "assessment result did not include a numeric score",
+        "score:null with guarded architecture findings and targetScore=90",
+      ],
+    });
+
+    expect(prompt).toContain("Assessment scoring contract recovery");
+    expect(prompt).toContain("Do not ask for an owner decision solely because score is null");
+    expect(prompt).toContain("make the assessment command emit a deterministic numeric score");
+    expect(prompt).toContain("repair the bot-side assessment contract");
+    expect(prompt).toContain("do not edit the target project source");
   });
 });
 

@@ -159,6 +159,12 @@ WorkOrder. The configured target is normally 95; a score at or above target is
 a terminal no-op, while an invalid assessment or unsafe repository state blocks
 dispatch without repository mutation. The score, target, notes, and decision
 must remain visible in the WorkOrder or task ledger evidence.
+Assessment output that has actionable architecture findings but omits a numeric
+score is an assessment scoring contract failure owned by automation recovery,
+not a project-owner decision. Recovery must retry or repair the assessment
+command/contract so the result becomes deterministic, and must not dead-letter
+that failure solely because an earlier recovery exhausted the generic attempt
+budget.
 Task Family is the single scheduled-job read model for Loop Engineering. The
 scheduler and Daily Task Audit discovery must consume it rather than reconstruct
 project, workspace, or repository task policy, job keys, or job kinds.

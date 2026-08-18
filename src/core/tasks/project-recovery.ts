@@ -38,6 +38,8 @@ export type ConfiguredRecoveryConfig = {
 };
 
 const MAX_RECOVERY_ATTEMPTS = 3;
+const ASSESSMENT_SCORING_CONTRACT_RE =
+  /(assessment (result|score|scoring).*numeric score|numeric score.*assessment|score:null|assessment score contract|assessment scoring contract|targetscore)/;
 
 export function classifyHistoricalFailure(
   input: HistoricalRecoveryInput,
@@ -60,6 +62,12 @@ export function classifyHistoricalFailure(
     return {
       classification: "retryable",
       reason: "local automation capacity or supervisor lease evidence is retryable",
+    };
+  }
+  if (ASSESSMENT_SCORING_CONTRACT_RE.test(evidence)) {
+    return {
+      classification: "retryable",
+      reason: "assessment scoring contract evidence is retryable automation repair work",
     };
   }
   if (input.attempt >= MAX_RECOVERY_ATTEMPTS) {

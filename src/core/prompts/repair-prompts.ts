@@ -57,6 +57,20 @@ export function buildProjectRecoveryPrompt(input: {
   taskIds: string[];
   evidence: string[];
 }): string {
+  const assessmentContractGuidance = hasAssessmentScoringContractEvidence([
+    input.reason,
+    ...input.evidence,
+  ])
+    ? [
+        "",
+        "Assessment scoring contract recovery:",
+        "- Do not ask for an owner decision solely because score is null or a numeric score is missing.",
+        "- First reproduce the assessment command output and confirm whether actionable findings, targetScore, or decision fields are present.",
+        "- If the configured assessment command is project-owned, make the assessment command emit a deterministic numeric score and preserve its actionable findings.",
+        "- If the failure is caused by tmux-claude-bot parsing, scheduling, or prompt-contract logic, repair the bot-side assessment contract and do not edit the target project source.",
+        "- After repair, rerun the assessment path and verify the original tasks can receive a final fixed, superseded, or blocked report with concrete evidence.",
+      ]
+    : [];
   return [
     "Historical scheduled task recovery for a configured project.",
     `Project: ${input.projectId}`,
@@ -77,6 +91,7 @@ export function buildProjectRecoveryPrompt(input: {
     "",
     "Evidence:",
     JSON.stringify(input.evidence, null, 2),
+    ...assessmentContractGuidance,
     "",
     "Required finalization:",
     "- Verify the target worktree and branch before mutation.",
@@ -85,6 +100,13 @@ export function buildProjectRecoveryPrompt(input: {
     "- Record classification, evidence, changes, verification, commit/PR state, and remaining blockers.",
     "- Update every original task id with its final repair status.",
   ].join("\n");
+}
+
+function hasAssessmentScoringContractEvidence(values: string[]): boolean {
+  const evidence = values.join(" ").toLowerCase();
+  return /(assessment (result|score|scoring).*numeric score|numeric score.*assessment|score:null|assessment score contract|assessment scoring contract|targetscore)/.test(
+    evidence,
+  );
 }
 
 export function buildDailyAuditRepairPrompt(input: {
