@@ -16,6 +16,7 @@ import {
   type AutonomousAdmissionLease,
   AutonomousWorkCoordinator,
   type AutonomousWorkIntent,
+  autonomousCapacityLeaseId,
 } from "../automation/coordinator.js";
 import { automationOccurrenceId } from "../automation/occurrence-window.js";
 import { agentIsIdle } from "../command/agent-ready.js";
@@ -135,6 +136,55 @@ const SYSTEM_GATE_GIT_SEARCH_PATHS = [
   "/run/current-system/sw/bin",
   "/nix/var/nix/profiles/default/bin",
 ];
+
+function activeCapacityLeaseIdsForWorkOrder(workOrder: LoopWorkOrder): string[] {
+  if (workOrder.task?.kind === "active-delegated-task") {
+    return [autonomousCapacityLeaseId({ source: "autopilot-delegate", id: workOrder.id })];
+  }
+  const taskKind = workOrder.task?.kind;
+  const ids = [
+    `${workOrder.projectId}:${workOrder.scheduledAt}`,
+    ...(taskKind === undefined
+      ? []
+      : [`${workOrder.projectId}:${taskKind}:${workOrder.scheduledAt}`]),
+  ];
+  if (taskKind === "repository-pull-request-review") {
+    ids.push(`pr-review:${workOrder.projectId}:${workOrder.scheduledAt}`);
+  }
+  return ids.map((id) => autonomousCapacityLeaseId({ source: "loop-engineering", id }));
+}
+
+function isLoopWorkOrderCapacityLeaseId(leaseId: string): boolean {
+  return (
+    leaseId.startsWith("autonomous:loop-engineering:") ||
+    leaseId.startsWith("autonomous:autopilot-delegate:")
+  );
+}
+
+export function reconcileAutonomousCapacityLeases(
+  capacityStore: AgentCapacityStore,
+  now = Date.now(),
+): number {
+  const activeByAgent = new Map<AgentKind, Set<string>>([
+    ["claude", new Set()],
+    ["codex", new Set()],
+  ]);
+  for (const { workOrder } of readLoopSupervisorWorkOrderRegistry(now).unfinished) {
+    const leases = activeByAgent.get(workOrder.agent);
+    for (const leaseId of activeCapacityLeaseIdsForWorkOrder(workOrder)) leases?.add(leaseId);
+  }
+  let removed = 0;
+  for (const [agent, activeLeaseIds] of activeByAgent) {
+    removed += capacityStore.reconcileActiveLeases(
+      agent,
+      activeLeaseIds,
+      now,
+      isLoopWorkOrderCapacityLeaseId,
+    );
+  }
+  return removed;
+}
+
 export type SupervisedSystemGateProject = Pick<LoopProjectConfig, "id" | "name" | "path"> & {
   commit: LoopWorkOrder["commitPolicy"];
   pullRequest: NonNullable<LoopWorkOrder["pullRequestPolicy"]>;
@@ -1780,6 +1830,15 @@ export async function startLoopEngineering(
   if (restored > 0) log.info("loop engineering control queue restored", { data: { restored } });
   const schedulerStore = new LoopSchedulerStore();
   const capacityStore = new AgentCapacityStore();
+  const reconcileCapacityLeases = (): void => {
+    const released = reconcileAutonomousCapacityLeases(capacityStore, Date.now());
+    if (released > 0) {
+      log.info("loop engineering stale autonomous capacity leases released", {
+        data: { released },
+      });
+    }
+  };
+  reconcileCapacityLeases();
   const automationCoordinator = new AutonomousWorkCoordinator({
     capacity: capacityStore,
     onCapacityTransition: (transition) =>
@@ -1894,6 +1953,7 @@ export async function startLoopEngineering(
       if (reconciled.checked > 0) {
         log.info("loop engineering supervisor work order reconcile complete", { data: reconciled });
       }
+      reconcileCapacityLeases();
       await refreshCapacity();
       const result = await runLoopServiceTickAsync({
         configFile: config.configFile,

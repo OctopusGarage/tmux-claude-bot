@@ -55,6 +55,12 @@ const ISO_RESET =
   /\bresets?\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2}))\b/i;
 const CLOCK_RESET = /\bresets?\s+(\d{1,2}):(\d{2})\b/i;
 
+export function autonomousCapacityLeaseId(
+  intent: Pick<AutonomousWorkIntent, "source" | "id">,
+): string {
+  return `autonomous:${intent.source}:${intent.id}`;
+}
+
 function officialLimitResetAt(text: string, now: number): number | null | undefined {
   const line = text
     .split("\n")
@@ -156,7 +162,7 @@ export class AutonomousWorkCoordinator {
     context: AutonomousAdmissionContext,
   ): AutonomousFinalAdmission {
     const now = this.now();
-    const leaseId = `autonomous:${intent.source}:${intent.id}`;
+    const leaseId = autonomousCapacityLeaseId(intent);
     const admission = this.decide(
       intent,
       context,
