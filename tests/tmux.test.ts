@@ -608,9 +608,47 @@ describe("TmuxBridge", () => {
 
     it("throws when kill fails", async () => {
       mockExecFile = createMockExecFile({});
-      mockExecFile.mockRejectedValueOnce(new Error("no such session"));
+      mockExecFile.mockRejectedValueOnce(new Error("tmux server died"));
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      await expect(bridge.killSession("nonexistent")).rejects.toThrow("no such session");
+      await expect(bridge.killSession("nonexistent")).rejects.toThrow("tmux server died");
+    });
+
+    it("treats an already-missing session as cleaned up", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(
+        new Error("Command failed: tmux kill-session -t missing\ncan't find session: missing\n"),
+      );
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await expect(bridge.killSession("missing")).resolves.toBeUndefined();
+    });
+
+    it("treats string-form already-missing session failures as cleaned up", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(
+        "Command failed: tmux kill-session -t missing\ncan't find session: missing\n",
+      );
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await expect(bridge.killSession("missing")).resolves.toBeUndefined();
+    });
+
+    it("throws when kill fails for a different missing session", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(
+        new Error("Command failed: tmux kill-session -t missing\ncan't find session: other\n"),
+      );
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await expect(bridge.killSession("missing")).rejects.toThrow("can't find session: other");
+    });
+
+    it("throws when a missing-session error did not come from kill-session", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(new Error("can't find session: missing"));
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await expect(bridge.killSession("missing")).rejects.toThrow("can't find session: missing");
     });
   });
 

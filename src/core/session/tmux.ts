@@ -42,6 +42,11 @@ function sendBufferFilePath(bufferName: string): string {
   return join(tmpdir(), `${bufferName}-${randomUUID()}.txt`);
 }
 
+function isMissingSessionKillError(err: unknown, sessionName: string): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes(`can't find session: ${sessionName}`) && message.includes("kill-session");
+}
+
 export class TmuxBridge {
   private readonly execFile: ExecFileLike;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -278,7 +283,12 @@ export class TmuxBridge {
   }
 
   async killSession(sessionName: string): Promise<void> {
-    await this.execFile("tmux", ["kill-session", "-t", sessionName], { timeout: 10000 });
+    try {
+      await this.execFile("tmux", ["kill-session", "-t", sessionName], { timeout: 10000 });
+    } catch (err) {
+      if (isMissingSessionKillError(err, sessionName)) return;
+      throw err;
+    }
   }
 
   /** Map of session name -> creation epoch-seconds, via `tmux list-sessions`.
