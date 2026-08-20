@@ -142,6 +142,73 @@ describe("RepairCoordinator", () => {
     });
   });
 
+  it("keeps accepted blocked project recovery closures terminal for the same task", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const terminal = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "project-recovery",
+      taskFamily: "knowledge-engine active delegated task",
+      fingerprint: "active delegation ended with blocked",
+      taskId: "autopilot:knowledge-engine",
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+      now: 1_000,
+    });
+    coordinator.markTerminal(terminal.id, "blocked", 1_500);
+
+    const next = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "project-recovery",
+      taskFamily: "knowledge-engine active delegated task",
+      fingerprint: "active delegation ended with blocked",
+      taskId: "autopilot:knowledge-engine",
+      summary: "Recovery dispatch deferred: automation admission deferred: capacity-exhausted",
+      now: 2_000,
+    });
+
+    expect(next.id).not.toBe(terminal.id);
+    expect(coordinator.list()).toHaveLength(2);
+    expect(coordinator.list().find((record) => record.id === terminal.id)).toMatchObject({
+      status: "blocked",
+    });
+  });
+
+  it("keeps accepted blocked project recovery closures terminal for later tasks in the same project", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const terminal = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "project-recovery",
+      taskFamily: "knowledge-engine active delegated task",
+      fingerprint: "active delegation ended with blocked",
+      taskId: "autopilot:old-knowledge-engine",
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+      now: 1_000,
+    });
+    coordinator.markTerminal(terminal.id, "blocked", 1_500);
+
+    const next = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "project-recovery",
+      taskFamily: "knowledge-engine active delegated task",
+      fingerprint: "supervisor completion evidence is invalid or incomplete and can be retried",
+      taskId: "autopilot:new-knowledge-engine",
+      summary:
+        "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. supervisor completion evidence is invalid or incomplete and can be retried",
+      now: 2_000,
+    });
+
+    expect(next.id).not.toBe(terminal.id);
+    expect(coordinator.list()).toHaveLength(2);
+    expect(coordinator.list().find((record) => record.id === terminal.id)).toMatchObject({
+      status: "blocked",
+    });
+  });
+
   it("claims due items in priority order and leaves later items pending", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     coordinator.enqueue({

@@ -30,6 +30,7 @@ type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 
 const RECONNECT_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = 180_000;
 
 function connectSocket(paths = controlSocketCandidatePaths()): Promise<net.Socket> {
   const [path, ...rest] = paths;
@@ -138,17 +139,21 @@ export class ControlClient extends EventEmitter {
     };
   }
 
-  private req(payload: WithoutId<ControlRequest>): Promise<unknown> {
+  private req(
+    payload: WithoutId<ControlRequest>,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!this.conn) {
         reject(new Error("not connected"));
         return;
       }
       const id = this.nextId++;
+      const timeoutMs = opts.timeoutMs ?? this.requestTimeoutMs;
       const timer = setTimeout(() => {
         if (!this.pending.delete(id)) return;
-        reject(new Error(`control request timed out after ${this.requestTimeoutMs}ms`));
-      }, this.requestTimeoutMs);
+        reject(new Error(`control request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
       this.conn.write(
@@ -280,7 +285,10 @@ export class ControlClient extends EventEmitter {
   taskAudit(
     opts: { now?: number; force?: boolean } = {},
   ): Promise<DailyTaskAuditServiceTickResult> {
-    return this.req({ op: "taskAudit", ...opts }) as Promise<DailyTaskAuditServiceTickResult>;
+    return this.req(
+      { op: "taskAudit", ...opts },
+      { timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS },
+    ) as Promise<DailyTaskAuditServiceTickResult>;
   }
   loopReports(
     opts: { limit?: number; projectId?: string; status?: "passed" | "failed" } = {},

@@ -305,4 +305,44 @@ describe("DailyTaskLedger", () => {
         "legacy pending failure; Superseded by later successful task loop:geo-backend:pull-request-review:second.",
     });
   });
+
+  it("keeps non-retryable project recovery closures closed across later deferrals", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-non-retryable-"));
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:knowledge-engine:active-delegated-task:1786972706589",
+      source: "loop-engineering",
+      name: "knowledge-engine active-delegated-task",
+      scheduledAt: 1_000,
+    });
+    ledger.fail("loop:knowledge-engine:active-delegated-task:1786972706589", {
+      endedAt: 1_500,
+      error: "blocked",
+      summary: "active delegation ended with blocked",
+    });
+    ledger.markRepairStatus("loop:knowledge-engine:active-delegated-task:1786972706589", {
+      repairStatus: "blocked",
+      updatedAt: 2_000,
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    });
+
+    ledger.markRepairStatus("loop:knowledge-engine:active-delegated-task:1786972706589", {
+      repairStatus: "pending",
+      updatedAt: 2_500,
+      summary: "Recovery dispatch deferred: automation admission deferred: capacity-exhausted",
+    });
+    ledger.fail("loop:knowledge-engine:active-delegated-task:1786972706589", {
+      endedAt: 3_000,
+      error: "blocked",
+      summary: "Recovery dispatch deferred: automation admission deferred: capacity-exhausted",
+    });
+
+    expect(ledger.listAll()[0]).toMatchObject({
+      repairStatus: "blocked",
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+      updatedAt: 3_000,
+    });
+  });
 });

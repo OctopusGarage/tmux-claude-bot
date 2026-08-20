@@ -39,16 +39,24 @@ function dueTarget(overrides: Partial<LoopDueTarget> = {}): LoopDueTarget {
 
 describe("resolveLoopPreDispatchAssessment", () => {
   it("returns a runnable pre-dispatch assessment for actionable project security risk", () => {
+    let observedEnv: Record<string, string> | undefined;
     const result = resolveLoopPreDispatchAssessment({
       target: dueTarget(),
       botRoot: "/bot",
-      runCommand: () => ({
-        status: 0,
-        stdout: JSON.stringify({ riskScore: 82, findings: ["dependency CVE"] }),
-        stderr: "",
-      }),
+      runCommand: (invocation) => {
+        observedEnv = invocation.env;
+        return {
+          status: 0,
+          stdout: JSON.stringify({ riskScore: 82, findings: ["dependency CVE"] }),
+          stderr: "",
+        };
+      },
     });
 
+    expect(observedEnv).toMatchObject({
+      LOOP_BOT_ROOT: "/bot",
+      LOOP_PROJECT_PATH: "/repo/hub",
+    });
     expect(result).toEqual({
       decision: "run",
       assessment: {

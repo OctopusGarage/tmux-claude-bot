@@ -193,6 +193,8 @@ function projectSecurityDecision(
             LOOP_PROJECT_NAME: project.name,
             LOOP_PROJECT_AGENT: project.agent,
             LOOP_PROJECT_GOAL: project.goal,
+            LOOP_PROJECT_PATH: project.path,
+            LOOP_BOT_ROOT: input.botRoot,
             LOOP_SECURITY_ACTION_THRESHOLD: String(policy.actionThreshold),
             LOOP_SECURITY_CRITICAL_THRESHOLD: String(policy.criticalThreshold),
           },

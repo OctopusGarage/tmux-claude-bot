@@ -77,6 +77,10 @@ repair-queue state only from an authoritative passing supervisor final summary.
 Project recovery must resolve a run-directory `reportPath` to its final summary
 and system gate before classifying a generic failure; missing a directory read
 must not manufacture an owner-decision outcome.
+Accepted blocked project-recovery closures that explicitly state no retryable
+project repair remains are terminal durable evidence. Later capacity/admission
+deferrals must not reopen those records or turn them back into pending repair
+work.
 When a system gate or execution-isolation producer knows that a finding belongs
 to a target or external boundary, it must persist a structured repair
 disposition; Runtime Guardian must never infer terminal ownership from log or
@@ -180,7 +184,9 @@ critical findings always run, actionable findings at or above the action
 threshold run, lower-risk findings are recorded as not-needed, and missing or
 invalid evidence blocks dispatch without repository mutation. The risk score,
 thresholds, notes, and decision must remain visible in the WorkOrder or task
-ledger evidence.
+ledger evidence. Project and workspace security assessment commands must receive
+the configured target path and bot root environment so shared scripts can resolve
+project-local inputs and bot-owned helpers deterministically.
 Dispatching reservations without an active worker lease must be reconciled after
 the short dispatch grace period; active leases must prevent that recovery, and
 the recovery must not run target-project commands.
