@@ -1,5 +1,5 @@
 import type { ConfigResolver } from "../agents/agent-config-resolver.js";
-import { resolveCodexApiInfo } from "../agents/codex/codex-usage.js";
+import { readLatestCodexUsage, resolveCodexApiInfo } from "../agents/codex/codex-usage.js";
 import { profileFor } from "../agents/registry.js";
 import type { AgentKind } from "../agents/types.js";
 import type { UsageSnapshot } from "../read/usage.js";
@@ -8,6 +8,16 @@ import {
   type AgentCapacityObservation,
   deriveAgentCapacity,
 } from "./capacity.js";
+
+const TELEMETRY_FRESH_MS = 15 * 60_000;
+
+function freshUsage(usage: UsageSnapshot | null, now: number): boolean {
+  return (
+    usage !== null &&
+    Number.isFinite(usage.updatedAt) &&
+    now - usage.updatedAt * 1_000 <= TELEMETRY_FRESH_MS
+  );
+}
 
 type CapacityProbeInput = {
   agent: AgentKind;
@@ -87,6 +97,20 @@ export async function observeAgentCapacity(
       : await profileFor(input.agent).readUsage(resolver, input.session, input.projectPath);
   } catch {
     usage = null;
+  }
+  if (
+    input.agent === "codex" &&
+    authentication === "subscription" &&
+    !freshUsage(usage, input.now)
+  ) {
+    try {
+      usage = await readLatestCodexUsage(
+        (await resolver.resolveCodexHome?.(input.session)) ?? profileFor("codex").defaultConfigRoot,
+        Math.floor(input.now / 1_000),
+      );
+    } catch {
+      // Fall back to the original session-scoped result; deriveAgentCapacity fails closed.
+    }
   }
   return deriveAgentCapacity({
     agent: input.agent,

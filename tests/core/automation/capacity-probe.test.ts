@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ConfigResolver } from "../../../src/core/agents/agent-config-resolver.js";
 import { observeAgentCapacity } from "../../../src/core/automation/capacity-probe.js";
@@ -82,5 +85,44 @@ describe("observeAgentCapacity", () => {
     });
 
     expect(result.state).toBe("available");
+  });
+
+  it("falls back to the latest account-wide Codex telemetry when the supervisor session is stale", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-home-"));
+    try {
+      const dir = join(root, "sessions", "2026", "08", "13");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "rollout-fresh.jsonl"),
+        [
+          `{"type":"session_meta","payload":{"id":"fresh","cwd":"/other-repo"}}`,
+          `{"timestamp":"2026-08-13T08:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":10},"model_context_window":1000},"rate_limits":{"primary":{"used_percent":3,"window_minutes":10080,"resets_at":1787196811},"secondary":null}}}`,
+        ].join("\n"),
+      );
+      const codexResolver = {
+        resolveConfigRoot: async () => "/unused",
+        isClaudeRunning: async () => false,
+        resolveCodexHome: async () => root,
+        isCodexRunning: async () => true,
+        invalidate: () => undefined,
+      } as ConfigResolver;
+
+      const result = await observeAgentCapacity({
+        agent: "codex",
+        session: "loop-supervisor",
+        projectPath: "/repo-without-rollout",
+        resolver: codexResolver,
+        now,
+        resolveAuthentication: async () => "subscription",
+      });
+
+      expect(result).toMatchObject({
+        state: "available",
+        fiveHourPct: null,
+        weeklyPct: 3,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
