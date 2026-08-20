@@ -319,6 +319,137 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
+  it("accepts recovered completed work after its prepared isolated worktree was cleaned up", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-source-"));
+    const cleanedWorktree = join(stateDir, "loop-worktrees", "hub", "1784196600000-hub");
+    const configFile = writeConfig(
+      cleanedWorktree,
+      [
+        "    commit:",
+        "      enabled: false",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+      ].join("\n"),
+    );
+    const order = {
+      ...workOrder(stateDir, cleanedWorktree),
+      task: {
+        kind: "repository-pull-request-review",
+        repo: "OctopusGarage/hub",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: true,
+        mergeMethod: "squash",
+        repair: { enabled: true, maxAttempts: 1 },
+      },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: cleanedWorktree,
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        sourceWorktree: sourceDir,
+        preparedBy: "system-git-worktree",
+      },
+      commitPolicy: { enabled: false, perRound: false },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+        mergeMethod: "squash" as const,
+      },
+    } satisfies LoopWorkOrder;
+    const runDir = writeUnfinishedRun(stateDir, order);
+    writeFileSync(
+      order.finalSummaryPath ?? "",
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["reviewed and merged open repository PR"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["Confirmed the repository PR was in scope."],
+          postMutationReview: ["Merged PR passed local and remote checks."],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "local-verification",
+              result: "passed",
+              command: "npm run verify:local",
+              evidence: "verify-local ok",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        pullRequestDecisions: [
+          {
+            number: 1,
+            repository: "OctopusGarage/hub",
+            outcome: "merged",
+            evidence: ["checks passed and PR merged"],
+            nextStep: "none",
+          },
+        ],
+        followUps: [],
+      })}\n`,
+    );
+    rmSync(cleanedWorktree, { recursive: true, force: true });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 2_000,
+      runCommand: () => {
+        throw new Error("PR commands should not run when supervisor reported no commits");
+      },
+      runGit: (invocation) => {
+        if (invocation.cwd === cleanedWorktree) {
+          return { status: 1, stdout: "", stderr: "spawnSync /usr/bin/git ENOENT" };
+        }
+        if (invocation.cwd === sourceDir && invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === sourceDir &&
+          invocation.args.join(" ") === "rev-parse --show-toplevel"
+        ) {
+          return { status: 0, stdout: `${sourceDir}\n`, stderr: "" };
+        }
+        if (
+          invocation.cwd === sourceDir &&
+          invocation.args.join(" ") === "worktree list --porcelain"
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git call: ${invocation.cwd} ${invocation.args.join(" ")}`);
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(JSON.parse(readFileSync(join(runDir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: true,
+      resultStatus: "completed",
+      evidence: expect.arrayContaining([
+        "prepared isolated worktree already cleaned after supervisor completion",
+      ]),
+    });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "completed"',
+    );
+  });
+
   it("does not reprocess a terminal failed work order after system-gate evidence is durable", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;

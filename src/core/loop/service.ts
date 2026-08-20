@@ -2186,6 +2186,7 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
       result: recoveredResult,
       runCommand: input.runCommand,
       ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
+      allowMissingPreparedIsolatedWorktree: true,
     });
     let revisionAttempt = 0;
     let revisionFailures = supervisorRevisionFailures(gate.failures);
@@ -2232,6 +2233,7 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
         result: recoveredRevision,
         runCommand: input.runCommand,
         ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
+        allowMissingPreparedIsolatedWorktree: true,
       });
       revisionFailures = supervisorRevisionFailures(gate.failures);
     }
@@ -2482,6 +2484,7 @@ export function runSupervisedSystemGateOutcome(input: {
   result: LoopSupervisedRunResult;
   runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  allowMissingPreparedIsolatedWorktree?: boolean;
 }): SupervisedSystemGateOutcome {
   if (input.result.status !== "completed") {
     return {
@@ -2532,26 +2535,36 @@ export function runSupervisedSystemGateOutcome(input: {
       );
     }
   }
+  const missingRecoveredPreparedIsolatedWorktree =
+    input.allowMissingPreparedIsolatedWorktree === true &&
+    isPreparedIsolatedExecutionWorktree(input.workOrder) &&
+    !existsSync(input.project.path);
   if (requiresGitGate && input.runGit === undefined) {
     failures.push("missing git adapter for supervised system gate");
   } else if (requiresGitGate && input.runGit !== undefined) {
     const runGit = input.runGit;
-    const status = runGit({ cwd: input.project.path, args: ["status", "--porcelain"] });
-    let targetWorktreeClean = false;
-    if (status.status !== 0) {
-      failures.push(`git status failed: ${status.stderr || status.stdout || "unknown error"}`);
-    } else if (status.stdout.trim().length > 0) {
-      failures.push(`worktree is dirty after supervisor completion: ${status.stdout.trim()}`);
+    let targetWorktreeClean = missingRecoveredPreparedIsolatedWorktree;
+    if (missingRecoveredPreparedIsolatedWorktree) {
+      evidence.push("prepared isolated worktree already cleaned after supervisor completion");
     } else {
-      targetWorktreeClean = true;
-      evidence.push("target worktree clean");
+      const status = runGit({ cwd: input.project.path, args: ["status", "--porcelain"] });
+      if (status.status !== 0) {
+        failures.push(`git status failed: ${status.stderr || status.stdout || "unknown error"}`);
+      } else if (status.stdout.trim().length > 0) {
+        failures.push(`worktree is dirty after supervisor completion: ${status.stdout.trim()}`);
+      } else {
+        targetWorktreeClean = true;
+        evidence.push("target worktree clean");
+      }
     }
-    if (targetWorktreeClean) {
+    if (targetWorktreeClean && !missingRecoveredPreparedIsolatedWorktree) {
       const restored = restoreIsolatedExecutionBranch(input.project, input.workOrder, input.runGit);
       failures.push(...restored.failures);
       evidence.push(...restored.evidence);
     }
-    failures.push(...isolatedExecutionBranchGate(input.project, input.workOrder, input.runGit));
+    if (!missingRecoveredPreparedIsolatedWorktree) {
+      failures.push(...isolatedExecutionBranchGate(input.project, input.workOrder, input.runGit));
+    }
 
     if (input.project.pullRequest.enabled) {
       failures.push(
@@ -2574,7 +2587,8 @@ export function runSupervisedSystemGateOutcome(input: {
         failures.length === 0 &&
         (input.workOrder.task?.kind === "pull-request-review" ||
           input.workOrder.task?.kind === "repository-pull-request-review") &&
-        input.project.pullRequest.autoMerge
+        input.project.pullRequest.autoMerge &&
+        !missingRecoveredPreparedIsolatedWorktree
       ) {
         const syncFailures = syncRepositoryReviewSwitchBackBranch({
           project: input.project,
