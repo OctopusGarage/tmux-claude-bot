@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AgentApiInfo } from "../../../shared/types.js";
 import { iterJsonlObjects } from "../../read/jsonl.js";
 import { numOrNull, type UsageSnapshot } from "../../read/usage.js";
-import { findRolloutForProject } from "./codex-rollout.js";
+import { collectRolloutFiles, findRolloutForProject } from "./codex-rollout.js";
 
 interface TokenCountPayload {
   type?: string;
@@ -13,9 +13,28 @@ interface TokenCountPayload {
     model_context_window?: number;
   };
   rate_limits?: {
-    primary?: { used_percent?: number; resets_at?: number };
-    secondary?: { used_percent?: number; resets_at?: number };
+    primary?: { used_percent?: number; resets_at?: number; window_minutes?: number } | null;
+    secondary?: { used_percent?: number; resets_at?: number; window_minutes?: number } | null;
   };
+}
+
+type RateLimitWindow = { used_percent?: number; resets_at?: number; window_minutes?: number };
+
+function isRateLimitWindow(value: unknown): value is RateLimitWindow {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rateLimitForWindow(
+  limits: TokenCountPayload["rate_limits"],
+  windowMinutes: number,
+  legacyKey: "primary" | "secondary",
+): RateLimitWindow | undefined {
+  const candidates = [limits?.primary, limits?.secondary].filter(isRateLimitWindow);
+  const exact = candidates.find((candidate) => candidate.window_minutes === windowMinutes);
+  if (exact !== undefined) return exact;
+  return candidates.some((candidate) => candidate.window_minutes !== undefined)
+    ? undefined
+    : candidates.find((candidate) => candidate === limits?.[legacyKey]);
 }
 
 /** Parse rollout JSONL text into a UsageSnapshot from its LAST token_count event,
@@ -25,29 +44,42 @@ export function codexUsageFromRollout(
   sessionId: string,
   now: number,
 ): UsageSnapshot | null {
-  let last: TokenCountPayload | null = null;
-  for (const obj of iterJsonlObjects<{ payload?: TokenCountPayload }>(jsonlText)) {
-    if (obj.payload?.type === "token_count") last = obj.payload;
+  let last: { payload: TokenCountPayload; timestamp?: string } | null = null;
+  for (const obj of iterJsonlObjects<{ timestamp?: string; payload?: TokenCountPayload }>(
+    jsonlText,
+  )) {
+    if (obj.payload?.type === "token_count") {
+      last =
+        typeof obj.timestamp === "string"
+          ? { payload: obj.payload, timestamp: obj.timestamp }
+          : { payload: obj.payload };
+    }
   }
   if (!last) return null;
 
-  const total = numOrNull(last.info?.total_token_usage?.total_tokens);
-  const ctxWindow = numOrNull(last.info?.model_context_window);
+  const total = numOrNull(last.payload.info?.total_token_usage?.total_tokens);
+  const ctxWindow = numOrNull(last.payload.info?.model_context_window);
   const contextPct =
     total !== null && ctxWindow !== null && ctxWindow > 0
       ? // Post-compaction the running total can exceed the window, so clamp to
         // 0–100 — otherwise the numeric label would print e.g. "147%".
         Math.min(100, Math.max(0, Math.round((total / ctxWindow) * 100)))
       : null;
+  const fiveHour = rateLimitForWindow(last.payload.rate_limits, 300, "primary");
+  const sevenDay = rateLimitForWindow(last.payload.rate_limits, 10080, "secondary");
+  const timestampSeconds =
+    typeof last.timestamp === "string" && Number.isFinite(Date.parse(last.timestamp))
+      ? Date.parse(last.timestamp) / 1_000
+      : now;
 
   return {
     sessionId,
     contextPct,
-    fiveHourPct: numOrNull(last.rate_limits?.primary?.used_percent),
-    fiveHourReset: numOrNull(last.rate_limits?.primary?.resets_at),
-    sevenDayPct: numOrNull(last.rate_limits?.secondary?.used_percent),
-    sevenDayReset: numOrNull(last.rate_limits?.secondary?.resets_at),
-    updatedAt: now,
+    fiveHourPct: numOrNull(fiveHour?.used_percent),
+    fiveHourReset: numOrNull(fiveHour?.resets_at),
+    sevenDayPct: numOrNull(sevenDay?.used_percent),
+    sevenDayReset: numOrNull(sevenDay?.resets_at),
+    updatedAt: timestampSeconds,
   };
 }
 
@@ -111,4 +143,21 @@ export async function readCodexUsage(
   } catch {
     return null;
   }
+}
+
+export async function readLatestCodexUsage(
+  configRoot: string | null,
+  now: number = Math.floor(Date.now() / 1000),
+): Promise<UsageSnapshot | null> {
+  if (!configRoot) return null;
+  const files = [...(await collectRolloutFiles(configRoot))].sort((a, b) => b.mtime - a.mtime);
+  for (const file of files) {
+    try {
+      const snapshot = codexUsageFromRollout(await readFile(file.path, "utf8"), "", now);
+      if (snapshot !== null) return snapshot;
+    } catch {
+      // Keep scanning; a single corrupt or racing rollout should not hide fresher telemetry.
+    }
+  }
+  return null;
 }

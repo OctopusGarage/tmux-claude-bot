@@ -66,18 +66,24 @@ export function deriveAgentCapacity(input: {
     { pct: fiveHourPct, reset: usage.fiveHourReset },
     { pct: weeklyPct, reset: usage.sevenDayReset },
   ].filter((window) => window.pct !== null && window.pct >= exhaustedPct);
+  const activeExhaustedWindows = exhaustedWindows.filter(
+    (window) => typeof window.reset !== "number" || window.reset * 1_000 > input.now,
+  );
+  if (exhaustedWindows.length > 0 && activeExhaustedWindows.length === 0) {
+    return unknown("usage-telemetry-reset-passed");
+  }
   const state: AgentCapacityState =
-    exhaustedWindows.length > 0
+    activeExhaustedWindows.length > 0
       ? "exhausted"
       : [fiveHourPct, weeklyPct].some((percent) => percent !== null && percent >= constrainedPct)
         ? "constrained"
         : "available";
-  const resetCandidates = exhaustedWindows
+  const resetCandidates = activeExhaustedWindows
     .map((window) => window.reset)
     .filter((reset): reset is number => typeof reset === "number" && reset * 1_000 > input.now)
     .map((reset) => reset * 1_000);
   const resetAt =
-    state === "exhausted" && resetCandidates.length === exhaustedWindows.length
+    state === "exhausted" && resetCandidates.length === activeExhaustedWindows.length
       ? Math.max(...resetCandidates)
       : null;
   return {

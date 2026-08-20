@@ -154,7 +154,8 @@ export class RepairCoordinator {
         (record) =>
           record.dedupeKey === dedupeKey &&
           isTerminal(record.status) &&
-          record.linkedTaskIds.includes(input.taskId),
+          record.linkedTaskIds.includes(input.taskId) &&
+          !hasNonRetryableProjectRecoveryEvidence(record, input),
       );
       if (stale !== undefined) {
         existing = reopenProjectRecoveryRecord(stale, input.now);
@@ -554,15 +555,33 @@ function isRecoverableProjectRecoveryTerminal(
 ): boolean {
   if (record.source !== "project-recovery" || record.projectId !== input.projectId) return false;
   if (record.status !== "blocked" || record.attempt >= REPAIR_MAX_ATTEMPTS) return false;
-  const evidence = [...record.summaries, input.summary, record.fingerprint, input.fingerprint]
-    .filter((value): value is string => value !== undefined)
-    .join(" ")
-    .toLowerCase();
+  if (hasNonRetryableProjectRecoveryEvidence(record, input)) return false;
+  const evidence = projectRecoveryEvidence(record, input);
   if (evidence.includes("recovery attempt limit reached")) return false;
   if (evidence.includes("dead-letter")) return false;
   if (evidence.includes("needs-owner-decision") && !hasRecoverableProjectRecoveryEvidence(evidence))
     return false;
   return hasRecoverableProjectRecoveryEvidence(evidence);
+}
+
+function hasNonRetryableProjectRecoveryEvidence(
+  record: RepairQueueRecord,
+  input: RepairEnqueueInput,
+): boolean {
+  const evidence = projectRecoveryEvidence(record, input);
+  if (evidence.includes("no retryable project repair remains")) return true;
+  if (evidence.includes("recovery attempt limit reached")) return true;
+  if (evidence.includes("dead-letter")) return true;
+  return (
+    evidence.includes("needs-owner-decision") && !hasRecoverableProjectRecoveryEvidence(evidence)
+  );
+}
+
+function projectRecoveryEvidence(record: RepairQueueRecord, input: RepairEnqueueInput): string {
+  return [...record.summaries, input.summary, record.fingerprint, input.fingerprint]
+    .filter((value): value is string => value !== undefined)
+    .join(" ")
+    .toLowerCase();
 }
 
 function hasRecoverableProjectRecoveryEvidence(evidence: string): boolean {

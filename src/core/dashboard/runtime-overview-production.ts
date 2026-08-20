@@ -13,7 +13,11 @@ import { operatorHomeDir } from "../projects/operator-home.js";
 import { createResourceGuardianStore } from "../resource-guardian/store.js";
 import { discoverRuntimeGuardianFindings } from "../runtime-guardian/inspector.js";
 import { DailyTaskAuditStore } from "../tasks/daily-audit-service.js";
-import { DailyTaskLedger, summarizeTaskWindow } from "../tasks/task-ledger.js";
+import {
+  DailyTaskLedger,
+  type ScheduledTaskRepairStatus,
+  summarizeTaskWindow,
+} from "../tasks/task-ledger.js";
 import type { RuntimeOverviewReaders, WorkOrderOverviewRead } from "./runtime-overview-reader.js";
 
 const POWER_CACHE_MS = 30_000;
@@ -30,6 +34,27 @@ let runtimeGuardianCache: {
   readAt: number;
   value: Awaited<ReturnType<RuntimeOverviewReaders["runtimeGuardian"]>>;
 } | null = null;
+
+function repairStatusForWorkOrder(
+  ledgerRecords: ReturnType<DailyTaskLedger["listAll"]>,
+  input: {
+    id: string;
+    projectId: string;
+    taskKind: string;
+    scheduledAt: number;
+  },
+): ScheduledTaskRepairStatus | undefined {
+  const byTaskId = new Map(ledgerRecords.map((record) => [record.taskId, record]));
+  const candidates = [
+    `autopilot:${input.id}`,
+    `loop:${input.projectId}:${input.taskKind}:${input.scheduledAt}`,
+  ];
+  for (const taskId of candidates) {
+    const repairStatus = byTaskId.get(taskId)?.repairStatus;
+    if (repairStatus !== undefined) return repairStatus;
+  }
+  return undefined;
+}
 
 function cachedDomain<T>(
   cache: { key: string; readAt: number; value: T } | null,
@@ -84,6 +109,7 @@ export function createRuntimeOverviewReaders(input: {
     workOrders: () => {
       const read = cachedDomain(workOrderCache, appStateDir(), now, () => {
         const registry = readLoopSupervisorWorkOrderRegistry(now);
+        const ledgerRecords = new DailyTaskLedger().listAll();
         const mapRecord = (record: (typeof registry.records)[number]) => ({
           id: record.workOrder.id,
           projectId: record.workOrder.projectId,
@@ -92,6 +118,15 @@ export function createRuntimeOverviewReaders(input: {
           status: record.state.status,
           scheduledAt: record.workOrder.scheduledAt,
           updatedAt: record.state.updatedAt,
+          ...(() => {
+            const repairStatus = repairStatusForWorkOrder(ledgerRecords, {
+              id: record.workOrder.id,
+              projectId: record.workOrder.projectId,
+              taskKind: record.workOrder.task?.kind ?? "loop",
+              scheduledAt: record.workOrder.scheduledAt,
+            });
+            return repairStatus === undefined ? {} : { repairStatus };
+          })(),
         });
         return {
           unfinished: registry.unfinished.map(mapRecord),
@@ -103,15 +138,17 @@ export function createRuntimeOverviewReaders(input: {
       workOrderCache = read.entry;
       return read.value;
     },
-    repositoryReviews: () =>
-      new RepositoryReviewQueue()
-        .list({ all: true })
-        .filter(
-          (item) =>
-            item.status === "retry-wait" ||
-            item.status === "manual-review" ||
-            item.status === "dead-letter",
-        )
+    repositoryReviews: () => {
+      const queueItems = new RepositoryReviewQueue().list({ all: true });
+      return queueItems
+        .filter((item) => {
+          if (item.status === "retry-wait") return true;
+          if (item.status !== "manual-review" && item.status !== "dead-letter") return false;
+          return !queueItems.some(
+            (other) =>
+              other.repositoryId === item.repositoryId && other.scheduledAt > item.scheduledAt,
+          );
+        })
         .map((item) => ({
           id: item.id,
           repositoryId: item.repositoryId,
@@ -119,7 +156,8 @@ export function createRuntimeOverviewReaders(input: {
           updatedAt: item.updatedAt,
           nextAttemptAt: item.nextAttemptAt,
           retryEpoch: item.retryEpoch ?? 0,
-        })),
+        }));
+    },
     dailyAudit: () => {
       const read = cachedDomain(dailyAuditCache, appStateDir(), now, () => {
         const window = {

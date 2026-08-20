@@ -81,9 +81,18 @@ export async function runProjectRecoveryPass(input: {
     ...workOrderRegistry.recoverableFailed,
   ]);
   const terminalWorkOrders = workOrderRegistry.terminal;
+  const terminalClosureRunIds = terminalProjectRecoveryRunIds(input.coordinator);
 
   for (const record of input.records) {
     if (record.source !== "loop-engineering" && record.source !== "autopilot-delegate") continue;
+    if (isCoveredByTerminalProjectRecovery(record, terminalClosureRunIds)) {
+      input.updateRepairStatus(
+        record.taskId,
+        "blocked",
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+      );
+      continue;
+    }
     const artifactText =
       record.reportPath === undefined ? undefined : readRecoveryArtifact(record.reportPath);
     const recoveryInput: HistoricalRecoveryInput = {
@@ -293,19 +302,43 @@ export async function reconcileProjectRecoveryArtifacts(input: {
 }): Promise<ProjectRecoveryArtifactReconciliationResult> {
   const result: ProjectRecoveryArtifactReconciliationResult = { checked: 0, fixed: 0, blocked: 0 };
   const byTaskId = new Map(input.records.map((record) => [record.taskId, record]));
+  const terminalClosureRunIds = terminalProjectRecoveryRunIds(input.coordinator);
+  const closedTaskIds = new Set<string>();
   for (const queueRecord of input.coordinator.list()) {
-    if (isRepairTerminal(queueRecord.status)) continue;
     const linked = queueRecord.linkedTaskIds
       .map((taskId) => byTaskId.get(taskId))
       .filter((record): record is ScheduledTaskRecord => record !== undefined);
+    const terminalClosure = isTerminalProjectRecoveryClosure(queueRecord);
+    if (isRepairTerminal(queueRecord.status) && !terminalClosure) continue;
     const hasLinkedRecoveryArtifact = linked.some(
       (record) =>
         record.source === "autopilot-delegate" && record.taskId !== queueRecord.linkedTaskIds[0],
     );
     if (queueRecord.source !== "project-recovery" && !hasLinkedRecoveryArtifact) continue;
-    if (isTerminalProjectRecoveryClosure(queueRecord)) {
+    if (terminalClosure) {
+      const summary =
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.";
+      const closureRecords = linkedTerminalClosureRecords(
+        queueRecord.linkedTaskIds,
+        linked,
+        byTaskId,
+      );
+      const needsClosure =
+        !isRepairTerminal(queueRecord.status) ||
+        closureRecords.some((record) => record.repairStatus !== "blocked");
+      if (!needsClosure) continue;
+      for (const record of closureRecords) {
+        input.updateRepairStatus(record.taskId, "blocked", summary);
+        closedTaskIds.add(record.taskId);
+      }
       input.coordinator.markTerminal(queueRecord.id, "blocked", input.now);
       result.blocked++;
+      continue;
+    }
+    if (linked.length > 0 && linked.every(isTerminalLinkedRepairRecord)) {
+      input.coordinator.markTerminal(queueRecord.id, linkedRepairQueueStatus(linked), input.now);
+      result.checked++;
+      result.fixed++;
       continue;
     }
     const originals = linked.filter(
@@ -402,6 +435,16 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       record.reportPath === undefined
     )
       continue;
+    if (isCoveredByTerminalProjectRecovery(record, terminalClosureRunIds)) {
+      if (closedTaskIds.has(record.taskId)) continue;
+      input.updateRepairStatus(
+        record.taskId,
+        "blocked",
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+      );
+      result.blocked++;
+      continue;
+    }
     const summaryPath = readFinalSummaryPath(record.reportPath);
     if (summaryPath === undefined) continue;
     const summary = readJson(summaryPath);
@@ -453,6 +496,25 @@ export async function reconcileProjectRecoveryArtifacts(input: {
   return result;
 }
 
+function isTerminalLinkedRepairRecord(record: ScheduledTaskRecord): boolean {
+  return (
+    record.status === "success" ||
+    record.repairStatus === "fixed" ||
+    record.repairStatus === "not-needed" ||
+    record.repairStatus === "superseded" ||
+    record.repairStatus === "not-reproducible"
+  );
+}
+
+function linkedRepairQueueStatus(
+  records: readonly ScheduledTaskRecord[],
+): "fixed" | "superseded" | "not-reproducible" {
+  if (records.some((record) => record.status === "success" || record.repairStatus === "fixed"))
+    return "fixed";
+  if (records.every((record) => record.repairStatus === "superseded")) return "superseded";
+  return "not-reproducible";
+}
+
 function dedupeWorkOrdersByRunDir(
   records: readonly UnfinishedLoopSupervisorWorkOrder[],
 ): UnfinishedLoopSupervisorWorkOrder[] {
@@ -480,10 +542,78 @@ function isRepairTerminal(status: string): boolean {
 }
 
 function isTerminalProjectRecoveryClosure(record: { summaries: readonly string[] }): boolean {
-  const latest = record.summaries.at(-1)?.toLowerCase() ?? "";
-  return (
-    latest.includes("closed from the authoritative accepted blocked project recovery") &&
-    latest.includes("no retryable project repair remains")
+  return record.summaries.some((summary) => {
+    const normalized = summary.toLowerCase();
+    return (
+      normalized.includes("closed from the authoritative accepted blocked project recovery") &&
+      normalized.includes("no retryable project repair remains")
+    );
+  });
+}
+
+function terminalProjectRecoveryRunIds(coordinator: RepairCoordinator): Set<string> {
+  return new Set(
+    coordinator
+      .list()
+      .filter(
+        (record) =>
+          record.source === "project-recovery" && isTerminalProjectRecoveryClosure(record),
+      )
+      .flatMap((record) => record.linkedTaskIds)
+      .map((taskId) => /^autopilot:([^:]+)$/.exec(taskId)?.[1])
+      .filter((runId): runId is string => runId !== undefined)
+      .flatMap((runId) => runIdAliases(runId)),
+  );
+}
+
+function isCoveredByTerminalProjectRecovery(
+  record: ScheduledTaskRecord,
+  terminalClosureRunIds: ReadonlySet<string>,
+): boolean {
+  if (record.repairStatus !== "pending" && record.repairStatus !== "running") return false;
+  if (!["failed", "missing", "running-timeout"].includes(record.status)) return false;
+  if (record.source === "autopilot-delegate") {
+    const runId = /^autopilot:([^:]+)$/.exec(record.taskId)?.[1];
+    return runId !== undefined && terminalClosureRunIds.has(runId);
+  }
+  if (record.source !== "loop-engineering") return false;
+  if (!record.taskId.includes(":active-delegated-task:")) return false;
+  const runId = record.taskId.split(":").at(-1);
+  return runId !== undefined && terminalClosureRunIds.has(runId);
+}
+
+function runIdAliases(runId: string): string[] {
+  const aliases = [runId];
+  const timestampPrefix = /^(\d+)-/.exec(runId)?.[1];
+  if (timestampPrefix !== undefined) aliases.push(timestampPrefix);
+  return aliases;
+}
+
+function linkedTerminalClosureRecords(
+  linkedTaskIds: readonly string[],
+  linkedRecords: readonly ScheduledTaskRecord[],
+  byTaskId: ReadonlyMap<string, ScheduledTaskRecord>,
+): ScheduledTaskRecord[] {
+  const runIds = new Set(
+    linkedTaskIds
+      .map((taskId) => /^autopilot:([^:]+)$/.exec(taskId)?.[1])
+      .filter((runId): runId is string => runId !== undefined)
+      .flatMap((runId) => runIdAliases(runId)),
+  );
+  const records = new Map(linkedRecords.map((record) => [record.taskId, record]));
+  for (const runId of runIds) {
+    for (const [taskId, record] of byTaskId) {
+      if (!taskId.endsWith(`:${runId}`)) continue;
+      if (!taskId.includes(":active-delegated-task:")) continue;
+      records.set(taskId, record);
+    }
+  }
+  return [...records.values()].filter(
+    (record) =>
+      ["failed", "missing", "running-timeout"].includes(record.status) &&
+      (record.repairStatus === "pending" ||
+        record.repairStatus === "running" ||
+        record.repairStatus === "blocked"),
   );
 }
 

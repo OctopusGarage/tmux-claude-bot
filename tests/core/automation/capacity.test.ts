@@ -51,6 +51,29 @@ describe("deriveAgentCapacity", () => {
       }),
     ).toMatchObject({ state, resetAt: state === "exhausted" ? now + 600_000 : null });
   });
+
+  it("does not keep exhausted state from a usage window whose reset already passed", () => {
+    expect(
+      deriveAgentCapacity({
+        agent: "codex",
+        authentication: "subscription",
+        now,
+        usage: {
+          sessionId: "safe-category-only",
+          contextPct: null,
+          fiveHourPct: 99,
+          fiveHourReset: now / 1_000 - 60,
+          sevenDayPct: 5,
+          sevenDayReset: null,
+          updatedAt: now / 1_000,
+        },
+      }),
+    ).toMatchObject({
+      state: "unknown",
+      latestReason: "usage-telemetry-reset-passed",
+      nextProbeAt: now + 15 * 60_000,
+    });
+  });
 });
 
 describe("decideCapacityAdmission", () => {

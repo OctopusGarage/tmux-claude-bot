@@ -604,6 +604,229 @@ describe("project recovery service", () => {
     });
   });
 
+  it("closes pending project recovery when linked original tasks are already fixed", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "geo-backend",
+      projectPath: "/repo/geo-backend",
+      source: "project-recovery",
+      taskFamily: "geo-backend security-maintenance",
+      fingerprint: "security assessment exit 1",
+      taskId: "loop:geo-backend:security-maintenance:1",
+      now: 1_000,
+    });
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:geo-backend:security-maintenance:1",
+          source: "loop-engineering",
+          name: "geo-backend security-maintenance",
+          status: "skipped",
+          repairStatus: "fixed",
+          summary: "Assessment rerun succeeded with riskScore=0.",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).not.toHaveBeenCalled();
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "fixed",
+    });
+  });
+
+  it("keeps accepted blocked project recovery terminal after later deferral summaries", async () => {
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const queue = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "project-recovery",
+      taskFamily: "knowledge-engine active-delegated-task",
+      fingerprint: "score-null",
+      taskId: "autopilot:original",
+      now: 1_000,
+    });
+    store.set(queue.id, {
+      ...queue,
+      summaries: [
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+        "Recovery dispatch deferred: automation admission deferred: capacity-exhausted",
+      ],
+      updatedAt: 1_200,
+    });
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:original",
+          source: "autopilot-delegate",
+          name: "knowledge-engine active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 0, fixed: 0, blocked: 1 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:original",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "blocked",
+    });
+  });
+
+  it("closes loop active-delegate ledger twins for terminal accepted blocked recoveries", async () => {
+    const runDir = join(tmpdir(), `project-recovery-terminal-twin-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        finalVerification: "passed",
+        reviewGate: { decision: "block" },
+      }),
+    );
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const queue = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "project-recovery",
+      taskFamily: "knowledge-engine active-delegated-task",
+      fingerprint: "accepted-blocked",
+      taskId: "autopilot:1786971506424-knowledge-engine-active-delegate",
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(
+      queue.id,
+      ["autopilot:1786972706589-knowledge-engine-active-delegate"],
+      1_100,
+    );
+    coordinator.markTerminal(queue.id, "blocked", 1_200);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:1786972706589-knowledge-engine-active-delegate",
+          source: "autopilot-delegate",
+          name: "knowledge-engine active delegated task",
+          status: "failed",
+          repairStatus: "blocked",
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "loop:knowledge-engine:active-delegated-task:1786972706589",
+          source: "loop-engineering",
+          name: "knowledge-engine active-delegated-task",
+          status: "failed",
+          repairStatus: "pending",
+          reportPath: runDir,
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 0, fixed: 0, blocked: 1 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:knowledge-engine:active-delegated-task:1786972706589",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+    expect(updateRepairStatus).not.toHaveBeenCalledWith(
+      "loop:knowledge-engine:active-delegated-task:1786972706589",
+      "blocked",
+      expect.stringContaining("Authoritative supervisor final summary reports blocked recovery"),
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "blocked",
+    });
+  });
+
+  it("does not requeue loop active-delegate twins already covered by terminal recovery", async () => {
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const queue = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "project-recovery",
+      taskFamily: "knowledge-engine active-delegated-task",
+      fingerprint: "accepted-blocked",
+      taskId: "autopilot:1786971506424-knowledge-engine-active-delegate",
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(
+      queue.id,
+      ["autopilot:1786972706589-knowledge-engine-active-delegate"],
+      1_100,
+    );
+    coordinator.markTerminal(queue.id, "blocked", 1_200);
+    const updateRepairStatus = vi.fn();
+    const dispatch = vi.fn();
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:knowledge-engine:active-delegated-task:1786972706589",
+          source: "loop-engineering",
+          name: "knowledge-engine active-delegated-task",
+          status: "failed",
+          repairStatus: "pending",
+          error: "blocked",
+          summary: "Recovery dispatch deferred: automation admission deferred: capacity-exhausted",
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+      ],
+      config: {
+        projects: [
+          { id: "knowledge-engine", name: "Knowledge Engine", path: "/repo/knowledge-engine" },
+        ],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ classified: 0, ownerDecision: 0, dispatched: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:knowledge-engine:active-delegated-task:1786972706589",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+  });
+
   it("releases a failed delegated recovery immediately instead of waiting for lease expiry", async () => {
     process.env.TCB_STATE_DIR = join(tmpdir(), `project-recovery-failed-${Date.now()}`);
     writeLoopSupervisorWorkOrderState({

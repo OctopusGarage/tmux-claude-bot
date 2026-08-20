@@ -150,14 +150,15 @@ export class DailyTaskLedger {
   ): ScheduledTaskRecord | null {
     const existing = this.store.get(taskId);
     if (!existing) return null;
+    const preserveClosedRepair = isNonRetryableProjectRecoveryClosure(existing);
     const record: ScheduledTaskRecord = {
       ...existing,
       status: "failed",
       endedAt: input.endedAt,
       error: input.error,
       failureKind: classifyTaskFailure(input.error, input.summary),
-      repairStatus: "pending",
-      ...(input.summary !== undefined ? { summary: input.summary } : {}),
+      repairStatus: preserveClosedRepair ? "blocked" : "pending",
+      ...(input.summary !== undefined && !preserveClosedRepair ? { summary: input.summary } : {}),
       ...(input.reportPath !== undefined ? { reportPath: input.reportPath } : {}),
       updatedAt: input.endedAt,
     };
@@ -191,6 +192,12 @@ export class DailyTaskLedger {
   ): ScheduledTaskRecord | null {
     const existing = this.store.get(taskId);
     if (!existing) return null;
+    if (
+      isNonRetryableProjectRecoveryClosure(existing) &&
+      (input.repairStatus === "pending" || input.repairStatus === "running")
+    ) {
+      return existing;
+    }
     const record: ScheduledTaskRecord = {
       ...existing,
       repairStatus: input.repairStatus,
@@ -336,6 +343,15 @@ export function classifyTaskFailure(
     return "missing-instrumentation";
   if (text.includes("supervised system gate failed")) return "system-gate";
   return "unknown";
+}
+
+function isNonRetryableProjectRecoveryClosure(record: ScheduledTaskRecord): boolean {
+  const summary = record.summary?.toLowerCase() ?? "";
+  return (
+    record.repairStatus === "blocked" &&
+    summary.includes("closed from the authoritative accepted blocked project recovery") &&
+    summary.includes("no retryable project repair remains")
+  );
 }
 
 function isUnresolvedRepairCandidate(record: ScheduledTaskRecord): boolean {

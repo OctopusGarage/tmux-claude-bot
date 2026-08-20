@@ -20,7 +20,7 @@ describe("codexUsageFromRollout", () => {
     expect(snap?.sevenDayPct).toBe(7);
     expect(snap?.sevenDayReset).toBe(1775000000);
     expect(snap?.sessionId).toBe("sess_x");
-    expect(snap?.updatedAt).toBe(1774644000);
+    expect(snap?.updatedAt).toBe(Date.parse("2026-03-27T16:22:53.468Z") / 1_000);
   });
   it("returns null when there is no token_count event", () => {
     const onlyMeta = `{"type":"session_meta","payload":{"id":"x","cwd":"/tmp"}}`;
@@ -41,6 +41,18 @@ describe("codexUsageFromRollout", () => {
     const snap = codexUsageFromRollout(line, "s", 0);
     expect(snap?.contextPct).toBeNull();
     expect(snap?.fiveHourPct).toBe(5);
+  });
+
+  it("maps Codex rate limits by window_minutes when primary is the weekly window", () => {
+    const line = `{"timestamp":"2026-08-20T15:25:43.963Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":10},"model_context_window":1000},"rate_limits":{"primary":{"used_percent":3,"window_minutes":10080,"resets_at":1787802596},"secondary":null}}}`;
+    const snap = codexUsageFromRollout(line, "s", 0);
+    expect(snap).toMatchObject({
+      fiveHourPct: null,
+      fiveHourReset: null,
+      sevenDayPct: 3,
+      sevenDayReset: 1787802596,
+      updatedAt: Date.parse("2026-08-20T15:25:43.963Z") / 1_000,
+    });
   });
 });
 
