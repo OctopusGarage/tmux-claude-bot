@@ -107,6 +107,59 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("does not surface closed repository-review repairs as current attention", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const repositoryId = "tmux-claude-bot-all-prs";
+      const scheduledAt = 2_000;
+      const taskId = `loop:pr-review:${repositoryId}:${scheduledAt}`;
+      const queue = new RepositoryReviewQueue();
+      const item = queue.enqueue({
+        repositoryId,
+        scheduledAt,
+        priority: 100,
+        now: scheduledAt,
+      });
+      expect(queue.lease(item.id, "worker", scheduledAt + 100, 1_000)).not.toBeNull();
+      expect(
+        queue.retry(
+          item.id,
+          "worker",
+          scheduledAt + 200,
+          "recovered supervisor work order result: supervisor-failed",
+          scheduledAt + 3_600_000,
+        ),
+      ).toBe(true);
+
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "tmux-claude-bot-all-prs repository-pull-request-review",
+        scheduledAt,
+      });
+      ledger.fail(taskId, { endedAt: scheduledAt + 300, error: "supervisor-failed" });
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "fixed",
+        updatedAt: scheduledAt + 400,
+      });
+
+      const result = createRuntimeOverviewReaders({
+        deps: {} as HandlerDeps,
+        now: scheduledAt + 500,
+        operatorSessionRunning: false,
+      }).repositoryReviews();
+
+      expect(result).toEqual([]);
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("attaches closed ledger repair status to terminal WorkOrders", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;
@@ -189,6 +242,78 @@ describe("production Runtime Overview readers", () => {
         expect.objectContaining({
           id,
           repairStatus: "superseded",
+        }),
+      ]);
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("attaches closed repository-review ledger repair status to terminal WorkOrders", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = 10_000;
+      const scheduledAt = now - 2_000;
+      const id = "run-repository-review";
+      const projectId = "tmux-claude-bot-all-prs";
+      const taskId = `loop:pr-review:${projectId}:${scheduledAt}`;
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "tmux-claude-bot-all-prs repository-pull-request-review",
+        scheduledAt,
+      });
+      ledger.fail(taskId, {
+        endedAt: now - 1_000,
+        error: "supervisor-failed",
+      });
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "fixed",
+        updatedAt: now - 500,
+      });
+
+      registryRead.mockReset();
+      registryRead.mockReturnValue({
+        ...emptyRegistry(),
+        terminal: [
+          {
+            workOrder: {
+              id,
+              projectId,
+              projectName: "tmux-claude-bot all PRs",
+              projectPath: "/tmp/project",
+              scheduledAt,
+              requiredFinalMarker: "FINAL",
+              task: { kind: "repository-pull-request-review" },
+            },
+            state: {
+              status: "failed",
+              projectId,
+              runId: id,
+              supervisorSession: "tmux_proj_loop-supervisor-1",
+              scheduledAt,
+              updatedAt: now - 1_000,
+            },
+            runDir: "/tmp/run",
+          },
+        ],
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {} as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).workOrders();
+
+      expect(result.terminal).toEqual([
+        expect.objectContaining({
+          id,
+          repairStatus: "fixed",
         }),
       ]);
     } finally {

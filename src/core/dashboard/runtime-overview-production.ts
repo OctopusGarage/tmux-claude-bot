@@ -22,6 +22,13 @@ import type { RuntimeOverviewReaders, WorkOrderOverviewRead } from "./runtime-ov
 
 const POWER_CACHE_MS = 30_000;
 const DOMAIN_CACHE_MS = 30_000;
+const CLOSED_REPAIR_STATUSES = new Set<ScheduledTaskRepairStatus>([
+  "fixed",
+  "not-needed",
+  "blocked",
+  "superseded",
+  "not-reproducible",
+]);
 let powerCache: { key: string; readAt: number; value: PowerStatusView } | null = null;
 let workOrderCache: { key: string; readAt: number; value: WorkOrderOverviewRead } | null = null;
 let dailyAuditCache: {
@@ -48,12 +55,24 @@ function repairStatusForWorkOrder(
   const candidates = [
     `autopilot:${input.id}`,
     `loop:${input.projectId}:${input.taskKind}:${input.scheduledAt}`,
+    ...(input.taskKind === "repository-pull-request-review"
+      ? [`loop:pr-review:${input.projectId}:${input.scheduledAt}`]
+      : []),
   ];
   for (const taskId of candidates) {
     const repairStatus = byTaskId.get(taskId)?.repairStatus;
     if (repairStatus !== undefined) return repairStatus;
   }
   return undefined;
+}
+
+function isClosedRepositoryReviewRepair(
+  ledgerRecords: ReturnType<DailyTaskLedger["listAll"]>,
+  input: { repositoryId: string; scheduledAt: number },
+): boolean {
+  const taskId = `loop:pr-review:${input.repositoryId}:${input.scheduledAt}`;
+  const repairStatus = ledgerRecords.find((record) => record.taskId === taskId)?.repairStatus;
+  return repairStatus !== undefined && CLOSED_REPAIR_STATUSES.has(repairStatus);
 }
 
 function cachedDomain<T>(
@@ -140,8 +159,17 @@ export function createRuntimeOverviewReaders(input: {
     },
     repositoryReviews: () => {
       const queueItems = new RepositoryReviewQueue().list({ all: true });
+      const ledgerRecords = new DailyTaskLedger().listAll();
       return queueItems
         .filter((item) => {
+          if (
+            isClosedRepositoryReviewRepair(ledgerRecords, {
+              repositoryId: item.repositoryId,
+              scheduledAt: item.scheduledAt,
+            })
+          ) {
+            return false;
+          }
           if (item.status === "retry-wait") return true;
           if (item.status !== "manual-review" && item.status !== "dead-letter") return false;
           return !queueItems.some(
