@@ -149,6 +149,25 @@ export class AgentCapacityStore {
     return true;
   }
 
+  reconcileActiveLeases(
+    agent: AgentKind,
+    activeLeaseIds: ReadonlySet<string>,
+    now: number,
+    shouldReconcileLease: (leaseId: string) => boolean = () => true,
+  ): number {
+    const existing = this.validRecord(agent);
+    if (existing === undefined) return 0;
+    const leases = Object.fromEntries(
+      Object.entries(existing.leases).filter(
+        ([leaseId, lease]) =>
+          lease.expiresAt > now && (!shouldReconcileLease(leaseId) || activeLeaseIds.has(leaseId)),
+      ),
+    );
+    const removed = Object.keys(existing.leases).length - Object.keys(leases).length;
+    if (removed > 0) this.records.set(agent, { ...existing, leases });
+    return removed;
+  }
+
   recordAutonomousStart(agent: AgentKind, now: number): boolean {
     const existing = this.validRecord(agent);
     if (existing === undefined) return false;

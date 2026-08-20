@@ -1,14 +1,22 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { AgentCapacityStore } from "../../src/core/automation/capacity-store.js";
+import { autonomousCapacityLeaseId } from "../../src/core/automation/coordinator.js";
 import { listLoopReports } from "../../src/core/loop/report.js";
-import { reconcileLoopSupervisorWorkOrders } from "../../src/core/loop/service.js";
+import {
+  reconcileAutonomousCapacityLeases,
+  reconcileLoopSupervisorWorkOrders,
+} from "../../src/core/loop/service.js";
 import {
   readLoopSupervisorWorkerLeaseState,
   writeLoopSupervisorWorkerLeaseState,
 } from "../../src/core/loop/supervisor-pool.js";
-import { readLoopSupervisorWorkOrderRegistry } from "../../src/core/loop/supervisor-state.js";
+import {
+  readLoopSupervisorWorkOrderRegistry,
+  writeLoopSupervisorWorkOrderState,
+} from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
@@ -137,6 +145,71 @@ function writeRecoverableFailedRun(stateDir: string, order: LoopWorkOrder): stri
 }
 
 describe("loop supervisor work order reconciliation", () => {
+  it("releases stale autonomous capacity leases for terminal work orders", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const activeOrder = workOrder(stateDir, projectDir);
+    const terminalOrder: LoopWorkOrder = {
+      ...workOrder(stateDir, projectDir),
+      id: "1784196900000-hub",
+      scheduledAt: 1_784_196_900_000,
+      finalSummaryPath: join(
+        stateDir,
+        "loop-runs",
+        "hub",
+        "1784196900000-hub",
+        "supervisor-final-summary.json",
+      ),
+    };
+    writeUnfinishedRun(stateDir, activeOrder);
+    rmSync(activeOrder.finalSummaryPath ?? "", { force: true });
+    writeUnfinishedRun(stateDir, terminalOrder);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: terminalOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: 2_000,
+      resultStatus: "completed",
+    });
+
+    const capacity = new AgentCapacityStore();
+    capacity.recordObservation({
+      agent: "codex",
+      authentication: "subscription",
+      state: "unknown",
+      fiveHourPct: null,
+      weeklyPct: null,
+      resetAt: null,
+      observedAt: 1_000,
+      nextProbeAt: 10_000,
+      latestReason: "usage-telemetry-unavailable",
+    });
+    const activeLeaseId = autonomousCapacityLeaseId({
+      source: "loop-engineering",
+      id: `${activeOrder.projectId}:${activeOrder.scheduledAt}`,
+    });
+    const terminalLeaseId = autonomousCapacityLeaseId({
+      source: "loop-engineering",
+      id: `${terminalOrder.projectId}:${terminalOrder.scheduledAt}`,
+    });
+    const runtimeGuardianLeaseId = autonomousCapacityLeaseId({
+      source: "runtime-guardian",
+      id: "live-runtime-repair",
+    });
+    expect(capacity.acquireLease("codex", activeLeaseId, 1_000, 10_000)).toBe(true);
+    expect(capacity.acquireLease("codex", terminalLeaseId, 1_000, 10_000)).toBe(true);
+    expect(capacity.acquireLease("codex", runtimeGuardianLeaseId, 1_000, 10_000)).toBe(true);
+    expect(capacity.acquireLease("codex", "expired", 1_000, 100)).toBe(true);
+
+    expect(reconcileAutonomousCapacityLeases(capacity, 2_000)).toBe(2);
+
+    expect(capacity.hasLease("codex", activeLeaseId, 2_000)).toBe(true);
+    expect(capacity.hasLease("codex", terminalLeaseId, 2_000)).toBe(false);
+    expect(capacity.hasLease("codex", runtimeGuardianLeaseId, 2_000)).toBe(true);
+    expect(capacity.read("codex", 2_000).activeAutonomousLeases).toBe(2);
+  });
+
   it("does not classify a recoverable final summary as abandoned", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
