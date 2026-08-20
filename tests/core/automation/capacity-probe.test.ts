@@ -125,4 +125,44 @@ describe("observeAgentCapacity", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("recovers Codex subscription capacity when the session auth probe is unknown", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-home-"));
+    try {
+      writeFileSync(join(root, "auth.json"), JSON.stringify({ tokens: { access_token: "t" } }));
+      const dir = join(root, "sessions", "2026", "08", "13");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "rollout-fresh.jsonl"),
+        [
+          `{"type":"session_meta","payload":{"id":"fresh","cwd":"/other-repo"}}`,
+          `{"timestamp":"2026-08-13T08:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":10},"model_context_window":1000},"rate_limits":{"primary":{"used_percent":3,"window_minutes":10080,"resets_at":1787196811},"secondary":null}}}`,
+        ].join("\n"),
+      );
+      const codexResolver = {
+        resolveConfigRoot: async () => "/unused",
+        isClaudeRunning: async () => false,
+        resolveCodexHome: async () => root,
+        isCodexRunning: async () => false,
+        invalidate: () => undefined,
+      } as ConfigResolver;
+
+      const result = await observeAgentCapacity({
+        agent: "codex",
+        session: "loop-supervisor",
+        projectPath: "/repo-without-rollout",
+        resolver: codexResolver,
+        now,
+        resolveAuthentication: async () => "unknown",
+      });
+
+      expect(result).toMatchObject({
+        authentication: "subscription",
+        state: "available",
+        weeklyPct: 3,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

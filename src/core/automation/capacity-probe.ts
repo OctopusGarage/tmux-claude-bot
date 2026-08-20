@@ -70,6 +70,27 @@ async function authenticationFor(
       : "unknown";
 }
 
+async function codexHomeForCapacityProbe(
+  session: string,
+  resolver: ConfigResolver,
+): Promise<string | null> {
+  return (await resolver.resolveCodexHome?.(session)) ?? profileFor("codex").defaultConfigRoot;
+}
+
+async function fallbackCodexAuthentication(
+  session: string,
+  resolver: ConfigResolver,
+): Promise<AgentAuthenticationCategory> {
+  const home = await codexHomeForCapacityProbe(session, resolver);
+  if (home === null) return "unknown";
+  const info = await resolveCodexApiInfo(home);
+  return info?.mode === "api"
+    ? "usage-based"
+    : info?.mode === "subscription"
+      ? "subscription"
+      : "unknown";
+}
+
 /** Observe capacity from the already running agent's local auth and transcript data. */
 export async function observeAgentCapacity(
   input: CapacityProbeInput,
@@ -89,6 +110,13 @@ export async function observeAgentCapacity(
   } catch {
     authentication = "unknown";
   }
+  if (input.agent === "codex" && authentication === "unknown") {
+    try {
+      authentication = await fallbackCodexAuthentication(input.session, resolver);
+    } catch {
+      authentication = "unknown";
+    }
+  }
 
   let usage: UsageSnapshot | null = null;
   try {
@@ -105,7 +133,7 @@ export async function observeAgentCapacity(
   ) {
     try {
       usage = await readLatestCodexUsage(
-        (await resolver.resolveCodexHome?.(input.session)) ?? profileFor("codex").defaultConfigRoot,
+        await codexHomeForCapacityProbe(input.session, resolver),
         Math.floor(input.now / 1_000),
       );
     } catch {
