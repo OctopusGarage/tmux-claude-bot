@@ -16,6 +16,11 @@ export type AutomationOccurrence = {
   updatedAt: number;
 };
 
+type OccurrenceLedgerRecord = {
+  taskId: string;
+  repairStatus?: string;
+};
+
 export type PlanAutomationOccurrenceInput = {
   key: string;
   scheduledAt: number;
@@ -152,6 +157,24 @@ export class AutomationOccurrenceStore {
     return true;
   }
 
+  reconcileFromLedger(records: readonly OccurrenceLedgerRecord[], now: number): number {
+    const terminalTaskIds = new Set(
+      records
+        .filter((record) => isTerminalLedgerRepairStatus(record.repairStatus))
+        .map((record) => record.taskId),
+    );
+    let settled = 0;
+    for (const occurrence of this.list()) {
+      if (occurrence.status !== "planned" && occurrence.status !== "admitted") continue;
+      if (!ledgerTaskIdsForOccurrence(occurrence).some((taskId) => terminalTaskIds.has(taskId))) {
+        continue;
+      }
+      this.records.set(occurrence.id, { ...occurrence, status: "settled", updatedAt: now });
+      settled++;
+    }
+    return settled;
+  }
+
   prune(now: number): number {
     let deleted = 0;
     for (const occurrence of this.list()) {
@@ -164,4 +187,25 @@ export class AutomationOccurrenceStore {
     }
     return deleted;
   }
+}
+
+function isTerminalLedgerRepairStatus(status: string | undefined): boolean {
+  return ["fixed", "not-needed", "blocked", "not-reproducible", "superseded"].includes(
+    status ?? "",
+  );
+}
+
+function ledgerTaskIdsForOccurrence(occurrence: AutomationOccurrence): string[] {
+  const parts = occurrence.key.split(":");
+  if (parts.length < 2) return [`loop:${occurrence.key}:${occurrence.scheduledAt}`];
+  const jobKind = parts.at(-1);
+  const jobKey = parts.slice(0, -1).join(":");
+  const ids = [
+    `loop:${jobKey}:${occurrence.scheduledAt}`,
+    `loop:${jobKey}:${jobKind}:${occurrence.scheduledAt}`,
+  ];
+  if (jobKind === "repository-pull-request-review") {
+    ids.push(`loop:pr-review:${jobKey}:${occurrence.scheduledAt}`);
+  }
+  return ids;
 }

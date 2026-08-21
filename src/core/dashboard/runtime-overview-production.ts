@@ -312,7 +312,9 @@ export function createRuntimeOverviewReaders(input: {
     agentCapacity: () => {
       const agent = deps.config.loopEngineering.supervisor.agent;
       const capacity = new AgentCapacityStore().read(agent, now);
-      const planned = new AutomationOccurrenceStore()
+      const occurrences = new AutomationOccurrenceStore();
+      occurrences.reconcileFromLedger(new DailyTaskLedger().listAll(), now);
+      const planned = occurrences
         .list()
         .filter(
           (occurrence) => occurrence.status === "planned" || occurrence.status === "admitted",

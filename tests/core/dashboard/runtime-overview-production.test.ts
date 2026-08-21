@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { AutomationOccurrenceStore } from "../../../src/core/automation/occurrence-window.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { RepositoryReviewQueue } from "../../../src/core/loop/repository-review-queue.js";
 import { DailyTaskLedger } from "../../../src/core/tasks/task-ledger.js";
@@ -60,6 +61,62 @@ describe("production Runtime Overview readers", () => {
         operatorSessionRunning: false,
       }).agentCapacity?.(),
     ).toMatchObject({ enabled: true, agent: "codex" });
+  });
+
+  it("settles terminal ledger occurrences before reporting planned Agent Capacity work", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const occurrence = new AutomationOccurrenceStore({ randomOffset: () => 0 }).plan({
+        key: "tmux-claude-bot:bug-fix:bug-fix",
+        scheduledAt: 1_000,
+        windowMs: 0,
+        now: 1_000,
+      });
+      new AutomationOccurrenceStore().setStatus(occurrence.id, "admitted", 1_100);
+
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId: "loop:tmux-claude-bot:bug-fix:1000",
+        source: "loop-engineering",
+        name: "tmux-claude-bot bug-fix",
+        scheduledAt: 1_000,
+      });
+      ledger.fail("loop:tmux-claude-bot:bug-fix:1000", {
+        endedAt: 1_200,
+        error: "supervisor failed",
+      });
+      ledger.markRepairStatus("loop:tmux-claude-bot:bug-fix:1000", {
+        repairStatus: "fixed",
+        updatedAt: 1_300,
+      });
+
+      const result = createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            loopEngineering: {
+              supervisor: { enabled: true, agent: "codex" },
+            },
+          },
+          ownerActivity: { lastObservedAt: () => null },
+        } as HandlerDeps,
+        now: 2_000,
+        operatorSessionRunning: false,
+      }).agentCapacity?.();
+
+      expect(result).toMatchObject({
+        plannedOccurrences: 0,
+        nextOccurrenceAt: null,
+      });
+      expect(new AutomationOccurrenceStore().get(occurrence.id)).toMatchObject({
+        status: "settled",
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("does not surface superseded terminal repository-review occurrences as current attention", () => {

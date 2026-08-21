@@ -160,6 +160,10 @@ from repaired setup observations: an initial failed preflight recorded before a
 successful environment repair and successful post-repair preflight is evidence
 for the repair history, not a reason to rewrite a completed, verified
 `reviewGate.decision=pass` run to `deterministic-gate-failed`.
+Agent Capacity views must reconcile planned/admitted occurrence-window records
+from authoritative terminal task-ledger repair statuses before reporting open
+planned load, so completed historical occurrences do not keep capacity degraded
+or display stale next-occurrence timestamps.
 Architecture alignment invariant: every project and workspace Architecture
 schedule must run its deterministic score assessment before creating a
 WorkOrder. The configured target is normally 95; a score at or above target is
