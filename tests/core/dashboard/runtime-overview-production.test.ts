@@ -211,6 +211,41 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("counts missing Daily Task Audit records without repair status as pending repair", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId: "loop:tmux-claude-bot:bug-fix:1000",
+        source: "loop-engineering",
+        name: "tmux-claude-bot bug-fix",
+        scheduledAt: 1_000,
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now: 1_300,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 1,
+        repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("attaches closed ledger repair status to terminal WorkOrders", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;
