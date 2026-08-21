@@ -27,7 +27,7 @@ import { OpportunityStore, parseOpportunityDiscoveryReportFile } from "../opport
 import { formatOpportunityDigest } from "../opportunities/view.js";
 import { sessionNameFromPath } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
-import { DailyTaskLedger } from "../tasks/task-ledger.js";
+import { DailyTaskLedger, type ScheduledTaskRecord } from "../tasks/task-ledger.js";
 import {
   createLoopQueueAgentEvalRunner,
   createLoopQueueAgentTaskRunner,
@@ -64,7 +64,10 @@ import {
   type RepositoryPullRequestRecoveryController,
 } from "./repository-pr-recovery.js";
 import { RepositoryPullRequestRecoveryStore } from "./repository-pr-recovery-store.js";
-import { RepositoryReviewQueue } from "./repository-review-queue.js";
+import {
+  RepositoryReviewQueue,
+  type RepositoryReviewQueueStatus,
+} from "./repository-review-queue.js";
 import {
   type LoopGitInvocation,
   type LoopRunCommandInvocation,
@@ -1217,6 +1220,7 @@ export async function runLoopServiceTickAsync(input: {
       tickNow,
       repositoryPullRequestRecovery,
     );
+    reconcileRepositoryReviewQueueLedgerClosures(repositoryReviewQueue, taskLedger, tickNow);
     const active = activeLoopSupervisorWork(input.configFile);
     const reservedSupervisorSessions = reserveLoopSupervisorSessions(
       supervisorSessions,
@@ -1651,6 +1655,73 @@ function restoreLastFired(
   const previous = previousLastFired[jobKey];
   if (previous === undefined) store.clearLastFired(jobKey);
   else store.setLastFired(jobKey, previous);
+}
+
+export function reconcileRepositoryReviewQueueLedgerClosures(
+  queue: RepositoryReviewQueue,
+  ledger: DailyTaskLedger,
+  now: number,
+): number {
+  let reconciled = 0;
+  const recordsByTaskId = new Map(ledger.listAll().map((record) => [record.taskId, record]));
+
+  for (const item of queue.list({ all: true })) {
+    if (isTerminalRepositoryReviewQueueStatus(item.status)) continue;
+    const taskId = `loop:pr-review:${item.repositoryId}:${item.scheduledAt}`;
+    const record = recordsByTaskId.get(taskId);
+    if (record === undefined) continue;
+    const closure = repositoryReviewQueueClosureFromLedger(record);
+    if (closure === null) continue;
+    if (
+      queue.completeOccurrence(
+        item.repositoryId,
+        item.scheduledAt,
+        now,
+        closure.status,
+        closure.reason,
+      )
+    ) {
+      reconciled++;
+    }
+  }
+
+  return reconciled;
+}
+
+function repositoryReviewQueueClosureFromLedger(
+  record: ScheduledTaskRecord,
+): { status: "completed" | "blocked"; reason: string } | null {
+  if (record.source !== "loop-engineering") return null;
+  if (!record.taskId.startsWith("loop:pr-review:")) return null;
+  if (
+    record.status === "success" ||
+    record.status === "skipped" ||
+    record.repairStatus === "fixed" ||
+    record.repairStatus === "not-needed" ||
+    record.repairStatus === "superseded" ||
+    record.repairStatus === "not-reproducible"
+  ) {
+    return {
+      status: "completed",
+      reason: `reconciled from daily task ledger repairStatus=${record.repairStatus ?? "not-needed"}`,
+    };
+  }
+  if (record.repairStatus === "blocked") {
+    return {
+      status: "blocked",
+      reason: "reconciled from daily task ledger repairStatus=blocked",
+    };
+  }
+  return null;
+}
+
+function isTerminalRepositoryReviewQueueStatus(status: RepositoryReviewQueueStatus): boolean {
+  return (
+    status === "completed" ||
+    status === "blocked" ||
+    status === "manual-review" ||
+    status === "dead-letter"
+  );
 }
 
 /* c8 ignore start -- filesystem-backed WorkOrder reconciliation is exercised by live service smoke tests. */

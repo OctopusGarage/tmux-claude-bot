@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RepositoryReviewQueue } from "../../src/core/loop/repository-review-queue.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
-import { runLoopServiceTickAsync as runLoopServiceTickAsyncProduction } from "../../src/core/loop/service.js";
+import {
+  reconcileRepositoryReviewQueueLedgerClosures,
+  runLoopServiceTickAsync as runLoopServiceTickAsyncProduction,
+} from "../../src/core/loop/service.js";
+import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
 
@@ -24,6 +28,55 @@ afterEach(() => {
 });
 
 describe("repository review service queue", () => {
+  it("closes retryable repository review queue items from fixed daily ledger evidence", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-pr-review-service-"));
+    const queue = new RepositoryReviewQueue();
+    const ledger = new DailyTaskLedger();
+    const scheduledAt = 1787198400000;
+    const created = queue.enqueue({
+      repositoryId: "tmux-claude-bot-all-prs",
+      scheduledAt,
+      priority: 1000,
+      now: 100,
+    });
+
+    expect(queue.lease(created.id, "worker", 100, 100)).not.toBeNull();
+    expect(
+      queue.fail(
+        created.id,
+        "worker",
+        110,
+        "recovered supervisor work order result: supervisor-failed",
+        200,
+      ),
+    ).toBe(true);
+    ledger.expect({
+      taskId: `loop:pr-review:tmux-claude-bot-all-prs:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "tmux-claude-bot-all-prs repository-pull-request-review",
+      scheduledAt,
+    });
+    ledger.fail(`loop:pr-review:tmux-claude-bot-all-prs:${scheduledAt}`, {
+      endedAt: 120,
+      error: "supervisor-failed",
+    });
+    ledger.markRepairStatus(`loop:pr-review:tmux-claude-bot-all-prs:${scheduledAt}`, {
+      repairStatus: "fixed",
+      updatedAt: 130,
+      summary: "Synchronized from terminal repair queue state (fixed).",
+    });
+
+    expect(reconcileRepositoryReviewQueueLedgerClosures(queue, ledger, 300)).toBe(1);
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        status: "completed",
+        lastError: "reconciled from daily task ledger repairStatus=fixed",
+      }),
+    ]);
+    expect(queue.listReady(300)).toEqual([]);
+  });
+
   it("persists a due repository review without waiting for a supervisor", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-pr-review-service-"));
     const root = mkdtempSync(join(tmpdir(), "tcb-pr-review-repo-"));
