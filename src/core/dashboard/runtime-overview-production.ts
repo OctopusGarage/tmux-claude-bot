@@ -244,9 +244,7 @@ export function createRuntimeOverviewReaders(input: {
             attention: summary.items.filter(
               (item) =>
                 ["failed", "missing", "running-timeout"].includes(item.status) &&
-                !["fixed", "not-needed", "superseded", "not-reproducible"].includes(
-                  item.repairStatus ?? "pending",
-                ),
+                !CLOSED_REPAIR_STATUSES.has(item.repairStatus ?? "pending"),
             ).length,
             repairPending: summary.items.filter((item) => item.repairStatus === "pending").length,
           },

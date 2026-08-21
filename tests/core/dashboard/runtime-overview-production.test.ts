@@ -167,6 +167,50 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("does not count blocked Daily Task Audit repairs as current attention", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const taskId = "daily-audit:self:1000";
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "daily-audit",
+        name: "Daily Task Audit self-check",
+        scheduledAt: 1_000,
+      });
+      ledger.fail(taskId, {
+        endedAt: 1_100,
+        error: "owner decision required",
+      });
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "blocked",
+        updatedAt: 1_200,
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now: 1_300,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 0,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("attaches closed ledger repair status to terminal WorkOrders", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;
