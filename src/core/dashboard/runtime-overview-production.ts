@@ -66,13 +66,23 @@ function repairStatusForWorkOrder(
   return undefined;
 }
 
-function isClosedRepositoryReviewRepair(
+function closedRepositoryReviewRepairClosure(
   ledgerRecords: ReturnType<DailyTaskLedger["listAll"]>,
   input: { repositoryId: string; scheduledAt: number },
-): boolean {
+): { status: "completed" | "blocked"; reason: string } | null {
   const taskId = `loop:pr-review:${input.repositoryId}:${input.scheduledAt}`;
   const repairStatus = ledgerRecords.find((record) => record.taskId === taskId)?.repairStatus;
-  return repairStatus !== undefined && CLOSED_REPAIR_STATUSES.has(repairStatus);
+  if (repairStatus === undefined || !CLOSED_REPAIR_STATUSES.has(repairStatus)) return null;
+  if (repairStatus === "blocked") {
+    return {
+      status: "blocked",
+      reason: "reconciled from daily task ledger repairStatus=blocked",
+    };
+  }
+  return {
+    status: "completed",
+    reason: `reconciled from daily task ledger repairStatus=${repairStatus}`,
+  };
 }
 
 function cachedDomain<T>(
@@ -158,16 +168,23 @@ export function createRuntimeOverviewReaders(input: {
       return read.value;
     },
     repositoryReviews: () => {
-      const queueItems = new RepositoryReviewQueue().list({ all: true });
+      const queue = new RepositoryReviewQueue();
+      const queueItems = queue.list({ all: true });
       const ledgerRecords = new DailyTaskLedger().listAll();
       return queueItems
         .filter((item) => {
-          if (
-            isClosedRepositoryReviewRepair(ledgerRecords, {
-              repositoryId: item.repositoryId,
-              scheduledAt: item.scheduledAt,
-            })
-          ) {
+          const closure = closedRepositoryReviewRepairClosure(ledgerRecords, {
+            repositoryId: item.repositoryId,
+            scheduledAt: item.scheduledAt,
+          });
+          if (closure !== null) {
+            queue.completeOccurrence(
+              item.repositoryId,
+              item.scheduledAt,
+              now,
+              closure.status,
+              closure.reason,
+            );
             return false;
           }
           if (item.status === "retry-wait") return true;
