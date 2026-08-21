@@ -265,6 +265,28 @@ export class DailyTaskLedger {
     return updated;
   }
 
+  reconcileExpectedMissing(now: number, input: { sources?: ScheduledTaskSource[] } = {}): number {
+    const sources = input.sources === undefined ? null : new Set(input.sources);
+    let updated = 0;
+    for (const [taskId, record] of this.store.sortedEntries()) {
+      if (record.status !== "expected") continue;
+      if (record.scheduledAt > now) continue;
+      if (sources !== null && !sources.has(record.source)) continue;
+      this.store.set(taskId, {
+        ...record,
+        status: "missing",
+        repairStatus: "pending",
+        summary: appendSummary(
+          record.summary,
+          "Reconciled missing expected task after its scheduled time passed without a run record.",
+        ),
+        updatedAt: now,
+      });
+      updated++;
+    }
+    return updated;
+  }
+
   reconcileSupersededFailures(): number {
     let updated = 0;
     const successes = this.store

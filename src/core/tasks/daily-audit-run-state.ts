@@ -9,7 +9,10 @@ const STALE_DAILY_AUDIT_RUN_MS = 30 * 60_000;
  * from being rediscovered and dispatched as a duplicate.
  */
 export function reconcileDailyAuditRunState(input: {
-  ledger: Pick<DailyTaskLedger, "reconcileStaleRunning" | "reconcileTerminalStatuses" | "listAll">;
+  ledger: Pick<
+    DailyTaskLedger,
+    "reconcileStaleRunning" | "reconcileExpectedMissing" | "reconcileTerminalStatuses" | "listAll"
+  >;
   coordinator: Pick<
     RepairCoordinator,
     | "reconcileExpiredLeases"
@@ -26,6 +29,7 @@ export function reconcileDailyAuditRunState(input: {
     timeoutMs: STALE_DAILY_AUDIT_RUN_MS,
     sources: ["daily-audit"],
   });
+  input.ledger.reconcileExpectedMissing(input.now);
   input.ledger.reconcileTerminalStatuses(input.now);
   input.coordinator.reconcileExpiredLeases(input.now);
   input.coordinator.reconcileDuplicateTaskIds(input.now);
