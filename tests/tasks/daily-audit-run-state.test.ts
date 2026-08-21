@@ -29,6 +29,7 @@ describe("daily audit run state", () => {
   it("reconciles durable ledger and repair state before task discovery", () => {
     const ledger = {
       reconcileStaleRunning: vi.fn(() => 1),
+      reconcileExpectedMissing: vi.fn(() => 0),
       reconcileTerminalStatuses: vi.fn(),
       listAll: vi.fn(() => []),
     };
@@ -55,6 +56,10 @@ describe("daily audit run state", () => {
     });
 
     expect(ledger.reconcileStaleRunning).toHaveBeenCalledWith(100, expect.any(Object));
+    expect(ledger.reconcileExpectedMissing).toHaveBeenCalledWith(100);
+    expect(ledger.reconcileExpectedMissing.mock.invocationCallOrder[0]).toBeLessThan(
+      coordinator.importPending.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
     expect(repairState).toHaveBeenCalledWith({ ledger, now: 100 });
     expect(repairState.mock.invocationCallOrder[0]).toBeLessThan(
       coordinator.importPending.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
