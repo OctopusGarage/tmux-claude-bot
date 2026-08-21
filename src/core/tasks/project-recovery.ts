@@ -40,6 +40,12 @@ export type ConfiguredRecoveryConfig = {
 const MAX_RECOVERY_ATTEMPTS = 3;
 const ASSESSMENT_SCORING_CONTRACT_RE =
   /(assessment (result|score|scoring).*numeric score|numeric score.*assessment|score:null|assessment score contract|assessment scoring contract|targetscore)/;
+const CAPACITY_OR_LEASE_RE =
+  /(supervisor lease|interactive-agent-busy|automation admission deferred|already has active automation|active workorder|active recovery|queue full|supervisor.*busy)/;
+const SOURCE_GIT_STATE_RE =
+  /(source worktree|source branch|branch.*diverg|diverg.*branch|neither ancestor nor descendant|not an ancestor|ahead .* behind|behind .* ahead)/;
+const GENERIC_RETRYABLE_RE =
+  /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery|can be retried|missing|preflight|dependency|worktree|branch|handoff|dispatch|supervisor-failed|not-found|no pull requests|worker)/;
 
 export function classifyHistoricalFailure(
   input: HistoricalRecoveryInput,
@@ -54,11 +60,7 @@ export function classifyHistoricalFailure(
     .filter((value): value is string => value !== undefined)
     .join(" ")
     .toLowerCase();
-  if (
-    /(supervisor lease|interactive-agent-busy|automation admission deferred|already has active automation|active workorder|active recovery|queue full|supervisor.*busy|no available)/.test(
-      evidence,
-    )
-  ) {
+  if (CAPACITY_OR_LEASE_RE.test(evidence)) {
     return {
       classification: "retryable",
       reason: "local automation capacity or supervisor lease evidence is retryable",
@@ -70,20 +72,10 @@ export function classifyHistoricalFailure(
       reason: "assessment scoring contract evidence is retryable automation repair work",
     };
   }
-  if (input.attempt >= MAX_RECOVERY_ATTEMPTS) {
-    return {
-      classification: "dead-letter",
-      reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
-    };
-  }
-  if (
-    /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery|can be retried)/.test(
-      evidence,
-    )
-  ) {
+  if (isRetryableSourceGitStateEvidence(evidence)) {
     return {
       classification: "retryable",
-      reason: "supervisor completion evidence is invalid or incomplete and can be retried",
+      reason: "source worktree branch state is retryable automation repair work",
     };
   }
   if (/(draft|conflict|conflicting|design decision|fingerprint|token-redaction)/.test(evidence)) {
@@ -102,11 +94,13 @@ export function classifyHistoricalFailure(
       reason: "evidence points to an external service or execution dependency",
     };
   }
-  if (
-    /(missing|preflight|dependency|worktree|branch|handoff|dispatch|supervisor-failed|not-found|no pull requests|worker)/.test(
-      evidence,
-    )
-  ) {
+  if (input.attempt >= MAX_RECOVERY_ATTEMPTS) {
+    return {
+      classification: "dead-letter",
+      reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
+    };
+  }
+  if (GENERIC_RETRYABLE_RE.test(evidence)) {
     return {
       classification: "retryable",
       reason: evidence.includes("preflight")
@@ -118,6 +112,10 @@ export function classifyHistoricalFailure(
     classification: "needs-owner-decision",
     reason: "failure evidence is not specific enough for a safe automatic retry",
   };
+}
+
+export function isRetryableSourceGitStateEvidence(evidence: string): boolean {
+  return SOURCE_GIT_STATE_RE.test(evidence.toLowerCase());
 }
 
 export function resolveConfiguredRecoveryTarget(

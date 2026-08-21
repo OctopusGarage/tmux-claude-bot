@@ -9,6 +9,7 @@ import {
   type ConfiguredRecoveryTarget,
   classifyHistoricalFailure,
   type HistoricalRecoveryInput,
+  isRetryableSourceGitStateEvidence,
   type RecoveryClassification,
   resolveConfiguredRecoveryTarget,
 } from "./project-recovery.js";
@@ -484,6 +485,15 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       result.blocked++;
       continue;
     }
+    if (summary.status === "blocked" && hasRetryableSourceGitStateEvidence(summary, systemGate)) {
+      input.updateRepairStatus(
+        record.taskId,
+        "pending",
+        "Authoritative supervisor final summary reports retryable source worktree branch state; returned to the repair queue.",
+      );
+      if (queueRecord !== undefined) input.coordinator.releaseToQueue(queueRecord.id, input.now);
+      continue;
+    }
     input.updateRepairStatus(
       record.taskId,
       "blocked",
@@ -533,7 +543,8 @@ function isAcceptedBlockedNoRepairSummary(
     typeof reviewGate === "object" &&
     (reviewGate as Record<string, unknown>).decision === "block" &&
     systemGate?.accepted === true &&
-    systemGate.resultStatus === "blocked"
+    systemGate.resultStatus === "blocked" &&
+    !hasRetryableSourceGitStateEvidence(summary, systemGate)
   );
 }
 
@@ -650,7 +661,20 @@ function acceptedBlockedRecoveryArtifact(reportPath: string | undefined): boolea
   const summary = readJson(summaryPath);
   if (summary?.status !== "blocked") return false;
   const systemGate = readJson(join(dirname(summaryPath), "system-gate.json"));
-  return systemGate?.accepted === true && systemGate.resultStatus === "blocked";
+  return (
+    systemGate?.accepted === true &&
+    systemGate.resultStatus === "blocked" &&
+    !hasRetryableSourceGitStateEvidence(summary, systemGate)
+  );
+}
+
+function hasRetryableSourceGitStateEvidence(
+  summary: Record<string, unknown>,
+  systemGate: Record<string, unknown> | undefined,
+): boolean {
+  return isRetryableSourceGitStateEvidence(
+    `${JSON.stringify(summary)} ${systemGate === undefined ? "" : JSON.stringify(systemGate)}`,
+  );
 }
 
 function readRecoveryArtifact(reportPath: string): string | undefined {

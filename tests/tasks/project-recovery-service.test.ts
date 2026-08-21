@@ -986,6 +986,93 @@ describe("project recovery service", () => {
     );
   });
 
+  it("returns accepted blocked source-branch divergence to the recovery queue", async () => {
+    const runDir = join(tmpdir(), `project-recovery-source-diverged-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "alcove",
+        actionsTaken: [
+          "Verified the source worktree dev is neither ancestor nor descendant of origin/dev.",
+        ],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: { decision: "block" },
+        commits: [],
+        followUps: ["Reconcile source branch divergence before retrying project recovery."],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        workOrderId: "blocked-recovery",
+        projectId: "alcove",
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "project-recovery",
+      taskFamily: "alcove pull-request-review",
+      fingerprint: "source-branch-diverged",
+      taskId: "loop:alcove:pull-request-review:1",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queue.id, ["autopilot:blocked-recovery"], 1_000);
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:alcove:pull-request-review:1",
+          source: "loop-engineering",
+          name: "alcove pull-request-review",
+          status: "failed",
+          repairStatus: "running",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:blocked-recovery",
+          source: "autopilot-delegate",
+          name: "alcove active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          error: "active delegation ended with blocked",
+          reportPath: runDir,
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 2, fixed: 0, blocked: 0 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "pending",
+      nextAttemptAt: 2_000,
+    });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:alcove:pull-request-review:1",
+      "pending",
+      expect.stringContaining("returned to the repair queue"),
+    );
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:blocked-recovery",
+      "pending",
+      expect.stringContaining("returned to the repair queue"),
+    );
+  });
+
   it("terminalizes stale pending recoveries already closed by accepted blocked evidence", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const queue = coordinator.enqueue({

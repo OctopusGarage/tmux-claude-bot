@@ -81,6 +81,9 @@ Accepted blocked project-recovery closures that explicitly state no retryable
 project repair remains are terminal durable evidence. Later capacity/admission
 deferrals must not reopen those records or turn them back into pending repair
 work.
+Source worktree or configured source-branch divergence from its remote base is
+retryable automation repair evidence, not an accepted blocked closure, even when
+the worker blocked after verifying the divergence.
 When a system gate or execution-isolation producer knows that a finding belongs
 to a target or external boundary, it must persist a structured repair
 disposition; Runtime Guardian must never infer terminal ownership from log or

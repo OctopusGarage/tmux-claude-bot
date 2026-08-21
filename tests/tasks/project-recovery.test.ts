@@ -167,6 +167,23 @@ describe("project recovery", () => {
     });
   });
 
+  it("keeps source worktree branch divergence retryable past the retry budget", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "blocked",
+        summary:
+          "The source worktree dev is neither ancestor nor descendant of origin/dev; local branch is ahead 3 and behind 14.",
+        artifactText:
+          "Source evidence shows a branch divergence in the source worktree, not a project-owner decision.",
+        attempt: 3,
+      }),
+    ).toMatchObject({
+      classification: "retryable",
+      reason: expect.stringContaining("source worktree branch state"),
+    });
+  });
+
   it("resolves repository and workspace targets", () => {
     expect(
       resolveConfiguredRecoveryTarget(
