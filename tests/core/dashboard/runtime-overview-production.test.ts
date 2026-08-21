@@ -153,6 +153,13 @@ describe("production Runtime Overview readers", () => {
       }).repositoryReviews();
 
       expect(result).toEqual([]);
+      expect(new RepositoryReviewQueue().list({ all: true })).toEqual([
+        expect.objectContaining({
+          id: item.id,
+          status: "completed",
+          lastError: "reconciled from daily task ledger repairStatus=fixed",
+        }),
+      ]);
     } finally {
       if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
       else process.env.TCB_STATE_DIR = originalStateDir;
