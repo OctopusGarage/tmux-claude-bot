@@ -431,12 +431,16 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     }
     case "clear": {
       log.info(`sending /clear session=${session}`);
-      await sendContextReset(deps, session, "clear");
+      await sendContextReset(deps, session, "clear", {
+        ensureSubmitted: msg.origin === "system",
+      });
       return m.clearedContext;
     }
     case "compact": {
       log.info(`sending /compact session=${session}`);
-      await sendContextReset(deps, session, "compact");
+      await sendContextReset(deps, session, "compact", {
+        ensureSubmitted: msg.origin === "system",
+      });
       return m.compactedContext;
     }
     case "enter": {

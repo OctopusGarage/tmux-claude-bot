@@ -437,11 +437,23 @@ describe("executeMessage — control actions", () => {
     const d = deps();
     expect(await executeMessage(msg("clear"), d)).toBe("✅ 已清空上下文 · /clear");
     expect(d.bridge.sendKeys).toHaveBeenCalledWith("/clear", "proj-1");
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalledWith("C-m", "proj-1");
     // /clear starts a new session → new transcript; the cached open-transcript
     // must be dropped so the next read re-detects it.
     expect(d.configResolver.invalidate).toHaveBeenCalledWith("proj-1");
     expect(await executeMessage(msg("compact"), d)).toBe("✅ 已压缩上下文 · /compact");
     expect(d.bridge.sendKeys).toHaveBeenCalledWith("/compact", "proj-1");
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalledWith("C-m", "proj-1");
+  });
+
+  it("confirms system-owned context reset submission before the next queued prompt", async () => {
+    const d = deps();
+    expect(await executeMessage(msg("clear", { origin: "system" }), d)).toBe(
+      "✅ 已清空上下文 · /clear",
+    );
+    expect(d.bridge.sendKeys).toHaveBeenCalledWith("/clear", "proj-1");
+    expect(d.bridge.sendRawKey).toHaveBeenCalledWith("C-m", "proj-1");
+    expect(d.agent.waitUntilInputReady).toHaveBeenCalledTimes(2);
   });
 
   it("left/right send the raw arrow keys", async () => {

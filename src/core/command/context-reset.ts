@@ -10,10 +10,16 @@ export async function sendContextReset(
   deps: HandlerDeps,
   session: string,
   op: "compact" | "clear",
-  options: { settleMs?: number } = {},
+  options: { settleMs?: number; ensureSubmitted?: boolean } = {},
 ): Promise<void> {
   await deps.bridge.sendKeys(`/${op}`, session);
   deps.configResolver.invalidate(session);
-  await sleep(options.settleMs ?? CONTEXT_RESET_SETTLE_MS);
+  const settleMs = options.settleMs ?? CONTEXT_RESET_SETTLE_MS;
+  await sleep(settleMs);
   await deps.agent.waitUntilInputReady(session);
+  if (options.ensureSubmitted === true) {
+    await deps.bridge.sendRawKey("C-m", session);
+    await sleep(settleMs);
+    await deps.agent.waitUntilInputReady(session);
+  }
 }
