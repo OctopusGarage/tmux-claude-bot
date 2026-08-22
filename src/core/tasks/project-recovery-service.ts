@@ -275,6 +275,7 @@ export async function runProjectRecoveryPass(input: {
           `Recovery dispatch deferred: ${dispatched.detail}`,
         );
       }
+      result.deferred++;
       continue;
     }
     input.coordinator.linkTaskIds(queueRecord.id, [`autopilot:${dispatched.runId}`], input.now);

@@ -192,6 +192,49 @@ describe("project recovery service", () => {
     );
   });
 
+  it("counts immediate dispatch blocks as deferred recovery work", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:geo:bug-fix:quiet",
+          source: "loop-engineering",
+          name: "geo bug-fix",
+          status: "failed",
+          summary: "supervisor-failed because worker handoff failed",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "pending",
+        },
+      ],
+      config: {
+        projects: [{ id: "geo", name: "Geo", path: "/repo/geo" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus,
+      dispatch: vi.fn(async () => ({
+        status: "blocked" as const,
+        detail: "automation admission deferred: quiet-hours",
+      })),
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ enqueued: 1, deferred: 1, dispatched: 0 });
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ source: "project-recovery", status: "pending", attempt: 0 }),
+    ]);
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:geo:bug-fix:quiet",
+      "pending",
+      "Recovery dispatch deferred: automation admission deferred: quiet-hours",
+    );
+  });
+
   it("does not claim or consume retries while a live project WorkOrder owns the project", async () => {
     process.env.TCB_STATE_DIR = join(tmpdir(), `project-recovery-live-${Date.now()}`);
     const now = Date.now();
