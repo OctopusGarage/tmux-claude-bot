@@ -211,9 +211,14 @@ export async function runRuntimeGuardianTick(input: {
     store.markRepairAttempt(repoPath, input.now);
     for (const finding of findings) store.markHandled(fingerprintForFinding(finding), input.now);
     if (dispatch?.status === "blocked") {
-      log.warn("runtime guardian repair delegation blocked", {
+      const ctx = {
         data: { detail: dispatch.detail, findings: repairableFindings.map(loggableFinding) },
-      });
+      };
+      if (dispatch.detail === "automation admission deferred: quiet-hours") {
+        log.debug("runtime guardian repair delegation blocked", ctx);
+      } else {
+        log.warn("runtime guardian repair delegation blocked", ctx);
+      }
       return {
         fired: true,
         mode: input.config.mode,
