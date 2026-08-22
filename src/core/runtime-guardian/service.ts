@@ -108,6 +108,9 @@ export async function runRuntimeGuardianTick(input: {
   const coordinator = input.coordinator ?? new RepairCoordinator();
   coordinator.reconcileDuplicateTaskIds(input.now);
   reconcileRuntimeGuardianQueue({ coordinator, now: input.now, findings: discovered });
+  const rediscoverable = discovered.filter(
+    (finding) => !hasTerminalRuntimeGuardianRecord(coordinator, finding),
+  );
   const due = dueRuntimeGuardianFindings({
     coordinator,
     now: input.now,
@@ -116,7 +119,7 @@ export async function runRuntimeGuardianTick(input: {
   const dueKeys = new Set(due.map(runtimeFindingKey));
   const findings = [
     ...due,
-    ...discovered.filter(
+    ...rediscoverable.filter(
       (finding) =>
         !dueKeys.has(runtimeFindingKey(finding)) &&
         !isCoolingDown(store, finding, input.now, input.config.cooldownMs),
@@ -275,6 +278,30 @@ export async function reconcileRuntimeGuardianBeforeDiscovery(
 function runtimeFindingKey(finding: RuntimeGuardianFinding): string {
   return `${finding.kind}|${finding.projectId}|${finding.runId}`;
 }
+
+function hasTerminalRuntimeGuardianRecord(
+  coordinator: RepairCoordinator,
+  finding: RuntimeGuardianFinding,
+): boolean {
+  return coordinator
+    .list()
+    .some(
+      (record) =>
+        record.source === "runtime-guardian" &&
+        record.projectId === finding.projectId &&
+        record.taskFamily === finding.kind &&
+        record.linkedTaskIds.includes(finding.runId) &&
+        TERMINAL_RUNTIME_GUARDIAN_REPAIR_STATUSES.has(record.status),
+    );
+}
+
+const TERMINAL_RUNTIME_GUARDIAN_REPAIR_STATUSES = new Set([
+  "fixed",
+  "blocked",
+  "not-reproducible",
+  "superseded",
+  "dead-letter",
+]);
 
 export function checkRuntimeGuardianRepairReadiness(
   repoPath: string,
