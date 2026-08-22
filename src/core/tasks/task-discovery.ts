@@ -61,6 +61,7 @@ function mergeClosedRepairResolution(
   if (
     ledgerRecord.source !== "loop-engineering" ||
     discoveredRecord.source !== "loop-engineering" ||
+    !isRepairableStatus(ledgerRecord.status) ||
     !isClosedRepairStatus(ledgerRecord.repairStatus) ||
     !isRepairableStatus(discoveredRecord.status)
   ) {

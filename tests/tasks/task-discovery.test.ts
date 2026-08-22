@@ -365,6 +365,31 @@ describe("mergeDiscoveredTaskRecords", () => {
     expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([discovered]);
   });
 
+  it("does not let a stale loop success hide a newly discovered loop failure", () => {
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt,
+      status: "success",
+      repairStatus: "not-needed",
+      summary: "Stale ledger success.",
+      updatedAt: scheduledAt + 1000,
+    };
+    const discovered: ScheduledTaskRecord = {
+      ...ledgerRecord,
+      status: "failed",
+      error: "supervised system gate failed: CI check verify concluded FAILURE",
+      failureKind: "external-ci",
+      repairStatus: "pending",
+      summary: "Rediscovered system-gated failure.",
+      updatedAt: scheduledAt + 2000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([discovered]);
+  });
+
   it("uses discovered loop repair evidence when the ledger repair state is still open", () => {
     const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
     const ledgerRecord: ScheduledTaskRecord = {
