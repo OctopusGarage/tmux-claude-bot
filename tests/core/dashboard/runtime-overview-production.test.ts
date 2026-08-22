@@ -119,6 +119,74 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("reconciles legacy loop ledger task ids to terminal WorkOrder repair status", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    registryRead.mockReset();
+    registryRead.mockReturnValue({
+      records: [
+        {
+          workOrder: {
+            id: "1000-alpha",
+            projectId: "alpha",
+            projectName: "Alpha",
+            scheduledAt: 1_000,
+            task: { kind: "architecture" },
+          },
+          state: { status: "failed", updatedAt: 1_100 },
+        },
+      ],
+      unfinished: [],
+      terminal: [
+        {
+          workOrder: {
+            id: "1000-alpha",
+            projectId: "alpha",
+            projectName: "Alpha",
+            scheduledAt: 1_000,
+            task: { kind: "architecture" },
+          },
+          state: { status: "failed", updatedAt: 1_100 },
+        },
+      ],
+      abandoned: [],
+      staleDispatching: [],
+    });
+    try {
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId: "loop:alpha:1000",
+        source: "loop-engineering",
+        name: "Alpha architecture",
+        scheduledAt: 1_000,
+      });
+      ledger.fail("loop:alpha:1000", { endedAt: 1_100, error: "blocked" });
+      ledger.markRepairStatus("loop:alpha:1000", {
+        repairStatus: "blocked",
+        updatedAt: 1_200,
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {} as HandlerDeps,
+        now: 1_300,
+        operatorSessionRunning: false,
+      }).workOrders();
+
+      expect(result.terminal).toEqual([
+        expect.objectContaining({
+          id: "1000-alpha",
+          repairStatus: "blocked",
+        }),
+      ]);
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      registryRead.mockReset();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not surface superseded terminal repository-review occurrences as current attention", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;

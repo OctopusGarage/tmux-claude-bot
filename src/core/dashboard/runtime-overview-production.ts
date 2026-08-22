@@ -55,6 +55,7 @@ function repairStatusForWorkOrder(
   const candidates = [
     `autopilot:${input.id}`,
     `loop:${input.projectId}:${input.taskKind}:${input.scheduledAt}`,
+    `loop:${input.projectId}:${input.scheduledAt}`,
     ...(input.taskKind === "repository-pull-request-review"
       ? [`loop:pr-review:${input.projectId}:${input.scheduledAt}`]
       : []),
