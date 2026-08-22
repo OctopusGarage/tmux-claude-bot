@@ -146,6 +146,10 @@ if (!telegramEnabled && !larkEnabled) {
   process.exit(1);
 }
 
+// Local control transport for the terminal TUI and diagnostics. Bind this before
+// boot recovery so CLI health checks do not look dead while startup work is slow.
+startControlServer(deps);
+
 await init();
 
 // Keep the reboot-recovery "running sessions" roster in sync with live tmux, so
@@ -187,9 +191,6 @@ if (config.autoRecover) {
   ).unref?.();
 }
 
-// Local control transport for the terminal TUI — a unix socket that drives this
-// same bot (one queue, no races). Non-blocking; best-effort.
-startControlServer(deps);
 startSystemSelfHeal(deps);
 
 let notificationDrivenServicesStarted = false;
