@@ -10,6 +10,13 @@ import {
 } from "../../src/core/loop/report-catalog.js";
 
 describe("listLoopReportRecords", () => {
+  it("ignores non-directory entries in the loop-runs root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tcb-loop-report-catalog-"));
+    writeFileSync(join(root, ".metadata_never_index"), "");
+
+    expect(listLoopReportRecords(root)).toEqual([]);
+  });
+
   it("projects command and supervisor report files into one report record list", async () => {
     const root = await mkdtemp(join(tmpdir(), "tcb-loop-report-catalog-"));
     const commandDir = join(root, "hub", "run-command");

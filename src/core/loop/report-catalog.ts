@@ -51,10 +51,12 @@ type LoopSupervisorReportSummary = {
 export function listLoopReportRecords(root: string): LoopReportRecord[] {
   if (!existsSync(root)) return [];
   const records: LoopReportRecord[] = [];
-  for (const projectId of readdirSync(root)) {
-    const projectDir = join(root, projectId);
-    for (const runId of readdirSync(projectDir)) {
-      const record = readReportRecord(join(projectDir, runId));
+  for (const projectEntry of readdirSync(root, { withFileTypes: true })) {
+    if (!projectEntry.isDirectory()) continue;
+    const projectDir = join(root, projectEntry.name);
+    for (const runEntry of readdirSync(projectDir, { withFileTypes: true })) {
+      if (!runEntry.isDirectory()) continue;
+      const record = readReportRecord(join(projectDir, runEntry.name));
       if (record !== null) records.push(record);
     }
   }
