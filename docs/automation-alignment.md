@@ -123,6 +123,8 @@ same task before dispatch; project recovery wins over an accidental bot-owned
 import for the same task. Runtime Guardian rediscovery must reuse its active
 record by durable task identity even when diagnostic evidence formatting changes;
 evidence text is not queue identity and must not create one record per tick.
+Once a Runtime Guardian record is terminal for a durable task identity, artifact
+lookback must not admit the same finding again as new repair work.
 Derived `autopilot:<workOrderId>` links identify aggregate execution evidence,
 not duplicate source tasks; every attached finding remains independently owned
 and settles from the shared WorkOrder outcome, including after a failed outcome

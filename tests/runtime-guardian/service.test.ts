@@ -1869,6 +1869,47 @@ projects:
     );
   });
 
+  it("does not requeue a guardian finding after a prior repair fixed it", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const prior = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 1_000,
+    });
+    coordinator.markTerminal(prior.id, "fixed", 2_000);
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 4_000_000,
+      config: runtimeConfig({ cooldownMs: 60_000 }),
+      coordinator,
+      discover: () => [
+        finding({
+          kind: "terminal-agent-transient-failure",
+          severity: "medium",
+          runId: "run-closed",
+          projectId: "fluent-frame",
+          projectPath: "/repo/fluent-frame",
+          evidence: [
+            "terminal failed work-order has retryable agent transient failure: run-closed",
+          ],
+        }),
+      ],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ fired: false, reason: "cooldown" });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(coordinator.list()).toHaveLength(1);
+    expect(coordinator.list()[0]).toMatchObject({ id: prior.id, status: "fixed" });
+  });
+
   it("does not reconcile or discover findings when runtime guardian is disabled", async () => {
     const discover = vi.fn(() => [finding()]);
     const reconcile = vi.fn();
