@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -88,6 +96,19 @@ function workOrder(id: string, projectPath: string, finalSummaryPath?: string): 
     requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${id}]`,
     finalSummaryPath,
   } as unknown as LoopWorkOrder;
+}
+
+function readLogEntries(): Array<{ level: string; component?: string; msg: string }> {
+  const dir = join(process.env.TCB_STATE_DIR ?? "", "logs");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((entry) => entry.startsWith("tcb-") && entry.endsWith(".jsonl"))
+    .flatMap((entry) =>
+      readFileSync(join(dir, entry), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { level: string; component?: string; msg: string }),
+    );
 }
 
 describe("runtime guardian", () => {
@@ -606,6 +627,30 @@ projects:
     if (!result.fired) throw new Error("expected runtime guardian to fire");
     expect(result.detail).toContain("target or external blocker");
     expect(dispatchRepair).not.toHaveBeenCalled();
+  });
+
+  it("keeps quiet-hours repair admission deferrals out of warning logs", async () => {
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: "automation admission deferred: quiet-hours",
+    }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [finding()],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(readLogEntries()).not.toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
   });
 
   it("closes a stale invalid-output repair when later authoritative artifacts pass", () => {
