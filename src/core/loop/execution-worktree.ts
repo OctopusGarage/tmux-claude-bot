@@ -95,6 +95,23 @@ type LoopExecutionWorktreeCleanupResult = "removed" | "already-clean" | "failed"
 // clears its entry before any cleanup decision.
 const reconciledMissingWorktrees = new Set<string>();
 
+function missingWorktreeReconciliationKey(input: {
+  worktree: string;
+  expectedBranch?: string | undefined;
+}): string {
+  return input.expectedBranch === undefined
+    ? input.worktree
+    : `${input.worktree}\0${input.expectedBranch}`;
+}
+
+function clearMissingWorktreeReconciliations(worktree: string): void {
+  for (const key of reconciledMissingWorktrees) {
+    if (key === worktree || key.startsWith(`${worktree}\0`)) {
+      reconciledMissingWorktrees.delete(key);
+    }
+  }
+}
+
 /** Reuse one verified worktree registry snapshot across a reconciliation pass. */
 export function createLoopExecutionWorktreeCleanup(
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
@@ -123,6 +140,10 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
   registrations: MissingWorktreeRegistrations,
 ): LoopExecutionWorktreeCleanupResult {
   const worktree = resolvePath(input.worktree);
+  const reconciliationKey = missingWorktreeReconciliationKey({
+    worktree,
+    expectedBranch: input.expectedBranch,
+  });
   if (!isBotOwnedLoopExecutionWorktree(worktree)) {
     log.warn("loop refused to remove worktree outside bot-owned state", {
       data: { worktree },
@@ -136,7 +157,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
     return "failed";
   }
   if (!existsSync(worktree)) {
-    if (reconciledMissingWorktrees.has(worktree) && input.expectedBranch === undefined) {
+    if (reconciledMissingWorktrees.has(reconciliationKey)) {
       return "already-clean";
     }
     if (input.sourceWorktree === undefined) {
@@ -165,7 +186,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
           return "failed";
         }
       }
-      reconciledMissingWorktrees.add(worktree);
+      reconciledMissingWorktrees.add(reconciliationKey);
       log.info("loop missing worktree registration is already reconciled", {
         data: { worktree, sourceWorktree },
       });
@@ -196,13 +217,13 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
     ) {
       return "failed";
     }
-    reconciledMissingWorktrees.add(worktree);
+    reconciledMissingWorktrees.add(reconciliationKey);
     log.info("loop removed missing worktree registration", {
       data: { worktree, sourceWorktree },
     });
     return "removed";
   }
-  reconciledMissingWorktrees.delete(worktree);
+  clearMissingWorktreeReconciliations(worktree);
   let branchHead: string | undefined;
   if (input.expectedBranch !== undefined) {
     if (input.sourceWorktree === undefined) {
@@ -289,7 +310,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
         runGit,
       })
     ) {
-      reconciledMissingWorktrees.add(worktree);
+      reconciledMissingWorktrees.add(reconciliationKey);
       log.info("loop removed standalone bot-owned checkout", { data: { worktree } });
       return "removed";
     }
@@ -301,7 +322,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
     });
     return "failed";
   }
-  reconciledMissingWorktrees.add(worktree);
+  reconciledMissingWorktrees.add(reconciliationKey);
   log.info("loop removed expired isolated worktree", { data: { worktree } });
   return "removed";
 }
