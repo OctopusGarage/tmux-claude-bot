@@ -303,6 +303,65 @@ describe("eval report", () => {
     });
   });
 
+  it("does not fail eval for a no-candidate PR review dependency preflight observation", () => {
+    const report = buildEvalReportFromSupervisorSummary({
+      taskId: "pull-request-review",
+      summary: summary({
+        projectId: "alcove",
+        actionsTaken: [
+          "Queried open PRs targeting dev; result was an empty list.",
+          "No PR diff, files changed, mergeability, status checks, or merge action was applicable because there were no open candidate PRs.",
+        ],
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [
+            "No mutation was performed; diff/risk review consisted of verifying no open PR candidates existed and the isolated worktree remained clean.",
+            "Regression risk: no code changes, no merged PRs, and no local edits.",
+          ],
+          aiReview: "not-run",
+          deterministicGates: [
+            {
+              name: "preflight executables",
+              command:
+                "test -x .venv/bin/ruff && test -x .venv/bin/mypy && test -x .venv/bin/pytest",
+              result: "failed",
+              evidence:
+                ".venv/bin/ruff, .venv/bin/mypy, and .venv/bin/pytest were absent; non-blocking here because this was a read-only no-candidate PR review.",
+            },
+            {
+              name: "open PRs targeting dev",
+              command: "gh pr list --repo OctopusGarage/alcove --base dev --state open",
+              result: "passed",
+              evidence: "[]",
+            },
+            {
+              name: "all open repository PRs",
+              command: "gh pr list --repo OctopusGarage/alcove --state open",
+              result: "passed",
+              evidence: "[]",
+            },
+            {
+              name: "clean isolated worktree",
+              command: "git status --short --branch",
+              result: "passed",
+              evidence: "## loop/alcove/architecture/1787362200000-alcove-pr-review...origin/dev",
+            },
+          ],
+          decision: "pass",
+          notes: [
+            "Verified no-delta PR review: there were no open PRs and no merge action to perform.",
+          ],
+        },
+      }),
+    });
+
+    expect(report.outcome).toMatchObject({
+      status: "passed",
+      finalVerification: "passed",
+      reviewDecision: "pass",
+    });
+  });
+
   it("does not fail eval for a protected-worktree base switch observation superseded by safe reset", () => {
     const report = buildEvalReportFromSupervisorSummary({
       summary: summary({

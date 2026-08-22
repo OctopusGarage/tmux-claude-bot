@@ -166,6 +166,7 @@ function hasUnresolvedFailedDeterministicGate(
       !isPreMutationDependencyGate(gate) &&
       !isResolvedPreflightRepairObservation(gates, index) &&
       !isNonBlockingReadOnlyPreflightObservation(gate, gates, summary) &&
+      !isNonBlockingNoCandidatePullRequestReviewPreflight(gate, gates, summary) &&
       !isResolvedProtectedWorktreeBaseSwitchObservation(gate, gates, summary) &&
       !isResolvedSourceWorktreeControlObservation(gate, gates, summary) &&
       !isBoundedArchitectureTargetResidual(gate, gates, summary),
@@ -197,6 +198,41 @@ function isNonBlockingReadOnlyPreflightObservation(
 
   const passedGateText = gates.map(passedGateEvidenceText).filter(Boolean).join("\n");
   return /(opportunity|report|summary|json)/.test(passedGateText);
+}
+
+function isNonBlockingNoCandidatePullRequestReviewPreflight(
+  gate: Exclude<LoopSupervisorReviewGateDeterministicGate, string>,
+  gates: LoopSupervisorReviewGateDeterministicGate[],
+  summary: LoopSupervisorFinalSummary,
+): boolean {
+  if (!isCompletedPassingSummary(summary)) return false;
+
+  const text = [
+    gateText(gate),
+    ...summary.actionsTaken,
+    ...(summary.reviewGate?.preMutationReview ?? []),
+    ...(summary.reviewGate?.postMutationReview ?? []),
+    ...(summary.reviewGate?.notes ?? []),
+  ]
+    .join("\n")
+    .toLowerCase();
+  if (!text.includes("preflight")) return false;
+  if (!/(\\.venv|venv|node_modules|tool binaries|executable|pytest|ruff|mypy)/.test(text)) {
+    return false;
+  }
+  if (
+    !/(no open pr|no open repository pr|no candidate|no pr diff|no mutation|no code changes)/.test(
+      text,
+    )
+  ) {
+    return false;
+  }
+
+  const passedGateText = gates.filter(isPassedStructuredGate).map(gateText).join("\n");
+  return (
+    /(open prs|all open repository prs|recent .*pr)/.test(passedGateText) &&
+    /(clean .*worktree|git status)/.test(passedGateText)
+  );
 }
 
 function isResolvedProtectedWorktreeBaseSwitchObservation(
