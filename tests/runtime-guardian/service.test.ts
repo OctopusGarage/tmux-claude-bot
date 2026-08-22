@@ -1910,6 +1910,47 @@ projects:
     expect(coordinator.list()[0]).toMatchObject({ id: prior.id, status: "fixed" });
   });
 
+  it("does not dispatch an already-pending guardian duplicate after a prior repair fixed it", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const prior = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 1_000,
+    });
+    coordinator.markTerminal(prior.id, "fixed", 2_000);
+    const duplicate = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 3_000,
+    });
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 4_000,
+      config: runtimeConfig({ cooldownMs: 0 }),
+      coordinator,
+      discover: () => [],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ fired: false, reason: "no-findings" });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(coordinator.list().find((record) => record.id === duplicate.id)).toMatchObject({
+      status: "superseded",
+    });
+  });
+
   it("does not reconcile or discover findings when runtime guardian is disabled", async () => {
     const discover = vi.fn(() => [finding()]);
     const reconcile = vi.fn();
