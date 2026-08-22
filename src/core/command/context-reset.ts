@@ -1,4 +1,7 @@
+import { sleep } from "../../shared/utils/sleep.js";
 import type { HandlerDeps } from "../deps.js";
+
+const CONTEXT_RESET_SETTLE_MS = 250;
 
 /** Reset an agent's context: send the `/compact` or `/clear` slash command to the
  * pane and invalidate the cached transcript resolver (a fresh transcript may follow).
@@ -7,7 +10,10 @@ export async function sendContextReset(
   deps: HandlerDeps,
   session: string,
   op: "compact" | "clear",
+  options: { settleMs?: number } = {},
 ): Promise<void> {
   await deps.bridge.sendKeys(`/${op}`, session);
   deps.configResolver.invalidate(session);
+  await sleep(options.settleMs ?? CONTEXT_RESET_SETTLE_MS);
+  await deps.agent.waitUntilInputReady(session);
 }

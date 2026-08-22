@@ -31,6 +31,7 @@ import { loopLedgerTaskId, workerLeaseOutcome } from "./work-order-settlement.js
 
 const log = createLogger("loop.supervisor-resource-reconciliation");
 const ORPHAN_WORKTREE_RETENTION_MS = 72 * 60 * 60 * 1_000;
+const MAX_WORKTREE_CLEANUPS_PER_RECONCILIATION = 25;
 
 export type SupervisorResourceReconciliation = {
   settledTerminalLeases: number;
@@ -281,6 +282,7 @@ function reconcileOrphanLoopSupervisorWorktrees(input: {
       }
       if (lastTouchedAt + ORPHAN_WORKTREE_RETENTION_MS > input.now) continue;
       if (cleanupWorktree({ worktree }) === "removed") removed++;
+      if (removed >= MAX_WORKTREE_CLEANUPS_PER_RECONCILIATION) return removed;
     }
   }
   return removed;
@@ -440,6 +442,7 @@ function reconcileTerminalLoopSupervisorWorktrees(input: {
       }) === "removed"
     ) {
       removed++;
+      if (removed >= MAX_WORKTREE_CLEANUPS_PER_RECONCILIATION) return removed;
     }
   }
   return removed;
@@ -455,15 +458,18 @@ function reconcileExpiredLoopSupervisorWorkerWorktrees(input: {
   );
   if (expired.length === 0) return 0;
 
-  let removed = 0;
-  const remaining = state.leases.filter((lease) => {
-    if (!expired.includes(lease) || !isBotOwnedLoopExecutionWorktree(lease.projectPath))
-      return true;
-    if (!cleanupLoopExecutionWorktree({ worktree: lease.projectPath, runGit: input.runGit }))
-      return true;
-    removed++;
-    return false;
-  });
+  const expiredIds = new Set(expired.map((lease) => lease.workOrderId));
+  const removedIds = new Set<string>();
+  for (const lease of state.leases) {
+    if (removedIds.size >= MAX_WORKTREE_CLEANUPS_PER_RECONCILIATION) break;
+    if (!expiredIds.has(lease.workOrderId) || !isBotOwnedLoopExecutionWorktree(lease.projectPath))
+      continue;
+    if (cleanupLoopExecutionWorktree({ worktree: lease.projectPath, runGit: input.runGit })) {
+      removedIds.add(lease.workOrderId);
+    }
+  }
+  const removed = removedIds.size;
+  const remaining = state.leases.filter((lease) => !removedIds.has(lease.workOrderId));
   if (remaining.length !== state.leases.length) {
     writeLoopSupervisorWorkerLeaseState({ leases: remaining });
   }

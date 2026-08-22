@@ -176,6 +176,77 @@ describe("supervisor resource reconciliation", () => {
     ]);
   });
 
+  it("caps terminal worktree cleanup per reconciliation pass", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-source-"));
+    const orders = Array.from({ length: 30 }, (_, index) =>
+      workOrder(stateDir, {
+        id: `missing-worktree-run-${index + 1}`,
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: join(
+            stateDir,
+            "loop-worktrees",
+            "app",
+            `missing-worktree-run-${index + 1}`,
+          ),
+          sourceWorktree,
+          worktreeIsolation: "isolated",
+          preparedBy: "system-git-worktree",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+        },
+      }),
+    );
+    for (const order of orders) {
+      writeLoopSupervisorWorkOrderState({
+        workOrder: order,
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+        status: "completed",
+        resultStatus: "completed",
+        now: 2_000,
+      });
+    }
+    const registered = new Set(orders.map((order) => order.projectPath));
+    const removed: string[] = [];
+
+    const reconcile = () =>
+      reconcileTerminalSupervisorResources({
+        now: 3_000,
+        runGit: (invocation) => {
+          if (invocation.args[0] === "rev-parse") {
+            return { status: 0, stdout: `${sourceWorktree}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return {
+              status: 0,
+              stdout: [...registered]
+                .map((worktree) => `worktree ${worktree}\nprunable stale\n`)
+                .join("\n"),
+              stderr: "",
+            };
+          }
+          if (invocation.args[0] === "worktree" && invocation.args[1] === "remove") {
+            const worktree = invocation.args[3];
+            if (worktree !== undefined) {
+              registered.delete(worktree);
+              removed.push(worktree);
+            }
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      });
+
+    await expect(reconcile()).resolves.toMatchObject({ removedTerminalWorktrees: 25 });
+    await expect(reconcile()).resolves.toMatchObject({ removedTerminalWorktrees: 5 });
+    expect(removed).toHaveLength(30);
+  });
+
   it("removes only unreferenced orphan worktrees after the failure retention window", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-state-"));
     process.env.TCB_STATE_DIR = stateDir;
