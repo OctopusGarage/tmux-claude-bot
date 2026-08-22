@@ -1,5 +1,6 @@
 import { tildeifyHomeDeep } from "../../shared/utils/path.js";
 import { parseSince } from "../logs/log-query.js";
+import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import { readAutomationAdmissionEvents } from "./admission-events.js";
 import { AgentCapacityStore } from "./capacity-store.js";
 import { AutomationOccurrenceStore } from "./occurrence-window.js";
@@ -53,7 +54,9 @@ export function runAgentCapacityCommand(
       const rest = args.slice(1);
       if (rest.some((arg) => arg !== "--json")) return { exitCode: 1, stderr: "unknown option" };
       const capacity = options.capacity ?? new AgentCapacityStore();
-      const occurrences = (options.occurrences ?? new AutomationOccurrenceStore())
+      const occurrenceStore = options.occurrences ?? new AutomationOccurrenceStore();
+      occurrenceStore.reconcileFromLedger(new DailyTaskLedger().listAll(), now);
+      const occurrences = occurrenceStore
         .list()
         .filter((item) => item.status === "planned" || item.status === "admitted");
       const recent = readAutomationAdmissionEvents({
