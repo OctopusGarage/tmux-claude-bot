@@ -880,7 +880,7 @@ function admissionFor(
   pressure: PressureState,
 ): ResourceCircuitAdmission {
   if (mode === "observe" || pressure === "healthy") return "open";
-  if (pressure === "elevated") return "heavy-closed";
+  if (pressure === "elevated" || pressure === "recovering") return "heavy-closed";
   return "background-closed";
 }
 
@@ -888,6 +888,7 @@ function actionSummaryFor(mode: ResourceGuardianMode, pressure: PressureState): 
   if (mode === "observe") return "observe mode kept resource admission open";
   if (pressure === "healthy") return "protect mode reopened resource admission";
   if (pressure === "elevated") return "protect mode closed heavy background admission";
+  if (pressure === "recovering") return "protect mode reopened light background admission";
   return "protect mode closed background admission";
 }
 

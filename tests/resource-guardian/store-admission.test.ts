@@ -553,6 +553,23 @@ describe("resource guardian admission", () => {
     ).toBe(false);
   });
 
+  it("lets light repair probes continue during resource recovery", () => {
+    const recovering = circuit({
+      pressure: "recovering",
+      admission: "heavy-closed",
+      reason: "resource pressure recovering",
+    });
+
+    expect(admitFromCircuit(input({ weight: "light" }), recovering)).toMatchObject({
+      allowed: true,
+      reason: "heavy-closed-light",
+    });
+    expect(admitFromCircuit(input({ weight: "heavy" }), recovering)).toMatchObject({
+      allowed: false,
+      reason: "resource pressure recovering",
+    });
+  });
+
   it("keeps a configured observe-mode state open for admission", () => {
     const store = createResourceGuardianStore({ rootDir: tempRoot(), now: clock });
     store.writeCurrent({

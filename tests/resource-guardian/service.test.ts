@@ -194,6 +194,43 @@ describe("resource guardian coordinator", () => {
     expect(store.current.view.stableSince).toBeNull();
   });
 
+  it("reopens light admission while resource pressure is recovering", async () => {
+    const store = new MemoryStore(
+      initialCurrent({
+        mode: "protect",
+        pressure: "critical",
+        admission: "background-closed",
+        incidentId: "incident-recovering",
+      }),
+    );
+    const coordinator = createResourceGuardianCoordinator({
+      config: config({ mode: "protect" }),
+      store,
+      sample: async (now) => sample(now, 40),
+      notify: async () => sent,
+      runtime: {
+        initialized: true,
+        memory: {
+          pressure: "critical",
+          stateSince: 0,
+          elevatedSince: null,
+          criticalSince: null,
+          emergencySince: null,
+          thermalSince: null,
+          recoverySince: null,
+        },
+      },
+    });
+
+    await coordinator.run(0);
+    await coordinator.run(300_000);
+
+    expect(store.current).toMatchObject({
+      view: { pressure: "recovering", circuit: "heavy-closed" },
+      circuit: { pressure: "recovering", admission: "heavy-closed" },
+    });
+  });
+
   it("dispatches only the latest durably ended bot-owned unresolved cleanup incident after the stable window", async () => {
     const store = new MemoryStore(initialCurrent({ mode: "protect", stableSince: 0 }));
     const eligible: ResourceIncident = {
@@ -902,7 +939,7 @@ describe("resource guardian coordinator", () => {
     expect(store.current.circuit.admission).toBe("open");
   });
 
-  it("maps protect pressure to heavy/background closure and reopens only after recovery", async () => {
+  it("maps protect pressure to guarded closures and reopens light work during recovery", async () => {
     const store = new MemoryStore();
     let now = 0;
     let cpu = 98;
@@ -937,7 +974,7 @@ describe("resource guardian coordinator", () => {
     await coordinator.run(recoveryStartedAt + 5 * minute);
     expect(store.current.circuit).toMatchObject({
       pressure: "recovering",
-      admission: "background-closed",
+      admission: "heavy-closed",
     });
     for (
       now = recoveryStartedAt + 5 * minute + 15_000;
