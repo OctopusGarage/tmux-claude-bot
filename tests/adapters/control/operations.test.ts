@@ -301,4 +301,65 @@ describe("control operation registry", () => {
       }),
     );
   });
+
+  it("cancels a Control queue item that is not consumed before the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const cancelQueued = vi.fn(() => true);
+      let queuedMessageId: string | undefined;
+      const enqueue = vi.fn((msg) => {
+        queuedMessageId = msg.id;
+        return "queued" as const;
+      });
+      const send = vi.fn();
+      const deps = {
+        config: { projectSessionPrefix: "tmux_" },
+        queue: { enqueue, cancelQueued },
+      } as unknown as HandlerDeps;
+
+      await handleControlRequest(
+        deps,
+        { id: 103, op: "send", session: "worker-a", text: "hello" },
+        send,
+      );
+
+      expect(cancelQueued).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(cancelQueued).toHaveBeenCalledWith(
+        "worker-a",
+        queuedMessageId,
+        "control message was not consumed before deadline",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not cancel a Control queue item after the queue starts it", async () => {
+    vi.useFakeTimers();
+    try {
+      const cancelQueued = vi.fn(() => true);
+      const enqueue = vi.fn((msg) => {
+        msg.started?.();
+        return "queued" as const;
+      });
+      const send = vi.fn();
+      const deps = {
+        config: { projectSessionPrefix: "tmux_" },
+        queue: { enqueue, cancelQueued },
+      } as unknown as HandlerDeps;
+
+      await handleControlRequest(
+        deps,
+        { id: 104, op: "send", session: "worker-a", text: "hello" },
+        send,
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(cancelQueued).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
