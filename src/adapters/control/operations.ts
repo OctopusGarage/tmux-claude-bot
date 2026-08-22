@@ -38,6 +38,7 @@ import type { ControlOperationHandler, ControlOperationHandlers } from "./operat
 import type { ControlRequest, ServerMessage } from "./protocol.js";
 
 const log = createLogger("control.operations");
+const CONTROL_MESSAGE_CONSUMPTION_TIMEOUT_MS = 30_000;
 
 export const controlOperationNames = [
   "snapshot",
@@ -245,8 +246,20 @@ async function enqueueControl(
     fail(messages("telegram").promptTranslateFailed);
     return;
   }
+  const messageId = newMessageId();
+  let consumed = false;
+  let consumptionTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearConsumptionTimer = (): void => {
+    if (consumptionTimer !== undefined) clearTimeout(consumptionTimer);
+    consumptionTimer = undefined;
+  };
+  consumptionTimer = setTimeout(() => {
+    if (consumed) return;
+    deps.queue.cancelQueued(session, messageId, "control message was not consumed before deadline");
+  }, CONTROL_MESSAGE_CONSUMPTION_TIMEOUT_MS);
+  consumptionTimer.unref();
   const verdict = deps.queue.enqueue({
-    id: newMessageId(),
+    id: messageId,
     ...(action === "text" && "preview" in prepared
       ? userPromptQueueFields(prepared)
       : { text: prepared.text }),
@@ -257,13 +270,28 @@ async function enqueueControl(
     origin: opts.origin ?? "user",
     ephemeral: true,
     ...(traceId !== undefined ? { traceId } : {}),
-    resolve: (output) => send({ event: "reply", session, output }),
-    reject: (err) => send({ event: "error", session, error: err.message }),
+    started: () => {
+      consumed = true;
+      clearConsumptionTimer();
+      return true;
+    },
+    resolve: (output) => {
+      clearConsumptionTimer();
+      send({ event: "reply", session, output });
+    },
+    reject: (err) => {
+      clearConsumptionTimer();
+      send({ event: "error", session, error: err.message });
+    },
     notify: (t) => send({ event: "notify", session, text: t }),
   });
   if (!verdict) {
+    clearConsumptionTimer();
     fail("queue full");
     return;
+  }
+  if (verdict !== "queued") {
+    clearConsumptionTimer();
   }
   ok({ status: verdict });
 }
