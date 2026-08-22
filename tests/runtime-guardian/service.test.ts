@@ -989,6 +989,52 @@ projects:
     expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
   });
 
+  it("does not rediscover transient artifacts after the repair queue marks them fixed", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "fluent-frame",
+      "run-transient-fixed",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-transient-fixed", "/repo/fluent-frame"),
+      projectId: "fluent-frame",
+      projectName: "Fluent Frame",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      JSON.stringify({
+        status: "dispatch-failed",
+        result: {
+          status: "dispatch-failed",
+          reason: "no live loop supervisor session",
+          output: "Not running; resume or start a new session.",
+        },
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "dispatch-failed",
+    });
+    const coordinator = new RepairCoordinator();
+    const record = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "no live supervisor session",
+      taskId: "run-transient-fixed",
+      now: 3,
+    });
+    coordinator.markTerminal(record.id, "fixed", 4);
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 5, lookbackMs: 10_000 })).toEqual([]);
+  });
+
   it("does not rediscover invalid-output artifacts with an authoritative blocked final summary", () => {
     const runDir = join(
       process.env.TCB_STATE_DIR ?? "",
