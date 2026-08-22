@@ -1543,6 +1543,56 @@ describe("project recovery service", () => {
     ]);
   });
 
+  it("deduplicates repeated project recovery evidence while linking all source tasks", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const summary =
+      "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.";
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:tmux-claude-bot:bug-fix:1",
+          source: "loop-engineering",
+          name: "tmux-claude-bot bug-fix",
+          status: "failed",
+          summary,
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "pending",
+        },
+        {
+          taskId: "loop:tmux-claude-bot:security-maintenance:2",
+          source: "loop-engineering",
+          name: "tmux-claude-bot security-maintenance",
+          status: "failed",
+          summary,
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+          repairStatus: "pending",
+        },
+      ],
+      config: {
+        projects: [{ id: "tmux-claude-bot", name: "tmux-claude-bot", path: "/repo/bot" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus: vi.fn(),
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ classified: 2, enqueued: 1 });
+    expect(coordinator.list()).toHaveLength(1);
+    expect(coordinator.list()[0]).toMatchObject({
+      fingerprint: summary,
+      linkedTaskIds: [
+        "loop:tmux-claude-bot:bug-fix:1",
+        "loop:tmux-claude-bot:security-maintenance:2",
+      ],
+    });
+  });
+
   it("closes the original task when its project recovery delegation succeeds", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();

@@ -42,6 +42,49 @@ describe("RepairCoordinator", () => {
     expect(createRepairDedupeKey(second)).toContain("active-delegated-task");
   });
 
+  it("uses stable fingerprints for repeated missing pending ledger imports", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const summary =
+      "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.";
+    const repeatedSummary = `${summary} ${summary}`;
+
+    expect(
+      coordinator.importPending(
+        [
+          {
+            taskId: "loop:tmux-claude-bot:bug-fix:1",
+            source: "loop-engineering",
+            name: "tmux-claude-bot bug-fix",
+            status: "missing",
+            repairStatus: "pending",
+            summary,
+            scheduledAt: 1_000,
+            updatedAt: 1_500,
+          },
+          {
+            taskId: "loop:tmux-claude-bot:bug-fix:2",
+            source: "loop-engineering",
+            name: "tmux-claude-bot bug-fix",
+            status: "missing",
+            repairStatus: "pending",
+            summary: repeatedSummary,
+            scheduledAt: 1_100,
+            updatedAt: 1_500,
+          },
+        ],
+        { projectId: "tmux-claude-bot", projectPath: "/repo/tmux-claude-bot", now: 2_000 },
+      ),
+    ).toBe(2);
+
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({
+        fingerprint: "missing-run-record",
+        linkedTaskIds: ["loop:tmux-claude-bot:bug-fix:1", "loop:tmux-claude-bot:bug-fix:2"],
+        summaries: [summary, repeatedSummary],
+      }),
+    ]);
+  });
+
   it("keeps one active runtime repair when diagnostic evidence formatting changes", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const first = coordinator.enqueue({

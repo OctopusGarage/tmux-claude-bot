@@ -222,21 +222,18 @@ export async function runProjectRecoveryPass(input: {
         projectPath: target.path,
         source: "project-recovery",
         taskFamily: records[0]?.name ?? target.id,
-        fingerprint: records
-          .map((record) => record.failureKind ?? record.error ?? record.summary ?? "unknown")
-          .join(" | "),
+        fingerprint: projectRecoveryFingerprint(records),
         taskId: records[0]?.taskId ?? target.id,
         ...(records[0]?.summary === undefined ? {} : { summary: records[0].summary }),
         priority: 100,
         now: input.now,
       });
     if (existing === undefined) result.enqueued++;
-    else
-      input.coordinator.linkTaskIds(
-        existing.id,
-        records.map((record) => record.taskId),
-        input.now,
-      );
+    input.coordinator.linkTaskIds(
+      queueRecord.id,
+      records.map((record) => record.taskId),
+      input.now,
+    );
     if (input.dispatch === undefined) continue;
     const leaseId = `project-recovery:${input.now}:${target.id}`;
     const claimed = input.coordinator.claimIds([queueRecord.id], {
@@ -290,6 +287,14 @@ export async function runProjectRecoveryPass(input: {
     result.dispatched++;
   }
   return result;
+}
+
+function projectRecoveryFingerprint(records: readonly RecoveryRecord[]): string {
+  const evidence = records
+    .map((record) => record.failureKind ?? record.error ?? record.summary ?? "unknown")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  return [...new Set(evidence)].join(" | ") || "unknown";
 }
 
 export async function reconcileProjectRecoveryArtifacts(input: {
