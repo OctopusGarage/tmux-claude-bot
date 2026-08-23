@@ -6684,6 +6684,63 @@ prReview:
     expect(gitCommands).toContainEqual({ cwd: projectDir, args: ["branch", "--show-current"] });
   });
 
+  it("includes isolated worktree preparation detail in dispatch failure evidence", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    mkdirSync(join(projectDir, ".git"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+      ].join("\n"),
+    });
+    const expectedWorktree = join(stateDir, "loop-worktrees", "hub", "1784196600000-hub");
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        const command = invocation.args.join(" ");
+        if (invocation.cwd === projectDir && command === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${projectDir}\n`, stderr: "" };
+        }
+        if (invocation.cwd === expectedWorktree && command === "rev-parse --show-toplevel") {
+          return { status: 1, stdout: "", stderr: "not a git repository" };
+        }
+        if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (command === "fetch origin dev") return { status: 0, stdout: "", stderr: "" };
+        if (
+          invocation.cwd === projectDir &&
+          command === `worktree add --detach ${expectedWorktree} origin/dev`
+        ) {
+          return { status: 128, stdout: "", stderr: "fatal: path already exists" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async () => {
+        throw new Error("supervisor must not run after worktree preparation failure");
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+      projectSessionPrefix: "tmux_proj_",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    const summary = readFileSync(supervisorSummaryPath(stateDir, "hub"), "utf8");
+    expect(summary).toContain("execution worktree isolation failed");
+    expect(summary).toContain("fatal: path already exists");
+  });
+
   it("does not enqueue an unsafe project Architecture run", async () => {
     vi.useFakeTimers();
     try {
