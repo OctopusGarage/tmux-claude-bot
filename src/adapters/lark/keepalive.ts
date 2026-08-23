@@ -71,6 +71,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       const reachable = await probe(deps.probeUrl);
       if (!reachable) {
         networkDownTicks = 1;
+        lastTick = Date.now();
         log.warn("network unreachable after wake-up; delaying ws refresh");
         return;
       }
@@ -79,6 +80,8 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
         await deps.forceReconnect();
       } catch (err) {
         log.error("force-reconnect failed", { err });
+      } finally {
+        lastTick = Date.now();
       }
       return;
     }
