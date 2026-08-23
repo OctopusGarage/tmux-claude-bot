@@ -9,7 +9,8 @@ const log = createLogger("lark.keepalive");
  *
  *  1. 15s timer — independent of the SDK's server-pushed ping cadence.
  *  2. Sleep detection — a tick gap > SLEEP_DETECT_MS means the machine likely
- *     just woke; reset counters and skip this tick (pre-sleep state is stale).
+ *     just woke; reset counters and refresh the WS if the Lark domain is reachable
+ *     because the SDK can still report a half-open socket as connected.
  *  3. Timer-storm guard — on wake, queued intervals can fire back-to-back;
  *     skip ticks closer than TIMER_STORM_GUARD_MS.
  *  4. HTTP probe — before force-reconnecting, check the Lark domain over
@@ -65,6 +66,20 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       consecutiveDown = 0;
       networkDownTicks = 0;
       lastTick = now;
+      const status = deps.getStatus();
+      if (!status) return;
+      const reachable = await probe(deps.probeUrl);
+      if (!reachable) {
+        networkDownTicks = 1;
+        log.warn("network unreachable after wake-up; delaying ws refresh");
+        return;
+      }
+      log.warn(`force-reconnect after wake-up (state=${status.state})`);
+      try {
+        await deps.forceReconnect();
+      } catch (err) {
+        log.error("force-reconnect failed", { err });
+      }
       return;
     }
     lastTick = now;

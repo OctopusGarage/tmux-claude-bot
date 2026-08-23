@@ -122,7 +122,30 @@ describe("startKeepalive", () => {
     expect(f.reconnects()).toBe(0);
   });
 
-  it("treats a long tick gap as wake-from-sleep: resets counters, skips the tick", async () => {
+  it("force-reconnects after wake-from-sleep even when the SDK still reports connected", async () => {
+    const f = makeDeps();
+    handle = startKeepalive(f.deps);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    vi.setSystemTime(Date.now() + 120_000);
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+
+    expect(f.reconnects()).toBe(1);
+  });
+
+  it("does not reconnect after wake-from-sleep while the network itself is unreachable", async () => {
+    const f = makeDeps();
+    f.setReachable(false);
+    handle = startKeepalive(f.deps);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    vi.setSystemTime(Date.now() + 120_000);
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+
+    expect(f.reconnects()).toBe(0);
+  });
+
+  it("treats a long tick gap as wake-from-sleep: resets counters before reconnecting", async () => {
     const f = makeDeps();
     f.setStatus({ state: "reconnecting", reconnectAttempts: 1 });
     handle = startKeepalive(f.deps);
@@ -130,11 +153,8 @@ describe("startKeepalive", () => {
     await vi.advanceTimersByTimeAsync(INTERVAL * 2); // down=2
     // Simulate sleep: jump the clock far ahead of the last tick.
     vi.setSystemTime(Date.now() + 120_000);
-    await vi.advanceTimersByTimeAsync(INTERVAL); // wake-up tick: reset + skip
-    await vi.advanceTimersByTimeAsync(INTERVAL * 2); // down=2 (fresh count)
+    await vi.advanceTimersByTimeAsync(INTERVAL); // wake-up tick: reset + reconnect
 
-    expect(f.reconnects()).toBe(0);
-    await vi.advanceTimersByTimeAsync(INTERVAL); // down=3 → reconnect
     expect(f.reconnects()).toBe(1);
   });
 
