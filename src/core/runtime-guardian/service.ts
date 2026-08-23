@@ -214,7 +214,7 @@ export async function runRuntimeGuardianTick(input: {
       const ctx = {
         data: { detail: dispatch.detail, findings: repairableFindings.map(loggableFinding) },
       };
-      if (dispatch.detail === "automation admission deferred: quiet-hours") {
+      if (isTransientRepairAdmissionDeferral(dispatch.detail)) {
         log.debug("runtime guardian repair delegation blocked", ctx);
       } else {
         log.warn("runtime guardian repair delegation blocked", ctx);
@@ -248,6 +248,12 @@ export async function runRuntimeGuardianTick(input: {
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+function isTransientRepairAdmissionDeferral(detail: string): boolean {
+  return /^(automation admission deferred:|project already has active automation:|supervisor .*busy|supervisor .*lease|queue full|no available)/i.test(
+    detail,
+  );
 }
 
 export async function reconcileRuntimeGuardianBeforeDiscovery(
