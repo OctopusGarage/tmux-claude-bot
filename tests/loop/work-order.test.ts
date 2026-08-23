@@ -422,6 +422,9 @@ describe("loop supervisor work order", () => {
     );
     expect(prompt).not.toContain("then switch the local worktree back to the configured branch");
     expect(prompt).toContain("GH_TOKEN=\"$(gh auth token --user 'example-owner')\"");
+    expect(prompt).toContain(
+      "Never expand or paste the token value into prompts, summaries, logs, or chat",
+    );
     expect(prompt).not.toContain("must preserve the user's current branch by default");
   });
 

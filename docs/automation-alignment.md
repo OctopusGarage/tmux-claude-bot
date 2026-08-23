@@ -592,7 +592,9 @@ GitHub account binding is mandatory for enabled project, workspace-repository,
 and repository-wide PR automation. Managed command construction refuses to
 create a bare `gh` command when `githubAccount` is absent, so a read-only
 operation cannot mask an account mismatch until a later push, merge, or close
-operation fails.
+operation fails. Prompt and artifact text must keep token lookup as a literal
+shell command; the resolved token value must never be pasted into a worker pane,
+summary, log, or chat message.
 
 ## Module Alignment Matrix
 

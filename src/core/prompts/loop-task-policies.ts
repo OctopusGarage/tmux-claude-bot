@@ -548,7 +548,7 @@ function workspaceGithubPolicy(
 ): string {
   const account = repository.pullRequest.githubAccount;
   if (account === undefined) return "use the repository's normal GitHub CLI identity";
-  return `use command-local GitHub authentication via export GH_TOKEN="$(gh auth token --user ${shellQuote(account)})" before gh pr commands; do not rely on the global gh active account`;
+  return `use command-local GitHub authentication via export GH_TOKEN="$(gh auth token --user ${shellQuote(account)})" before gh pr commands; never expand or paste the token value into prompts, summaries, logs, or chat; do not rely on the global gh active account`;
 }
 
 function mergeMethodFlag(method: "squash" | "merge" | "rebase" | undefined): string {

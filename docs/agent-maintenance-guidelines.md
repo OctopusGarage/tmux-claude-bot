@@ -392,7 +392,9 @@ GH_TOKEN="$(gh auth token --user <account>)" gh ...
 
 This applies to `gh api`, `gh pr`, `gh run`, `gh repo`, and security-alert
 checks, even when the task does not create a PR. Do not rely on the global
-active `gh` account for configured projects.
+active `gh` account for configured projects. Keep the token lookup as a literal
+shell command in prompts, summaries, logs, and chat; never paste or interpolate
+the resulting token value into a worker pane or durable artifact.
 
 Repository PR self-healing must remain narrower than general GitHub
 administration. It may approve or rerun an exact head workflow and may enable
