@@ -1188,7 +1188,7 @@ function githubIdentityPolicy(workOrder: LoopWorkOrder): string {
     return "- For GitHub CLI commands, use the repository's normal gh context.";
   }
   const tokenCommand = `GH_TOKEN="$(gh auth token --user ${shellQuote(account)})"`;
-  return `- For every GitHub CLI command, use the configured account with a command-local token: ${tokenCommand} gh <api|pr|run|repo> ...; for multi-command shells, first run export ${tokenCommand}. This includes GitHub security findings checks such as gh api; do not rely on the global gh active account.`;
+  return `- For every GitHub CLI command, use the configured account with a command-local token: ${tokenCommand} gh <api|pr|run|repo> ...; for multi-command shells, first run export ${tokenCommand}. Never expand or paste the token value into prompts, summaries, logs, or chat; keep this as a literal shell command. This includes GitHub security findings checks such as gh api; do not rely on the global gh active account.`;
 }
 
 function commitPolicyForWorkOrder(
