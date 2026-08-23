@@ -748,7 +748,12 @@ export async function runLoopServiceTickAsync(input: {
     let result: LoopSupervisedRunResult;
     if (preparationFailures.length > 0) {
       const reason = `execution worktree isolation failed: ${preparationFailures
-        .map((failure) => `${failure.repositoryId}: ${failure.reason} (${failure.sourceWorktree})`)
+        .map(
+          (failure) =>
+            `${failure.repositoryId}: ${failure.reason}${
+              failure.detail === undefined ? "" : `: ${failure.detail}`
+            } (${failure.sourceWorktree})`,
+        )
         .join("; ")}`;
       result = {
         status: "dispatch-failed",
