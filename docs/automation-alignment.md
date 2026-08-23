@@ -464,6 +464,9 @@ Runtime Guardian readiness failures are also transient admission deferrals:
 they do not mark findings handled or start the repository repair cooldown. A
 durable repair whose Repair Coordinator backoff is due may retry even while the
 outer discovery cooldown is active.
+Runtime Guardian repair admission deferrals caused by quiet hours, resource
+pressure, queue capacity, or active automation are diagnostic DEBUG evidence,
+not repeated WARN-level operator attention.
 Admission must select the current non-terminal queue record when an equivalent
 historical record is already terminal. A queued Runtime Guardian delegation
 persists both its WorkOrder id and delegated ledger task id on every claimed

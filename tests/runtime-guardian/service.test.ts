@@ -653,6 +653,31 @@ projects:
     );
   });
 
+  it("keeps resource-pressure repair admission deferrals out of warning logs", async () => {
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail:
+        "automation admission deferred: emergency resource pressure; background-closed admission protection is active",
+    }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [finding()],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(readLogEntries()).not.toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
+  });
+
   it("closes a stale invalid-output repair when later authoritative artifacts pass", () => {
     const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "geo", "run-later-passed");
     mkdirSync(runDir, { recursive: true });
