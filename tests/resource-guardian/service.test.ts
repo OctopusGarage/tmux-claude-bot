@@ -1092,6 +1092,8 @@ describe("resource guardian coordinator", () => {
       newState: "elevated",
       incidentId: "incident-notify",
       hostCpuPct: 85,
+      loadPct: 85,
+      eventLoopLagMs: 0,
       circuit: "heavy-closed",
       actionSummary: "protect mode closed heavy background admission",
     });

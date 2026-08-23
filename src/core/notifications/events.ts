@@ -20,6 +20,8 @@ export type ResourcePressureTransitionEvent = {
   newState: PressureState;
   incidentId: string | null;
   hostCpuPct: number;
+  loadPct: number;
+  eventLoopLagMs: number;
   circuit: ResourceCircuitAdmission;
   actionSummary: string;
 };
@@ -105,10 +107,7 @@ function resourcePressureTransitionRequest(
       event.newState === "healthy"
         ? "Resource pressure recovered"
         : `Resource pressure ${event.newState}`,
-    body:
-      event.newState === "healthy"
-        ? "Background work resumed"
-        : `CPU ${event.hostCpuPct}% · background work paused`,
+    body: event.newState === "healthy" ? "Background work resumed" : resourcePressureBody(event),
     delivery: {
       mode: "state-change",
       topic: "resource-guardian:pressure",
@@ -116,6 +115,23 @@ function resourcePressureTransitionRequest(
       ...(event.newState === "healthy" ? { notifyInitial: false } : {}),
     },
   };
+}
+
+function resourcePressureBody(event: ResourcePressureTransitionEvent): string {
+  return [
+    ...(event.eventLoopLagMs >= 1000
+      ? [`event loop lag ${formatLagDuration(event.eventLoopLagMs)}`]
+      : []),
+    `load ${Math.round(event.loadPct)}%`,
+    `CPU ${Math.round(event.hostCpuPct)}%`,
+    `${event.circuit} admission`,
+  ].join(" · ");
+}
+
+function formatLagDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  return formatDuration(ms);
 }
 
 function longTaskFinishedRequest(

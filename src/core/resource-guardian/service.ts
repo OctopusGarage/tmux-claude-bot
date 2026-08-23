@@ -474,6 +474,8 @@ export async function runResourceGuardianTick(
         oldState: previousPressure,
         newState: pressure,
         hostCpuPct: freshSample.hostCpuPct,
+        loadPct: freshSample.loadPct,
+        eventLoopLagMs: freshSample.eventLoopLagMs,
         circuit,
         actionSummary,
       });
@@ -688,6 +690,8 @@ async function notifyTransition(input: {
   oldState: PressureState;
   newState: PressureState;
   hostCpuPct: number;
+  loadPct: number;
+  eventLoopLagMs: number;
   circuit: ResourceCircuitAdmission;
   actionSummary: string;
 }): Promise<ResourceIncident | null> {
@@ -700,6 +704,8 @@ async function notifyTransition(input: {
       newState: input.newState,
       incidentId: input.incident?.id ?? null,
       hostCpuPct: input.hostCpuPct,
+      loadPct: input.loadPct,
+      eventLoopLagMs: input.eventLoopLagMs,
       circuit: input.circuit,
       actionSummary: input.actionSummary,
     });

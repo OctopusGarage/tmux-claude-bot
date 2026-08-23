@@ -21,7 +21,9 @@ describe("notification event contracts", () => {
       oldState: "elevated",
       newState: "critical",
       incidentId: "resource-42",
-      hostCpuPct: 94.25,
+      hostCpuPct: 94,
+      loadPct: 87,
+      eventLoopLagMs: 35_200,
       circuit: "background-closed",
       actionSummary: "protect mode closed background admission",
     });
@@ -32,7 +34,9 @@ describe("notification event contracts", () => {
       title: "Resource pressure critical",
     });
     if (request === null) throw new Error("expected actionable transition");
-    expect(request.body).toBe("CPU 94.25% · background work paused");
+    expect(request.body).toBe(
+      "event loop lag 35s · load 87% · CPU 94% · background-closed admission",
+    );
     expect(request.delivery).toEqual({
       mode: "state-change",
       topic: "resource-guardian:pressure",
@@ -65,6 +69,8 @@ describe("notification event contracts", () => {
         newState: "elevated",
         incidentId: "resource-41",
         hostCpuPct: 82,
+        loadPct: 82,
+        eventLoopLagMs: 0,
         circuit: "open",
         actionSummary: "observing",
       }),
@@ -78,6 +84,8 @@ describe("notification event contracts", () => {
       newState: "healthy",
       incidentId: "resource-42",
       hostCpuPct: 25,
+      loadPct: 25,
+      eventLoopLagMs: 0,
       circuit: "open",
       actionSummary: "background admission restored",
     });
