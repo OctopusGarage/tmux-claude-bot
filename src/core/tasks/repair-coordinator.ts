@@ -260,7 +260,7 @@ export class RepairCoordinator {
         projectPath: input.projectPath,
         source: record.source,
         taskFamily: record.name,
-        fingerprint: record.failureKind ?? record.error ?? record.summary ?? "unknown",
+        fingerprint: fingerprintForPendingRecord(record),
         taskId: record.taskId,
         ...(record.summary === undefined ? {} : { summary: record.summary }),
         priority: record.scheduledAt >= input.now - 48 * 60 * 60_000 ? 100 : 10,
@@ -610,6 +610,14 @@ function isEligiblePendingRecord(record: PendingLedgerRecord): boolean {
   if (record.repairStatus !== "pending") return false;
   if (!new Set(["failed", "missing", "running-timeout"]).has(record.status)) return false;
   return record.source === "daily-audit" || isBotOwnedTaskName(record.name);
+}
+
+function fingerprintForPendingRecord(record: PendingLedgerRecord): string {
+  if (record.failureKind !== undefined) return record.failureKind;
+  if (record.error !== undefined) return record.error;
+  if (record.status === "missing") return "missing-run-record";
+  if (record.status === "running-timeout") return "running-timeout";
+  return record.summary ?? "unknown";
 }
 
 function isBotOwnedTaskName(name: string): boolean {
