@@ -47,6 +47,16 @@ export function reconcileRuntimeGuardianQueue(input: {
       (recordsPerWorkOrder.get(record.workOrderId) ?? 0) + 1,
     );
   }
+  const terminalIdentities = new Set(
+    queueRecords
+      .filter(
+        (record) =>
+          record.source === "runtime-guardian" &&
+          isQueueTerminal(record.status) &&
+          record.status !== "superseded",
+      )
+      .flatMap(runtimeGuardianRecordIdentities),
+  );
   for (const record of queueRecords) {
     const recoverableAggregateSibling =
       record.status === "superseded" &&
@@ -57,6 +67,14 @@ export function reconcileRuntimeGuardianQueue(input: {
       (isQueueTerminal(record.status) && !recoverableAggregateSibling)
     )
       continue;
+    if (
+      !isQueueTerminal(record.status) &&
+      runtimeGuardianRecordIdentities(record).some((identity) => terminalIdentities.has(identity))
+    ) {
+      input.coordinator.markTerminal(record.id, "superseded", input.now);
+      reconciled++;
+      continue;
+    }
     const repairWorkOrder =
       record.workOrderId === undefined ? undefined : terminalByRunId.get(record.workOrderId);
     if (repairWorkOrder !== undefined) {
@@ -143,6 +161,12 @@ function restoreSupersededAggregateRetries(input: {
 
 function originalRuntimeGuardianTaskIds(record: RepairQueueRecord): string[] {
   return record.linkedTaskIds.filter((taskId) => !taskId.startsWith("autopilot:"));
+}
+
+function runtimeGuardianRecordIdentities(record: RepairQueueRecord): string[] {
+  return originalRuntimeGuardianTaskIds(record).map(
+    (taskId) => `${record.projectId}:${record.taskFamily}:${taskId}`,
+  );
 }
 
 function recoverRuntimeGuardianWorkOrderLinks(input: {

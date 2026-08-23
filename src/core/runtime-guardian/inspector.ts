@@ -15,6 +15,7 @@ import {
   type LoopSupervisorReviewGateDeterministicGate,
   parseSupervisorFinalSummaryFile,
 } from "../loop/work-order.js";
+import { RepairCoordinator, type RepairQueueStatus } from "../tasks/repair-coordinator.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import type { RuntimeGuardianFinding, RuntimeGuardianRepairDisposition } from "./findings.js";
 
@@ -29,6 +30,7 @@ export function discoverRuntimeGuardianFindings(
 ): RuntimeGuardianFinding[] {
   const findings: RuntimeGuardianFinding[] = [];
   const terminal = listTerminalLoopSupervisorWorkOrders();
+  const terminalRepairQueueClosures = readTerminalRuntimeGuardianClosures();
   for (const record of listStaleDispatchingLoopSupervisorWorkOrders(input.now)) {
     if (input.repoPath !== undefined && record.workOrder.projectPath !== input.repoPath) continue;
     if (outsideLookback(record.state.updatedAt, input)) continue;
@@ -46,7 +48,8 @@ export function discoverRuntimeGuardianFindings(
       ],
     });
   }
-  for (const record of terminal) inspectTerminalRecord(findings, record, input);
+  for (const record of terminal)
+    inspectTerminalRecord(findings, record, input, terminalRepairQueueClosures);
   const terminalIds = new Set(terminal.map((record) => record.workOrder.id));
   for (const lease of readLoopSupervisorWorkerLeaseState().leases) {
     if (lease.status !== "active" || !terminalIds.has(lease.workOrderId)) continue;
@@ -69,6 +72,7 @@ function inspectTerminalRecord(
   findings: RuntimeGuardianFinding[],
   record: TerminalWorkOrder,
   input: { now: number; lookbackMs: number },
+  terminalRepairQueueClosures: ReadonlySet<string>,
 ): void {
   if (outsideLookback(record.state.updatedAt, input)) return;
   if (hasTerminalLedgerClosure(record)) return;
@@ -82,7 +86,8 @@ function inspectTerminalRecord(
     transientFailure(record),
     readOnlySmokeBlocked(record, finalSummaryPath),
   ]) {
-    if (finding !== null) findings.push(finding);
+    if (finding !== null && !hasTerminalRepairQueueClosure(terminalRepairQueueClosures, finding))
+      findings.push(finding);
   }
   if (
     record.state.status === "completed" &&
@@ -106,12 +111,56 @@ const CLOSED_LEDGER_REPAIR_STATUSES = new Set([
   "superseded",
 ]);
 
+const TERMINAL_RUNTIME_GUARDIAN_REPAIR_STATUSES = new Set<RepairQueueStatus>([
+  "fixed",
+  "blocked",
+  "not-reproducible",
+  "superseded",
+  "dead-letter",
+]);
+
 function hasTerminalLedgerClosure(record: TerminalWorkOrder): boolean {
   const runId = record.workOrder.id;
   return new DailyTaskLedger().listAll().some((entry) => {
     if (!CLOSED_LEDGER_REPAIR_STATUSES.has(entry.repairStatus ?? "")) return false;
     return entry.taskId.includes(runId) || entry.reportPath?.includes(runId) === true;
   });
+}
+
+function readTerminalRuntimeGuardianClosures(): ReadonlySet<string> {
+  return new Set(
+    new RepairCoordinator()
+      .list()
+      .filter(
+        (record) =>
+          record.source === "runtime-guardian" &&
+          TERMINAL_RUNTIME_GUARDIAN_REPAIR_STATUSES.has(record.status),
+      )
+      .flatMap((record) =>
+        record.linkedTaskIds
+          .filter((taskId) => !taskId.startsWith("autopilot:"))
+          .map((taskId) =>
+            runtimeGuardianRepairClosureKey(record.projectId, record.taskFamily, taskId),
+          ),
+      ),
+  );
+}
+
+function hasTerminalRepairQueueClosure(
+  terminalRepairQueueClosures: ReadonlySet<string>,
+  finding: RuntimeGuardianFinding,
+): boolean {
+  return terminalRepairQueueClosures.has(
+    runtimeGuardianRepairClosureKey(finding.projectId, finding.kind, finding.runId),
+  );
+}
+
+function runtimeGuardianRepairClosureKey(
+  projectId: string,
+  taskFamily: string,
+  taskId: string,
+): string {
+  return `${projectId}:${taskFamily}:${taskId}`;
 }
 
 function systemGateFailure(

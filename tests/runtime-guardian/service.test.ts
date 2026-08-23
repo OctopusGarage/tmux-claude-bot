@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -88,6 +96,19 @@ function workOrder(id: string, projectPath: string, finalSummaryPath?: string): 
     requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${id}]`,
     finalSummaryPath,
   } as unknown as LoopWorkOrder;
+}
+
+function readLogEntries(): Array<{ level: string; component?: string; msg: string }> {
+  const dir = join(process.env.TCB_STATE_DIR ?? "", "logs");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((entry) => entry.startsWith("tcb-") && entry.endsWith(".jsonl"))
+    .flatMap((entry) =>
+      readFileSync(join(dir, entry), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { level: string; component?: string; msg: string }),
+    );
 }
 
 describe("runtime guardian", () => {
@@ -608,6 +629,30 @@ projects:
     expect(dispatchRepair).not.toHaveBeenCalled();
   });
 
+  it("keeps quiet-hours repair admission deferrals out of warning logs", async () => {
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: "automation admission deferred: quiet-hours",
+    }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [finding()],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(readLogEntries()).not.toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
+  });
+
   it("closes a stale invalid-output repair when later authoritative artifacts pass", () => {
     const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "geo", "run-later-passed");
     mkdirSync(runDir, { recursive: true });
@@ -942,6 +987,52 @@ projects:
     });
 
     expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover transient artifacts after the repair queue marks them fixed", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "fluent-frame",
+      "run-transient-fixed",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-transient-fixed", "/repo/fluent-frame"),
+      projectId: "fluent-frame",
+      projectName: "Fluent Frame",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      JSON.stringify({
+        status: "dispatch-failed",
+        result: {
+          status: "dispatch-failed",
+          reason: "no live loop supervisor session",
+          output: "Not running; resume or start a new session.",
+        },
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "dispatch-failed",
+    });
+    const coordinator = new RepairCoordinator();
+    const record = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "no live supervisor session",
+      taskId: "run-transient-fixed",
+      now: 3,
+    });
+    coordinator.markTerminal(record.id, "fixed", 4);
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 5, lookbackMs: 10_000 })).toEqual([]);
   });
 
   it("does not rediscover invalid-output artifacts with an authoritative blocked final summary", () => {
@@ -1867,6 +1958,88 @@ projects:
         ],
       }),
     );
+  });
+
+  it("does not requeue a guardian finding after a prior repair fixed it", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const prior = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 1_000,
+    });
+    coordinator.markTerminal(prior.id, "fixed", 2_000);
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 4_000_000,
+      config: runtimeConfig({ cooldownMs: 60_000 }),
+      coordinator,
+      discover: () => [
+        finding({
+          kind: "terminal-agent-transient-failure",
+          severity: "medium",
+          runId: "run-closed",
+          projectId: "fluent-frame",
+          projectPath: "/repo/fluent-frame",
+          evidence: [
+            "terminal failed work-order has retryable agent transient failure: run-closed",
+          ],
+        }),
+      ],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ fired: false, reason: "cooldown" });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(coordinator.list()).toHaveLength(1);
+    expect(coordinator.list()[0]).toMatchObject({ id: prior.id, status: "fixed" });
+  });
+
+  it("does not dispatch an already-pending guardian duplicate after a prior repair fixed it", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const prior = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 1_000,
+    });
+    coordinator.markTerminal(prior.id, "fixed", 2_000);
+    const duplicate = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 3_000,
+    });
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 4_000,
+      config: runtimeConfig({ cooldownMs: 0 }),
+      coordinator,
+      discover: () => [],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ fired: false, reason: "no-findings" });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(coordinator.list().find((record) => record.id === duplicate.id)).toMatchObject({
+      status: "superseded",
+    });
   });
 
   it("does not reconcile or discover findings when runtime guardian is disabled", async () => {
