@@ -77,6 +77,55 @@ describe("repository review service queue", () => {
     expect(queue.listReady(300)).toEqual([]);
   });
 
+  it("closes retryable repository review queue items from completed recovery evidence", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-pr-review-service-"));
+    const queue = new RepositoryReviewQueue();
+    const ledger = new DailyTaskLedger();
+    const scheduledAt = 1787542800000;
+    const created = queue.enqueue({
+      repositoryId: "knowledge-engine-all-prs",
+      scheduledAt,
+      priority: 1000,
+      now: 100,
+    });
+
+    expect(queue.lease(created.id, "worker", 100, 100)).not.toBeNull();
+    expect(
+      queue.fail(
+        created.id,
+        "worker",
+        110,
+        "repository review supervisor result: dispatch-failed",
+        200,
+      ),
+    ).toBe(true);
+    ledger.expect({
+      taskId: `loop:pr-review:knowledge-engine-all-prs:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "knowledge-engine-all-prs repository-pull-request-review",
+      scheduledAt,
+    });
+    ledger.fail(`loop:pr-review:knowledge-engine-all-prs:${scheduledAt}`, {
+      endedAt: 120,
+      error: "dispatch-failed",
+    });
+    ledger.markRepairStatus(`loop:pr-review:knowledge-engine-all-prs:${scheduledAt}`, {
+      repairStatus: "completed",
+      updatedAt: 130,
+      summary: "Recovery completed by active delegated run.",
+    });
+
+    expect(reconcileRepositoryReviewQueueLedgerClosures(queue, ledger, 300)).toBe(1);
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        status: "completed",
+        lastError: "reconciled from daily task ledger repairStatus=completed",
+      }),
+    ]);
+    expect(queue.listReady(300)).toEqual([]);
+  });
+
   it("persists a due repository review without waiting for a supervisor", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-pr-review-service-"));
     const root = mkdtempSync(join(tmpdir(), "tcb-pr-review-repo-"));

@@ -1623,6 +1623,26 @@ prReview:
     expect(supervisorRevisionFailures(["PR state is MERGED"])).toEqual([]);
   });
 
+  it("does not request a supervisor revision for system-owned git gate failures", () => {
+    expect(
+      supervisorRevisionFailures(["git status failed: spawnSync /usr/bin/git ENOENT"]),
+    ).toEqual([]);
+    expect(
+      supervisorRevisionFailures([
+        "git fetch origin main failed: Connection closed by 198.18.0.28 port 443",
+      ]),
+    ).toEqual([]);
+    expect(
+      supervisorRevisionFailures(["isolated worktree branch check failed: spawnSync git ENOENT"]),
+    ).toEqual([]);
+  });
+
+  it("still requests a supervisor revision for agent-correctable summary failures", () => {
+    const failure = "supervisor summary commits did not include valid commit ids";
+
+    expect(supervisorRevisionFailures([failure])).toEqual([failure]);
+  });
+
   it("restores a clean isolated worker to the WorkOrder branch before accepting completion", async () => {
     const invocations: string[] = [];
     let currentBranch = "dev";

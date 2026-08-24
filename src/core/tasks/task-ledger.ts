@@ -39,6 +39,7 @@ export type ScheduledTaskRepairStatus =
   | "not-needed"
   | "pending"
   | "running"
+  | "completed"
   | "fixed"
   | "blocked"
   | "failed"

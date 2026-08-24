@@ -1701,6 +1701,7 @@ function repositoryReviewQueueClosureFromLedger(
   if (
     record.status === "success" ||
     record.status === "skipped" ||
+    record.repairStatus === "completed" ||
     record.repairStatus === "fixed" ||
     record.repairStatus === "not-needed" ||
     record.repairStatus === "superseded" ||
@@ -2535,6 +2536,7 @@ function systemGateFailureRepairDisposition(
 
 function isTargetOrExternalSystemGateFailure(failure: string): boolean {
   return (
+    isSystemOwnedSystemGateFailure(failure) ||
     failure.startsWith("GitHub account ") ||
     failure.startsWith("PR lookup failed:") ||
     failure.startsWith("PR lookup after body cleanup failed:") ||
@@ -2551,6 +2553,15 @@ function isTargetOrExternalSystemGateFailure(failure: string): boolean {
     failure.startsWith("source worktree is dirty after supervisor completion:") ||
     failure.startsWith("source git branch check failed:") ||
     failure.startsWith("source branch is ")
+  );
+}
+
+function isSystemOwnedSystemGateFailure(failure: string): boolean {
+  return (
+    failure.startsWith("git status failed:") ||
+    failure.startsWith("git fetch origin ") ||
+    failure.startsWith("isolated worktree branch check failed:") ||
+    failure.startsWith("isolated worktree restore failed:")
   );
 }
 
@@ -3113,6 +3124,7 @@ export function supervisorRevisionFailures(failures: string[]): string[] {
 }
 
 function isRecoverableSupervisorGateFailure(failure: string): boolean {
+  if (isSystemOwnedSystemGateFailure(failure)) return false;
   if (failure.startsWith("GitHub account ")) return false;
   if (failure.startsWith("PR state is ")) return false;
   if (failure.startsWith("missing git adapter")) return false;

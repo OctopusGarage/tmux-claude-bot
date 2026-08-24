@@ -157,6 +157,9 @@ retryable handoff evidence, not a completed repository-review outcome.
 Historical prose-only `manual-review` or repairable `dead-letter` records are
 reopened once with a fresh retry epoch only while the PR is open and no newer or
 active occurrence owns the repository.
+Repository review queue reconciliation must treat authoritative ledger repair
+closures such as `fixed`, `completed`, `not-needed`, `superseded`, and
+`not-reproducible` as terminal completed queue evidence.
 No-delta recovery alignment invariant: when authoritative verification proves
 the target already healthy, the WorkOrder completes with a clean-worktree gate
 and `commits: []` even if its normal commit and PR policies are enabled. The
@@ -370,6 +373,10 @@ runs retain those worktrees only until the configured retention TTL expires.
 Supervised system gates must resolve required git executables from the current
 service-safe environment at gate execution time so launch-time PATH drift does
 not create false terminal orchestration failures.
+System-owned git command failures during finalization, including fetch network
+failures and missing git executables, must not request a supervisor revision;
+they are automation/external recovery evidence, not agent-correctable code
+defects.
 If an isolated worktree directory disappears before normal cleanup, terminal
 reconciliation must use the WorkOrder's verified source repository to remove its
 exact stale Git worktree registration; a missing directory is not cleanup proof.
