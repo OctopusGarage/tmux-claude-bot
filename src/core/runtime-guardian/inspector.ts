@@ -7,8 +7,7 @@ import {
 } from "../eval/report.js";
 import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
 import {
-  listStaleDispatchingLoopSupervisorWorkOrders,
-  listTerminalLoopSupervisorWorkOrders,
+  readLoopSupervisorWorkOrderRegistry,
   STALE_DISPATCHING_WORK_ORDER_MS,
 } from "../loop/supervisor-state.js";
 import {
@@ -19,7 +18,11 @@ import { RepairCoordinator, type RepairQueueStatus } from "../tasks/repair-coord
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 import type { RuntimeGuardianFinding, RuntimeGuardianRepairDisposition } from "./findings.js";
 
-type TerminalWorkOrder = ReturnType<typeof listTerminalLoopSupervisorWorkOrders>[number];
+type TerminalWorkOrder = ReturnType<typeof readLoopSupervisorWorkOrderRegistry>["terminal"][number];
+type ClosedLedgerRepairRecord = {
+  taskId: string;
+  reportPath?: string;
+};
 
 /** Read durable Loop artifacts and classify repair findings without changing runtime state. */
 export function discoverRuntimeGuardianFindings(
@@ -29,9 +32,11 @@ export function discoverRuntimeGuardianFindings(
   },
 ): RuntimeGuardianFinding[] {
   const findings: RuntimeGuardianFinding[] = [];
-  const terminal = listTerminalLoopSupervisorWorkOrders();
+  const registry = readLoopSupervisorWorkOrderRegistry(input.now);
+  const terminal = registry.terminal;
+  const terminalLedgerClosures = readTerminalLedgerClosures();
   const terminalRepairQueueClosures = readTerminalRuntimeGuardianClosures();
-  for (const record of listStaleDispatchingLoopSupervisorWorkOrders(input.now)) {
+  for (const record of registry.staleDispatching) {
     if (input.repoPath !== undefined && record.workOrder.projectPath !== input.repoPath) continue;
     if (outsideLookback(record.state.updatedAt, input)) continue;
     findings.push({
@@ -49,7 +54,13 @@ export function discoverRuntimeGuardianFindings(
     });
   }
   for (const record of terminal)
-    inspectTerminalRecord(findings, record, input, terminalRepairQueueClosures);
+    inspectTerminalRecord(
+      findings,
+      record,
+      input,
+      terminalLedgerClosures,
+      terminalRepairQueueClosures,
+    );
   const terminalIds = new Set(terminal.map((record) => record.workOrder.id));
   for (const lease of readLoopSupervisorWorkerLeaseState().leases) {
     if (lease.status !== "active" || !terminalIds.has(lease.workOrderId)) continue;
@@ -72,10 +83,11 @@ function inspectTerminalRecord(
   findings: RuntimeGuardianFinding[],
   record: TerminalWorkOrder,
   input: { now: number; lookbackMs: number },
+  terminalLedgerClosures: readonly ClosedLedgerRepairRecord[],
   terminalRepairQueueClosures: ReadonlySet<string>,
 ): void {
   if (outsideLookback(record.state.updatedAt, input)) return;
-  if (hasTerminalLedgerClosure(record)) return;
+  if (hasTerminalLedgerClosure(record, terminalLedgerClosures)) return;
   const gatePath = join(record.runDir, "system-gate.json");
   const finalSummaryPath =
     record.workOrder.finalSummaryPath ?? join(record.runDir, "supervisor-final-summary.json");
@@ -119,12 +131,20 @@ const TERMINAL_RUNTIME_GUARDIAN_REPAIR_STATUSES = new Set<RepairQueueStatus>([
   "dead-letter",
 ]);
 
-function hasTerminalLedgerClosure(record: TerminalWorkOrder): boolean {
+function readTerminalLedgerClosures(): ClosedLedgerRepairRecord[] {
+  return new DailyTaskLedger()
+    .listAll()
+    .filter((entry) => CLOSED_LEDGER_REPAIR_STATUSES.has(entry.repairStatus ?? ""));
+}
+
+function hasTerminalLedgerClosure(
+  record: TerminalWorkOrder,
+  terminalLedgerClosures: readonly ClosedLedgerRepairRecord[],
+): boolean {
   const runId = record.workOrder.id;
-  return new DailyTaskLedger().listAll().some((entry) => {
-    if (!CLOSED_LEDGER_REPAIR_STATUSES.has(entry.repairStatus ?? "")) return false;
-    return entry.taskId.includes(runId) || entry.reportPath?.includes(runId) === true;
-  });
+  return terminalLedgerClosures.some(
+    (entry) => entry.taskId.includes(runId) || entry.reportPath?.includes(runId) === true,
+  );
 }
 
 function readTerminalRuntimeGuardianClosures(): ReadonlySet<string> {
