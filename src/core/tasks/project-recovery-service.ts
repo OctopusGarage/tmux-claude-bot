@@ -349,6 +349,41 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       result.fixed++;
       continue;
     }
+    const linkedRecoveryArtifacts = linked.filter(
+      (record) =>
+        record.source === "autopilot-delegate" && record.taskId !== queueRecord.linkedTaskIds[0],
+    );
+    const linkedOriginals = linked.filter((record) => !linkedRecoveryArtifacts.includes(record));
+    if (
+      linkedOriginals.length > 0 &&
+      linkedOriginals.every(isTerminalLinkedRepairRecord) &&
+      linkedRecoveryArtifacts.some(
+        (record) =>
+          ["failed", "missing", "running-timeout"].includes(record.status) &&
+          (record.repairStatus === "pending" || record.repairStatus === "running"),
+      )
+    ) {
+      for (const recovery of linkedRecoveryArtifacts) {
+        if (
+          ["failed", "missing", "running-timeout"].includes(recovery.status) &&
+          (recovery.repairStatus === "pending" || recovery.repairStatus === "running")
+        ) {
+          input.updateRepairStatus(
+            recovery.taskId,
+            "superseded",
+            "Superseded by an authoritative terminal repair outcome for the original task.",
+          );
+        }
+      }
+      input.coordinator.markTerminal(
+        queueRecord.id,
+        linkedRepairQueueStatus(linkedOriginals),
+        input.now,
+      );
+      result.checked++;
+      result.fixed++;
+      continue;
+    }
     const originals = linked.filter(
       (record) =>
         record.status !== "success" &&
