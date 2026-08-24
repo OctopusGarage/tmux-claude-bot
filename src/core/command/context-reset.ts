@@ -19,11 +19,16 @@ export async function sendContextReset(
   await sleep(settleMs);
   await deps.agent.waitUntilInputReady(session);
   if (options.ensureSubmitted === true) {
+    let stillInComposer = false;
     for (let attempt = 0; attempt < CONTEXT_RESET_SUBMIT_ATTEMPTS; attempt += 1) {
       await deps.bridge.sendRawKey("C-m", session);
       await sleep(settleMs);
       await deps.agent.waitUntilInputReady(session);
-      if (!(await resetCommandStillInComposer(deps, session, op))) break;
+      stillInComposer = await resetCommandStillInComposer(deps, session, op);
+      if (!stillInComposer) break;
+    }
+    if (stillInComposer) {
+      throw new Error("context reset command was not submitted before automation prompt");
     }
   }
 }
