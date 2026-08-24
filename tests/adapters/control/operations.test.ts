@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -40,6 +40,13 @@ describe("control operation registry", () => {
       "loopReports",
       "runtimeGuardianFindings",
     ]);
+  });
+
+  it("keeps Runtime Guardian read-only observations on the pure inspector path", () => {
+    const source = readFileSync("src/adapters/control/operations-observation.ts", "utf8");
+
+    expect(source).toContain('from "../../core/runtime-guardian/inspector.js"');
+    expect(source).not.toContain('from "../../core/runtime-guardian/service.js"');
   });
 
   it("reports explicit Daily Task Audit truncation", () => {

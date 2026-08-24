@@ -1,6 +1,6 @@
 import type { HandlerDeps } from "../../core/deps.js";
 import { queryLoopReports } from "../../core/loop/report.js";
-import { discoverRuntimeGuardianFindings } from "../../core/runtime-guardian/service.js";
+import { discoverRuntimeGuardianFindings } from "../../core/runtime-guardian/inspector.js";
 import { DailyTaskAuditStore } from "../../core/tasks/daily-audit-service.js";
 import {
   DailyTaskLedger,
