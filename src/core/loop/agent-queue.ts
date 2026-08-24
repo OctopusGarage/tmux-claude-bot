@@ -259,6 +259,20 @@ async function enqueueLoopAgentPromptToSession(
     });
     return { status: "acquired" };
   };
+  const releaseFailureLease = (): void => {
+    if (leaseAcquired) {
+      releaseSupervisorWorkerLease(workOrder, "failure");
+      return;
+    }
+    if (!deferLeaseUntilConsumption) return;
+    const hasPreReservedLease = readLoopSupervisorWorkerLeaseState().leases.some(
+      (lease) =>
+        lease.status === "active" &&
+        lease.workerSession === sessionName &&
+        lease.workOrderId === workOrder.id,
+    );
+    if (hasPreReservedLease) releaseSupervisorWorkerLease(workOrder, "failure");
+  };
   if (!deferLeaseUntilConsumption) {
     const lease = acquireLease();
     if (lease.status === "unavailable") {
@@ -273,11 +287,11 @@ async function enqueueLoopAgentPromptToSession(
 
   const resetResult = await enqueueContextResetIfNeeded(deps, sessionName, contextReset);
   if (resetResult !== null && resetResult.status !== 0) {
-    if (leaseAcquired) releaseSupervisorWorkerLease(workOrder, "failure");
+    releaseFailureLease();
     return resetResult;
   }
   if (signal?.aborted) {
-    if (leaseAcquired) releaseSupervisorWorkerLease(workOrder, "failure");
+    releaseFailureLease();
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
 
@@ -298,7 +312,7 @@ async function enqueueLoopAgentPromptToSession(
     const settle = (result: LoopRunCommandResult): void => {
       signal?.removeEventListener("abort", abort);
       clearConsumptionTimer();
-      if (result.status !== 0 && leaseAcquired) releaseSupervisorWorkerLease(workOrder, "failure");
+      if (result.status !== 0) releaseFailureLease();
       resolve(result);
     };
     const verdict = deps.queue.enqueue({

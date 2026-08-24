@@ -514,6 +514,65 @@ describe("createLoopSupervisorTaskRunner", () => {
     }
   });
 
+  it("settles a pre-reserved deferred supervisor lease when queued work is cancelled before consumption", async () => {
+    vi.useFakeTimers();
+    try {
+      writeLoopSupervisorWorkerLeaseState({
+        leases: [
+          {
+            workerSession: "tmux_proj_loop-supervisor",
+            workOrderId: workOrder.id,
+            projectId: workOrder.projectId,
+            projectPath: workOrder.projectPath,
+            status: "active",
+            leasedAt: 1_000,
+            updatedAt: 1_000,
+          },
+        ],
+      });
+      const queue = new MessageQueue(
+        30,
+        join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+      );
+      const deps = {
+        queue,
+        config: { projectSessionPrefix: "tmux_proj_" },
+        bridge: {
+          hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+        },
+      };
+      queue.setReadinessProbe(async () => false, 60_000);
+      queue.setHandler(async (message) => message.resolve("should not run"));
+      const controller = new AbortController();
+
+      const pending = createLoopSupervisorTaskRunner(deps)({
+        session: "tmux_proj_loop-supervisor",
+        prompt: "Run deferred supervised work order",
+        signal: controller.signal,
+        workOrder,
+        deferLeaseUntilConsumption: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort("cancelled by resource pressure");
+
+      await expect(pending).resolves.toMatchObject({
+        status: 1,
+        stderr: "loop supervisor task was cancelled",
+      });
+      expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+        expect.objectContaining({
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: workOrder.id,
+          status: "retained",
+          retainUntil: expect.any(Number),
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("acquires a deferred supervisor lease when the queued item is consumed", async () => {
     const queue = new MessageQueue(
       30,
