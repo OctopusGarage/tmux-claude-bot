@@ -1,4 +1,5 @@
 import { readAgentLastActivityAt } from "../agents/read.js";
+import { paneHasActiveTurn } from "../agents/runner-base.js";
 import type { HandlerDeps } from "../deps.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { paneIsAnimating } from "../session/pane-activity.js";
@@ -53,7 +54,7 @@ async function paneHasBlockingState(deps: HandlerDeps, session: string): Promise
 
 function paneBlocksInput(pane: string): boolean {
   return (
-    /esc to interrupt/i.test(pane) ||
+    paneHasActiveTurn(pane) ||
     /UserPromptSubmit hook/i.test(pane) ||
     /hook \(blocked\)/i.test(pane) ||
     /Messages to be submitted after next tool call/i.test(pane) ||

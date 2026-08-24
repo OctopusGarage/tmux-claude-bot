@@ -68,6 +68,29 @@ describe("agentIsIdle (queue idle-gate)", () => {
     expect(await agentIsIdle(blockedDeps, "s")).toBe(false);
   });
 
+  it("idle when Codex left a stale working marker above a completed turn", async () => {
+    h.lastActivityAt.mockResolvedValue(Date.now() - 120_000);
+    h.animating.mockResolvedValue(false);
+    const completedDeps = {
+      configResolver: {},
+      bridge: {
+        capturePane: vi.fn(async () =>
+          [
+            "◦ Working (46s • esc to interrupt)",
+            "",
+            "• [LOOP_SUPERVISOR_DONE:run-1]",
+            "",
+            "─ Worked for 9m 03s ─",
+            "",
+            "› Ask Codex to do anything",
+          ].join("\n"),
+        ),
+      },
+    } as never;
+
+    expect(await agentIsIdle(completedDeps, "s")).toBe(true);
+  });
+
   it("in the ambiguous window, an animating pane is busy", async () => {
     h.lastActivityAt.mockResolvedValue(Date.now() - 20_000);
     h.animating.mockResolvedValue(true);
