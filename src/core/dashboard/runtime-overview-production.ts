@@ -23,6 +23,7 @@ import type { RuntimeOverviewReaders, WorkOrderOverviewRead } from "./runtime-ov
 const POWER_CACHE_MS = 30_000;
 const DOMAIN_CACHE_MS = 30_000;
 const CLOSED_REPAIR_STATUSES = new Set<ScheduledTaskRepairStatus>([
+  "completed",
   "fixed",
   "not-needed",
   "blocked",

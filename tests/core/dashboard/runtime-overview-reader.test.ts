@@ -431,6 +431,43 @@ describe("Runtime Overview reader", () => {
     );
   });
 
+  it("does not keep completed WorkOrder repairs in current attention", async () => {
+    const now = 10_000;
+    const overview = await readRuntimeOverview({
+      now,
+      sessions: [],
+      readers: readers({
+        workOrders: () => ({
+          unfinished: [],
+          terminal: [
+            {
+              id: "repo-pr-review",
+              projectId: "knowledge-engine-all-prs",
+              projectName: "knowledge-engine all PRs",
+              taskKind: "repository-pull-request-review",
+              status: "failed",
+              scheduledAt: 1_000,
+              updatedAt: 9_000,
+              repairStatus: "completed",
+            },
+          ],
+          abandoned: [],
+          staleDispatching: [],
+        }),
+      }),
+    });
+
+    expect(overview.recentOutcomes.items).toContainEqual(
+      expect.objectContaining({ id: "work-order:repo-pr-review", status: "failed" }),
+    );
+    expect(overview.attention.items).not.toContainEqual(
+      expect.objectContaining({ id: "work-order:repo-pr-review" }),
+    );
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({ id: "work-orders", status: "healthy" }),
+    );
+  });
+
   it("does not warn about dependencies for an intentionally disabled automation", async () => {
     const overview = await readRuntimeOverview({
       now: 1_000,

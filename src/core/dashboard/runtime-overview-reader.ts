@@ -170,6 +170,7 @@ type Collected<T> =
 
 const FAILED_WORK_ORDER_ATTENTION_MS = 24 * 60 * 60 * 1_000;
 const CLOSED_WORK_ORDER_REPAIR_STATUSES = new Set([
+  "completed",
   "fixed",
   "not-needed",
   "blocked",
