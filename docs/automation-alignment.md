@@ -116,6 +116,9 @@ When a linked Runtime Guardian repair WorkOrder becomes terminal, reconciliation
 must mark a completed repair fixed or detach a non-completed WorkOrder and return
 the queue record to bounded retry; terminal WorkOrders must never leave durable
 repair ownership stuck in `running`.
+If the matching ledger closure is recorded under the Autopilot task id form
+`autopilot:<original-runtime-run-id>`, Runtime Guardian queue reconciliation must
+treat it as terminal evidence for the original runtime finding id.
 Known target-project and external blockers are admitted there as durable terminal
 records without invoking a bot repair.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
