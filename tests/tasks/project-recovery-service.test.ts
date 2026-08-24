@@ -685,6 +685,61 @@ describe("project recovery service", () => {
     });
   });
 
+  it("supersedes failed delegated recoveries when the original task is already fixed", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "loop-engineering",
+      taskFamily: "tmux-claude-bot bug-fix",
+      fingerprint: "unknown",
+      taskId: "loop:tmux-claude-bot:bug-fix:1",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queue.id, ["autopilot:recovery-cancelled"], 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:tmux-claude-bot:bug-fix:1",
+          source: "loop-engineering",
+          name: "tmux-claude-bot bug-fix",
+          status: "failed",
+          repairStatus: "fixed",
+          summary:
+            "Closed from the authoritative supervisor final summary; recovery completed and verification passed.",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:recovery-cancelled",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          error: "active delegation ended with cancelled",
+          summary: "Delegated recovery failed; returned to the repair queue for another worker.",
+          scheduledAt: 1_100,
+          updatedAt: 1_600,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:recovery-cancelled",
+      "superseded",
+      "Superseded by an authoritative terminal repair outcome for the original task.",
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "fixed",
+    });
+  });
+
   it("keeps accepted blocked project recovery terminal after later deferral summaries", async () => {
     const store = new InMemoryRepairQueueStore();
     const coordinator = new RepairCoordinator(store);

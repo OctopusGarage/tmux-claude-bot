@@ -230,6 +230,10 @@ reservation while its system gate is still being written. Delegated-task
 reconciliation must leave its ledger entry running, and project recovery must
 defer without consuming a retry, until either an accepted gate or terminal
 WorkOrder state makes the outcome authoritative.
+If a later authoritative recovery or no-op verification has already terminalized
+the original scheduled task, older failed delegated-recovery ledger twins are
+superseded and the shared repair queue is closed from that original task
+outcome instead of being requeued forever.
 When a completed supervised WorkOrder reports verified commits and the project
 explicitly enables pull requests, the system gate owns publication as well as
 verification: if the WorkOrder branch has no PR, it pushes that exact branch,
