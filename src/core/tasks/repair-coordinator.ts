@@ -589,7 +589,11 @@ function hasRecoverableProjectRecoveryEvidence(evidence: string): boolean {
     evidence.includes("can be retried") ||
     evidence.includes("invalid-final-summary") ||
     evidence.includes("invalid final summary") ||
-    evidence.includes("incomplete recovery")
+    evidence.includes("incomplete recovery") ||
+    evidence.includes("source worktree") ||
+    evidence.includes("source branch") ||
+    evidence.includes("branch divergence") ||
+    evidence.includes("branch state")
   );
 }
 
