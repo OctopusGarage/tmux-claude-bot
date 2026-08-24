@@ -168,7 +168,9 @@ consumer can claim it again.
 
 Terminal repair outcomes are `fixed`, `blocked`, `not-reproducible`,
 `superseded`, and `dead-letter` for queue records. Ledger repair outcomes also
-include `not-needed` and `failed`: `not-needed` is a successful no-op, while
+include `not-needed`, `completed`, and `failed`: `not-needed` is a successful
+no-op, `completed` is terminal recovery evidence for flows such as a
+repository-review recovery that proved there was no remaining PR work, and
 `failed` remains open for classification or retry. `blocked` is reserved for a
 proven safety, ownership, configuration, or external dependency boundary; it is
 not a synonym for queue capacity or a temporary worker shortage. `superseded`
