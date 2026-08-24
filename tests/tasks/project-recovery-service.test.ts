@@ -1694,6 +1694,100 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
+  it("closes a terminal blocked project recovery record when a linked recovery later succeeds", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+    const queueRecord = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot security-maintenance",
+      fingerprint: "missing-run-record",
+      taskId: "loop:tmux-claude-bot:automation-governance-review:1787538900000",
+      now: 1_000,
+    });
+    coordinator.markTerminal(queueRecord.id, "blocked", 1_001);
+    coordinator.linkTaskIds(
+      queueRecord.id,
+      ["autopilot:1787540909921-tmux-claude-bot-active-delegate"],
+      1_002,
+    );
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:tmux-claude-bot:automation-governance-review:1787538900000",
+          source: "loop-engineering",
+          name: "tmux-claude-bot automation-governance-review",
+          scheduledAt: 1,
+          status: "failed",
+          repairStatus: "blocked",
+          summary: "Authoritative supervisor final summary reports blocked recovery.",
+          updatedAt: 1_003,
+        },
+        {
+          taskId: "autopilot:1787540909921-tmux-claude-bot-active-delegate",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          scheduledAt: 1_004,
+          status: "success",
+          repairStatus: "not-needed",
+          summary:
+            "Original task loop:tmux-claude-bot:automation-governance-review:1787538900000 is fixed by merged PR #206.",
+          updatedAt: 1_999,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:tmux-claude-bot:automation-governance-review:1787538900000",
+      "fixed",
+      expect.stringContaining("project recovery delegation"),
+    );
+    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
+  it("keeps terminal blocked project recovery records closed without linked recovery evidence", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+    const queueRecord = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot security-maintenance",
+      fingerprint: "missing-run-record",
+      taskId: "loop:tmux-claude-bot:security-maintenance:1787332800000",
+      now: 1_000,
+    });
+    coordinator.markTerminal(queueRecord.id, "blocked", 1_001);
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:tmux-claude-bot:security-maintenance:1787332800000",
+          source: "loop-engineering",
+          name: "tmux-claude-bot security-maintenance",
+          scheduledAt: 1,
+          status: "failed",
+          repairStatus: "blocked",
+          summary: "Authoritative supervisor final summary reports blocked recovery.",
+          updatedAt: 1_003,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 0, fixed: 0, blocked: 0 });
+    expect(updateRepairStatus).not.toHaveBeenCalled();
+    expect(coordinator.list()[0]).toMatchObject({ status: "blocked" });
+  });
+
   it("closes legacy loop-engineering queue records when their linked project recovery succeeds", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();

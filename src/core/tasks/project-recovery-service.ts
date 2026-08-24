@@ -316,11 +316,12 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       .map((taskId) => byTaskId.get(taskId))
       .filter((record): record is ScheduledTaskRecord => record !== undefined);
     const terminalClosure = isTerminalProjectRecoveryClosure(queueRecord);
-    if (isRepairTerminal(queueRecord.status) && !terminalClosure) continue;
     const hasLinkedRecoveryArtifact = linked.some(
       (record) =>
         record.source === "autopilot-delegate" && record.taskId !== queueRecord.linkedTaskIds[0],
     );
+    if (isRepairTerminal(queueRecord.status) && !terminalClosure && !hasLinkedRecoveryArtifact)
+      continue;
     if (queueRecord.source !== "project-recovery" && !hasLinkedRecoveryArtifact) continue;
     if (terminalClosure) {
       const summary =
