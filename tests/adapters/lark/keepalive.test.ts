@@ -151,6 +151,19 @@ describe("startKeepalive", () => {
     expect(reconnects).toBe(1);
   });
 
+  it("debounces repeated wake reconnects across short wake cycles", async () => {
+    const f = makeDeps();
+    handle = startKeepalive(f.deps);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    vi.setSystemTime(Date.now() + 120_000);
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    vi.setSystemTime(Date.now() + 60_000);
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+
+    expect(f.reconnects()).toBe(1);
+  });
+
   it("does not reconnect after wake-from-sleep while the network itself is unreachable", async () => {
     const f = makeDeps();
     f.setReachable(false);
