@@ -4,6 +4,11 @@ import { loopRunDir } from "../loop/artifacts.js";
 import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "../loop/work-order.js";
 import type { RepairCoordinator, RepairQueueRecord } from "../tasks/repair-coordinator.js";
+import {
+  DailyTaskLedger,
+  type ScheduledTaskRecord,
+  type ScheduledTaskRepairStatus,
+} from "../tasks/task-ledger.js";
 import type { RuntimeGuardianFinding, RuntimeGuardianFindingKind } from "./findings.js";
 
 const RUNTIME_GUARDIAN_FINDING_KINDS = new Set<RuntimeGuardianFindingKind>([
@@ -36,6 +41,10 @@ export function reconcileRuntimeGuardianQueue(input: {
     coordinator: input.coordinator,
     now: input.now,
     workOrders: registry.records,
+  });
+  reconciled += reconcileRuntimeGuardianLedgerClosures({
+    coordinator: input.coordinator,
+    now: input.now,
   });
   const terminalByRunId = new Map(registry.terminal.map((record) => [record.workOrder.id, record]));
   const queueRecords = input.coordinator.list();
@@ -162,6 +171,73 @@ function restoreSupersededAggregateRetries(input: {
 
 function originalRuntimeGuardianTaskIds(record: RepairQueueRecord): string[] {
   return record.linkedTaskIds.filter((taskId) => !taskId.startsWith("autopilot:"));
+}
+
+function reconcileRuntimeGuardianLedgerClosures(input: {
+  coordinator: RepairCoordinator;
+  now: number;
+}): number {
+  const ledgerRecords = new DailyTaskLedger().listAll();
+  if (ledgerRecords.length === 0) return 0;
+  const byTaskId = new Map(ledgerRecords.map((record) => [record.taskId, record]));
+  let reconciled = 0;
+  for (const record of input.coordinator.list()) {
+    if (
+      record.source !== "runtime-guardian" ||
+      !["pending", "leased", "running", "retry-wait"].includes(record.status)
+    )
+      continue;
+    const linkedRecords = record.linkedTaskIds.map((taskId) =>
+      ledgerRecordForRuntimeGuardianTaskId(byTaskId, taskId),
+    );
+    if (linkedRecords.some((linked) => linked !== undefined && linked.repairStatus === undefined))
+      continue;
+    const outcomes = linkedRecords
+      .map((linked) => linked?.repairStatus)
+      .filter((status): status is ScheduledTaskRepairStatus => status !== undefined);
+    const knownOutcomesAreTerminal = outcomes.every((status) =>
+      CLOSED_LEDGER_REPAIR_STATUSES.has(status),
+    );
+    if (outcomes.length !== record.linkedTaskIds.length) {
+      if (outcomes.length > 0 && knownOutcomesAreTerminal) {
+        input.coordinator.markTerminal(record.id, "blocked", input.now);
+        reconciled++;
+      }
+      continue;
+    }
+    if (!knownOutcomesAreTerminal) continue;
+    input.coordinator.markTerminal(
+      record.id,
+      terminalQueueStatusForLedgerOutcomes(outcomes),
+      input.now,
+    );
+    reconciled++;
+  }
+  return reconciled;
+}
+
+function ledgerRecordForRuntimeGuardianTaskId(
+  byTaskId: Map<string, ScheduledTaskRecord>,
+  taskId: string,
+): ScheduledTaskRecord | undefined {
+  return byTaskId.get(taskId) ?? byTaskId.get(`autopilot:${taskId}`);
+}
+
+const CLOSED_LEDGER_REPAIR_STATUSES = new Set<ScheduledTaskRepairStatus>([
+  "fixed",
+  "not-needed",
+  "blocked",
+  "not-reproducible",
+  "superseded",
+]);
+
+function terminalQueueStatusForLedgerOutcomes(
+  outcomes: readonly ScheduledTaskRepairStatus[],
+): "fixed" | "blocked" | "not-reproducible" | "superseded" {
+  if (outcomes.some((outcome) => outcome === "blocked")) return "blocked";
+  if (outcomes.every((outcome) => outcome === "superseded")) return "superseded";
+  if (outcomes.every((outcome) => outcome === "not-reproducible")) return "not-reproducible";
+  return "fixed";
 }
 
 function linkedWorkOrderArtifactIds(record: RepairQueueRecord): string[] {

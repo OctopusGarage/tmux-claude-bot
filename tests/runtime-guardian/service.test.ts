@@ -586,6 +586,143 @@ projects:
     ]);
   });
 
+  it("closes stale Runtime Guardian queues from autopilot ledger closures for the original run", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "missing final marker",
+      taskId: "run-original",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(record.id, ["autopilot:runtime-repair"], 1_001);
+
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "autopilot:run-original",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1_000,
+    });
+    ledger.fail("autopilot:run-original", {
+      endedAt: 1_100,
+      error: "invalid-output",
+      reportPath: "/state/loop-runs/tmux-claude-bot/run-original/supervisor.md",
+    });
+    ledger.markRepairStatus("autopilot:run-original", {
+      repairStatus: "superseded",
+      updatedAt: 1_200,
+      summary: "Superseded by later successful task autopilot:run-success.",
+    });
+    ledger.expect({
+      taskId: "autopilot:runtime-repair",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1_300,
+    });
+    ledger.fail("autopilot:runtime-repair", {
+      endedAt: 1_400,
+      error: "cancelled",
+      reportPath: "/state/loop-runs/tmux-claude-bot/runtime-repair/supervisor.md",
+    });
+    ledger.markRepairStatus("autopilot:runtime-repair", {
+      repairStatus: "superseded",
+      updatedAt: 1_500,
+      summary: "Superseded by later successful task autopilot:run-success.",
+    });
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: record.id, status: "superseded" }),
+    ]);
+  });
+
+  it("maps terminal ledger closures onto stale Runtime Guardian queues", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const ledger = new DailyTaskLedger();
+    const cases = [
+      ["run-fixed", "fixed", "fixed"],
+      ["run-not-needed", "not-needed", "fixed"],
+      ["run-blocked", "blocked", "blocked"],
+      ["run-not-reproducible", "not-reproducible", "not-reproducible"],
+    ] as const;
+
+    for (const [runId, ledgerStatus, queueStatus] of cases) {
+      coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/repo/tmux-claude-bot",
+        source: "runtime-guardian",
+        taskFamily: "terminal-invalid-output",
+        fingerprint: `${runId} failure`,
+        taskId: runId,
+        now: 1_000,
+      });
+      ledger.expect({
+        taskId: `autopilot:${runId}`,
+        source: "autopilot-delegate",
+        name: "tmux-claude-bot active delegated task",
+        scheduledAt: 1_000,
+      });
+      if (ledgerStatus === "not-needed") {
+        ledger.finish(`autopilot:${runId}`, { endedAt: 1_100 });
+      } else {
+        ledger.fail(`autopilot:${runId}`, { endedAt: 1_100, error: ledgerStatus });
+        ledger.markRepairStatus(`autopilot:${runId}`, {
+          repairStatus: ledgerStatus,
+          updatedAt: 1_200,
+        });
+      }
+      expect(queueStatus).toBeDefined();
+    }
+
+    const partial = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "partial historical failure",
+      taskId: "run-partial",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(partial.id, ["run-missing"], 1_001);
+    ledger.expect({
+      taskId: "autopilot:run-partial",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1_000,
+    });
+    ledger.fail("autopilot:run-partial", { endedAt: 1_100, error: "blocked" });
+    ledger.markRepairStatus("autopilot:run-partial", {
+      repairStatus: "blocked",
+      updatedAt: 1_200,
+    });
+
+    const stillSettling = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "settling failure",
+      taskId: "run-settling",
+      now: 1_000,
+    });
+    ledger.expect({
+      taskId: "autopilot:run-settling",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1_000,
+    });
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(5);
+    expect(coordinator.list()).toEqual([
+      ...cases.map(([, , queueStatus]) => expect.objectContaining({ status: queueStatus })),
+      expect.objectContaining({ id: partial.id, status: "blocked" }),
+      expect.objectContaining({ id: stillSettling.id, status: "pending" }),
+    ]);
+  });
+
   it("does not infer a terminal blocker from legacy failure wording", async () => {
     const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
 
