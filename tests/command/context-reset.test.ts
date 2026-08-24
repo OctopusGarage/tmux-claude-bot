@@ -32,4 +32,17 @@ describe("sendContextReset", () => {
     expect(d.bridge.sendRawKey).toHaveBeenCalledWith("C-m", "s1");
     expect(d.agent.waitUntilInputReady).toHaveBeenCalledTimes(2);
   });
+  it("keeps confirming while the reset command remains in the active composer", async () => {
+    const d = fakeDeps();
+    d.bridge.capturePane = vi
+      .fn()
+      .mockResolvedValueOnce("› /clear\nmain · Context 100% left")
+      .mockResolvedValueOnce("› \nmain · Context 100% left");
+
+    await sendContextReset(d, "s1", "clear", { settleMs: 0, ensureSubmitted: true });
+
+    expect(d.bridge.sendRawKey).toHaveBeenCalledTimes(2);
+    expect(d.bridge.capturePane).toHaveBeenCalledTimes(2);
+    expect(d.agent.waitUntilInputReady).toHaveBeenCalledTimes(3);
+  });
 });
