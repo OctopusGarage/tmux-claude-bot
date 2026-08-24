@@ -200,12 +200,6 @@ export function listAbandonedLoopSupervisorWorkOrders(): UnfinishedLoopSuperviso
   return readLoopSupervisorWorkOrderRegistry().abandoned;
 }
 
-export function listStaleDispatchingLoopSupervisorWorkOrders(
-  now = Date.now(),
-): UnfinishedLoopSupervisorWorkOrder[] {
-  return readLoopSupervisorWorkOrderRegistry(now).staleDispatching;
-}
-
 export function listTerminalLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
   return readLoopSupervisorWorkOrderRegistry().terminal;
 }
