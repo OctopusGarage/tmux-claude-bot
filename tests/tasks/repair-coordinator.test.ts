@@ -153,6 +153,44 @@ describe("RepairCoordinator", () => {
     expect(coordinator.list()).toHaveLength(1);
   });
 
+  it("reopens blocked project recovery when later evidence reports source branch divergence", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const stale = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot security-maintenance",
+      fingerprint: "active delegation ended with blocked",
+      taskId: "loop:tmux-claude-bot:automation-governance-review:1787538900000",
+      summary: "Authoritative supervisor final summary reports blocked recovery (status=blocked).",
+      now: 1_000,
+    });
+    coordinator.markTerminal(stale.id, "blocked", 1_500);
+
+    const reopened = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "source worktree branch state",
+      taskId: "autopilot:1787540909921-tmux-claude-bot-active-delegate",
+      summary:
+        "Authoritative supervisor final summary reports retryable source worktree branch state; returned to the repair queue.",
+      now: 2_000,
+    });
+
+    expect(reopened.id).toBe(stale.id);
+    expect(reopened).toMatchObject({
+      status: "pending",
+      attempt: 0,
+      nextAttemptAt: 2_000,
+    });
+    expect(reopened.linkedTaskIds).toEqual([
+      "loop:tmux-claude-bot:automation-governance-review:1787538900000",
+      "autopilot:1787540909921-tmux-claude-bot-active-delegate",
+    ]);
+  });
+
   it("keeps owner-decision project recovery blocks terminal", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const terminal = coordinator.enqueue({
