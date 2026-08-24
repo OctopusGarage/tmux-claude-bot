@@ -336,6 +336,50 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("does not count completed Daily Task Audit repairs as current attention", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const taskId = "loop:pr-review:knowledge-engine-all-prs:1000";
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "knowledge-engine-all-prs repository-pull-request-review",
+        scheduledAt: 1_000,
+      });
+      ledger.fail(taskId, {
+        endedAt: 1_100,
+        error: "dispatch-failed",
+      });
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "completed",
+        updatedAt: 1_200,
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now: 1_300,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 0,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("counts missing Daily Task Audit records without repair status as pending repair", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;
