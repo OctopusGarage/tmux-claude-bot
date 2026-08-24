@@ -93,14 +93,15 @@ export function reconcileRuntimeGuardianQueue(input: {
       continue;
     }
     if (record.taskFamily !== "terminal-invalid-output") continue;
-    const terminal = record.linkedTaskIds.map((id) => terminalByRunId.get(id)).find(Boolean);
-    const evidence =
-      terminal === undefined
-        ? record.linkedTaskIds
-            .map((id) => readPassingTerminalArtifacts(loopRunDir(record.projectId, id)))
-            .find(Boolean)
-        : readPassingTerminalArtifacts(terminal.runDir, terminal.workOrder);
-    if (evidence === false || evidence === undefined) continue;
+    const evidence = linkedWorkOrderArtifactIds(record)
+      .map((id) => {
+        const terminal = terminalByRunId.get(id);
+        return terminal === undefined
+          ? readPassingTerminalArtifacts(loopRunDir(record.projectId, id))
+          : readPassingTerminalArtifacts(terminal.runDir, terminal.workOrder);
+      })
+      .find((value) => value !== false);
+    if (evidence === undefined) continue;
     input.coordinator.markTerminal(
       record.id,
       evidence === "fixed" ? "fixed" : evidence === "blocked" ? "blocked" : "not-reproducible",
@@ -161,6 +162,16 @@ function restoreSupersededAggregateRetries(input: {
 
 function originalRuntimeGuardianTaskIds(record: RepairQueueRecord): string[] {
   return record.linkedTaskIds.filter((taskId) => !taskId.startsWith("autopilot:"));
+}
+
+function linkedWorkOrderArtifactIds(record: RepairQueueRecord): string[] {
+  return [
+    ...new Set(
+      record.linkedTaskIds.map((taskId) =>
+        taskId.startsWith("autopilot:") ? taskId.slice("autopilot:".length) : taskId,
+      ),
+    ),
+  ];
 }
 
 function runtimeGuardianRecordIdentities(record: RepairQueueRecord): string[] {

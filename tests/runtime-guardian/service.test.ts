@@ -730,6 +730,76 @@ projects:
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
+  it("closes stale invalid-output repairs from linked autopilot repair artifacts", () => {
+    const originalRunDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-original-invalid",
+    );
+    const repairRunDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-repair-passed",
+    );
+    mkdirSync(originalRunDir, { recursive: true });
+    mkdirSync(repairRunDir, { recursive: true });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-original-invalid", "/repo/tmux-claude-bot"),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const repairOrder = workOrder(
+      "run-repair-passed",
+      "/repo/tmux-claude-bot",
+      join(repairRunDir, "supervisor-final-summary.json"),
+    );
+    writeFileSync(
+      join(repairRunDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["repaired original invalid-output runtime finding"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123"],
+        followUps: [],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: repairOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: 3,
+      resultStatus: "completed",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "invalid-summary",
+      taskId: "run-original-invalid",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queued.id, ["autopilot:run-repair-passed"], 1_001);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
   it("does not rediscover legacy isolated-branch gate failures after successful final summary evidence", () => {
     const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "alcove", "run-branch-gate");
     mkdirSync(runDir, { recursive: true });
