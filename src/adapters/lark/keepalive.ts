@@ -26,6 +26,7 @@ const TIMER_STORM_GUARD_MS = 5_000;
 const HTTP_PROBE_TIMEOUT_MS = 5_000;
 const DEAD_THRESHOLD = 3;
 const NETWORK_DOWN_LOG_EVERY = 20; // ~every 5min while the network is down
+const WAKE_RECONNECT_DEBOUNCE_MS = 5 * 60_000;
 
 export interface KeepaliveDeps {
   /** Snapshot of the WS state; undefined before the channel first connects. */
@@ -49,6 +50,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
   let lastTick = 0;
   let consecutiveDown = 0;
   let networkDownTicks = 0;
+  let lastWakeReconnectAt = 0;
   let stopped = false;
 
   const tick = async (): Promise<void> => {
@@ -75,9 +77,17 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
         log.warn("network unreachable after wake-up; delaying ws refresh");
         return;
       }
+      if (lastWakeReconnectAt > 0 && now - lastWakeReconnectAt < WAKE_RECONNECT_DEBOUNCE_MS) {
+        log.info(
+          `wake-up reconnect skipped; last refresh ${Math.round((now - lastWakeReconnectAt) / 1000)}s ago`,
+        );
+        lastTick = now;
+        return;
+      }
       log.warn(`force-reconnect after wake-up (state=${status.state})`);
       try {
         await deps.forceReconnect();
+        lastWakeReconnectAt = Date.now();
       } catch (err) {
         log.error("force-reconnect failed", { err });
       } finally {
