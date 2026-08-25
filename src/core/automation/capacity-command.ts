@@ -21,6 +21,10 @@ function json(value: unknown): string {
   return JSON.stringify(tildeifyHomeDeep(value));
 }
 
+function formatProbeTime(value: number): string {
+  return value > 0 ? new Date(value).toISOString() : "unknown";
+}
+
 function parseHistoryArgs(args: string[], now: number): { since: number; json: boolean } | string {
   let since = now - 24 * 60 * 60_000;
   let jsonOutput = false;
@@ -80,7 +84,7 @@ export function runAgentCapacityCommand(
               `agent capacity: ${view.agents.length} pools`,
               ...view.agents.map(
                 (agent) =>
-                  `- ${agent.agent}: ${agent.state} auth=${agent.authentication} active=${agent.activeAutonomousLeases} nextProbe=${new Date(agent.nextProbeAt).toISOString()}`,
+                  `- ${agent.agent}: ${agent.state} auth=${agent.authentication} active=${agent.activeAutonomousLeases} nextProbe=${formatProbeTime(agent.nextProbeAt)}`,
               ),
               `planned occurrences: ${view.plannedOccurrences}`,
               `latest decision: ${view.latestDecision?.reason ?? "none"}`,

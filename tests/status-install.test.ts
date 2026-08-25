@@ -112,6 +112,26 @@ describe("statuslineScript / manualSnippet", () => {
     expect(out).toContain("weekly 12%");
     expect(out).not.toContain("(reset ?)");
   });
+
+  it.skipIf(!hasShellTools)("renders missing usage percentages as unknown, not zero", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-sl-"));
+    const f = join(dir, "statusline.sh");
+    writeFileSync(f, statuslineScript(dir), { mode: 0o755 });
+    const input = JSON.stringify({
+      model: { display_name: "Opus 4.8" },
+      context_window: {},
+      rate_limits: {},
+    });
+
+    const out = execFileSync("bash", ["-c", `printf %s '${input}' | '${f}'`]).toString();
+
+    expect(out).toContain("?% ctx");
+    expect(out).toContain("session ?%");
+    expect(out).toContain("weekly ?%");
+    expect(out).not.toContain("0% ctx");
+    expect(out).not.toContain("session 0%");
+    expect(out).not.toContain("weekly 0%");
+  });
 });
 
 describe("runStatusInstall", () => {

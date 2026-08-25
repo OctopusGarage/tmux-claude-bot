@@ -101,6 +101,9 @@ for the full healthy window.
 Resource Guardian host CPU samples without a reliable delta baseline are
 unavailable, not zero. Notifications and public status output must render them
 as unknown while preserving load-based pressure decisions.
+User-facing automation status must not render unavailable percentages or probe
+timestamps as numeric zero or the Unix epoch. Use null, unknown, or n/a at the
+presentation boundary unless zero is measured evidence.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing

@@ -54,6 +54,14 @@ describe("agent capacity command", () => {
     expect(result.stdout).not.toContain(process.env.HOME ?? "<missing-home>");
   });
 
+  it("does not render absent capacity probe timestamps as the Unix epoch", () => {
+    const result = runAgentCapacityCommand(["status"], { now: () => now });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("nextProbe=unknown");
+    expect(result.stdout).not.toContain("1970-01-01");
+  });
+
   it("reconciles terminal ledger occurrences before reporting planned load", () => {
     const scheduledAt = now - 60_000;
     new AutomationOccurrenceStore({ randomOffset: () => 0 }).plan({
