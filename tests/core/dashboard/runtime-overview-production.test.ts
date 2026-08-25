@@ -328,6 +328,7 @@ describe("production Runtime Overview readers", () => {
         failed: 1,
         attention: 0,
         repairPending: 0,
+        blocked: 1,
       });
     } finally {
       if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
@@ -372,6 +373,7 @@ describe("production Runtime Overview readers", () => {
         failed: 1,
         attention: 0,
         repairPending: 0,
+        completed: 1,
       });
     } finally {
       if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;

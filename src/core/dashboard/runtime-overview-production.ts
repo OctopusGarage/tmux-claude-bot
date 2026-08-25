@@ -253,6 +253,36 @@ export function createRuntimeOverviewReaders(input: {
                 ["failed", "missing", "running-timeout"].includes(item.status) &&
                 (item.repairStatus ?? "pending") === "pending",
             ).length,
+            blocked: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "blocked",
+            ).length,
+            completed: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "completed",
+            ).length,
+            fixed: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "fixed",
+            ).length,
+            notNeeded: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "not-needed",
+            ).length,
+            superseded: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "superseded",
+            ).length,
+            notReproducible: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "not-reproducible",
+            ).length,
           },
           outcomes,
         };

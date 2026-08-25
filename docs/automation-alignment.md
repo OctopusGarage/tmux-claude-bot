@@ -522,6 +522,9 @@ task ledger repair state remains open. Once reconciliation marks the matching
 record `fixed`, `not-needed`, `blocked`, `superseded`, `not-reproducible`, or
 `dead-letter`, the Runtime Overview may retain the run as a recent outcome but
 must not keep projecting it as unresolved WorkOrder attention.
+Daily Task Audit summaries still expose non-zero terminal repair outcome counts
+so "failed, 0 repair pending" never hides that failures were blocked, fixed,
+superseded, completed, not needed, not reproducible, or dead-lettered.
 
 The Agent Capacity runtime domain is part of that same snapshot. Its durable
 record contains only agent kind, authentication category, normalized capacity

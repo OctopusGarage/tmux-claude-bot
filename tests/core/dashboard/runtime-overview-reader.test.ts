@@ -337,7 +337,14 @@ describe("Runtime Overview reader", () => {
         dailyAudit: () => ({
           enabled: true,
           lastFiredAt: 1_900,
-          summary: { active: 1, failed: 1, attention: 1, repairPending: 1 },
+          summary: {
+            active: 1,
+            failed: 4,
+            attention: 1,
+            repairPending: 1,
+            blocked: 2,
+            deadLetter: 1,
+          },
           outcomes: [
             {
               id: "ledger:audit-1",
@@ -376,7 +383,7 @@ describe("Runtime Overview reader", () => {
     expect(overview.runtimeDomains).toContainEqual(
       expect.objectContaining({
         id: "daily-task-audit",
-        summary: expect.stringContaining("1 failed"),
+        summary: expect.stringContaining("4 failed, 1 repair pending, 2 blocked, 1 dead-letter"),
       }),
     );
     expect(overview.runtimeDomains).toContainEqual(
