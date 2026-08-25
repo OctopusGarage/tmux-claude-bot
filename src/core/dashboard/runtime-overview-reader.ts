@@ -86,13 +86,37 @@ export type RuntimeOverviewReaders = {
     | {
         enabled: boolean;
         lastFiredAt?: number;
-        summary?: { active: number; failed: number; attention: number; repairPending: number };
+        summary?: {
+          active: number;
+          failed: number;
+          attention: number;
+          repairPending: number;
+          blocked?: number;
+          completed?: number;
+          fixed?: number;
+          notNeeded?: number;
+          superseded?: number;
+          notReproducible?: number;
+          deadLetter?: number;
+        };
         outcomes?: RecentOutcome[];
       }
     | Promise<{
         enabled: boolean;
         lastFiredAt?: number;
-        summary?: { active: number; failed: number; attention: number; repairPending: number };
+        summary?: {
+          active: number;
+          failed: number;
+          attention: number;
+          repairPending: number;
+          blocked?: number;
+          completed?: number;
+          fixed?: number;
+          notNeeded?: number;
+          superseded?: number;
+          notReproducible?: number;
+          deadLetter?: number;
+        };
         outcomes?: RecentOutcome[];
       }>;
   runtimeGuardian():
@@ -215,6 +239,33 @@ function failedDomain(
   errorKind: Exclude<RuntimeDomainView["errorKind"], null>,
 ): RuntimeDomainView {
   return { id, label, status: "degraded", summary: "read unavailable", errorKind };
+}
+
+function dailyAuditSummaryText(summary: {
+  failed: number;
+  repairPending: number;
+  blocked?: number;
+  completed?: number;
+  fixed?: number;
+  notNeeded?: number;
+  superseded?: number;
+  notReproducible?: number;
+  deadLetter?: number;
+}): string {
+  const parts = [`${summary.failed} failed`, `${summary.repairPending} repair pending`];
+  const terminal = [
+    ["blocked", summary.blocked],
+    ["completed", summary.completed],
+    ["fixed", summary.fixed],
+    ["not-needed", summary.notNeeded],
+    ["superseded", summary.superseded],
+    ["not-reproducible", summary.notReproducible],
+    ["dead-letter", summary.deadLetter],
+  ] as const;
+  for (const [label, count] of terminal) {
+    if ((count ?? 0) > 0) parts.push(`${count} ${label}`);
+  }
+  return parts.join(", ");
 }
 
 function workOrderView(record: OverviewWorkOrder): ActiveWorkItem {
@@ -564,7 +615,7 @@ export async function readRuntimeOverview(input: {
           ? value.lastFiredAt === undefined
             ? "no completed run recorded"
             : "last run recorded"
-          : `${summary.failed} failed, ${summary.repairPending} repair pending`,
+          : dailyAuditSummaryText(summary),
       ),
     );
   } else {
