@@ -1020,12 +1020,23 @@ export async function runLoopServiceTickAsync(input: {
         ...(input.notifications !== undefined ? { notifications: input.notifications } : {}),
       });
     } else {
+      const summary =
+        "summary" in result
+          ? result.summary.actionsTaken.join("; ") || result.status
+          : "Loop supervisor run did not complete successfully.";
       taskLedger.fail(ledgerTaskId, {
         endedAt,
         error: result.status,
-        summary: "Loop supervisor run did not complete successfully.",
+        summary,
         reportPath: completion.report.markdownPath,
       });
+      if (result.status === "blocked" && gate.failures.length === 0) {
+        taskLedger.markRepairStatus(ledgerTaskId, {
+          repairStatus: "blocked",
+          updatedAt: endedAt,
+          summary,
+        });
+      }
     }
     logSupervisorRunResult({
       runId,
