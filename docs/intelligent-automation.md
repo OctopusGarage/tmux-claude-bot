@@ -1004,11 +1004,14 @@ is due, and it normalizes the audit config to avoid `TASK_AUDIT_ENABLED=false`
 or `TASK_AUDIT_TICK_MS=0` disabling core state reconciliation. It then queues an
 active-agent self-heal sweep with a broad operator-equivalent prompt when
 `SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, so newly observed gaps are not
-limited to a hard-coded checklist. It must still reuse Daily Task Audit repair
-dispatch, Project Recovery dispatch, Repair Coordinator leases, Resource
-Guardian admission, and the normal WorkOrder gates. It is not permission to
-bypass owner-decision, external-wait, capacity, clean-worktree, or verification
-blockers.
+limited to a hard-coded checklist. The sweep must also ask why each abnormality
+was not already detected, retried, or repaired by existing automation; when that
+reason is a bot-owned automation gap, the same repair slice should fix the gap
+instead of waiting for an operator to rediscover it. It must still reuse Daily
+Task Audit repair dispatch, Project Recovery dispatch, Repair Coordinator
+leases, Resource Guardian admission, and the normal WorkOrder gates. It is not
+permission to bypass owner-decision, external-wait, capacity, clean-worktree, or
+verification blockers.
 
 Historical Loop failures use project-scoped recovery. The recovery classifier
 reads ledger evidence and supervisor artifacts, resolves only projects,

@@ -946,8 +946,12 @@ uses the same repair queues, Loop Supervisor admission checks, worktree
 isolation, and verification policy as Daily Task Audit repair. With
 `SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, the same tick also queues a broad
 active-agent self-heal prompt so automation can inspect across files, logs,
-state, queue artifacts, and PR/CI evidence instead of being limited to a fixed
-checklist. Disable the whole tick only for deliberate maintenance windows with
+state, queue artifacts, and PR/CI evidence with the same open-ended mandate as
+an operator asking whether the last 24 hours completed normally. The prompt must
+not shrink to a fixed checklist: when it finds an abnormality, it also
+investigates why existing automation did not detect, retry, or repair it
+without a manual prompt, and fixes that bot-owned automation gap when evidence
+is sufficient. Disable the whole tick only for deliberate maintenance windows with
 `SYSTEM_SELF_HEAL_ENABLED=false` or `SYSTEM_SELF_HEAL_TICK_MS=0`; disable only
 the broad agent sweep with `SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=false`.
 

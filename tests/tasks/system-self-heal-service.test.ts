@@ -142,7 +142,7 @@ describe("system self-heal service", () => {
     await vi.waitFor(() => expect(audit).toEqual({ fired: false, reason: "not-due" }));
   });
 
-  it("dispatches the agent sweep as an operator-forced delegation", async () => {
+  it("dispatches the agent sweep as an autonomous operator-equivalent delegation", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-system-self-heal-"));
     const deps = {
       config: {
@@ -190,10 +190,19 @@ describe("system self-heal service", () => {
         deps,
         expect.objectContaining({
           session: "tmux_proj_-repo-tmux-claude-bot",
-          resourceTrigger: "operator",
-          resourceForce: true,
+          resourceTrigger: "background",
+          resourceForce: false,
+          requirement: expect.stringContaining("operator-equivalent"),
         }),
       ),
+    );
+    const [, request] = vi.mocked(startActiveDelegatedTask).mock.calls[0] ?? [];
+    expect(request?.requirement).toContain("Do not narrow the investigation to a fixed checklist");
+    expect(request?.requirement).toContain(
+      "For every abnormality, also investigate why existing automation did not detect, retry, or repair it without a manual prompt",
+    );
+    expect(request?.requirement).toContain(
+      "If the missing automation is bot-owned, fix that automation gap too",
     );
   });
 });
