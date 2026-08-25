@@ -1011,7 +1011,9 @@ instead of waiting for an operator to rediscover it. It must still reuse Daily
 Task Audit repair dispatch, Project Recovery dispatch, Repair Coordinator
 leases, Resource Guardian admission, and the normal WorkOrder gates. It is not
 permission to bypass owner-decision, external-wait, capacity, clean-worktree, or
-verification blockers.
+verification blockers. A blocked broad sweep is durable evidence: the tick
+records a `system-self-heal` ledger failure with the admission reason when no
+WorkOrder is created.
 
 Historical Loop failures use project-scoped recovery. The recovery classifier
 reads ledger evidence and supervisor artifacts, resolves only projects,

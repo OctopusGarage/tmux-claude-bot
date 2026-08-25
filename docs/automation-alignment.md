@@ -104,6 +104,9 @@ as unknown while preserving load-based pressure decisions.
 User-facing automation status must not render unavailable percentages or probe
 timestamps as numeric zero or the Unix epoch. Use null, unknown, or n/a at the
 presentation boundary unless zero is measured evidence.
+System Self-Heal broad agent sweeps must leave durable ledger evidence when
+admission blocks the sweep before WorkOrder creation; otherwise the hourly
+operator-equivalent check can disappear from the next audit window.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing
