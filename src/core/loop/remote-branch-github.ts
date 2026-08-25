@@ -201,10 +201,23 @@ function isRepositoryAuthorized(value: unknown): boolean {
 function parseCloseReason(
   body: string,
 ): LoopRemoteBranchObservation["pullRequests"][number]["externalCloseReason"] {
-  const match = /^(duplicate|obsolete|non-actionable|invalid)(?=\s|[-—:])/i.exec(body.trim());
-  return match?.[1]?.toLowerCase() as
-    | LoopRemoteBranchObservation["pullRequests"][number]["externalCloseReason"]
-    | undefined;
+  const trimmed = body.trim();
+  const match = /^(duplicate|obsolete|non-actionable|invalid)(?=\s|[-—:])/i.exec(trimmed);
+  if (match !== null) {
+    return match[1]?.toLowerCase() as
+      | LoopRemoteBranchObservation["pullRequests"][number]["externalCloseReason"]
+      | undefined;
+  }
+  const closedAsMatch =
+    /^(?:closed|closing)\b[\s\S]{0,160}?\bas\s+(duplicate|obsolete|non-actionable|invalid)(?=\s|[-—:/])/i.exec(
+      trimmed,
+    );
+  if (closedAsMatch !== null) {
+    return closedAsMatch[1]?.toLowerCase() as
+      | LoopRemoteBranchObservation["pullRequests"][number]["externalCloseReason"]
+      | undefined;
+  }
+  return undefined;
 }
 
 function assertTarget(target: LoopRemoteBranchTarget): void {

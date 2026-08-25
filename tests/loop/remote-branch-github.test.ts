@@ -134,8 +134,13 @@ describe("Loop remote branch GitHub adapter", () => {
               author_association: "MEMBER",
             },
             {
-              body: "invalid — this later comment is not repository-authorized",
+              body: "Closed as duplicate/subset after #53 was squash-merged.",
               created_at: "2026-08-07T14:16:24Z",
+              author_association: "COLLABORATOR",
+            },
+            {
+              body: "invalid — this later comment is not repository-authorized",
+              created_at: "2026-08-07T14:16:25Z",
               author_association: "CONTRIBUTOR",
             },
           ]),
@@ -160,7 +165,7 @@ describe("Loop remote branch GitHub adapter", () => {
           headSha: "abc123",
           baseBranch: "dev",
           closedAt: "2026-08-07T14:16:23Z",
-          externalCloseReason: "obsolete",
+          externalCloseReason: "duplicate",
         },
       ],
     });

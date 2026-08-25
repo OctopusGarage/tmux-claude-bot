@@ -172,6 +172,11 @@ active occurrence owns the repository.
 Repository review queue reconciliation must treat authoritative ledger repair
 closures such as `fixed`, `completed`, `not-needed`, `superseded`, and
 `not-reproducible` as terminal completed queue evidence.
+Loop remote-branch cleanup may delete closed unmerged Loop PR heads only from
+structured WorkOrder PR decisions or repository-authorized post-close comments
+that use allowlisted close reasons, including concise forms such as `obsolete`
+and operator prose such as `closed as duplicate`; free-form unclassified closure
+text remains non-deletable.
 No-delta recovery alignment invariant: when authoritative verification proves
 the target already healthy, the WorkOrder completes with a clean-worktree gate
 and `commits: []` even if its normal commit and PR policies are enabled. The
