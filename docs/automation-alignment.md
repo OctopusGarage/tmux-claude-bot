@@ -219,6 +219,10 @@ for an operator to inspect tmux.
 Repository-review queue recovery may label an occurrence `running` only when
 its WorkOrder id and supervisor session match an active worker lease; a
 `dispatching` file alone is never a capacity reservation.
+Control-socket write failures are retryable transport failures and must fail
+the in-flight request promptly instead of waiting for the full request timeout.
+Server-side broken-pipe responses must be contained to the affected connection
+and must not leave command delivery ambiguous for automation recovery.
 Safe project-recovery dispatch deferrals remain immediately claimable in the
 Repair Coordinator queue; they must not be delayed until the original cron
 schedule fires again.

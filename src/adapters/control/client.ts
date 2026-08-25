@@ -156,9 +156,23 @@ export class ControlClient extends EventEmitter {
       }, timeoutMs);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
-      this.conn.write(
-        encodeLine({ id, caller: this.callerProvenance(), ...payload } as ControlRequest),
-      );
+      const failWrite = (err: Error): void => {
+        const pending = this.pending.get(id);
+        if (pending === undefined) return;
+        this.pending.delete(id);
+        clearTimeout(pending.timer);
+        pending.reject(new Error(`control request write failed: ${err.message}`));
+      };
+      try {
+        this.conn.write(
+          encodeLine({ id, caller: this.callerProvenance(), ...payload } as ControlRequest),
+          (err) => {
+            if (err) failWrite(err);
+          },
+        );
+      } catch (err) {
+        failWrite(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 

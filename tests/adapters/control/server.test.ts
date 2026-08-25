@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import type { Server } from "node:net";
 import net from "node:net";
@@ -225,5 +226,24 @@ describe("control server ↔ client (real unix socket)", () => {
 
     await expect(client.peek("silent", 5)).rejects.toThrow("control request timed out after 20ms");
     for (const socket of sockets) socket.destroy();
+  });
+
+  it("fails a request immediately when the socket write fails", async () => {
+    client = new ControlClient({ requestTimeoutMs: 10_000 });
+    const socket = new EventEmitter() as EventEmitter & {
+      end: () => void;
+      write: (chunk: string, cb?: (err?: Error) => void) => boolean;
+    };
+    socket.end = () => {};
+    socket.write = (_chunk, cb) => {
+      setTimeout(() => cb?.(new Error("write failed")), 0);
+      return false;
+    };
+
+    (client as unknown as { wire: (conn: typeof socket) => void }).wire(socket);
+
+    await expect(client.peek("broken", 5)).rejects.toThrow(
+      "control request write failed: write failed",
+    );
   });
 });

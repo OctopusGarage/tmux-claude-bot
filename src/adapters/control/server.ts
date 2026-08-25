@@ -44,7 +44,16 @@ export function startControlServer(deps: HandlerDeps): net.Server {
     const decode = createLineDecoder<ControlRequest>();
     const send = (msg: ServerMessage): void => {
       if (!conn.writable) return;
-      conn.write(encodeLine(msg));
+      try {
+        conn.write(encodeLine(msg), (err) => {
+          if (!err) return;
+          log.warn("control response write failed", { err });
+          conn.destroy();
+        });
+      } catch (err) {
+        log.warn("control response write failed", { err });
+        conn.destroy();
+      }
     };
     clients.add(send);
 
