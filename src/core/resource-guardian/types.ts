@@ -45,6 +45,7 @@ export type DeepResourceProbe = () => Promise<DeepResourceSnapshot>;
 export type ResourceSample = {
   capturedAt: number;
   hostCpuPct: number;
+  hostCpuStatus?: "available" | "unavailable";
   loadPct: number;
   eventLoopLagMs: number;
   thermal: ThermalPressure;

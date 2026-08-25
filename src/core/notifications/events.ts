@@ -20,6 +20,7 @@ export type ResourcePressureTransitionEvent = {
   newState: PressureState;
   incidentId: string | null;
   hostCpuPct: number;
+  hostCpuStatus?: "available" | "unavailable";
   loadPct: number;
   eventLoopLagMs: number;
   circuit: ResourceCircuitAdmission;
@@ -123,7 +124,7 @@ function resourcePressureBody(event: ResourcePressureTransitionEvent): string {
       ? [`event loop lag ${formatLagDuration(event.eventLoopLagMs)}`]
       : []),
     `load ${Math.round(event.loadPct)}%`,
-    `CPU ${Math.round(event.hostCpuPct)}%`,
+    event.hostCpuStatus === "unavailable" ? "CPU n/a" : `CPU ${Math.round(event.hostCpuPct)}%`,
     `${event.circuit} admission`,
   ].join(" · ");
 }

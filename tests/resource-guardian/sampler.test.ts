@@ -62,6 +62,7 @@ describe("createResourceSampler", () => {
     ).resolves.toMatchObject({
       capturedAt: 100,
       hostCpuPct: 0,
+      hostCpuStatus: "unavailable",
       loadPct: 50,
       eventLoopLagMs: 0,
       thermal: "unknown",
@@ -78,6 +79,7 @@ describe("createResourceSampler", () => {
       sampler.sample({ now: 140, scheduledAt: 125, deep: false }),
     ).resolves.toMatchObject({
       hostCpuPct: 80,
+      hostCpuStatus: "available",
       loadPct: 50,
       eventLoopLagMs: 15,
     });
@@ -91,7 +93,7 @@ describe("createResourceSampler", () => {
     await sampler.sample({ now: 100, scheduledAt: 90, deep: false });
     await expect(
       sampler.sample({ now: 3_600_140, scheduledAt: 125, deep: false }),
-    ).resolves.toMatchObject({ hostCpuPct: 0, eventLoopLagMs: 0 });
+    ).resolves.toMatchObject({ hostCpuPct: 0, hostCpuStatus: "unavailable", eventLoopLagMs: 0 });
   });
 
   it("copies the CPU baseline when a probe reuses its totals object", async () => {

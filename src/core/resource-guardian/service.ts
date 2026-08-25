@@ -478,6 +478,9 @@ export async function runResourceGuardianTick(
         eventLoopLagMs: freshSample.eventLoopLagMs,
         circuit,
         actionSummary,
+        ...(freshSample.hostCpuStatus === undefined
+          ? {}
+          : { hostCpuStatus: freshSample.hostCpuStatus }),
       });
       if (pressure !== "healthy" && notifiedIncident) runtime.incident = notifiedIncident;
     }
@@ -690,6 +693,7 @@ async function notifyTransition(input: {
   oldState: PressureState;
   newState: PressureState;
   hostCpuPct: number;
+  hostCpuStatus?: ResourceSample["hostCpuStatus"];
   loadPct: number;
   eventLoopLagMs: number;
   circuit: ResourceCircuitAdmission;
@@ -708,6 +712,7 @@ async function notifyTransition(input: {
       eventLoopLagMs: input.eventLoopLagMs,
       circuit: input.circuit,
       actionSummary: input.actionSummary,
+      ...(input.hostCpuStatus === undefined ? {} : { hostCpuStatus: input.hostCpuStatus }),
     });
     if (request === null) {
       outcome = "skipped";

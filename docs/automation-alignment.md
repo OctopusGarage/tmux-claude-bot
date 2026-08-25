@@ -98,6 +98,9 @@ Resource Guardian recovery is a guarded reopening phase: it must keep heavy
 autonomous work closed while allowing light repair probes and health checks to
 continue, so a recovering host can prove and repair system state without waiting
 for the full healthy window.
+Resource Guardian host CPU samples without a reliable delta baseline are
+unavailable, not zero. Notifications and public status output must render them
+as unknown while preserving load-based pressure decisions.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing

@@ -50,7 +50,11 @@ function configuredProfile(env: Map<string, string>): ResourceGuardianProfile {
   return value === "conservative" ? "conservative" : "balanced";
 }
 
-function publicSample(sample: ResourceSample): Omit<ResourceSample, "deepSnapshot"> & {
+function publicSample(sample: ResourceSample): Omit<
+  ResourceSample,
+  "deepSnapshot" | "hostCpuPct"
+> & {
+  hostCpuPct: number | null;
   deepSnapshot?: {
     capturedAt: number;
     thermal: ResourceSample["thermal"];
@@ -60,9 +64,13 @@ function publicSample(sample: ResourceSample): Omit<ResourceSample, "deepSnapsho
   };
 } {
   const { deepSnapshot, ...summary } = sample;
-  if (deepSnapshot === undefined) return summary;
-  return {
+  const publicSummary = {
     ...summary,
+    hostCpuPct: sample.hostCpuStatus === "unavailable" ? null : sample.hostCpuPct,
+  };
+  if (deepSnapshot === undefined) return publicSummary;
+  return {
+    ...publicSummary,
     deepSnapshot: {
       capturedAt: deepSnapshot.capturedAt,
       thermal: deepSnapshot.thermal,

@@ -44,16 +44,16 @@ export function createResourceSampler(
       const cpuCount = lightweightProbe.cpuCount();
       const eventLoopLagMs = Math.max(0, now - scheduledAt);
       const resumedAfterSuspension = eventLoopLagMs > suspensionGapMs;
-      const hostCpuPct =
-        previousCpuTotals && !resumedAfterSuspension
-          ? hostCpuBusyPct(previousCpuTotals, currentCpuTotals)
-          : 0;
+      const baseline = previousCpuTotals;
+      const hasHostCpuBaseline = baseline !== undefined && !resumedAfterSuspension;
+      const hostCpuPct = hasHostCpuBaseline ? hostCpuBusyPct(baseline, currentCpuTotals) : 0;
       previousCpuTotals = { ...currentCpuTotals };
       const deepSnapshot = deep ? await deepProbe() : undefined;
 
       return {
         capturedAt: now,
         hostCpuPct,
+        hostCpuStatus: hasHostCpuBaseline ? "available" : "unavailable",
         loadPct: cpuCount > 0 ? Math.round((oneMinuteLoad / cpuCount) * 100) : 0,
         eventLoopLagMs: resumedAfterSuspension ? 0 : eventLoopLagMs,
         thermal: deepSnapshot?.thermal ?? "unknown",

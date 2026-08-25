@@ -66,11 +66,16 @@ function isNullableId(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
+function isHostCpuStatus(value: unknown): value is ResourceSample["hostCpuStatus"] {
+  return value === "available" || value === "unavailable";
+}
+
 function isSample(value: unknown): value is ResourceSample {
   if (!isRecord(value)) return false;
   return (
     isFiniteNumber(value.capturedAt) &&
     isFiniteNumber(value.hostCpuPct) &&
+    (value.hostCpuStatus === undefined || isHostCpuStatus(value.hostCpuStatus)) &&
     isFiniteNumber(value.loadPct) &&
     isFiniteNumber(value.eventLoopLagMs) &&
     (value.thermal === "normal" || value.thermal === "pressure" || value.thermal === "unknown") &&

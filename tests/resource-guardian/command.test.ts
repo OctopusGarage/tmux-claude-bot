@@ -52,6 +52,7 @@ describe("Resource Guardian operator command", () => {
         {
           capturedAt: 1,
           hostCpuPct: 95,
+          hostCpuStatus: "unavailable",
           loadPct: 90,
           eventLoopLagMs: 12,
           thermal: "normal",
@@ -102,6 +103,7 @@ describe("Resource Guardian operator command", () => {
     expect(incidents.stdout).not.toContain("super-secret");
     expect(incidents.stdout).not.toContain("command");
     expect(incidents.stdout).not.toContain("cwd");
+    expect(incidents.stdout).toContain('"hostCpuPct": null');
     expect(runResourceGuardianCommand(["incidents", "--limit", "0"])).toMatchObject({
       exitCode: 1,
     });

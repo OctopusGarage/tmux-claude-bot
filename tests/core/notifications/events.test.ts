@@ -44,6 +44,24 @@ describe("notification event contracts", () => {
     });
   });
 
+  it("does not render unavailable host CPU samples as zero CPU", () => {
+    const request = notificationRequestForEvent({
+      kind: "resource.pressure-transition",
+      oldState: "elevated",
+      newState: "critical",
+      incidentId: "resource-42",
+      hostCpuPct: 0,
+      hostCpuStatus: "unavailable",
+      loadPct: 87,
+      eventLoopLagMs: 0,
+      circuit: "background-closed",
+      actionSummary: "protect mode closed background admission",
+    });
+
+    if (request === null) throw new Error("expected actionable transition");
+    expect(request.body).toBe("load 87% · CPU n/a · background-closed admission");
+  });
+
   it("renders resource action failures without pretending they are pressure transitions", () => {
     const request = notificationRequestForEvent({
       kind: "resource.action-failed",
