@@ -27,6 +27,14 @@ export type AutomationAdmission =
   | { allowed: false; reason: string; incidentId: string | null; retryAt?: number };
 
 const REQUIRED_IDLE_MS = 15 * 60_000;
+const AUTONOMOUS_HEAVY_RETRY_MS = 15 * 60_000;
+
+function shouldSerializeAutonomousHeavyWork(input: ResourceAdmissionInput): boolean {
+  return (
+    input.weight === "heavy" &&
+    (input.trigger === "background" || input.trigger === "resource-repair")
+  );
+}
 
 /**
  * One pre-reservation gate for autonomous work. Quiet hours decide first so a
@@ -93,6 +101,14 @@ export function admitAutomationWork(
         reason: capacity.reason,
         incidentId: null,
         ...(capacity.retryAt === undefined ? {} : { retryAt: capacity.retryAt }),
+      };
+    }
+    if (shouldSerializeAutonomousHeavyWork(input) && options.capacity.activeAutonomousLeases > 0) {
+      return {
+        allowed: false,
+        reason: "autonomous-heavy-active-lease",
+        incidentId: null,
+        retryAt: input.now + AUTONOMOUS_HEAVY_RETRY_MS,
       };
     }
   }

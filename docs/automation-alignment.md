@@ -104,6 +104,12 @@ as unknown while preserving load-based pressure decisions.
 User-facing automation status must not render unavailable percentages or probe
 timestamps as numeric zero or the Unix epoch. Use null, unknown, or n/a at the
 presentation boundary unless zero is measured evidence.
+Autonomous background heavy work is serialized per agent even when usage
+capacity is available. The shared admission gate must defer a new background or
+resource-repair heavy task while another autonomous heavy lease is active, so
+Loop Engineering, Autopilot, Daily Task Audit, Runtime Guardian, Project
+Recovery, and Resource Guardian repair cannot stack verification-heavy workers
+on the same host.
 System Self-Heal broad agent sweeps must leave durable ledger evidence when
 admission blocks the sweep before WorkOrder creation; otherwise the hourly
 operator-equivalent check can disappear from the next audit window.
