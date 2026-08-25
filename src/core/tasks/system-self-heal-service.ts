@@ -12,6 +12,7 @@ import {
   createProjectRecoveryDelegator,
   dispatchProjectRecovery,
 } from "./project-recovery-dispatch.js";
+import { DailyTaskLedger } from "./task-ledger.js";
 import { reconcileAutopilotDelegatedTasks } from "./task-reconciliation.js";
 
 const log = createLogger("tasks.system-self-heal");
@@ -81,8 +82,9 @@ export function startSystemSelfHeal(
     options.clearInterval ??
     ((timer: TimerHandle) => clearInterval(timer as ReturnType<typeof setInterval>));
   const tick = (): void => {
+    const tickNow = now();
     void runTick({
-      now: now(),
+      now: tickNow,
       config,
       runAudit: ({ now: auditNow, force }) =>
         runDailyTaskAuditServiceTick({
@@ -115,7 +117,7 @@ export function startSystemSelfHeal(
           skipScheduledAudit: true,
           force,
         }),
-      runAgentSweep: () => dispatchAgentSelfHealSweep(deps),
+      runAgentSweep: () => dispatchAgentSelfHealSweep(deps, tickNow),
     }).catch((err) => log.warn("system self-heal tick failed", { err }));
   };
   const timer = (options.setInterval ?? setInterval)(tick, config.tickMs);
@@ -127,6 +129,7 @@ export function startSystemSelfHeal(
 
 async function dispatchAgentSelfHealSweep(
   deps: HandlerDeps,
+  now = Date.now(),
 ): Promise<"disabled" | "queued" | "blocked"> {
   if (!deps.config.systemSelfHeal.agentSweepEnabled) return "disabled";
   const repoPath = deps.config.taskAudit.repoPath.trim() || process.cwd();
@@ -140,6 +143,7 @@ async function dispatchAgentSelfHealSweep(
     resourceForce: false,
   });
   if (result.status === "blocked") {
+    recordBlockedAgentSweep(now, result.reason);
     log.info("system self-heal agent sweep deferred", { data: { reason: result.reason } });
     return "blocked";
   }
@@ -147,6 +151,24 @@ async function dispatchAgentSelfHealSweep(
     data: { runId: result.runId, supervisorSession: result.supervisorSession },
   });
   return "queued";
+}
+
+function recordBlockedAgentSweep(now: number, reason: string): void {
+  const ledger = new DailyTaskLedger();
+  const taskId = `system-self-heal:agent-sweep:${now}`;
+  ledger.expect({
+    taskId,
+    source: "system-self-heal",
+    name: "tmux-claude-bot system self-heal agent sweep",
+    scheduledAt: now,
+    summary: "System self-heal attempted to queue the broad active-agent sweep.",
+  });
+  ledger.start(taskId, now);
+  ledger.fail(taskId, {
+    endedAt: now,
+    error: reason,
+    summary: `System self-heal agent sweep deferred before WorkOrder creation: ${reason}`,
+  });
 }
 
 function buildAgentSelfHealRequirement(): string {

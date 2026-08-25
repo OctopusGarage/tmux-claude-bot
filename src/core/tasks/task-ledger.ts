@@ -10,6 +10,7 @@ export const SCHEDULED_TASK_SOURCES = [
   "launchd",
   "daily-audit",
   "autopilot-delegate",
+  "system-self-heal",
 ] as const;
 
 export type ScheduledTaskSource = (typeof SCHEDULED_TASK_SOURCES)[number];

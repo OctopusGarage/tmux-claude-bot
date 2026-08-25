@@ -8,6 +8,7 @@ import {
   runSystemSelfHealTick,
   startSystemSelfHeal,
 } from "../../src/core/tasks/system-self-heal-service.js";
+import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 vi.mock("../../src/core/autopilot/delegated-task.js", () => ({
   startActiveDelegatedTask: vi.fn(async () => ({
@@ -203,6 +204,68 @@ describe("system self-heal service", () => {
     );
     expect(request?.requirement).toContain(
       "If the missing automation is bot-owned, fix that automation gap too",
+    );
+  });
+
+  it("records blocked agent sweep attempts in the task ledger", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-system-self-heal-blocked-"));
+    vi.mocked(startActiveDelegatedTask).mockResolvedValueOnce({
+      status: "blocked",
+      reason: "automation admission deferred: capacity-unknown-active-lease",
+      showQueue: false,
+    });
+    const deps = {
+      config: {
+        projectSessionPrefix: "tmux_proj_",
+        systemSelfHeal: {
+          enabled: true,
+          tickMs: 3_600_000,
+          agentSweepEnabled: true,
+        },
+        taskAudit: {
+          enabled: false,
+          tickMs: 0,
+          schedule: "0 0 1 1 *",
+          repoPath: "/repo/tmux-claude-bot",
+          repairBranch: "dev",
+          autoRepair: false,
+          repairWorktreeIsolation: "isolated",
+          channel: "lark",
+        },
+        loopEngineering: {
+          configFile: undefined,
+          supervisor: {
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+      bridge: { killSession: vi.fn() },
+      notifications: { notify: vi.fn() },
+    } as unknown as HandlerDeps;
+    const runTick = vi.fn(async (input: RunTickInput) => ({
+      fired: true as const,
+      audit: { fired: false as const, reason: "not-due" as const },
+      agentSweep: await input.runAgentSweep(),
+    }));
+
+    startSystemSelfHeal(deps, {
+      now: () => 2_000,
+      runTick,
+      setInterval: () => 7 as never,
+      clearInterval: vi.fn(),
+    });
+
+    await vi.waitFor(() =>
+      expect(new DailyTaskLedger().listAll()).toContainEqual(
+        expect.objectContaining({
+          taskId: "system-self-heal:agent-sweep:2000",
+          source: "system-self-heal",
+          name: "tmux-claude-bot system self-heal agent sweep",
+          status: "failed",
+          repairStatus: "pending",
+          error: "automation admission deferred: capacity-unknown-active-lease",
+        }),
+      ),
     );
   });
 });
