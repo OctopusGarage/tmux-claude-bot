@@ -168,6 +168,45 @@ describe("automation admission", () => {
     expect(resourceAdmission).not.toHaveBeenCalled();
   });
 
+  it("serializes autonomous heavy work even when usage capacity is available", () => {
+    const now = atSingapore("2026-08-11T12:00:00");
+    const resourceAdmission = vi.fn(() => ({
+      allowed: true as const,
+      reason: "open",
+      incidentId: null,
+    }));
+
+    expect(
+      admitAutomationWork(input({ now }), {
+        capacity: capacity({ activeAutonomousLeases: 1 }),
+        resourceAdmission,
+      }),
+    ).toEqual({
+      allowed: false,
+      reason: "autonomous-heavy-active-lease",
+      incidentId: null,
+      retryAt: now + 15 * 60_000,
+    });
+    expect(resourceAdmission).not.toHaveBeenCalled();
+  });
+
+  it("does not serialize reconcile work for an existing autonomous lease", () => {
+    const now = atSingapore("2026-08-11T12:00:00");
+    const resourceAdmission = vi.fn(() => ({
+      allowed: true as const,
+      reason: "open",
+      incidentId: null,
+    }));
+
+    expect(
+      admitAutomationWork(input({ now, trigger: "reconcile" }), {
+        capacity: capacity({ activeAutonomousLeases: 1 }),
+        resourceAdmission,
+      }),
+    ).toEqual({ allowed: true, reason: "open", incidentId: null });
+    expect(resourceAdmission).toHaveBeenCalledOnce();
+  });
+
   it("does not apply recent-activity deferral to operator work", () => {
     const now = atSingapore("2026-08-11T12:00:00");
     expect(

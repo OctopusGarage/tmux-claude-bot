@@ -1062,6 +1062,10 @@ bot-owned incident with failed deterministic-cleanup evidence, persists a
 repair intent before delegation, and shares the global Repair Coordinator's
 one-at-a-time fingerprint, cooldown, and retry boundaries. A pressure relapse,
 external/unknown attribution, or missing durable evidence blocks repair.
+The same shared admission gate serializes autonomous background heavy work per
+agent even when usage capacity is available. A new background or resource-repair
+heavy task waits while another autonomous heavy lease is active, which prevents
+multiple local verification-heavy workers from piling onto one host.
 
 Task 7 adds a read-only ownership resolver for deep process samples. Strong
 bot attribution requires an exact `pid` plus process-start identity, a verified

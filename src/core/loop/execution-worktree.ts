@@ -187,7 +187,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
         }
       }
       reconciledMissingWorktrees.add(reconciliationKey);
-      log.info("loop missing worktree registration is already reconciled", {
+      log.debug("loop missing worktree registration is already reconciled", {
         data: { worktree, sourceWorktree },
       });
       return "already-clean";
