@@ -408,4 +408,63 @@ describe("supervisor resource reconciliation", () => {
       }),
     ]);
   });
+
+  it("terminalizes in-flight active leases when the worker pane no longer owns an active turn", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const scheduledAt = Date.now() - 6 * 60 * 1_000;
+    const order = workOrder(stateDir, {
+      id: "inflight-idle-run",
+      task: { kind: "harness-auto" },
+    } as Partial<LoopWorkOrder>);
+    mkdirSync(order.projectPath, { recursive: true });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: scheduledAt,
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-worker-app-inflight-idle-run",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: order.projectPath,
+          status: "active",
+          leasedAt: scheduledAt,
+          updatedAt: scheduledAt,
+        },
+      ],
+    });
+
+    await expect(
+      reconcileTerminalSupervisorResources({
+        now: Date.now(),
+        workerSessionOwnsActiveTurn: async () => false,
+      }),
+    ).resolves.toMatchObject({ abandonedWorkOrders: 1 });
+
+    const state = JSON.parse(
+      readFileSync(
+        join(stateDir, "loop-runs", "app", "inflight-idle-run", "work-order-state.json"),
+        {
+          encoding: "utf8",
+        },
+      ),
+    ) as { status?: string; resultStatus?: string; revisionReasons?: string[] };
+    expect(state).toMatchObject({
+      status: "failed",
+      resultStatus: "dispatch-timeout",
+    });
+    expect(state.revisionReasons).toContain(
+      "active supervisor worker lease no longer owns an active queue turn",
+    );
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workOrderId: order.id,
+        status: "retained",
+      }),
+    ]);
+  });
 });

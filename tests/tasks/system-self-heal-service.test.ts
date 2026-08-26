@@ -207,7 +207,7 @@ describe("system self-heal service", () => {
     );
   });
 
-  it("records blocked agent sweep attempts in the task ledger", async () => {
+  it("records blocked agent sweep attempts as deferred skips in the task ledger", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-system-self-heal-blocked-"));
     vi.mocked(startActiveDelegatedTask).mockResolvedValueOnce({
       status: "blocked",
@@ -261,9 +261,10 @@ describe("system self-heal service", () => {
           taskId: "system-self-heal:agent-sweep:2000",
           source: "system-self-heal",
           name: "tmux-claude-bot system self-heal agent sweep",
-          status: "failed",
-          repairStatus: "pending",
-          error: "automation admission deferred: capacity-unknown-active-lease",
+          status: "skipped",
+          repairStatus: "not-needed",
+          summary:
+            "System self-heal agent sweep deferred before WorkOrder creation: automation admission deferred: capacity-unknown-active-lease",
         }),
       ),
     );

@@ -184,6 +184,23 @@ describe("project recovery", () => {
     });
   });
 
+  it("does not treat ordinary source worktree audit notes as branch-state failures", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "blocked",
+        summary:
+          "Original source worktree stayed on dev and clean. PR checks failed because GitHub account payments failed or spending limit needs to be increased.",
+        artifactText:
+          "No source worktree mutation was performed; the remaining blocker is GitHub billing.",
+        attempt: 0,
+      }),
+    ).toMatchObject({
+      classification: "waiting-external",
+      reason: expect.stringContaining("external service"),
+    });
+  });
+
   it("resolves repository and workspace targets", () => {
     expect(
       resolveConfiguredRecoveryTarget(

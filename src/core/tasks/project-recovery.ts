@@ -43,7 +43,7 @@ const ASSESSMENT_SCORING_CONTRACT_RE =
 const CAPACITY_OR_LEASE_RE =
   /(supervisor lease|interactive-agent-busy|automation admission deferred|already has active automation|active workorder|active recovery|queue full|supervisor.*busy)/;
 const SOURCE_GIT_STATE_RE =
-  /(source worktree|source branch|branch.*diverg|diverg.*branch|neither ancestor nor descendant|not an ancestor|ahead .* behind|behind .* ahead)/;
+  /(source worktree is dirty|source branch.*dirty|source branch.*diverg|branch.*diverg|diverg.*branch|neither ancestor nor descendant|not an ancestor|ahead .* behind|behind .* ahead)/;
 const GENERIC_RETRYABLE_RE =
   /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery|can be retried|missing|preflight|dependency|worktree|branch|handoff|dispatch|supervisor-failed|not-found|no pull requests|worker)/;
 

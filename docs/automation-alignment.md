@@ -116,6 +116,9 @@ on the same host.
 System Self-Heal broad agent sweeps must leave durable ledger evidence when
 admission blocks the sweep before WorkOrder creation; otherwise the hourly
 operator-equivalent check can disappear from the next audit window.
+That durable evidence is a deferred `skipped/not-needed` attempt, not a
+`failed/pending` repair candidate, because no WorkOrder was created and the next
+scheduled sweep remains responsible for retrying once admission opens.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing

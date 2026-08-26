@@ -128,13 +128,12 @@ export async function runProjectRecoveryPass(input: {
       continue;
     }
     if (classification.classification === "waiting-external") {
-      if (record.repairStatus === "blocked") {
-        input.updateRepairStatus(
-          record.taskId,
-          "pending",
-          `Recovery classification: waiting-external; ${classification.reason}`,
-        );
-      }
+      input.updateRepairStatus(
+        record.taskId,
+        "blocked",
+        `Recovery classification: waiting-external; ${classification.reason}`,
+      );
+      closeLinkedProjectRecoveryQueues(input.coordinator, record.taskId, input.now);
       result.waitingExternal++;
       continue;
     }
@@ -437,11 +436,13 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       if (acceptedBlockedRecoveries.length > 0) {
         const summary =
           "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.";
-        for (const original of originals) {
-          input.updateRepairStatus(original.taskId, "blocked", summary);
-        }
-        for (const recovery of acceptedBlockedRecoveries) {
-          input.updateRepairStatus(recovery.taskId, "blocked", summary);
+        for (const record of linkedAcceptedBlockedClosureRecords(
+          queueRecord.linkedTaskIds,
+          linked,
+          byTaskId,
+        )) {
+          input.updateRepairStatus(record.taskId, "blocked", summary);
+          closedTaskIds.add(record.taskId);
         }
         input.coordinator.markTerminal(queueRecord.id, "blocked", input.now);
         result.blocked++;
@@ -471,6 +472,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     }
   }
   for (const record of input.records) {
+    if (closedTaskIds.has(record.taskId)) continue;
     if (
       (record.source !== "loop-engineering" && record.source !== "autopilot-delegate") ||
       !["failed", "missing", "running-timeout"].includes(record.status) ||
@@ -497,6 +499,24 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     const queueRecord = input.coordinator
       .list()
       .find((queued) => queued.linkedTaskIds.includes(record.taskId));
+    if (
+      queueRecord !== undefined &&
+      isRepairTerminal(queueRecord.status) &&
+      queueRecord.source === "project-recovery" &&
+      hasLinkedAcceptedBlockedRecoveryArtifact(queueRecord.linkedTaskIds, byTaskId)
+    ) {
+      const summary =
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.";
+      for (const closure of linkedAcceptedBlockedClosureRecords(
+        queueRecord.linkedTaskIds,
+        [record],
+        byTaskId,
+      )) {
+        input.updateRepairStatus(closure.taskId, "blocked", summary);
+      }
+      result.blocked++;
+      continue;
+    }
     if (queueRecord !== undefined && isRepairTerminal(queueRecord.status)) continue;
     const reviewGate = summary.reviewGate;
     const passed =
@@ -567,6 +587,19 @@ function linkedRepairQueueStatus(
   return "not-reproducible";
 }
 
+function closeLinkedProjectRecoveryQueues(
+  coordinator: RepairCoordinator,
+  taskId: string,
+  now: number,
+): void {
+  for (const queued of coordinator.list()) {
+    if (queued.source !== "project-recovery") continue;
+    if (isRepairTerminal(queued.status)) continue;
+    if (!queued.linkedTaskIds.includes(taskId)) continue;
+    coordinator.markTerminal(queued.id, "blocked", now);
+  }
+}
+
 function dedupeWorkOrdersByRunDir(
   records: readonly UnfinishedLoopSupervisorWorkOrder[],
 ): UnfinishedLoopSupervisorWorkOrder[] {
@@ -619,6 +652,15 @@ function terminalProjectRecoveryRunIds(coordinator: RepairCoordinator): Set<stri
   );
 }
 
+function hasLinkedAcceptedBlockedRecoveryArtifact(
+  linkedTaskIds: readonly string[],
+  byTaskId: ReadonlyMap<string, ScheduledTaskRecord>,
+): boolean {
+  return linkedAcceptedBlockedClosureRecords(linkedTaskIds, [], byTaskId).some((record) =>
+    acceptedBlockedRecoveryArtifact(record.reportPath),
+  );
+}
+
 function isCoveredByTerminalProjectRecovery(
   record: ScheduledTaskRecord,
   terminalClosureRunIds: ReadonlySet<string>,
@@ -633,6 +675,39 @@ function isCoveredByTerminalProjectRecovery(
   if (!record.taskId.includes(":active-delegated-task:")) return false;
   const runId = record.taskId.split(":").at(-1);
   return runId !== undefined && terminalClosureRunIds.has(runId);
+}
+
+function linkedAcceptedBlockedClosureRecords(
+  linkedTaskIds: readonly string[],
+  linkedRecords: readonly ScheduledTaskRecord[],
+  byTaskId: ReadonlyMap<string, ScheduledTaskRecord>,
+): ScheduledTaskRecord[] {
+  const runIds = new Set(
+    linkedTaskIds
+      .map((taskId) => /^autopilot:([^:]+)$/.exec(taskId)?.[1])
+      .filter((runId): runId is string => runId !== undefined)
+      .flatMap((runId) => runIdAliases(runId)),
+  );
+  const records = new Map(linkedRecords.map((record) => [record.taskId, record]));
+  for (const taskId of linkedTaskIds) {
+    const record = byTaskId.get(taskId);
+    if (record !== undefined) records.set(taskId, record);
+  }
+  for (const runId of runIds) {
+    for (const [taskId, record] of byTaskId) {
+      if (taskId === `autopilot:${runId}` || taskId.endsWith(`:${runId}`)) {
+        records.set(taskId, record);
+      }
+    }
+  }
+  return [...records.values()].filter(
+    (record) =>
+      ["failed", "missing", "running-timeout", "running"].includes(record.status) &&
+      (record.repairStatus === undefined ||
+        record.repairStatus === "pending" ||
+        record.repairStatus === "running" ||
+        record.repairStatus === "blocked"),
+  );
 }
 
 function runIdAliases(runId: string): string[] {

@@ -165,7 +165,12 @@ async function reconcileAbandonedActiveLoopSupervisorWorkerLeases(
   let settled = 0;
   for (const record of readLoopSupervisorWorkOrderRegistry(now).unfinished) {
     if (excludedWorkOrderIds.has(record.workOrder.id)) continue;
-    if (record.state.status !== "queued" && record.state.status !== "dispatching") continue;
+    if (
+      record.state.status !== "queued" &&
+      record.state.status !== "dispatching" &&
+      record.state.status !== "in-flight"
+    )
+      continue;
     if (now - record.state.updatedAt <= STALE_DISPATCHING_WORK_ORDER_MS) continue;
     if (parseWorkerFinalSummaryExists(record.workOrder)) continue;
     const lease = activeLeasesByWorkOrder.get(record.workOrder.id);

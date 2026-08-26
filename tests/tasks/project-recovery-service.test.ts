@@ -925,6 +925,127 @@ describe("project recovery service", () => {
     );
   });
 
+  it("blocks waiting-external recoveries instead of leaving them pending", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+    const dispatch = vi.fn();
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:pr-review:fluent-frame-all-prs:1",
+          source: "loop-engineering",
+          name: "fluent-frame-all-prs repository-pull-request-review",
+          status: "failed",
+          error: "blocked",
+          summary:
+            "GitHub Actions job was not started because recent account payments failed or spending limit needs to be increased.",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "pending",
+        },
+      ],
+      config: {
+        projects: [],
+        repositories: [{ id: "fluent-frame-all-prs", path: "/repo/fluent-frame" }],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ waitingExternal: 1, dispatched: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:pr-review:fluent-frame-all-prs:1",
+      "blocked",
+      "Recovery classification: waiting-external; evidence points to an external service or execution dependency",
+    );
+    expect(coordinator.list()).toEqual([]);
+  });
+
+  it("blocks pending queues when a linked recovery has accepted blocked evidence", async () => {
+    const runDir = join(tmpdir(), `project-recovery-current-blocked-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        finalVerification: "passed",
+        reviewGate: { decision: "block" },
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({ accepted: true, resultStatus: "blocked" }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "fluent-frame-all-prs",
+      projectPath: "/repo/fluent-frame",
+      source: "project-recovery",
+      taskFamily: "fluent-frame-all-prs repository-pull-request-review",
+      fingerprint: "unknown",
+      taskId: "loop:pr-review:fluent-frame-all-prs:1",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(
+      queue.id,
+      [
+        "autopilot:1787720706612-fluent-frame-active-delegate",
+        "loop:fluent-frame:active-delegated-task:1787720706612",
+        "autopilot:1787723168018-fluent-frame-active-delegate",
+      ],
+      1_100,
+    );
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:pr-review:fluent-frame-all-prs:1",
+          source: "loop-engineering",
+          name: "fluent-frame-all-prs repository-pull-request-review",
+          status: "failed",
+          repairStatus: "pending",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:1787723168018-fluent-frame-active-delegate",
+          source: "autopilot-delegate",
+          name: "fluent-frame active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          reportPath: join(runDir, "supervisor.md"),
+          scheduledAt: 1_200,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 1 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:pr-review:fluent-frame-all-prs:1",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:1787723168018-fluent-frame-active-delegate",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "blocked",
+    });
+  });
+
   it("releases a failed delegated recovery immediately instead of waiting for lease expiry", async () => {
     process.env.TCB_STATE_DIR = join(tmpdir(), `project-recovery-failed-${Date.now()}`);
     writeLoopSupervisorWorkOrderState({
@@ -2011,7 +2132,7 @@ describe("project recovery service", () => {
     });
   });
 
-  it("keeps external waits pending without dispatching them", async () => {
+  it("blocks external waits without dispatching them", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();
     const dispatch = vi.fn();
@@ -2040,8 +2161,17 @@ describe("project recovery service", () => {
       canonicalize: (path) => path,
     });
 
-    expect(result).toMatchObject({ classified: 1, enqueued: 0, dispatched: 0 });
-    expect(updateRepairStatus).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      classified: 1,
+      enqueued: 0,
+      dispatched: 0,
+      waitingExternal: 1,
+    });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:geo:security-maintenance:1000",
+      "blocked",
+      "Recovery classification: waiting-external; evidence points to an external service or execution dependency",
+    );
     expect(dispatch).not.toHaveBeenCalled();
   });
 
@@ -2075,7 +2205,7 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "pending" });
   });
 
-  it("reopens a stale blocked classification when the evidence is external waiting", async () => {
+  it("keeps stale external waits blocked when better evidence is found", async () => {
     const updateRepairStatus = vi.fn();
     await runProjectRecoveryPass({
       now: 2_000,
@@ -2105,7 +2235,7 @@ describe("project recovery service", () => {
     });
     expect(updateRepairStatus).toHaveBeenCalledWith(
       "loop:geo:security-maintenance:1003",
-      "pending",
+      "blocked",
       expect.stringContaining("waiting-external"),
     );
   });
