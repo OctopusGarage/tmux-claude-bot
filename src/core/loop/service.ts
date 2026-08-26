@@ -1020,12 +1020,23 @@ export async function runLoopServiceTickAsync(input: {
         ...(input.notifications !== undefined ? { notifications: input.notifications } : {}),
       });
     } else {
+      const summary =
+        "summary" in result
+          ? result.summary.actionsTaken.join("; ") || result.status
+          : "Loop supervisor run did not complete successfully.";
       taskLedger.fail(ledgerTaskId, {
         endedAt,
         error: result.status,
-        summary: "Loop supervisor run did not complete successfully.",
+        summary,
         reportPath: completion.report.markdownPath,
       });
+      if (result.status === "blocked" && gate.failures.length === 0) {
+        taskLedger.markRepairStatus(ledgerTaskId, {
+          repairStatus: "blocked",
+          updatedAt: endedAt,
+          summary,
+        });
+      }
     }
     logSupervisorRunResult({
       runId,
@@ -2341,6 +2352,7 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
       ...(result.status === "completed"
         ? { summary: result.summary.actionsTaken.join("; ") || result.status }
         : { failureSummary: "Recovered loop supervisor run did not complete successfully." }),
+      closeBlockedRepairStatus: result.status === "blocked" && gate.failures.length === 0,
       advanceScheduler: !completion.retrySchedule && result.status !== "invalid-output",
       writeState: writeLoopSupervisorWorkOrderState,
       settleLease: (workOrder, resultStatus, now) =>

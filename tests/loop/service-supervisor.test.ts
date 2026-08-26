@@ -297,6 +297,73 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     expect(schedulerStore.getLastFired()).toEqual({});
   });
 
+  it("closes the ledger repair status when a supervised target is accepted as blocked", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-blocked-ledger-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-blocked-ledger-project-"));
+    const runSupervisorTask = vi.fn(async (request) => {
+      const marker = finalMarkerFromPrompt(request.prompt);
+      return {
+        status: 0,
+        stdout: `${marker}\n${JSON.stringify({
+          status: "blocked",
+          projectId: "hub",
+          actionsTaken: ["confirmed deterministic gate remains blocked"],
+          delegatedTasks: [],
+          finalVerification: "failed",
+          reviewGate: {
+            preMutationReview: ["Confirmed the blocker from durable gate evidence."],
+            postMutationReview: ["No mutation was safe for this blocker."],
+            aiReview: "not-run",
+            deterministicGates: [
+              {
+                name: "assessment target",
+                result: "failed",
+                evidence: "score 93 against target 95",
+              },
+            ],
+            decision: "block",
+            notes: ["Owner-owned prerequisite remains unmet."],
+            evidence: [
+              {
+                questionInvestigated: "Can the blocked gate be repaired automatically?",
+                conclusion: "No. The prerequisite is owner-owned.",
+                evidence: ["system-gate.json"],
+                uncertainty: "Low.",
+                recommendedNextStep: "Wait for owner prerequisite.",
+              },
+            ],
+          },
+          commits: [],
+          followUps: ["Wait for owner prerequisite."],
+        })}`,
+        stderr: "",
+      };
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile: writeLoopConfig({
+        projectPath: projectDir,
+        runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      }),
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 1, failed: 1 });
+    expect(new DailyTaskLedger().listAll()).toContainEqual(
+      expect.objectContaining({
+        taskId: expect.stringMatching(/^loop:hub:\d+$/),
+        status: "failed",
+        repairStatus: "blocked",
+        summary: "confirmed deterministic gate remains blocked",
+      }),
+    );
+  });
+
   it("reads active worker leases as supervisor capacity reservations", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-active-resources-"));
     writeLoopSupervisorWorkerLeaseState({
@@ -3549,6 +3616,7 @@ prReview:
       taskId: ledgerTaskId,
       status: "failed",
       error: "blocked",
+      repairStatus: "blocked",
     });
   });
 

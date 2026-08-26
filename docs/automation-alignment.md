@@ -81,6 +81,9 @@ Accepted blocked project-recovery closures that explicitly state no retryable
 project repair remains are terminal durable evidence. Later capacity/admission
 deferrals must not reopen those records or turn them back into pending repair
 work.
+When a Loop WorkOrder's system gate accepts a valid blocked supervisor summary,
+the task ledger must close that task with `repairStatus=blocked`; Daily Task
+Audit and dashboard attention must not keep it as pending repair work.
 Source worktree or configured source-branch divergence from its remote base is
 retryable automation repair evidence, not an accepted blocked closure, even when
 the worker blocked after verifying the divergence.

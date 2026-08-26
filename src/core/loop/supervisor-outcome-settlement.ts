@@ -19,7 +19,7 @@ type OutcomeDependencies = {
     now: number,
   ) => void;
   scheduler: Pick<LoopSchedulerStore, "setLastFired">;
-  ledger: Pick<DailyTaskLedger, "expect" | "start" | "finish" | "fail">;
+  ledger: Pick<DailyTaskLedger, "expect" | "start" | "finish" | "fail" | "markRepairStatus">;
 };
 
 export type SupervisorWorkOrderOutcome = OutcomeDependencies & {
@@ -32,6 +32,7 @@ export type SupervisorWorkOrderOutcome = OutcomeDependencies & {
   reportPath: string;
   summary?: string;
   failureSummary?: string;
+  closeBlockedRepairStatus?: boolean;
   advanceScheduler: boolean;
   skipLedger?: boolean;
 };
@@ -71,4 +72,11 @@ export function settleSupervisorWorkOrderOutcome(input: SupervisorWorkOrderOutco
     summary: input.failureSummary ?? "Loop supervisor run did not complete successfully.",
     reportPath: input.reportPath,
   });
+  if (input.closeBlockedRepairStatus && input.resultStatus === "blocked") {
+    input.ledger.markRepairStatus(ledgerTaskId, {
+      repairStatus: "blocked",
+      updatedAt: input.endedAt,
+      summary: input.failureSummary ?? input.resultStatus,
+    });
+  }
 }
