@@ -141,6 +141,8 @@ export class DailyTaskLedger {
       ...(input.reportPath !== undefined ? { reportPath: input.reportPath } : {}),
       updatedAt: input.endedAt,
     };
+    delete record.error;
+    delete record.failureKind;
     this.store.set(taskId, record);
     this.supersedeEarlierFailures(record);
     return record;
@@ -179,6 +181,8 @@ export class DailyTaskLedger {
       ...(input.summary !== undefined ? { summary: input.summary } : {}),
       updatedAt: input.endedAt,
     };
+    delete record.error;
+    delete record.failureKind;
     this.store.set(taskId, record);
     return record;
   }

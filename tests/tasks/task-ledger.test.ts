@@ -129,6 +129,51 @@ describe("DailyTaskLedger", () => {
     });
   });
 
+  it("clears stale failure fields when a task later succeeds or skips", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-clear-failure-"));
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:alcove:harness-auto",
+      source: "loop-engineering",
+      name: "alcove harness-auto",
+      scheduledAt: 1,
+    });
+    ledger.fail("loop:alcove:harness-auto", {
+      endedAt: 2,
+      error: "supervisor-failed",
+      summary: "supervised system gate failed",
+    });
+    ledger.finish("loop:alcove:harness-auto", { endedAt: 3, summary: "verified no-delta" });
+
+    expect(ledger.listAll()[0]).toMatchObject({
+      status: "success",
+      repairStatus: "not-needed",
+      summary: "verified no-delta",
+    });
+    expect(ledger.listAll()[0]?.error).toBeUndefined();
+    expect(ledger.listAll()[0]?.failureKind).toBeUndefined();
+
+    ledger.expect({
+      taskId: "system-self-heal:agent-sweep",
+      source: "system-self-heal",
+      name: "System self-heal agent sweep",
+      scheduledAt: 4,
+    });
+    ledger.fail("system-self-heal:agent-sweep", {
+      endedAt: 5,
+      error: "autonomous-heavy-active-lease",
+    });
+    ledger.skip("system-self-heal:agent-sweep", { endedAt: 6, summary: "deferred" });
+
+    expect(ledger.listAll()[1]).toMatchObject({
+      status: "skipped",
+      repairStatus: "not-needed",
+      summary: "deferred",
+    });
+    expect(ledger.listAll()[1]?.error).toBeUndefined();
+    expect(ledger.listAll()[1]?.failureKind).toBeUndefined();
+  });
+
   it("marks a running task as timed out after the timeout window", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-timeout-"));
     const ledger = new DailyTaskLedger();
