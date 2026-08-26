@@ -1007,7 +1007,10 @@ active-agent self-heal sweep with a broad operator-equivalent prompt when
 limited to a hard-coded checklist. The sweep must also ask why each abnormality
 was not already detected, retried, or repaired by existing automation; when that
 reason is a bot-owned automation gap, the same repair slice should fix the gap
-instead of waiting for an operator to rediscover it. It must still reuse Daily
+instead of waiting for an operator to rediscover it. When the sweep changes this
+repository, it must verify locally, commit on `dev`, push to `origin/dev`, run
+`git pull --rebase` after the successful push, and leave the worktree clean. It
+must still reuse Daily
 Task Audit repair dispatch, Project Recovery dispatch, Repair Coordinator
 leases, Resource Guardian admission, and the normal WorkOrder gates. It is not
 permission to bypass owner-decision, external-wait, capacity, clean-worktree, or

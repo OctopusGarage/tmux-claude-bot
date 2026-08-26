@@ -116,6 +116,11 @@ on the same host.
 System Self-Heal broad agent sweeps must leave durable ledger evidence when
 admission blocks the sweep before WorkOrder creation; otherwise the hourly
 operator-equivalent check can disappear from the next audit window.
+When a System Self-Heal broad sweep changes this repository, the WorkOrder must
+verify locally, commit on `dev`, push to `origin/dev`, run `git pull --rebase`
+after the successful push, and finish with a clean worktree. If commit, push, or
+rebase is blocked, the WorkOrder must record the exact blocker instead of
+leaving uncommitted edits behind.
 That durable evidence is a deferred `skipped/not-needed` attempt, not a
 `failed/pending` repair candidate, because no WorkOrder was created and the next
 scheduled sweep remains responsible for retrying once admission opens.

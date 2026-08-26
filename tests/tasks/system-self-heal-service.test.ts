@@ -205,6 +205,10 @@ describe("system self-heal service", () => {
     expect(request?.requirement).toContain(
       "If the missing automation is bot-owned, fix that automation gap too",
     );
+    expect(request?.requirement).toContain("commit the change on the dev branch");
+    expect(request?.requirement).toContain("push it to origin/dev");
+    expect(request?.requirement).toContain("run git pull --rebase after a successful push");
+    expect(request?.requirement).toContain("must not leave this repository with a dirty worktree");
   });
 
   it("records blocked agent sweep attempts as deferred skips in the task ledger", async () => {
