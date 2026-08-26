@@ -98,15 +98,15 @@
     "*.{ts,js,json}": "biome check --write --no-errors-on-unmatched"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "2.5.10",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^26.2.0",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.18",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@vitest/coverage-v8": "^4.1.11",
     "dependency-cruiser": "^18.2.0",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.0",
     "fast-check": "^4.9.0",
     "husky": "^9.1.7",
     "knip": "^6.32.2",
