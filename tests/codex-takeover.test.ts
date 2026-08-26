@@ -252,17 +252,20 @@ describe("listCodexOrphans", () => {
   }, 15_000);
 
   it("does not list claude processes as codex orphans", async () => {
-    const probe = fakeProbe({
-      snapshot: async () =>
-        [
-          { pid: 8, ppid: 1, command: "claude --resume abc" },
-          { pid: 9, ppid: 1, command: "codex" },
-        ] as ProcRow[],
-      tmuxPanePids: async () => [],
-      cwdOf: async () => "/home/u/proj",
+    await withTempDir(async (codexHome) => {
+      const probe = fakeProbe({
+        snapshot: async () =>
+          [
+            { pid: 8, ppid: 1, command: "claude --resume abc" },
+            { pid: 9, ppid: 1, command: "codex" },
+          ] as ProcRow[],
+        tmuxPanePids: async () => [],
+        cwdOf: async () => "/home/u/proj",
+        readProcEnv: async () => `CODEX_HOME=${codexHome}`,
+      });
+      const orphans = await listCodexOrphans(probe);
+      expect(orphans).toHaveLength(1);
+      expect(orphans[0]?.pid).toBe(9);
     });
-    const orphans = await listCodexOrphans(probe);
-    expect(orphans).toHaveLength(1);
-    expect(orphans[0]?.pid).toBe(9);
   }, 15_000);
 });
