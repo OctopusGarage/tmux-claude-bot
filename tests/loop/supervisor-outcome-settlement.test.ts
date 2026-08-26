@@ -17,7 +17,13 @@ describe("supervisor WorkOrder outcome settlement", () => {
     const state = vi.fn();
     const lease = vi.fn();
     const scheduler = { setLastFired: vi.fn() };
-    const ledger = { expect: vi.fn(), start: vi.fn(), finish: vi.fn(), fail: vi.fn() };
+    const ledger = {
+      expect: vi.fn(),
+      start: vi.fn(),
+      finish: vi.fn(),
+      fail: vi.fn(),
+      markRepairStatus: vi.fn(),
+    };
 
     settleSupervisorWorkOrderOutcome({
       workOrder,
@@ -43,5 +49,45 @@ describe("supervisor WorkOrder outcome settlement", () => {
       expect.objectContaining({ summary: "changed module", reportPath: "/tmp/report.md" }),
     );
     expect(ledger.fail).not.toHaveBeenCalled();
+  });
+
+  it("marks accepted blocked outcomes as closed repairs when requested", () => {
+    const state = vi.fn();
+    const lease = vi.fn();
+    const scheduler = { setLastFired: vi.fn() };
+    const ledger = {
+      expect: vi.fn(),
+      start: vi.fn(),
+      finish: vi.fn(),
+      fail: vi.fn(),
+      markRepairStatus: vi.fn(),
+    };
+
+    settleSupervisorWorkOrderOutcome({
+      workOrder,
+      supervisorSession: "supervisor",
+      startedAt: 10,
+      endedAt: 20,
+      resultStatus: "blocked",
+      stateStatus: "failed",
+      reportPath: "/tmp/report.md",
+      failureSummary: "owner prerequisite remains blocked",
+      closeBlockedRepairStatus: true,
+      advanceScheduler: true,
+      writeState: state,
+      settleLease: lease,
+      scheduler,
+      ledger,
+    });
+
+    expect(ledger.fail).toHaveBeenCalledWith(
+      "loop:project:100",
+      expect.objectContaining({ error: "blocked", summary: "owner prerequisite remains blocked" }),
+    );
+    expect(ledger.markRepairStatus).toHaveBeenCalledWith("loop:project:100", {
+      repairStatus: "blocked",
+      updatedAt: 20,
+      summary: "owner prerequisite remains blocked",
+    });
   });
 });

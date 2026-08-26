@@ -3616,6 +3616,7 @@ prReview:
       taskId: ledgerTaskId,
       status: "failed",
       error: "blocked",
+      repairStatus: "blocked",
     });
   });
 

@@ -2352,6 +2352,7 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
       ...(result.status === "completed"
         ? { summary: result.summary.actionsTaken.join("; ") || result.status }
         : { failureSummary: "Recovered loop supervisor run did not complete successfully." }),
+      closeBlockedRepairStatus: result.status === "blocked" && gate.failures.length === 0,
       advanceScheduler: !completion.retrySchedule && result.status !== "invalid-output",
       writeState: writeLoopSupervisorWorkOrderState,
       settleLease: (workOrder, resultStatus, now) =>
