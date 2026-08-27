@@ -11,6 +11,10 @@ vi.mock("../src/shared/utils/error.js", () => ({
   normalizeError: (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
 }));
 
+vi.mock("../src/shared/utils/sleep.js", () => ({
+  sleep: vi.fn(async () => {}),
+}));
+
 import type { Bot, Context } from "grammy";
 import { reply, send, type Tone } from "../src/adapters/telegram/replies.js";
 import { UI_ICONS } from "../src/shared/ui/icons.js";

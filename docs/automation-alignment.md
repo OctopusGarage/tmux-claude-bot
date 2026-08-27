@@ -119,6 +119,10 @@ exhaustion, or an active autonomous heavy lease, it must stop scanning additiona
 heavy due targets for that tick. The scheduler must preserve the due occurrence
 for a later retry instead of marking it fired, but the closed gate must not cause
 one log/precheck/write burst per due target on every service tick.
+The independent repository PR review queue tick may use a faster normal cadence
+for final-summary pickup, but it must perform a top-level heavy-work admission
+precheck and back off to the main Loop cadence after global admission closure
+instead of continuing a 10-second closed-gate polling loop.
 System Self-Heal broad agent sweeps must leave durable ledger evidence when
 admission blocks the sweep before WorkOrder creation; otherwise the hourly
 operator-equivalent check can disappear from the next audit window.

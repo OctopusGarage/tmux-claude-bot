@@ -8,7 +8,7 @@ import { createWarningCoalescer } from "../../shared/utils/log-coalescer.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
 import type { AgentKind } from "../agents/types.js";
-import { admitAutomationWork } from "../automation/admission.js";
+import { type AutomationAdmission, admitAutomationWork } from "../automation/admission.js";
 import { observeAgentCapacity } from "../automation/capacity-probe.js";
 import { AgentCapacityStore } from "../automation/capacity-store.js";
 import {
@@ -334,6 +334,23 @@ function isGlobalAutomationAdmissionDeferral(reason: string): boolean {
     "capacity-exhausted",
     "capacity-state-unavailable",
   ].some((marker) => reason.includes(marker));
+}
+
+export function repositoryReviewAdmissionBackoffUntil(input: {
+  now: number;
+  tickMs: number;
+  admission: AutomationAdmission;
+}): number | null {
+  if (input.admission.allowed) return null;
+  if (!isGlobalAutomationAdmissionDeferral(input.admission.reason)) return null;
+  if (
+    input.admission.retryAt !== undefined &&
+    Number.isFinite(input.admission.retryAt) &&
+    input.admission.retryAt > input.now
+  ) {
+    return input.admission.retryAt;
+  }
+  return input.now + Math.max(input.tickMs, REPOSITORY_REVIEW_MIN_TICK_MS);
 }
 
 function logSupervisorRunResult(input: {
@@ -2030,6 +2047,7 @@ export async function startLoopEngineering(
   void reconcileRemoteBranches();
   let tickInFlight = false;
   let repositoryReviewTickInFlight = false;
+  let repositoryReviewSuppressedUntil = 0;
   const tick = async (): Promise<void> => {
     if (tickInFlight) {
       log.warn("loop engineering tick skipped because previous tick is still running");
@@ -2101,10 +2119,39 @@ export async function startLoopEngineering(
     }
   };
   const repositoryReviewTick = async (): Promise<void> => {
+    const now = Date.now();
+    if (now < repositoryReviewSuppressedUntil) return;
     if (repositoryReviewTickInFlight) return;
     repositoryReviewTickInFlight = true;
     try {
       await refreshCapacity();
+      const admission = automationCoordinator.precheck(
+        {
+          id: "loop-engineering:repository-review-queue-tick",
+          source: "loop-engineering",
+          trigger: "background",
+          weight: "heavy",
+          agent: automationAgent,
+        },
+        automationContext(),
+      );
+      const backoffUntil = repositoryReviewAdmissionBackoffUntil({
+        now: Date.now(),
+        tickMs: config.tickMs,
+        admission,
+      });
+      if (backoffUntil !== null) {
+        repositoryReviewSuppressedUntil = backoffUntil;
+        log.info("repository PR review queue tick deferred by automation admission", {
+          data: {
+            incidentId: admission.incidentId,
+            reason: admission.reason,
+            retryAt: new Date(backoffUntil).toISOString(),
+          },
+        });
+        return;
+      }
+      repositoryReviewSuppressedUntil = 0;
       await runLoopServiceTickAsync({
         configFile: config.configFile,
         now: Date.now(),

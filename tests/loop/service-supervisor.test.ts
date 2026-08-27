@@ -10,6 +10,7 @@ import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
   reconcileLoopSupervisorWorkOrders,
+  repositoryReviewAdmissionBackoffUntil,
   resolveSystemGateGitExecutable,
   runGitCommand,
   runLoopServiceTickAsync as runLoopServiceTickAsyncProduction,
@@ -202,6 +203,35 @@ function resourceClosedState() {
 }
 
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("backs off the independent repository review tick after global admission closure", () => {
+    const now = Date.parse("2026-08-27T04:50:00Z");
+
+    expect(
+      repositoryReviewAdmissionBackoffUntil({
+        now,
+        tickMs: 300_000,
+        admission: {
+          allowed: false,
+          incidentId: "incident-resource-closed",
+          reason: "critical resource pressure; background-closed admission protection is active",
+        },
+      }),
+    ).toBe(now + 300_000);
+
+    expect(
+      repositoryReviewAdmissionBackoffUntil({
+        now,
+        tickMs: 300_000,
+        admission: {
+          allowed: false,
+          incidentId: null,
+          reason: "occurrence-not-before",
+          retryAt: now + 60_000,
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("reconciles remote Loop branches at startup and on a bounded maintenance cadence", async () => {
     vi.useFakeTimers();
     try {
