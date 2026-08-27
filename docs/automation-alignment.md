@@ -140,6 +140,9 @@ leaving uncommitted edits behind.
 That durable evidence is a `failed/pending` repair candidate, because no
 WorkOrder was created and the next scheduled sweep alone is not enough evidence
 that the operator-equivalent check actually ran.
+Legacy deferred sweep records that were stored as `skipped/not-needed` must be
+reopened to `failed/pending` during audit reconciliation so historical missed
+operator-equivalent checks do not stay hidden.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing

@@ -125,6 +125,12 @@ async function runDailyTaskAuditServiceTickInternal(
   const ledger = input.ledger ?? new DailyTaskLedger();
   const coordinator = input.coordinator ?? new RepairCoordinator();
   const repoPath = input.config.repoPath.trim() || process.cwd();
+  const reopenedSelfHealSweeps = ledger.reconcileDeferredSystemSelfHealSweeps(input.now);
+  if (reopenedSelfHealSweeps > 0) {
+    log.warn("reopened legacy deferred system self-heal sweeps", {
+      data: { count: reopenedSelfHealSweeps },
+    });
+  }
   const staleAudits = reconcileDailyAuditRunState({
     ledger,
     coordinator,

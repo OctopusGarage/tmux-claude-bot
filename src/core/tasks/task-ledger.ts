@@ -88,6 +88,8 @@ export type TaskAuditSummary = {
 };
 
 const RUNNING_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+const SYSTEM_SELF_HEAL_DEFERRED_PREFIX =
+  "System self-heal agent sweep deferred before WorkOrder creation: ";
 
 export class DailyTaskLedger {
   private readonly store = new JsonMapStore<ScheduledTaskRecord>("scheduled_task_ledger.json");
@@ -235,6 +237,31 @@ export class DailyTaskLedger {
         summary: appendSummary(
           record.summary,
           "Normalized terminal task state: successful or skipped task needs no repair.",
+        ),
+        updatedAt: now,
+      });
+      updated++;
+    }
+    return updated;
+  }
+
+  reconcileDeferredSystemSelfHealSweeps(now: number): number {
+    let updated = 0;
+    for (const [taskId, record] of this.store.sortedEntries()) {
+      if (record.source !== "system-self-heal") continue;
+      if (record.status !== "skipped" || record.repairStatus !== "not-needed") continue;
+      const summary = record.summary ?? "";
+      if (!summary.startsWith(SYSTEM_SELF_HEAL_DEFERRED_PREFIX)) continue;
+      const reason = summary.slice(SYSTEM_SELF_HEAL_DEFERRED_PREFIX.length).trim() || "unknown";
+      this.store.set(taskId, {
+        ...record,
+        status: "failed",
+        error: reason,
+        failureKind: classifyTaskFailure(reason, summary),
+        repairStatus: "pending",
+        summary: appendSummary(
+          summary,
+          "Reopened legacy deferred system self-heal sweep as retryable repair evidence.",
         ),
         updatedAt: now,
       });

@@ -279,6 +279,48 @@ describe("runDailyTaskAuditServiceTick", () => {
     });
   });
 
+  it("reopens legacy deferred system self-heal sweeps that were recorded as not-needed skips", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-legacy-self-heal-"));
+    const ledger = new DailyTaskLedger();
+    const taskId = "system-self-heal:agent-sweep:1787847224115";
+    ledger.expect({
+      taskId,
+      source: "system-self-heal",
+      name: "tmux-claude-bot system self-heal agent sweep",
+      scheduledAt: Date.parse("2026-08-27T16:13:44.115Z"),
+    });
+    ledger.start(taskId, Date.parse("2026-08-27T16:13:44.115Z"));
+    ledger.skip(taskId, {
+      endedAt: Date.parse("2026-08-27T16:13:44.115Z"),
+      summary:
+        "System self-heal agent sweep deferred before WorkOrder creation: automation admission deferred: autonomous-heavy-active-lease",
+    });
+
+    await runDailyTaskAuditServiceTick({
+      now: Date.parse("2026-08-27T17:30:00Z"),
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: false,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications: new NotificationGateway(),
+      ledger,
+      skipScheduledAudit: true,
+    });
+
+    expect(ledger.listAll().find((record) => record.taskId === taskId)).toMatchObject({
+      status: "failed",
+      repairStatus: "pending",
+      error: "automation admission deferred: autonomous-heavy-active-lease",
+      summary: expect.stringContaining("Reopened legacy deferred system self-heal sweep"),
+    });
+  });
+
   it("catches the latest missed audit when first started after the schedule window", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-service-"));
     const notifications = new NotificationGateway();
