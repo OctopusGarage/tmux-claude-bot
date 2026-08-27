@@ -113,6 +113,12 @@ resource-repair heavy task while another autonomous heavy lease is active, so
 Loop Engineering, Autopilot, Daily Task Audit, Runtime Guardian, Project
 Recovery, and Resource Guardian repair cannot stack verification-heavy workers
 on the same host.
+When a Loop Engineering tick sees a global admission closure such as Resource
+Guardian `background-closed`, quiet hours, owner/interactive activity, capacity
+exhaustion, or an active autonomous heavy lease, it must stop scanning additional
+heavy due targets for that tick. The scheduler must preserve the due occurrence
+for a later retry instead of marking it fired, but the closed gate must not cause
+one log/precheck/write burst per due target on every service tick.
 System Self-Heal broad agent sweeps must leave durable ledger evidence when
 admission blocks the sweep before WorkOrder creation; otherwise the hourly
 operator-equivalent check can disappear from the next audit window.

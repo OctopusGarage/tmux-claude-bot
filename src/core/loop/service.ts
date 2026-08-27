@@ -322,6 +322,20 @@ function shouldRetrySystemSchedule(summary: LoopRunSummary): boolean {
   });
 }
 
+function isGlobalAutomationAdmissionDeferral(reason: string): boolean {
+  return [
+    "background-closed admission protection is active",
+    "heavy-closed admission protection is active",
+    "resource pressure",
+    "quiet-hours",
+    "autonomous-heavy-active-lease",
+    "interactive-agent-busy",
+    "recent-owner-activity",
+    "capacity-exhausted",
+    "capacity-state-unavailable",
+  ].some((marker) => reason.includes(marker));
+}
+
 function logSupervisorRunResult(input: {
   runId: string;
   scheduledAt: number;
@@ -394,6 +408,7 @@ export function runLoopServiceTick(input: {
           reason: admission.reason,
         },
       });
+      if (isGlobalAutomationAdmissionDeferral(admission.reason)) break;
       continue;
     }
     log.info("loop engineering project run start", {
@@ -1459,6 +1474,7 @@ export async function runLoopServiceTickAsync(input: {
           reason: admission.reason,
         },
       });
+      if (isGlobalAutomationAdmissionDeferral(admission.reason)) break;
       continue;
     }
     if (input.repositoryReviewOnly) {

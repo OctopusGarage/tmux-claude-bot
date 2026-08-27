@@ -152,6 +152,60 @@ projects:
     expect(new DailyTaskLedger().listAll()).toEqual([]);
   });
 
+  it("stops the async due scan after a global admission deferral", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-global-deferral-state-"));
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-global-deferral-"));
+    const file = join(dir, "loop.yml");
+    const firstProject = mkdtempSync(join(tmpdir(), "tcb-loop-global-deferral-a-"));
+    const secondProject = mkdtempSync(join(tmpdir(), "tcb-loop-global-deferral-b-"));
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: alpha
+    name: Alpha
+    path: ${firstProject}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve alpha in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+  - id: beta
+    name: Beta
+    path: ${secondProject}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve beta in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+`,
+    );
+    const precheck = vi.fn(() => ({
+      allowed: false as const,
+      reason: "critical resource pressure; background-closed admission protection is active",
+      incidentId: "incident-resource-closed",
+    }));
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: vi.fn(),
+      automationAgent: "codex",
+      automationCoordinator: {
+        precheck,
+      } as never,
+    });
+
+    expect(result).toMatchObject({ checked: 2, due: 2, ran: 0, failed: 0 });
+    expect(precheck).toHaveBeenCalledTimes(1);
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+  });
+
   it("runs due projects, writes reports, records backlog suggestions, and persists fire anchors", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-state-"));
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-service-"));
