@@ -23,6 +23,7 @@ import {
   reconcileDailyAuditRepairQueue,
   reconcileDailyAuditRunState,
 } from "./daily-audit-run-state.js";
+import { isBotOwnedRetryableRecoveryEvidence } from "./project-recovery.js";
 import {
   createProjectRecoveryDelegator,
   dispatchProjectRecovery,
@@ -494,6 +495,7 @@ function verifyRecoveryProjectPath(path: string): boolean {
 function shouldReconsiderBlockedRecovery(record: ScheduledTaskRecord): boolean {
   if (record.repairStatus !== "blocked") return false;
   const summary = record.summary?.toLowerCase() ?? "";
+  if (isBotOwnedRetryableRecoveryEvidence(summary)) return true;
   if (summary.includes("no retryable project repair remains")) return false;
   if (summary.includes("recovery classification: recovery attempt limit reached")) return false;
   if (summary.includes("recovery classification: dead-letter")) return false;
@@ -515,7 +517,8 @@ function isRecoverableConfiguredTargetSummary(summary: string): boolean {
     summary.includes("can be retried") ||
     summary.includes("invalid-final-summary") ||
     summary.includes("invalid final summary") ||
-    summary.includes("incomplete recovery")
+    summary.includes("incomplete recovery") ||
+    isBotOwnedRetryableRecoveryEvidence(summary)
   );
 }
 

@@ -1,5 +1,6 @@
 import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
+import { isBotOwnedRetryableRecoveryEvidence } from "./project-recovery.js";
 
 export const SCHEDULED_TASK_SOURCES = [
   "loop-engineering",
@@ -378,7 +379,8 @@ function isNonRetryableProjectRecoveryClosure(record: ScheduledTaskRecord): bool
   return (
     record.repairStatus === "blocked" &&
     summary.includes("closed from the authoritative accepted blocked project recovery") &&
-    summary.includes("no retryable project repair remains")
+    summary.includes("no retryable project repair remains") &&
+    !isBotOwnedRetryableRecoveryEvidence(summary)
   );
 }
 

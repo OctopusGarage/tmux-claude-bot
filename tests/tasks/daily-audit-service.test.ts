@@ -196,6 +196,89 @@ describe("runDailyTaskAuditServiceTick", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("reconsiders blocked project recovery when the evidence is bot-owned and retryable", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-retryable-blocked-"));
+    const projectPath = join(process.env.TCB_STATE_DIR, "knowledge-engine");
+    mkdirSync(projectPath, { recursive: true });
+    const realProjectPath = realpathSync(projectPath);
+    execFileSync("git", ["init"], { cwd: realProjectPath, stdio: "ignore" });
+    const configFile = join(process.env.TCB_STATE_DIR, "loop.yaml");
+    writeFileSync(
+      configFile,
+      [
+        "projects:",
+        "  - id: knowledge-engine",
+        "    name: Knowledge Engine",
+        `    path: ${realProjectPath}`,
+        "    agent: codex",
+        '    schedule: "0 2 * * *"',
+        "    goal: Improve architecture in small verified slices.",
+        "    maxRounds: 3",
+        "    targetScore: 95",
+        "    assessment:",
+        "      command: npm run assess",
+        "prReview:",
+        "  repositories: []",
+        "workspaces: []",
+      ].join("\n"),
+    );
+    const ledger = new DailyTaskLedger();
+    const taskId = "loop:knowledge-engine:1787824800000";
+    const scheduledAt = Date.parse("2026-08-27T10:00:00Z");
+    ledger.expect({
+      taskId,
+      source: "loop-engineering",
+      name: "knowledge-engine architecture",
+      scheduledAt,
+    });
+    ledger.fail(taskId, {
+      endedAt: scheduledAt + 1_000,
+      error: "blocked",
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains. Assessment score contract emitted score:null and tcb open-worker timed out.",
+    });
+    ledger.markRepairStatus(taskId, {
+      repairStatus: "blocked",
+      updatedAt: scheduledAt + 2_000,
+      summary:
+        "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains. Assessment score contract emitted score:null and tcb open-worker timed out.",
+    });
+    const dispatchProjectRecovery = vi.fn(async () => ({
+      status: "queued" as const,
+      runId: "retryable-recovery",
+    }));
+
+    await runDailyTaskAuditServiceTick({
+      now: Date.parse("2026-08-27T16:00:00Z"),
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: false,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications: new NotificationGateway(),
+      ledger,
+      loopConfigFile: configFile,
+      skipScheduledAudit: true,
+      dispatchProjectRecovery,
+    });
+
+    expect(dispatchProjectRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskIds: [taskId],
+        classification: expect.objectContaining({ classification: "retryable" }),
+      }),
+    );
+    expect(ledger.listAll().find((record) => record.taskId === taskId)).toMatchObject({
+      repairStatus: "running",
+      summary: "Project recovery delegated run retryable-recovery.",
+    });
+  });
+
   it("catches the latest missed audit when first started after the schedule window", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-service-"));
     const notifications = new NotificationGateway();

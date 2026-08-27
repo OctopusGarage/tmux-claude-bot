@@ -81,6 +81,12 @@ Accepted blocked project-recovery closures that explicitly state no retryable
 project repair remains are terminal durable evidence. Later capacity/admission
 deferrals must not reopen those records or turn them back into pending repair
 work.
+Accepted blocked project-recovery closures are not terminal when their current
+ledger evidence contains bot-owned recovery defects such as assessment scoring
+contract failures, missing numeric scores, control/open-worker timeouts,
+dispatch-failed supervisor setup, or missing service-safe git executables; the
+hourly self-heal path must re-enter recovery for those defects instead of
+requiring an operator prompt.
 When a Loop WorkOrder's system gate accepts a valid blocked supervisor summary,
 the task ledger must close that task with `repairStatus=blocked`; Daily Task
 Audit and dashboard attention must not keep it as pending repair work.
@@ -123,17 +129,17 @@ The independent repository PR review queue tick may use a faster normal cadence
 for final-summary pickup, but it must perform a top-level heavy-work admission
 precheck and back off to the main Loop cadence after global admission closure
 instead of continuing a 10-second closed-gate polling loop.
-System Self-Heal broad agent sweeps must leave durable ledger evidence when
-admission blocks the sweep before WorkOrder creation; otherwise the hourly
-operator-equivalent check can disappear from the next audit window.
+System Self-Heal broad agent sweeps must leave durable retryable failure ledger
+evidence when admission blocks the sweep before WorkOrder creation; otherwise
+the hourly operator-equivalent check can disappear from the next audit window.
 When a System Self-Heal broad sweep changes this repository, the WorkOrder must
 verify locally, commit on `dev`, push to `origin/dev`, run `git pull --rebase`
 after the successful push, and finish with a clean worktree. If commit, push, or
 rebase is blocked, the WorkOrder must record the exact blocker instead of
 leaving uncommitted edits behind.
-That durable evidence is a deferred `skipped/not-needed` attempt, not a
-`failed/pending` repair candidate, because no WorkOrder was created and the next
-scheduled sweep remains responsible for retrying once admission opens.
+That durable evidence is a `failed/pending` repair candidate, because no
+WorkOrder was created and the next scheduled sweep alone is not enough evidence
+that the operator-equivalent check actually ran.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing

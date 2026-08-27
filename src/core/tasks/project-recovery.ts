@@ -66,7 +66,10 @@ export function classifyHistoricalFailure(
       reason: "local automation capacity or supervisor lease evidence is retryable",
     };
   }
-  if (ASSESSMENT_SCORING_CONTRACT_RE.test(evidence)) {
+  if (
+    ASSESSMENT_SCORING_CONTRACT_RE.test(evidence) ||
+    isBotOwnedRetryableRecoveryEvidence(evidence)
+  ) {
     return {
       classification: "retryable",
       reason: "assessment scoring contract evidence is retryable automation repair work",
@@ -116,6 +119,21 @@ export function classifyHistoricalFailure(
 
 export function isRetryableSourceGitStateEvidence(evidence: string): boolean {
   return SOURCE_GIT_STATE_RE.test(evidence.toLowerCase());
+}
+
+export function isBotOwnedRetryableRecoveryEvidence(evidence: string): boolean {
+  const normalized = evidence.toLowerCase();
+  return (
+    normalized.includes("score:null") ||
+    normalized.includes("assessment score contract") ||
+    normalized.includes("assessment scoring contract") ||
+    normalized.includes("assessment result did not include a numeric score") ||
+    normalized.includes("open-worker") ||
+    normalized.includes("control request timed out") ||
+    normalized.includes("dispatch-failed") ||
+    normalized.includes("failed to ensure loop supervisor session") ||
+    normalized.includes("spawnsync /usr/bin/git enoent")
+  );
 }
 
 export function resolveConfiguredRecoveryTarget(
