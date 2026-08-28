@@ -160,7 +160,6 @@ function readAcceptedSystemGate(
     }>;
     if (
       gate.accepted !== true ||
-      gate.resultStatus !== "completed" ||
       gate.workOrderId !== workOrderId ||
       gate.projectId !== projectId
     ) {
