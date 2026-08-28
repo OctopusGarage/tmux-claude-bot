@@ -30,7 +30,10 @@ function workOrder(id: string, runDir: string): LoopWorkOrder {
   } as unknown as LoopWorkOrder;
 }
 
-function writeSummary(path: string, status: "completed" | "failed" = "completed"): void {
+function writeSummary(
+  path: string,
+  status: "completed" | "failed" | "blocked" = "completed",
+): void {
   writeFileSync(
     path,
     `${JSON.stringify({
@@ -151,6 +154,33 @@ describe("autopilot delegated task reconciliation", () => {
     expect(
       new DailyTaskLedger().listAll().find((item) => item.taskId === `autopilot:${runId}`),
     ).toMatchObject({ status: "failed", repairStatus: "pending" });
+  });
+
+  it("does not report accepted blocked system gates as mismatched", async () => {
+    const runId = arrangeTerminalRun("failed", true);
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+    writeSummary(join(runDir, "supervisor-final-summary.json"), "blocked");
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        workOrderId: runId,
+        projectId: "tmux-claude-bot",
+      })}\n`,
+    );
+    startLedger(runId);
+
+    const result = await reconcileAutopilotDelegatedTasks({ now: 3 });
+
+    expect(result).toMatchObject({ finished: 0, failed: 1 });
+    expect(
+      new DailyTaskLedger().listAll().find((item) => item.taskId === `autopilot:${runId}`),
+    ).toMatchObject({
+      status: "failed",
+      repairStatus: "pending",
+      error: "Autopilot delegated task reconciliation failed: terminal summary status=blocked",
+    });
   });
 
   it("fails, rather than closing a repair, when the system gate is malformed", async () => {
