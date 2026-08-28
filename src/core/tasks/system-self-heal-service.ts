@@ -139,8 +139,9 @@ async function dispatchAgentSelfHealSweep(
     session,
     requirement: buildAgentSelfHealRequirement(),
     worktreeIsolation: deps.config.taskAudit.repairWorktreeIsolation,
-    resourceTrigger: "background",
+    resourceTrigger: "operator",
     resourceForce: false,
+    notificationMode: "autonomous",
   });
   if (result.status === "blocked") {
     recordBlockedAgentSweep(now, result.reason);

@@ -290,11 +290,13 @@ reconciles terminal WorkOrders, task-ledger state, repair queue ownership, and
 project-recovery candidates, then consumes due repair queues through the normal
 Loop Supervisor admission gates. With
 `SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, it also queues a broad active-agent
-self-heal prompt equivalent to an operator asking it to check the last 24 hours,
-investigate across files/state/logs/PR evidence, fix safe bot-owned issues, and
-record real blockers. This is an open-ended investigation protocol, not a fixed
-checklist: every abnormality must also be checked for the reason existing
-automation did not detect, retry, or repair it without a manual prompt, and
+self-heal prompt through operator-equivalent admission, while keeping WorkOrder
+notifications autonomous, equivalent to an operator asking it to check the last
+24 hours, investigate across files/state/logs/PR evidence, fix safe bot-owned
+issues, and record real blockers. This is an open-ended investigation protocol,
+not a fixed checklist: every abnormality must also be checked for the reason
+existing automation did not detect, retry, or repair it without a manual prompt,
+and
 bot-owned automation gaps should be fixed in the same repair slice when
 evidence is sufficient. Set `SYSTEM_SELF_HEAL_TICK_MS=0` or
 `SYSTEM_SELF_HEAL_ENABLED=false` only when the operator intentionally wants to

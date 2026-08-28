@@ -143,7 +143,7 @@ describe("system self-heal service", () => {
     await vi.waitFor(() => expect(audit).toEqual({ fired: false, reason: "not-due" }));
   });
 
-  it("dispatches the agent sweep as an autonomous operator-equivalent delegation", async () => {
+  it("dispatches the agent sweep with operator-equivalent admission and autonomous notification", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-system-self-heal-"));
     const deps = {
       config: {
@@ -191,8 +191,9 @@ describe("system self-heal service", () => {
         deps,
         expect.objectContaining({
           session: "tmux_proj_-repo-tmux-claude-bot",
-          resourceTrigger: "background",
+          resourceTrigger: "operator",
           resourceForce: false,
+          notificationMode: "autonomous",
           requirement: expect.stringContaining("operator-equivalent"),
         }),
       ),

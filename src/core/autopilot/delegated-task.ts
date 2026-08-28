@@ -295,6 +295,7 @@ export async function startActiveDelegatedTask(
     worktreeIsolation?: LoopWorktreeIsolationMode;
     resourceTrigger?: "operator" | "background" | "resource-repair";
     resourceForce?: boolean;
+    notificationMode?: "interactive" | "autonomous";
     /** Internal durable idempotency identity for Resource Guardian repair only. */
     trustedRunId?: string;
   },
@@ -437,9 +438,10 @@ export async function startActiveDelegatedTask(
       timeoutMs: DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS,
       projectSessionPrefix: deps.config.projectSessionPrefix,
       notificationMode:
-        input.resourceTrigger === "background" || input.resourceTrigger === "resource-repair"
+        input.notificationMode ??
+        (input.resourceTrigger === "background" || input.resourceTrigger === "resource-repair"
           ? "autonomous"
-          : "interactive",
+          : "interactive"),
       ...(projectPolicy !== null ? { projectPolicy } : {}),
     });
     const preparationFailures: string[] = [];

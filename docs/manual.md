@@ -945,12 +945,13 @@ project-recovery candidates. When existing evidence is enough to proceed, it
 uses the same repair queues, Loop Supervisor admission checks, worktree
 isolation, and verification policy as Daily Task Audit repair. With
 `SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, the same tick also queues a broad
-active-agent self-heal prompt so automation can inspect across files, logs,
-state, queue artifacts, and PR/CI evidence with the same open-ended mandate as
-an operator asking whether the last 24 hours completed normally. The prompt must
-not shrink to a fixed checklist: when it finds an abnormality, it also
-investigates why existing automation did not detect, retry, or repair it
-without a manual prompt, and fixes that bot-owned automation gap when evidence
+active-agent self-heal prompt through operator-equivalent admission, while
+keeping the WorkOrder notification mode autonomous, so automation can inspect
+across files, logs, state, queue artifacts, and PR/CI evidence with the same
+open-ended mandate as an operator asking whether the last 24 hours completed
+normally. The prompt must not shrink to a fixed checklist: when it finds an
+abnormality, it also investigates why existing automation did not detect, retry,
+or repair it without a manual prompt, and fixes that bot-owned automation gap when evidence
 is sufficient. If admission blocks the broad sweep before a WorkOrder is queued,
 the tick records a `system-self-heal` ledger failure with the exact deferral
 reason so the next audit has durable evidence. Disable the whole tick only for deliberate maintenance windows with

@@ -444,6 +444,27 @@ describe("active delegated task supervisor pool", () => {
     });
   });
 
+  it("allows operator-equivalent delegations to keep autonomous notification mode", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-autonomous-notify-"));
+    setPathForSession("tmux_proj_project", projectDir);
+    startLoopSupervisor.mockResolvedValueOnce(true);
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_project",
+        requirement: "run the hourly self-heal sweep",
+        resourceTrigger: "operator",
+        notificationMode: "autonomous",
+      }),
+    ).resolves.toMatchObject({ status: "queued" });
+
+    expect(listUnfinishedLoopSupervisorWorkOrders()[0]?.workOrder).toMatchObject({
+      projectPath: projectDir,
+      notificationMode: "autonomous",
+    });
+  });
+
   it("does not let force override emergency resource admission", async () => {
     const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
     writeResourceCircuit({ pressure: "emergency", reason: "emergency host pressure" });
