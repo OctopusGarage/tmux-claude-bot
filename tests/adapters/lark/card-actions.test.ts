@@ -634,7 +634,10 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscussall", ids }));
 
-      expect(deps.queue.enqueued).toHaveLength(1);
+      await vi.waitFor(() => {
+        expect(deps.queue.enqueued).toHaveLength(1);
+      });
+
       expect(deps.queue.enqueued[0]?.action).toBe("text");
       expect(deps.queue.enqueued[0]?.text).toContain("as one combined scope");
       expect(deps.queue.enqueued[0]?.text).toContain(suggestions[0]?.id);
@@ -642,6 +645,71 @@ describe("makeCardActionHandler", () => {
       expect(JSON.stringify(channel.cards())).not.toContain("oppdelegate");
       expect(new OpportunityStore().get(ids[0] ?? "")).toMatchObject({ status: "discussing" });
       expect(new OpportunityStore().get(ids[1] ?? "")).toMatchObject({ status: "discussing" });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
+  });
+
+  it("oppdiscussall acks quickly even when follow-up card sending is slow", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-batch-fast-ack-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-batch-fast-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      initGitProject(projectDir);
+      const suggestions = new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "api",
+          projectName: "api",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["docs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Add explain command",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Users need manual log inspection.",
+              whyNow: "Opportunity discovery found repeated support friction.",
+              value: "Faster support.",
+              evidence: ["support logs mention missing context"],
+              recommendedApproach: "Discuss a read-only explain command.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Scope can grow"],
+              nonGoals: ["Do not implement during discussion"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add the explain command after owner approval.",
+            },
+          ],
+        },
+        projectPath: projectDir,
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      const ids = suggestions.map((suggestion) => suggestion.id);
+      const channel = fakeChannel();
+      channel.send = vi.fn(() => new Promise(() => undefined)) as unknown as typeof channel.send;
+      const deps = fakeDeps({
+        config: { cdAllowedDirs: [projectDir] },
+        bridge: { hasSession: vi.fn(async () => true) },
+      });
+      const handler = makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscussall", ids }));
+
+      await expect(
+        Promise.race([
+          handler.then(() => "resolved"),
+          new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+        ]),
+      ).resolves.toBe("resolved");
     } finally {
       rmSync(stateDir, { recursive: true, force: true });
       rmSync(projectDir, { recursive: true, force: true });

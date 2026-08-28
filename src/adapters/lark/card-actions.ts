@@ -162,6 +162,8 @@ interface CardCtx {
 
 type CardHandler = (ctx: CardCtx) => Promise<void>;
 
+const FAST_ACK_CARD_COMMANDS = new Set<string>(["oppdiscussall"]);
+
 // --- Handlers that need more than a one-liner -------------------------------
 
 async function handleVoiceLang({ channel, evt, value }: CardCtx): Promise<void> {
@@ -1072,6 +1074,13 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
 
         const handler = CARD_HANDLERS[cmd];
         if (handler) {
+          if (FAST_ACK_CARD_COMMANDS.has(cmd)) {
+            void handler({ channel, deps, evt, value, chatKind }).catch(async (err: unknown) => {
+              log.warn("cardAction background handler failed", { err, data: { cmd } });
+              await sendError(channel, evt.chatId, err);
+            });
+            return;
+          }
           await handler({ channel, deps, evt, value, chatKind });
           return;
         }
