@@ -163,6 +163,36 @@ describe("makeCardActionHandler", () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it("ap_delegate acks quickly even when the follow-up reply is slow", async () => {
+    const channel = fakeChannel();
+    channel.send = vi.fn(() => new Promise(() => undefined)) as unknown as typeof channel.send;
+    const deps = fakeDeps({
+      config: {
+        loopEngineering: {
+          configFile: "",
+          tickMs: 60_000,
+          supervisor: {
+            enabled: false,
+            dir: "/tmp/tcb-loop-supervisor",
+            agent: "codex",
+            poolSize: 1,
+            resetBeforeWorkOrder: "compact",
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+    });
+
+    const handler = makeCardActionHandler(channel, deps)(evt({ cmd: "ap_delegate", s: "proj-1" }));
+
+    await expect(
+      Promise.race([
+        handler.then(() => "resolved"),
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]),
+    ).resolves.toBe("resolved");
+  });
+
   it("dangerous control button asks for confirmation before enqueueing", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
@@ -363,7 +393,9 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
 
-      expect(deps.queue.enqueued).toHaveLength(1);
+      await vi.waitFor(() => {
+        expect(deps.queue.enqueued).toHaveLength(1);
+      });
       expect(deps.queue.enqueued[0]?.action).toBe("text");
       expect(deps.queue.enqueued[0]?.text).toContain("Do not implement yet.");
       expect(JSON.stringify(channel.cards())).not.toContain("oppdelegate");
@@ -427,7 +459,9 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
 
-      expect(channel.texts().join("\n")).toContain("项目 agent 当前正在处理任务");
+      await vi.waitFor(() => {
+        expect(channel.texts().join("\n")).toContain("项目 agent 当前正在处理任务");
+      });
       expect(deps.queue.enqueued).toHaveLength(0);
       expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
     } finally {
@@ -489,9 +523,11 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
 
-      const text = channel.texts().join("\n");
-      expect(text).toContain("项目正在执行自动化任务");
-      expect(text).toContain("run-automation-1");
+      await vi.waitFor(() => {
+        const text = channel.texts().join("\n");
+        expect(text).toContain("项目正在执行自动化任务");
+        expect(text).toContain("run-automation-1");
+      });
       expect(deps.queue.enqueued).toHaveLength(0);
       expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
     } finally {
@@ -554,9 +590,11 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
 
-      const text = channel.texts().join("\n");
-      expect(text).toContain("项目工作区不干净");
-      expect(text).toContain("?? dirty.ts");
+      await vi.waitFor(() => {
+        const text = channel.texts().join("\n");
+        expect(text).toContain("项目工作区不干净");
+        expect(text).toContain("?? dirty.ts");
+      });
       expect(deps.queue.enqueued).toHaveLength(0);
       expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
     } finally {

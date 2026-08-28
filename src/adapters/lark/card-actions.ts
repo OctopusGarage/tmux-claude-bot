@@ -162,7 +162,14 @@ interface CardCtx {
 
 type CardHandler = (ctx: CardCtx) => Promise<void>;
 
-const FAST_ACK_CARD_COMMANDS = new Set<string>(["oppdiscussall"]);
+const FAST_ACK_CARD_COMMANDS = new Set<string>([
+  AUTOPILOT_ACTIONS.delegate.larkCmd,
+  AUTOPILOT_ACTIONS["confirm-delegate"].larkCmd,
+  AUTOPILOT_ACTIONS["cancel-delegate"].larkCmd,
+  "ap_cancel_run",
+  "oppdiscuss",
+  "oppdiscussall",
+]);
 
 // --- Handlers that need more than a one-liner -------------------------------
 
