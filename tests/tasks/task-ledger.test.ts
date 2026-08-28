@@ -129,6 +129,15 @@ describe("DailyTaskLedger", () => {
     });
   });
 
+  it("classifies active automation admission conflicts as system gates", () => {
+    expect(
+      classifyTaskFailure(
+        "project already has active automation: active-delegated-task 1787932899837-tmux-claude-bot-active-delegate (in-flight)",
+        "System self-heal agent sweep deferred before WorkOrder creation",
+      ),
+    ).toBe("system-gate");
+  });
+
   it("clears stale failure fields when a task later succeeds or skips", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-clear-failure-"));
     const ledger = new DailyTaskLedger();

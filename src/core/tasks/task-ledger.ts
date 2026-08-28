@@ -394,7 +394,12 @@ export function classifyTaskFailure(
   if (text.includes("ci check") || text.includes("statuscheckrollup")) return "external-ci";
   if (text.includes("network") || text.includes("socket") || text.includes("tls handshake"))
     return "external-service";
-  if (text.includes("automation admission deferred")) return "system-gate";
+  if (
+    text.includes("automation admission deferred") ||
+    text.includes("project already has active automation")
+  ) {
+    return "system-gate";
+  }
   if (text.includes("did not become ready") || text.includes("timeout")) return "agent-timeout";
   if (text.includes("missing instrumentation") || text.includes("missing output"))
     return "missing-instrumentation";
