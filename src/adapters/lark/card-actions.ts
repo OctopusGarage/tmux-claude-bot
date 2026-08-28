@@ -171,6 +171,25 @@ const FAST_ACK_CARD_COMMANDS = new Set<string>([
   "oppdiscussall",
 ]);
 
+async function resolveCardChatKind(
+  channel: LarkChannel,
+  chatId: string,
+  cmd: string,
+): Promise<ChatKind | null> {
+  // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
+  // groups are serviced (serviceableChat). An unbound group — including one
+  // whose binding was lost — is ignored, so its (possibly stale) buttons do
+  // nothing. Bound is a cheap local check; only hit the chat API otherwise.
+  // Resolve the chat kind ONCE and thread it into handlers so the per-action
+  // policy (chat-policy.ts) stays symmetric with text.
+  const isP2p = isProjectGroup(chatId) ? false : await isP2pChat(channel, chatId);
+  if (!serviceableChat(isP2p, chatId)) {
+    log.info(`ignore cardAction in unbound chat=${chatId} cmd=${cmd}`);
+    return null;
+  }
+  return isP2p ? "p2p" : "group";
+}
+
 // --- Handlers that need more than a one-liner -------------------------------
 
 async function handleVoiceLang({ channel, evt, value }: CardCtx): Promise<void> {
@@ -1064,33 +1083,30 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
       log.info(`cardAction cmd=${cmd} chat=${evt.chatId}`);
 
       try {
-        // Mirror the text handler (handlers.ts): only 1:1 chats and bound project
-        // groups are serviced (serviceableChat). An unbound group — including one
-        // whose binding was lost — is ignored, so its (possibly stale) buttons do
-        // nothing. Bound is a cheap local check; only hit the chat API otherwise.
-        // Resolve the chat kind ONCE here and thread it into the handlers so the
-        // per-action policy (chat-policy.ts) is enforced symmetrically with text.
-        const isP2p = isProjectGroup(evt.chatId) ? false : await isP2pChat(channel, evt.chatId);
-        if (!serviceableChat(isP2p, evt.chatId)) {
-          log.info(`ignore cardAction in unbound chat=${evt.chatId} cmd=${cmd}`);
-          return;
-        }
-        const chatKind: ChatKind = isP2p ? "p2p" : "group";
-
         if (cmd === "noop") return;
 
         const handler = CARD_HANDLERS[cmd];
         if (handler) {
           if (FAST_ACK_CARD_COMMANDS.has(cmd)) {
-            void handler({ channel, deps, evt, value, chatKind }).catch(async (err: unknown) => {
+            void (async () => {
+              const chatKind = await resolveCardChatKind(channel, evt.chatId, cmd);
+              if (!chatKind) return;
+              await handler({ channel, deps, evt, value, chatKind });
+            })().catch(async (err: unknown) => {
               log.warn("cardAction background handler failed", { err, data: { cmd } });
               await sendError(channel, evt.chatId, err);
             });
             return;
           }
+          const chatKind = await resolveCardChatKind(channel, evt.chatId, cmd);
+          if (!chatKind) return;
           await handler({ channel, deps, evt, value, chatKind });
           return;
         }
+
+        const chatKind = await resolveCardChatKind(channel, evt.chatId, cmd);
+        if (!chatKind) return;
+        const isP2p = chatKind === "p2p";
 
         const planned = await planMessageAction({
           deps,

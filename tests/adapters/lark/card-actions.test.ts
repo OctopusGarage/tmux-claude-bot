@@ -193,6 +193,38 @@ describe("makeCardActionHandler", () => {
     ).resolves.toBe("resolved");
   });
 
+  it("ap_delegate acks quickly even when chat type lookup is slow", async () => {
+    const channel = fakeChannel();
+    channel.getChatInfo = vi.fn(
+      () => new Promise(() => undefined),
+    ) as unknown as typeof channel.getChatInfo;
+    const deps = fakeDeps({
+      config: {
+        loopEngineering: {
+          configFile: "",
+          tickMs: 60_000,
+          supervisor: {
+            enabled: false,
+            dir: "/tmp/tcb-loop-supervisor",
+            agent: "codex",
+            poolSize: 1,
+            resetBeforeWorkOrder: "compact",
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+    });
+
+    const handler = makeCardActionHandler(channel, deps)(evt({ cmd: "ap_delegate", s: "proj-1" }));
+
+    await expect(
+      Promise.race([
+        handler.then(() => "resolved"),
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]),
+    ).resolves.toBe("resolved");
+  });
+
   it("dangerous control button asks for confirmation before enqueueing", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
