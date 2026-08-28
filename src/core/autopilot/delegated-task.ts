@@ -65,6 +65,7 @@ const log = createLogger("autopilot.delegated-task");
 const DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS = 7_200_000;
 const WORKER_STARTUP_GRACE_MS = 2 * 60_000;
 const WORKER_STARTUP_PROBE_MS = 1_000;
+const WORKER_STARTUP_PROBE_TIMEOUT_MS = 5_000;
 const DEFAULT_REVISION_MAX_ATTEMPTS = 3;
 export const DEFAULT_CONTEXT_DELEGATE_REQUIREMENT = [
   "Continue the current user-confirmed task from the target session context and repository state until it is genuinely complete.",
@@ -699,12 +700,19 @@ async function workerAgentOwnsTurnAfterStartupGrace(
       );
       continue;
     }
-    const agentRunning =
+    const agentRunning = await withStartupProbeTimeout(
       agent === "codex"
-        ? await deps.configResolver.isCodexRunning(workerSession)
-        : await deps.configResolver.isClaudeRunning(workerSession);
+        ? deps.configResolver.isCodexRunning(workerSession)
+        : deps.configResolver.isClaudeRunning(workerSession),
+      null,
+    );
+    if (agentRunning === null) return true;
     if (agentRunning) {
-      const pane = await deps.bridge.capturePane(workerSession).catch(() => "");
+      const pane = await withStartupProbeTimeout(
+        deps.bridge.capturePane(workerSession).catch(() => ""),
+        null,
+      );
+      if (pane === null) return true;
       if (paneHasActiveTurn(pane) || paneNeedsConfirm(pane)) return true;
     }
     const remaining = deadline - Date.now();
@@ -713,6 +721,17 @@ async function workerAgentOwnsTurnAfterStartupGrace(
       setTimeout(resolve, Math.min(WORKER_STARTUP_PROBE_MS, remaining)),
     );
   }
+}
+
+function withStartupProbeTimeout<T, F>(promise: Promise<T>, fallback: F): Promise<T | F> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<F>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), WORKER_STARTUP_PROBE_TIMEOUT_MS);
+    timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 function launchActiveDelegatedTask(

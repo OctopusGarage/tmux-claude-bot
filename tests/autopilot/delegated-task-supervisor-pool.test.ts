@@ -605,6 +605,52 @@ describe("active delegated task supervisor pool", () => {
     expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
   });
 
+  it("continues startup when active delegation liveness probing hangs", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-hung-liveness-"));
+    const order = workOrder({ id: "hung-liveness-after-restart", projectPath: projectDir });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const d = deps(1);
+    d.bridge = {
+      hasSession: vi.fn(async () => true),
+      capturePane: vi.fn(async () => "should not be required"),
+    } as unknown as HandlerDeps["bridge"];
+    d.configResolver = {
+      isCodexRunning: vi.fn(() => new Promise<boolean>(() => {})),
+    } as unknown as HandlerDeps["configResolver"];
+
+    vi.useFakeTimers();
+    try {
+      const reconciliation = reconcileAndResumeActiveDelegatedTasksAfterRestart(d);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(reconciliation).resolves.toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
+    expect(
+      listUnfinishedLoopSupervisorWorkOrders().some((record) => record.workOrder.id === order.id),
+    ).toBe(true);
+  });
+
   it("releases an in-flight lease when only an idle supervisor process survived restart", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-idle-supervisor-"));
     const order = workOrder({ id: "idle-supervisor-after-restart", projectPath: projectDir });
