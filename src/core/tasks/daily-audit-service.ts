@@ -570,9 +570,12 @@ export async function dispatchDailyTaskRepair(
     resourceTrigger: "background",
   });
   if (result.status === "blocked") {
-    log.warn("daily task audit auto repair could not be delegated", {
-      data: { reason: result.reason },
-    });
+    const ctx = { data: { reason: result.reason } };
+    if (isTransientRepairAdmissionDeferral(result.reason)) {
+      log.debug("daily task audit auto repair could not be delegated", ctx);
+    } else {
+      log.warn("daily task audit auto repair could not be delegated", ctx);
+    }
     return { status: "blocked", detail: result.reason };
   }
   return {
@@ -580,6 +583,12 @@ export async function dispatchDailyTaskRepair(
     runId: result.runId,
     detail: `runId=${result.runId} project=${result.projectId} supervisor=${result.supervisorSession}`,
   };
+}
+
+function isTransientRepairAdmissionDeferral(detail: string): boolean {
+  return /^(automation admission deferred:|project already has active automation:|supervisor .*busy|supervisor .*lease|queue full|no available)/i.test(
+    detail,
+  );
 }
 
 function appendRepairSummary(current: string | undefined, addition: string): string {

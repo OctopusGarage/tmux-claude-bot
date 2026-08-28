@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,7 +37,21 @@ const originalStateDir = process.env.TCB_STATE_DIR;
 afterEach(() => {
   if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
   else process.env.TCB_STATE_DIR = originalStateDir;
+  vi.mocked(startActiveDelegatedTask).mockClear();
 });
+
+function readLogEntries(): Array<{ level: string; component?: string; msg: string }> {
+  const dir = join(process.env.TCB_STATE_DIR ?? "", "logs");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((entry) => entry.startsWith("tcb-") && entry.endsWith(".jsonl"))
+    .flatMap((entry) =>
+      readFileSync(join(dir, entry), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { level: string; component?: string; msg: string }),
+    );
+}
 
 describe("runDailyTaskAuditServiceTick", () => {
   it("serializes overlapping audit ticks instead of dispatching duplicate repairs", async () => {
@@ -1153,6 +1175,112 @@ projects:
         session: expect.stringMatching(/^tmux_proj_/),
         requirement: expect.stringContaining("Daily scheduled task audit repair."),
         resourceTrigger: "background",
+      }),
+    );
+  });
+
+  it("keeps transient admission deferrals out of warning logs", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-delegate-deferral-"));
+    vi.mocked(startActiveDelegatedTask).mockResolvedValueOnce({
+      status: "blocked",
+      reason: "automation admission deferred: quiet-hours",
+    } as never);
+
+    const result = await dispatchDailyTaskRepair(
+      {
+        config: {
+          projectSessionPrefix: "tmux_proj_",
+          taskAudit: {
+            repairWorktreeIsolation: "isolated",
+          },
+          loopEngineering: {
+            supervisor: {
+              enabled: true,
+              poolSize: 1,
+            },
+          },
+        },
+      } as never,
+      {
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        items: [
+          {
+            taskId: "loop:self:quiet",
+            source: "loop-engineering",
+            name: "self",
+            scheduledAt: 1,
+            status: "missing",
+            error: "missed schedule",
+            repairStatus: "pending",
+            updatedAt: 2,
+          },
+        ],
+      },
+    );
+
+    expect(result).toEqual({
+      status: "blocked",
+      detail: "automation admission deferred: quiet-hours",
+    });
+    expect(readLogEntries()).not.toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "tasks.daily-audit-service",
+        msg: "daily task audit auto repair could not be delegated",
+      }),
+    );
+  });
+
+  it("keeps non-transient blocked repair delegation failures in warning logs", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-delegate-hard-block-"));
+    vi.mocked(startActiveDelegatedTask).mockResolvedValueOnce({
+      status: "blocked",
+      reason: "loop supervisor is disabled",
+    } as never);
+
+    const result = await dispatchDailyTaskRepair(
+      {
+        config: {
+          projectSessionPrefix: "tmux_proj_",
+          taskAudit: {
+            repairWorktreeIsolation: "isolated",
+          },
+          loopEngineering: {
+            supervisor: {
+              enabled: true,
+              poolSize: 1,
+            },
+          },
+        },
+      } as never,
+      {
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        items: [
+          {
+            taskId: "loop:self:hard-block",
+            source: "loop-engineering",
+            name: "self",
+            scheduledAt: 1,
+            status: "failed",
+            error: "invalid output",
+            repairStatus: "pending",
+            updatedAt: 2,
+          },
+        ],
+      },
+    );
+
+    expect(result).toEqual({
+      status: "blocked",
+      detail: "loop supervisor is disabled",
+    });
+    expect(readLogEntries()).toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "tasks.daily-audit-service",
+        msg: "daily task audit auto repair could not be delegated",
       }),
     );
   });
