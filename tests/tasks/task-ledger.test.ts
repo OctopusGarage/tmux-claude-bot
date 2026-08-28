@@ -249,6 +249,15 @@ describe("DailyTaskLedger", () => {
       "external-ci",
     );
     expect(classifyTaskFailure("blocked", "worktree is dirty before sync")).toBe("dirty-worktree");
+    expect(
+      classifyTaskFailure(
+        "automation admission deferred: interactive-agent-busy",
+        "System self-heal agent sweep deferred before WorkOrder creation",
+      ),
+    ).toBe("system-gate");
+    expect(
+      classifyTaskFailure("automation admission deferred: autonomous-heavy-active-lease", ""),
+    ).toBe("system-gate");
     expect(classifyTaskFailure("dispatch-failed", "Codex did not become ready in time")).toBe(
       "agent-timeout",
     );
