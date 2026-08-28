@@ -267,6 +267,7 @@ describe("system self-heal service", () => {
           name: "tmux-claude-bot system self-heal agent sweep",
           status: "failed",
           repairStatus: "pending",
+          failureKind: "system-gate",
           error: "automation admission deferred: capacity-unknown-active-lease",
           summary:
             "System self-heal agent sweep deferred before WorkOrder creation: automation admission deferred: capacity-unknown-active-lease",
