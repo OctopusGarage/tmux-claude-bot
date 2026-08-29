@@ -2667,6 +2667,12 @@ export function runSupervisedSystemGateOutcome(input: {
     );
   }
   const reviewGate = input.result.summary.reviewGate;
+  if (
+    input.workOrder.planning?.required === true &&
+    input.result.summary.planReview === undefined
+  ) {
+    failures.push("planReview is required for planned work orders");
+  }
   if (reviewGate === undefined) {
     evidence.push("supervisor reviewGate not reported; deterministic system gates still enforced");
     if (input.workOrder.task?.kind === "automation-governance-review") {

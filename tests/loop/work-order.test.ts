@@ -772,6 +772,14 @@ describe("loop supervisor work order", () => {
         maxPullRequests: 1,
       },
     });
+    expect(workOrder.planning).toMatchObject({
+      required: true,
+      source: "task-family",
+      requireOwnerConfirmation: false,
+    });
+    expect(workOrder.planning?.acceptanceCriteria).toContain(
+      "The final governance report reaches the configured target score or records the concrete blocker.",
+    );
     expect(workOrder.commitPolicy.branch).toBe(
       "loop/datavibe/automation-governance-review/1752643800000-datavibe-automation-governance-review",
     );
