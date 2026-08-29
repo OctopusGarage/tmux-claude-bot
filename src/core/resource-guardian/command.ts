@@ -112,6 +112,11 @@ function publicIncident(incident: ResourceIncident): unknown {
     samples: incident.samples.map(publicSample),
     transitions: incident.transitions.map((transition) => ({
       ...transition,
+      hostCpuPct:
+        incident.samples.find((sample) => sample.capturedAt === transition.at)?.hostCpuStatus ===
+        "unavailable"
+          ? null
+          : transition.hostCpuPct,
       reason: sanitizeResourceGuardianText(transition.reason),
     })),
     actions: incident.actions.map((action) => ({
