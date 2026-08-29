@@ -154,7 +154,8 @@ describe("CodexRunner.start", () => {
 
     await runner.start("sess");
 
-    expect(sent[0]).toBe("keys:codex --yolo"); // launched first
+    expect(sent[0]).toBe("raw:C-u"); // clear stale shell input before launch
+    expect(sent[1]).toBe("keys:codex --yolo"); // then launch
     expect(sent).toContain("raw:Enter"); // trust gate auto-accepted
   });
 
@@ -183,6 +184,40 @@ describe("CodexRunner.start", () => {
     await runner.start("sess");
 
     expect(sent).toEqual([]);
+  });
+
+  it("serializes concurrent starts for the same session so the launch command is typed once", async () => {
+    let running = false;
+    const sent: string[] = [];
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () => "› type here\n  gpt-5.5 · /proj",
+      sendKeys: async (t: string) => {
+        sent.push(`keys:${t}`);
+        if (t === "codex --yolo") running = true;
+      },
+      sendRawKey: async (k: string) => {
+        sent.push(`raw:${k}`);
+      },
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => running,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: {} as unknown as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 50,
+      maxWaitDoneMs: 50,
+    });
+
+    await Promise.all([runner.start("sess"), runner.start("sess")]);
+
+    expect(sent.filter((entry) => entry === "raw:C-u")).toHaveLength(1);
+    expect(sent.filter((entry) => entry === "keys:codex --yolo")).toHaveLength(1);
   });
 });
 
@@ -223,7 +258,8 @@ describe("CodexRunner.startWithResume", () => {
 
     await runner.startWithResume("sess", "uuid-9");
 
-    expect(sent[0]).toBe("keys:codex --yolo resume uuid-9"); // resume typed first
+    expect(sent[0]).toBe("raw:C-u"); // clear stale shell input before resume
+    expect(sent[1]).toBe("keys:codex --yolo resume uuid-9"); // then resume
     expect(sent).toContain("raw:Enter"); // trust gate auto-accepted
   });
 });

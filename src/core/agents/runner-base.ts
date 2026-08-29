@@ -134,6 +134,7 @@ export abstract class AgentRunnerBase implements AgentRunner {
   protected readonly pollIntervalMs: number;
   protected readonly maxWaitReadyMs: number;
   protected readonly maxWaitDoneMs: number;
+  private readonly launchLocks = new Map<string, Promise<void>>();
 
   constructor(o: AgentRunnerOptions) {
     this.bridge = o.bridge;
@@ -169,6 +170,32 @@ export abstract class AgentRunnerBase implements AgentRunner {
     return paneHasActiveTurn(pane);
   }
 
+  private async sendLaunchCommand(command: string, sessionName?: string): Promise<void> {
+    await this.bridge.sendRawKey("C-u", sessionName);
+    await this.bridge.sendKeys(command, sessionName);
+  }
+
+  private async withLaunchLock<T>(
+    sessionName: string | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const session = await this.bridge.resolveSessionName(sessionName);
+    const previous = this.launchLocks.get(session) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.catch(() => {}).then(() => current);
+    this.launchLocks.set(session, queued);
+    await previous.catch(() => {});
+    try {
+      return await run();
+    } finally {
+      release();
+      if (this.launchLocks.get(session) === queued) this.launchLocks.delete(session);
+    }
+  }
+
   /** After a launch: clear the trust-directory gate (BOTH agents show it on first
    * launch in a dir, blocking input) and wait for the composer. Best-effort —
    * swallow a slow/failed boot so the caller's action still completes (the user
@@ -200,13 +227,15 @@ export abstract class AgentRunnerBase implements AgentRunner {
   }
 
   async start(sessionName?: string, command?: string): Promise<void> {
-    if (await this.checkIfRunning(sessionName)) return;
-    log.info("agent starting", {
-      ...(sessionName === undefined ? {} : { session: sessionName }),
-      data: { agent: this.logTag, resume: "fresh" },
+    await this.withLaunchLock(sessionName, async () => {
+      if (await this.checkIfRunning(sessionName)) return;
+      log.info("agent starting", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        data: { agent: this.logTag, resume: "fresh" },
+      });
+      await this.sendLaunchCommand(command ?? this.command, sessionName);
+      await this.waitReadyBestEffort(sessionName);
     });
-    await this.bridge.sendKeys(command ?? this.command, sessionName);
-    await this.waitReadyBestEffort(sessionName);
   }
 
   async startWithResume(
@@ -214,13 +243,18 @@ export abstract class AgentRunnerBase implements AgentRunner {
     sessionId: string,
     command?: string,
   ): Promise<void> {
-    if (await this.checkIfRunning(sessionName)) return;
-    log.info("agent starting", {
-      ...(sessionName === undefined ? {} : { session: sessionName }),
-      data: { agent: this.logTag, resume: "exact-id", sessionId },
+    await this.withLaunchLock(sessionName, async () => {
+      if (await this.checkIfRunning(sessionName)) return;
+      log.info("agent starting", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        data: { agent: this.logTag, resume: "exact-id", sessionId },
+      });
+      await this.sendLaunchCommand(
+        this.resumeCommand(command ?? this.command, sessionId),
+        sessionName,
+      );
+      await this.waitReadyBestEffort(sessionName);
     });
-    await this.bridge.sendKeys(this.resumeCommand(command ?? this.command, sessionId), sessionName);
-    await this.waitReadyBestEffort(sessionName);
   }
 
   async waitUntilReady(sessionName?: string): Promise<void> {
@@ -321,34 +355,36 @@ export abstract class AgentRunnerBase implements AgentRunner {
   }
 
   async gracefulRestartWithContinue(sessionName?: string, command?: string): Promise<void> {
-    // Capture the EXACT running session id from the live process (its open
-    // transcript) BEFORE exiting, so we resume THAT conversation — not merely "the
-    // most recent in the dir". Falls back to the continue command when the id
-    // can't be read (no live transcript open).
-    const resolved = await this.bridge.resolveSessionName(sessionName);
-    // Prefer the EXACT live id; if the pid isn't holding the transcript open right
-    // now, fall back to the last-observed live id (disambiguates co-located Free
-    // Projects, where continueCommand's "newest in dir" can resume the wrong one).
-    const sessionId =
-      (await this.configResolver.resolveLiveTranscript?.(resolved))?.sessionId ??
-      this.configResolver.lastLiveSessionId?.(resolved) ??
-      null;
-    log.info("agent restarting", {
-      session: resolved,
-      data: {
-        agent: this.logTag,
-        resume: sessionId ? "exact-id" : "continue",
-        ...(sessionId ? { sessionId } : {}),
-      },
+    await this.withLaunchLock(sessionName, async () => {
+      // Capture the EXACT running session id from the live process (its open
+      // transcript) BEFORE exiting, so we resume THAT conversation — not merely "the
+      // most recent in the dir". Falls back to the continue command when the id
+      // can't be read (no live transcript open).
+      const resolved = await this.bridge.resolveSessionName(sessionName);
+      // Prefer the EXACT live id; if the pid isn't holding the transcript open right
+      // now, fall back to the last-observed live id (disambiguates co-located Free
+      // Projects, where continueCommand's "newest in dir" can resume the wrong one).
+      const sessionId =
+        (await this.configResolver.resolveLiveTranscript?.(resolved))?.sessionId ??
+        this.configResolver.lastLiveSessionId?.(resolved) ??
+        null;
+      log.info("agent restarting", {
+        session: resolved,
+        data: {
+          agent: this.logTag,
+          resume: sessionId ? "exact-id" : "continue",
+          ...(sessionId ? { sessionId } : {}),
+        },
+      });
+      await this.bridge.sendExit(sessionName);
+      await sleep(EXIT_GRACE_MS);
+      if (await this.checkIfRunning(sessionName)) return; // didn't exit — don't double-launch
+      const cmd = command ?? this.command;
+      await this.sendLaunchCommand(
+        sessionId ? this.resumeCommand(cmd, sessionId) : this.continueCommand(cmd),
+        sessionName,
+      );
+      await this.waitReadyBestEffort(sessionName);
     });
-    await this.bridge.sendExit(sessionName);
-    await sleep(EXIT_GRACE_MS);
-    if (await this.checkIfRunning(sessionName)) return; // didn't exit — don't double-launch
-    const cmd = command ?? this.command;
-    await this.bridge.sendKeys(
-      sessionId ? this.resumeCommand(cmd, sessionId) : this.continueCommand(cmd),
-      sessionName,
-    );
-    await this.waitReadyBestEffort(sessionName);
   }
 }

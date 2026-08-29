@@ -139,13 +139,17 @@ describe("ClaudeRunner", () => {
     });
 
     it("sends claude command when not running", async () => {
-      let sendKeysCalled = false;
+      const sentKeys: string[] = [];
+      const pastedText: string[] = [];
+      bridge = createMockBridge(mockExecFile, getSessionName, (_file, data) =>
+        pastedText.push(data),
+      );
       mockExecFile.mockImplementation(async (cmd: string, args: string[]): Promise<ExecResult> => {
         if (cmd === "tmux" && args[0] === "capture-pane") {
           return { stdout: "❯ ", stderr: "" }; // ready composer
         }
         if (cmd === "tmux" && args[0] === "send-keys") {
-          sendKeysCalled = true;
+          sentKeys.push(args[args.length - 1] ?? "");
         }
         return { stdout: "", stderr: "" };
       });
@@ -156,7 +160,8 @@ describe("ClaudeRunner", () => {
         ...defaultOptions,
       });
       await runner.start();
-      expect(sendKeysCalled).toBe(true);
+      expect(sentKeys.filter((key) => key !== "cancel")[0]).toBe("C-u");
+      expect(pastedText).toContain("/opt/homebrew/bin/claude");
     });
 
     it("clears the trust-directory gate on start (sends Enter)", async () => {
