@@ -101,6 +101,14 @@ describe("Resource Guardian operator command", () => {
           eventLoopLagMs: 0,
           thermal: "unknown",
         },
+        {
+          capturedAt: 4,
+          hostCpuPct: 73,
+          hostCpuStatus: "available",
+          loadPct: 55,
+          eventLoopLagMs: 1,
+          thermal: "unknown",
+        },
       ],
       transitions: [
         {
@@ -110,6 +118,14 @@ describe("Resource Guardian operator command", () => {
           hostCpuPct: 0,
           circuit: "heavy-closed",
           reason: "protect mode closed heavy background admission",
+        },
+        {
+          at: 4,
+          from: "elevated",
+          to: "healthy",
+          hostCpuPct: 73,
+          circuit: "open",
+          reason: "protect mode reopened resource admission",
         },
       ],
       actions: [],
@@ -133,6 +149,10 @@ describe("Resource Guardian operator command", () => {
       publicIncidents.find((incident: { id: string }) => incident.id === "incident-2")
         .transitions[0].hostCpuPct,
     ).toBeNull();
+    expect(
+      publicIncidents.find((incident: { id: string }) => incident.id === "incident-2")
+        .transitions[1].hostCpuPct,
+    ).toBe(73);
     expect(incidents.stdout).not.toContain(homedir());
     expect(incidents.stdout).toContain("~/work");
     expect(incidents.stdout).not.toContain("super-secret");
