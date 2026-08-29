@@ -90,6 +90,9 @@ requiring an operator prompt.
 When a Loop WorkOrder's system gate accepts a valid blocked supervisor summary,
 the task ledger must close that task with `repairStatus=blocked`; Daily Task
 Audit and dashboard attention must not keep it as pending repair work.
+When task-family governance declares `requiresPlanning: true`, the WorkOrder
+builder must persist a `planning` block and the system gate must reject a
+completed final summary that omits `planReview`.
 Source worktree or configured source-branch divergence from its remote base is
 retryable automation repair evidence, not an accepted blocked closure, even when
 the worker blocked after verifying the divergence.

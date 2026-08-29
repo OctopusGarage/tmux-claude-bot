@@ -18,6 +18,7 @@ import type {
 } from "./config.js";
 import { finalMarkerForWorkOrder, SUPERVISOR_FINAL_STATUS_LIST } from "./final-summary-contract.js";
 import { defaultActiveDelegationPlanning, type LoopWorkOrderPlanning } from "./planning.js";
+import { loopTaskFamilyGovernance } from "./task-family.js";
 import type {
   HarnessAutoSubtask,
   HarnessAutoSubtaskKind,
@@ -85,6 +86,7 @@ export function buildLoopWorkOrder(input: {
     id: input.runId,
     scheduledAt: input.scheduledAt,
     task,
+    ...planningForTask(task),
     projectId: input.project.id,
     projectName: input.project.name,
     projectPath: input.project.path,
@@ -937,6 +939,37 @@ function automationGovernancePolicy(
       autoMerge: false,
       minimumSeverity: "P1",
       maxPullRequests: 1,
+    },
+  };
+}
+
+function planningForTask(task: NonNullable<LoopWorkOrder["task"]>): {
+  planning?: LoopWorkOrderPlanning;
+} {
+  const governance = loopTaskFamilyGovernance(task.kind);
+  if (!governance.requiresPlanning) return {};
+  return {
+    planning: {
+      required: true,
+      source: "task-family",
+      requireOwnerConfirmation: governance.ownerConfirmation === "required-before-dispatch",
+      rubric: [
+        `Follow governed prompt ${governance.promptId ?? task.kind}.`,
+        `Stay within the declared ${governance.actionScope} action scope.`,
+        "Record planReview with checklist, target score, stop condition, verification, and remaining risk evidence.",
+      ],
+      acceptanceCriteria: [
+        "The final governance report reaches the configured target score or records the concrete blocker.",
+        "The final summary includes planReview proving the required planning checklist was completed.",
+      ],
+      stopConditions: [
+        governance.stopRule,
+        "Repository state, permissions, CI, or dependency issues prevent reliable verification.",
+      ],
+      nonGoals: [
+        "Do not continue optimizing after the task-family stop rule is satisfied.",
+        "Do not broaden the WorkOrder beyond its governed task-family scope.",
+      ],
     },
   };
 }
