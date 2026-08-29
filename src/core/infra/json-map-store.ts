@@ -163,6 +163,13 @@ export class JsonMapStore<V> {
     this.write(map);
   }
 
+  update(mutator: (map: Record<string, V>) => boolean): boolean {
+    const map = { ...this.read() };
+    const changed = mutator(map);
+    if (changed) this.write(map);
+    return changed;
+  }
+
   delete(key: string): boolean {
     const map = { ...this.read() };
     if (!(key in map)) return false;

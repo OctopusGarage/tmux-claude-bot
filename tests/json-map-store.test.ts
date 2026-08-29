@@ -41,6 +41,41 @@ describe("JsonMapStore", () => {
     expect(store.delete("a")).toBe(false);
   });
 
+  it("updates multiple keys through one persisted map mutation", () => {
+    const store = new JsonMapStore<string>("test-store.json");
+    store.set("a", "1");
+    store.set("b", "2");
+
+    expect(
+      store.update((map) => {
+        map.a = "10";
+        map.b = "20";
+        return true;
+      }),
+    ).toBe(true);
+
+    expect(new JsonMapStore<string>("test-store.json").sortedEntries()).toEqual([
+      ["a", "10"],
+      ["b", "20"],
+    ]);
+  });
+
+  it("skips persistence when an update reports no change", () => {
+    const store = new JsonMapStore<string>("test-store.json");
+    store.set("a", "1");
+    const before = fs.statSync(filePath()).mtimeMs;
+
+    expect(
+      store.update((map) => {
+        map.a = "2";
+        return false;
+      }),
+    ).toBe(false);
+
+    expect(fs.statSync(filePath()).mtimeMs).toBe(before);
+    expect(new JsonMapStore<string>("test-store.json").get("a")).toBe("1");
+  });
+
   it("missing file reads as an empty map", () => {
     const store = new JsonMapStore<string>("test-store.json");
     expect(store.has("x")).toBe(false);

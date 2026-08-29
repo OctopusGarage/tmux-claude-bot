@@ -323,14 +323,33 @@ export class DailyTaskLedger {
 
   reconcileSupersededFailures(): number {
     let updated = 0;
-    const successes = this.store
-      .sortedEntries()
-      .map(([, record]) => record)
-      .filter((record) => record.status === "success")
-      .sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
-    for (const success of successes) {
-      updated += this.supersedeEarlierFailures(success);
-    }
+    this.store.update((records) => {
+      const entries = Object.entries(records).sort(([a], [b]) => a.localeCompare(b));
+      const successes = entries
+        .map(([, record]) => record)
+        .filter((record) => record.status === "success")
+        .sort((a, b) => a.scheduledAt - b.scheduledAt || a.taskId.localeCompare(b.taskId));
+      for (const success of successes) {
+        for (const [taskId, record] of entries) {
+          const current = records[taskId] ?? record;
+          if (current.taskId === success.taskId) continue;
+          if (current.source !== success.source || current.name !== success.name) continue;
+          if (current.scheduledAt >= success.scheduledAt) continue;
+          if (!isUnresolvedRepairCandidate(current)) continue;
+          records[taskId] = {
+            ...current,
+            repairStatus: "superseded",
+            summary: appendSummary(
+              current.summary,
+              `Superseded by later successful task ${success.taskId}.`,
+            ),
+            updatedAt: success.endedAt ?? success.updatedAt,
+          };
+          updated++;
+        }
+      }
+      return updated > 0;
+    });
     return updated;
   }
 

@@ -369,6 +369,50 @@ describe("DailyTaskLedger", () => {
     });
   });
 
+  it("only supersedes an unresolved failure once when multiple later successes exist", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-reconcile-once-"));
+    const ledger = new DailyTaskLedger();
+    const firstAt = Date.parse("2026-07-27T01:00:00Z");
+    const secondAt = Date.parse("2026-07-27T02:00:00Z");
+    const thirdAt = Date.parse("2026-07-27T03:00:00Z");
+
+    ledger.expect({
+      taskId: "loop:geo-backend:bug-fix:first",
+      source: "loop-engineering",
+      name: "geo-backend bug-fix",
+      scheduledAt: firstAt,
+    });
+    ledger.fail("loop:geo-backend:bug-fix:first", {
+      endedAt: firstAt + 1000,
+      error: "supervisor-failed",
+      summary: "legacy pending failure",
+    });
+    for (const [taskId, scheduledAt] of [
+      ["loop:geo-backend:bug-fix:second", secondAt],
+      ["loop:geo-backend:bug-fix:third", thirdAt],
+    ] as const) {
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "geo-backend bug-fix",
+        scheduledAt,
+      });
+      ledger.finish(taskId, { endedAt: scheduledAt + 1000 });
+    }
+    ledger.markRepairStatus("loop:geo-backend:bug-fix:first", {
+      repairStatus: "pending",
+      updatedAt: thirdAt + 2000,
+      summary: "legacy pending failure",
+    });
+
+    expect(ledger.reconcileSupersededFailures()).toBe(1);
+    expect(ledger.listAll()[0]).toMatchObject({
+      repairStatus: "superseded",
+      summary:
+        "legacy pending failure; Superseded by later successful task loop:geo-backend:bug-fix:second.",
+    });
+  });
+
   it("keeps non-retryable project recovery closures closed across later deferrals", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-non-retryable-"));
     const ledger = new DailyTaskLedger();
