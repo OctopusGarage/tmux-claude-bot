@@ -66,6 +66,10 @@ describe("Loop task policy prompt lines", () => {
     expectLine(lines, "Run at most 1 focused bug-fix round(s)");
     expectLine(lines, "Cleanup policy is aggressive");
     expectLine(lines, "Add or update a focused regression test");
+    expectLine(
+      lines,
+      "If touched code uses async tasks, cancellation, finally blocks, retries, queues, locks, streams",
+    );
     expectLine(lines, "Additional bug-fix instruction: focus on queue correctness");
   });
 
@@ -217,6 +221,10 @@ describe("Loop task policy prompt lines", () => {
     });
 
     expectLine(noRepair, "Do not modify PR branches; report blockers only.");
+    expectLine(
+      noRepair,
+      "For async, cancellation, finally, retry, queue, lock, stream, billing, or background-spawn changes",
+    );
     expectLine(noRepair, "Do not merge automatically");
     expectLine(repairAndMerge, "at most 2 repair attempt(s)");
     expectLine(repairAndMerge, "Additional repair instruction: repair CI-only failures");
@@ -274,6 +282,10 @@ describe("Loop task policy prompt lines", () => {
     expectLine(lines, "api(main->dev, autoMerge=false)");
     expect(lines.join("\n")).not.toContain("web(release->release");
     expectLine(lines, "merge the PR according to that repository's pullRequest policy");
+    expectLine(
+      lines,
+      "For async, cancellation, finally, retry, queue, lock, stream, billing, or background-spawn changes",
+    );
     expectLine(lines, "Additional review instruction: prioritize fresh loop branches");
   });
 

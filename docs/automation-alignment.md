@@ -584,6 +584,10 @@ pressure does not create a WorkOrder/ledger/worker lease or consume its schedule
 anchor. Agent-backed execution revalidates admission after planning and before
 dispatch. User chat and user-confirmed Autopilot retain ordinary FIFO queueing;
 official exhausted-capacity evidence waits rather than bypassing the provider.
+Bug-fix and PR-review workers treat async/task lifecycle edits as a mandatory
+risk lens: success, error, timeout, cancellation, replacement, and shutdown
+paths must be traced when touched code can continue work, spawn background
+tasks, hold locks, emit terminal state, or affect quota/billing from `finally`.
 The local administrative projection is `tcb automation capacity status/history`;
 the durable 30-day journal is bounded, secret-free, and records planning,
 supersession, deferral, admission, settlement, and capacity transitions.

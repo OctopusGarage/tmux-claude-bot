@@ -57,6 +57,14 @@ function architecturePolicy(workOrder: LoopWorkOrder): string[] {
   ];
 }
 
+function asyncExitPathRiskReviewLine(): string {
+  return "- If touched code uses async tasks, cancellation, finally blocks, retries, queues, locks, streams, billing counters, or background spawning, explicitly trace every success, error, timeout, cancellation, replacement, and shutdown exit path. Verify that finally blocks cannot emit stale success, continue work, double-charge, leak locks/tasks, or spawn new work after cancellation unless that behavior is intentionally guarded and covered by a regression test.";
+}
+
+function pullRequestAsyncExitPathRiskReviewLine(): string {
+  return "- For async, cancellation, finally, retry, queue, lock, stream, billing, or background-spawn changes, review the exit-path matrix explicitly: success, error, timeout, cancellation, replacement, and shutdown. A PR is not clean if a finally block can keep stale success state, continue work, double-charge, leak locks/tasks, or spawn follow-up work after cancellation without an intentional guard and regression test.";
+}
+
 function workspaceArchitecturePolicy(workOrder: LoopWorkOrder): string[] {
   const task = workOrderTask(workOrder);
   if (task.kind !== "workspace-architecture" || workOrder.workspace === undefined) return [];
@@ -89,6 +97,7 @@ function bugFixPolicy(workOrder: LoopWorkOrder): string[] {
     "- Before editing, perform an independent verification pass from the current final code state and calling path; if that pass cannot reconstruct the bug mechanism, skip the candidate.",
     "- If a suspected issue cannot be proven as a real functional or reliability risk, record it as a deferred candidate or skipped candidate and do not edit for it.",
     "- Keep each repair small, local, and consistent with existing project patterns.",
+    asyncExitPathRiskReviewLine(),
     task.requireRegressionTest
       ? "- Add or update a focused regression test for every code bug you fix. If a regression test is genuinely impossible, record the reason and use the narrowest available verification instead."
       : "- Prefer focused regression tests for fixed bugs, but follow the configured project verification contract when tests are impractical.",
@@ -376,6 +385,7 @@ function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): 
       "- Draft is a review state, not an exclusion: inspect same-repository draft PRs, then either make the bounded repair and run `gh pr ready <number>` before re-reviewing, or run `gh pr close <number> --comment <reason>` for obsolete/duplicate/non-actionable work; leave it open only with a concrete human decision blocker.",
       "- For a same-repository conflicting PR, take over the existing head branch, sync the configured base, resolve the conflict when it is safe and bounded, push, and repeat the review/check gates; if it is obsolete or non-actionable, close it with evidence, otherwise record the exact human blocker. Do not silently skip it.",
       "- If checks are pending, inconclusive, failing, required reviews are missing, mergeability is unknown, or the branch is behind in a way GitHub cannot update safely, record the exact blocker and decide whether to repair, close, or request human action.",
+      pullRequestAsyncExitPathRiskReviewLine(),
       "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
       task.autoMerge
         ? "- If both review passes pass and CI/status checks are successful, merge the PR according to that repository's pullRequest policy, including its configured mergeMethod, then sync the repository's local switch-back branch."
@@ -394,6 +404,7 @@ function pullRequestReviewPolicy(workOrder: LoopWorkOrder, baseBranch: string): 
     "- Draft is a review state, not an exclusion: inspect same-repository draft PRs, then either make the bounded repair and run `gh pr ready <number>` before re-reviewing, or run `gh pr close <number> --comment <reason>` for obsolete/duplicate/non-actionable work; leave it open only with a concrete human decision blocker.",
     "- For a same-repository conflicting PR, take over the existing head branch, sync the configured base, resolve the conflict when it is safe and bounded, push, and repeat the review/check gates; if it is obsolete or non-actionable, close it with evidence, otherwise record the exact human blocker. Do not silently skip it.",
     "- If checks are pending, inconclusive, failing, or mergeability is unknown, record the exact blocker and decide whether to repair, close, or request human action.",
+    pullRequestAsyncExitPathRiskReviewLine(),
     "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
     task.autoMerge
       ? `- If both review passes pass and CI/status checks are successful, merge the PR with GitHub CLI using ${mergeMethodFlag(task.mergeMethod)}, then sync the local switch-back branch.`
@@ -426,6 +437,7 @@ function repositoryPullRequestReviewPolicy(workOrder: LoopWorkOrder): string[] {
     "- For a same-repository conflicting PR, take over the existing head branch, sync the configured base, resolve the conflict when it is safe and bounded, push, and repeat the review/check gates; if it is obsolete or non-actionable, close it with evidence, otherwise record the exact human blocker. Do not silently skip it.",
     "- If checks are pending, inconclusive, failing, required reviews are missing, mergeability is unknown, or the branch is behind in a way GitHub cannot update safely, record the exact blocker and decide whether to repair, close, or request human action.",
     "- A stale cancelled or superseded check run is not by itself a human blocker: compare runs for the same required check, rerun the exact workflow once when the latest result is inconclusive, then poll and re-read GitHub's current mergeability before deciding retry versus manual-review.",
+    pullRequestAsyncExitPathRiskReviewLine(),
     "- The review passes may use the worker agent's native review capabilities, but merge decisions remain serialized and gated by PR, CI, mergeability, and system evidence.",
     "- When polling after a repair push or merge attempt, always request PR state and mergedAt in addition to mergeability and checks. If GitHub reports state=MERGED, stop waiting on mergeability, verify checks and local switch-back state, then write the final summary.",
     ...repositoryPullRequestRepairPolicy(task),
