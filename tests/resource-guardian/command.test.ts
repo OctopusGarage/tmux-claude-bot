@@ -84,9 +84,39 @@ describe("Resource Guardian operator command", () => {
         },
       ],
     });
+    store.writeIncident({
+      schemaVersion: 1,
+      id: "incident-2",
+      fingerprint: "fp-2",
+      attribution: "unknown",
+      startedAt: 3,
+      endedAt: 4,
+      pressure: "healthy",
+      samples: [
+        {
+          capturedAt: 3,
+          hostCpuPct: 0,
+          hostCpuStatus: "unavailable",
+          loadPct: 50,
+          eventLoopLagMs: 0,
+          thermal: "unknown",
+        },
+      ],
+      transitions: [
+        {
+          at: 3,
+          from: "healthy",
+          to: "elevated",
+          hostCpuPct: 0,
+          circuit: "heavy-closed",
+          reason: "protect mode closed heavy background admission",
+        },
+      ],
+      actions: [],
+    });
 
     const status = runResourceGuardianCommand(["status", "--json"]);
-    const incidents = runResourceGuardianCommand(["incidents", "--limit", "1", "--json"]);
+    const incidents = runResourceGuardianCommand(["incidents", "--limit", "2", "--json"]);
 
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(status.stdout ?? "{}")).toMatchObject({
@@ -95,9 +125,14 @@ describe("Resource Guardian operator command", () => {
       view: { circuit: "open", mode: "protect", profile: "conservative" },
     });
     expect(incidents.exitCode).toBe(0);
-    expect(JSON.parse(incidents.stdout ?? "[]")).toEqual([
-      expect.objectContaining({ id: "incident-1" }),
-    ]);
+    const publicIncidents = JSON.parse(incidents.stdout ?? "[]");
+    expect(publicIncidents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "incident-1" })]),
+    );
+    expect(
+      publicIncidents.find((incident: { id: string }) => incident.id === "incident-2")
+        .transitions[0].hostCpuPct,
+    ).toBeNull();
     expect(incidents.stdout).not.toContain(homedir());
     expect(incidents.stdout).toContain("~/work");
     expect(incidents.stdout).not.toContain("super-secret");
