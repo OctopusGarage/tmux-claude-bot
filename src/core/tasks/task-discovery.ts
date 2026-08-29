@@ -47,10 +47,25 @@ function shouldPreferDiscoveredRecord(
   ledgerRecord: ScheduledTaskRecord,
   discoveredRecord: ScheduledTaskRecord,
 ): boolean {
+  if (
+    ledgerRecord.source === "loop-engineering" &&
+    discoveredRecord.source === "loop-engineering" &&
+    isClosedTerminalStatus(ledgerRecord) &&
+    ledgerRecord.updatedAt >= discoveredRecord.updatedAt
+  ) {
+    return false;
+  }
   return (
     ledgerRecord.source === "loop-engineering" &&
     discoveredRecord.source === "loop-engineering" &&
     discoveredRecord.status !== "expected"
+  );
+}
+
+function isClosedTerminalStatus(record: ScheduledTaskRecord): boolean {
+  return (
+    (record.status === "success" || record.status === "skipped") &&
+    isClosedRepairStatus(record.repairStatus)
   );
 }
 
@@ -103,6 +118,7 @@ function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTask
     finalSummaryPath,
   });
   if (reconciled === null) return record;
+  if (isClosedTerminalStatus(record) && isRepairableStatus(reconciled.status)) return record;
   return mergeClosedRepairResolution(record, reconciled);
 }
 

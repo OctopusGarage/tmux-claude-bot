@@ -365,6 +365,72 @@ describe("mergeDiscoveredTaskRecords", () => {
     expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([discovered]);
   });
 
+  it("does not let a stale discovered loop failure reopen a later ledger success", () => {
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:english-pilot:harness-auto:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "english-pilot harness-auto",
+      scheduledAt,
+      status: "success",
+      repairStatus: "not-needed",
+      summary: "Later authoritative recovery completed successfully.",
+      endedAt: scheduledAt + 3000,
+      updatedAt: scheduledAt + 3000,
+    };
+    const discovered: ScheduledTaskRecord = {
+      ...ledgerRecord,
+      status: "failed",
+      error: "loop supervisor completed with unresolved risky follow-up",
+      repairStatus: "pending",
+      summary: "Stale failed artifact was rediscovered.",
+      updatedAt: scheduledAt + 2000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [discovered])).toEqual([ledgerRecord]);
+  });
+
+  it("does not let a stale loop final-summary artifact reopen a ledger success", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-stale-failed-artifact-"));
+    process.env.TCB_STATE_DIR = root;
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runDir = join(
+      root,
+      "loop-runs",
+      "english-pilot",
+      `${scheduledAt}-english-pilot-harness-auto`,
+    );
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["The task completed."],
+        followUps: ["Unresolved risky follow-up from a stale artifact."],
+      }),
+      "utf8",
+    );
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:english-pilot:harness-auto:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "english-pilot harness-auto",
+      scheduledAt,
+      status: "success",
+      repairStatus: "not-needed",
+      summary: "Later authoritative recovery completed successfully.",
+      endedAt: scheduledAt + 3000,
+      updatedAt: scheduledAt + 3000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [])).toEqual([
+      expect.objectContaining({
+        taskId: ledgerRecord.taskId,
+        status: "success",
+        repairStatus: "not-needed",
+      }),
+    ]);
+  });
+
   it("does not let a stale loop success hide a newly discovered loop failure", () => {
     const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
     const ledgerRecord: ScheduledTaskRecord = {
