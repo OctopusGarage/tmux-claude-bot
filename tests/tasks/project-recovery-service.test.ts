@@ -1320,6 +1320,93 @@ describe("project recovery service", () => {
     });
   });
 
+  it("does not close an active recovery that is still running from accepted blocked artifacts", async () => {
+    const root = join(tmpdir(), `project-recovery-running-artifact-${Date.now()}`);
+    const runDir = join(root, "blocked");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        finalVerification: "passed",
+        reviewGate: { decision: "block" },
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({ accepted: true, resultStatus: "blocked" }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "project-recovery",
+      taskFamily: "geo active delegated task",
+      fingerprint: "unknown",
+      taskId: "autopilot:original",
+      summary: "original failed",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(
+      queue.id,
+      ["autopilot:blocked-recovery", "autopilot:live-recovery"],
+      1_100,
+    );
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:original",
+          source: "autopilot-delegate",
+          name: "geo active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          scheduledAt: 1_000,
+          updatedAt: 1_050,
+        },
+        {
+          taskId: "autopilot:blocked-recovery",
+          source: "autopilot-delegate",
+          name: "geo active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          reportPath: runDir,
+          scheduledAt: 1_050,
+          updatedAt: 1_100,
+        },
+        {
+          taskId: "autopilot:live-recovery",
+          source: "autopilot-delegate",
+          name: "geo active delegated task",
+          status: "running",
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 1 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:original",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:blocked-recovery",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+    expect(updateRepairStatus).not.toHaveBeenCalledWith(
+      "autopilot:live-recovery",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it("does not classify a successful original task as an incomplete recovery", async () => {
     const root = join(tmpdir(), `project-recovery-success-${Date.now()}`);
     const runDir = join(root, "run");

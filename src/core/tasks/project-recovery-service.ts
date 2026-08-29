@@ -702,7 +702,7 @@ function linkedAcceptedBlockedClosureRecords(
   }
   return [...records.values()].filter(
     (record) =>
-      ["failed", "missing", "running-timeout", "running"].includes(record.status) &&
+      ["failed", "missing", "running-timeout"].includes(record.status) &&
       (record.repairStatus === undefined ||
         record.repairStatus === "pending" ||
         record.repairStatus === "running" ||
