@@ -46,6 +46,10 @@ export function reconcileRuntimeGuardianQueue(input: {
     coordinator: input.coordinator,
     now: input.now,
   });
+  reconciled += reconcileDuplicateTerminalRuntimeGuardianRecords({
+    coordinator: input.coordinator,
+    now: input.now,
+  });
   const terminalByRunId = new Map(registry.terminal.map((record) => [record.workOrder.id, record]));
   const queueRecords = input.coordinator.list();
   const recordsPerWorkOrder = new Map<string, number>();
@@ -119,6 +123,48 @@ export function reconcileRuntimeGuardianQueue(input: {
     reconciled++;
   }
   return reconciled;
+}
+
+function reconcileDuplicateTerminalRuntimeGuardianRecords(input: {
+  coordinator: RepairCoordinator;
+  now: number;
+}): number {
+  const records = input.coordinator
+    .list()
+    .filter(
+      (record) =>
+        record.source === "runtime-guardian" &&
+        isQueueTerminal(record.status) &&
+        record.status !== "superseded",
+    );
+  const byIdentity = new Map<string, RepairQueueRecord[]>();
+  for (const record of records) {
+    for (const identity of runtimeGuardianRecordIdentities(record)) {
+      const group = byIdentity.get(identity) ?? [];
+      group.push(record);
+      byIdentity.set(identity, group);
+    }
+  }
+
+  const superseded = new Set<string>();
+  for (const group of byIdentity.values()) {
+    const unique = [...new Map(group.map((record) => [record.id, record])).values()];
+    if (unique.length < 2) continue;
+    unique.sort(
+      (left, right) =>
+        right.updatedAt - left.updatedAt ||
+        right.createdAt - left.createdAt ||
+        left.id.localeCompare(right.id),
+    );
+    const winner = unique[0];
+    if (winner === undefined) continue;
+    for (const duplicate of unique.slice(1)) {
+      if (duplicate.id === winner.id || superseded.has(duplicate.id)) continue;
+      input.coordinator.markTerminal(duplicate.id, "superseded", input.now);
+      superseded.add(duplicate.id);
+    }
+  }
+  return superseded.size;
 }
 
 function restoreSupersededAggregateRetries(input: {

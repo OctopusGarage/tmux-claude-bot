@@ -723,6 +723,38 @@ projects:
     ]);
   });
 
+  it("supersedes duplicate terminal Runtime Guardian records for the same durable finding", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const older = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint:
+        "system gate rejected terminal work-order: run-1; resultStatus: supervisor-failed",
+      taskId: "run-1",
+      now: 1_000,
+    });
+    coordinator.markTerminal(older.id, "blocked", 1_100);
+    const newer = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint:
+        "system gate rejected terminal work-order: run-1 / resultStatus: supervisor-failed",
+      taskId: "run-1",
+      now: 2_000,
+    });
+    coordinator.markTerminal(newer.id, "blocked", 2_100);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 3_000, findings: [] })).toBe(1);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: older.id, status: "superseded" }),
+      expect.objectContaining({ id: newer.id, status: "blocked" }),
+    ]);
+  });
+
   it("does not infer a terminal blocker from legacy failure wording", async () => {
     const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
 
