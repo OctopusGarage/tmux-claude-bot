@@ -51,7 +51,8 @@ function shouldPreferDiscoveredRecord(
     ledgerRecord.source === "loop-engineering" &&
     discoveredRecord.source === "loop-engineering" &&
     isClosedTerminalStatus(ledgerRecord) &&
-    ledgerRecord.updatedAt >= discoveredRecord.updatedAt
+    (ledgerRecord.updatedAt >= discoveredRecord.updatedAt ||
+      isCompletedFinalSummaryAnomalyRecord(discoveredRecord))
   ) {
     return false;
   }
@@ -104,6 +105,12 @@ function isRepairableStatus(status: ScheduledTaskRecord["status"]): boolean {
   return ["failed", "missing", "running-timeout"].includes(status);
 }
 
+function isCompletedFinalSummaryAnomalyRecord(record: ScheduledTaskRecord): boolean {
+  return (
+    record.error?.startsWith("loop supervisor completed with unresolved risky follow-up") === true
+  );
+}
+
 function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTaskRecord {
   if (record.source !== "loop-engineering") return record;
   const finalSummaryPath = finalSummaryPathForLedgerRecord(record);
@@ -118,7 +125,13 @@ function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTask
     finalSummaryPath,
   });
   if (reconciled === null) return record;
-  if (isClosedTerminalStatus(record) && isRepairableStatus(reconciled.status)) return record;
+  if (
+    isClosedTerminalStatus(record) &&
+    isRepairableStatus(reconciled.status) &&
+    isCompletedFinalSummaryAnomalyRecord(reconciled)
+  ) {
+    return record;
+  }
   return mergeClosedRepairResolution(record, reconciled);
 }
 

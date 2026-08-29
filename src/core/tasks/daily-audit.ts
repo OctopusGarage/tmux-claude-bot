@@ -43,7 +43,7 @@ export async function runDailyTaskAudit(input: {
       ...(record.summary === undefined ? {} : { summary: record.summary }),
     });
   }
-  const ledgerRecords = input.ledger.listForWindow(window);
+  const ledgerRecords = ledgerRecordsForAuditWindow(input.ledger, window, discoveredRecords);
   const summary = summarizeTaskWindow({
     records: mergeDiscoveredTaskRecords(ledgerRecords, discoveredRecords),
     now: input.now,
@@ -62,6 +62,22 @@ export async function runDailyTaskAudit(input: {
     );
   }
   return { summary, repairCandidates };
+}
+
+function ledgerRecordsForAuditWindow(
+  ledger: DailyTaskLedger,
+  window: ReturnType<typeof previousSingaporeDayWindow>,
+  discoveredRecords: ReturnType<ScheduledTaskDiscovery>,
+) {
+  const records = ledger.listForWindow(window);
+  const recordIds = new Set(records.map((record) => record.taskId));
+  const discoveredIds = new Set(discoveredRecords.map((record) => record.taskId));
+  for (const record of ledger.listAll()) {
+    if (!discoveredIds.has(record.taskId) || recordIds.has(record.taskId)) continue;
+    records.push(record);
+    recordIds.add(record.taskId);
+  }
+  return records;
 }
 
 export function buildDailyTaskAuditNotification(input: {

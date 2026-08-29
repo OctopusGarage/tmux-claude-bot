@@ -261,6 +261,44 @@ describe("runDailyTaskAudit", () => {
     );
   });
 
+  it("matches discovered jittered tasks to closed ledger records outside the audit window", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-jittered-"));
+    const ledger = new DailyTaskLedger();
+    const scheduledAt = Date.parse("2026-07-26T23:50:00Z");
+    const windowStart = Date.parse("2026-07-27T00:00:00Z");
+    const taskId = `loop:knowledge-engine:security-maintenance:${scheduledAt}`;
+    ledger.expect({
+      taskId,
+      source: "loop-engineering",
+      name: "knowledge-engine security-maintenance",
+      scheduledAt,
+    });
+    ledger.skip(taskId, {
+      endedAt: windowStart + 10 * 60_000,
+      summary: "risk score 0 was below action threshold",
+    });
+
+    const result = await runDailyTaskAudit({
+      now: Date.parse("2026-07-28T02:00:00Z"),
+      ledger,
+      discover: () => [
+        {
+          taskId,
+          source: "loop-engineering",
+          name: "knowledge-engine security-maintenance",
+          scheduledAt,
+          status: "expected",
+          summary: "loop-engineering schedule discovered after jitter",
+          updatedAt: windowStart + 10 * 60_000,
+        },
+      ],
+    });
+
+    expect(result.summary.counts.missing).toBe(0);
+    expect(result.summary.counts.skipped).toBe(1);
+    expect(result.repairCandidates).toEqual([]);
+  });
+
   it("reports non-timeout running tasks without dispatching them for repair", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-running-"));
     const ledger = new DailyTaskLedger();
