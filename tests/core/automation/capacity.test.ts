@@ -3,6 +3,10 @@ import {
   decideCapacityAdmission,
   deriveAgentCapacity,
 } from "../../../src/core/automation/capacity.js";
+import {
+  formatCapacityTransitionNotification,
+  shouldRefreshCapacityNow,
+} from "../../../src/core/automation/capacity-refresh.js";
 
 const now = Date.parse("2026-08-13T10:00:00Z");
 
@@ -149,5 +153,50 @@ describe("decideCapacityAdmission", () => {
       allowed: true,
       reason: "operator-work",
     });
+  });
+});
+
+describe("shouldRefreshCapacityNow", () => {
+  it("refreshes stale unknown telemetry before the normal next probe so recovery is not delayed", () => {
+    expect(
+      shouldRefreshCapacityNow({
+        observedAt: now,
+        nextProbeAt: now + 15 * 60_000,
+        state: "unknown",
+        latestReason: "usage-telemetry-stale",
+        activeAutonomousLeases: 0,
+        now: now + 60_000,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps normal available observations on their next probe schedule", () => {
+    expect(
+      shouldRefreshCapacityNow({
+        observedAt: now,
+        nextProbeAt: now + 15 * 60_000,
+        state: "available",
+        latestReason: "usage-available",
+        activeAutonomousLeases: 0,
+        now: now + 60_000,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("formatCapacityTransitionNotification", () => {
+  it("explains stale Codex telemetry as local uncertainty rather than exhausted quota", () => {
+    const message = formatCapacityTransitionNotification({
+      agent: "codex",
+      from: "available",
+      to: "unknown",
+      reason: "usage-telemetry-stale",
+      resetAt: null,
+    });
+
+    expect(message.title).toBe("codex capacity unknown");
+    expect(message.body).toContain("Local Codex usage telemetry is stale");
+    expect(message.body).toContain("This does not mean the quota is exhausted");
+    expect(message.body).toContain("background automation will wait or run conservatively");
   });
 });

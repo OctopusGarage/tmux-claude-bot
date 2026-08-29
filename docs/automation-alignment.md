@@ -587,6 +587,10 @@ official exhausted-capacity evidence waits rather than bypassing the provider.
 The local administrative projection is `tcb automation capacity status/history`;
 the durable 30-day journal is bounded, secret-free, and records planning,
 supersession, deferral, admission, settlement, and capacity transitions.
+Capacity transition notifications translate internal telemetry reasons into
+operator-facing meaning: stale or unavailable local usage telemetry is reported
+as local uncertainty, not quota exhaustion, and recovery probes may refresh
+stale unknown telemetry before the normal next-probe timestamp.
 
 Promise-returning Runtime Domain collectors have a bounded wait and report a
 stable `errorKind` (`read-failed` or `timeout`) without exposing the original

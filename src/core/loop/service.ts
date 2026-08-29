@@ -10,6 +10,10 @@ import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
 import type { AgentKind } from "../agents/types.js";
 import { type AutomationAdmission, admitAutomationWork } from "../automation/admission.js";
 import { observeAgentCapacity } from "../automation/capacity-probe.js";
+import {
+  formatCapacityTransitionNotification,
+  shouldRefreshCapacityNow,
+} from "../automation/capacity-refresh.js";
 import { AgentCapacityStore } from "../automation/capacity-store.js";
 import {
   type AutonomousAdmissionContext,
@@ -1962,30 +1966,21 @@ export async function startLoopEngineering(
   reconcileCapacityLeases();
   const automationCoordinator = new AutonomousWorkCoordinator({
     capacity: capacityStore,
-    onCapacityTransition: (transition) =>
-      deps.notifications.notify({
+    onCapacityTransition: (transition) => {
+      const notification = formatCapacityTransitionNotification(transition);
+      return deps.notifications.notify({
         source: "loop-engineering",
         level: transition.to === "available" ? "info" : "warning",
-        title:
-          transition.to === "exhausted"
-            ? `${transition.agent} capacity exhausted`
-            : transition.to === "available"
-              ? `${transition.agent} capacity recovered`
-              : `${transition.agent} capacity ${transition.to}`,
-        body: [
-          `Capacity changed from ${transition.from} to ${transition.to}.`,
-          `Reason: ${transition.reason}`,
-          ...(transition.resetAt === null
-            ? []
-            : [`Next probe: ${new Date(transition.resetAt).toISOString()}`]),
-        ].join("\n"),
+        title: notification.title,
+        body: notification.body,
         delivery: {
           mode: "state-change",
           topic: `agent-capacity:${transition.agent}`,
           state: transition.to,
           ...(transition.to === "available" ? { notifyInitial: false } : {}),
         },
-      }),
+      });
+    },
   });
   const automationAgent = deps.config.loopEngineering.supervisor.agent;
   const supervisorSessions = loopSupervisorSessionNames(
@@ -1996,7 +1991,7 @@ export async function startLoopEngineering(
   const refreshCapacity = async (): Promise<void> => {
     const now = Date.now();
     const current = capacityStore.read(automationAgent, now);
-    if (current.observedAt > 0 && current.nextProbeAt > now) return;
+    if (!shouldRefreshCapacityNow({ ...current, now })) return;
     if (capacityRefresh !== null) return capacityRefresh;
     capacityRefresh = (async () => {
       const session = supervisorSessions[0];

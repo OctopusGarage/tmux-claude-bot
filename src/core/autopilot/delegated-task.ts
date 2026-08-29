@@ -3,6 +3,7 @@ import { basename, resolve } from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
+import { formatCapacityTransitionNotification } from "../automation/capacity-refresh.js";
 import { AgentCapacityStore } from "../automation/capacity-store.js";
 import {
   type AutonomousAdmissionLease,
@@ -960,23 +961,22 @@ async function finishActiveDelegatedTask(
   if (result.status !== "completed") {
     new AutonomousWorkCoordinator({
       capacity: new AgentCapacityStore(),
-      onCapacityTransition: (transition) =>
-        deps.notifications.notify({
+      onCapacityTransition: (transition) => {
+        const notification = formatCapacityTransitionNotification(transition);
+        return deps.notifications.notify({
           source: "autopilot-delegate",
           level: transition.to === "available" ? "info" : "warning",
           session: workOrder.notificationSession ?? supervisorSession,
-          title:
-            transition.to === "exhausted"
-              ? `${transition.agent} capacity exhausted`
-              : `${transition.agent} capacity ${transition.to}`,
-          body: `Capacity changed from ${transition.from} to ${transition.to}. ${transition.reason}`,
+          title: notification.title,
+          body: notification.body,
           delivery: {
             mode: "state-change",
             topic: `agent-capacity:${transition.agent}`,
             state: transition.to,
             ...(transition.to === "available" ? { notifyInitial: false } : {}),
           },
-        }),
+        });
+      },
     }).recordLimitSignal(workOrder.agent, result.output, "autopilot-delegate");
   }
   const completion = completeLoopSupervisorRun({
