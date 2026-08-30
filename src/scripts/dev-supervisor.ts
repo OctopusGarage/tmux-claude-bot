@@ -14,7 +14,7 @@ import { createLogger } from "../shared/utils/logger.js";
 const log = createLogger("dev.supervisor");
 
 export interface ChildHandle {
-  kill(): void;
+  kill(signal?: NodeJS.Signals): void;
   onExit(cb: () => void): void;
 }
 
@@ -29,6 +29,10 @@ export interface SupervisorDeps {
 }
 
 type SpawnedChild = { child: ChildHandle; markIntentional: () => void };
+type SupervisorHandle = { stop(signal?: NodeJS.Signals): void };
+type SupervisorSignalTarget = {
+  once(event: NodeJS.Signals, cb: () => void): unknown;
+};
 
 /** Spawn a child and return the handle plus a setter to mark its death as intentional.
  * The onExit closure checks a per-child `intentional` boolean — calling
@@ -67,11 +71,12 @@ function spawnChild(
   };
 }
 
-export function startSupervisor(deps: SupervisorDeps): { stop(): void } {
+export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
   const crashes: number[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
   let running = false;
   let pending = false;
+  let stopped = false;
   let current = spawnChild(deps, crashes, (next) => {
     current = next;
   });
@@ -89,7 +94,7 @@ export function startSupervisor(deps: SupervisorDeps): { stop(): void } {
       return;
     }
     current.markIntentional();
-    current.child.kill();
+    current.child.kill("SIGTERM");
     crashes.length = 0;
     current = spawnChild(deps, crashes, (next) => {
       current = next;
@@ -123,13 +128,56 @@ export function startSupervisor(deps: SupervisorDeps): { stop(): void } {
   });
 
   return {
-    stop() {
+    stop(signal = "SIGTERM") {
+      if (stopped) return;
+      stopped = true;
       if (timer) clearTimeout(timer);
       unwatch();
       current.markIntentional();
-      current.child.kill();
+      current.child.kill(signal);
     },
   };
+}
+
+export function installSupervisorSignalHandlers(
+  supervisor: SupervisorHandle,
+  signalTarget: SupervisorSignalTarget = process,
+  exit: (code: number) => never = process.exit,
+): void {
+  let handled = false;
+  const handle = (signal: NodeJS.Signals): void => {
+    if (handled) return;
+    handled = true;
+    log.info("dev supervisor shutdown signal received", { data: { signal } });
+    supervisor.stop(signal);
+    exit(0);
+  };
+  signalTarget.once("SIGINT", () => handle("SIGINT"));
+  signalTarget.once("SIGTERM", () => handle("SIGTERM"));
+}
+
+function killProcessTree(cp: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+  if (cp.pid === undefined) {
+    cp.kill(signal);
+    return;
+  }
+  try {
+    process.kill(-cp.pid, signal);
+    return;
+  } catch (err) {
+    if (isProcessMissingError(err)) return;
+    log.warn("process group termination failed; falling back to child kill", { err });
+  }
+  cp.kill(signal);
+}
+
+function isProcessMissingError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "ESRCH"
+  );
 }
 
 /** Real-I/O deps used when run as a process (not exercised by unit tests). */
@@ -141,11 +189,12 @@ function realDeps(): SupervisorDeps {
     startChild() {
       const cp = spawn(process.execPath, [join(repo, "node_modules/.bin/tsx"), "src/index.ts"], {
         cwd: repo,
+        detached: true,
         stdio: "inherit",
       });
       cp.on("error", (err) => log.error("child spawn failed", { err }));
       return {
-        kill: () => cp.kill("SIGTERM"),
+        kill: (signal = "SIGTERM") => killProcessTree(cp, signal),
         onExit: (cb) => cp.once("exit", cb),
       };
     },
@@ -188,5 +237,5 @@ if (
   process.argv[1]?.endsWith("dev-supervisor.js")
 ) {
   log.info("dev supervisor starting", { data: { cwd: process.cwd() } });
-  startSupervisor(realDeps());
+  installSupervisorSignalHandlers(startSupervisor(realDeps()));
 }

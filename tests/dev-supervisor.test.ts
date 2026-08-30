@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupervisorStatus } from "../src/core/dev/supervisor-core.js";
-import { startSupervisor } from "../src/scripts/dev-supervisor.js";
+import { installSupervisorSignalHandlers, startSupervisor } from "../src/scripts/dev-supervisor.js";
 
 /** A fake ChildHandle that captures the onExit callback so tests can fire it. */
 class FakeChild {
@@ -26,6 +26,7 @@ function makeDeps(over: Partial<Parameters<typeof startSupervisor>[0]> = {}) {
   let onChange: ((rel: string) => void) | null = null;
   const children: FakeChild[] = [];
   const statuses: SupervisorStatus[] = [];
+  const unwatch = vi.fn();
 
   // Each startChild() call creates and records a new FakeChild.
   const startChild = vi.fn(() => {
@@ -41,7 +42,7 @@ function makeDeps(over: Partial<Parameters<typeof startSupervisor>[0]> = {}) {
     runTypecheck,
     watchSrc: (cb: (rel: string) => void) => {
       onChange = cb;
-      return () => {};
+      return unwatch;
     },
     writeStatus: (s: SupervisorStatus) => statuses.push(s),
     now: () => 1000,
@@ -55,6 +56,7 @@ function makeDeps(over: Partial<Parameters<typeof startSupervisor>[0]> = {}) {
     /** children[0] is the boot child, children[1] the first respawn, etc. */
     children,
     statuses,
+    unwatch,
     startChild,
     runTypecheck,
     fire: (rel: string) => onChange?.(rel),
@@ -274,5 +276,44 @@ describe("startSupervisor", () => {
     // Only 2 respawns should have happened (crashes 1 and 2 respawn; crash 3 waits).
     expect(startChild).toHaveBeenCalledTimes(2);
     expect(statuses.at(-1)?.state).toBe("crash-wait");
+  });
+
+  it("stop marks the live child intentional, clears the watcher, and is idempotent", () => {
+    const { deps, children, unwatch } = makeDeps();
+    const supervisor = startSupervisor(deps);
+
+    supervisor.stop("SIGINT");
+    supervisor.stop("SIGTERM");
+    expect(unwatch).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledWith("SIGINT");
+
+    expectChild(children, 0).fireExit();
+    expect(deps.startChild).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("installSupervisorSignalHandlers", () => {
+  it("stops the supervisor once before exiting on a shutdown signal", () => {
+    const handlers = new Map<string, () => void>();
+    const signalTarget = {
+      once: vi.fn((event: string, cb: () => void) => {
+        handlers.set(event, cb);
+        return signalTarget;
+      }),
+    };
+    const supervisor = { stop: vi.fn() };
+    const exit = vi.fn((code: number) => {
+      throw new Error(`exit ${code}`);
+    }) as unknown as (code: number) => never;
+
+    installSupervisorSignalHandlers(supervisor, signalTarget, exit);
+
+    expect(() => handlers.get("SIGTERM")?.()).toThrow("exit 0");
+    expect(() => handlers.get("SIGINT")?.()).not.toThrow();
+    expect(supervisor.stop).toHaveBeenCalledTimes(1);
+    expect(supervisor.stop).toHaveBeenCalledWith("SIGTERM");
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
   });
 });
