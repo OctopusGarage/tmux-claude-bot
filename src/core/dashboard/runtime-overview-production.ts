@@ -102,6 +102,13 @@ function isOpenRepairableTask(item: ScheduledTaskRecord): boolean {
   );
 }
 
+function isTransientAdmissionDeferral(item: ScheduledTaskRecord): boolean {
+  const evidence = `${item.error ?? ""}\n${item.summary ?? ""}`;
+  return /automation admission deferred: (quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)/i.test(
+    evidence,
+  );
+}
+
 function summarizeCurrentDailyAuditWindow(input: {
   ledger: DailyTaskLedger;
   now: number;
@@ -134,8 +141,9 @@ function summarizeCurrentDailyAuditWindow(input: {
     window,
   });
   const openItems = summary.items.filter(isOpenRepairableTask);
+  const attentionItems = openItems.filter((item) => !isTransientAdmissionDeferral(item));
   return {
-    attention: openItems.length,
+    attention: attentionItems.length,
     repairPending: openItems.filter((item) => (item.repairStatus ?? "pending") === "pending")
       .length,
   };

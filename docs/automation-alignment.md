@@ -538,6 +538,10 @@ outer discovery cooldown is active.
 Runtime Guardian repair admission deferrals caused by quiet hours, resource
 pressure, queue capacity, or active automation are diagnostic DEBUG evidence,
 not repeated WARN-level operator attention.
+Daily Task Audit dashboard attention follows the same operator-attention
+boundary: current-window pending repairs caused only by transient admission
+deferrals remain visible in failed/repair-pending counts, but they do not create
+the Daily Task Audit attention card or make the domain unhealthy.
 Admission must select the current non-terminal queue record when an equivalent
 historical record is already terminal. A queued Runtime Guardian delegation
 persists both its WorkOrder id and delegated ledger task id on every claimed

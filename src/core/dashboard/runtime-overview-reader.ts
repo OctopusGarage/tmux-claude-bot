@@ -268,6 +268,14 @@ function dailyAuditSummaryText(summary: {
   return parts.join(", ");
 }
 
+function isScheduledDailyAuditOutcome(outcome: RecentOutcome): boolean {
+  if (outcome.domain !== "daily-audit") return false;
+  if (outcome.id.startsWith("ledger:daily-audit:self:")) return false;
+  return (
+    outcome.label === "Daily scheduled task audit" || outcome.id.startsWith("ledger:daily-audit:")
+  );
+}
+
 function workOrderView(record: OverviewWorkOrder): ActiveWorkItem {
   return {
     id: `work-order:${record.id}`,
@@ -542,7 +550,7 @@ export async function readRuntimeOverview(input: {
       : undefined;
     const auditLastOutcome = dailyAuditRead.ok
       ? (dailyAuditRead.value.outcomes ?? [])
-          .filter((outcome) => outcome.domain === "daily-audit")
+          .filter(isScheduledDailyAuditOutcome)
           .sort((left, right) => right.endedAt - left.endedAt)[0]
       : undefined;
     automation = automationRead.value.map((item) => ({

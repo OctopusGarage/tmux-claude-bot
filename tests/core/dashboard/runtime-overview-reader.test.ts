@@ -398,6 +398,61 @@ describe("Runtime Overview reader", () => {
     );
   });
 
+  it("uses the scheduled Daily Task Audit run for the automation last outcome", async () => {
+    const overview = await readRuntimeOverview({
+      now: 2_000,
+      sessions: [],
+      readers: readers({
+        automation: () => [
+          {
+            id: "task-audit",
+            label: "Daily Task Audit",
+            enabled: true,
+            configured: true,
+            tickMs: 300_000,
+          },
+        ],
+        dailyAudit: () => ({
+          enabled: true,
+          lastFiredAt: 1_000,
+          summary: {
+            active: 0,
+            failed: 1,
+            attention: 0,
+            repairPending: 0,
+            notNeeded: 1,
+          },
+          outcomes: [
+            {
+              id: "ledger:daily-audit:self:900",
+              domain: "daily-audit",
+              label: "Daily task audit self-check",
+              status: "failed",
+              endedAt: 1_000,
+            },
+            {
+              id: "ledger:daily-audit:1000",
+              domain: "daily-audit",
+              label: "Daily scheduled task audit",
+              status: "passed",
+              endedAt: 1_000,
+            },
+          ],
+        }),
+      }),
+    });
+
+    expect(overview.automation).toContainEqual(
+      expect.objectContaining({
+        id: "task-audit",
+        lastOutcome: { status: "passed", endedAt: 1_000 },
+      }),
+    );
+    expect(overview.recentOutcomes.items).toContainEqual(
+      expect.objectContaining({ id: "ledger:daily-audit:self:900", status: "failed" }),
+    );
+  });
+
   it("keeps absent optional integrations informational", async () => {
     const overview = await readRuntimeOverview({ now: 1_000, sessions: [], readers: readers() });
 

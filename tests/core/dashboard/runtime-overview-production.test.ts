@@ -419,6 +419,49 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("does not count quiet-hours Daily Task Audit repair deferrals as current attention", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const ledger = new DailyTaskLedger();
+      for (const [projectId, scheduledAt] of [
+        ["geo-backend-all-prs", Date.parse("2026-08-30T11:20:00+08:00")],
+        ["net-auto-switch-all-prs", Date.parse("2026-08-30T12:20:00+08:00")],
+      ] as const) {
+        const taskId = `loop:pr-review:${projectId}:${scheduledAt}`;
+        ledger.expect({
+          taskId,
+          source: "loop-engineering",
+          name: `${projectId} repository-pull-request-review`,
+          scheduledAt,
+          summary: "Recovery dispatch deferred: automation admission deferred: quiet-hours",
+        });
+      }
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 2,
+        attention: 0,
+        repairPending: 2,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not report historical Daily Task Audit pending repairs as current attention", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;
