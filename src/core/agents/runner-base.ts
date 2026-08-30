@@ -46,6 +46,8 @@ export function paneHasActiveTurn(pane: string): boolean {
 }
 
 export function paneConfirmAction(pane: string): ReadyVerdict {
+  const codexUpdate = paneCodexUpdateAction(pane);
+  if (codexUpdate !== "wait") return codexUpdate;
   if (activeCodexAdditionalSafetyMenu(pane)) return "wait";
   if (!activeConfirmGate(pane)) return "wait";
   if (pane.includes("Bypass Permissions mode") && pane.includes("Yes, I accept")) {
@@ -58,6 +60,12 @@ export function paneConfirmAction(pane: string): ReadyVerdict {
 export function paneCodexAdditionalSafetyAction(pane: string): ReadyVerdict {
   if (!activeCodexAdditionalSafetyMenu(pane)) return "wait";
   if (/❯\s*2\.\s*Keep waiting/i.test(pane)) return { sendRawKey: "Enter" };
+  return { sendRawKeys: ["Down", "Enter"] };
+}
+
+function paneCodexUpdateAction(pane: string): ReadyVerdict {
+  if (!activeCodexUpdateMenu(pane)) return "wait";
+  if (/›\s*2\.\s*Skip\b/i.test(pane)) return { sendRawKey: "Enter" };
   return { sendRawKeys: ["Down", "Enter"] };
 }
 
@@ -91,6 +99,19 @@ function activeCodexAdditionalSafetyMenu(pane: string): boolean {
     /Retry with a faster model/i.test(pane) &&
     /Keep waiting/i.test(pane) &&
     /Press enter to confirm or esc to go back/i.test(lastLine)
+  );
+}
+
+function activeCodexUpdateMenu(pane: string): boolean {
+  const lines = pane.split("\n");
+  const lastNonBlank = findLastNonBlankLine(lines);
+  if (lastNonBlank < 0) return false;
+  const lastLine = lines[lastNonBlank] ?? "";
+  return (
+    /Update available!/i.test(pane) &&
+    /1\.\s*Update now/i.test(pane) &&
+    /2\.\s*Skip/i.test(pane) &&
+    /Press enter to continue/i.test(lastLine)
   );
 }
 

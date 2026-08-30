@@ -94,6 +94,32 @@ describe("codex pane heuristics", () => {
     expect(paneConfirmAction(bypass)).toEqual({ sendRawKeys: ["Down", "Enter"] });
   });
 
+  it("skips the Codex update prompt instead of confirming the default update action", () => {
+    const updatePrompt = [
+      "  Update available! 0.150.1 -> 0.151.0",
+      "› 1. Update now (runs `npm install -g @openai/codex`)",
+      "  2. Skip",
+      "  3. Skip until next version",
+      "Press enter to continue",
+    ].join("\n");
+
+    expect(paneNeedsConfirm(updatePrompt)).toBe(true);
+    expect(paneConfirmAction(updatePrompt)).toEqual({ sendRawKeys: ["Down", "Enter"] });
+  });
+
+  it("does not treat a stale Codex update prompt above a shell prompt as active", () => {
+    const staleUpdatePrompt = [
+      "  Update available! 0.150.1 -> 0.151.0",
+      "› 1. Update now (runs `npm install -g @openai/codex`)",
+      "  2. Skip",
+      "  3. Skip until next version",
+      "Press enter to continue",
+      "(base) user@host:~/repo|main ⇒",
+    ].join("\n");
+
+    expect(paneNeedsConfirm(staleUpdatePrompt)).toBe(false);
+  });
+
   it("does not treat stale confirm text above a shell prompt as an active gate", () => {
     const stale =
       "WARNING: Claude Code running in Bypass Permissions mode\n\n  ❯ 1. No, exit\n    2. Yes, I accept\n\n  Enter to confirm · Esc to cancel\n(base) user@host:~/repo|main ⇒";
