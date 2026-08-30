@@ -22,6 +22,7 @@ import { reconcileDailyAuditRepairState } from "./daily-audit-repair-state.js";
 import {
   reconcileDailyAuditRepairQueue,
   reconcileDailyAuditRunState,
+  reconcileStaleDailyAuditSelfChecks,
 } from "./daily-audit-run-state.js";
 import { isBotOwnedRetryableRecoveryEvidence } from "./project-recovery.js";
 import {
@@ -172,6 +173,7 @@ async function runDailyTaskAuditServiceTickInternal(
     window: previousSingaporeDayWindow(input.now),
     now: input.now,
   });
+  reconcileStaleDailyAuditSelfChecks({ ledger, now: input.now });
   ledger.expect({
     taskId,
     source: "daily-audit",

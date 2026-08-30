@@ -402,6 +402,91 @@ describe("runDailyTaskAuditServiceTick", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("closes recovered self-checks before audit repair dispatch", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-daily-audit-self-check-recovered-"),
+    );
+    const notifications = new NotificationGateway();
+    notifications.register(
+      "lark",
+      vi.fn(async () => undefined),
+    );
+    const ledger = new DailyTaskLedger();
+    const failedAuditAt = Date.parse("2026-08-30T04:36:24.249Z");
+    const recoveredAuditAt = Date.parse("2026-08-30T05:41:24.947Z");
+    const now = Date.parse("2026-08-31T02:00:00.000Z");
+    ledger.expect({
+      taskId: `daily-audit:${failedAuditAt}`,
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: failedAuditAt,
+    });
+    ledger.fail(`daily-audit:${failedAuditAt}`, {
+      endedAt: failedAuditAt,
+      error: "notification failed: telegram: no sender registered; lark: no sender registered",
+      summary: "failures=4 repair-dispatch=deferred notification=failed",
+    });
+    ledger.markRepairStatus(`daily-audit:${failedAuditAt}`, {
+      repairStatus: "superseded",
+      updatedAt: recoveredAuditAt,
+      summary: `Superseded by later successful task daily-audit:${recoveredAuditAt}.`,
+    });
+    ledger.expect({
+      taskId: `daily-audit:${recoveredAuditAt}`,
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: recoveredAuditAt,
+    });
+    ledger.finish(`daily-audit:${recoveredAuditAt}`, {
+      endedAt: recoveredAuditAt,
+      summary: "failures=0 repair-dispatch=not-needed notification=sent",
+    });
+    const selfTaskId = `daily-audit:self:${failedAuditAt}`;
+    ledger.expect({
+      taskId: selfTaskId,
+      source: "daily-audit",
+      name: "Daily task audit self-check",
+      scheduledAt: failedAuditAt,
+    });
+    ledger.fail(selfTaskId, {
+      endedAt: recoveredAuditAt,
+      error:
+        "previous audit status=failed error=notification failed: telegram: no sender registered; lark: no sender registered",
+      summary:
+        "Daily Task Audit self-check found previous audit issue: previous audit status=failed error=notification failed: telegram: no sender registered; lark: no sender registered",
+    });
+    const dispatchRepair = vi.fn(async () => ({
+      status: "queued" as const,
+      detail: "runId=unexpected",
+      runId: "unexpected",
+    }));
+
+    await runDailyTaskAuditServiceTick({
+      now,
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: true,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications,
+      ledger,
+      dispatchRepair,
+      discover: () => [],
+      force: true,
+    });
+
+    expect(ledger.listAll().find((record) => record.taskId === selfTaskId)).toMatchObject({
+      repairStatus: "not-needed",
+      summary: expect.stringContaining("later successful Daily Task Audit"),
+    });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+  });
+
   it("dispatches repair when auto repair is enabled and the audit finds failures", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-repair-"));
     const notifications = new NotificationGateway();
