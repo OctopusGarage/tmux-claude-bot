@@ -1,6 +1,9 @@
 import { Domain } from "@larksuiteoapi/node-sdk";
 import { describe, expect, it } from "vitest";
-import { larkChannelOptions } from "../../../src/adapters/lark/start.js";
+import {
+  larkChannelOptions,
+  logIncomingMessageBoundary,
+} from "../../../src/adapters/lark/start.js";
 
 describe("larkChannelOptions", () => {
   it("disables the SDK mention filter (policy.requireMention=false) so bound project groups work without @bot", () => {
@@ -40,5 +43,18 @@ describe("larkChannelOptions", () => {
       if (prev === undefined) delete process.env.LARK_DEDUP_TTL_MS;
       else process.env.LARK_DEDUP_TTL_MS = prev;
     }
+  });
+});
+
+describe("logIncomingMessageBoundary", () => {
+  it("accepts normalized message metadata before business routing", () => {
+    expect(() =>
+      logIncomingMessageBoundary({
+        chatId: "oc_group",
+        chatType: "group",
+        rawContentType: "text",
+        senderId: "ou_owner",
+      } as never),
+    ).not.toThrow();
   });
 });

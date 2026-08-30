@@ -4,6 +4,7 @@ import {
   type LarkChannel,
   type LarkChannelOptions,
   LoggerLevel,
+  type NormalizedMessage,
 } from "@larksuiteoapi/node-sdk";
 import type { HandlerDeps } from "../../core/deps.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -13,6 +14,12 @@ import { startKeepalive } from "./keepalive.js";
 import { registerLarkNotifications } from "./notifications.js";
 
 const log = createLogger("lark.start");
+
+export function logIncomingMessageBoundary(msg: NormalizedMessage): void {
+  log.info(
+    `message event received chat=${msg.chatId} chat_type=${msg.chatType} content_type=${msg.rawContentType} sender=${msg.senderId || "?"}`,
+  );
+}
 
 /**
  * Options for the SDK's `createLarkChannel`. Extracted (and exported) so the
@@ -72,7 +79,11 @@ export function startLark(deps: HandlerDeps): void {
   }
   const domain = cfg.domain === "lark" ? Domain.Lark : Domain.Feishu;
   const channel: LarkChannel = createLarkChannel(larkChannelOptions(cfg, domain));
-  channel.on("message", makeMessageHandler(channel, deps));
+  const messageHandler = makeMessageHandler(channel, deps);
+  channel.on("message", async (msg) => {
+    logIncomingMessageBoundary(msg);
+    await messageHandler(msg);
+  });
   channel.on("cardAction", makeCardActionHandler(channel, deps));
 
   // Chat prompts are intentionally not restored across bot restarts. Replaying a
