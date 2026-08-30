@@ -1,5 +1,9 @@
 import { appStateDir } from "../../shared/state-dir.js";
 import { readAiToolReadiness } from "../ai-tools/install-contract.js";
+import {
+  type AutomationAdmissionEvent,
+  readAutomationAdmissionEvents,
+} from "../automation/admission-events.js";
 import { AgentCapacityStore } from "../automation/capacity-store.js";
 import { AutomationOccurrenceStore } from "../automation/occurrence-window.js";
 import { readAutomationStatuses } from "../config/automation-command.js";
@@ -102,11 +106,58 @@ function isOpenRepairableTask(item: ScheduledTaskRecord): boolean {
   );
 }
 
-function isTransientAdmissionDeferral(item: ScheduledTaskRecord): boolean {
-  const evidence = `${item.error ?? ""}\n${item.summary ?? ""}`;
-  return /automation admission deferred: (quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)/i.test(
-    evidence,
+function isTransientAdmissionReason(reason: string): boolean {
+  return /^(quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)$/i.test(
+    reason,
   );
+}
+
+function admissionOccurrenceIdsFor(item: ScheduledTaskRecord): Set<string> {
+  const ids = new Set<string>([item.taskId]);
+  const parts = item.taskId.split(":");
+  if (parts[0] === "loop" && parts.length >= 4) {
+    const scheduledAt = parts.at(-1);
+    if (scheduledAt !== undefined) {
+      if (parts[1] === "pr-review" && parts[2] !== undefined) {
+        ids.add(`pr-review:${parts[2]}:repository-pull-request-review@${scheduledAt}`);
+      } else if (parts[1] !== undefined && parts[2] !== undefined) {
+        ids.add(`${parts[1]}:${parts[2]}:${parts[2]}@${scheduledAt}`);
+        ids.add(`${parts[1]}:${parts[2]}:${scheduledAt}`);
+      }
+    }
+  }
+  return ids;
+}
+
+function hasTransientAdmissionEvent(
+  item: ScheduledTaskRecord,
+  events: AutomationAdmissionEvent[],
+): boolean {
+  const ids = admissionOccurrenceIdsFor(item);
+  return events.some((event) => {
+    if (event.kind !== "deferred" || !isTransientAdmissionReason(event.reason)) return false;
+    if (event.occurrenceId !== undefined && ids.has(event.occurrenceId)) return true;
+    if (ids.has(event.intentId)) return true;
+    return (
+      item.status === "missing" &&
+      item.name.includes("repository-pull-request-review") &&
+      event.source === "loop-engineering" &&
+      event.intentId === "loop-engineering:repository-review-queue-tick"
+    );
+  });
+}
+
+function isTransientAdmissionDeferral(
+  item: ScheduledTaskRecord,
+  admissionEvents: AutomationAdmissionEvent[] = [],
+): boolean {
+  const evidence = `${item.error ?? ""}\n${item.summary ?? ""}`;
+  if (/automation admission deferred: /i.test(evidence)) {
+    return /automation admission deferred: (quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)/i.test(
+      evidence,
+    );
+  }
+  return hasTransientAdmissionEvent(item, admissionEvents);
 }
 
 function summarizeCurrentDailyAuditWindow(input: {
@@ -141,7 +192,14 @@ function summarizeCurrentDailyAuditWindow(input: {
     window,
   });
   const openItems = summary.items.filter(isOpenRepairableTask);
-  const attentionItems = openItems.filter((item) => !isTransientAdmissionDeferral(item));
+  const admissionEvents = readAutomationAdmissionEvents({
+    since: window.start,
+    until: input.now,
+    limit: 200,
+  }).events;
+  const attentionItems = openItems.filter(
+    (item) => !isTransientAdmissionDeferral(item, admissionEvents),
+  );
   return {
     attention: attentionItems.length,
     repairPending: openItems.filter((item) => (item.repairStatus ?? "pending") === "pending")
