@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type BackoffConfig,
@@ -23,8 +23,10 @@ export interface SupervisorDeps {
   runTypecheck(): Promise<number>;
   watchSrc(onChange: (rel: string) => void): () => void;
   writeStatus(s: SupervisorStatus): void;
+  shouldDeferReload?(): boolean;
   now(): number;
   debounceMs: number;
+  reloadDeferRecheckMs?: number;
   backoff: BackoffConfig;
 }
 
@@ -80,6 +82,15 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
   let current = spawnChild(deps, crashes, (next) => {
     current = next;
   });
+  const reloadDeferRecheckMs = deps.reloadDeferRecheckMs ?? 30_000;
+
+  function scheduleDeferredReloadCheck(): void {
+    timer = setTimeout(() => {
+      pending = true;
+      void maybeRun();
+    }, reloadDeferRecheckMs);
+    timer.unref();
+  }
 
   async function onSettled(): Promise<void> {
     const code = await deps.runTypecheck();
@@ -91,6 +102,21 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
         ),
       );
       log.warn("typecheck failed; holding last-good child", { data: { code } });
+      return;
+    }
+    if (deps.shouldDeferReload?.() === true) {
+      deps.writeStatus(
+        buildStatus(
+          {
+            state: "reload-deferred",
+            lastReloadAtMs: null,
+            lastError: "active automation is using the bot process",
+          },
+          deps.now(),
+        ),
+      );
+      log.warn("clean typecheck reload deferred because automation is active");
+      scheduleDeferredReloadCheck();
       return;
     }
     current.markIntentional();
@@ -184,7 +210,8 @@ function isProcessMissingError(err: unknown): boolean {
 function realDeps(): SupervisorDeps {
   const repo = process.cwd();
   const srcDir = join(repo, "src");
-  const statusFile = join(process.env.TCB_STATE_DIR ?? repo, "dev-supervisor.json");
+  const stateDir = process.env.TCB_STATE_DIR ?? repo;
+  const statusFile = join(stateDir, "dev-supervisor.json");
   return {
     startChild() {
       const cp = spawn(process.execPath, [join(repo, "node_modules/.bin/tsx"), "src/index.ts"], {
@@ -225,10 +252,28 @@ function realDeps(): SupervisorDeps {
         log.debug("status write failed", { err });
       }
     },
+    shouldDeferReload: () => hasActiveAutomation(stateDir),
     now: () => Date.now(),
     debounceMs: 300,
     backoff: { windowMs: 10_000, maxInWindow: 3, delayMs: 1000 },
   };
+}
+
+function hasActiveAutomation(stateDir: string): boolean {
+  return hasActiveSupervisorLease(join(stateDir, "loop-supervisor-worker-leases.json"));
+}
+
+function hasActiveSupervisorLease(file: string): boolean {
+  if (!existsSync(file)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+      leases?: { status?: unknown }[];
+    };
+    return Array.isArray(parsed.leases) && parsed.leases.some((lease) => lease.status === "active");
+  } catch (err) {
+    log.warn("could not inspect active automation leases; deferring reload", { err });
+    return true;
+  }
 }
 
 // Entry: only run when invoked directly (not when imported by tests).
