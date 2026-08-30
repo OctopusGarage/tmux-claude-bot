@@ -602,7 +602,7 @@ export async function readRuntimeOverview(input: {
         severity: "warning",
         observedAt: value.lastFiredAt ?? input.now,
         summary: `${summary?.attention ?? 0} Daily Task Audit item needs attention`,
-        nextAction: "tcb logs --grep daily-task-audit --since 7d",
+        nextAction: "tcb logs --grep 'daily task audit' --since 7d",
         presentation: { kind: "daily-audit-attention", count: summary?.attention ?? 0 },
       });
     }
