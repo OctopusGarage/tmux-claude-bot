@@ -122,15 +122,17 @@ describe("startKeepalive", () => {
     expect(f.reconnects()).toBe(0);
   });
 
-  it("force-reconnects after wake-from-sleep even when the SDK still reports connected", async () => {
-    const f = makeDeps();
+  it("does not reconnect on a long tick gap while the SDK still reports connected", async () => {
+    const probe = vi.fn(async () => true);
+    const f = makeDeps({ probe });
     handle = startKeepalive(f.deps);
 
     await vi.advanceTimersByTimeAsync(INTERVAL);
     vi.setSystemTime(Date.now() + 120_000);
     await vi.advanceTimersByTimeAsync(INTERVAL);
 
-    expect(f.reconnects()).toBe(1);
+    expect(probe).not.toHaveBeenCalled();
+    expect(f.reconnects()).toBe(0);
   });
 
   it("does not treat a slow wake reconnect as another wake on the next interval", async () => {
@@ -142,6 +144,7 @@ describe("startKeepalive", () => {
       },
     });
     handle = startKeepalive(f.deps);
+    f.setStatus({ state: "reconnecting", reconnectAttempts: 1 });
 
     await vi.advanceTimersByTimeAsync(INTERVAL);
     vi.setSystemTime(Date.now() + 120_000);
@@ -154,6 +157,7 @@ describe("startKeepalive", () => {
   it("debounces repeated wake reconnects across short wake cycles", async () => {
     const f = makeDeps();
     handle = startKeepalive(f.deps);
+    f.setStatus({ state: "reconnecting", reconnectAttempts: 1 });
 
     await vi.advanceTimersByTimeAsync(INTERVAL);
     vi.setSystemTime(Date.now() + 120_000);
@@ -166,6 +170,7 @@ describe("startKeepalive", () => {
 
   it("does not reconnect after wake-from-sleep while the network itself is unreachable", async () => {
     const f = makeDeps();
+    f.setStatus({ state: "reconnecting", reconnectAttempts: 1 });
     f.setReachable(false);
     handle = startKeepalive(f.deps);
 

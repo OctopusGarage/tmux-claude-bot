@@ -8,9 +8,9 @@ const log = createLogger("lark.keepalive");
  * network flaps that leave the WS half-open).
  *
  *  1. 15s timer — independent of the SDK's server-pushed ping cadence.
- *  2. Sleep detection — a tick gap > SLEEP_DETECT_MS means the machine likely
- *     just woke; reset counters and refresh the WS if the Lark domain is reachable
- *     because the SDK can still report a half-open socket as connected.
+ *  2. Long-gap detection — a tick gap > SLEEP_DETECT_MS means the machine may
+ *     have slept or the host was busy. Reset counters, but do not tear down a
+ *     socket the SDK still reports as connected; host load can delay timers too.
  *  3. Timer-storm guard — on wake, queued intervals can fire back-to-back;
  *     skip ticks closer than TIMER_STORM_GUARD_MS.
  *  4. HTTP probe — before force-reconnecting, check the Lark domain over
@@ -62,14 +62,15 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     if (sinceLast > 0 && sinceLast < TIMER_STORM_GUARD_MS) {
       return;
     }
-    // (2) Sleep detection — machine likely just woke from sleep.
+    // (2) Long-gap detection — machine likely woke from sleep or was busy.
     if (sinceLast > SLEEP_DETECT_MS) {
-      log.info(`wake-up detected (slept ~${Math.round(sinceLast / 1000)}s)`);
+      log.info(`keepalive long tick gap detected (~${Math.round(sinceLast / 1000)}s)`);
       consecutiveDown = 0;
       networkDownTicks = 0;
       lastTick = now;
       const status = deps.getStatus();
       if (!status) return;
+      if (status.state === "connected") return;
       const reachable = await probe(deps.probeUrl);
       if (!reachable) {
         networkDownTicks = 1;
