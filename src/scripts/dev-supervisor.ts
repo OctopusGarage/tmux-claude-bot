@@ -12,10 +12,13 @@ import {
 import { createLogger } from "../shared/utils/logger.js";
 
 const log = createLogger("dev.supervisor");
+const CHILD_SHUTDOWN_GRACE_MS = 10_000;
+const SUPERVISOR_EXIT_GRACE_MS = CHILD_SHUTDOWN_GRACE_MS + 2_000;
 
 export interface ChildHandle {
   kill(signal?: NodeJS.Signals): void;
   onExit(cb: () => void): void;
+  waitForExit?(timeoutMs?: number): Promise<boolean>;
 }
 
 export interface SupervisorDeps {
@@ -31,7 +34,7 @@ export interface SupervisorDeps {
 }
 
 type SpawnedChild = { child: ChildHandle; markIntentional: () => void };
-type SupervisorHandle = { stop(signal?: NodeJS.Signals): void };
+type SupervisorHandle = { stop(signal?: NodeJS.Signals): Promise<void> };
 type SupervisorSignalTarget = {
   once(event: NodeJS.Signals, cb: () => void): unknown;
 };
@@ -119,8 +122,13 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
       scheduleDeferredReloadCheck();
       return;
     }
-    current.markIntentional();
-    current.child.kill("SIGTERM");
+    const old = current;
+    old.markIntentional();
+    old.child.kill("SIGTERM");
+    const exited = await old.child.waitForExit?.(SUPERVISOR_EXIT_GRACE_MS);
+    if (exited === false) {
+      log.warn("old child did not exit before reload respawn");
+    }
     crashes.length = 0;
     current = spawnChild(deps, crashes, (next) => {
       current = next;
@@ -154,13 +162,17 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
   });
 
   return {
-    stop(signal = "SIGTERM") {
+    async stop(signal = "SIGTERM") {
       if (stopped) return;
       stopped = true;
       if (timer) clearTimeout(timer);
       unwatch();
       current.markIntentional();
       current.child.kill(signal);
+      const exited = await current.child.waitForExit?.(SUPERVISOR_EXIT_GRACE_MS);
+      if (exited === false) {
+        log.warn("child did not exit before supervisor shutdown completed");
+      }
     },
   };
 }
@@ -175,8 +187,7 @@ export function installSupervisorSignalHandlers(
     if (handled) return;
     handled = true;
     log.info("dev supervisor shutdown signal received", { data: { signal } });
-    supervisor.stop(signal);
-    exit(0);
+    void supervisor.stop(signal).finally(() => exit(0));
   };
   signalTarget.once("SIGINT", () => handle("SIGINT"));
   signalTarget.once("SIGTERM", () => handle("SIGTERM"));
@@ -220,9 +231,42 @@ function realDeps(): SupervisorDeps {
         stdio: "inherit",
       });
       cp.on("error", (err) => log.error("child spawn failed", { err }));
+      let exited = false;
+      let escalationTimer: ReturnType<typeof setTimeout> | null = null;
+      const exitCallbacks: Array<() => void> = [];
+      cp.once("exit", () => {
+        exited = true;
+        if (escalationTimer) clearTimeout(escalationTimer);
+        for (const cb of exitCallbacks.splice(0)) cb();
+      });
       return {
-        kill: (signal = "SIGTERM") => killProcessTree(cp, signal),
-        onExit: (cb) => cp.once("exit", cb),
+        kill(signal = "SIGTERM") {
+          killProcessTree(cp, signal);
+          if (signal === "SIGKILL" || exited || escalationTimer !== null) return;
+          escalationTimer = setTimeout(() => {
+            if (exited) return;
+            log.warn("child did not exit after graceful signal; escalating to SIGKILL");
+            killProcessTree(cp, "SIGKILL");
+          }, CHILD_SHUTDOWN_GRACE_MS);
+          escalationTimer.unref();
+        },
+        onExit: (cb) => {
+          if (exited) {
+            cb();
+            return;
+          }
+          exitCallbacks.push(cb);
+        },
+        waitForExit(timeoutMs = SUPERVISOR_EXIT_GRACE_MS) {
+          if (exited) return Promise.resolve(true);
+          return new Promise((resolve) => {
+            const timeout = setTimeout(() => resolve(false), timeoutMs);
+            exitCallbacks.push(() => {
+              clearTimeout(timeout);
+              resolve(true);
+            });
+          });
+        },
       };
     },
     runTypecheck() {

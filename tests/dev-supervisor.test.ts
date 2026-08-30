@@ -5,6 +5,7 @@ import { installSupervisorSignalHandlers, startSupervisor } from "../src/scripts
 /** A fake ChildHandle that captures the onExit callback so tests can fire it. */
 class FakeChild {
   kill = vi.fn();
+  waitForExit = vi.fn(async () => true);
   private _exitCb: (() => void) | null = null;
   onExit(cb: () => void): void {
     this._exitCb = cb;
@@ -96,6 +97,32 @@ describe("startSupervisor", () => {
     expect(runTypecheck).toHaveBeenCalledTimes(1);
     expect(expectChild(children, 0).kill).toHaveBeenCalledTimes(1);
     expect(startChild).toHaveBeenCalledTimes(1); // respawned
+  });
+
+  it("waits for the old child to exit before starting the reload child", async () => {
+    let releaseExit!: () => void;
+    const { deps, children, startChild, runTypecheck, fire } = makeDeps();
+    startSupervisor(deps);
+    expectChild(children, 0).waitForExit.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseExit = () => resolve(true);
+        }),
+    );
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledWith("SIGTERM");
+    expect(startChild).not.toHaveBeenCalled();
+
+    releaseExit();
+    await flushAll();
+
+    expect(startChild).toHaveBeenCalledTimes(1);
   });
 
   it("on a failing typecheck, holds the child and records the error", async () => {
@@ -320,12 +347,12 @@ describe("startSupervisor", () => {
     expect(statuses.at(-1)?.state).toBe("crash-wait");
   });
 
-  it("stop marks the live child intentional, clears the watcher, and is idempotent", () => {
+  it("stop marks the live child intentional, clears the watcher, and is idempotent", async () => {
     const { deps, children, unwatch } = makeDeps();
     const supervisor = startSupervisor(deps);
 
-    supervisor.stop("SIGINT");
-    supervisor.stop("SIGTERM");
+    await supervisor.stop("SIGINT");
+    await supervisor.stop("SIGTERM");
     expect(unwatch).toHaveBeenCalledTimes(1);
     expect(expectChild(children, 0).kill).toHaveBeenCalledTimes(1);
     expect(expectChild(children, 0).kill).toHaveBeenCalledWith("SIGINT");
@@ -336,7 +363,7 @@ describe("startSupervisor", () => {
 });
 
 describe("installSupervisorSignalHandlers", () => {
-  it("stops the supervisor once before exiting on a shutdown signal", () => {
+  it("stops the supervisor once before exiting on a shutdown signal", async () => {
     const handlers = new Map<string, () => void>();
     const signalTarget = {
       once: vi.fn((event: string, cb: () => void) => {
@@ -344,17 +371,29 @@ describe("installSupervisorSignalHandlers", () => {
         return signalTarget;
       }),
     };
-    const supervisor = { stop: vi.fn() };
-    const exit = vi.fn((code: number) => {
-      throw new Error(`exit ${code}`);
-    }) as unknown as (code: number) => never;
+    let releaseStop!: () => void;
+    const supervisor = {
+      stop: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseStop = resolve;
+          }),
+      ),
+    };
+    const exit = vi.fn() as unknown as (code: number) => never;
 
     installSupervisorSignalHandlers(supervisor, signalTarget, exit);
 
-    expect(() => handlers.get("SIGTERM")?.()).toThrow("exit 0");
-    expect(() => handlers.get("SIGINT")?.()).not.toThrow();
+    handlers.get("SIGTERM")?.();
+    handlers.get("SIGINT")?.();
     expect(supervisor.stop).toHaveBeenCalledTimes(1);
     expect(supervisor.stop).toHaveBeenCalledWith("SIGTERM");
+    expect(exit).not.toHaveBeenCalled();
+
+    releaseStop();
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(0);
   });
