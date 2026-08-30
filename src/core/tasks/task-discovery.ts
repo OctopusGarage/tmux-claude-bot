@@ -125,11 +125,7 @@ function reconcileLoopLedgerArtifact(record: ScheduledTaskRecord): ScheduledTask
     finalSummaryPath,
   });
   if (reconciled === null) return record;
-  if (
-    isClosedTerminalStatus(record) &&
-    isRepairableStatus(reconciled.status) &&
-    isCompletedFinalSummaryAnomalyRecord(reconciled)
-  ) {
+  if (isClosedTerminalStatus(record) && isRepairableStatus(reconciled.status)) {
     return record;
   }
   return mergeClosedRepairResolution(record, reconciled);

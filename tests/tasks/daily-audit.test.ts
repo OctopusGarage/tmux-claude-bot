@@ -117,6 +117,47 @@ describe("runDailyTaskAudit", () => {
     expect(body).not.toContain("closed repair · failed");
   });
 
+  it("renders automation admission deferrals as waiting instead of attention", () => {
+    const deferred = taskAuditItem({
+      taskId: "loop:geo-backend:test-coverage:1",
+      name: "geo-backend test-coverage",
+      status: "missing",
+      repairStatus: "pending",
+      failureKind: "system-gate",
+      summary:
+        "Recovery dispatch deferred: automation admission deferred: autonomous-heavy-active-lease",
+    });
+
+    const notification = buildDailyTaskAuditNotification({
+      summary: {
+        window: { start: 0, end: 1, label: "2026-08-04 SGT" },
+        counts: {
+          success: 0,
+          failed: 0,
+          missing: 1,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [deferred],
+      },
+      repairCandidates: [deferred],
+      repairDispatch: "deferred - automation admission deferred: autonomous-heavy-active-lease",
+    });
+
+    expect(notification).toMatchObject({
+      level: "info",
+      title: "Daily task audit waiting for automation capacity",
+      delivery: {
+        mode: "state-change",
+        topic: "daily-task-audit:health",
+        state: "waiting:geo-backend test-coverage:missing:system-gate",
+      },
+    });
+    expect(notification.body).toContain("Status: WAITING");
+    expect(notification.body).toContain("geo-backend test-coverage · missing · system-gate");
+  });
+
   it("caps the rendered issue list and reports the hidden count", () => {
     const issues = Array.from({ length: 10 }, (_, index) =>
       taskAuditItem({

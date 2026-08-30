@@ -87,13 +87,18 @@ export function buildDailyTaskAuditNotification(input: {
   repairDispatch?: string;
 }): NotificationRequest {
   const activeIssues = activeIssueItems(input.summary.items);
+  const status = dailyTaskAuditNotificationStatus(activeIssues);
   const body = renderDailyTaskAudit(input.summary, input.repairCandidates, {
     ...(input.repairDispatch !== undefined ? { repairDispatch: input.repairDispatch } : {}),
   });
   const intent = buildAutomationNotificationIntent({
     title:
-      activeIssues.length > 0 ? "Daily task audit needs attention" : "Daily task audit healthy",
-    status: activeIssues.length > 0 ? "attention" : "ok",
+      status === "attention"
+        ? "Daily task audit needs attention"
+        : status === "waiting"
+          ? "Daily task audit waiting for automation capacity"
+          : "Daily task audit healthy",
+    status,
     summary: body.split("\n"),
   });
   return {
@@ -106,13 +111,13 @@ export function buildDailyTaskAuditNotification(input: {
       mode: "state-change",
       topic: "daily-task-audit:health",
       state:
-        activeIssues.length === 0
+        status === "ok"
           ? "healthy"
-          : `attention:${activeIssues
+          : `${status}:${activeIssues
               .map((item) => `${item.name}:${item.status}:${item.failureKind ?? "unknown"}`)
               .sort()
               .join("|")}`,
-      ...(activeIssues.length === 0 ? { notifyInitial: false } : {}),
+      ...(status === "ok" ? { notifyInitial: false } : {}),
     },
   };
 }
@@ -124,9 +129,10 @@ export function renderDailyTaskAudit(
 ): string {
   const counts = summary.counts;
   const activeIssues = activeIssueItems(summary.items);
+  const status = dailyTaskAuditNotificationStatus(activeIssues);
   const closedFailures = closedFailureItems(summary.items);
   const lines = [
-    `Status: ${activeIssues.length > 0 ? "ATTENTION" : "OK"}`,
+    `Status: ${status.toUpperCase()}`,
     `Counts: ${counts.success} success · ${counts.failed} failed · ${counts.missing} missing · ${counts.running} running`,
     `Repair: ${repairCandidates.length} candidates${
       opts.repairDispatch === undefined ? "" : ` · ${opts.repairDispatch}`
@@ -154,11 +160,23 @@ export function renderDailyTaskAudit(
   return lines.filter((line) => line.length > 0).join("\n");
 }
 
+function dailyTaskAuditNotificationStatus(
+  activeIssues: TaskAuditItem[],
+): "ok" | "waiting" | "attention" {
+  if (activeIssues.length === 0) return "ok";
+  return activeIssues.every(isAutomationAdmissionDeferredIssue) ? "waiting" : "attention";
+}
+
 function activeIssueItems(items: TaskAuditItem[]): TaskAuditItem[] {
   return items.filter((item) => {
     if (item.status === "running") return true;
     return isRepairableStatus(item.status) && !isClosedRepairStatus(item.repairStatus);
   });
+}
+
+function isAutomationAdmissionDeferredIssue(item: TaskAuditItem): boolean {
+  const evidence = `${item.error ?? ""}\n${item.summary ?? ""}`;
+  return evidence.includes("Recovery dispatch deferred: automation admission deferred:");
 }
 
 function closedFailureItems(items: TaskAuditItem[]): TaskAuditItem[] {

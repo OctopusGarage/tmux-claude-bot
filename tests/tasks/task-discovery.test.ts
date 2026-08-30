@@ -655,6 +655,53 @@ describe("mergeDiscoveredTaskRecords", () => {
     ]);
   });
 
+  it("does not let a stale system-gate rejection reopen a closed loop success", () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-stale-system-gate-json-"));
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runDir = join(root, "loop-runs", "tmux-claude-bot", `${scheduledAt}-tmux-claude-bot`);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        actionsTaken: ["Recovered the run and verified the source worktree."],
+        finalVerification: "passed",
+        followUps: [],
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        failures: ["git status failed: spawnSync /usr/bin/git ENOENT"],
+        evalReport: {
+          outcome: {
+            status: "failed",
+            finalVerification: "failed",
+            reviewDecision: "fail",
+            reason: "final-verification-failed",
+          },
+        },
+      }),
+      "utf8",
+    );
+    const ledgerRecord: ScheduledTaskRecord = {
+      taskId: `loop:tmux-claude-bot:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "tmux-claude-bot architecture",
+      scheduledAt,
+      status: "success",
+      repairStatus: "not-needed",
+      summary: "Authoritative ledger closure from a later accepted repair.",
+      reportPath: join(runDir, "supervisor.md"),
+      endedAt: scheduledAt + 3000,
+      updatedAt: scheduledAt + 3000,
+    };
+
+    expect(mergeDiscoveredTaskRecords([ledgerRecord], [])).toEqual([ledgerRecord]);
+  });
+
   it("uses default system-gate rejection text when no failure details were persisted", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-system-gate-default-"));
     const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
