@@ -112,6 +112,48 @@ describe("startSupervisor", () => {
     expect(statuses.at(-1)?.state).toBe("typecheck-failed");
   });
 
+  it("defers clean reloads while active automation is using the bot process", async () => {
+    const shouldDeferReload = vi.fn(() => true);
+    const { deps, children, statuses, startChild, runTypecheck, fire } = makeDeps({
+      shouldDeferReload,
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(1);
+    expect(shouldDeferReload).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
+    expect(startChild).not.toHaveBeenCalled();
+    expect(statuses.at(-1)?.state).toBe("reload-deferred");
+  });
+
+  it("reloads on the deferred recheck after active automation clears", async () => {
+    let activeAutomation = true;
+    const { deps, children, startChild, runTypecheck, fire } = makeDeps({
+      shouldDeferReload: () => activeAutomation,
+      reloadDeferRecheckMs: 100,
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+    expect(startChild).not.toHaveBeenCalled();
+
+    activeAutomation = false;
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(2);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledTimes(1);
+    expect(startChild).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores changes to test files (no typecheck, no restart)", async () => {
     const { deps, runTypecheck, fire } = makeDeps();
     startSupervisor(deps);

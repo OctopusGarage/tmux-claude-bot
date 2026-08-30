@@ -29,6 +29,8 @@ managed dev points it at this repository's source CLI and the deployed state
 directory; switching back to prod points it at the managed `dist/cli.js`.
 Service installers refresh the launcher through `install-cli-launchers.sh` so
 the command surface cannot silently lag behind the running service.
+In managed dev, clean hot reloads must defer while an active Loop Supervisor
+worker lease is present so operator automation is not interrupted mid-WorkOrder.
 
 Managed install owns the full onboarding surface: runtime build, global
 launchers, guided setup, launchd/systemd registration, isolated Home Operator

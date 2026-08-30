@@ -40,7 +40,7 @@ export function nextCrashAction(
 }
 
 export interface SupervisorStatus {
-  state: "running" | "typecheck-failed" | "crash-wait";
+  state: "running" | "typecheck-failed" | "crash-wait" | "reload-deferred";
   lastReloadAtMs: number | null;
   lastError: string | null;
   updatedAtMs: number;
