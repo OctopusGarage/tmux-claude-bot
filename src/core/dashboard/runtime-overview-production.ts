@@ -14,7 +14,14 @@ import { createResourceGuardianStore } from "../resource-guardian/store.js";
 import { discoverRuntimeGuardianFindings } from "../runtime-guardian/inspector.js";
 import { DailyTaskAuditStore } from "../tasks/daily-audit-service.js";
 import {
+  discoverLaunchdScheduledTasks,
+  discoverLoopEngineeringScheduledTasks,
+  mergeDiscoveredTaskRecords,
+} from "../tasks/task-discovery.js";
+import {
   DailyTaskLedger,
+  previousSingaporeDayWindow,
+  type ScheduledTaskRecord,
   type ScheduledTaskRepairStatus,
   summarizeTaskWindow,
 } from "../tasks/task-ledger.js";
@@ -30,6 +37,7 @@ const CLOSED_REPAIR_STATUSES = new Set<ScheduledTaskRepairStatus>([
   "superseded",
   "not-reproducible",
 ]);
+const REPAIRABLE_STATUSES = new Set(["failed", "missing", "running-timeout"]);
 let powerCache: { key: string; readAt: number; value: PowerStatusView } | null = null;
 let workOrderCache: { key: string; readAt: number; value: WorkOrderOverviewRead } | null = null;
 let dailyAuditCache: {
@@ -85,6 +93,57 @@ function closedRepositoryReviewRepairClosure(
     status: "completed",
     reason: `reconciled from daily task ledger repairStatus=${repairStatus}`,
   };
+}
+
+function isOpenRepairableTask(item: ScheduledTaskRecord): boolean {
+  return (
+    REPAIRABLE_STATUSES.has(item.status) &&
+    !CLOSED_REPAIR_STATUSES.has(item.repairStatus ?? "pending")
+  );
+}
+
+function summarizeCurrentDailyAuditWindow(input: {
+  ledger: DailyTaskLedger;
+  now: number;
+  loopConfigFile?: string;
+}): { attention: number; repairPending: number } {
+  const window = previousSingaporeDayWindow(input.now);
+  const discoveredRecords = [
+    ...discoverLaunchdScheduledTasks({
+      window,
+      now: input.now,
+      includeLabel: (label) => label === "com.octopusgarage.tmux-claude-bot",
+    }),
+    ...discoverLoopEngineeringScheduledTasks({
+      window,
+      now: input.now,
+      ...(input.loopConfigFile !== undefined ? { configFile: input.loopConfigFile } : {}),
+    }),
+  ];
+  const records = input.ledger.listForWindow(window);
+  const recordIds = new Set(records.map((record) => record.taskId));
+  const discoveredIds = new Set(discoveredRecords.map((record) => record.taskId));
+  for (const record of input.ledger.listAll()) {
+    if (!discoveredIds.has(record.taskId) || recordIds.has(record.taskId)) continue;
+    records.push(record);
+    recordIds.add(record.taskId);
+  }
+  const summary = summarizeTaskWindow({
+    records: mergeDiscoveredTaskRecords(records, discoveredRecords),
+    now: input.now,
+    window,
+  });
+  const openItems = summary.items.filter(isOpenRepairableTask);
+  return {
+    attention: openItems.length,
+    repairPending: openItems.filter((item) => (item.repairStatus ?? "pending") === "pending")
+      .length,
+  };
+}
+
+function configuredLoopConfigFile(deps: HandlerDeps): string | undefined {
+  const config = deps.config as { loopEngineering?: { configFile?: string } };
+  return config.loopEngineering?.configFile;
 }
 
 function cachedDomain<T>(
@@ -207,13 +266,22 @@ export function createRuntimeOverviewReaders(input: {
     },
     dailyAudit: () => {
       const read = cachedDomain(dailyAuditCache, appStateDir(), now, () => {
+        const ledger = new DailyTaskLedger();
         const window = {
           start: now - 7 * 24 * 60 * 60 * 1_000,
           end: now + 1,
           label: "recent 7 days",
         };
-        const records = new DailyTaskLedger().listForWindow(window);
+        const records = ledger.listForWindow(window);
         const summary = summarizeTaskWindow({ records, now, window });
+        const current = summarizeCurrentDailyAuditWindow({
+          ledger,
+          now,
+          ...(() => {
+            const loopConfigFile = configuredLoopConfigFile(deps);
+            return loopConfigFile === undefined ? {} : { loopConfigFile };
+          })(),
+        });
         const outcomes = summary.items
           .filter(
             (record) =>
@@ -243,16 +311,8 @@ export function createRuntimeOverviewReaders(input: {
               (item) => item.source === "daily-audit" && item.status === "running",
             ).length,
             failed: summary.counts.failed + summary.counts.missing + summary.counts.runningTimeout,
-            attention: summary.items.filter(
-              (item) =>
-                ["failed", "missing", "running-timeout"].includes(item.status) &&
-                !CLOSED_REPAIR_STATUSES.has(item.repairStatus ?? "pending"),
-            ).length,
-            repairPending: summary.items.filter(
-              (item) =>
-                ["failed", "missing", "running-timeout"].includes(item.status) &&
-                (item.repairStatus ?? "pending") === "pending",
-            ).length,
+            attention: current.attention,
+            repairPending: current.repairPending,
             blocked: summary.items.filter(
               (item) =>
                 ["failed", "missing", "running-timeout"].includes(item.status) &&

@@ -387,12 +387,14 @@ describe("production Runtime Overview readers", () => {
     const originalStateDir = process.env.TCB_STATE_DIR;
     process.env.TCB_STATE_DIR = stateDir;
     try {
+      const now = Date.parse("2026-08-30T12:00:00+08:00");
+      const scheduledAt = Date.parse("2026-08-29T10:00:00+08:00");
       const ledger = new DailyTaskLedger();
       ledger.expect({
-        taskId: "loop:tmux-claude-bot:bug-fix:1000",
+        taskId: "loop:tmux-claude-bot:bug-fix:2026-08-29",
         source: "loop-engineering",
         name: "tmux-claude-bot bug-fix",
-        scheduledAt: 1_000,
+        scheduledAt,
       });
 
       const result = await createRuntimeOverviewReaders({
@@ -401,7 +403,7 @@ describe("production Runtime Overview readers", () => {
             taskAudit: { enabled: true, tickMs: 300_000 },
           },
         } as HandlerDeps,
-        now: 1_300,
+        now,
         operatorSessionRunning: false,
       }).dailyAudit();
 
@@ -409,6 +411,47 @@ describe("production Runtime Overview readers", () => {
         failed: 1,
         attention: 1,
         repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report historical Daily Task Audit pending repairs as current attention", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = 10 * 24 * 60 * 60 * 1_000;
+      const taskId = "loop:tmux-claude-bot:bug-fix:historical";
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "tmux-claude-bot bug-fix",
+        scheduledAt: now - 5 * 24 * 60 * 60 * 1_000,
+      });
+      ledger.fail(taskId, {
+        endedAt: now - 5 * 24 * 60 * 60 * 1_000 + 1_000,
+        error: "old failure",
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 0,
       });
     } finally {
       if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
