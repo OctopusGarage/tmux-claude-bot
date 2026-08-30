@@ -377,6 +377,10 @@ describe("Runtime Overview reader", () => {
     expect(overview.attention.items).toContainEqual(
       expect.objectContaining({ id: "daily-task-audit:repair-pending" }),
     );
+    expect(
+      overview.attention.items.find((item) => item.id === "daily-task-audit:repair-pending")
+        ?.nextAction,
+    ).toBe("tcb logs --grep 'daily task audit' --since 7d");
     expect(overview.recentOutcomes.items).toContainEqual(
       expect.objectContaining({ id: "ledger:audit-1", status: "failed" }),
     );
