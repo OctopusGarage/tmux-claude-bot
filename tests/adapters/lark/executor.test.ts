@@ -65,6 +65,21 @@ describe("enqueueLarkAction", () => {
     expect(channel.cards()).toHaveLength(1);
   });
 
+  it("falls back to plain text when the result card cannot be sent", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+
+    await enqueueLarkAction(channel, deps, "chat-1", "msg-1", "text", "hi");
+    vi.mocked(channel.send).mockRejectedValueOnce(
+      Object.assign(new Error("card rejected"), { code: "permission_denied" }),
+    );
+
+    deps.queue.resolveLast("Claude says hi");
+    await vi.waitFor(() =>
+      expect(channel.texts().some((t) => t.includes("Claude says hi"))).toBe(true),
+    );
+  });
+
   it("on resolve of a non-'text' action, replies plain text", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();

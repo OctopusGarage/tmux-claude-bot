@@ -140,6 +140,8 @@ export async function enqueueLarkAction(
               );
               if (mid) {
                 recordReplyTarget(mid, session);
+              } else {
+                await sendText(channel, chatId, `${output}\n\n${projectTag(session)}`);
               }
             } else {
               await sendText(channel, chatId, `${output}\n\n${projectTag(session)}`);

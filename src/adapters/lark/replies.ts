@@ -10,6 +10,7 @@ import { textOrPlaceholder } from "./format.js";
 const log = createLogger("lark.replies");
 
 const MAX_SEND_ATTEMPTS = 3;
+const SEND_TIMEOUT_MS = 15_000;
 /**
  * `channel.send` rejects with a `LarkChannelError` carrying a fixed-vocabulary
  * `code` (the SDK wraps raw network/axios errors into these). The SDK ALREADY
@@ -28,6 +29,30 @@ const RETRYABLE_CODES = new Set(["send_timeout", "not_connected"]);
 function isRetryable(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
   return typeof code === "string" && RETRYABLE_CODES.has(code);
+}
+
+function sendTimeoutError(label: string): Error & { code: "send_timeout" } {
+  return Object.assign(new Error(`${label} timed out after ${SEND_TIMEOUT_MS}ms`), {
+    code: "send_timeout" as const,
+  });
+}
+
+async function withSendTimeout(
+  label: string,
+  send: () => Promise<SendResult>,
+): Promise<SendResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      send(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(sendTimeoutError(label)), SEND_TIMEOUT_MS);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -50,7 +75,7 @@ async function sendWithRetry(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
     try {
-      return await send();
+      return await withSendTimeout(label, send);
     } catch (err) {
       lastErr = err;
       if (attempt < MAX_SEND_ATTEMPTS && isRetryable(err)) {
