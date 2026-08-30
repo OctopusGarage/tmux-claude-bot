@@ -163,4 +163,139 @@ describe("daily audit run state", () => {
         ),
     ).toEqual([]);
   });
+
+  it("closes stale self-check repairs after a later audit notification succeeds", () => {
+    const previousAuditAt = Date.parse("2026-08-30T04:36:24.249Z");
+    const recoveredAuditAt = Date.parse("2026-08-30T05:41:24.947Z");
+    const now = Date.parse("2026-08-30T16:15:07.903Z");
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: `daily-audit:${previousAuditAt}`,
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.fail(`daily-audit:${previousAuditAt}`, {
+      endedAt: previousAuditAt,
+      error: "notification failed: telegram: no sender registered; lark: no sender registered",
+      summary: "failures=4 repair-dispatch=deferred notification=failed",
+    });
+    ledger.markRepairStatus(`daily-audit:${previousAuditAt}`, {
+      repairStatus: "superseded",
+      updatedAt: previousAuditAt + 1,
+      summary: `Superseded by later successful task daily-audit:${recoveredAuditAt}.`,
+    });
+    ledger.expect({
+      taskId: `daily-audit:self:${previousAuditAt}`,
+      source: "daily-audit",
+      name: "Daily task audit self-check",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.fail(`daily-audit:self:${previousAuditAt}`, {
+      endedAt: now,
+      error:
+        "previous audit status=failed error=notification failed: telegram: no sender registered; lark: no sender registered",
+      summary:
+        "Daily Task Audit self-check found previous audit issue: previous audit status=failed error=notification failed: telegram: no sender registered; lark: no sender registered",
+    });
+    ledger.expect({
+      taskId: `daily-audit:${recoveredAuditAt}`,
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: recoveredAuditAt,
+    });
+    ledger.finish(`daily-audit:${recoveredAuditAt}`, {
+      endedAt: recoveredAuditAt,
+      summary: "failures=0 repair-dispatch=not-needed notification=sent",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "daily-audit",
+      taskFamily: "Daily task audit self-check",
+      fingerprint: "notification",
+      taskId: `daily-audit:self:${previousAuditAt}`,
+      now,
+    });
+
+    reconcileDailyAuditRunState({
+      ledger,
+      coordinator,
+      now,
+      repoPath: "/repo/tmux-claude-bot",
+      reconcileRepairState: () => {},
+    });
+
+    expect(
+      ledger.listAll().find((entry) => entry.taskId === `daily-audit:self:${previousAuditAt}`),
+    ).toMatchObject({
+      repairStatus: "not-needed",
+      summary: expect.stringContaining("later successful Daily Task Audit"),
+    });
+    expect(coordinator.list()).toContainEqual(
+      expect.objectContaining({
+        status: "fixed",
+        linkedTaskIds: [`daily-audit:self:${previousAuditAt}`],
+      }),
+    );
+  });
+
+  it("keeps a pending self-check when a partial audit notification has not recovered", () => {
+    const previousAuditAt = Date.parse("2026-08-30T05:41:24.947Z");
+    const now = Date.parse("2026-08-30T16:15:07.903Z");
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: `daily-audit:${previousAuditAt}`,
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.finish(`daily-audit:${previousAuditAt}`, {
+      endedAt: previousAuditAt,
+      summary: "failures=0 repair-dispatch=not-needed notification=partial",
+    });
+    ledger.expect({
+      taskId: `daily-audit:self:${previousAuditAt}`,
+      source: "daily-audit",
+      name: "Daily task audit self-check",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.fail(`daily-audit:self:${previousAuditAt}`, {
+      endedAt: now,
+      error: "previous audit notification=partial",
+      summary:
+        "Daily Task Audit self-check found previous audit issue: previous audit notification=partial",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "daily-audit",
+      taskFamily: "Daily task audit self-check",
+      fingerprint: "notification",
+      taskId: `daily-audit:self:${previousAuditAt}`,
+      now,
+    });
+
+    reconcileDailyAuditRunState({
+      ledger,
+      coordinator,
+      now,
+      repoPath: "/repo/tmux-claude-bot",
+      reconcileRepairState: () => {},
+    });
+
+    expect(
+      ledger.listAll().find((entry) => entry.taskId === `daily-audit:self:${previousAuditAt}`),
+    ).toMatchObject({
+      repairStatus: "pending",
+    });
+    expect(coordinator.list()).toContainEqual(
+      expect.objectContaining({
+        status: "pending",
+        linkedTaskIds: [`daily-audit:self:${previousAuditAt}`],
+      }),
+    );
+  });
 });
