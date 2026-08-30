@@ -34,6 +34,10 @@ export function reconcileDailyAuditRunState(input: {
   input.coordinator.reconcileExpiredLeases(input.now);
   input.coordinator.reconcileDuplicateTaskIds(input.now);
   input.reconcileRepairState({ ledger: input.ledger as DailyTaskLedger, now: input.now });
+  reconcileStaleDailyAuditSelfChecks({
+    ledger: input.ledger as DailyTaskLedger,
+    now: input.now,
+  });
   reconcilePendingLedgerFromTerminalRepairQueue({
     ledger: input.ledger as DailyTaskLedger,
     coordinator: input.coordinator,
@@ -86,6 +90,46 @@ export function reconcilePendingLedgerFromTerminalRepairQueue(input: {
       summary: appendSummary(
         record.summary,
         `Synchronized from terminal repair queue state (${repairStatus}).`,
+      ),
+    });
+    updated++;
+  }
+  return updated;
+}
+
+export function reconcileStaleDailyAuditSelfChecks(input: {
+  ledger: Pick<DailyTaskLedger, "listAll" | "markRepairStatus">;
+  now: number;
+}): number {
+  const records = input.ledger.listAll();
+  const byTaskId = new Map(records.map((record) => [record.taskId, record]));
+  const recoveredAuditTimes = records
+    .filter((record) => record.source === "daily-audit")
+    .filter((record) => !record.taskId.startsWith("daily-audit:self:"))
+    .filter((record) => record.status === "success")
+    .filter((record) => /\bnotification=(sent|suppressed)\b/.test(record.summary ?? ""))
+    .map((record) => record.scheduledAt);
+  let updated = 0;
+  for (const record of records) {
+    if (!record.taskId.startsWith("daily-audit:self:")) continue;
+    if (record.repairStatus !== "pending") continue;
+    const auditedScheduledAt = Number(record.taskId.slice("daily-audit:self:".length));
+    if (!Number.isFinite(auditedScheduledAt)) continue;
+    const auditedRecord = byTaskId.get(`daily-audit:${auditedScheduledAt}`);
+    const auditedRepairStatus = auditedRecord?.repairStatus;
+    const auditedClosedByRecovery =
+      auditedRepairStatus !== undefined &&
+      ["fixed", "superseded", "not-reproducible"].includes(auditedRepairStatus);
+    const laterAuditNotificationRecovered = recoveredAuditTimes.some(
+      (scheduledAt) => scheduledAt > auditedScheduledAt,
+    );
+    if (!auditedClosedByRecovery && !laterAuditNotificationRecovered) continue;
+    input.ledger.markRepairStatus(record.taskId, {
+      repairStatus: "not-needed",
+      updatedAt: input.now,
+      summary: appendSummary(
+        record.summary,
+        "Closed stale Daily Task Audit self-check after a later successful Daily Task Audit notification recovered.",
       ),
     });
     updated++;
