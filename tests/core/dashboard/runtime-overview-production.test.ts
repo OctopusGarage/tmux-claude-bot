@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { appendAutomationAdmissionEvent } from "../../../src/core/automation/admission-events.js";
 import { AutomationOccurrenceStore } from "../../../src/core/automation/occurrence-window.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { RepositoryReviewQueue } from "../../../src/core/loop/repository-review-queue.js";
@@ -454,6 +455,197 @@ describe("production Runtime Overview readers", () => {
         failed: 2,
         attention: 0,
         repairPending: 2,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses admission events to keep quiet-hours Daily Task Audit repairs out of current attention", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const scheduledAt = Date.parse("2026-08-30T15:20:00+08:00");
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId: `loop:geo-frontend:test-coverage:${scheduledAt}`,
+        source: "loop-engineering",
+        name: "geo-frontend test-coverage",
+        scheduledAt,
+        summary:
+          "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.",
+      });
+      appendAutomationAdmissionEvent({
+        at: now - 60_000,
+        kind: "deferred",
+        source: "loop-engineering",
+        intentId: `geo-frontend:test-coverage:${scheduledAt}`,
+        agent: "codex",
+        occurrenceId: `geo-frontend:test-coverage:test-coverage@${scheduledAt}`,
+        reason: "quiet-hours",
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses direct admission intent matches for current Daily Task Audit repair deferrals", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const scheduledAt = Date.parse("2026-08-30T15:20:00+08:00");
+      const taskId = `loop:geo-frontend:test-coverage:${scheduledAt}`;
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "geo-frontend test-coverage",
+        scheduledAt,
+        summary:
+          "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.",
+      });
+      appendAutomationAdmissionEvent({
+        at: now - 60_000,
+        kind: "deferred",
+        source: "loop-engineering",
+        intentId: taskId,
+        agent: "codex",
+        reason: "autonomous-heavy-active-lease",
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses repository-review queue admission events for current missing review repairs", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const scheduledAt = Date.parse("2026-08-30T12:20:00+08:00");
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId: `loop:pr-review:geo-backend-all-prs:${scheduledAt}`,
+        source: "loop-engineering",
+        name: "geo-backend-all-prs repository-pull-request-review",
+        scheduledAt,
+        summary:
+          "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.",
+      });
+      appendAutomationAdmissionEvent({
+        at: now - 60_000,
+        kind: "deferred",
+        source: "loop-engineering",
+        intentId: "loop-engineering:repository-review-queue-tick",
+        agent: "codex",
+        reason: "quiet-hours",
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps current Daily Task Audit attention when admission events are not transient", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const scheduledAt = Date.parse("2026-08-30T15:20:00+08:00");
+      const taskId = `loop:geo-frontend:test-coverage:${scheduledAt}`;
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "geo-frontend test-coverage",
+        scheduledAt,
+        summary:
+          "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.",
+      });
+      appendAutomationAdmissionEvent({
+        at: now - 60_000,
+        kind: "deferred",
+        source: "loop-engineering",
+        intentId: taskId,
+        agent: "codex",
+        reason: "owner decision needed",
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 1,
+        repairPending: 1,
       });
     } finally {
       if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
