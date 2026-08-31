@@ -87,6 +87,18 @@ describe("readRuntimeOverview", () => {
       }),
     });
 
+    expect(overview.recentOutcomes.items).toContainEqual(
+      expect.objectContaining({
+        id: "work-order:1787057816707-tmux-claude-bot-active-delegate",
+        status: "passed",
+      }),
+    );
+    expect(overview.recentOutcomes.items).not.toContainEqual(
+      expect.objectContaining({
+        id: "work-order:1787057816707-tmux-claude-bot-active-delegate",
+        status: "failed",
+      }),
+    );
     expect(overview.health.status).toBe("healthy");
     expect(overview.attention.items).toEqual([]);
     expect(overview.runtimeDomains.find((domain) => domain.id === "work-orders")).toMatchObject({

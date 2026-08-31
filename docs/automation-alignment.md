@@ -90,6 +90,10 @@ requiring an operator prompt.
 When a Loop WorkOrder's system gate accepts a valid blocked supervisor summary,
 the task ledger must close that task with `repairStatus=blocked`; Daily Task
 Audit and dashboard attention must not keep it as pending repair work.
+Dashboard recent outcomes must also project a failed WorkOrder with a closed
+non-blocking repair status (`completed`, `fixed`, `not-needed`, `superseded`,
+or `not-reproducible`) as resolved, so historical stale WorkOrder state does not
+contradict authoritative repair evidence.
 When task-family governance declares `requiresPlanning: true`, the WorkOrder
 builder must persist a `planning` block and the system gate must reject a
 completed final summary that omits `planReview`.
