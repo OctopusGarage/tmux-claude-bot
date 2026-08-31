@@ -46,16 +46,23 @@ export function nextCronFire(expression: string, after: number): number | null {
     Set<number>,
     Set<number>,
   ];
+  const dayOfMonthWildcard = parts[2] === "*";
+  const dayOfWeekWildcard = parts[4] === "*";
   const start = new Date(Math.ceil((after + 1) / 60_000) * 60_000);
   const limit = after + 366 * 24 * 60 * 60 * 1_000;
   for (let time = start.getTime(); time <= limit; time += 60_000) {
     const date = new Date(time);
+    const dayOfMonthMatches = days.has(date.getUTCDate());
+    const dayOfWeekMatches = weekdays.has(date.getUTCDay());
+    const dayMatches =
+      dayOfMonthWildcard || dayOfWeekWildcard
+        ? dayOfMonthMatches && dayOfWeekMatches
+        : dayOfMonthMatches || dayOfWeekMatches;
     if (
       minutes.has(date.getUTCMinutes()) &&
       hours.has(date.getUTCHours()) &&
       months.has(date.getUTCMonth() + 1) &&
-      days.has(date.getUTCDate()) &&
-      weekdays.has(date.getUTCDay())
+      dayMatches
     ) {
       return time;
     }

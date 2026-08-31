@@ -8,6 +8,12 @@ describe("nextFire", () => {
     );
   });
 
+  it("matches either day-of-month or day-of-week when both are restricted", () => {
+    expect(nextFire({ kind: "cron", cron: "0 9 1 * 1" }, Date.UTC(2026, 5, 30, 9, 0))).toBe(
+      Date.UTC(2026, 6, 1, 9, 0),
+    );
+  });
+
   it("preserves immediate and one-shot schedule semantics", () => {
     expect(nextFire({ kind: "now" }, 10)).toBe(10);
     expect(nextFire({ kind: "at", at: 11 }, 10)).toBe(11);
