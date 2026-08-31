@@ -120,7 +120,7 @@ function ledgerOutcomeStatus(record: ScheduledTaskRecord): "passed" | "cancelled
 }
 
 function isTransientAdmissionReason(reason: string): boolean {
-  return /^(quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)$/i.test(
+  return /^(quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|capacity-unknown-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)$/i.test(
     reason,
   );
 }
@@ -160,13 +160,21 @@ function hasTransientAdmissionEvent(
   });
 }
 
+function hasOpenAutomationOccurrence(
+  item: ScheduledTaskRecord,
+  openOccurrenceIds: ReadonlySet<string>,
+): boolean {
+  const ids = admissionOccurrenceIdsFor(item);
+  return [...ids].some((id) => openOccurrenceIds.has(id));
+}
+
 function isTransientAdmissionDeferral(
   item: ScheduledTaskRecord,
   admissionEvents: AutomationAdmissionEvent[] = [],
 ): boolean {
   const evidence = `${item.error ?? ""}\n${item.summary ?? ""}`;
   if (/automation admission deferred: /i.test(evidence)) {
-    return /automation admission deferred: (quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)/i.test(
+    return /automation admission deferred: (quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|capacity-unknown-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)/i.test(
       evidence,
     );
   }
@@ -208,10 +216,18 @@ function summarizeCurrentDailyAuditWindow(input: {
   const admissionEvents = readAutomationAdmissionEvents({
     since: window.start,
     until: input.now,
-    limit: 200,
+    limit: 2_000,
   }).events;
+  const openOccurrenceIds = new Set(
+    new AutomationOccurrenceStore()
+      .list()
+      .filter((occurrence) => occurrence.status === "planned" || occurrence.status === "admitted")
+      .map((occurrence) => occurrence.id),
+  );
   const attentionItems = openItems.filter(
-    (item) => !isTransientAdmissionDeferral(item, admissionEvents),
+    (item) =>
+      !hasOpenAutomationOccurrence(item, openOccurrenceIds) &&
+      !isTransientAdmissionDeferral(item, admissionEvents),
   );
   return {
     attention: attentionItems.length,

@@ -604,6 +604,111 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("keeps capacity-unknown active-lease deferrals out of current Daily Task Audit attention", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const scheduledAt = Date.parse("2026-08-30T15:20:00+08:00");
+      const taskId = `loop:geo-frontend:test-coverage:${scheduledAt}`;
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "geo-frontend test-coverage",
+        scheduledAt,
+        summary:
+          "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.",
+      });
+      appendAutomationAdmissionEvent({
+        at: now - 10 * 60_000,
+        kind: "deferred",
+        source: "loop-engineering",
+        intentId: taskId,
+        agent: "codex",
+        occurrenceId: `geo-frontend:test-coverage:test-coverage@${scheduledAt}`,
+        reason: "capacity-unknown-active-lease",
+      });
+      for (let index = 0; index < 220; index += 1) {
+        appendAutomationAdmissionEvent({
+          at: now - 9 * 60_000 + index,
+          kind: "deferred",
+          source: "loop-engineering",
+          intentId: `unrelated:${index}`,
+          agent: "codex",
+          reason: "quiet-hours",
+        });
+      }
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps planned occurrence-window work out of current Daily Task Audit attention", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const scheduledAt = Date.parse("2026-08-30T23:40:00+08:00");
+      const taskId = `loop:english-pilot:test-coverage:${scheduledAt}`;
+      new AutomationOccurrenceStore({ randomOffset: () => 0 }).plan({
+        key: "english-pilot:test-coverage:test-coverage",
+        scheduledAt,
+        windowMs: 60 * 60_000,
+        now: scheduledAt,
+        source: "loop-engineering",
+      });
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "english-pilot test-coverage",
+        scheduledAt,
+        summary: "loop-engineering schedule discovered; no explicit run record was found yet",
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses repository-review queue admission events for current missing review repairs", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;

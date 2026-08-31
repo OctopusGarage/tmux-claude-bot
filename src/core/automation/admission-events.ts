@@ -11,6 +11,7 @@ const EVENT_DIR = "automation-admission/events";
 const DEDUPE_FILE = "automation-admission/event-dedupe.json";
 const RETENTION_MS = 30 * 24 * 60 * 60_000;
 const DEDUPE_MS = 15 * 60_000;
+const MAX_READ_LIMIT = 2_000;
 const SOURCES = new Set<ResourceAdmissionInput["source"]>([
   "loop-engineering",
   "daily-task-audit",
@@ -170,7 +171,7 @@ export function readAutomationAdmissionEvents(input: {
     }
   }
   events.sort((left, right) => left.at - right.at);
-  const limit = Math.max(1, Math.min(200, input.limit ?? 200));
+  const limit = Math.max(1, Math.min(MAX_READ_LIMIT, input.limit ?? 200));
   return {
     events: events.slice(-limit),
     invalidRecords,
