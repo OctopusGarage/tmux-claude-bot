@@ -12,6 +12,7 @@ import {
   createProjectRecoveryDelegator,
   dispatchProjectRecovery,
 } from "./project-recovery-dispatch.js";
+import { RepairCoordinator } from "./repair-coordinator.js";
 import { DailyTaskLedger } from "./task-ledger.js";
 import { reconcileAutopilotDelegatedTasks } from "./task-reconciliation.js";
 
@@ -151,7 +152,35 @@ async function dispatchAgentSelfHealSweep(
   log.info("system self-heal agent sweep queued", {
     data: { runId: result.runId, supervisorSession: result.supervisorSession },
   });
+  linkQueuedAgentSweepToPendingRepair(now, result.runId);
   return "queued";
+}
+
+function linkQueuedAgentSweepToPendingRepair(now: number, runId: string): void {
+  const coordinator = new RepairCoordinator();
+  const ledger = new DailyTaskLedger();
+  const leaseId = `system-self-heal-agent-sweep:${now}`;
+  const claimed = coordinator.claimDue({
+    now,
+    leaseId,
+    limit: 8,
+    projectId: "tmux-claude-bot",
+    sources: ["system-self-heal"],
+  });
+  for (const record of claimed) {
+    coordinator.markRunning(record.id, leaseId, now);
+    coordinator.linkTaskIds(record.id, [`autopilot:${runId}`], now);
+    for (const taskId of record.linkedTaskIds) {
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "running",
+        updatedAt: now,
+        summary: appendRepairSummary(
+          ledger.listAll().find((candidate) => candidate.taskId === taskId)?.summary,
+          "System self-heal delegated this item.",
+        ),
+      });
+    }
+  }
 }
 
 function recordBlockedAgentSweep(now: number, reason: string): void {
@@ -182,4 +211,10 @@ function buildAgentSelfHealRequirement(): string {
     "Avoid broad rewrites. Prefer small fixes that remove the reason this issue needed manual operator prompting, but do not stop at a known-failure example if the evidence points somewhere else.",
     "Before finalizing, summarize what was checked, what was fixed or queued, why any remaining item could not be fixed automatically, verification results, commit/PR/push state, and whether the working tree is clean.",
   ].join("\\n");
+}
+
+function appendRepairSummary(current: string | undefined, addition: string): string {
+  if (current === undefined || current.trim().length === 0) return addition;
+  if (current.includes(addition)) return current;
+  return `${current}\n${addition}`;
 }

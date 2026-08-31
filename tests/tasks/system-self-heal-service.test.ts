@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import type { HandlerDeps } from "../../src/core/deps.js";
+import { RepairCoordinator } from "../../src/core/tasks/repair-coordinator.js";
 import {
   runSystemSelfHealTick,
   startSystemSelfHeal,
@@ -275,5 +276,83 @@ describe("system self-heal service", () => {
         }),
       ),
     );
+  });
+
+  it("links a queued self-heal sweep to pending self-heal repair evidence", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-system-self-heal-linkage-"));
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "system-self-heal:agent-sweep:1000",
+      source: "system-self-heal",
+      name: "tmux-claude-bot system self-heal agent sweep",
+      scheduledAt: 1_000,
+      summary: "System self-heal attempted to queue the broad active-agent sweep.",
+    });
+    ledger.start("system-self-heal:agent-sweep:1000", 1_000);
+    ledger.fail("system-self-heal:agent-sweep:1000", {
+      endedAt: 1_000,
+      error: "project already has active automation: bug-fix 1 (in-flight)",
+      summary:
+        "System self-heal agent sweep deferred before WorkOrder creation: project already has active automation: bug-fix 1 (in-flight)",
+    });
+
+    const deps = {
+      config: {
+        projectSessionPrefix: "tmux_proj_",
+        systemSelfHeal: {
+          enabled: true,
+          tickMs: 3_600_000,
+          agentSweepEnabled: true,
+        },
+        taskAudit: {
+          enabled: false,
+          tickMs: 0,
+          schedule: "0 0 1 1 *",
+          repoPath: "/repo/tmux-claude-bot",
+          repairBranch: "dev",
+          autoRepair: false,
+          repairWorktreeIsolation: "isolated",
+          channel: "lark",
+        },
+        loopEngineering: {
+          configFile: undefined,
+          supervisor: {
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+      bridge: { killSession: vi.fn() },
+      notifications: { notify: vi.fn() },
+    } as unknown as HandlerDeps;
+    const runTick = vi.fn(async (input: RunTickInput) => ({
+      fired: true as const,
+      audit: await input.runAudit({ now: 2_000, force: false }),
+      agentSweep: await input.runAgentSweep(),
+    }));
+
+    startSystemSelfHeal(deps, {
+      now: () => 2_000,
+      runTick,
+      setInterval: () => 7 as never,
+      clearInterval: vi.fn(),
+    });
+
+    await vi.waitFor(() => {
+      const record = new RepairCoordinator()
+        .list()
+        .find((candidate) => candidate.source === "system-self-heal");
+      expect(record).toMatchObject({
+        status: "running",
+        linkedTaskIds: ["system-self-heal:agent-sweep:1000", "autopilot:self-heal-run"],
+      });
+      expect(
+        new DailyTaskLedger()
+          .listAll()
+          .find((item) => item.taskId === "system-self-heal:agent-sweep:1000"),
+      ).toMatchObject({
+        repairStatus: "running",
+        summary: expect.stringContaining("System self-heal delegated this item."),
+      });
+    });
   });
 });

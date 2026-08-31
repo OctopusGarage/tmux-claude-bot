@@ -139,6 +139,10 @@ instead of continuing a 10-second closed-gate polling loop.
 System Self-Heal broad agent sweeps must leave durable retryable failure ledger
 evidence when admission blocks the sweep before WorkOrder creation; otherwise
 the hourly operator-equivalent check can disappear from the next audit window.
+When a later System Self-Heal broad agent sweep queues successfully, it must
+claim due `system-self-heal` repair records, mark their ledger records running,
+and link them to the new active-delegation task so completion can close the
+original deferral instead of leaving stale Daily Task Audit attention.
 When a System Self-Heal broad sweep changes this repository, the WorkOrder must
 verify locally, commit on `dev`, push to `origin/dev`, run `git pull --rebase`
 after the successful push, and finish with a clean worktree. If commit, push, or
