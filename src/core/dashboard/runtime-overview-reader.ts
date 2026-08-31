@@ -288,18 +288,26 @@ function workOrderView(record: OverviewWorkOrder): ActiveWorkItem {
   };
 }
 
+function workOrderOutcomeStatus(record: OverviewWorkOrder): RecentOutcome["status"] {
+  if (
+    record.status === "failed" &&
+    record.repairStatus !== "blocked" &&
+    record.repairStatus !== "dead-letter" &&
+    CLOSED_WORK_ORDER_REPAIR_STATUSES.has(record.repairStatus ?? "pending")
+  ) {
+    return "passed";
+  }
+  if (record.status === "completed") return "passed";
+  if (record.status === "cancelled") return "cancelled";
+  return "failed";
+}
+
 function workOrderOutcome(record: OverviewWorkOrder): RecentOutcome {
-  const status: RecentOutcome["status"] =
-    record.status === "completed"
-      ? "passed"
-      : record.status === "cancelled"
-        ? "cancelled"
-        : "failed";
   return {
     id: `work-order:${record.id}`,
     domain: "loop",
     label: `${record.projectName}: ${record.taskKind}`,
-    status,
+    status: workOrderOutcomeStatus(record),
     endedAt: record.updatedAt,
     projectId: record.projectId,
   };

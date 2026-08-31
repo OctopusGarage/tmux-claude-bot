@@ -524,7 +524,7 @@ describe("Runtime Overview reader", () => {
     });
 
     expect(overview.recentOutcomes.items).toContainEqual(
-      expect.objectContaining({ id: "work-order:repo-pr-review", status: "failed" }),
+      expect.objectContaining({ id: "work-order:repo-pr-review", status: "passed" }),
     );
     expect(overview.attention.items).not.toContainEqual(
       expect.objectContaining({ id: "work-order:repo-pr-review" }),
