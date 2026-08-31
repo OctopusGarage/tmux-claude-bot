@@ -106,6 +106,19 @@ function isOpenRepairableTask(item: ScheduledTaskRecord): boolean {
   );
 }
 
+function ledgerOutcomeStatus(record: ScheduledTaskRecord): "passed" | "cancelled" | "failed" {
+  if (record.status === "success") return "passed";
+  if (record.status === "skipped") return "cancelled";
+  if (
+    REPAIRABLE_STATUSES.has(record.status) &&
+    record.repairStatus !== "blocked" &&
+    CLOSED_REPAIR_STATUSES.has(record.repairStatus ?? "pending")
+  ) {
+    return "passed";
+  }
+  return "failed";
+}
+
 function isTransientAdmissionReason(reason: string): boolean {
   return /^(quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)$/i.test(
     reason,
@@ -358,12 +371,7 @@ export function createRuntimeOverviewReaders(input: {
             id: `ledger:${record.taskId}`,
             domain: record.source,
             label: record.name,
-            status:
-              record.status === "success"
-                ? ("passed" as const)
-                : record.status === "skipped"
-                  ? ("cancelled" as const)
-                  : ("failed" as const),
+            status: ledgerOutcomeStatus(record),
             endedAt: record.endedAt ?? record.updatedAt,
           }));
         return {

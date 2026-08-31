@@ -188,6 +188,51 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("projects repaired non-loop ledger failures as passed recent outcomes", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId: "system-self-heal:agent-sweep:1000",
+        source: "system-self-heal",
+        name: "tmux-claude-bot system self-heal agent sweep",
+        scheduledAt: 1_000,
+      });
+      ledger.fail("system-self-heal:agent-sweep:1000", {
+        endedAt: 1_100,
+        error: "automation admission deferred: critical resource pressure",
+      });
+      ledger.markRepairStatus("system-self-heal:agent-sweep:1000", {
+        repairStatus: "not-reproducible",
+        updatedAt: 1_200,
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now: 1_300,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.outcomes).toContainEqual(
+        expect.objectContaining({
+          id: "ledger:system-self-heal:agent-sweep:1000",
+          domain: "system-self-heal",
+          status: "passed",
+        }),
+      );
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not surface superseded terminal repository-review occurrences as current attention", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;
