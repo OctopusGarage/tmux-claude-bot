@@ -246,7 +246,10 @@ export class ControlClient extends EventEmitter {
     resolvedPath?: string;
     message?: string;
   }> {
-    return this.req({ op: "openWorker", session, path, ...opts }) as Promise<{
+    return this.req(
+      { op: "openWorker", session, path, ...opts },
+      { timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS },
+    ) as Promise<{
       status: string;
       session?: string;
       started?: string;
