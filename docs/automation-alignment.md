@@ -577,6 +577,11 @@ must not keep projecting it as unresolved WorkOrder attention.
 Daily Task Audit summaries still expose non-zero terminal repair outcome counts
 so "failed, 0 repair pending" never hides that failures were blocked, fixed,
 superseded, completed, not needed, not reproducible, or dead-lettered.
+Direct non-loop ledger outcomes follow the same projection rule: after a failed,
+missing, or running-timeout task is reconciled to a closed non-blocking
+`repairStatus` such as `fixed`, `not-needed`, `superseded`, or
+`not-reproducible`, recent outcomes may keep the row for auditability but must
+render it as passed instead of a live failure.
 
 The Agent Capacity runtime domain is part of that same snapshot. Its durable
 record contains only agent kind, authentication category, normalized capacity
