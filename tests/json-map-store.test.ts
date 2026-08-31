@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { JsonMapStore } from "../src/core/infra/json-map-store.js";
 
@@ -193,4 +195,49 @@ describe("JsonMapStore", () => {
     // A fresh instance (e.g. after a restart) sees the persisted value.
     expect(new JsonMapStore<string>("test-store.json").get("k")).toBe("v");
   });
+
+  it("preserves every key written by concurrent processes", async () => {
+    const stateDir =
+      process.env.TCB_STATE_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), "tcb-store-concurrent-"));
+    const worker = `
+      import { JsonMapStore } from ${JSON.stringify(
+        pathToFileURL(path.resolve("src/core/infra/json-map-store.ts")).href,
+      )};
+      const keyPrefix = process.env.TCB_TEST_KEY_PREFIX;
+      if (keyPrefix === undefined) throw new Error("missing TCB_TEST_KEY_PREFIX");
+      const store = new JsonMapStore("test-store.json");
+      for (let i = 0; i < 30; i++) {
+        store.set(\`\${keyPrefix}-\${i}\`, String(i));
+      }
+    `;
+    const processCount = 8;
+
+    await Promise.all(
+      Array.from({ length: processCount }, (_, index) =>
+        runWorker(worker, `worker-${index}`, stateDir),
+      ),
+    );
+
+    expect(new JsonMapStore<string>("test-store.json").sortedEntries()).toHaveLength(
+      processCount * 30,
+    );
+  }, 20_000);
 });
+
+function runWorker(script: string, keyPrefix: string, stateDir: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(path.resolve("node_modules/.bin/tsx"), ["-e", script], {
+      env: { ...process.env, TCB_STATE_DIR: stateDir, TCB_TEST_KEY_PREFIX: keyPrefix },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`worker ${keyPrefix} exited ${code}: ${stderr}`));
+    });
+  });
+}

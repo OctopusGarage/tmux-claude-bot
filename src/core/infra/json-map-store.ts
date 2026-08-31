@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as nodePath from "node:path";
 import { appStateFile } from "../../shared/state-dir.js";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -48,9 +49,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * (ENOENT) is treated as empty. This closes the failure mode where one transient
  * parse error / concurrent-write race wiped every binding at once.
  *
- * Single-process safety: each public op is fully synchronous, so two ops in one
- * process cannot interleave. Cross-process concurrent writers can still lose an
- * update, but the atomic rename guarantees no torn file.
+ * Mutation safety: writes take a per-file lock around read-modify-write, so
+ * concurrent CLI/helper processes do not overwrite each other's map entries.
+ * The atomic rename still guarantees no torn file.
  */
 export class JsonMapStore<V> {
   private cache: CacheEntry<V> | null = null;
@@ -149,6 +150,43 @@ export class JsonMapStore<V> {
     }
   }
 
+  private withWriteLock<T>(fn: () => T): T {
+    const lock = `${this.file()}.lock`;
+    fs.mkdirSync(nodePath.dirname(lock), { recursive: true });
+    const deadline = Date.now() + 10_000;
+    let fd: number | null = null;
+    while (fd === null) {
+      try {
+        fd = fs.openSync(lock, "wx");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        try {
+          const st = fs.statSync(lock);
+          if (Date.now() - st.mtimeMs > 30_000) fs.unlinkSync(lock);
+        } catch (lockErr) {
+          if ((lockErr as NodeJS.ErrnoException).code !== "ENOENT") throw lockErr;
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`timed out acquiring ${this.fileName} write lock`);
+        }
+        sleepSync(10);
+      }
+    }
+    try {
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }));
+      return fn();
+    } finally {
+      fs.closeSync(fd);
+      try {
+        fs.unlinkSync(lock);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          log.warn(`failed to release ${this.fileName} write lock: ${String(err)}`);
+        }
+      }
+    }
+  }
+
   get(key: string): V | undefined {
     return this.read()[key];
   }
@@ -158,28 +196,38 @@ export class JsonMapStore<V> {
   }
 
   set(key: string, value: V): void {
-    const map = { ...this.read() };
-    map[key] = value;
-    this.write(map);
+    this.withWriteLock(() => {
+      const map = { ...this.read() };
+      map[key] = value;
+      this.write(map);
+    });
   }
 
   update(mutator: (map: Record<string, V>) => boolean): boolean {
-    const map = { ...this.read() };
-    const changed = mutator(map);
-    if (changed) this.write(map);
-    return changed;
+    return this.withWriteLock(() => {
+      const map = { ...this.read() };
+      const changed = mutator(map);
+      if (changed) this.write(map);
+      return changed;
+    });
   }
 
   delete(key: string): boolean {
-    const map = { ...this.read() };
-    if (!(key in map)) return false;
-    delete map[key];
-    this.write(map);
-    return true;
+    return this.withWriteLock(() => {
+      const map = { ...this.read() };
+      if (!(key in map)) return false;
+      delete map[key];
+      this.write(map);
+      return true;
+    });
   }
 
   /** Entries sorted by key — the order every list view here wants. */
   sortedEntries(): Array<[string, V]> {
     return Object.entries(this.read()).sort(([a], [b]) => a.localeCompare(b));
   }
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
