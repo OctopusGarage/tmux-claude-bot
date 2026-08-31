@@ -30,7 +30,7 @@ type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 
 const RECONNECT_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const LONG_RUNNING_REQUEST_TIMEOUT_MS = 180_000;
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = 600_000;
 
 function connectSocket(paths = controlSocketCandidatePaths()): Promise<net.Socket> {
   const [path, ...rest] = paths;
