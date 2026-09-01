@@ -294,6 +294,70 @@ describe("control server ↔ client (real unix socket)", () => {
     }
   });
 
+  it("keeps send requests open while the agent produces a reply", async () => {
+    vi.useFakeTimers();
+    client = new ControlClient({ requestTimeoutMs: 20 });
+    const socket = new EventEmitter() as EventEmitter & {
+      end: () => void;
+      write: (chunk: string, cb?: (err?: Error) => void) => boolean;
+    };
+    socket.end = () => {};
+    socket.write = (_chunk, cb) => {
+      cb?.();
+      return true;
+    };
+    (client as unknown as { wire: (conn: typeof socket) => void }).wire(socket);
+
+    const sent = client.send("tmux_proj_loop-worker-api", "investigate");
+    let rejected: Error | undefined;
+    sent.catch((err: Error) => {
+      rejected = err;
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(rejected).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(570_000);
+      await expect(sent).rejects.toThrow("control request timed out after 600000ms");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps control actions open while lifecycle commands are consumed", async () => {
+    vi.useFakeTimers();
+    client = new ControlClient({ requestTimeoutMs: 20 });
+    const socket = new EventEmitter() as EventEmitter & {
+      end: () => void;
+      write: (chunk: string, cb?: (err?: Error) => void) => boolean;
+    };
+    socket.end = () => {};
+    socket.write = (_chunk, cb) => {
+      cb?.();
+      return true;
+    };
+    (client as unknown as { wire: (conn: typeof socket) => void }).wire(socket);
+
+    const compacted = client.control("tmux_proj_loop-worker-api", "compact");
+    let rejected: Error | undefined;
+    compacted.catch((err: Error) => {
+      rejected = err;
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(rejected).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(570_000);
+      await expect(compacted).rejects.toThrow("control request timed out after 600000ms");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("fails a request immediately when the socket write fails", async () => {
     client = new ControlClient({ requestTimeoutMs: 10_000 });
     const socket = new EventEmitter() as EventEmitter & {
