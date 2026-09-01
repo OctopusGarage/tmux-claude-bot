@@ -30,6 +30,14 @@ const sampleWithLoad = (
   thermal: "normal",
 });
 
+const sampleWithEventLoopLag = (capturedAt: number, eventLoopLagMs: number): ResourceSample => ({
+  capturedAt,
+  hostCpuPct: 20,
+  loadPct: 20,
+  eventLoopLagMs,
+  thermal: "normal",
+});
+
 describe("pressure policy", () => {
   it("keeps a CPU burst shorter than the elevated sustain window healthy", () => {
     let memory = initialPressureMemory(0);
@@ -90,6 +98,29 @@ describe("pressure policy", () => {
     expect(memory.pressure).toBe("critical");
 
     memory = advancePressureState(memory, sampleWithLoad(90_001, 55, 220), "balanced");
+    expect(memory.pressure).toBe("critical");
+    expect(memory.recoverySince).toBeNull();
+  });
+
+  it("closes admission when event loop lag exceeds the control request window", () => {
+    const memory = advancePressureState(
+      initialPressureMemory(0),
+      sampleWithEventLoopLag(30_001, 30_001),
+      "balanced",
+    );
+
+    expect(memory.pressure).toBe("critical");
+    expect(memory.stateSince).toBe(30_001);
+  });
+
+  it("does not recover while event loop lag remains severe", () => {
+    let memory = initialPressureMemory(0);
+    memory = advancePressureState(memory, sample(0, 94), "balanced");
+    memory = advancePressureState(memory, sample(90_000, 94), "balanced");
+    expect(memory.pressure).toBe("critical");
+
+    memory = advancePressureState(memory, sampleWithEventLoopLag(390_000, 45_000), "balanced");
+
     expect(memory.pressure).toBe("critical");
     expect(memory.recoverySince).toBeNull();
   });

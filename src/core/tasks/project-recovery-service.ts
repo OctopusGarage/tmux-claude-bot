@@ -9,6 +9,7 @@ import {
   type ConfiguredRecoveryTarget,
   classifyHistoricalFailure,
   type HistoricalRecoveryInput,
+  isBotOwnedRetryableRecoveryEvidence,
   isRetryableSourceGitStateEvidence,
   type RecoveryClassification,
   resolveConfiguredRecoveryTarget,
@@ -547,11 +548,11 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       result.blocked++;
       continue;
     }
-    if (summary.status === "blocked" && hasRetryableSourceGitStateEvidence(summary, systemGate)) {
+    if (summary.status === "blocked" && hasRetryableProjectRecoveryEvidence(summary, systemGate)) {
       input.updateRepairStatus(
         record.taskId,
         "pending",
-        "Authoritative supervisor final summary reports retryable source worktree branch state; returned to the repair queue.",
+        "Authoritative supervisor final summary reports retryable automation recovery evidence; returned to the repair queue.",
       );
       if (queueRecord !== undefined) input.coordinator.releaseToQueue(queueRecord.id, input.now);
       continue;
@@ -619,7 +620,7 @@ function isAcceptedBlockedNoRepairSummary(
     (reviewGate as Record<string, unknown>).decision === "block" &&
     systemGate?.accepted === true &&
     systemGate.resultStatus === "blocked" &&
-    !hasRetryableSourceGitStateEvidence(summary, systemGate)
+    !hasRetryableProjectRecoveryEvidence(summary, systemGate)
   );
 }
 
@@ -776,21 +777,20 @@ function acceptedBlockedRecoveryArtifact(reportPath: string | undefined): boolea
   const summaryPath = readFinalSummaryPath(reportPath);
   if (summaryPath === undefined) return false;
   const summary = readJson(summaryPath);
-  if (summary?.status !== "blocked") return false;
   const systemGate = readJson(join(dirname(summaryPath), "system-gate.json"));
-  return (
-    systemGate?.accepted === true &&
-    systemGate.resultStatus === "blocked" &&
-    !hasRetryableSourceGitStateEvidence(summary, systemGate)
-  );
+  if (summary === undefined) return false;
+  return isAcceptedBlockedNoRepairSummary(summary, systemGate);
 }
 
-function hasRetryableSourceGitStateEvidence(
+function hasRetryableProjectRecoveryEvidence(
   summary: Record<string, unknown>,
   systemGate: Record<string, unknown> | undefined,
 ): boolean {
-  return isRetryableSourceGitStateEvidence(
-    `${JSON.stringify(summary)} ${systemGate === undefined ? "" : JSON.stringify(systemGate)}`,
+  const evidence = `${JSON.stringify(summary)} ${
+    systemGate === undefined ? "" : JSON.stringify(systemGate)
+  }`;
+  return (
+    isRetryableSourceGitStateEvidence(evidence) || isBotOwnedRetryableRecoveryEvidence(evidence)
   );
 }
 
