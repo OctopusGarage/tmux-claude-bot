@@ -12,6 +12,7 @@ import {
   createProjectRecoveryDelegator,
   dispatchProjectRecovery,
 } from "./project-recovery-dispatch.js";
+import { isImmediateRecoveryDeferral } from "./recovery-admission.js";
 import { RepairCoordinator } from "./repair-coordinator.js";
 import { DailyTaskLedger } from "./task-ledger.js";
 import { reconcileAutopilotDelegatedTasks } from "./task-reconciliation.js";
@@ -145,7 +146,9 @@ async function dispatchAgentSelfHealSweep(
     notificationMode: "autonomous",
   });
   if (result.status === "blocked") {
-    recordBlockedAgentSweep(now, result.reason);
+    if (!isImmediateRecoveryDeferral(result.reason)) {
+      recordBlockedAgentSweep(now, result.reason);
+    }
     log.info("system self-heal agent sweep deferred", { data: { reason: result.reason } });
     return "blocked";
   }

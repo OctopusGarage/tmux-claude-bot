@@ -83,7 +83,7 @@ export async function admitRecoveryFindings(input: {
       detail: dispatch.detail,
     };
   }
-  const deferred = isImmediateDeferral(dispatch.detail);
+  const deferred = isImmediateRecoveryDeferral(dispatch.detail);
   for (const record of claimed) {
     if (deferred) input.coordinator.releaseToQueue(record.id, input.now);
     else input.coordinator.releaseForRetry(record.id, input.now);
@@ -166,7 +166,7 @@ export async function dispatchRecoveryQueue<T>(input: {
   try {
     const result = await input.dispatch(items);
     if (result?.status === "blocked") {
-      const deferred = isImmediateDeferral(result.detail);
+      const deferred = isImmediateRecoveryDeferral(result.detail);
       for (const record of claimed) {
         if (deferred) input.coordinator.releaseToQueue(record.id, input.now);
         else input.coordinator.releaseForRetry(record.id, input.now);
@@ -198,7 +198,7 @@ export async function dispatchRecoveryQueue<T>(input: {
   }
 }
 
-function isImmediateDeferral(detail: string): boolean {
+export function isImmediateRecoveryDeferral(detail: string): boolean {
   return /(capacity|active automation|queue full|supervisor.*(busy|lease)|interactive-agent-busy|automation admission deferred|no available)/i.test(
     detail,
   );
