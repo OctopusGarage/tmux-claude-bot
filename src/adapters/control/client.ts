@@ -187,15 +187,21 @@ export class ControlClient extends EventEmitter {
     text: string,
     opts: { callerSession?: string } = {},
   ): Promise<{ status: string }> {
-    return this.req({
-      op: "send",
-      session,
-      text,
-      ...(opts.callerSession !== undefined ? { callerSession: opts.callerSession } : {}),
-    }) as Promise<{ status: string }>;
+    return this.req(
+      {
+        op: "send",
+        session,
+        text,
+        ...(opts.callerSession !== undefined ? { callerSession: opts.callerSession } : {}),
+      },
+      { timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS },
+    ) as Promise<{ status: string }>;
   }
   control(session: string, action: string): Promise<{ status: string }> {
-    return this.req({ op: "control", session, action }) as Promise<{ status: string }>;
+    return this.req(
+      { op: "control", session, action },
+      { timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS },
+    ) as Promise<{ status: string }>;
   }
   projects(): Promise<{ sid: string; label: string; alive: boolean; active: boolean }[]> {
     return this.req({ op: "projects" }) as Promise<
