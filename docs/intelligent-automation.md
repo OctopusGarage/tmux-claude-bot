@@ -129,6 +129,11 @@ confirmed bot-owned runtime findings enter the bot self-repair WorkOrder.
 A completed repair WorkOrder fixes its durable queue record. A failed, timed-out,
 or cancelled repair WorkOrder is detached and returned to bounded retry so a
 service restart cannot leave global repair ownership stuck in `running`.
+Resource Guardian treats severe event-loop lag as active local pressure because
+control-socket requests and worker delivery cannot be trusted while the service
+event loop is stalled beyond the normal control request window. That lag must
+close background admission in protect mode until a later healthy sample reopens
+the circuit.
 
 Every terminal supervised WorkOrder also has a cleanup closure. Successful runs
 release the worker and immediately remove their bot-owned isolated execution

@@ -1205,6 +1205,97 @@ describe("project recovery service", () => {
     );
   });
 
+  it("returns accepted blocked worker-control failures to the recovery queue", async () => {
+    const runDir = join(tmpdir(), `project-recovery-worker-control-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: [
+          "Attempted worker compact; control request timed out after 30000ms.",
+          "Attempted tcb send --no-wait; the request timed out before enqueue.",
+        ],
+        delegatedTasks: [{ projectId: "tmux-claude-bot", status: "blocked" }],
+        finalVerification: "failed",
+        reviewGate: {
+          decision: "block",
+          notes:
+            "Blocked before substantive delegated execution because the required tcb worker control path could not reliably compact or send to the configured isolated worker.",
+        },
+        commits: [],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        workOrderId: "blocked-recovery",
+        projectId: "tmux-claude-bot",
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active-delegated-task",
+      fingerprint: "worker-control-timeout",
+      taskId: "loop:tmux-claude-bot:active-delegated-task:1",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queue.id, ["autopilot:blocked-recovery"], 1_000);
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:tmux-claude-bot:active-delegated-task:1",
+          source: "loop-engineering",
+          name: "tmux-claude-bot active-delegated-task",
+          status: "failed",
+          repairStatus: "running",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:blocked-recovery",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          error: "active delegation ended with blocked",
+          reportPath: runDir,
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 2, fixed: 0, blocked: 0 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "pending",
+      nextAttemptAt: 2_000,
+    });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:tmux-claude-bot:active-delegated-task:1",
+      "pending",
+      expect.stringContaining("returned to the repair queue"),
+    );
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:blocked-recovery",
+      "pending",
+      expect.stringContaining("returned to the repair queue"),
+    );
+  });
+
   it("returns accepted blocked source-branch divergence to the recovery queue", async () => {
     const runDir = join(tmpdir(), `project-recovery-source-diverged-${Date.now()}`);
     await mkdir(runDir, { recursive: true });

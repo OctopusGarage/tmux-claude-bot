@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 
 const seconds = (value: number): number => value * 1_000;
+const CONTROL_REQUEST_WINDOW_MS = seconds(30);
 
 export const PRESSURE_PROFILES = Object.freeze({
   balanced: Object.freeze({
@@ -83,6 +84,10 @@ function pressurePctFor(sample: ResourceSample): number {
   return Math.max(sample.hostCpuPct, sample.loadPct);
 }
 
+function hasSevereEventLoopLag(sample: ResourceSample): boolean {
+  return sample.eventLoopLagMs > CONTROL_REQUEST_WINDOW_MS;
+}
+
 export function advancePressureState(
   previous: PressureMemory,
   sample: ResourceSample,
@@ -118,7 +123,10 @@ export function advancePressureState(
   const emergency =
     hasSustainedPressure(capturedAt, next.emergencySince, profile.emergencySustainMs) ||
     hasSustainedPressure(capturedAt, next.thermalSince, profile.thermalSustainMs);
-  const critical = hasSustainedPressure(capturedAt, next.criticalSince, profile.criticalSustainMs);
+  const severeEventLoopLag = hasSevereEventLoopLag(sample);
+  const critical =
+    severeEventLoopLag ||
+    hasSustainedPressure(capturedAt, next.criticalSince, profile.criticalSustainMs);
   const elevated = hasSustainedPressure(capturedAt, next.elevatedSince, profile.elevatedSustainMs);
 
   if (previous.pressure === "healthy") {
@@ -140,7 +148,11 @@ export function advancePressureState(
 
     // Thermal pressure is itself an active emergency signal; wait for it to
     // clear before allowing CPU recovery to make progress.
-    if (sample.thermal === "pressure" || pressurePct >= profile.recoveryCpuPct) {
+    if (
+      sample.thermal === "pressure" ||
+      severeEventLoopLag ||
+      pressurePct >= profile.recoveryCpuPct
+    ) {
       return { ...withPressure(next, previous.pressure, capturedAt), recoverySince: null };
     }
 
@@ -157,7 +169,11 @@ export function advancePressureState(
   // A recovery interruption must return to a guarded state. A fresh low-CPU
   // interval starts the recovery clock again from its first sample.
   if (emergency) return { ...withPressure(next, "emergency", capturedAt), recoverySince: null };
-  if (pressurePct >= profile.recoveryCpuPct || sample.thermal === "pressure") {
+  if (
+    severeEventLoopLag ||
+    pressurePct >= profile.recoveryCpuPct ||
+    sample.thermal === "pressure"
+  ) {
     return { ...withPressure(next, "critical", capturedAt), recoverySince: null };
   }
 
