@@ -213,7 +213,7 @@ describe("system self-heal service", () => {
     expect(request?.requirement).toContain("must not leave this repository with a dirty worktree");
   });
 
-  it("records blocked agent sweep attempts as retryable failures in the task ledger", async () => {
+  it("does not record immediate agent sweep admission deferrals as task failures", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-system-self-heal-blocked-"));
     vi.mocked(startActiveDelegatedTask).mockResolvedValueOnce({
       status: "blocked",
@@ -261,21 +261,8 @@ describe("system self-heal service", () => {
       clearInterval: vi.fn(),
     });
 
-    await vi.waitFor(() =>
-      expect(new DailyTaskLedger().listAll()).toContainEqual(
-        expect.objectContaining({
-          taskId: "system-self-heal:agent-sweep:2000",
-          source: "system-self-heal",
-          name: "tmux-claude-bot system self-heal agent sweep",
-          status: "failed",
-          repairStatus: "pending",
-          failureKind: "system-gate",
-          error: "automation admission deferred: capacity-unknown-active-lease",
-          summary:
-            "System self-heal agent sweep deferred before WorkOrder creation: automation admission deferred: capacity-unknown-active-lease",
-        }),
-      ),
-    );
+    await vi.waitFor(() => expect(startActiveDelegatedTask).toHaveBeenCalled());
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
   });
 
   it("links a queued self-heal sweep to pending self-heal repair evidence", async () => {

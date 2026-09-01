@@ -546,6 +546,10 @@ outer discovery cooldown is active.
 Runtime Guardian repair admission deferrals caused by quiet hours, resource
 pressure, queue capacity, or active automation are diagnostic DEBUG evidence,
 not repeated WARN-level operator attention.
+System Self-Heal agent-sweep admission deferrals before WorkOrder creation use
+the same boundary: log the deferred attempt, but do not create a failed task
+ledger row or Repair Coordinator item until a sweep actually owns executable
+repair evidence.
 Daily Task Audit dashboard attention follows the same operator-attention
 boundary: current-window pending repairs caused only by transient admission
 deferrals remain visible in failed/repair-pending counts, but they do not create
