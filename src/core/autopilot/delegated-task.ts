@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
@@ -16,6 +16,7 @@ import {
 import type { QueuedMessage } from "../command/queue-message.js";
 import type { HandlerDeps } from "../deps.js";
 import { createLoopSupervisorTaskRunner } from "../loop/agent-queue.js";
+import { LOOP_RUN_ARTIFACTS } from "../loop/artifacts.js";
 import { type LoopProjectConfig, parseLoopConfigYaml } from "../loop/config.js";
 import {
   cleanupLoopExecutionWorktree,
@@ -364,6 +365,13 @@ export async function startActiveDelegatedTask(
         resolve(record.workOrder.projectPath) === resolve(projectPath),
     );
     if (existing !== undefined) {
+      if (
+        existing.state.status === "queued" ||
+        existing.state.status === "dispatching" ||
+        existing.state.status === "in-flight"
+      ) {
+        clearActiveDelegatedTerminalArtifacts(existing.workOrder);
+      }
       return {
         status: "queued",
         runId: existing.workOrder.id,
@@ -507,6 +515,7 @@ export async function startActiveDelegatedTask(
         };
       }
 
+      clearActiveDelegatedTerminalArtifacts(workOrder);
       writeLoopSupervisorWorkOrderState({
         workOrder,
         supervisorSession: assignedSupervisorSession,
@@ -581,6 +590,19 @@ export async function startActiveDelegatedTask(
     }
   } finally {
     startingActiveDelegationProjects.delete(reservationKey);
+  }
+}
+
+function clearActiveDelegatedTerminalArtifacts(workOrder: { finalSummaryPath?: string }): void {
+  if (workOrder.finalSummaryPath === undefined) return;
+  const runDir = dirname(workOrder.finalSummaryPath);
+  for (const artifact of [
+    LOOP_RUN_ARTIFACTS.supervisorFinalSummary,
+    LOOP_RUN_ARTIFACTS.supervisorSummary,
+    LOOP_RUN_ARTIFACTS.supervisorMarkdown,
+    LOOP_RUN_ARTIFACTS.systemGate,
+  ]) {
+    rmSync(join(runDir, artifact), { force: true });
   }
 }
 

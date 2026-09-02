@@ -370,6 +370,12 @@ became idle during restart, the WorkOrder is recorded as a
 bounded invalid-output failure, the lease is released, and project recovery
 requeues it. Reboot recovery must not leave a durable delegation orphaned in an
 intermediate state or falsely fail a live supervisor-owned turn.
+When a queued, dispatching, or in-flight active-delegate WorkOrder is relaunched
+or reused, stale terminal run artifacts from an earlier failed dispatch attempt
+must be removed before the fresh WorkOrder state is written. Daily Task Audit
+and Runtime Guardian must not rediscover old `supervisor-summary.json`,
+`supervisor.md`, `supervisor-final-summary.json`, or `system-gate.json` files as
+current failure evidence while the WorkOrder has a live lease.
 Failed Autopilot delegations for configured projects must enter the same
 project-scoped recovery path as Loop Engineering failures. Invalid or missing
 supervisor summaries are retryable orchestration evidence; capacity and active
