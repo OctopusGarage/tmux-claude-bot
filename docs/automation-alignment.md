@@ -153,6 +153,11 @@ verify locally, commit on `dev`, push to `origin/dev`, run `git pull --rebase`
 after the successful push, and finish with a clean worktree. If commit, push, or
 rebase is blocked, the WorkOrder must record the exact blocker instead of
 leaving uncommitted edits behind.
+Loop execution worktree cleanup must remove terminal completed isolated
+worktrees as soon as they are safe to verify and must retain only recent
+unreferenced supervisor worktree directories by default. The orphan fallback
+retention window is one week; active WorkOrders, active leases, and currently
+owned worker sessions remain protected from directory-based cleanup.
 That durable evidence is a `failed/pending` repair candidate, because no
 WorkOrder was created and the next scheduled sweep alone is not enough evidence
 that the operator-equivalent check actually ran.

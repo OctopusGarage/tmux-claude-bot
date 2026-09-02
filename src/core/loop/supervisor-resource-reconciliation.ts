@@ -30,7 +30,7 @@ import type { LoopWorkOrder } from "./work-order.js";
 import { loopLedgerTaskId, workerLeaseOutcome } from "./work-order-settlement.js";
 
 const log = createLogger("loop.supervisor-resource-reconciliation");
-const ORPHAN_WORKTREE_RETENTION_MS = 72 * 60 * 60 * 1_000;
+const ORPHAN_WORKTREE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_WORKTREE_CLEANUPS_PER_RECONCILIATION = 25;
 
 export type SupervisorResourceReconciliation = {

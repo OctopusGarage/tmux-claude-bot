@@ -374,7 +374,7 @@ function cleanupExactLocalLoopBranch(input: {
     cwd: input.sourceWorktree,
     args: ["show-ref", "--verify", "--hash", ref],
   });
-  if (observed.status !== 0) return observed.status === 1 && observed.stdout.trim() === "";
+  if (observed.status !== 0) return localLoopBranchAlreadyAbsent(observed);
   const observedSha = observed.stdout.trim();
   if (!isGitObjectId(observedSha)) return false;
   if (input.expectedSha !== undefined && observedSha !== input.expectedSha) {
@@ -388,6 +388,12 @@ function cleanupExactLocalLoopBranch(input: {
     args: ["update-ref", "-d", ref, observedSha],
   });
   return deleted.status === 0;
+}
+
+function localLoopBranchAlreadyAbsent(result: LoopRunCommandResult): boolean {
+  if (result.stdout.trim() !== "") return false;
+  if (result.status === 1) return true;
+  return result.status === 128 && result.stderr.includes("not a valid ref");
 }
 
 function isBotOwnedLoopBranch(branch: string): boolean {

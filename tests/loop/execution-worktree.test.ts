@@ -501,6 +501,60 @@ describe("loop execution worktrees", () => {
       `${worktree}:status --porcelain`,
     ]);
   });
+
+  it("continues cleanup when the expected local loop branch is already absent", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceWorktree = join(stateDir, "source");
+    const worktree = join(stateDir, "loop-worktrees", "hub", "completed-run");
+    const branch = "loop/hub/architecture/completed-run";
+    const sha = "a".repeat(40);
+    mkdirSync(join(worktree, ".git"), { recursive: true });
+    mkdirSync(sourceWorktree, { recursive: true });
+    const calls: string[] = [];
+
+    expect(
+      cleanupLoopExecutionWorktree({
+        worktree,
+        sourceWorktree,
+        expectedBranch: branch,
+        runGit: (invocation) => {
+          calls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
+          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "branch --show-current") {
+            return { status: 0, stdout: "\n", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "rev-parse --verify HEAD") {
+            return { status: 0, stdout: `${sha}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return { status: 0, stdout: `worktree ${sourceWorktree}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ").startsWith("show-ref --verify --hash refs/heads/")) {
+            return { status: 128, stdout: "", stderr: "fatal: not a valid ref\n" };
+          }
+          if (invocation.args.join(" ") === `worktree remove --force ${worktree}`) {
+            return {
+              status: 128,
+              stdout: "",
+              stderr: `fatal: '${worktree}' is a main working tree\n`,
+            };
+          }
+          if (invocation.args.join(" ") === "status --porcelain") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          throw new Error(
+            `unexpected git invocation: ${invocation.cwd} ${invocation.args.join(" ")}`,
+          );
+        },
+      }),
+    ).toBe(true);
+
+    expect(existsSync(worktree)).toBe(false);
+    expect(calls).toContain(`${sourceWorktree}:show-ref --verify --hash refs/heads/${branch}`);
+  });
 });
 
 function gitStub(

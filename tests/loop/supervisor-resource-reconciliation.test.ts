@@ -247,22 +247,31 @@ describe("supervisor resource reconciliation", () => {
     expect(removed).toHaveLength(30);
   });
 
-  it("removes only unreferenced orphan worktrees after the failure retention window", async () => {
+  it("removes only unreferenced orphan worktrees after the weekly retention window", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-state-"));
     process.env.TCB_STATE_DIR = stateDir;
-    const now = 100 * 60 * 60 * 1_000;
+    const now = 10 * 24 * 60 * 60 * 1_000;
     const worktreeRoot = join(stateDir, "loop-worktrees", "app");
     const expiredOrphan = join(worktreeRoot, "expired-orphan");
+    const retainedRecentOrphan = join(worktreeRoot, "retained-recent-orphan");
     const youngOrphan = join(worktreeRoot, "young-orphan");
     const leasedOrphan = join(worktreeRoot, "leased-orphan");
     const referencedPath = join(worktreeRoot, "referenced-run");
-    for (const path of [expiredOrphan, youngOrphan, leasedOrphan, referencedPath]) {
+    for (const path of [
+      expiredOrphan,
+      retainedRecentOrphan,
+      youngOrphan,
+      leasedOrphan,
+      referencedPath,
+    ]) {
       mkdirSync(path, { recursive: true });
     }
-    const olderThanRetention = new Date(now - 73 * 60 * 60 * 1_000);
+    const olderThanRetention = new Date(now - 8 * 24 * 60 * 60 * 1_000);
     for (const path of [expiredOrphan, leasedOrphan, referencedPath]) {
       utimesSync(path, olderThanRetention, olderThanRetention);
     }
+    const withinWeeklyRetention = new Date(now - 6 * 24 * 60 * 60 * 1_000);
+    utimesSync(retainedRecentOrphan, withinWeeklyRetention, withinWeeklyRetention);
     const young = new Date(now - 1_000);
     utimesSync(youngOrphan, young, young);
 
@@ -322,6 +331,7 @@ describe("supervisor resource reconciliation", () => {
       `${expiredOrphan}:rev-parse --show-toplevel`,
       `${expiredOrphan}:worktree remove --force ${expiredOrphan}`,
     ]);
+    expect(existsSync(retainedRecentOrphan)).toBe(true);
   });
 
   it("terminalizes abandoned dispatches as dispatch timeouts, not invalid output", async () => {
