@@ -292,6 +292,52 @@ describe("active delegated task supervisor pool", () => {
     expect(startLoopSupervisor).not.toHaveBeenCalled();
   });
 
+  it("clears stale terminal artifacts before relaunching a trusted repair run", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-stale-artifacts-"));
+    const runId = "resource-repair-repair-100-1";
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", runId, runId);
+    mkdirSync(runDir, { recursive: true });
+    for (const file of [
+      "supervisor.md",
+      "supervisor-summary.json",
+      "supervisor-final-summary.json",
+      "system-gate.json",
+    ]) {
+      writeFileSync(join(runDir, file), "stale", "utf8");
+    }
+    setPathForSession("tmux_proj_project", projectDir);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder({
+        id: runId,
+        projectPath: projectDir,
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+        finalSummaryPath: join(runDir, "supervisor-final-summary.json"),
+      }),
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "queued",
+      now: 1,
+    });
+
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_project",
+        requirement: "repair only the durable resource failure",
+        resourceTrigger: "resource-repair",
+        trustedRunId: runId,
+      }),
+    ).resolves.toMatchObject({ status: "queued", runId });
+
+    for (const file of [
+      "supervisor.md",
+      "supervisor-summary.json",
+      "supervisor-final-summary.json",
+      "system-gate.json",
+    ]) {
+      expect(existsSync(join(runDir, file))).toBe(false);
+    }
+  });
+
   it("accepts a trusted run id only for resource-repair triggers", async () => {
     const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-resource-repair-trigger-"));
