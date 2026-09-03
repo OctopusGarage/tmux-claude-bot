@@ -44,6 +44,7 @@ describe("automation admission", () => {
       allowed: false,
       reason: "quiet-hours",
       incidentId: null,
+      retryAt: atSingapore("2026-08-11T09:30:00"),
     });
     expect(resourceAdmission).not.toHaveBeenCalled();
   });
@@ -54,7 +55,12 @@ describe("automation admission", () => {
         hostPower: scheduled,
         resourceAdmission: () => ({ allowed: true, reason: "open", incidentId: null }),
       }),
-    ).toEqual({ allowed: false, reason: "wake-warmup", incidentId: null });
+    ).toEqual({
+      allowed: false,
+      reason: "wake-warmup",
+      incidentId: null,
+      retryAt: atSingapore("2026-08-11T09:30:00"),
+    });
   });
 
   it.each(["interactive", "operator", "reconcile"] as const)(

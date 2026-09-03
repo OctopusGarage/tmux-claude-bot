@@ -17,13 +17,15 @@ export type ProjectRecoveryDispatchInput = {
 
 export type ProjectRecoveryDispatchResult =
   | { status: "queued"; runId: string; detail: string }
-  | { status: "blocked"; detail: string };
+  | { status: "blocked"; detail: string; retryAt?: number };
 
 export type ProjectRecoveryDelegator = (input: {
   session: string;
   requirement: string;
   worktreeIsolation: "source" | "isolated";
-}) => Promise<{ status: "queued"; runId: string } | { status: "blocked"; reason: string }>;
+}) => Promise<
+  { status: "queued"; runId: string } | { status: "blocked"; reason: string; retryAt?: number }
+>;
 
 export function projectRecoveryLockKey(target: ConfiguredRecoveryTarget): string {
   return `${target.kind}:${target.id}`;
@@ -52,7 +54,12 @@ export async function dispatchProjectRecovery(
     }),
     worktreeIsolation: options.worktreeIsolation,
   });
-  if (result.status === "blocked") return { status: "blocked", detail: result.reason };
+  if (result.status === "blocked")
+    return {
+      status: "blocked",
+      detail: result.reason,
+      ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }),
+    };
   return {
     status: "queued",
     runId: result.runId,
@@ -66,7 +73,12 @@ export function createProjectRecoveryDelegator(deps: HandlerDeps): ProjectRecove
       ...input,
       resourceTrigger: "background",
     });
-    if (result.status === "blocked") return { status: "blocked", reason: result.reason };
+    if (result.status === "blocked")
+      return {
+        status: "blocked",
+        reason: result.reason,
+        ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }),
+      };
     return { status: "queued", runId: result.runId };
   };
 }

@@ -399,7 +399,11 @@ export async function dispatchRuntimeGuardianRepair(
         resourceTrigger: "background",
       });
       return delegated.status === "blocked"
-        ? { status: "blocked", detail: delegated.reason }
+        ? {
+            status: "blocked",
+            detail: delegated.reason,
+            ...(delegated.retryAt === undefined ? {} : { retryAt: delegated.retryAt }),
+          }
         : {
             status: "queued",
             detail: `runId=${delegated.runId} project=${delegated.projectId} supervisor=${delegated.supervisorSession}`,

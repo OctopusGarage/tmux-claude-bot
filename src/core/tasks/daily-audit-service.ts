@@ -74,7 +74,7 @@ export type DailyTaskRepairDispatch = (input: {
 
 export type DailyTaskRepairDispatchResult =
   | { status: "queued"; detail: string; runId?: string }
-  | { status: "blocked"; detail: string };
+  | { status: "blocked"; detail: string; retryAt?: number };
 
 export class DailyTaskAuditStore {
   private readonly fired = new JsonMapStore<number>("daily_task_audit_lastfired.json");
@@ -585,7 +585,11 @@ export async function dispatchDailyTaskRepair(
     } else {
       log.warn("daily task audit auto repair could not be delegated", ctx);
     }
-    return { status: "blocked", detail: result.reason };
+    return {
+      status: "blocked",
+      detail: result.reason,
+      ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }),
+    };
   }
   return {
     status: "queued",

@@ -418,14 +418,14 @@ export class RepairCoordinator {
     return updated;
   }
 
-  releaseToQueue(id: string, now: number): RepairQueueRecord | undefined {
+  releaseToQueue(id: string, now: number, nextAttemptAt = now): RepairQueueRecord | undefined {
     const record = this.store.get(id);
     if (record === undefined) return undefined;
     const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
     const updated: RepairQueueRecord = {
       ...withoutLease,
       status: "pending",
-      nextAttemptAt: now,
+      nextAttemptAt,
       updatedAt: now,
     };
     this.store.set(id, updated);

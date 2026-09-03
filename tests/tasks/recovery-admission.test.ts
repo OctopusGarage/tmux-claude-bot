@@ -113,6 +113,27 @@ describe("recovery admission", () => {
     ]);
   });
 
+  it("preserves a transient dispatch retry time without incrementing retry", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+
+    const result = await admitRecoveryFindings({
+      findings: [finding()],
+      coordinator,
+      now: 1_000,
+      leaseId: "admission:1",
+      dispatch: async () => ({
+        status: "blocked",
+        detail: "automation admission deferred: quiet-hours",
+        retryAt: 2_000,
+      }),
+    });
+
+    expect(result).toMatchObject({ disposition: "deferred", admitted: 1, claimed: 1 });
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ status: "pending", attempt: 0, nextAttemptAt: 2_000 }),
+    ]);
+  });
+
   it("treats supervisor lease and interactive agent admission failures as immediate deferrals", async () => {
     for (const detail of [
       "queued task could not acquire its supervisor lease",
@@ -150,6 +171,31 @@ describe("recovery admission", () => {
         expect.objectContaining({ status: "pending", attempt: 0, nextAttemptAt: 1_000 }),
       ]);
     }
+  });
+
+  it("preserves a transient dispatch queue retry time", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    coordinator.enqueue({ ...finding(), now: 999 });
+
+    const result = await dispatchRecoveryQueue({
+      coordinator,
+      now: 1_000,
+      leaseId: "admission:1",
+      projectId: "bot",
+      limit: 1,
+      resolve: (records) => [...records],
+      dispatch: async () => ({
+        status: "blocked",
+        detail: "automation admission deferred: quiet-hours",
+        retryAt: 2_000,
+      }),
+      onQueued: () => {},
+    });
+
+    expect(result).toMatchObject({ disposition: "deferred", claimed: 1 });
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ status: "pending", attempt: 0, nextAttemptAt: 2_000 }),
+    ]);
   });
 
   it("returns a normal blocked admission to backoff retry", async () => {

@@ -29,7 +29,9 @@ export type ProjectRecoveryDispatchRequest = {
 
 export type ProjectRecoveryDispatch = (
   request: ProjectRecoveryDispatchRequest,
-) => Promise<{ status: "queued"; runId: string } | { status: "blocked"; detail: string }>;
+) => Promise<
+  { status: "queued"; runId: string } | { status: "blocked"; detail: string; retryAt?: number }
+>;
 
 export type ProjectRecoveryPassResult = {
   classified: number;
@@ -264,7 +266,7 @@ export async function runProjectRecoveryPass(input: {
       evidence,
     });
     if (dispatched.status === "blocked") {
-      input.coordinator.releaseToQueue(queueRecord.id, input.now);
+      input.coordinator.releaseToQueue(queueRecord.id, input.now, dispatched.retryAt);
       for (const record of records) {
         input.updateRepairStatus(
           record.taskId,

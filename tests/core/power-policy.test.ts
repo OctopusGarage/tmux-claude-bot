@@ -47,13 +47,21 @@ describe("host power policy", () => {
         trigger: "background",
         now: atSingapore("2026-08-11T04:00:00"),
       }),
-    ).toEqual({ allowed: false, reason: "quiet-hours" });
+    ).toEqual({
+      allowed: false,
+      reason: "quiet-hours",
+      retryAt: atSingapore("2026-08-11T09:30:00"),
+    });
     expect(
       admitQuietHoursWork(scheduled, {
         trigger: "resource-repair",
         now: atSingapore("2026-08-11T09:20:00"),
       }),
-    ).toEqual({ allowed: false, reason: "wake-warmup" });
+    ).toEqual({
+      allowed: false,
+      reason: "wake-warmup",
+      retryAt: atSingapore("2026-08-11T09:30:00"),
+    });
   });
 
   it.each(["interactive", "operator", "reconcile"] as const)(
