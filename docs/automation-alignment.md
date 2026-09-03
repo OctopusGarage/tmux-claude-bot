@@ -122,6 +122,10 @@ resource pressure signal, not a healthy sample. In protect mode it must close
 background admission so Loop, Autopilot, Daily Task Audit, Runtime Guardian, and
 Project Recovery do not start work while the bot cannot reliably answer control
 requests or deliver worker prompts.
+During a low-host-pressure recovery window, an isolated control-loop lag sample
+must keep the host guarded but must not erase the recovery anchor. Recovery must
+be able to progress to `recovering` so light probes and repair checks can prove
+system health while heavy autonomous work remains closed.
 User-facing automation status must not render unavailable percentages or probe
 timestamps as numeric zero or the Unix epoch. Use null, unknown, or n/a at the
 presentation boundary unless zero is measured evidence.

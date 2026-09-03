@@ -113,7 +113,7 @@ describe("pressure policy", () => {
     expect(memory.stateSince).toBe(30_001);
   });
 
-  it("does not recover while event loop lag remains severe", () => {
+  it("does not enter recovering before the recovery window while event loop lag remains severe", () => {
     let memory = initialPressureMemory(0);
     memory = advancePressureState(memory, sample(0, 94), "balanced");
     memory = advancePressureState(memory, sample(90_000, 94), "balanced");
@@ -122,7 +122,39 @@ describe("pressure policy", () => {
     memory = advancePressureState(memory, sampleWithEventLoopLag(390_000, 45_000), "balanced");
 
     expect(memory.pressure).toBe("critical");
-    expect(memory.recoverySince).toBeNull();
+    expect(memory.recoverySince).toBe(390_000);
+  });
+
+  it("keeps low-resource recovery progress across isolated control-loop lag", () => {
+    let memory = initialPressureMemory(0);
+    memory = advancePressureState(memory, sample(0, 94), "balanced");
+    memory = advancePressureState(memory, sample(90_000, 94), "balanced");
+    expect(memory.pressure).toBe("critical");
+
+    memory = advancePressureState(memory, sample(90_001, 40), "balanced");
+    expect(memory.recoverySince).toBe(90_001);
+
+    memory = advancePressureState(memory, sampleWithEventLoopLag(240_001, 45_000), "balanced");
+    expect(memory.pressure).toBe("critical");
+    expect(memory.recoverySince).toBe(90_001);
+
+    memory = advancePressureState(memory, sample(390_001, 40), "balanced");
+    expect(memory.pressure).toBe("recovering");
+    expect(memory.recoverySince).toBe(90_001);
+  });
+
+  it("does not reopen fully healthy while control-loop lag is still severe", () => {
+    let memory = initialPressureMemory(0);
+    memory = advancePressureState(memory, sample(0, 94), "balanced");
+    memory = advancePressureState(memory, sample(90_000, 94), "balanced");
+    memory = advancePressureState(memory, sample(90_001, 40), "balanced");
+    memory = advancePressureState(memory, sample(390_001, 40), "balanced");
+    expect(memory.pressure).toBe("recovering");
+
+    memory = advancePressureState(memory, sampleWithEventLoopLag(690_001, 45_000), "balanced");
+
+    expect(memory.pressure).toBe("recovering");
+    expect(memory.recoverySince).toBe(90_001);
   });
 
   it("enters emergency after sustained thermal pressure", () => {
