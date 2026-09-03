@@ -122,6 +122,58 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
   });
 
+  it("retries status-zero Codex transport failures before parsing supervisor output", async () => {
+    let attempts = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            status: 0,
+            stdout:
+              "unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses",
+            stderr: "",
+          };
+        }
+        return {
+          status: 0,
+          stdout:
+            '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":["retried after Codex transport failure"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}',
+          stderr: "",
+        };
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result).toMatchObject({
+      status: "completed",
+      summary: {
+        actionsTaken: ["retried after Codex transport failure"],
+        finalVerification: "passed",
+      },
+    });
+  });
+
+  it("classifies exhausted status-zero Codex transport failures as dispatch failures", async () => {
+    const output =
+      "unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses";
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => ({ status: 0, stdout: output, stderr: "" }),
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: output,
+      output,
+    });
+  });
+
   it("returns timeout and aborts dispatch when dispatch does not finish before the deadline", async () => {
     let signal: AbortSignal | undefined;
     const result = await runLoopSupervisedProjectAsync({

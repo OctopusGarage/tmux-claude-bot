@@ -216,6 +216,7 @@ async function dispatchWithProviderTransientRetry(
 ): Promise<SupervisorDispatchResult> {
   const maxAttempts = Math.max(1, input.transientDispatchMaxAttempts ?? 2);
   let last: SupervisorDispatchResult | undefined;
+  let lastTransientOutput: string | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const result = await input.dispatch({
@@ -227,13 +228,19 @@ async function dispatchWithProviderTransientRetry(
         ...(request.contextReset !== undefined ? { contextReset: request.contextReset } : {}),
       });
       last = result;
-      if (result.status === 0 || !isProviderTransientFailure(joinOutput(result))) return result;
+      const output = joinOutput(result);
+      if (!isProviderTransientFailure(output)) return result;
+      lastTransientOutput = output;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       last = { status: 1, stdout: "", stderr: message };
+      lastTransientOutput = message;
       if (!isProviderTransientFailure(message)) throw err;
     }
     if (signal.aborted) return last;
+  }
+  if (last !== undefined && last.status === 0 && lastTransientOutput !== undefined) {
+    return { status: 1, stdout: "", stderr: lastTransientOutput };
   }
   return last ?? { status: 1, stdout: "", stderr: "dispatch failed" };
 }

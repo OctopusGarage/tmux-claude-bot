@@ -16,6 +16,18 @@ describe("agent transient failure classification", () => {
     });
   });
 
+  it("classifies Codex backend transport 404 output as a retryable provider failure", () => {
+    const output =
+      "unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses";
+
+    expect(classifyAgentTransientFailure(output)).toEqual({
+      kind: "rate-limit",
+      domain: "provider",
+      retryable: true,
+    });
+    expect(isProviderTransientFailure(output)).toBe(true);
+  });
+
   it("classifies queue and readiness failures without treating them as provider failures", () => {
     expect(classifyAgentTransientFailure("loop supervisor task queue is full")).toEqual({
       kind: "queue-capacity",
