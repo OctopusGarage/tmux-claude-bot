@@ -357,6 +357,28 @@ export function repositoryReviewAdmissionBackoffUntil(input: {
   return input.now + Math.max(input.tickMs, REPOSITORY_REVIEW_MIN_TICK_MS);
 }
 
+export function deferReadyRepositoryReviewsForAdmission(input: {
+  queue: RepositoryReviewQueue;
+  now: number;
+  nextAttemptAt: number;
+  reason: string;
+}): number {
+  let deferred = 0;
+  for (const item of input.queue.listReady(input.now)) {
+    if (
+      input.queue.deferReady(
+        item.id,
+        input.now,
+        input.nextAttemptAt,
+        `automation admission deferred: ${input.reason}`,
+      )
+    ) {
+      deferred += 1;
+    }
+  }
+  return deferred;
+}
+
 function logSupervisorRunResult(input: {
   runId: string;
   scheduledAt: number;
@@ -1351,12 +1373,25 @@ export async function runLoopServiceTickAsync(input: {
             if (queueItem === undefined) return;
             const admission = precheckAutonomousTarget(target, false);
             if (!admission.allowed) {
+              const nextAttemptAt =
+                repositoryReviewAdmissionBackoffUntil({
+                  now,
+                  tickMs: REPOSITORY_REVIEW_RETRY_BASE_MS,
+                  admission,
+                }) ?? now + REPOSITORY_REVIEW_RETRY_BASE_MS;
+              repositoryReviewQueue.deferReady(
+                queueItem.id,
+                now,
+                nextAttemptAt,
+                `automation admission deferred: ${admission.reason}`,
+              );
               log.info("loop engineering repository review deferred by automation admission", {
                 data: {
                   jobKey: target.due.jobKey,
                   queueItemId: queueItem.id,
                   incidentId: admission.incidentId,
                   reason: admission.reason,
+                  retryAt: new Date(nextAttemptAt).toISOString(),
                 },
               });
               return;
@@ -2136,6 +2171,13 @@ export async function startLoopEngineering(
         admission,
       });
       if (backoffUntil !== null) {
+        const queue = new RepositoryReviewQueue();
+        deferReadyRepositoryReviewsForAdmission({
+          queue,
+          now,
+          nextAttemptAt: backoffUntil,
+          reason: admission.reason,
+        });
         repositoryReviewSuppressedUntil = backoffUntil;
         log.info("repository PR review queue tick deferred by automation admission", {
           data: {

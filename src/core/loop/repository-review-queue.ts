@@ -227,6 +227,24 @@ export class RepositoryReviewQueue {
     return running;
   }
 
+  deferReady(id: string, now: number, nextAttemptAt: number, reason: string): boolean {
+    const item = this.items.get(id);
+    if (
+      item === undefined ||
+      (item.status !== "pending" && item.status !== "retry-wait") ||
+      item.nextAttemptAt > now
+    ) {
+      return false;
+    }
+    this.items.set(id, {
+      ...item,
+      updatedAt: now,
+      nextAttemptAt,
+      lastError: reason,
+    });
+    return true;
+  }
+
   fail(id: string, owner: string, now: number, error: string, nextAttemptAt: number): boolean {
     const item = this.items.get(id);
     if (

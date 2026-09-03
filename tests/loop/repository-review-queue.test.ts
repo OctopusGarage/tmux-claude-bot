@@ -305,6 +305,25 @@ describe("repository review queue", () => {
     });
   });
 
+  it("defers a ready review without consuming a retry attempt", () => {
+    const store = queue();
+    const ready = store.enqueue(item({ repositoryId: "admission-gated" }));
+
+    expect(store.deferReady(ready.id, 100, 1_000, "automation admission deferred")).toBe(true);
+    expect(store.deferReady(ready.id, 999, 2_000, "still deferred")).toBe(false);
+
+    expect(store.listReady(999)).toEqual([]);
+    expect(store.listReady(1_000)).toEqual([
+      expect.objectContaining({
+        id: ready.id,
+        status: "pending",
+        attempt: 0,
+        nextAttemptAt: 1_000,
+        lastError: "automation admission deferred",
+      }),
+    ]);
+  });
+
   it("reopens a false terminal occurrence with a fresh bounded retry epoch", () => {
     const store = queue();
     const created = store.enqueue(item({ repositoryId: "false-manual" }));
