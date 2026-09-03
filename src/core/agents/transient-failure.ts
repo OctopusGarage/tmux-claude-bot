@@ -32,7 +32,9 @@ export function classifyAgentTransientFailure(
     normalized.includes("rate-limit") ||
     normalized.includes("too many requests") ||
     normalized.includes("temporarily unavailable") ||
-    normalized.includes("overloaded")
+    normalized.includes("overloaded") ||
+    (normalized.includes("unexpected status 404") &&
+      normalized.includes("backend-api/codex/responses"))
   ) {
     return { kind: "rate-limit", domain: "provider", retryable: true };
   }
