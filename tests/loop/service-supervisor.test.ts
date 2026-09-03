@@ -9,6 +9,7 @@ import { RepositoryReviewQueue } from "../../src/core/loop/repository-review-que
 import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
+  deferReadyRepositoryReviewsForAdmission,
   reconcileLoopSupervisorWorkOrders,
   repositoryReviewAdmissionBackoffUntil,
   resolveSystemGateGitExecutable,
@@ -230,6 +231,52 @@ describe("runLoopServiceTickAsync supervised routing", () => {
         },
       }),
     ).toBeNull();
+  });
+
+  it("moves ready repository reviews to an admission retry time without consuming attempts", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-repository-admission-deferral-"),
+    );
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    const queue = new RepositoryReviewQueue();
+    const first = queue.enqueue({
+      repositoryId: "repo-one-prs",
+      scheduledAt: now,
+      priority: 1000,
+      now,
+    });
+    const second = queue.enqueue({
+      repositoryId: "repo-two-prs",
+      scheduledAt: now + 1,
+      priority: 1000,
+      now,
+    });
+
+    expect(
+      deferReadyRepositoryReviewsForAdmission({
+        queue,
+        now,
+        nextAttemptAt: now + 15 * 60 * 1000,
+        reason: "recent-owner-activity",
+      }),
+    ).toBe(2);
+
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({
+        id: first.id,
+        status: "pending",
+        attempt: 0,
+        nextAttemptAt: now + 15 * 60 * 1000,
+        lastError: "automation admission deferred: recent-owner-activity",
+      }),
+      expect.objectContaining({
+        id: second.id,
+        status: "pending",
+        attempt: 0,
+        nextAttemptAt: now + 15 * 60 * 1000,
+        lastError: "automation admission deferred: recent-owner-activity",
+      }),
+    ]);
   });
 
   it("reconciles remote Loop branches at startup and on a bounded maintenance cadence", async () => {
@@ -640,7 +687,12 @@ prReview:
     await runLoopServiceTickAsync(input);
 
     expect(queue.list({ all: true })).toEqual([
-      expect.objectContaining({ status: "pending", attempt: 0 }),
+      expect.objectContaining({
+        status: "pending",
+        attempt: 0,
+        nextAttemptAt: now + 15 * 60 * 1000,
+        lastError: "automation admission deferred: critical host pressure",
+      }),
     ]);
     expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
     expect(runSupervisorTask).not.toHaveBeenCalled();
@@ -650,7 +702,10 @@ prReview:
       circuit: { ...closed.circuit, admission: "open" },
       view: { ...closed.view, circuit: "open" },
     });
-    await runLoopServiceTickAsync(input);
+    await runLoopServiceTickAsync({
+      ...input,
+      now: now + 15 * 60 * 1000,
+    });
 
     expect(runSupervisorTask).toHaveBeenCalled();
   });

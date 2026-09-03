@@ -145,6 +145,10 @@ The independent repository PR review queue tick may use a faster normal cadence
 for final-summary pickup, but it must perform a top-level heavy-work admission
 precheck and back off to the main Loop cadence after global admission closure
 instead of continuing a 10-second closed-gate polling loop.
+When that top-level precheck or a per-item repository-review dispatch precheck
+defers ready work, the queue must move `nextAttemptAt` to the admission retry
+time without incrementing the attempt count, so dashboards do not advertise
+already-past automatic retry times during quiet hours or closed admission.
 System Self-Heal broad agent sweeps must leave durable retryable failure ledger
 evidence when admission blocks the sweep before WorkOrder creation; otherwise
 the hourly operator-equivalent check can disappear from the next audit window.
