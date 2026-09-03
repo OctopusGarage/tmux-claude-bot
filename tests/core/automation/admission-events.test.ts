@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -71,5 +71,27 @@ describe("automation admission event journal", () => {
     const result = readAutomationAdmissionEvents({ since: 0, until: 10_000, limit: 2 });
     expect(result.truncated).toBe(true);
     expect(result.events.map((event) => event.intentId)).toEqual(["intent-2", "intent-3"]);
+  });
+
+  it("keeps the dedupe map bounded to the short dedupe horizon", () => {
+    appendAutomationAdmissionEvent({
+      at: 1_000,
+      kind: "deferred",
+      source: "loop-engineering",
+      intentId: "old-intent",
+      reason: "background-closed",
+    });
+    appendAutomationAdmissionEvent({
+      at: 2 * 60 * 60_000,
+      kind: "deferred",
+      source: "loop-engineering",
+      intentId: "new-intent",
+      reason: "background-closed",
+    });
+
+    const raw = readFileSync(join(stateDir, "automation-admission", "event-dedupe.json"), "utf8");
+    expect(Object.keys(JSON.parse(raw))).toHaveLength(1);
+    expect(raw).toContain("new-intent");
+    expect(raw).not.toContain("old-intent");
   });
 });

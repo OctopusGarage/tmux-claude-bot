@@ -126,6 +126,13 @@ async function runDailyTaskAuditServiceTickInternal(
   const ledger = input.ledger ?? new DailyTaskLedger();
   const coordinator = input.coordinator ?? new RepairCoordinator();
   const repoPath = input.config.repoPath.trim() || process.cwd();
+  const prunedLedger = ledger.pruneTerminal(input.now);
+  const prunedRepair = coordinator.pruneTerminal(input.now);
+  if (prunedLedger > 0 || prunedRepair > 0) {
+    log.info("pruned terminal task repair history", {
+      data: { ledger: prunedLedger, repairQueue: prunedRepair },
+    });
+  }
   const reopenedSelfHealSweeps = ledger.reconcileDeferredSystemSelfHealSweeps(input.now);
   if (reopenedSelfHealSweeps > 0) {
     log.warn("reopened legacy deferred system self-heal sweeps", {

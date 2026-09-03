@@ -101,7 +101,7 @@ describe("AutomationOccurrenceStore", () => {
     const old = store.plan({ key: "loop:old", scheduledAt: 1, windowMs: 0, now: 1 });
     store.setStatus(old.id, "settled", 2);
 
-    const afterRetention = 31 * 24 * 60 * 60_000;
+    const afterRetention = 8 * 24 * 60 * 60_000;
     store.plan({
       key: "loop:new",
       scheduledAt: afterRetention,

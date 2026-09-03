@@ -369,6 +369,40 @@ describe("DailyTaskLedger", () => {
     });
   });
 
+  it("prunes only terminal task history after the bounded retention window", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-prune-"));
+    const ledger = new DailyTaskLedger();
+    const eightDays = 8 * 24 * 60 * 60 * 1000;
+
+    ledger.expect({
+      taskId: "loop:old-success",
+      source: "loop-engineering",
+      name: "old success",
+      scheduledAt: 1_000,
+    });
+    ledger.finish("loop:old-success", { endedAt: 2_000 });
+    ledger.expect({
+      taskId: "loop:old-missing",
+      source: "loop-engineering",
+      name: "old missing",
+      scheduledAt: 3_000,
+    });
+    ledger.reconcileExpectedMissing(eightDays);
+    ledger.expect({
+      taskId: "loop:recent-success",
+      source: "loop-engineering",
+      name: "recent success",
+      scheduledAt: eightDays,
+    });
+    ledger.finish("loop:recent-success", { endedAt: eightDays });
+
+    expect(ledger.pruneTerminal(eightDays + 2_000)).toBe(1);
+    expect(ledger.listAll().map((record) => record.taskId)).toEqual([
+      "loop:old-missing",
+      "loop:recent-success",
+    ]);
+  });
+
   it("only supersedes an unresolved failure once when multiple later successes exist", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-reconcile-once-"));
     const ledger = new DailyTaskLedger();

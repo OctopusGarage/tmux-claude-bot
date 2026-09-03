@@ -88,6 +88,7 @@ export type TaskAuditSummary = {
 };
 
 const RUNNING_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const SYSTEM_SELF_HEAL_DEFERRED_PREFIX =
   "System self-heal agent sweep deferred before WorkOrder creation: ";
 
@@ -228,45 +229,51 @@ export class DailyTaskLedger {
 
   reconcileTerminalStatuses(now: number): number {
     let updated = 0;
-    for (const [taskId, record] of this.store.sortedEntries()) {
-      if (!["success", "skipped"].includes(record.status)) continue;
-      if (record.repairStatus === "not-needed") continue;
-      this.store.set(taskId, {
-        ...record,
-        repairStatus: "not-needed",
-        summary: appendSummary(
-          record.summary,
-          "Normalized terminal task state: successful or skipped task needs no repair.",
-        ),
-        updatedAt: now,
-      });
-      updated++;
-    }
+    this.store.update((records) => {
+      for (const [taskId, record] of Object.entries(records)) {
+        if (!["success", "skipped"].includes(record.status)) continue;
+        if (record.repairStatus === "not-needed") continue;
+        records[taskId] = {
+          ...record,
+          repairStatus: "not-needed",
+          summary: appendSummary(
+            record.summary,
+            "Normalized terminal task state: successful or skipped task needs no repair.",
+          ),
+          updatedAt: now,
+        };
+        updated++;
+      }
+      return updated > 0;
+    });
     return updated;
   }
 
   reconcileDeferredSystemSelfHealSweeps(now: number): number {
     let updated = 0;
-    for (const [taskId, record] of this.store.sortedEntries()) {
-      if (record.source !== "system-self-heal") continue;
-      if (record.status !== "skipped" || record.repairStatus !== "not-needed") continue;
-      const summary = record.summary ?? "";
-      if (!summary.startsWith(SYSTEM_SELF_HEAL_DEFERRED_PREFIX)) continue;
-      const reason = summary.slice(SYSTEM_SELF_HEAL_DEFERRED_PREFIX.length).trim() || "unknown";
-      this.store.set(taskId, {
-        ...record,
-        status: "failed",
-        error: reason,
-        failureKind: classifyTaskFailure(reason, summary),
-        repairStatus: "pending",
-        summary: appendSummary(
-          summary,
-          "Reopened legacy deferred system self-heal sweep as retryable repair evidence.",
-        ),
-        updatedAt: now,
-      });
-      updated++;
-    }
+    this.store.update((records) => {
+      for (const [taskId, record] of Object.entries(records)) {
+        if (record.source !== "system-self-heal") continue;
+        if (record.status !== "skipped" || record.repairStatus !== "not-needed") continue;
+        const summary = record.summary ?? "";
+        if (!summary.startsWith(SYSTEM_SELF_HEAL_DEFERRED_PREFIX)) continue;
+        const reason = summary.slice(SYSTEM_SELF_HEAL_DEFERRED_PREFIX.length).trim() || "unknown";
+        records[taskId] = {
+          ...record,
+          status: "failed",
+          error: reason,
+          failureKind: classifyTaskFailure(reason, summary),
+          repairStatus: "pending",
+          summary: appendSummary(
+            summary,
+            "Reopened legacy deferred system self-heal sweep as retryable repair evidence.",
+          ),
+          updatedAt: now,
+        };
+        updated++;
+      }
+      return updated > 0;
+    });
     return updated;
   }
 
@@ -277,47 +284,53 @@ export class DailyTaskLedger {
     const timeoutMs = input.timeoutMs ?? RUNNING_TIMEOUT_MS;
     const sources = input.sources === undefined ? null : new Set(input.sources);
     let updated = 0;
-    for (const [taskId, record] of this.store.sortedEntries()) {
-      if (record.status !== "running") continue;
-      if (sources !== null && !sources.has(record.source)) continue;
-      if (now - record.updatedAt < timeoutMs) continue;
-      this.store.set(taskId, {
-        ...record,
-        status: "running-timeout",
-        endedAt: now,
-        error: `Task execution exceeded the ${Math.round(timeoutMs / 60_000)} minute recovery timeout.`,
-        failureKind: "agent-timeout",
-        repairStatus: "pending",
-        summary: appendSummary(
-          record.summary,
-          "Reconciled stale running task after its execution owner disappeared.",
-        ),
-        updatedAt: now,
-      });
-      updated++;
-    }
+    this.store.update((records) => {
+      for (const [taskId, record] of Object.entries(records)) {
+        if (record.status !== "running") continue;
+        if (sources !== null && !sources.has(record.source)) continue;
+        if (now - record.updatedAt < timeoutMs) continue;
+        records[taskId] = {
+          ...record,
+          status: "running-timeout",
+          endedAt: now,
+          error: `Task execution exceeded the ${Math.round(timeoutMs / 60_000)} minute recovery timeout.`,
+          failureKind: "agent-timeout",
+          repairStatus: "pending",
+          summary: appendSummary(
+            record.summary,
+            "Reconciled stale running task after its execution owner disappeared.",
+          ),
+          updatedAt: now,
+        };
+        updated++;
+      }
+      return updated > 0;
+    });
     return updated;
   }
 
   reconcileExpectedMissing(now: number, input: { sources?: ScheduledTaskSource[] } = {}): number {
     const sources = input.sources === undefined ? null : new Set(input.sources);
     let updated = 0;
-    for (const [taskId, record] of this.store.sortedEntries()) {
-      if (record.status !== "expected") continue;
-      if (record.scheduledAt > now) continue;
-      if (sources !== null && !sources.has(record.source)) continue;
-      this.store.set(taskId, {
-        ...record,
-        status: "missing",
-        repairStatus: "pending",
-        summary: appendSummary(
-          record.summary,
-          "Reconciled missing expected task after its scheduled time passed without a run record.",
-        ),
-        updatedAt: now,
-      });
-      updated++;
-    }
+    this.store.update((records) => {
+      for (const [taskId, record] of Object.entries(records)) {
+        if (record.status !== "expected") continue;
+        if (record.scheduledAt > now) continue;
+        if (sources !== null && !sources.has(record.source)) continue;
+        records[taskId] = {
+          ...record,
+          status: "missing",
+          repairStatus: "pending",
+          summary: appendSummary(
+            record.summary,
+            "Reconciled missing expected task after its scheduled time passed without a run record.",
+          ),
+          updatedAt: now,
+        };
+        updated++;
+      }
+      return updated > 0;
+    });
     return updated;
   }
 
@@ -370,23 +383,41 @@ export class DailyTaskLedger {
 
   private supersedeEarlierFailures(success: ScheduledTaskRecord): number {
     let updated = 0;
-    for (const [, record] of this.store.sortedEntries()) {
-      if (record.taskId === success.taskId) continue;
-      if (record.source !== success.source || record.name !== success.name) continue;
-      if (record.scheduledAt >= success.scheduledAt) continue;
-      if (!isUnresolvedRepairCandidate(record)) continue;
-      this.store.set(record.taskId, {
-        ...record,
-        repairStatus: "superseded",
-        summary: appendSummary(
-          record.summary,
-          `Superseded by later successful task ${success.taskId}.`,
-        ),
-        updatedAt: success.endedAt ?? success.updatedAt,
-      });
-      updated++;
-    }
+    this.store.update((records) => {
+      for (const [taskId, record] of Object.entries(records)) {
+        if (record.taskId === success.taskId) continue;
+        if (record.source !== success.source || record.name !== success.name) continue;
+        if (record.scheduledAt >= success.scheduledAt) continue;
+        if (!isUnresolvedRepairCandidate(record)) continue;
+        records[taskId] = {
+          ...record,
+          repairStatus: "superseded",
+          summary: appendSummary(
+            record.summary,
+            `Superseded by later successful task ${success.taskId}.`,
+          ),
+          updatedAt: success.endedAt ?? success.updatedAt,
+        };
+        updated++;
+      }
+      return updated > 0;
+    });
     return updated;
+  }
+
+  pruneTerminal(now: number, retentionMs: number = TERMINAL_RETENTION_MS): number {
+    let deleted = 0;
+    this.store.update((records) => {
+      for (const [taskId, record] of Object.entries(records)) {
+        if (!isTerminalTaskRecord(record)) continue;
+        const referenceAt = record.scheduledAt;
+        if (referenceAt > now || now - referenceAt <= retentionMs) continue;
+        delete records[taskId];
+        deleted++;
+      }
+      return deleted > 0;
+    });
+    return deleted;
   }
 }
 
@@ -440,6 +471,16 @@ function isUnresolvedRepairCandidate(record: ScheduledTaskRecord): boolean {
   if (!["failed", "missing", "running-timeout"].includes(record.status)) return false;
   return !["fixed", "not-needed", "blocked", "superseded", "not-reproducible"].includes(
     record.repairStatus ?? "pending",
+  );
+}
+
+function isTerminalTaskRecord(record: ScheduledTaskRecord): boolean {
+  if (record.status === "running" || record.status === "expected" || record.status === "missing") {
+    return false;
+  }
+  if (record.repairStatus === undefined) return false;
+  return ["fixed", "not-needed", "blocked", "not-reproducible", "superseded"].includes(
+    record.repairStatus,
   );
 }
 

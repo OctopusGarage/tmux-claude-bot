@@ -34,8 +34,8 @@ type OccurrenceStoreOptions = {
 };
 
 const FILE = "automation-admission/occurrences.json";
-const TERMINAL_RETENTION_MS = 30 * 24 * 60 * 60_000;
-const OPEN_RETENTION_MS = 90 * 24 * 60 * 60_000;
+const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const OPEN_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 export function automationOccurrenceId(key: string, scheduledAt: number): string {
   return `${key}@${scheduledAt}`;
@@ -177,14 +177,23 @@ export class AutomationOccurrenceStore {
 
   prune(now: number): number {
     let deleted = 0;
-    for (const occurrence of this.list()) {
-      const retention =
-        occurrence.status === "settled" || occurrence.status === "superseded"
-          ? TERMINAL_RETENTION_MS
-          : OPEN_RETENTION_MS;
-      if (occurrence.updatedAt > now || now - occurrence.updatedAt <= retention) continue;
-      if (this.records.delete(occurrence.id)) deleted++;
-    }
+    this.records.update((records) => {
+      for (const [id, value] of Object.entries(records)) {
+        if (!isOccurrence(value)) {
+          delete records[id];
+          deleted++;
+          continue;
+        }
+        const retention =
+          value.status === "settled" || value.status === "superseded"
+            ? TERMINAL_RETENTION_MS
+            : OPEN_RETENTION_MS;
+        if (value.updatedAt > now || now - value.updatedAt <= retention) continue;
+        delete records[id];
+        deleted++;
+      }
+      return deleted > 0;
+    });
     return deleted;
   }
 }

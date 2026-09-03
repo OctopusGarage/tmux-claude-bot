@@ -35,6 +35,7 @@ export type RepairQueueRecord = {
 export type RepairQueueStore = {
   get(id: string): RepairQueueRecord | undefined;
   set(id: string, value: RepairQueueRecord): void;
+  update(mutator: (records: Record<string, RepairQueueRecord>) => boolean): boolean;
   list(): RepairQueueRecord[];
 };
 
@@ -48,6 +49,20 @@ export class InMemoryRepairQueueStore implements RepairQueueStore {
 
   set(id: string, value: RepairQueueRecord): void {
     this.values.set(id, structuredClone(value));
+  }
+
+  update(mutator: (records: Record<string, RepairQueueRecord>) => boolean): boolean {
+    const records = Object.fromEntries(
+      [...this.values.entries()].map(([id, value]) => [id, structuredClone(value)]),
+    );
+    const changed = mutator(records);
+    if (changed) {
+      this.values.clear();
+      for (const [id, value] of Object.entries(records)) {
+        this.values.set(id, structuredClone(value));
+      }
+    }
+    return changed;
   }
 
   list(): RepairQueueRecord[] {
@@ -64,6 +79,10 @@ class PersistentRepairQueueStore implements RepairQueueStore {
 
   set(id: string, value: RepairQueueRecord): void {
     this.store.set(id, value);
+  }
+
+  update(mutator: (records: Record<string, RepairQueueRecord>) => boolean): boolean {
+    return this.store.update(mutator);
   }
 
   list(): RepairQueueRecord[] {
@@ -108,6 +127,7 @@ type PendingLedgerRecord = {
 
 const DEFAULT_LEASE_MS = 30 * 60_000;
 const MAX_BACKOFF_MS = 30 * 60_000;
+const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const REPAIR_MAX_ATTEMPTS = 3;
 
 export function createRepairDedupeKey(input: {
@@ -285,15 +305,18 @@ export class RepairCoordinator {
       .sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt)
       .slice(0, Math.max(0, input.limit));
     const expiresAt = input.now + (input.leaseMs ?? DEFAULT_LEASE_MS);
-    for (const record of claimed) {
-      this.store.set(record.id, {
-        ...record,
-        status: "leased",
-        leaseId: input.leaseId,
-        leaseExpiresAt: expiresAt,
-        updatedAt: input.now,
-      });
-    }
+    this.store.update((records) => {
+      for (const record of claimed) {
+        records[record.id] = {
+          ...record,
+          status: "leased",
+          leaseId: input.leaseId,
+          leaseExpiresAt: expiresAt,
+          updatedAt: input.now,
+        };
+      }
+      return claimed.length > 0;
+    });
     return claimed.map((record) => ({
       ...record,
       status: "leased",
@@ -315,15 +338,18 @@ export class RepairCoordinator {
       )
       .slice(0, Math.max(0, input.limit));
     const expiresAt = input.now + (input.leaseMs ?? DEFAULT_LEASE_MS);
-    for (const record of due) {
-      this.store.set(record.id, {
-        ...record,
-        status: "leased",
-        leaseId: input.leaseId,
-        leaseExpiresAt: expiresAt,
-        updatedAt: input.now,
-      });
-    }
+    this.store.update((records) => {
+      for (const record of due) {
+        records[record.id] = {
+          ...record,
+          status: "leased",
+          leaseId: input.leaseId,
+          leaseExpiresAt: expiresAt,
+          updatedAt: input.now,
+        };
+      }
+      return due.length > 0;
+    });
     return due.map((record) => ({
       ...record,
       status: "leased",
@@ -492,40 +518,64 @@ export class RepairCoordinator {
 
   reconcileExpiredLeases(now: number): number {
     let count = 0;
-    for (const record of this.list()) {
-      if (
-        (record.status !== "leased" && record.status !== "running") ||
-        record.leaseExpiresAt === undefined ||
-        record.leaseExpiresAt > now
-      )
-        continue;
-      const attempt = record.attempt + 1;
-      const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
-      const updated: RepairQueueRecord = {
-        ...withoutLease,
-        status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
-        attempt,
-        nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
-        updatedAt: now,
-      };
-      this.store.set(record.id, updated);
-      count++;
-    }
+    this.store.update((records) => {
+      for (const [id, record] of Object.entries(records)) {
+        if (
+          (record.status !== "leased" && record.status !== "running") ||
+          record.leaseExpiresAt === undefined ||
+          record.leaseExpiresAt > now
+        )
+          continue;
+        const attempt = record.attempt + 1;
+        const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
+        records[id] = {
+          ...withoutLease,
+          status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
+          attempt,
+          nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
+          updatedAt: now,
+        };
+        count++;
+      }
+      return count > 0;
+    });
     return count;
   }
 
   private deadLetterExhausted(now: number): number {
     let count = 0;
-    for (const record of this.list()) {
-      if (
-        (record.status !== "pending" && record.status !== "retry-wait") ||
-        record.attempt < REPAIR_MAX_ATTEMPTS
-      )
-        continue;
-      this.markTerminal(record.id, "dead-letter", now);
-      count++;
-    }
+    this.store.update((records) => {
+      for (const [id, record] of Object.entries(records)) {
+        if (
+          (record.status !== "pending" && record.status !== "retry-wait") ||
+          record.attempt < REPAIR_MAX_ATTEMPTS
+        )
+          continue;
+        const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
+        records[id] = {
+          ...withoutLease,
+          status: "dead-letter",
+          updatedAt: now,
+        };
+        count++;
+      }
+      return count > 0;
+    });
     return count;
+  }
+
+  pruneTerminal(now: number, retentionMs: number = TERMINAL_RETENTION_MS): number {
+    let deleted = 0;
+    this.store.update((records) => {
+      for (const [id, record] of Object.entries(records)) {
+        if (!isTerminal(record.status)) continue;
+        if (record.createdAt > now || now - record.createdAt <= retentionMs) continue;
+        delete records[id];
+        deleted++;
+      }
+      return deleted > 0;
+    });
+    return deleted;
   }
 }
 

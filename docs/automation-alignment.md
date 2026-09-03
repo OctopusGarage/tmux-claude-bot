@@ -148,6 +148,11 @@ instead of continuing a 10-second closed-gate polling loop.
 System Self-Heal broad agent sweeps must leave durable retryable failure ledger
 evidence when admission blocks the sweep before WorkOrder creation; otherwise
 the hourly operator-equivalent check can disappear from the next audit window.
+Daily Task Audit service ticks must prune terminal task and repair history by
+task occurrence or queue creation time on a bounded retention window before
+reconciliation. Completed/fixed/superseded history is evidence, not an
+unbounded hot path: once it is older than the retention window, it must not keep
+inflating JSON state files that are rewritten on every repair or audit tick.
 When a later System Self-Heal broad agent sweep queues successfully, it must
 claim due `system-self-heal` repair records, mark their ledger records running,
 and link them to the new active-delegation task so completion can close the

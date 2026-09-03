@@ -437,6 +437,43 @@ describe("RepairCoordinator", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "dead-letter", attempt: 14 });
   });
 
+  it("prunes only terminal repair history after the bounded retention window", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const old = coordinator.enqueue({
+      projectId: "project-a",
+      projectPath: "/repo/a",
+      source: "daily-audit",
+      taskFamily: "audit",
+      fingerprint: "old",
+      taskId: "old",
+      now: 1_000,
+    });
+    coordinator.markTerminal(old.id, "fixed", 2_000);
+    coordinator.enqueue({
+      projectId: "project-a",
+      projectPath: "/repo/a",
+      source: "daily-audit",
+      taskFamily: "audit",
+      fingerprint: "open",
+      taskId: "open",
+      now: 3_000,
+    });
+    const eightDays = 8 * 24 * 60 * 60 * 1000;
+    const recent = coordinator.enqueue({
+      projectId: "project-a",
+      projectPath: "/repo/a",
+      source: "daily-audit",
+      taskFamily: "audit",
+      fingerprint: "recent",
+      taskId: "recent",
+      now: eightDays,
+    });
+    coordinator.markTerminal(recent.id, "blocked", eightDays);
+
+    expect(coordinator.pruneTerminal(eightDays + 2_000)).toBe(1);
+    expect(coordinator.list().map((record) => record.linkedTaskIds[0])).toEqual(["open", "recent"]);
+  });
+
   it("imports bot-owned historical failures but does not claim unrelated projects", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const imported = coordinator.importPending(

@@ -9,8 +9,9 @@ import type { ResourceAdmissionInput } from "../resource-guardian/types.js";
 const log = createLogger("automation.admission-events");
 const EVENT_DIR = "automation-admission/events";
 const DEDUPE_FILE = "automation-admission/event-dedupe.json";
-const RETENTION_MS = 30 * 24 * 60 * 60_000;
+const EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const DEDUPE_MS = 15 * 60_000;
+const DEDUPE_RETENTION_MS = Math.max(60 * 60_000, DEDUPE_MS * 2);
 const MAX_READ_LIMIT = 2_000;
 const SOURCES = new Set<ResourceAdmissionInput["source"]>([
   "loop-engineering",
@@ -87,7 +88,7 @@ function dedupeKey(event: NewAutomationAdmissionEvent): string {
 }
 
 function cleanOldFiles(dir: string, now: number): void {
-  const cutoff = dateKey(now - RETENTION_MS);
+  const cutoff = dateKey(now - EVENT_RETENTION_MS);
   try {
     for (const name of fs.readdirSync(dir)) {
       const match = /^(\d{8})\.jsonl$/.exec(name);
@@ -99,11 +100,16 @@ function cleanOldFiles(dir: string, now: number): void {
 }
 
 function cleanOldDedupeEntries(dedupe: JsonMapStore<{ at: number }>, now: number): void {
-  for (const [key, value] of dedupe.sortedEntries()) {
-    if (!Number.isFinite(value.at) || value.at > now || now - value.at > RETENTION_MS) {
-      dedupe.delete(key);
+  dedupe.update((records) => {
+    let changed = false;
+    for (const [key, value] of Object.entries(records)) {
+      if (!Number.isFinite(value.at) || value.at > now || now - value.at > DEDUPE_RETENTION_MS) {
+        delete records[key];
+        changed = true;
+      }
     }
-  }
+    return changed;
+  });
 }
 
 export function appendAutomationAdmissionEvent(event: NewAutomationAdmissionEvent): boolean {
