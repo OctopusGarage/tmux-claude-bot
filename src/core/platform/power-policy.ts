@@ -11,7 +11,7 @@ export type QuietHoursTrigger =
 
 export type QuietHoursAdmission =
   | { allowed: true; reason: string }
-  | { allowed: false; reason: "quiet-hours" | "wake-warmup" };
+  | { allowed: false; reason: "quiet-hours" | "wake-warmup"; retryAt: number };
 
 const WAKE_WARMUP_MINUTES = 15;
 
@@ -40,6 +40,96 @@ function localMinutes(now: number, timezone: string): number {
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
   const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
   return hour * 60 + minute;
+}
+
+function localDateParts(
+  now: number,
+  timezone: string,
+): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(now));
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value ?? "1970"),
+    month: Number(parts.find((part) => part.type === "month")?.value ?? "1"),
+    day: Number(parts.find((part) => part.type === "day")?.value ?? "1"),
+  };
+}
+
+function localDateTimeParts(
+  now: number,
+  timezone: string,
+): { year: number; month: number; day: number; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(now));
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value ?? "1970"),
+    month: Number(parts.find((part) => part.type === "month")?.value ?? "1"),
+    day: Number(parts.find((part) => part.type === "day")?.value ?? "1"),
+    hour: Number(parts.find((part) => part.type === "hour")?.value ?? "0"),
+    minute: Number(parts.find((part) => part.type === "minute")?.value ?? "0"),
+  };
+}
+
+function addCalendarDays(
+  date: { year: number; month: number; day: number },
+  days: number,
+): { year: number; month: number; day: number } {
+  const shifted = new Date(Date.UTC(date.year, date.month - 1, date.day + days));
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+  };
+}
+
+function zonedWallTimeToEpoch(
+  input: { year: number; month: number; day: number; hour: number; minute: number },
+  timezone: string,
+): number {
+  const targetUtc = Date.UTC(input.year, input.month - 1, input.day, input.hour, input.minute);
+  let candidate = targetUtc;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const actual = localDateTimeParts(candidate, timezone);
+    const actualUtc = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hour,
+      actual.minute,
+    );
+    const delta = actualUtc - targetUtc;
+    if (delta === 0) break;
+    candidate -= delta;
+  }
+  return candidate;
+}
+
+export function nextQuietHoursRetryAt(config: HostPowerConfig, now: number): number {
+  const targetMinutes = minutesFor(config.quietEnd);
+  const currentMinutes = localMinutes(now, config.timezone);
+  const targetDate = addCalendarDays(
+    localDateParts(now, config.timezone),
+    currentMinutes < targetMinutes ? 0 : 1,
+  );
+  return zonedWallTimeToEpoch(
+    {
+      ...targetDate,
+      hour: Math.floor(targetMinutes / 60),
+      minute: targetMinutes % 60,
+    },
+    config.timezone,
+  );
 }
 
 export function wakeTimeFor(config: HostPowerConfig): string {
@@ -71,7 +161,17 @@ export function admitQuietHoursWork(
     return { allowed: true, reason: input.trigger };
   }
   const phase = resolveHostPowerPhase(config, input.now);
-  if (phase === "natural-sleep") return { allowed: false, reason: "quiet-hours" };
-  if (phase === "wake-warmup") return { allowed: false, reason: "wake-warmup" };
+  if (phase === "natural-sleep")
+    return {
+      allowed: false,
+      reason: "quiet-hours",
+      retryAt: nextQuietHoursRetryAt(config, input.now),
+    };
+  if (phase === "wake-warmup")
+    return {
+      allowed: false,
+      reason: "wake-warmup",
+      retryAt: nextQuietHoursRetryAt(config, input.now),
+    };
   return { allowed: true, reason: phase };
 }

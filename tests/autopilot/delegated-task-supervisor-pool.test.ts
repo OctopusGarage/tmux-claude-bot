@@ -432,6 +432,7 @@ describe("active delegated task supervisor pool", () => {
         status: "blocked",
         reason: "automation admission deferred: capacity-exhausted",
         showQueue: false,
+        retryAt: now + 60_000,
       });
     } finally {
       clock.mockRestore();
@@ -459,6 +460,7 @@ describe("active delegated task supervisor pool", () => {
         status: "blocked",
         reason: "automation admission deferred: quiet-hours",
         showQueue: false,
+        retryAt: Date.parse("2026-07-17T01:30:00Z"),
       });
     } finally {
       now.mockRestore();

@@ -83,7 +83,12 @@ export function admitAutomationWork(
     now: input.now,
   });
   if (!quietHours.allowed) {
-    return { allowed: false, reason: quietHours.reason, incidentId: null };
+    return {
+      allowed: false,
+      reason: quietHours.reason,
+      incidentId: null,
+      retryAt: quietHours.retryAt,
+    };
   }
   if (options.capacity !== undefined) {
     const capacity = decideCapacityAdmission({

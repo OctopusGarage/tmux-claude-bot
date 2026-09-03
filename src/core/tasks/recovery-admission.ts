@@ -15,7 +15,7 @@ export type RecoveryFinding = {
 
 export type RecoveryAdmissionDispatchResult =
   | { status: "queued"; detail: string; runId?: string }
-  | { status: "blocked"; detail: string };
+  | { status: "blocked"; detail: string; retryAt?: number };
 
 export type RecoveryAdmissionResult = {
   disposition: "not-needed" | "queued" | "deferred" | "blocked";
@@ -85,7 +85,7 @@ export async function admitRecoveryFindings(input: {
   }
   const deferred = isImmediateRecoveryDeferral(dispatch.detail);
   for (const record of claimed) {
-    if (deferred) input.coordinator.releaseToQueue(record.id, input.now);
+    if (deferred) input.coordinator.releaseToQueue(record.id, input.now, dispatch.retryAt);
     else input.coordinator.releaseForRetry(record.id, input.now);
   }
   return {
@@ -168,7 +168,7 @@ export async function dispatchRecoveryQueue<T>(input: {
     if (result?.status === "blocked") {
       const deferred = isImmediateRecoveryDeferral(result.detail);
       for (const record of claimed) {
-        if (deferred) input.coordinator.releaseToQueue(record.id, input.now);
+        if (deferred) input.coordinator.releaseToQueue(record.id, input.now, result.retryAt);
         else input.coordinator.releaseForRetry(record.id, input.now);
       }
       return {

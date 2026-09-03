@@ -86,7 +86,7 @@ export type ActiveDelegatedTaskStartResult =
       supervisorSession: string;
       reportDir: string | null;
     }
-  | { status: "blocked"; reason: string; showQueue: boolean };
+  | { status: "blocked"; reason: string; showQueue: boolean; retryAt?: number };
 
 export type ActiveDelegateCompletionNotification = {
   level: "warning" | "error";
@@ -335,6 +335,7 @@ export async function startActiveDelegatedTask(
         status: "blocked",
         reason: `automation admission deferred: ${admission.reason}`,
         showQueue: false,
+        ...(admission.retryAt === undefined ? {} : { retryAt: admission.retryAt }),
       };
     }
   }
@@ -391,6 +392,7 @@ export async function startActiveDelegatedTask(
         status: "blocked",
         reason: `automation admission deferred: ${admission.reason}`,
         showQueue: false,
+        ...(admission.retryAt === undefined ? {} : { retryAt: admission.retryAt }),
       };
     }
   }
@@ -485,6 +487,7 @@ export async function startActiveDelegatedTask(
         status: "blocked",
         reason: `automation admission deferred: ${finalAdmission.reason}`,
         showQueue: false,
+        ...(finalAdmission.retryAt === undefined ? {} : { retryAt: finalAdmission.retryAt }),
       };
     }
     let admissionHandedOff = false;
