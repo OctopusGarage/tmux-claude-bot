@@ -260,6 +260,10 @@ Agent Capacity views must reconcile planned/admitted occurrence-window records
 from authoritative terminal task-ledger repair statuses before reporting open
 planned load, so completed historical occurrences do not keep capacity degraded
 or display stale next-occurrence timestamps.
+When planned work is overdue because admission is closed or serialized behind an
+active autonomous lease, keep the planned backlog count visible, but do not
+render that overdue timestamp as the next future occurrence on dashboard, TUI,
+MCP, or CLI status surfaces.
 Architecture alignment invariant: every project and workspace Architecture
 schedule must run its deterministic score assessment before creating a
 WorkOrder. The configured target is normally 95; a score at or above target is

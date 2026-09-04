@@ -731,6 +731,12 @@ export async function readRuntimeOverview(input: {
         presentation: { kind: "agent-capacity", agent: value.agent, state: value.state },
       });
     }
+    const nextOccurrenceSummary =
+      value.nextOccurrenceAt === null
+        ? ""
+        : value.nextOccurrenceAt < input.now
+          ? `; overdue since ${new Date(value.nextOccurrenceAt).toISOString()}`
+          : `; next ${new Date(value.nextOccurrenceAt).toISOString()}`;
     runtimeDomains.push(
       domain(
         "agent-capacity",
@@ -742,7 +748,7 @@ export async function readRuntimeOverview(input: {
             : value.state === "unknown"
               ? "degraded"
               : "attention",
-        `${value.agent} ${value.authentication}; ${value.state}; ${value.activeAutonomousLeases} active, ${value.plannedOccurrences} planned${value.nextOccurrenceAt === null ? "" : `; next ${new Date(value.nextOccurrenceAt).toISOString()}`}`,
+        `${value.agent} ${value.authentication}; ${value.state}; ${value.activeAutonomousLeases} active, ${value.plannedOccurrences} planned${nextOccurrenceSummary}`,
       ),
     );
   } else {

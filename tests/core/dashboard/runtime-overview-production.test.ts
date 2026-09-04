@@ -120,6 +120,48 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("reports only future Agent Capacity occurrence timestamps", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      new AutomationOccurrenceStore({ randomOffset: () => 0 }).plan({
+        key: "tmux-claude-bot:bug-fix:bug-fix",
+        scheduledAt: 1_000,
+        windowMs: 0,
+        now: 1_000,
+      });
+      new AutomationOccurrenceStore({ randomOffset: () => 0 }).plan({
+        key: "tmux-claude-bot:test-coverage:test-coverage",
+        scheduledAt: 3_000,
+        windowMs: 0,
+        now: 2_000,
+      });
+
+      const result = createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            loopEngineering: {
+              supervisor: { enabled: true, agent: "codex" },
+            },
+          },
+          ownerActivity: { lastObservedAt: () => null },
+        } as HandlerDeps,
+        now: 2_000,
+        operatorSessionRunning: false,
+      }).agentCapacity?.();
+
+      expect(result).toMatchObject({
+        plannedOccurrences: 2,
+        nextOccurrenceAt: 3_000,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("reconciles legacy loop ledger task ids to terminal WorkOrder repair status", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;

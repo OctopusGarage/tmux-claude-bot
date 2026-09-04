@@ -501,6 +501,7 @@ export function createRuntimeOverviewReaders(input: {
         .filter(
           (occurrence) => occurrence.status === "planned" || occurrence.status === "admitted",
         );
+      const futurePlanned = planned.filter((occurrence) => occurrence.notBefore >= now);
       return {
         enabled: deps.config.loopEngineering.supervisor.enabled,
         agent,
@@ -511,9 +512,9 @@ export function createRuntimeOverviewReaders(input: {
         activeAutonomousLeases: capacity.activeAutonomousLeases,
         plannedOccurrences: planned.length,
         nextOccurrenceAt:
-          planned.length === 0
+          futurePlanned.length === 0
             ? null
-            : Math.min(...planned.map((occurrence) => occurrence.notBefore)),
+            : Math.min(...futurePlanned.map((occurrence) => occurrence.notBefore)),
         ownerLastActivityAt: deps.ownerActivity.lastObservedAt(),
       };
     },
