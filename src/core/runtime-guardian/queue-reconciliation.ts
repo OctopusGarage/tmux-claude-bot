@@ -266,7 +266,18 @@ function ledgerRecordForRuntimeGuardianTaskId(
   byTaskId: Map<string, ScheduledTaskRecord>,
   taskId: string,
 ): ScheduledTaskRecord | undefined {
-  return byTaskId.get(taskId) ?? byTaskId.get(`autopilot:${taskId}`);
+  return (
+    byTaskId.get(taskId) ??
+    byTaskId.get(`autopilot:${taskId}`) ??
+    byTaskId.get(ledgerTaskIdForRepositoryReviewWorkOrder(taskId))
+  );
+}
+
+function ledgerTaskIdForRepositoryReviewWorkOrder(workOrderId: string): string {
+  const match = /^(\d+)-(.+)-repo-pr-review$/.exec(workOrderId);
+  if (match === null) return workOrderId;
+  const [, scheduledAt, repositoryId] = match;
+  return `loop:pr-review:${repositoryId}:${scheduledAt}`;
 }
 
 const CLOSED_LEDGER_REPAIR_STATUSES = new Set<ScheduledTaskRepairStatus>([
