@@ -2518,6 +2518,58 @@ prReview:
     });
   });
 
+  it("classifies missing system git executable gate failures as bot repairable", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "supervisor-failed" as const,
+      output: "supervised system gate failed",
+      summary: {
+        status: "failed" as const,
+        projectId: "geo-backend",
+        actionsTaken: ["verified project checks before the gate"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        commits: [],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-geo",
+        projectId: "geo-backend",
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [
+          "git status failed: spawnSync /usr/bin/git ENOENT",
+          "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+        ],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: false,
+      repairDisposition: "bot-repairable",
+      findings: [
+        expect.objectContaining({
+          code: "system-gate-bot-repairable",
+          repairDisposition: "bot-repairable",
+          retry: "automatic",
+          evidence: expect.arrayContaining([
+            "git status failed: spawnSync /usr/bin/git ENOENT",
+            "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+          ]),
+        }),
+      ],
+    });
+  });
+
   it("leaves recoverable system-gate revision failures without terminal blocker disposition", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
     const result = {
