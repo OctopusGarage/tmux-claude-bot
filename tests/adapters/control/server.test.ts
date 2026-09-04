@@ -190,6 +190,28 @@ describe("control server ↔ client (real unix socket)", () => {
     });
   });
 
+  it("redacts token-shaped shell-expanded values from loop supervisor sends", async () => {
+    const { deps, enqueued } = fakeDeps();
+    server = startControlServer(deps);
+    await new Promise((r) => setTimeout(r, 60));
+    client = new ControlClient();
+    await client.connect();
+
+    const token = "github_pat_11TESTFAKE_22syntheticValueForRedactionOnly";
+    const ack = await client.send("sessB", `Run GH_TOKEN=${token} gh pr checks 264`, {
+      callerSession: "tmux_proj_loop-supervisor-1",
+    });
+
+    expect(ack.status).toBe("queued");
+    expect(enqueued[0]?.text).toBe("Run GH_TOKEN=<redacted> gh pr checks 264");
+    expect(enqueued[0]?.text).not.toContain(token);
+    expect(enqueued[0]).toMatchObject({
+      sessionName: "sessB",
+      action: "text",
+      origin: "system",
+    });
+  });
+
   it("auto-reconnects when the connection drops (server still up)", async () => {
     const { deps } = fakeDeps();
     server = startControlServer(deps);

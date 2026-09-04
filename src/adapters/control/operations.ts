@@ -30,7 +30,7 @@ import {
   newTraceId,
   runWithLogContext,
 } from "../../shared/utils/log-context.js";
-import { createLogger } from "../../shared/utils/logger.js";
+import { createLogger, redactSecrets } from "../../shared/utils/logger.js";
 import { createControlDiagnosticsHandlers } from "./operations-diagnostics.js";
 import { createControlObservationHandlers } from "./operations-observation.js";
 import { createControlProjectSessionHandlers } from "./operations-project-sessions.js";
@@ -39,6 +39,18 @@ import type { ControlRequest, ServerMessage } from "./protocol.js";
 
 const log = createLogger("control.operations");
 const CONTROL_MESSAGE_CONSUMPTION_TIMEOUT_MS = 30_000;
+
+function redactSystemPromptFields<T extends { text: string; sourceText?: string | undefined }>(
+  fields: T,
+  origin: "user" | "system",
+): T {
+  if (origin !== "system") return fields;
+  return {
+    ...fields,
+    text: redactSecrets(fields.text),
+    ...(fields.sourceText !== undefined ? { sourceText: redactSecrets(fields.sourceText) } : {}),
+  };
+}
 
 export const controlOperationNames = [
   "snapshot",
@@ -238,6 +250,7 @@ async function enqueueControl(
   opts: { origin?: "user" | "system" } = {},
 ): Promise<void> {
   const traceId = currentLogContext().traceId;
+  const origin = opts.origin ?? "user";
   const prepared =
     action === "text"
       ? await prepareUserPromptDelivery("control", text, "text")
@@ -261,13 +274,13 @@ async function enqueueControl(
   const verdict = deps.queue.enqueue({
     id: messageId,
     ...(action === "text" && "preview" in prepared
-      ? userPromptQueueFields(prepared)
-      : { text: prepared.text }),
+      ? redactSystemPromptFields(userPromptQueueFields(prepared), origin)
+      : redactSystemPromptFields({ text: prepared.text }, origin)),
     chatId: "control",
     channel: "control",
     sessionName: session,
     action,
-    origin: opts.origin ?? "user",
+    origin,
     ephemeral: true,
     ...(traceId !== undefined ? { traceId } : {}),
     started: () => {
