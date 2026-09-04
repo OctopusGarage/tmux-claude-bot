@@ -192,6 +192,57 @@ describe("project recovery service", () => {
     );
   });
 
+  it("uses stable project-recovery fingerprints for missing expected records", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const summary =
+      "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.";
+    const repeatedSummary = `${summary} / ${summary} / ${summary}`;
+
+    const result = await runProjectRecoveryPass({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:geo:bug-fix:1",
+          source: "loop-engineering",
+          name: "geo bug-fix",
+          status: "missing",
+          summary,
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "pending",
+        },
+        {
+          taskId: "loop:geo:test-coverage:2",
+          source: "loop-engineering",
+          name: "geo test-coverage",
+          status: "missing",
+          summary: repeatedSummary,
+          scheduledAt: 1_100,
+          updatedAt: 1_600,
+          repairStatus: "pending",
+        },
+      ],
+      config: {
+        projects: [{ id: "geo", name: "Geo", path: "/repo/geo" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator,
+      updateRepairStatus: vi.fn(),
+      canonicalize: (path) => path,
+    });
+
+    expect(result).toMatchObject({ enqueued: 1, dispatched: 0 });
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({
+        source: "project-recovery",
+        fingerprint: "missing-run-record",
+        linkedTaskIds: ["loop:geo:bug-fix:1", "loop:geo:test-coverage:2"],
+      }),
+    ]);
+    expect(coordinator.list()[0]?.dedupeKey).not.toContain(summary);
+  });
+
   it("counts immediate dispatch blocks as deferred recovery work", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();

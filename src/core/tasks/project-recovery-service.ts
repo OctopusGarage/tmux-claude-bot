@@ -293,10 +293,16 @@ export async function runProjectRecoveryPass(input: {
 
 function projectRecoveryFingerprint(records: readonly RecoveryRecord[]): string {
   const evidence = records
-    .map((record) => record.failureKind ?? record.error ?? record.summary ?? "unknown")
+    .map((record) => fingerprintForRecoveryRecord(record))
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
   return [...new Set(evidence)].join(" | ") || "unknown";
+}
+
+function fingerprintForRecoveryRecord(record: RecoveryRecord): string {
+  if (record.status === "missing") return "missing-run-record";
+  if (record.status === "running-timeout") return "running-timeout";
+  return record.failureKind ?? record.error ?? record.summary ?? "unknown";
 }
 
 export async function reconcileProjectRecoveryArtifacts(input: {
