@@ -2641,14 +2641,14 @@ function systemGateFailureRepairDisposition(
   failures: string[],
 ): SystemGateFinding["repairDisposition"] | undefined {
   if (failures.length === 0) return undefined;
-  return failures.some(isTargetOrExternalSystemGateFailure)
-    ? "target-or-external-blocker"
-    : undefined;
+  if (failures.some(isTargetOrExternalSystemGateFailure)) return "target-or-external-blocker";
+  if (failures.some(isBotRepairableSystemGateFailure)) return "bot-repairable";
+  return undefined;
 }
 
 function isTargetOrExternalSystemGateFailure(failure: string): boolean {
   return (
-    isSystemOwnedSystemGateFailure(failure) ||
+    (isSystemOwnedSystemGateFailure(failure) && !isBotRepairableSystemGateFailure(failure)) ||
     failure.startsWith("GitHub account ") ||
     failure.startsWith("PR lookup failed:") ||
     failure.startsWith("PR lookup after body cleanup failed:") ||
@@ -2666,6 +2666,10 @@ function isTargetOrExternalSystemGateFailure(failure: string): boolean {
     failure.startsWith("source git branch check failed:") ||
     failure.startsWith("source branch is ")
   );
+}
+
+function isBotRepairableSystemGateFailure(failure: string): boolean {
+  return /\bspawnSync (?:git|sh|\/usr\/bin\/git|\/bin\/sh|\/usr\/bin\/sh) ENOENT$/.test(failure);
 }
 
 function isSystemOwnedSystemGateFailure(failure: string): boolean {
