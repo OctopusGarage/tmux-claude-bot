@@ -112,11 +112,14 @@ export function redactSecrets(message: string): string {
   for (const secret of [
     process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN,
     process.env.LARK_APP_SECRET,
+    process.env.GH_TOKEN,
+    process.env.GITHUB_TOKEN,
   ]) {
     if (secret) out = out.split(secret).join("<redacted-token>");
   }
   return out
     .replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot<redacted-token>")
+    .replace(/\b(?:gh[opsur]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]+)\b/g, REDACTED)
     .replace(/(https?:\/\/[^\s/:@]+:)[^\s/@]+@/gi, `$1${REDACTED}@`)
     .replace(/((?:proxy-)?authorization\s*:\s*)(?:bearer|basic)\s+[^\s,;]+/gi, `$1${REDACTED}`)
     .replace(
@@ -124,7 +127,7 @@ export function redactSecrets(message: string): string {
       `$1${REDACTED}`,
     )
     .replace(
-      /((?:access[_-]?token|refresh[_-]?token|api[_-]?key|app[_-]?secret|password)\s*[=:]\s*)(?!<redacted)[^\s,;]+/gi,
+      /((?:[A-Z0-9_]*token|access[_-]?token|refresh[_-]?token|api[_-]?key|app[_-]?secret|password)\s*[=:]\s*)(?!<redacted)[^\s,;]+/gi,
       `$1${REDACTED}`,
     );
 }
