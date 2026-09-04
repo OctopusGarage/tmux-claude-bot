@@ -94,6 +94,23 @@ describe("agent capacity command", () => {
     });
   });
 
+  it("does not report a past-due planned occurrence as the next occurrence", () => {
+    new AutomationOccurrenceStore({ randomOffset: () => 0 }).plan({
+      key: "project-a:architecture",
+      scheduledAt: now - 60_000,
+      windowMs: 0,
+      now: now - 60_000,
+    });
+
+    const result = runAgentCapacityCommand(["status", "--json"], { now: () => now });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout ?? "")).toMatchObject({
+      plannedOccurrences: 1,
+      nextOccurrenceAt: null,
+    });
+  });
+
   it("renders bounded decision history and validates the lookback", () => {
     appendAutomationAdmissionEvent({
       at: now - 60_000,

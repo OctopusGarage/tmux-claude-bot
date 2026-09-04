@@ -63,6 +63,7 @@ export function runAgentCapacityCommand(
       const occurrences = occurrenceStore
         .list()
         .filter((item) => item.status === "planned" || item.status === "admitted");
+      const futureOccurrences = occurrences.filter((item) => item.notBefore >= now);
       const recent = readAutomationAdmissionEvents({
         since: now - 24 * 60 * 60_000,
         until: now,
@@ -73,7 +74,9 @@ export function runAgentCapacityCommand(
         agents: [capacity.read("claude", now), capacity.read("codex", now)],
         plannedOccurrences: occurrences.length,
         nextOccurrenceAt:
-          occurrences.length === 0 ? null : Math.min(...occurrences.map((item) => item.notBefore)),
+          futureOccurrences.length === 0
+            ? null
+            : Math.min(...futureOccurrences.map((item) => item.notBefore)),
         latestDecision: recent.events.at(-1) ?? null,
       };
       return {

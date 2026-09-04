@@ -165,6 +165,35 @@ describe("Runtime Overview reader", () => {
     expect(overview.health.status).toBe("attention");
   });
 
+  it("labels past-due agent capacity occurrences as overdue", async () => {
+    const overview = await readRuntimeOverview({
+      now: 1_000,
+      sessions: [],
+      readers: readers({
+        agentCapacity: () => ({
+          enabled: true,
+          agent: "codex",
+          authentication: "subscription",
+          state: "available",
+          observedAt: 900,
+          retryAt: 1_500,
+          activeAutonomousLeases: 1,
+          plannedOccurrences: 3,
+          nextOccurrenceAt: 500,
+          ownerLastActivityAt: null,
+        }),
+      }),
+    });
+
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({
+        id: "agent-capacity",
+        summary:
+          "codex subscription; available; 1 active, 3 planned; overdue since 1970-01-01T00:00:00.500Z",
+      }),
+    );
+  });
+
   it("points Runtime Guardian findings at the bounded findings drilldown", async () => {
     const overview = await readRuntimeOverview({
       now: 2_000,
