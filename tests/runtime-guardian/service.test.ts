@@ -723,6 +723,42 @@ projects:
     ]);
   });
 
+  it("maps repository review ledger closures from raw WorkOrder ids", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    coordinator.enqueue({
+      projectId: "telegram-bridge-all-prs",
+      projectPath:
+        "/state/loop-worktrees/telegram-bridge-all-prs/1788238200000-telegram-bridge-all-prs-repo-pr-review",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "terminal failed work-order has resultStatus=invalid-output",
+      taskId: "1788238200000-telegram-bridge-all-prs-repo-pr-review",
+      now: 1_000,
+    });
+
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:pr-review:telegram-bridge-all-prs:1788238200000",
+      source: "loop-engineering",
+      name: "telegram-bridge-all-prs repository-pull-request-review",
+      scheduledAt: 1_788_238_200_000,
+    });
+    ledger.fail("loop:pr-review:telegram-bridge-all-prs:1788238200000", {
+      endedAt: 1_100,
+      error: "invalid-output",
+      reportPath:
+        "/state/loop-runs/telegram-bridge-all-prs/1788238200000-telegram-bridge-all-prs-repo-pr-review/supervisor.md",
+    });
+    ledger.markRepairStatus("loop:pr-review:telegram-bridge-all-prs:1788238200000", {
+      repairStatus: "fixed",
+      updatedAt: 1_200,
+      summary: "Closed from the authoritative successful project recovery delegation.",
+    });
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()).toEqual([expect.objectContaining({ status: "fixed" })]);
+  });
+
   it("supersedes duplicate terminal Runtime Guardian records for the same durable finding", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const older = coordinator.enqueue({
