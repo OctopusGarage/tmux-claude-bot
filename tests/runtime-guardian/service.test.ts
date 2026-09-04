@@ -883,6 +883,39 @@ projects:
     );
   });
 
+  it("does not mark readiness admission deferrals handled or start repair cooldown", async () => {
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: "Codex did not become ready in time",
+    }));
+    const transientFinding = finding({
+      kind: "terminal-agent-transient-failure",
+      runId: "run-agent-readiness",
+      evidence: [
+        "terminal failed work-order has retryable agent transient failure: run-agent-readiness",
+        "transient-kind: agent-readiness",
+        "Codex did not become ready in time",
+      ],
+    });
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [transientFinding],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(dispatchRepair).toHaveBeenCalledOnce();
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBeUndefined();
+    expect(
+      store.lastHandledAt("terminal-agent-transient-failure:tmux-claude-bot:run-agent-readiness"),
+    ).toBeUndefined();
+  });
+
   it("closes a stale invalid-output repair when later authoritative artifacts pass", () => {
     const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "geo", "run-later-passed");
     mkdirSync(runDir, { recursive: true });

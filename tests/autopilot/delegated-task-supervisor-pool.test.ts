@@ -1096,6 +1096,94 @@ describe("active delegated task supervisor pool", () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
+  it("re-ensures and retries active delegation when supervisor dispatch fails readiness", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));
+    setPathForSession("tmux_proj_project", projectDir);
+    startLoopSupervisor.mockResolvedValue(true);
+    const notify = vi.fn(async () => ({ status: "sent", deliveries: [] }));
+    const d = deps(1);
+    d.bridge = { hasSession: vi.fn(async () => true) } as unknown as HandlerDeps["bridge"];
+    d.notifications = { notify } as unknown as HandlerDeps["notifications"];
+    let textDispatches = 0;
+    d.queue = {
+      cancelQueued: vi.fn(),
+      enqueue: vi.fn((message: any) => {
+        if (message.action !== "text") {
+          message.resolve("compacted");
+          return "queued";
+        }
+        textDispatches += 1;
+        message.started?.();
+        if (textDispatches === 1) {
+          queueMicrotask(() => message.reject(new Error("Codex did not become ready in time")));
+          return "queued";
+        }
+        const marker = message.text.match(/\[LOOP_SUPERVISOR_DONE:([^\]]+)\]/)?.[1];
+        if (marker === undefined) throw new Error("missing final marker in prompt");
+        queueMicrotask(() =>
+          message.resolve(
+            [
+              `[LOOP_SUPERVISOR_DONE:${marker}]`,
+              JSON.stringify({
+                status: "completed",
+                projectId: "project",
+                actionsTaken: ["retried active delegation after readiness failure"],
+                delegatedTasks: [],
+                finalVerification: "passed",
+                reviewGate: {
+                  preMutationReview: ["confirmed readiness retry"],
+                  postMutationReview: ["completed after retry"],
+                  aiReview: "not-applicable",
+                  deterministicGates: [],
+                  decision: "pass",
+                  notes: [],
+                },
+                planReview: {
+                  checklistCompleted: true,
+                  targetScoreMet: "not-applicable",
+                  stopConditionReached: false,
+                  overOptimizationAvoided: true,
+                  verificationCompleted: true,
+                  remainingRisks: [],
+                },
+                commits: [],
+                followUps: [],
+              }),
+            ].join("\n"),
+          ),
+        );
+        return "queued";
+      }),
+    } as unknown as HandlerDeps["queue"];
+
+    const result = await startActiveDelegatedTask(d, {
+      session: "tmux_proj_project",
+      requirement: "finish the confirmed task",
+    });
+
+    expect(result).toMatchObject({
+      status: "queued",
+      supervisorSession: "tmux_proj_loop-supervisor",
+    });
+    if (result.status !== "queued" || result.reportDir === null) throw new Error("expected queued");
+    await waitForFile(join(result.reportDir, "system-gate.json"), 3000);
+
+    expect(startLoopSupervisor).toHaveBeenCalledTimes(2);
+    expect(startLoopSupervisor.mock.calls.map((call) => call[2])).toEqual([
+      "tmux_proj_loop-supervisor",
+      "tmux_proj_loop-supervisor",
+    ]);
+    expect(textDispatches).toBe(2);
+    expect(JSON.parse(readFileSync(join(result.reportDir, "system-gate.json"), "utf8"))).toEqual(
+      expect.objectContaining({
+        workOrderId: result.runId,
+        resultStatus: "completed",
+        accepted: true,
+      }),
+    );
+  });
+
   it("recovers active delegation when a valid final summary file lands after output capture settles", async () => {
     const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-delegate-project-"));

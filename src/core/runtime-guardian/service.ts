@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { AppConfig } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { isAgentTransientFailure } from "../agents/transient-failure.js";
 import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
@@ -208,8 +209,6 @@ export async function runRuntimeGuardianTick(input: {
       mode: input.config.mode,
       findings: repairableFindings,
     });
-    store.markRepairAttempt(repoPath, input.now);
-    for (const finding of findings) store.markHandled(fingerprintForFinding(finding), input.now);
     if (dispatch?.status === "blocked") {
       const ctx = {
         data: { detail: dispatch.detail, findings: repairableFindings.map(loggableFinding) },
@@ -217,6 +216,9 @@ export async function runRuntimeGuardianTick(input: {
       if (isTransientRepairAdmissionDeferral(dispatch.detail)) {
         log.debug("runtime guardian repair delegation blocked", ctx);
       } else {
+        store.markRepairAttempt(repoPath, input.now);
+        for (const finding of findings)
+          store.markHandled(fingerprintForFinding(finding), input.now);
         log.warn("runtime guardian repair delegation blocked", ctx);
       }
       return {
@@ -227,6 +229,8 @@ export async function runRuntimeGuardianTick(input: {
         detail: dispatch.detail,
       };
     }
+    store.markRepairAttempt(repoPath, input.now);
+    for (const finding of findings) store.markHandled(fingerprintForFinding(finding), input.now);
     const detail = dispatch?.detail ?? "queued";
     log.warn("runtime guardian delegated repair", {
       data: { detail, findings: repairableFindings.map(loggableFinding) },
@@ -251,8 +255,11 @@ export async function runRuntimeGuardianTick(input: {
 }
 
 function isTransientRepairAdmissionDeferral(detail: string): boolean {
-  return /^(automation admission deferred:|project already has active automation:|supervisor .*busy|supervisor .*lease|queue full|no available)/i.test(
-    detail,
+  return (
+    isAgentTransientFailure(detail) ||
+    /^(automation admission deferred:|project already has active automation:|supervisor .*busy|supervisor .*lease|queue full|no available)/i.test(
+      detail,
+    )
   );
 }
 

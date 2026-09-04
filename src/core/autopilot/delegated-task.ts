@@ -923,6 +923,28 @@ async function runActiveDelegatedTaskInBackground(
     cancelSignal,
     dispatch,
   });
+  if (
+    isActiveDelegationSupervisorReadinessFailure(result) &&
+    !cancelSignal.aborted &&
+    (await startLoopSupervisor(deps, undefined, supervisorSession))
+  ) {
+    log.warn("active delegated task supervisor dispatch readiness failed; retrying after ensure", {
+      data: {
+        runId: workOrder.id,
+        projectId: workOrder.projectId,
+        supervisorSession,
+        reason: result.reason,
+      },
+    });
+    result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession,
+      timeoutMs: DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS,
+      resetBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
+      cancelSignal,
+      dispatch,
+    });
+  }
 
   result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
   let gate = runSupervisedSystemGateOutcome({
@@ -972,6 +994,18 @@ async function runActiveDelegatedTaskInBackground(
   }
 
   await finishActiveDelegatedTask(deps, workOrder, supervisorSession, startedAt, gate);
+}
+
+function isActiveDelegationSupervisorReadinessFailure(
+  result: LoopSupervisedRunResult,
+): result is { status: "dispatch-failed"; reason: string; output: string } {
+  if (result.status !== "dispatch-failed") return false;
+  const text = `${result.reason}\n${result.output}`.toLowerCase();
+  return (
+    text.includes("did not become ready") ||
+    text.includes("no live loop supervisor session") ||
+    text.includes("loop supervisor task queue is full")
+  );
 }
 
 async function finishActiveDelegatedTask(
