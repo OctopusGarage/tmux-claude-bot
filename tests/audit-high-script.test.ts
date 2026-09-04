@@ -12,7 +12,10 @@ function writeExecutable(path: string, content: string): void {
   writeFileSync(path, content, { mode: 0o755 });
 }
 
-async function runAuditScript(fakeNpm: string): Promise<{
+async function runAuditScript(
+  fakeNpm: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<{
   code: number;
   stdout: string;
   stderr: string;
@@ -24,7 +27,11 @@ async function runAuditScript(fakeNpm: string): Promise<{
     try {
       const result = await execFile("bash", [join(root, "scripts", "audit-high.sh")], {
         cwd: root,
-        env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
+        env: {
+          ...process.env,
+          ...extraEnv,
+          PATH: `${dir}:${process.env.PATH ?? ""}`,
+        },
       });
       return { code: 0, stdout: result.stdout, stderr: result.stderr };
     } catch (err) {
@@ -63,6 +70,37 @@ exit 1
 
     expect(result.code).toBe(0);
     expect(result.stderr).toContain("external audit service failure");
+  });
+
+  it("runs npm audit without unrelated inherited environment values", async () => {
+    const result = await runAuditScript(
+      `#!/bin/sh
+if [ "\${TCB_AUDIT_SECRET_SHOULD_NOT_LEAK:-}" = "present" ]; then
+  echo "secret leaked into npm audit environment" >&2
+  exit 42
+fi
+echo "environment sanitized"
+exit 0
+`,
+      { TCB_AUDIT_SECRET_SHOULD_NOT_LEAK: "present" },
+    );
+
+    expect(result).toEqual({
+      code: 0,
+      stdout: "environment sanitized\n",
+      stderr: "",
+    });
+  });
+
+  it("tilde-collapses home paths from npm audit output", async () => {
+    const result = await runAuditScript(`#!/bin/sh
+echo "npm error log: $HOME/.npm/_logs/audit.log"
+exit 1
+`);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("~/.npm/_logs/audit.log");
+    expect(result.stdout).not.toContain(`${process.env.HOME}/.npm`);
   });
 
   it("still fails when npm audit reports a real vulnerability", async () => {
