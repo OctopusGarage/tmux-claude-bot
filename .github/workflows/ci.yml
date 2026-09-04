@@ -28,7 +28,7 @@ jobs:
           cache: npm
       - run: npm ci
       # Dependency vulnerability scan. Platform-independent, so ubuntu-only.
-      - run: npm audit --audit-level=high
+      - run: scripts/audit-high.sh
         if: matrix.os == 'ubuntu-latest'
       # Not preinstalled on the macOS runner image, and the lint result is
       # platform-independent anyway — once on ubuntu is enough.
