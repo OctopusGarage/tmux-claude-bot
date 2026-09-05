@@ -357,6 +357,21 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       result.fixed++;
       continue;
     }
+    const originalsFixedBySuccessfulCounterpart =
+      linkedOriginalsFixedBySuccessfulCounterpart(linked);
+    if (originalsFixedBySuccessfulCounterpart.length > 0) {
+      for (const original of originalsFixedBySuccessfulCounterpart) {
+        input.updateRepairStatus(
+          original.taskId,
+          "fixed",
+          "Closed from the authoritative successful project recovery delegation.",
+        );
+      }
+      input.coordinator.markTerminal(queueRecord.id, "fixed", input.now);
+      result.checked++;
+      result.fixed++;
+      continue;
+    }
     const linkedRecoveryArtifacts = linked.filter(
       (record) =>
         record.source === "autopilot-delegate" && record.taskId !== queueRecord.linkedTaskIds[0],
@@ -586,6 +601,32 @@ function isTerminalLinkedRepairRecord(record: ScheduledTaskRecord): boolean {
   );
 }
 
+function linkedOriginalsFixedBySuccessfulCounterpart(
+  records: readonly ScheduledTaskRecord[],
+): ScheduledTaskRecord[] {
+  const successfulDelegatedRunIds = new Set(
+    records
+      .filter(
+        (record) =>
+          record.source === "autopilot-delegate" &&
+          record.status === "success" &&
+          isTerminalLinkedRepairRecord(record),
+      )
+      .flatMap((record) => taskIdRunAliases(record.taskId)),
+  );
+  if (successfulDelegatedRunIds.size === 0) return [];
+  return records.filter(
+    (record) =>
+      record.source === "loop-engineering" &&
+      record.taskId.includes(":active-delegated-task:") &&
+      ["failed", "missing", "running-timeout"].includes(record.status) &&
+      (record.repairStatus === "pending" ||
+        record.repairStatus === "running" ||
+        record.repairStatus === "blocked") &&
+      taskIdRunAliases(record.taskId).some((runId) => successfulDelegatedRunIds.has(runId)),
+  );
+}
+
 function recoveryRecordMentionsTask(record: ScheduledTaskRecord, taskId: string): boolean {
   if (record.summary?.includes(taskId)) return true;
   if (record.reportPath === undefined) return false;
@@ -735,6 +776,14 @@ function runIdAliases(runId: string): string[] {
   const timestampPrefix = /^(\d+)-/.exec(runId)?.[1];
   if (timestampPrefix !== undefined) aliases.push(timestampPrefix);
   return aliases;
+}
+
+function taskIdRunAliases(taskId: string): string[] {
+  const autopilotRunId = /^autopilot:([^:]+)$/.exec(taskId)?.[1];
+  if (autopilotRunId !== undefined) return runIdAliases(autopilotRunId);
+  if (!taskId.includes(":active-delegated-task:")) return [];
+  const runId = taskId.split(":").at(-1);
+  return runId === undefined ? [] : runIdAliases(runId);
 }
 
 function linkedTerminalClosureRecords(
