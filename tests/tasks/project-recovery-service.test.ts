@@ -736,6 +736,80 @@ describe("project recovery service", () => {
     });
   });
 
+  it("closes pending project recovery from a successful delegated counterpart despite expected records", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "invalid-final-summary",
+      taskId: "autopilot:run-1",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(
+      queue.id,
+      [
+        "loop:tmux-claude-bot:active-delegated-task:run-1",
+        "loop:tmux-claude-bot:security-maintenance:future",
+      ],
+      1_001,
+    );
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:run-1",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "success",
+          repairStatus: "not-needed",
+          summary: "completed",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "loop:tmux-claude-bot:active-delegated-task:run-1",
+          source: "loop-engineering",
+          name: "tmux-claude-bot active-delegated-task",
+          status: "failed",
+          repairStatus: "pending",
+          summary: "Reconciled terminal supervisor artifacts and found an incomplete closure.",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "loop:tmux-claude-bot:security-maintenance:future",
+          source: "loop-engineering",
+          name: "tmux-claude-bot security-maintenance",
+          status: "expected",
+          summary: "loop-engineering schedule discovered; no explicit run record was found yet",
+          scheduledAt: 1_500,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:tmux-claude-bot:active-delegated-task:run-1",
+      "fixed",
+      "Closed from the authoritative successful project recovery delegation.",
+    );
+    expect(updateRepairStatus).not.toHaveBeenCalledWith(
+      "loop:tmux-claude-bot:security-maintenance:future",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "fixed",
+    });
+  });
+
   it("supersedes failed delegated recoveries when the original task is already fixed", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const queue = coordinator.enqueue({
