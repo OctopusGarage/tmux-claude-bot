@@ -120,6 +120,35 @@ export async function reconcileAutopilotDelegatedTasks(
     }
   }
 
+  for (const task of ledger.listAll()) {
+    if (
+      task.source !== "autopilot-delegate" ||
+      task.status !== "success" ||
+      task.repairStatus !== "not-needed"
+    )
+      continue;
+    const runId = task.taskId.startsWith("autopilot:")
+      ? task.taskId.slice("autopilot:".length)
+      : task.taskId;
+    const actionable = actionableByRunId.get(runId);
+    if (actionable === undefined) continue;
+    const summary = parseSupervisorFinalSummaryFile(actionable.workOrder);
+    const gate = readAcceptedSystemGate(
+      join(actionable.runDir, "system-gate.json"),
+      actionable.workOrder.id,
+      actionable.workOrder.projectId,
+    );
+    if (!(summary.ok && summary.summary.status === "completed" && gate.ok)) continue;
+    reconcileOperatorEquivalentSelfHealQueue({
+      coordinator,
+      ledger,
+      delegatedTaskId: task.taskId,
+      now,
+      requirement: workOrderRequirement(actionable.workOrder),
+      projectId: actionable.workOrder.projectId,
+    });
+  }
+
   return result;
 }
 
