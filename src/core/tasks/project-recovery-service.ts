@@ -410,8 +410,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       (record) =>
         record.source === "autopilot-delegate" &&
         record.status === "success" &&
-        record.summary !== undefined &&
-        originals.some((original) => record.summary?.includes(original.taskId)),
+        originals.some((original) => recoveryRecordMentionsTask(record, original.taskId)),
     );
     const recoverySucceeded = linkedRecoverySucceeded || summaryMatchedRecoverySucceeded;
     const recoveryFailed = linked.some(
@@ -585,6 +584,18 @@ function isTerminalLinkedRepairRecord(record: ScheduledTaskRecord): boolean {
     record.repairStatus === "superseded" ||
     record.repairStatus === "not-reproducible"
   );
+}
+
+function recoveryRecordMentionsTask(record: ScheduledTaskRecord, taskId: string): boolean {
+  if (record.summary?.includes(taskId)) return true;
+  if (record.reportPath === undefined) return false;
+  const summaryPath = readFinalSummaryPath(record.reportPath);
+  if (summaryPath === undefined) return false;
+  try {
+    return readFileSync(summaryPath, "utf8").includes(taskId);
+  } catch {
+    return false;
+  }
 }
 
 function linkedRepairQueueStatus(
