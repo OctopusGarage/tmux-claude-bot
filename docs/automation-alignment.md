@@ -161,6 +161,11 @@ When a later System Self-Heal broad agent sweep queues successfully, it must
 claim due `system-self-heal` repair records, mark their ledger records running,
 and link them to the new active-delegation task so completion can close the
 original deferral instead of leaving stale Daily Task Audit attention.
+When an operator-equivalent tmux-claude-bot active delegation completes the same
+last-24-hour automation investigation outside the exact hourly sweep dispatch,
+Autopilot reconciliation must also terminalize open `system-self-heal` sweep
+deferral records so manually prompted recovery does not leave stale audit
+attention behind.
 When a System Self-Heal broad sweep changes this repository, the WorkOrder must
 verify locally, commit on `dev`, push to `origin/dev`, run `git pull --rebase`
 after the successful push, and finish with a clean worktree. If commit, push, or

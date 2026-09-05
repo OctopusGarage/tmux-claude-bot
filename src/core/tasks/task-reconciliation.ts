@@ -79,6 +79,14 @@ export async function reconcileAutopilotDelegatedTasks(
         now,
         succeeded: true,
       });
+      reconcileOperatorEquivalentSelfHealQueue({
+        coordinator,
+        ledger,
+        delegatedTaskId: task.taskId,
+        now,
+        requirement: workOrderRequirement(actionable.workOrder),
+        projectId: actionable.workOrder.projectId,
+      });
       result.finished += 1;
     } else {
       const reason = !summary.ok
@@ -169,6 +177,51 @@ function readAcceptedSystemGate(
   } catch {
     return { ok: false, reason: `invalid system gate (${path})` };
   }
+}
+
+function reconcileOperatorEquivalentSelfHealQueue(input: {
+  coordinator: RepairCoordinator;
+  ledger: DailyTaskLedger;
+  delegatedTaskId: string;
+  now: number;
+  requirement: string;
+  projectId: string;
+}): void {
+  if (input.projectId !== "tmux-claude-bot") return;
+  if (!isOperatorEquivalentSelfHealRequirement(input.requirement)) return;
+  for (const queueRecord of input.coordinator.list()) {
+    if (queueRecord.projectId !== "tmux-claude-bot") continue;
+    if (queueRecord.source !== "system-self-heal") continue;
+    if (!["pending", "leased", "running", "retry-wait"].includes(queueRecord.status)) continue;
+    input.coordinator.linkTaskIds(queueRecord.id, [input.delegatedTaskId], input.now);
+    for (const taskId of queueRecord.linkedTaskIds) {
+      input.ledger.markRepairStatus(taskId, {
+        repairStatus: "fixed",
+        updatedAt: input.now,
+        summary:
+          "Closed from the authoritative successful operator-equivalent self-heal delegation.",
+      });
+    }
+    input.coordinator.markTerminal(queueRecord.id, "fixed", input.now);
+  }
+}
+
+function isOperatorEquivalentSelfHealRequirement(requirement: string): boolean {
+  const normalized = requirement.toLowerCase();
+  return (
+    normalized.includes("operator-equivalent investigation") &&
+    normalized.includes("automation task") &&
+    normalized.includes("last 24 hours")
+  );
+}
+
+function workOrderRequirement(workOrder: unknown): string {
+  if (workOrder === null || typeof workOrder !== "object") return "";
+  if (!("task" in workOrder)) return "";
+  const task = workOrder.task;
+  if (task === null || typeof task !== "object") return "";
+  if (!("requirement" in task)) return "";
+  return typeof task.requirement === "string" ? task.requirement : "";
 }
 
 function reconcileDelegatedRepairQueue(input: {
