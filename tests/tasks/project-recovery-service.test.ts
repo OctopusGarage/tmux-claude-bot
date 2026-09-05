@@ -2099,6 +2099,75 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
+  it("closes pending originals when an unlinked successful recovery final summary names them", async () => {
+    const stateDir = join(tmpdir(), `project-recovery-summary-match-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    const runDir = join(stateDir, "loop-runs", "fluent-frame", "recovery-run");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "fluent-frame",
+        actionsTaken: [
+          "Original task autopilot:stale-fluent-frame final repair status: recovered/no-delta.",
+        ],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: { decision: "pass" },
+        commits: [],
+        followUps: [],
+      }),
+    );
+
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const updateRepairStatus = vi.fn();
+    coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "project-recovery",
+      taskFamily: "fluent-frame active delegated task",
+      fingerprint: "unknown",
+      taskId: "autopilot:stale-fluent-frame",
+      now: 1_000,
+    });
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:stale-fluent-frame",
+          source: "autopilot-delegate",
+          name: "fluent-frame active delegated task",
+          scheduledAt: 1,
+          status: "failed",
+          repairStatus: "pending",
+          updatedAt: 1_003,
+        },
+        {
+          taskId: "autopilot:recovery-run",
+          source: "autopilot-delegate",
+          name: "fluent-frame active delegated task",
+          scheduledAt: 1_004,
+          status: "success",
+          repairStatus: "not-needed",
+          updatedAt: 1_999,
+          reportPath: runDir,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:stale-fluent-frame",
+      "fixed",
+      expect.stringContaining("project recovery delegation"),
+    );
+    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
   it("closes a terminal blocked project recovery record when a linked recovery later succeeds", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();
