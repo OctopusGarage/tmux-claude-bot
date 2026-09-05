@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath, loopRunDir, loopRunsRoot } from "./artifacts.js";
@@ -86,6 +86,7 @@ export function writeLoopSupervisorWorkOrderState(input: {
 }): void {
   const runDir = runDirForWorkOrder(input.workOrder);
   mkdirSync(runDir, { recursive: true });
+  clearStaleActiveDelegatedArtifacts(input.workOrder, input.status, runDir);
   writeFileAtomicSync(workOrderPath(runDir), `${JSON.stringify(input.workOrder, null, 2)}\n`);
   const state: LoopSupervisorWorkOrderState = {
     status: input.status,
@@ -99,6 +100,23 @@ export function writeLoopSupervisorWorkOrderState(input: {
   if (input.revisionAttempt !== undefined) state.revisionAttempt = input.revisionAttempt;
   if (input.revisionReasons !== undefined) state.revisionReasons = input.revisionReasons;
   writeFileAtomicSync(statePath(runDir), `${JSON.stringify(state, null, 2)}\n`);
+}
+
+function clearStaleActiveDelegatedArtifacts(
+  workOrder: LoopWorkOrder,
+  status: LoopSupervisorWorkOrderStateStatus,
+  runDir: string,
+): void {
+  if (workOrder.task?.kind !== "active-delegated-task") return;
+  if (!["queued", "dispatching", "in-flight"].includes(status)) return;
+  for (const artifact of [
+    LOOP_RUN_ARTIFACTS.supervisorFinalSummary,
+    LOOP_RUN_ARTIFACTS.supervisorSummary,
+    LOOP_RUN_ARTIFACTS.supervisorMarkdown,
+    LOOP_RUN_ARTIFACTS.systemGate,
+  ]) {
+    rmSync(join(runDir, artifact), { force: true });
+  }
 }
 
 export function workOrderStateForResult(

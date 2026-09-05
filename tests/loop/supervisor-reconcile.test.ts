@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -89,6 +89,26 @@ function workOrder(stateDir: string, projectPath: string): LoopWorkOrder {
   };
 }
 
+function activeDelegatedWorkOrder(stateDir: string, projectPath: string): LoopWorkOrder {
+  const runId = "1784196600000-hub-active-delegate";
+  return {
+    ...workOrder(stateDir, projectPath),
+    id: runId,
+    requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
+    finalSummaryPath: join(stateDir, "loop-runs", "hub", runId, "supervisor-final-summary.json"),
+    task: {
+      kind: "active-delegated-task",
+      sourceSession: "tmux_proj_hub",
+      requirement:
+        "Run an operator-equivalent investigation: check whether every tmux-claude-bot automation task from the last 24 hours is healthy.",
+      requireReview: true,
+      requireTests: true,
+      requireCoverageReview: true,
+      allowAiEval: true,
+    },
+  };
+}
+
 function writeUnfinishedRun(stateDir: string, order: LoopWorkOrder): string {
   const runDir = join(stateDir, "loop-runs", "hub", order.id);
   mkdirSync(runDir, { recursive: true });
@@ -145,6 +165,39 @@ function writeRecoverableFailedRun(stateDir: string, order: LoopWorkOrder): stri
 }
 
 describe("loop supervisor work order reconciliation", () => {
+  it("clears stale terminal artifacts when an active delegated work order is relaunched", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectPath = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const order = activeDelegatedWorkOrder(stateDir, projectPath);
+    const runDir = join(stateDir, "loop-runs", order.projectId, order.id);
+    mkdirSync(runDir, { recursive: true });
+    for (const file of [
+      "supervisor.md",
+      "supervisor-summary.json",
+      "supervisor-final-summary.json",
+      "system-gate.json",
+    ]) {
+      writeFileSync(join(runDir, file), "stale", "utf8");
+    }
+
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: 2_000,
+    });
+
+    for (const file of [
+      "supervisor.md",
+      "supervisor-summary.json",
+      "supervisor-final-summary.json",
+      "system-gate.json",
+    ]) {
+      expect(existsSync(join(runDir, file))).toBe(false);
+    }
+  });
+
   it("releases stale autonomous capacity leases for terminal work orders", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;

@@ -356,4 +356,107 @@ describe("autopilot delegated task reconciliation", () => {
       linkedTaskIds: ["system-self-heal:agent-sweep:1000", `autopilot:${runId}`],
     });
   });
+
+  it("settles open system self-heal deferrals from the current broad sweep wording", async () => {
+    const runId = arrangeTerminalRun("completed", true);
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+    const workOrderPath = join(runDir, "work-order.json");
+    const order = JSON.parse(readFileSync(workOrderPath, "utf8"));
+    order.task = {
+      kind: "active-delegated-task",
+      requirement:
+        "Run an operator-equivalent investigation: check whether every tmux-claude-bot automation task from the last 24 hours is healthy, and fix everything that is safe to fix without waiting for another manual prompt.",
+    };
+    writeFileSync(workOrderPath, `${JSON.stringify(order)}\n`);
+
+    const coordinator = new RepairCoordinator();
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "system-self-heal",
+      taskFamily: "tmux-claude-bot system self-heal agent sweep",
+      fingerprint: "system-gate",
+      taskId: "system-self-heal:agent-sweep:1000",
+      now: 1,
+    });
+
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "system-self-heal:agent-sweep:1000",
+      source: "system-self-heal",
+      name: "tmux-claude-bot system self-heal agent sweep",
+      scheduledAt: 1,
+    });
+    ledger.fail("system-self-heal:agent-sweep:1000", {
+      endedAt: 1,
+      error: "automation admission deferred: background-closed",
+    });
+    startLedger(runId);
+
+    await reconcileAutopilotDelegatedTasks({ now: 3, ledger });
+
+    expect(
+      ledger.listAll().find((record) => record.taskId === "system-self-heal:agent-sweep:1000"),
+    ).toMatchObject({
+      repairStatus: "fixed",
+    });
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "fixed",
+      linkedTaskIds: ["system-self-heal:agent-sweep:1000", `autopilot:${runId}`],
+    });
+  });
+
+  it("settles open system self-heal deferrals from an already completed operator-equivalent delegation", async () => {
+    const runId = arrangeTerminalRun("completed", true);
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+    const workOrderPath = join(runDir, "work-order.json");
+    const order = JSON.parse(readFileSync(workOrderPath, "utf8"));
+    order.task = {
+      kind: "active-delegated-task",
+      requirement:
+        "Run an operator-equivalent investigation: check whether every tmux-claude-bot automation task from the last 24 hours is healthy, and fix everything that is safe to fix without waiting for another manual prompt.",
+    };
+    writeFileSync(workOrderPath, `${JSON.stringify(order)}\n`);
+
+    const coordinator = new RepairCoordinator();
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "system-self-heal",
+      taskFamily: "tmux-claude-bot system self-heal agent sweep",
+      fingerprint: "system-gate",
+      taskId: "system-self-heal:agent-sweep:1000",
+      now: 1,
+    });
+
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "system-self-heal:agent-sweep:1000",
+      source: "system-self-heal",
+      name: "tmux-claude-bot system self-heal agent sweep",
+      scheduledAt: 1,
+    });
+    ledger.fail("system-self-heal:agent-sweep:1000", {
+      endedAt: 1,
+      error: "automation admission deferred: background-closed",
+    });
+    startLedger(runId);
+    ledger.finish(`autopilot:${runId}`, {
+      endedAt: 2,
+      summary: "completed",
+      reportPath: runDir,
+    });
+
+    await reconcileAutopilotDelegatedTasks({ now: 3, ledger });
+
+    expect(
+      ledger.listAll().find((record) => record.taskId === "system-self-heal:agent-sweep:1000"),
+    ).toMatchObject({
+      repairStatus: "fixed",
+    });
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "fixed",
+      linkedTaskIds: ["system-self-heal:agent-sweep:1000", `autopilot:${runId}`],
+    });
+  });
 });
