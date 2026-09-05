@@ -306,4 +306,54 @@ describe("autopilot delegated task reconciliation", () => {
     );
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
+
+  it("settles open system self-heal deferrals from an operator-equivalent active delegation", async () => {
+    const runId = arrangeTerminalRun("completed", true);
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+    const workOrderPath = join(runDir, "work-order.json");
+    const order = JSON.parse(readFileSync(workOrderPath, "utf8"));
+    order.task = {
+      kind: "active-delegated-task",
+      requirement:
+        "Run an operator-equivalent investigation of tmux-claude-bot automation tasks from the last 24 hours.",
+    };
+    writeFileSync(workOrderPath, `${JSON.stringify(order)}\n`);
+
+    const coordinator = new RepairCoordinator();
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "system-self-heal",
+      taskFamily: "tmux-claude-bot system self-heal agent sweep",
+      fingerprint: "system-gate",
+      taskId: "system-self-heal:agent-sweep:1000",
+      now: 1,
+    });
+
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "system-self-heal:agent-sweep:1000",
+      source: "system-self-heal",
+      name: "tmux-claude-bot system self-heal agent sweep",
+      scheduledAt: 1,
+    });
+    ledger.fail("system-self-heal:agent-sweep:1000", {
+      endedAt: 1,
+      error: "automation admission deferred: background-closed",
+    });
+    startLedger(runId);
+
+    await reconcileAutopilotDelegatedTasks({ now: 3, ledger });
+
+    expect(
+      ledger.listAll().find((record) => record.taskId === "system-self-heal:agent-sweep:1000"),
+    ).toMatchObject({
+      repairStatus: "fixed",
+      summary: "Closed from the authoritative successful operator-equivalent self-heal delegation.",
+    });
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "fixed",
+      linkedTaskIds: ["system-self-heal:agent-sweep:1000", `autopilot:${runId}`],
+    });
+  });
 });
