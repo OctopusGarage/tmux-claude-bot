@@ -29,3 +29,8 @@ export function clearRecoveryIntent(session: string, taskId: string): boolean {
   if (!current || current.taskId !== taskId) return false;
   return store.delete(session);
 }
+
+/** Discard any unfinished-task marker for a session that is being terminally cleaned up. */
+export function discardRecoveryIntent(session: string): boolean {
+  return store.delete(session);
+}
