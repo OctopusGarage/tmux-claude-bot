@@ -336,6 +336,7 @@ function isGlobalAutomationAdmissionDeferral(reason: string): boolean {
     "interactive-agent-busy",
     "recent-owner-activity",
     "capacity-exhausted",
+    "capacity-constrained",
     "capacity-state-unavailable",
   ].some((marker) => reason.includes(marker));
 }
