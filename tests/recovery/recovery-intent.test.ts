@@ -8,6 +8,7 @@ import {
   hasRecoveryIntent,
   markRecoveryIntent,
 } from "../../src/core/recovery/recovery-intent.js";
+import { cleanupWorkerSessionRecords } from "../../src/core/recovery/worker-session-cleanup.js";
 
 let stateDir: string;
 
@@ -55,6 +56,14 @@ describe("recovery intent", () => {
 
     expect(clearRecoveryIntent("tmux_proj_a", "msg-a")).toBe(true);
     expect(clearRecoveryIntent("tmux_proj_a", "msg-b")).toBe(false);
+  });
+
+  it("clears loop worker intents when worker session records are cleaned up", () => {
+    markRecoveryIntent("tmux_proj_loop-worker-api", "msg-a", 1000);
+
+    cleanupWorkerSessionRecords("tmux_proj_loop-worker-api");
+
+    expect(hasRecoveryIntent("tmux_proj_loop-worker-api")).toBe(false);
   });
 
   it("treats a corrupt state file as empty and preserves the original bytes", () => {
