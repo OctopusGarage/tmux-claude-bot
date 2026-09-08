@@ -85,6 +85,65 @@ describe("RepairCoordinator", () => {
     ]);
   });
 
+  it("prefers project recovery when duplicate non-terminal records share task ids", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const firstAutopilot = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "autopilot-delegate",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "unknown",
+      taskId: "autopilot:run-1",
+      now: 1_000,
+    });
+    const secondAutopilot = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "autopilot-delegate",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "system-gate",
+      taskId: "autopilot:run-1",
+      now: 1_001,
+    });
+    const projectRecovery = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "unknown / invalid-final-summary",
+      taskId: "autopilot:run-1",
+      now: 1_002,
+    });
+    coordinator.linkTaskIds(
+      projectRecovery.id,
+      ["loop:tmux-claude-bot:active-delegated-task:1"],
+      1_003,
+    );
+    coordinator.linkTaskIds(firstAutopilot.id, ["autopilot:run-2"], 1_004);
+    coordinator.linkTaskIds(secondAutopilot.id, ["autopilot:run-2"], 1_005);
+    coordinator.linkTaskIds(projectRecovery.id, ["autopilot:run-2"], 1_006);
+
+    expect(coordinator.reconcileDuplicateTaskIds(2_000)).toBe(2);
+
+    expect(coordinator.list()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: projectRecovery.id,
+          source: "project-recovery",
+          status: "pending",
+        }),
+        expect.objectContaining({
+          id: firstAutopilot.id,
+          status: "superseded",
+        }),
+        expect.objectContaining({
+          id: secondAutopilot.id,
+          status: "superseded",
+        }),
+      ]),
+    );
+  });
+
   it("keeps one active runtime repair when diagnostic evidence formatting changes", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const first = coordinator.enqueue({
