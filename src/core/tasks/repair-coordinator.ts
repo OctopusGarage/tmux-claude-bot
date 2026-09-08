@@ -451,6 +451,7 @@ export class RepairCoordinator {
         : undefined;
       if (
         derivedWorkOrderId !== undefined &&
+        !unique.some((record) => record.source === "project-recovery") &&
         unique.every(
           (record) =>
             record.workOrderId === derivedWorkOrderId ||
