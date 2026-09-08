@@ -915,6 +915,90 @@ describe("project recovery service", () => {
     });
   });
 
+  it("closes pending recovery queues from system-accepted blocked artifacts even when final verification failed", async () => {
+    const runDir = join(tmpdir(), `project-recovery-accepted-blocked-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        finalVerification: "failed",
+        reviewGate: { decision: "block" },
+        actionsTaken: [
+          "The remaining issue is PR #115 dependency/toolchain policy, not a bot-owned repair.",
+        ],
+        reviewNotes: [
+          "The original source worktree remained untouched on dev.",
+          "The worker stayed in the isolated worktree for inspection.",
+        ],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        findings: [],
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "mesh-talk-all-prs",
+      projectPath: "/repo/mesh-talk",
+      source: "project-recovery",
+      taskFamily: "mesh-talk-all-prs repository-pull-request-review",
+      fingerprint: "missing-run-record",
+      taskId: "loop:pr-review:mesh-talk-all-prs:1788581400000",
+      summary:
+        "loop-engineering schedule discovered; no explicit run record was found yet; Reconciled missing expected task after its scheduled time passed without a run record.",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queue.id, ["autopilot:1788858053785-mesh-talk-active-delegate"], 1_100);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:pr-review:mesh-talk-all-prs:1788581400000",
+          source: "loop-engineering",
+          name: "mesh-talk-all-prs repository-pull-request-review",
+          status: "failed",
+          repairStatus: "pending",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:1788858053785-mesh-talk-active-delegate",
+          source: "autopilot-delegate",
+          name: "mesh-talk active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          reportPath: runDir,
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 1 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:pr-review:mesh-talk-all-prs:1788581400000",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:1788858053785-mesh-talk-active-delegate",
+      "blocked",
+      "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.",
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "blocked",
+    });
+  });
+
   it("closes loop active-delegate ledger twins for terminal accepted blocked recoveries", async () => {
     const runDir = join(tmpdir(), `project-recovery-terminal-twin-${Date.now()}`);
     await mkdir(runDir, { recursive: true });

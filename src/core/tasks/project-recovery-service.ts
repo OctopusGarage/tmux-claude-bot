@@ -9,7 +9,6 @@ import {
   type ConfiguredRecoveryTarget,
   classifyHistoricalFailure,
   type HistoricalRecoveryInput,
-  isBotOwnedRetryableRecoveryEvidence,
   isRetryableSourceGitStateEvidence,
   type RecoveryClassification,
   resolveConfiguredRecoveryTarget,
@@ -674,7 +673,6 @@ function isAcceptedBlockedNoRepairSummary(
   const reviewGate = summary.reviewGate;
   return (
     summary.status === "blocked" &&
-    summary.finalVerification === "passed" &&
     reviewGate !== null &&
     typeof reviewGate === "object" &&
     (reviewGate as Record<string, unknown>).decision === "block" &&
@@ -854,11 +852,36 @@ function hasRetryableProjectRecoveryEvidence(
   summary: Record<string, unknown>,
   systemGate: Record<string, unknown> | undefined,
 ): boolean {
-  const evidence = `${JSON.stringify(summary)} ${
-    systemGate === undefined ? "" : JSON.stringify(systemGate)
-  }`;
+  const reviewGate =
+    summary.reviewGate !== null && typeof summary.reviewGate === "object"
+      ? (summary.reviewGate as Record<string, unknown>)
+      : {};
+  const evidence = [
+    summary.finalVerification,
+    summary.error,
+    summary.actionsTaken,
+    summary.followUps,
+    reviewGate.notes,
+    reviewGate.deterministicGates,
+    systemGate?.findings,
+  ]
+    .map((value) => (value === undefined ? "" : JSON.stringify(value)))
+    .join(" ");
+  return isRetryableSourceGitStateEvidence(evidence) || hasPreciseBotRetryableEvidence(evidence);
+}
+
+function hasPreciseBotRetryableEvidence(evidence: string): boolean {
+  const normalized = evidence.toLowerCase();
   return (
-    isRetryableSourceGitStateEvidence(evidence) || isBotOwnedRetryableRecoveryEvidence(evidence)
+    normalized.includes("score:null") ||
+    normalized.includes("assessment score contract") ||
+    normalized.includes("assessment scoring contract") ||
+    normalized.includes("assessment result did not include a numeric score") ||
+    normalized.includes("open-worker") ||
+    normalized.includes("control request timed out") ||
+    normalized.includes("dispatch-failed") ||
+    normalized.includes("failed to ensure loop supervisor session") ||
+    normalized.includes("spawnsync /usr/bin/git enoent")
   );
 }
 

@@ -1,4 +1,5 @@
 import { JsonMapStore } from "../infra/json-map-store.js";
+import { isRetryableSourceGitStateEvidence } from "./project-recovery.js";
 
 export type RepairQueueStatus =
   | "pending"
@@ -657,10 +658,8 @@ function hasRecoverableProjectRecoveryEvidence(evidence: string): boolean {
     evidence.includes("invalid-final-summary") ||
     evidence.includes("invalid final summary") ||
     evidence.includes("incomplete recovery") ||
-    evidence.includes("source worktree") ||
-    evidence.includes("source branch") ||
-    evidence.includes("branch divergence") ||
-    evidence.includes("branch state")
+    evidence.includes("source worktree branch state") ||
+    isRetryableSourceGitStateEvidence(evidence)
   );
 }
 
