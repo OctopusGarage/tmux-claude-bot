@@ -129,6 +129,7 @@ export function leaseLoopSupervisorWorker(input: {
       status: "leased";
       state: LoopSupervisorWorkerLeaseState;
       lease: LoopSupervisorWorkerLease;
+      reusedExisting: boolean;
     }
   | { status: "unavailable"; state: LoopSupervisorWorkerLeaseState; reason: string } {
   const state = pruneExpiredRetainedLeases(input.state, input.now);
@@ -165,6 +166,7 @@ export function leaseLoopSupervisorWorker(input: {
       ],
     },
     lease,
+    reusedExisting: existing?.workOrderId === input.workOrder.id,
   };
 }
 

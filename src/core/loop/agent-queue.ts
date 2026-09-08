@@ -249,12 +249,14 @@ async function enqueueLoopAgentPromptToSession(
       });
       return { status: "unavailable", reason: lease.reason };
     }
+    leaseAcquired = !lease.reusedExisting;
     log.info("loop supervisor worker leased", {
       session: sessionName,
       data: {
         workOrderId: workOrder.id,
         projectId: workOrder.projectId,
         projectPath: workOrder.projectPath,
+        reusedExisting: lease.reusedExisting,
       },
     });
     return { status: "acquired" };
@@ -282,7 +284,6 @@ async function enqueueLoopAgentPromptToSession(
         stderr: lease.reason,
       };
     }
-    leaseAcquired = true;
   }
 
   const resetResult = await enqueueContextResetIfNeeded(deps, sessionName, contextReset);
@@ -333,7 +334,6 @@ async function enqueueLoopAgentPromptToSession(
         if (deferLeaseUntilConsumption) {
           const lease = acquireLease();
           if (lease.status === "unavailable") return false;
-          leaseAcquired = true;
         }
         consumed = true;
         clearConsumptionTimer();

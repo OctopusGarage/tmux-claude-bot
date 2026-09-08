@@ -694,6 +694,52 @@ describe("createLoopSupervisorTaskRunner", () => {
     ]);
   });
 
+  it("keeps an existing same-work-order supervisor lease active when a nested queued prompt fails", async () => {
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          projectPath: workOrder.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_000,
+        },
+      ],
+    });
+    const queue = new MessageQueue(
+      30,
+      join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
+    );
+    const deps = {
+      queue,
+      config: { projectSessionPrefix: "tmux_proj_" },
+      bridge: {
+        hasSession: async (sessionName: string) => sessionName === "tmux_proj_loop-supervisor",
+      },
+    };
+    queue.setHandler(async (message) => {
+      message.reject(new Error("revision prompt failed"));
+    });
+
+    const result = await createLoopSupervisorTaskRunner(deps)({
+      session: "tmux_proj_loop-supervisor",
+      prompt: "Run supervised revision prompt",
+      signal: new AbortController().signal,
+      workOrder,
+    });
+
+    expect(result).toEqual({ status: 1, stdout: "", stderr: "revision prompt failed" });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: "tmux_proj_loop-supervisor",
+        workOrderId: workOrder.id,
+        status: "active",
+      }),
+    ]);
+  });
+
   it("queues clear before a loop supervisor work order when requested", async () => {
     const queue = new MessageQueue(
       30,
