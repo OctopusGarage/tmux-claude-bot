@@ -169,6 +169,22 @@ export class RepairCoordinator {
           !isTerminal(record.status),
       );
     }
+    if (existing === undefined && input.source === "resource-guardian") {
+      const stale = this.list()
+        .filter(
+          (record) =>
+            record.dedupeKey === dedupeKey &&
+            record.source === "resource-guardian" &&
+            record.status === "blocked" &&
+            record.attempt < REPAIR_MAX_ATTEMPTS &&
+            isTerminal(record.status),
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)[0];
+      if (stale !== undefined) {
+        existing = reopenTerminalRepairRecord(stale, input.now);
+        this.store.set(existing.id, existing);
+      }
+    }
     if (existing === undefined && input.source === "project-recovery") {
       const stale = this.list().find(
         (record) =>
@@ -178,7 +194,7 @@ export class RepairCoordinator {
           !hasNonRetryableProjectRecoveryEvidence(record, input),
       );
       if (stale !== undefined) {
-        existing = reopenProjectRecoveryRecord(stale, input.now);
+        existing = reopenTerminalRepairRecord(stale, input.now);
         this.store.set(existing.id, existing);
       }
     }
@@ -187,7 +203,7 @@ export class RepairCoordinator {
         .filter((record) => isRecoverableProjectRecoveryTerminal(record, input))
         .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)[0];
       if (stale !== undefined) {
-        existing = reopenProjectRecoveryRecord(stale, input.now);
+        existing = reopenTerminalRepairRecord(stale, input.now);
         this.store.set(existing.id, existing);
       }
     }
@@ -584,7 +600,7 @@ function isTerminal(status: RepairQueueStatus): boolean {
   return ["fixed", "blocked", "not-reproducible", "superseded", "dead-letter"].includes(status);
 }
 
-function reopenProjectRecoveryRecord(record: RepairQueueRecord, now: number): RepairQueueRecord {
+function reopenTerminalRepairRecord(record: RepairQueueRecord, now: number): RepairQueueRecord {
   const {
     leaseId: _leaseId,
     leaseExpiresAt: _leaseExpiresAt,
