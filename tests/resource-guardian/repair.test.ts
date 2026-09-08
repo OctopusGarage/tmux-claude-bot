@@ -208,6 +208,86 @@ describe("resourceRepairQueueState", () => {
 
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
+
+  it("reopens a retryable terminal Resource Guardian record instead of duplicating the fingerprint", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const first = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo",
+      source: "resource-guardian",
+      taskFamily: "resource-guardian-stable-recovery",
+      fingerprint: "resource-pressure:1",
+      taskId: "incident-1",
+      summary: "cleanup still needed",
+      now: 1_000,
+    });
+    coordinator.markTerminal(first.id, "blocked", 2_000);
+
+    const second = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo",
+      source: "resource-guardian",
+      taskFamily: "resource-guardian-stable-recovery",
+      fingerprint: "resource-pressure:1",
+      taskId: "incident-2",
+      summary: "same fingerprint observed again",
+      now: 3_000,
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(coordinator.list()).toHaveLength(1);
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "pending",
+      linkedTaskIds: ["incident-1", "incident-2"],
+      summaries: ["cleanup still needed", "same fingerprint observed again"],
+      updatedAt: 3_000,
+    });
+  });
+
+  it("does not resurrect closed Resource Guardian terminal outcomes", () => {
+    for (const terminalStatus of [
+      "fixed",
+      "not-reproducible",
+      "superseded",
+      "dead-letter",
+    ] as const) {
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+      const first = coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/repo",
+        source: "resource-guardian",
+        taskFamily: "resource-guardian-stable-recovery",
+        fingerprint: "resource-pressure:closed",
+        taskId: "incident-1",
+        now: 1_000,
+      });
+      coordinator.markTerminal(first.id, terminalStatus, 2_000);
+
+      const second = coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/repo",
+        source: "resource-guardian",
+        taskFamily: "resource-guardian-stable-recovery",
+        fingerprint: "resource-pressure:closed",
+        taskId: "incident-2",
+        now: 3_000,
+      });
+
+      expect(second.id).not.toBe(first.id);
+      expect(coordinator.list()).toEqual([
+        expect.objectContaining({
+          id: first.id,
+          status: terminalStatus,
+          linkedTaskIds: ["incident-1"],
+        }),
+        expect.objectContaining({
+          id: second.id,
+          status: "pending",
+          linkedTaskIds: ["incident-2"],
+        }),
+      ]);
+    }
+  });
 });
 
 function repairInput(
