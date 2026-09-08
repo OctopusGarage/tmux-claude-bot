@@ -18,6 +18,10 @@ import {
   dispatchDailyTaskRepair,
   runDailyTaskAuditServiceTick,
 } from "../../src/core/tasks/daily-audit-service.js";
+import {
+  InMemoryRepairQueueStore,
+  RepairCoordinator,
+} from "../../src/core/tasks/repair-coordinator.js";
 import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 import { buildDailyAuditRepairPrompt } from "../../src/core/tasks/task-repair.js";
 
@@ -1110,6 +1114,82 @@ projects:
 
     expect(result).toMatchObject({ fired: true, failures: 0 });
     expect(dispatchRepair).not.toHaveBeenCalled();
+  });
+
+  it("closes pending self-check repairs after the current audit notification succeeds", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-self-close-"));
+    const notifications = new NotificationGateway();
+    notifications.register(
+      "lark",
+      vi.fn(async () => {}),
+    );
+    const ledger = new DailyTaskLedger();
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const previousAuditAt = Date.parse("2026-07-28T02:00:00Z");
+    const currentAuditAt = Date.parse("2026-07-29T02:05:00Z");
+    const selfTaskId = `daily-audit:self:${previousAuditAt}`;
+    ledger.expect({
+      taskId: `daily-audit:${previousAuditAt}`,
+      source: "daily-audit",
+      name: "Daily scheduled task audit",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.finish(`daily-audit:${previousAuditAt}`, {
+      endedAt: previousAuditAt + 1000,
+      summary: "failures=0 repair-dispatch=not-needed notification=partial",
+    });
+    ledger.expect({
+      taskId: selfTaskId,
+      source: "daily-audit",
+      name: "Daily task audit self-check",
+      scheduledAt: previousAuditAt,
+    });
+    ledger.fail(selfTaskId, {
+      endedAt: previousAuditAt + 2000,
+      error: "previous audit notification=partial",
+      summary:
+        "Daily Task Audit self-check found previous audit issue: previous audit notification=partial",
+    });
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "daily-audit",
+      taskFamily: "Daily task audit self-check",
+      fingerprint: "unknown",
+      taskId: selfTaskId,
+      now: previousAuditAt + 3000,
+    });
+
+    const result = await runDailyTaskAuditServiceTick({
+      now: currentAuditAt,
+      config: {
+        enabled: true,
+        schedule: "0 2 * * *",
+        tickMs: 300000,
+        channel: "lark",
+        autoRepair: false,
+        repairBranch: "dev",
+        repoPath: "/repo/tmux-claude-bot",
+        repairWorktreeIsolation: "isolated",
+      },
+      notifications,
+      ledger,
+      coordinator,
+      discover: () => [],
+      force: true,
+    });
+
+    expect(result).toMatchObject({ fired: true, notificationStatus: "sent" });
+    expect(ledger.listAll().find((record) => record.taskId === selfTaskId)).toMatchObject({
+      repairStatus: "not-needed",
+      summary: expect.stringContaining("later successful Daily Task Audit notification"),
+    });
+    expect(coordinator.list()).toContainEqual(
+      expect.objectContaining({
+        status: "fixed",
+        linkedTaskIds: [selfTaskId],
+      }),
+    );
   });
 
   it("does not mark the audit complete when the final notification cannot be delivered", async () => {

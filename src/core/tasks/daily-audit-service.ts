@@ -279,6 +279,8 @@ async function runDailyTaskAuditServiceTickInternal(
       notificationStatus: notificationResult.status,
     }),
   });
+  reconcileStaleDailyAuditSelfChecks({ ledger, now: input.now });
+  reconcileDailyAuditRepairQueue({ ledger, coordinator, now: input.now });
   store.setLastFired(scheduledAt);
   return {
     fired: true,
