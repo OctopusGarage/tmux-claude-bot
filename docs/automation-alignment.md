@@ -592,6 +592,10 @@ Daily Task Audit dashboard attention follows the same operator-attention
 boundary: current-window pending repairs caused only by transient admission
 deferrals remain visible in failed/repair-pending counts, but they do not create
 the Daily Task Audit attention card or make the domain unhealthy.
+Current-window pending repairs already owned by a non-terminal Repair Coordinator
+record follow the same boundary: dashboards must keep the repair-pending count
+visible for auditability, but must not label it as manual operator attention
+until the queue reaches a terminal blocker or loses its automation owner.
 Admission must select the current non-terminal queue record when an equivalent
 historical record is already terminal. A queued Runtime Guardian delegation
 persists both its WorkOrder id and delegated ledger task id on every claimed
