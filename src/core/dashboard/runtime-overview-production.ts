@@ -17,6 +17,7 @@ import { operatorHomeDir } from "../projects/operator-home.js";
 import { createResourceGuardianStore } from "../resource-guardian/store.js";
 import { discoverRuntimeGuardianFindings } from "../runtime-guardian/inspector.js";
 import { DailyTaskAuditStore } from "../tasks/daily-audit-service.js";
+import { RepairCoordinator } from "../tasks/repair-coordinator.js";
 import {
   discoverLaunchdScheduledTasks,
   discoverLoopEngineeringScheduledTasks,
@@ -168,6 +169,13 @@ function hasOpenAutomationOccurrence(
   return [...ids].some((id) => openOccurrenceIds.has(id));
 }
 
+function hasOpenRepairQueueRecord(
+  item: ScheduledTaskRecord,
+  openRepairTaskIds: ReadonlySet<string>,
+) {
+  return openRepairTaskIds.has(item.taskId);
+}
+
 function isTransientAdmissionDeferral(
   item: ScheduledTaskRecord,
   admissionEvents: AutomationAdmissionEvent[] = [],
@@ -224,9 +232,16 @@ function summarizeCurrentDailyAuditWindow(input: {
       .filter((occurrence) => occurrence.status === "planned" || occurrence.status === "admitted")
       .map((occurrence) => occurrence.id),
   );
+  const openRepairTaskIds = new Set(
+    new RepairCoordinator()
+      .list()
+      .filter((record) => ["pending", "leased", "running", "retry-wait"].includes(record.status))
+      .flatMap((record) => record.linkedTaskIds),
+  );
   const attentionItems = openItems.filter(
     (item) =>
       !hasOpenAutomationOccurrence(item, openOccurrenceIds) &&
+      !hasOpenRepairQueueRecord(item, openRepairTaskIds) &&
       !isTransientAdmissionDeferral(item, admissionEvents),
   );
   return {

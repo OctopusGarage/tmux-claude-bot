@@ -6,6 +6,7 @@ import { appendAutomationAdmissionEvent } from "../../../src/core/automation/adm
 import { AutomationOccurrenceStore } from "../../../src/core/automation/occurrence-window.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { RepositoryReviewQueue } from "../../../src/core/loop/repository-review-queue.js";
+import { RepairCoordinator } from "../../../src/core/tasks/repair-coordinator.js";
 import { DailyTaskLedger } from "../../../src/core/tasks/task-ledger.js";
 
 const registryRead = vi.hoisted(() => vi.fn());
@@ -837,6 +838,62 @@ describe("production Runtime Overview readers", () => {
       expect(result.summary).toMatchObject({
         failed: 1,
         attention: 1,
+        repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not count pending Daily Task Audit repairs owned by the repair queue as current attention", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const scheduledAt = Date.parse("2026-08-30T15:20:00+08:00");
+      const taskId = `loop:fluent-frame:harness-auto:${scheduledAt}`;
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "fluent-frame harness-auto",
+        scheduledAt,
+      });
+      ledger.fail(taskId, {
+        endedAt: scheduledAt + 1_000,
+        error: "supervised system gate rejected the run",
+        summary: "System gate rejected a completed supervisor run.",
+      });
+
+      new RepairCoordinator().enqueue({
+        projectId: "fluent-frame",
+        projectPath: "/tmp/fluent-frame",
+        source: "project-recovery",
+        taskFamily: "fluent-frame harness-auto",
+        fingerprint: "system-gate",
+        taskId,
+        summary:
+          "Recovery dispatch deferred: automation admission deferred: autonomous-heavy-active-lease",
+        priority: 100,
+        now: scheduledAt + 2_000,
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
         repairPending: 1,
       });
     } finally {
