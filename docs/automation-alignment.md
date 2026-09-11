@@ -110,6 +110,10 @@ adapters may discover and render findings, but claim, immediate deferral,
 retry-backoff, and queue terminalization must not be reimplemented by an
 adapter. Shared automation notification intent owns severity and content facts;
 Telegram and Lark remain the only channel-rendering adapters.
+Long-task completion notifications must only describe a credible current task
+window. Implausibly stale task windows are cleanup signals, not user-facing
+completion events, and must not read old transcript history or deliver chat
+notifications.
 Resource Guardian recovery is a guarded reopening phase: it must keep heavy
 autonomous work closed while allowing light repair probes and health checks to
 continue, so a recovering host can prove and repair system state without waiting

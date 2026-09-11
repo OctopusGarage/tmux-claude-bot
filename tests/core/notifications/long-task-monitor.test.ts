@@ -12,6 +12,7 @@ import { OwnerActivityTracker } from "../../../src/core/notifications/owner-acti
 
 const THREE_MIN = 3 * 60 * 1000;
 const FIVE_MIN = 5 * 60 * 1000;
+const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
 
 function row(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
@@ -247,6 +248,44 @@ describe("LongTaskMonitor", () => {
     await monitor.tick();
     await monitor.tick();
 
+    expect(telegram).not.toHaveBeenCalled();
+  });
+
+  it("drops implausibly stale task windows instead of sending old transcript history", async () => {
+    const telegram = vi.fn(async (_message: string) => {});
+    const gateway = new NotificationGateway();
+    gateway.register("telegram", telegram);
+    const latestHistory = vi.fn(async () => "old unrelated assistant answer");
+    const snapshots = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [
+          row({
+            taskMs: TWO_DAYS,
+            task: { key: "transcript:tmux_proj_api:1", startedAt: 1, source: "transcript" },
+            cumulativeBusyMs: 0,
+          }),
+        ],
+        global: {},
+        generatedAt: TWO_DAYS,
+      })
+      .mockResolvedValueOnce({
+        sessions: [idleRow()],
+        global: {},
+        generatedAt: TWO_DAYS + 1000,
+      });
+    const monitor = new LongTaskMonitor({
+      snapshot: snapshots as never,
+      notifications: gateway,
+      ownerActivity: new OwnerActivityTracker(),
+      latestHistory,
+      thresholdMs: FIVE_MIN,
+    });
+
+    await monitor.tick();
+    await monitor.tick();
+
+    expect(latestHistory).not.toHaveBeenCalled();
     expect(telegram).not.toHaveBeenCalled();
   });
 

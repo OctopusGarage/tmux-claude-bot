@@ -13,6 +13,7 @@ import { resolveNotificationTargetPlan } from "./target-resolver.js";
 
 export const LONG_TASK_CHECK_MS = 5 * 60 * 1000;
 export const LONG_TASK_THRESHOLD_MS = 3 * 60 * 1000;
+export const LONG_TASK_MAX_NOTIFY_MS = 24 * 60 * 60 * 1000;
 
 type SnapshotProvider = () => Promise<Pick<DashboardSnapshot, "sessions" | "generatedAt">>;
 type FinishedTaskWindow = {
@@ -37,6 +38,7 @@ export type LongTaskMonitorOptions = {
   ownerActivity: OwnerActivityTracker;
   latestHistory?: LatestHistoryProvider;
   thresholdMs?: number;
+  maxNotifyTaskMs?: number;
   projectSessionPrefix?: string;
 };
 
@@ -48,6 +50,7 @@ export class LongTaskMonitor {
   private readonly ownerActivity: OwnerActivityTracker;
   private readonly latestHistory: LatestHistoryProvider;
   private readonly thresholdMs: number;
+  private readonly maxNotifyTaskMs: number;
   private readonly watched = new Map<string, WatchedTask>();
   private readonly projectSessionPrefix: string;
 
@@ -57,6 +60,7 @@ export class LongTaskMonitor {
     this.ownerActivity = opts.ownerActivity;
     this.latestHistory = opts.latestHistory ?? (async () => null);
     this.thresholdMs = opts.thresholdMs ?? LONG_TASK_THRESHOLD_MS;
+    this.maxNotifyTaskMs = opts.maxNotifyTaskMs ?? LONG_TASK_MAX_NOTIFY_MS;
     this.projectSessionPrefix = opts.projectSessionPrefix ?? "tmux_proj_";
   }
 
@@ -92,6 +96,10 @@ export class LongTaskMonitor {
       }
 
       const taskMs = row.taskMs ?? 0;
+      if (!isWatchableTaskMs(taskMs, this.maxNotifyTaskMs)) {
+        this.watched.delete(row.session);
+        continue;
+      }
       this.watched.set(row.session, {
         session: row.session,
         label: row.label,
@@ -116,6 +124,7 @@ export class LongTaskMonitor {
   ): Promise<void> {
     const channels = this.notifications.registeredChannels();
     if (channels.length === 0) return;
+    if (!isWatchableTaskMs(task.lastTaskMs, this.maxNotifyTaskMs)) return;
 
     let latestHistory: string | null = null;
     try {
@@ -205,4 +214,8 @@ function latestAssistantForTaskWindow(
     return assistant;
   }
   return null;
+}
+
+function isWatchableTaskMs(taskMs: number, maxNotifyTaskMs: number): boolean {
+  return Number.isFinite(taskMs) && taskMs >= 0 && taskMs <= maxNotifyTaskMs;
 }
