@@ -97,6 +97,12 @@ contradict authoritative repair evidence.
 When task-family governance declares `requiresPlanning: true`, the WorkOrder
 builder must persist a `planning` block and the system gate must reject a
 completed final summary that omits `planReview`.
+Architecture and harness architecture WorkOrders must preserve resource
+reservation boundaries in target repositories: slow work such as network calls,
+LLM routing, file scans, database queries, and subprocess startup must not move
+inside queue, admission, semaphore, or lock reservations. Fast-fail capacity
+checks may be non-mutating, but the real reservation must remain adjacent to the
+protected work and be covered by an ordering regression test when changed.
 Source worktree or configured source-branch divergence from its remote base is
 retryable automation repair evidence, not an accepted blocked closure, even when
 the worker blocked after verifying the divergence.

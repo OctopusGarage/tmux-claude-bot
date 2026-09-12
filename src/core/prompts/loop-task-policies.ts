@@ -53,8 +53,13 @@ function architecturePolicy(workOrder: LoopWorkOrder): string[] {
   return [
     "- Work in focused rounds and stop at the configured limits.",
     `- Architecture target score is ${workOrder.targetScore}; if evaluation reaches or exceeds it, stop instead of optimizing for its own sake.`,
+    resourceReservationBoundaryLine(),
     ...cleanupPolicyLines(effectiveCleanupPolicy(workOrder.cleanupPolicy)),
   ];
+}
+
+function resourceReservationBoundaryLine(): string {
+  return "- Do not move slow work such as network calls, LLM routing, file scans, database queries, or subprocess startup inside queue/admission/semaphore/lock reservations. If a fast-fail check is needed, use a non-mutating capacity check before slow resolution, then take the real reservation immediately before the protected work starts and cover that ordering with a regression test.";
 }
 
 function asyncExitPathRiskReviewLine(): string {
@@ -73,6 +78,7 @@ function workspaceArchitecturePolicy(workOrder: LoopWorkOrder): string[] {
     `- Architecture target score is ${workOrder.targetScore}; if the cross-repository evaluation reaches or exceeds it, stop instead of optimizing for its own sake.`,
     "- Use native exploration to compare repository roles and contracts when useful, then synthesize one workspace-level decision with evidence and uncertainty.",
     "- Prefer the smallest set of repository changes that improves the whole workspace. Do not force every repository to change.",
+    resourceReservationBoundaryLine(),
     ...cleanupPolicyLines(effectiveCleanupPolicy(workOrder.cleanupPolicy)),
     task.prompt !== undefined ? `- Additional workspace instruction: ${task.prompt}` : "",
   ].filter(Boolean);

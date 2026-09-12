@@ -41,11 +41,15 @@ function expectLine(lines: string[], text: string): void {
   expect(lines.some((line) => line.includes(text))).toBe(true);
 }
 
+const ADMISSION_BOUNDARY_TEXT =
+  "Do not move slow work such as network calls, LLM routing, file scans, database queries, or subprocess startup inside queue/admission/semaphore/lock reservations";
+
 describe("Loop task policy prompt lines", () => {
   it("defaults missing task metadata to architecture policy with conservative cleanup", () => {
     const lines = buildLoopTaskPolicyLines(workOrder(), "main");
 
     expectLine(lines, "Architecture target score is 90");
+    expectLine(lines, ADMISSION_BOUNDARY_TEXT);
     expectLine(lines, "Cleanup policy is conservative");
   });
 
