@@ -154,7 +154,8 @@ describe("automation admission", () => {
 
   it("applies capacity policy before Resource Guardian", () => {
     const now = atSingapore("2026-08-11T12:00:00");
-    const resetAt = now + 60_000;
+    const resetAt = now + 3 * 24 * 60 * 60_000;
+    const nextProbeAt = now + 15 * 60_000;
     const resourceAdmission = vi.fn(() => ({
       allowed: true as const,
       reason: "open",
@@ -162,14 +163,14 @@ describe("automation admission", () => {
     }));
     expect(
       admitAutomationWork(input({ now }), {
-        capacity: capacity({ state: "exhausted", resetAt }),
+        capacity: capacity({ state: "exhausted", resetAt, nextProbeAt }),
         resourceAdmission,
       }),
     ).toEqual({
       allowed: false,
       reason: "capacity-exhausted",
       incidentId: null,
-      retryAt: resetAt,
+      retryAt: nextProbeAt,
     });
     expect(resourceAdmission).not.toHaveBeenCalled();
   });

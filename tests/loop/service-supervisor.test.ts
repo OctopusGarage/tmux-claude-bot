@@ -233,6 +233,23 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     ).toBeNull();
   });
 
+  it("backs off repository reviews to the next capacity probe rather than the quota reset", () => {
+    const now = Date.parse("2026-08-27T04:50:00Z");
+
+    expect(
+      repositoryReviewAdmissionBackoffUntil({
+        now,
+        tickMs: 300_000,
+        admission: {
+          allowed: false,
+          incidentId: null,
+          reason: "capacity-exhausted",
+          retryAt: now + 15 * 60 * 1000,
+        },
+      }),
+    ).toBe(now + 15 * 60 * 1000);
+  });
+
   it("moves ready repository reviews to an admission retry time without consuming attempts", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(
       join(tmpdir(), "tcb-loop-repository-admission-deferral-"),

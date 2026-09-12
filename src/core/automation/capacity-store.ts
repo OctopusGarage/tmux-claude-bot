@@ -1,6 +1,10 @@
 import type { AgentKind } from "../agents/types.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
-import type { AgentCapacityObservation, AgentCapacityView } from "./capacity.js";
+import {
+  type AgentCapacityObservation,
+  type AgentCapacityView,
+  exhaustedCapacityNextProbeAt,
+} from "./capacity.js";
 
 type AgentCapacityRecord = {
   schemaVersion: 1;
@@ -74,18 +78,7 @@ export class AgentCapacityStore {
     if (!isCapacityRecord(raw) || raw.observation.agent !== agent) {
       return fallback(agent, "capacity-state-invalid");
     }
-    const observation =
-      raw.observation.state === "exhausted" &&
-      raw.observation.resetAt !== null &&
-      raw.observation.resetAt <= now
-        ? {
-            ...raw.observation,
-            state: "unknown" as const,
-            resetAt: null,
-            nextProbeAt: now,
-            latestReason: "capacity-reset-passed",
-          }
-        : raw.observation;
+    const observation = normalizeObservation(raw.observation, now);
     return {
       ...observation,
       activeAutonomousLeases: Object.values(raw.leases).filter((lease) => lease.expiresAt > now)
@@ -194,4 +187,27 @@ export class AgentCapacityStore {
     const raw = this.records.get(agent);
     return isCapacityRecord(raw) && raw.observation.agent === agent ? raw : undefined;
   }
+}
+
+function normalizeObservation(
+  observation: AgentCapacityObservation,
+  now: number,
+): AgentCapacityObservation {
+  if (observation.state !== "exhausted" || observation.resetAt === null) return observation;
+  if (observation.resetAt <= now) {
+    return {
+      ...observation,
+      state: "unknown",
+      resetAt: null,
+      nextProbeAt: now,
+      latestReason: "capacity-reset-passed",
+    };
+  }
+  return {
+    ...observation,
+    nextProbeAt: Math.min(
+      observation.nextProbeAt,
+      exhaustedCapacityNextProbeAt(now, observation.resetAt),
+    ),
+  };
 }

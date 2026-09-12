@@ -118,4 +118,25 @@ describe("AgentCapacityStore", () => {
       latestReason: "capacity-reset-passed",
     });
   });
+
+  it("caps legacy exhausted probe times that were persisted at a distant reset", () => {
+    const store = new AgentCapacityStore();
+    store.recordObservation({
+      agent: "codex",
+      authentication: "subscription",
+      state: "exhausted",
+      fiveHourPct: 20,
+      weeklyPct: 99,
+      resetAt: 3 * 24 * 60 * 60_000,
+      observedAt: 1_000,
+      nextProbeAt: 3 * 24 * 60 * 60_000,
+      latestReason: "usage-exhausted",
+    });
+
+    expect(store.read("codex", 2_000)).toMatchObject({
+      state: "exhausted",
+      resetAt: 3 * 24 * 60 * 60_000,
+      nextProbeAt: 2_000 + 15 * 60_000,
+    });
+  });
 });

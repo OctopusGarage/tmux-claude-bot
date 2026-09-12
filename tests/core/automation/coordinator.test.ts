@@ -256,7 +256,7 @@ describe("AutonomousWorkCoordinator", () => {
     expect(capacity.read("claude", now)).toMatchObject({
       state: "exhausted",
       resetAt: Date.parse("2026-08-13T20:00:00+08:00"),
-      nextProbeAt: Date.parse("2026-08-13T20:00:00+08:00"),
+      nextProbeAt: now + 15 * 60_000,
     });
 
     available(capacity);

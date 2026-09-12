@@ -95,6 +95,7 @@ export function admitAutomationWork(
       now: input.now,
       state: options.capacity.state,
       resetAt: options.capacity.resetAt,
+      nextProbeAt: options.capacity.nextProbeAt,
       trigger: input.trigger,
       activeLeases: options.capacity.activeAutonomousLeases,
       lastAutonomousStartAt: options.capacity.lastAutonomousStartAt,

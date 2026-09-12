@@ -3,7 +3,11 @@ import type { AgentKind } from "../agents/types.js";
 import type { ResourceAdmission, ResourceAdmissionInput } from "../resource-guardian/types.js";
 import { type AutomationAdmission, admitAutomationWork } from "./admission.js";
 import { appendAutomationAdmissionEvent } from "./admission-events.js";
-import type { AgentCapacityObservation, AgentCapacityState } from "./capacity.js";
+import {
+  type AgentCapacityObservation,
+  type AgentCapacityState,
+  exhaustedCapacityNextProbeAt,
+} from "./capacity.js";
 import { AgentCapacityStore } from "./capacity-store.js";
 import { AutomationOccurrenceStore } from "./occurrence-window.js";
 
@@ -234,7 +238,7 @@ export class AutonomousWorkCoordinator {
         weeklyPct: current.weeklyPct,
         resetAt,
         observedAt: now,
-        nextProbeAt: resetAt ?? now + 15 * 60_000,
+        nextProbeAt: exhaustedCapacityNextProbeAt(now, resetAt ?? null),
         latestReason: "official-limit-signal",
       },
       source,

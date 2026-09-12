@@ -23,10 +23,17 @@ export type AgentCapacityView = AgentCapacityObservation & {
 
 const TELEMETRY_FRESH_MS = 15 * 60_000;
 const REPROBE_MS = 15 * 60_000;
+const EXHAUSTED_REPROBE_MS = 15 * 60_000;
 const UNKNOWN_START_INTERVAL_MS = 30 * 60_000;
 
 function finitePercent(value: number | null): number | null {
   return value !== null && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+}
+
+export function exhaustedCapacityNextProbeAt(now: number, resetAt: number | null): number {
+  return resetAt === null
+    ? now + EXHAUSTED_REPROBE_MS
+    : Math.min(resetAt, now + EXHAUSTED_REPROBE_MS);
 }
 
 export function deriveAgentCapacity(input: {
@@ -86,6 +93,10 @@ export function deriveAgentCapacity(input: {
     state === "exhausted" && resetCandidates.length === activeExhaustedWindows.length
       ? Math.max(...resetCandidates)
       : null;
+  const nextProbeAt =
+    state === "exhausted" && resetAt !== null
+      ? exhaustedCapacityNextProbeAt(input.now, resetAt)
+      : input.now + REPROBE_MS;
   return {
     agent: input.agent,
     authentication: input.authentication,
@@ -94,7 +105,7 @@ export function deriveAgentCapacity(input: {
     weeklyPct,
     resetAt,
     observedAt: input.now,
-    nextProbeAt: resetAt ?? input.now + REPROBE_MS,
+    nextProbeAt,
     latestReason: `usage-${state}`,
   };
 }
@@ -107,6 +118,7 @@ export function decideCapacityAdmission(input: {
   now: number;
   state: AgentCapacityState;
   resetAt: number | null;
+  nextProbeAt?: number | null;
   trigger: "interactive" | "operator" | "background" | "reconcile" | "resource-repair";
   activeLeases: number;
   lastAutonomousStartAt: number | null;
@@ -116,7 +128,11 @@ export function decideCapacityAdmission(input: {
     return {
       allowed: false,
       reason: "capacity-exhausted",
-      ...(input.resetAt === null ? {} : { retryAt: input.resetAt }),
+      ...(input.nextProbeAt !== undefined && input.nextProbeAt !== null
+        ? { retryAt: input.nextProbeAt }
+        : input.resetAt === null
+          ? {}
+          : { retryAt: exhaustedCapacityNextProbeAt(input.now, input.resetAt) }),
     };
   }
   if (input.trigger === "interactive" || input.trigger === "operator") {

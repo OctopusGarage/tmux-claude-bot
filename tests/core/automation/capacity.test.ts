@@ -78,21 +78,45 @@ describe("deriveAgentCapacity", () => {
       nextProbeAt: now + 15 * 60_000,
     });
   });
+
+  it("caps exhausted capacity probes before long reset windows", () => {
+    expect(
+      deriveAgentCapacity({
+        agent: "codex",
+        authentication: "subscription",
+        now,
+        usage: {
+          sessionId: "safe-category-only",
+          contextPct: null,
+          fiveHourPct: 20,
+          fiveHourReset: null,
+          sevenDayPct: 99,
+          sevenDayReset: now / 1_000 + 3 * 24 * 60 * 60,
+          updatedAt: now / 1_000,
+        },
+      }),
+    ).toMatchObject({
+      state: "exhausted",
+      resetAt: now + 3 * 24 * 60 * 60_000,
+      nextProbeAt: now + 15 * 60_000,
+    });
+  });
 });
 
 describe("decideCapacityAdmission", () => {
-  it("waits for the official reset when capacity is exhausted", () => {
+  it("keeps probing before the official reset when capacity is exhausted", () => {
     expect(
       decideCapacityAdmission({
         now,
         state: "exhausted",
-        resetAt: now + 600_000,
+        resetAt: now + 3 * 24 * 60 * 60_000,
+        nextProbeAt: now + 15 * 60_000,
         trigger: "background",
         activeLeases: 0,
         lastAutonomousStartAt: null,
         repairDepth: 0,
       }),
-    ).toEqual({ allowed: false, reason: "capacity-exhausted", retryAt: now + 600_000 });
+    ).toEqual({ allowed: false, reason: "capacity-exhausted", retryAt: now + 15 * 60_000 });
   });
 
   it("uses conservative concurrency and cooldown when telemetry is unknown", () => {

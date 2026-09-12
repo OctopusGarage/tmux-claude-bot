@@ -659,7 +659,9 @@ deferred by occurrence time, owner activity, capacity, quiet hours, or resource
 pressure does not create a WorkOrder/ledger/worker lease or consume its schedule
 anchor. Agent-backed execution revalidates admission after planning and before
 dispatch. User chat and user-confirmed Autopilot retain ordinary FIFO queueing;
-official exhausted-capacity evidence waits rather than bypassing the provider.
+official exhausted-capacity evidence waits rather than bypassing the provider,
+but it still uses bounded lightweight probes before the known reset time so
+early capacity recovery is not missed.
 Bug-fix and PR-review workers treat async/task lifecycle edits as a mandatory
 risk lens: success, error, timeout, cancellation, replacement, and shutdown
 paths must be traced when touched code can continue work, spawn background
