@@ -324,6 +324,36 @@ describe("repository review queue", () => {
     ]);
   });
 
+  it("reopens stale capacity-exhausted deferrals so admission can be re-evaluated", () => {
+    const store = queue();
+    const now = Date.parse("2026-09-12T07:00:00Z");
+    const ready = store.enqueue({
+      repositoryId: "knowledge-engine-all-prs",
+      scheduledAt: Date.parse("2026-09-08T03:40:00Z"),
+      priority: 100,
+      now,
+    });
+    expect(
+      store.deferReady(
+        ready.id,
+        now,
+        Date.parse("2026-09-15T02:34:50Z"),
+        "automation admission deferred: capacity-exhausted",
+      ),
+    ).toBe(true);
+
+    expect(store.listReady(now)).toEqual([
+      expect.objectContaining({
+        id: ready.id,
+        repositoryId: "knowledge-engine-all-prs",
+        status: "pending",
+        attempt: 0,
+        nextAttemptAt: now,
+        lastError: "reopened stale capacity-exhausted repository review deferral",
+      }),
+    ]);
+  });
+
   it("reopens a false terminal occurrence with a fresh bounded retry epoch", () => {
     const store = queue();
     const created = store.enqueue(item({ repositoryId: "false-manual" }));

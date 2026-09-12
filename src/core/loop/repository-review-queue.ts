@@ -12,6 +12,7 @@ export type RepositoryReviewQueueStatus =
   | "dead-letter";
 
 export const REPOSITORY_REVIEW_MAX_ATTEMPTS = 5;
+const CAPACITY_EXHAUSTED_DEFERRAL_REOPEN_MS = 15 * 60_000;
 
 export type RepositoryReviewQueueItem = {
   id: string;
@@ -76,6 +77,7 @@ export class RepositoryReviewQueue {
 
   list(options: { all?: boolean } = {}): RepositoryReviewQueueItem[] {
     const now = Date.now();
+    this.reopenStaleCapacityExhaustedDeferrals(now);
     this.deadLetterExhausted(now);
     this.reclaimExpiredLeases(now);
     return this.items
@@ -89,6 +91,7 @@ export class RepositoryReviewQueue {
 
   listReady(now: number, limit = Number.POSITIVE_INFINITY): RepositoryReviewQueueItem[] {
     this.migrateLegacyBlocked(now);
+    this.reopenStaleCapacityExhaustedDeferrals(now);
     this.deadLetterExhausted(now);
     this.reclaimExpiredLeases(now);
     return this.items
@@ -408,6 +411,24 @@ export class RepositoryReviewQueue {
       )
         continue;
       this.items.set(id, { ...item, status: "dead-letter", updatedAt: now, nextAttemptAt: now });
+    }
+  }
+
+  private reopenStaleCapacityExhaustedDeferrals(now: number): void {
+    for (const [id, item] of this.items.sortedEntries()) {
+      if (
+        (item.status !== "pending" && item.status !== "retry-wait") ||
+        item.nextAttemptAt <= now + CAPACITY_EXHAUSTED_DEFERRAL_REOPEN_MS ||
+        !item.lastError?.includes("automation admission deferred: capacity-exhausted")
+      ) {
+        continue;
+      }
+      this.items.set(id, {
+        ...item,
+        updatedAt: now,
+        nextAttemptAt: now,
+        lastError: "reopened stale capacity-exhausted repository review deferral",
+      });
     }
   }
 }
