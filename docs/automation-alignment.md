@@ -127,6 +127,10 @@ for the full healthy window.
 Resource Guardian host CPU samples without a reliable delta baseline are
 unavailable, not zero. Notifications and public status output must render them
 as unknown while preserving load-based pressure decisions.
+Resource Guardian must measure each interval's delivery delay independently.
+After a delayed callback, the next expected sample is anchored to that callback's
+actual delivery time, including delays below the suspension threshold. A single
+stall must not become permanent pressure that prevents automatic recovery.
 Resource Guardian event-loop lag above the normal control request window is a
 resource pressure signal, not a healthy sample. In protect mode it must close
 background admission so Loop, Autopilot, Daily Task Audit, Runtime Guardian, and

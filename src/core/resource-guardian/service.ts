@@ -1004,10 +1004,8 @@ export function startResourceGuardian(
   const timer = setIntervalFn(() => {
     const scheduledAt = nextScheduledAt;
     const actualNow = now();
-    nextScheduledAt =
-      actualNow - scheduledAt > suspensionGapMs
-        ? actualNow + config.tickMs
-        : nextScheduledAt + config.tickMs;
+    // Interval callbacks resume from delivery time; past delay is not fresh pressure.
+    nextScheduledAt = actualNow + config.tickMs;
     runScheduledTick(scheduledAt, actualNow);
   }, config.tickMs);
   (timer as { unref?: () => void }).unref?.();
