@@ -319,6 +319,8 @@ export async function reconcileProjectRecoveryArtifacts(input: {
   const terminalClosureRunIds = terminalProjectRecoveryRunIds(input.coordinator);
   const closedTaskIds = new Set<string>();
   for (const queueRecord of input.coordinator.list()) {
+    // Self-heal closure belongs to the investigation-window-aware reconciliation.
+    if (queueRecord.source === "system-self-heal") continue;
     const linked = queueRecord.linkedTaskIds
       .map((taskId) => byTaskId.get(taskId))
       .filter((record): record is ScheduledTaskRecord => record !== undefined);
@@ -521,6 +523,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     const queueRecord = input.coordinator
       .list()
       .find((queued) => queued.linkedTaskIds.includes(record.taskId));
+    if (queueRecord?.source === "system-self-heal") continue;
     if (
       queueRecord !== undefined &&
       isRepairTerminal(queueRecord.status) &&

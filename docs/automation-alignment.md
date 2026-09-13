@@ -183,7 +183,11 @@ A successful operator-equivalent investigation covers only self-heal occurrences
 and queue records created no later than its scheduled start. Replaying historical
 success must not close newer failures. Reconciliation reopens legacy false closures
 only when the sole linked investigation predates every source occurrence and the
-ledger retains the exact automatic closure evidence; unrelated closures remain intact.
+ledger retains the exact automatic closure evidence, including the historical generic
+project-recovery closure; unrelated closures remain intact. Generic project artifact
+reconciliation must not close or release `system-self-heal` queues: their dedicated
+Autopilot reconciliation owns investigation-window checks. Repeated passes through
+both reconcilers must preserve a reopened newer occurrence as pending.
 When an operator-equivalent tmux-claude-bot active delegation completes the same
 last-24-hour automation investigation outside the exact hourly sweep dispatch,
 Autopilot reconciliation must also terminalize open `system-self-heal` sweep
