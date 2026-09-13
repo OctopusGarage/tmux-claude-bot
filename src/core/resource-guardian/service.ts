@@ -465,19 +465,32 @@ export async function runResourceGuardianTick(
     if (pressure === "healthy") runtime.incident = null;
     else if (incidentPersisted) runtime.incident = nextIncident;
 
-    if (pressureChanged) {
+    const transition = nextIncident?.transitions.at(-1);
+    const lastPressureNotification = nextIncident?.actions
+      .slice()
+      .reverse()
+      .find((action) => action.kind === "notification" && action.phase === "pressure-notification");
+    const retryPressureNotification =
+      !pressureChanged &&
+      pressure !== "healthy" &&
+      transition?.to === pressure &&
+      lastPressureNotification !== undefined &&
+      lastPressureNotification.at >= transition.at &&
+      ["failed", "partial"].includes(lastPressureNotification.outcome) &&
+      freshSample.capturedAt - lastPressureNotification.at >= 60_000;
+    if (pressureChanged || retryPressureNotification) {
       const notifiedIncident = await notifyTransition({
         notify: input.notify,
         store: input.store,
         incident: nextIncident,
         at: freshSample.capturedAt,
-        oldState: previousPressure,
+        oldState: retryPressureNotification ? transition.from : previousPressure,
         newState: pressure,
         hostCpuPct: freshSample.hostCpuPct,
         loadPct: freshSample.loadPct,
         eventLoopLagMs: freshSample.eventLoopLagMs,
         circuit,
-        actionSummary,
+        actionSummary: retryPressureNotification ? transition.reason : actionSummary,
         ...(freshSample.hostCpuStatus === undefined
           ? {}
           : { hostCpuStatus: freshSample.hostCpuStatus }),
@@ -730,6 +743,7 @@ async function notifyTransition(input: {
     nextIncident.actions.push({
       at: input.at,
       kind: "notification",
+      phase: "pressure-notification",
       outcome,
       reason,
     });
@@ -1004,10 +1018,8 @@ export function startResourceGuardian(
   const timer = setIntervalFn(() => {
     const scheduledAt = nextScheduledAt;
     const actualNow = now();
-    nextScheduledAt =
-      actualNow - scheduledAt > suspensionGapMs
-        ? actualNow + config.tickMs
-        : nextScheduledAt + config.tickMs;
+    // Interval callbacks resume from delivery time; past delay is not fresh pressure.
+    nextScheduledAt = actualNow + config.tickMs;
     runScheduledTick(scheduledAt, actualNow);
   }, config.tickMs);
   (timer as { unref?: () => void }).unref?.();

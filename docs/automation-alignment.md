@@ -127,6 +127,14 @@ for the full healthy window.
 Resource Guardian host CPU samples without a reliable delta baseline are
 unavailable, not zero. Notifications and public status output must render them
 as unknown while preserving load-based pressure decisions.
+Failed or partially delivered Resource Guardian pressure notifications must retry
+at a bounded one-minute cadence while their typed transition remains current.
+Persist retry evidence in the incident so restart preserves the cadence; reuse
+channel deduplication, and never replay untyped legacy or superseded transitions.
+Resource Guardian must measure each interval's delivery delay independently.
+After a delayed callback, the next expected sample is anchored to that callback's
+actual delivery time, including delays below the suspension threshold. A single
+stall must not become permanent pressure that prevents automatic recovery.
 Resource Guardian event-loop lag above the normal control request window is a
 resource pressure signal, not a healthy sample. In protect mode it must close
 background admission so Loop, Autopilot, Daily Task Audit, Runtime Guardian, and
@@ -171,6 +179,11 @@ When a later System Self-Heal broad agent sweep queues successfully, it must
 claim due `system-self-heal` repair records, mark their ledger records running,
 and link them to the new active-delegation task so completion can close the
 original deferral instead of leaving stale Daily Task Audit attention.
+A successful operator-equivalent investigation covers only self-heal occurrences
+and queue records created no later than its scheduled start. Replaying historical
+success must not close newer failures. Reconciliation reopens legacy false closures
+only when the sole linked investigation predates every source occurrence and the
+ledger retains the exact automatic closure evidence; unrelated closures remain intact.
 When an operator-equivalent tmux-claude-bot active delegation completes the same
 last-24-hour automation investigation outside the exact hourly sweep dispatch,
 Autopilot reconciliation must also terminalize open `system-self-heal` sweep
@@ -898,7 +911,14 @@ installation.
 
 ## Known Alignment Gaps To Investigate
 
-No open alignment gaps are currently recorded here.
+Workspace recovery remains a known integration gap: generic Project Recovery
+requires one Git toplevel and creates an active delegation, while a configured
+workspace may contain multiple repositories under a non-Git root. The workspace
+scheduler owns the safe multi-repository WorkOrder path. Recovery must use that
+same path before it can repair a missed workspace occurrence; do not bypass root
+verification or silently choose a member repository. The bot-owned recovery
+adapter needs a dedicated regression covering per-repository isolation and PR
+policies. Existing workspace schedules remain due through admission deferrals.
 
 When a new gap is found, add it here with the affected surfaces, why it cannot
 be completed in the current slice, and the test or runtime evidence needed to

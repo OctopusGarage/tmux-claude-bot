@@ -1071,6 +1071,68 @@ describe("resource guardian coordinator", () => {
     expect(store.current.circuit.incidentId).not.toBe(firstId);
   });
 
+  it.each(["failed", "partial"] as const)(
+    "retries a current pressure notification after %s delivery across restart",
+    async (status) => {
+      const store = new MemoryStore();
+      let now = 0;
+      const notify = vi
+        .fn()
+        .mockResolvedValueOnce({ status, deliveries: [] })
+        .mockResolvedValue(sent);
+      const options = {
+        config: config({ mode: "protect" }),
+        store,
+        sample: async () => ({ ...sample(now, 95), eventLoopLagMs: 31_000 }),
+        notify,
+        incidentId: () => "incident-retry",
+      };
+      await createResourceGuardianCoordinator(options).run(now);
+      expect(notify).toHaveBeenCalledTimes(1);
+      const restarted = createResourceGuardianCoordinator(options);
+      now = 30_000;
+      await restarted.run(now);
+      expect(notify).toHaveBeenCalledTimes(1);
+      now = 60_000;
+      await restarted.run(now);
+      expect(notify).toHaveBeenCalledTimes(2);
+      expect(notify.mock.calls[1]?.[0]).toEqual(notify.mock.calls[0]?.[0]);
+      now = 90_000;
+      await restarted.run(now);
+      expect(notify).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["untyped", "superseded"])(
+    "does not retry %s pressure notification evidence",
+    async (kind) => {
+      const store = new MemoryStore();
+      let now = 0;
+      const notify = vi.fn(async () => ({ status: "failed" as const, deliveries: [] }));
+      const options = {
+        config: config({ mode: "protect" }),
+        store,
+        sample: async () => ({ ...sample(now, 95), eventLoopLagMs: 31_000 }),
+        notify,
+        incidentId: () => "incident-retry",
+      };
+      await createResourceGuardianCoordinator(options).run(now);
+      const incident = store.incidents.get("incident-retry");
+      expect(incident).toBeDefined();
+      if (incident === undefined) throw new Error("missing incident");
+      if (kind === "untyped") {
+        for (const action of incident.actions) delete action.phase;
+      } else {
+        const transition = incident.transitions.at(-1);
+        if (transition === undefined) throw new Error("missing transition");
+        incident.transitions.push({ ...transition, at: 1_000 });
+      }
+      now = 60_000;
+      await createResourceGuardianCoordinator(options).run(now);
+      expect(notify).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("notifies only on pressure transitions with the shared event semantics", async () => {
     const store = new MemoryStore();
     const notify = vi.fn(async () => sent);
@@ -1565,47 +1627,50 @@ describe("resource guardian coordinator", () => {
     stop();
   });
 
-  it("rebases the next schedule after one host-suspension tick", async () => {
-    const store = new MemoryStore();
-    const takeSample = vi.fn(async (actualNow: number, scheduledAt: number) => ({
-      ...sample(actualNow, 10),
-      eventLoopLagMs: Math.max(0, actualNow - scheduledAt),
-    }));
-    let currentNow = 1_000;
-    let intervalTick: (() => void) | undefined;
-    const stop = startResourceGuardian(
-      {
-        config: { resourceGuardian: config({ tickMs: 1_000 }) },
-        notifications: { notify: async () => sent },
-      } as unknown as Parameters<typeof startResourceGuardian>[0],
-      {
-        store,
-        sample: takeSample,
-        now: () => currentNow,
-        setInterval: ((tick: () => void) => {
-          intervalTick = tick;
-          return { id: 22 } as unknown as NodeJS.Timeout;
-        }) as NonNullable<StartResourceGuardianTestOptions["setInterval"]>,
-        clearInterval: () => {},
-        repairDispatcher: unusedRepairDispatcher,
-        recoverOperatorUpdate: () => {},
-      },
-    );
+  it.each([35_000, 3_601_000])(
+    "rebases the next schedule after a delayed tick at %i",
+    async (delayedAt) => {
+      const store = new MemoryStore();
+      const takeSample = vi.fn(async (actualNow: number, scheduledAt: number) => ({
+        ...sample(actualNow, 10),
+        eventLoopLagMs: Math.max(0, actualNow - scheduledAt),
+      }));
+      let currentNow = 1_000;
+      let intervalTick: (() => void) | undefined;
+      const stop = startResourceGuardian(
+        {
+          config: { resourceGuardian: config({ tickMs: 1_000 }) },
+          notifications: { notify: async () => sent },
+        } as unknown as Parameters<typeof startResourceGuardian>[0],
+        {
+          store,
+          sample: takeSample,
+          now: () => currentNow,
+          setInterval: ((tick: () => void) => {
+            intervalTick = tick;
+            return { id: 22 } as unknown as NodeJS.Timeout;
+          }) as NonNullable<StartResourceGuardianTestOptions["setInterval"]>,
+          clearInterval: () => {},
+          repairDispatcher: unusedRepairDispatcher,
+          recoverOperatorUpdate: () => {},
+        },
+      );
 
-    await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(store.writes).toBe(1));
-    currentNow = 3_601_000;
-    intervalTick?.();
-    await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(2));
-    expect(takeSample).toHaveBeenNthCalledWith(2, 3_601_000, 2_000);
-    await vi.waitFor(() => expect(store.writes).toBe(2));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    currentNow = 3_602_000;
-    intervalTick?.();
-    await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(3));
-    expect(takeSample).toHaveBeenNthCalledWith(3, 3_602_000, 3_602_000);
-    stop();
-  });
+      await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(store.writes).toBe(1));
+      currentNow = delayedAt;
+      intervalTick?.();
+      await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(2));
+      expect(takeSample).toHaveBeenNthCalledWith(2, delayedAt, 2_000);
+      await vi.waitFor(() => expect(store.writes).toBe(2));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      currentNow = delayedAt + 1_000;
+      intervalTick?.();
+      await vi.waitFor(() => expect(takeSample).toHaveBeenCalledTimes(3));
+      expect(takeSample).toHaveBeenNthCalledWith(3, delayedAt + 1_000, delayedAt + 1_000);
+      stop();
+    },
+  );
 
   it("drops queued and in-flight ticks after stop", async () => {
     const store = new MemoryStore();
