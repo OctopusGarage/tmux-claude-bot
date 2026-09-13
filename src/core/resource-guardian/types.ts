@@ -132,7 +132,7 @@ export type ResourceIncidentAction = {
   outcome: "recorded" | "sent" | "partial" | "failed" | "skipped";
   reason: string;
   /** Explicit lifecycle phase; legacy unphased action evidence never authorizes repair. */
-  phase?: "deterministic-cleanup" | "repair-intent" | "repair-dispatch";
+  phase?: "deterministic-cleanup" | "repair-intent" | "repair-dispatch" | "pressure-notification";
   /** Identity proof recorded before a protect-mode destructive action. */
   target?: {
     pid: number;

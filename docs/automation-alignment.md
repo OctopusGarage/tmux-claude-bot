@@ -127,6 +127,10 @@ for the full healthy window.
 Resource Guardian host CPU samples without a reliable delta baseline are
 unavailable, not zero. Notifications and public status output must render them
 as unknown while preserving load-based pressure decisions.
+Failed or partially delivered Resource Guardian pressure notifications must retry
+at a bounded one-minute cadence while their typed transition remains current.
+Persist retry evidence in the incident so restart preserves the cadence; reuse
+channel deduplication, and never replay untyped legacy or superseded transitions.
 Resource Guardian must measure each interval's delivery delay independently.
 After a delayed callback, the next expected sample is anchored to that callback's
 actual delivery time, including delays below the suspension threshold. A single
@@ -907,7 +911,14 @@ installation.
 
 ## Known Alignment Gaps To Investigate
 
-No open alignment gaps are currently recorded here.
+Workspace recovery remains a known integration gap: generic Project Recovery
+requires one Git toplevel and creates an active delegation, while a configured
+workspace may contain multiple repositories under a non-Git root. The workspace
+scheduler owns the safe multi-repository WorkOrder path. Recovery must use that
+same path before it can repair a missed workspace occurrence; do not bypass root
+verification or silently choose a member repository. The bot-owned recovery
+adapter needs a dedicated regression covering per-repository isolation and PR
+policies. Existing workspace schedules remain due through admission deferrals.
 
 When a new gap is found, add it here with the affected surfaces, why it cannot
 be completed in the current slice, and the test or runtime evidence needed to

@@ -1071,6 +1071,68 @@ describe("resource guardian coordinator", () => {
     expect(store.current.circuit.incidentId).not.toBe(firstId);
   });
 
+  it.each(["failed", "partial"] as const)(
+    "retries a current pressure notification after %s delivery across restart",
+    async (status) => {
+      const store = new MemoryStore();
+      let now = 0;
+      const notify = vi
+        .fn()
+        .mockResolvedValueOnce({ status, deliveries: [] })
+        .mockResolvedValue(sent);
+      const options = {
+        config: config({ mode: "protect" }),
+        store,
+        sample: async () => ({ ...sample(now, 95), eventLoopLagMs: 31_000 }),
+        notify,
+        incidentId: () => "incident-retry",
+      };
+      await createResourceGuardianCoordinator(options).run(now);
+      expect(notify).toHaveBeenCalledTimes(1);
+      const restarted = createResourceGuardianCoordinator(options);
+      now = 30_000;
+      await restarted.run(now);
+      expect(notify).toHaveBeenCalledTimes(1);
+      now = 60_000;
+      await restarted.run(now);
+      expect(notify).toHaveBeenCalledTimes(2);
+      expect(notify.mock.calls[1]?.[0]).toEqual(notify.mock.calls[0]?.[0]);
+      now = 90_000;
+      await restarted.run(now);
+      expect(notify).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["untyped", "superseded"])(
+    "does not retry %s pressure notification evidence",
+    async (kind) => {
+      const store = new MemoryStore();
+      let now = 0;
+      const notify = vi.fn(async () => ({ status: "failed" as const, deliveries: [] }));
+      const options = {
+        config: config({ mode: "protect" }),
+        store,
+        sample: async () => ({ ...sample(now, 95), eventLoopLagMs: 31_000 }),
+        notify,
+        incidentId: () => "incident-retry",
+      };
+      await createResourceGuardianCoordinator(options).run(now);
+      const incident = store.incidents.get("incident-retry");
+      expect(incident).toBeDefined();
+      if (incident === undefined) throw new Error("missing incident");
+      if (kind === "untyped") {
+        for (const action of incident.actions) delete action.phase;
+      } else {
+        const transition = incident.transitions.at(-1);
+        if (transition === undefined) throw new Error("missing transition");
+        incident.transitions.push({ ...transition, at: 1_000 });
+      }
+      now = 60_000;
+      await createResourceGuardianCoordinator(options).run(now);
+      expect(notify).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("notifies only on pressure transitions with the shared event semantics", async () => {
     const store = new MemoryStore();
     const notify = vi.fn(async () => sent);
