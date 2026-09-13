@@ -122,7 +122,13 @@ export async function runProjectRecoveryPass(input: {
       continue;
     }
     const target = resolveConfiguredRecoveryTarget(input.config, recoveryInput, input.canonicalize);
-    if (target === null || input.verifyProjectPath?.(target.path) === false) {
+    if (
+      target === null ||
+      (target.kind === "workspace"
+        ? !target.repositoryPaths?.length ||
+          target.repositoryPaths.some((path) => input.verifyProjectPath?.(path) === false)
+        : input.verifyProjectPath?.(target.path) === false)
+    ) {
       input.updateRepairStatus(
         record.taskId,
         "blocked",

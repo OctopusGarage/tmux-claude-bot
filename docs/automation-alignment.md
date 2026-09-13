@@ -954,3 +954,21 @@ When a new gap is found, add it here with the affected surfaces, why it cannot
 be completed in the current slice, and the test or runtime evidence needed to
 close it. Do not leave silent drift in source, docs, skills, commands, or chat
 surfaces.
+
+## Workspace Recovery Acceptance
+
+Project Recovery must validate every configured workspace member repository, not
+the workspace coordination root. Missing members fail closed. Recovery dispatch
+passes the configured workspace identity to Autopilot, which reloads and binds that
+identity to the recorded target root before creating a WorkOrder. The existing
+workspace builder owns per-repository agent, worktree isolation, branch and PR
+policies; the active-delegation requirement must preserve those policies and keep
+the coordination root read-only. Both admission checks and durable recovery links
+remain in the existing Autopilot path. Concurrent starts reserve the root and all
+member paths; conflicts include isolated members' source paths, while ordinary
+source-session chat retains its existing isolation exception.
+
+Verification must exercise two real Git repositories under a non-Git parent,
+invalid identity/root rejection, member verification failures, and preservation
+of repository policies in the generated supervisor prompt. A recovery is complete
+only after the ordinary supervisor and system gates accept its terminal evidence.

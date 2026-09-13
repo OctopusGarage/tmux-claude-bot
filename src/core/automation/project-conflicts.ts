@@ -62,7 +62,12 @@ function workOrderResourcePaths(
   if (workOrder.workspace !== undefined) {
     return [
       workOrder.workspace.root,
-      ...workOrder.workspace.repositories.map((repository) => repository.path),
+      ...workOrder.workspace.repositories.flatMap((repository) => [
+        repository.path,
+        ...(includeSourceWorktree && repository.sourcePath !== undefined
+          ? [repository.sourcePath]
+          : []),
+      ]),
       ...(includeSourceWorktree && sourceWorktree !== undefined ? [sourceWorktree] : []),
     ];
   }

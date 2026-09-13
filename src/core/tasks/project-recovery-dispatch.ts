@@ -22,6 +22,7 @@ export type ProjectRecoveryDispatchResult =
 export type ProjectRecoveryDelegator = (input: {
   session: string;
   requirement: string;
+  workspaceId?: string;
   worktreeIsolation: "source" | "isolated";
 }) => Promise<
   { status: "queued"; runId: string } | { status: "blocked"; reason: string; retryAt?: number }
@@ -43,9 +44,11 @@ export async function dispatchProjectRecovery(
   setPathForSession(session, input.target.path);
   const result = await options.delegate({
     session,
+    ...(input.target.kind === "workspace" ? { workspaceId: input.target.id } : {}),
     requirement: buildProjectRecoveryPrompt({
       projectId: input.target.id,
       projectPath: input.target.path,
+      targetKind: input.target.kind,
       taskFamily: input.taskFamily,
       classification: input.classification.classification,
       reason: input.classification.reason,

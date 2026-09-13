@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -149,6 +158,135 @@ describe("active delegated task supervisor pool", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-delegate-pool-"));
     startLoopSupervisor.mockReset();
   });
+
+  it("rejects a recovery workspace identity absent from configuration", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    setPathForSession("tmux_proj_suite", "/fixture/suite");
+    await expect(
+      startActiveDelegatedTask(deps(1), {
+        session: "tmux_proj_suite",
+        requirement: "recover workspace",
+        workspaceId: "missing",
+      }),
+    ).resolves.toMatchObject({
+      status: "blocked",
+      reason: expect.stringContaining("configured workspace"),
+    });
+  });
+
+  it.each(["free", "member-busy", "invalid-member", "dirty-member"])(
+    "dispatches workspace recovery with real isolated member worktrees: %s",
+    async (state) => {
+      const { startActiveDelegatedTask } = await import(
+        "../../src/core/autopilot/delegated-task.js"
+      );
+      const stateDir = realpathSync(process.env.TCB_STATE_DIR ?? "");
+      process.env.TCB_STATE_DIR = stateDir;
+      const root = join(stateDir, "suite");
+      for (const id of ["api", "web"]) {
+        const path = join(root, id);
+        mkdirSync(path, { recursive: true });
+        if (state === "invalid-member" && id === "web") continue;
+        execFileSync("git", ["init", "-b", "main"], { cwd: path, stdio: "pipe" });
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "seed",
+          ],
+          { cwd: path, stdio: "pipe" },
+        );
+      }
+      if (state === "dirty-member")
+        writeFileSync(join(root, "web", "operator-change.txt"), "preserve this change");
+      const configFile = join(stateDir, "workspace.yaml");
+      writeFileSync(
+        configFile,
+        `projects: []
+workspaces:
+  - id: suite
+    name: Suite
+    root: ${root}
+    agent: codex
+    worktreeIsolation: isolated
+    architecture:
+      goal: Improve suite architecture.
+    repositories:
+      - id: api
+        name: API
+        role: backend
+        path: ${join(root, "api")}
+      - id: web
+        name: Web
+        role: frontend
+        path: ${join(root, "web")}
+`,
+      );
+      const d = deps(1);
+      d.config.loopEngineering.configFile = configFile;
+      setPathForSession("tmux_proj_suite", root);
+      startLoopSupervisor.mockResolvedValue(true);
+      if (state === "member-busy") {
+        writeLoopSupervisorWorkOrderState({
+          workOrder: workOrder({ id: "member-active", projectPath: join(root, "api") }),
+          supervisorSession: "tmux_proj_loop-supervisor",
+          status: "in-flight",
+          now: Date.now(),
+        });
+      }
+      const result = await startActiveDelegatedTask(d, {
+        session: "tmux_proj_suite",
+        requirement: "recover workspace failure",
+        workspaceId: "suite",
+        resourceTrigger: "background",
+      });
+      if (state !== "free") {
+        expect(result).toMatchObject({
+          status: "blocked",
+          reason: expect.stringContaining(
+            state === "member-busy" ? "active automation" : "worktree isolation failed",
+          ),
+        });
+        if (state === "dirty-member") {
+          const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], {
+            cwd: join(root, "api"),
+            encoding: "utf8",
+          });
+          expect(worktrees.match(/^worktree /gm)).toHaveLength(1);
+          expect(readFileSync(join(root, "web", "operator-change.txt"), "utf8")).toBe(
+            "preserve this change",
+          );
+        }
+        return;
+      }
+      expect(result, JSON.stringify(result)).toMatchObject({
+        status: "queued",
+        projectId: "suite",
+      });
+      if (result.status !== "queued" || !result.reportDir)
+        throw new Error("expected workspace delegation");
+      const order = JSON.parse(readFileSync(join(result.reportDir, "work-order.json"), "utf8"));
+      expect(order.workspace?.repositories).toHaveLength(2);
+      for (const repository of order.workspace.repositories) {
+        expect(repository.sourcePath).toBe(join(root, repository.id));
+        expect(repository.path).not.toBe(repository.sourcePath);
+        expect(
+          execFileSync("git", ["rev-parse", "--show-toplevel"], {
+            cwd: repository.path,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(repository.path);
+      }
+    },
+  );
 
   it("marks infrastructure blocks as not queueable", () => {
     expect(

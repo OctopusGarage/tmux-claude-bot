@@ -36,6 +36,7 @@ function writeWorkOrder(input: {
   projectPath: string;
   sourceWorktree?: string;
   worktreeIsolation: "isolated" | "source";
+  workspace?: LoopWorkOrder["workspace"];
 }): void {
   writeLoopSupervisorWorkOrderState({
     workOrder: {
@@ -44,6 +45,7 @@ function writeWorkOrder(input: {
       projectId: "tmux-claude-bot",
       projectName: "tmux-claude-bot",
       projectPath: input.projectPath,
+      ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
       task: { kind: "bug-fix", maxRounds: 1, maxBugsPerRound: 1, requireRegressionTest: true },
       executionIsolation: {
         mode: "supervised-worker",
@@ -79,6 +81,37 @@ function writeWorkOrder(input: {
 }
 
 describe("project automation conflicts", () => {
+  it("reserves workspace member source paths without blocking isolated source chat", () => {
+    writeWorkOrder({
+      id: "workspace-run",
+      projectPath: stateDir,
+      worktreeIsolation: "isolated",
+      workspace: {
+        root: stateDir,
+        repositories: [
+          {
+            id: "api",
+            name: "API",
+            path: isolatedDir,
+            sourcePath: sourceDir,
+            role: "backend",
+            agent: "codex",
+            pullRequest: {
+              enabled: false,
+              base: "main",
+              switchBack: "main",
+              autoMerge: false,
+              mergeMethod: "squash",
+            },
+          },
+        ],
+      },
+    });
+    expect(findProjectAutomationConflict(sourceDir)?.runId).toBe("workspace-run");
+    expect(findProjectAutomationConflict(sourceDir, { includeSourceWorktree: false })).toBeNull();
+    expect(findProjectAutomationConflict(isolatedDir)?.runId).toBe("workspace-run");
+  });
+
   it("does not block ordinary source-session messages for an isolated worktree run", () => {
     setPathForSession("source-session", sourceDir);
     writeWorkOrder({
