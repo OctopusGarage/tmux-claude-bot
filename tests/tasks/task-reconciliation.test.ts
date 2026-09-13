@@ -357,6 +357,60 @@ describe("autopilot delegated task reconciliation", () => {
     });
   });
 
+  it.each(["pending", "false-closure", "unrelated-closure"])(
+    "does not let historical investigation cover a newer sweep: %s",
+    async (state) => {
+      const runId = arrangeTerminalRun("completed", true);
+      const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+      const orderPath = join(runDir, "work-order.json");
+      const order = JSON.parse(readFileSync(orderPath, "utf8"));
+      order.task = {
+        kind: "active-delegated-task",
+        requirement:
+          "Run an operator-equivalent investigation of automation tasks from the last 24 hours.",
+      };
+      writeFileSync(orderPath, JSON.stringify(order));
+      startLedger(runId);
+      const ledger = new DailyTaskLedger();
+      ledger.finish(`autopilot:${runId}`, { endedAt: 2, summary: "completed" });
+      const taskId = "system-self-heal:agent-sweep:4";
+      ledger.expect({ taskId, source: "system-self-heal", name: "self-heal", scheduledAt: 4 });
+      ledger.fail(taskId, {
+        endedAt: 4,
+        error: "automation admission deferred: background-closed",
+      });
+      const coordinator = new RepairCoordinator();
+      const queued = coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/repo/tmux-claude-bot",
+        source: "system-self-heal",
+        taskFamily: "self-heal",
+        fingerprint: "system-gate",
+        taskId,
+        now: 4,
+      });
+      if (state !== "pending") {
+        coordinator.linkTaskIds(queued.id, [`autopilot:${runId}`], 5);
+        coordinator.markTerminal(queued.id, "fixed", 5);
+        ledger.markRepairStatus(taskId, {
+          repairStatus: "fixed",
+          updatedAt: 5,
+          summary:
+            state === "false-closure"
+              ? "Closed from the authoritative successful operator-equivalent self-heal delegation."
+              : "Fixed by a separate verified repair.",
+        });
+      }
+      await reconcileAutopilotDelegatedTasks({ now: 6, ledger });
+      await reconcileAutopilotDelegatedTasks({ now: 7, ledger });
+      const expected = state === "unrelated-closure" ? "fixed" : "pending";
+      expect(ledger.listAll().find((record) => record.taskId === taskId)?.repairStatus).toBe(
+        expected,
+      );
+      expect(coordinator.list().find((record) => record.id === queued.id)?.status).toBe(expected);
+    },
+  );
+
   it("settles open system self-heal deferrals from the current broad sweep wording", async () => {
     const runId = arrangeTerminalRun("completed", true);
     const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);

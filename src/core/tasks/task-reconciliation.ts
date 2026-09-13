@@ -86,6 +86,7 @@ export async function reconcileAutopilotDelegatedTasks(
         now,
         requirement: workOrderRequirement(actionable.workOrder),
         projectId: actionable.workOrder.projectId,
+        coveredThrough: actionable.workOrder.scheduledAt,
       });
       result.finished += 1;
     } else {
@@ -146,6 +147,7 @@ export async function reconcileAutopilotDelegatedTasks(
       now,
       requirement: workOrderRequirement(actionable.workOrder),
       projectId: actionable.workOrder.projectId,
+      coveredThrough: actionable.workOrder.scheduledAt,
     });
   }
 
@@ -215,15 +217,58 @@ function reconcileOperatorEquivalentSelfHealQueue(input: {
   now: number;
   requirement: string;
   projectId: string;
+  coveredThrough: number;
 }): void {
   if (input.projectId !== "tmux-claude-bot") return;
   if (!isOperatorEquivalentSelfHealRequirement(input.requirement)) return;
+  if (!Number.isFinite(input.coveredThrough)) return;
+  const ledgerById = new Map(input.ledger.listAll().map((record) => [record.taskId, record]));
+  const closureSummary =
+    "Closed from the authoritative successful operator-equivalent self-heal delegation.";
   for (const queueRecord of input.coordinator.list()) {
     if (queueRecord.projectId !== "tmux-claude-bot") continue;
     if (queueRecord.source !== "system-self-heal") continue;
+    const sourceIds = queueRecord.linkedTaskIds.filter((id) => !id.startsWith("autopilot:"));
+    const originals = sourceIds.map((id) => ledgerById.get(id));
+    const delegatedIds = queueRecord.linkedTaskIds.filter((id) => id.startsWith("autopilot:"));
+    // Repair only the exact legacy closure this historical investigation could not cover.
+    if (
+      queueRecord.status === "fixed" &&
+      delegatedIds.length === 1 &&
+      delegatedIds[0] === input.delegatedTaskId &&
+      originals.length > 0 &&
+      originals.every(
+        (record) =>
+          record?.source === "system-self-heal" &&
+          ["failed", "missing", "running-timeout"].includes(record.status) &&
+          record.scheduledAt > input.coveredThrough &&
+          record.repairStatus === "fixed" &&
+          record.summary === closureSummary,
+      )
+    ) {
+      for (const taskId of sourceIds) {
+        input.ledger.markRepairStatus(taskId, {
+          repairStatus: "pending",
+          updatedAt: input.now,
+          summary:
+            "Reopened self-heal deferral: the linked investigation predates this occurrence.",
+        });
+      }
+      input.coordinator.releaseToQueue(queueRecord.id, input.now);
+      continue;
+    }
     if (!["pending", "leased", "running", "retry-wait"].includes(queueRecord.status)) continue;
+    if (
+      queueRecord.createdAt > input.coveredThrough ||
+      originals.length === 0 ||
+      originals.some(
+        (record) =>
+          record?.source !== "system-self-heal" || record.scheduledAt > input.coveredThrough,
+      )
+    )
+      continue;
     input.coordinator.linkTaskIds(queueRecord.id, [input.delegatedTaskId], input.now);
-    for (const taskId of queueRecord.linkedTaskIds) {
+    for (const taskId of sourceIds) {
       input.ledger.markRepairStatus(taskId, {
         repairStatus: "fixed",
         updatedAt: input.now,

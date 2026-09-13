@@ -175,6 +175,11 @@ When a later System Self-Heal broad agent sweep queues successfully, it must
 claim due `system-self-heal` repair records, mark their ledger records running,
 and link them to the new active-delegation task so completion can close the
 original deferral instead of leaving stale Daily Task Audit attention.
+A successful operator-equivalent investigation covers only self-heal occurrences
+and queue records created no later than its scheduled start. Replaying historical
+success must not close newer failures. Reconciliation reopens legacy false closures
+only when the sole linked investigation predates every source occurrence and the
+ledger retains the exact automatic closure evidence; unrelated closures remain intact.
 When an operator-equivalent tmux-claude-bot active delegation completes the same
 last-24-hour automation investigation outside the exact hourly sweep dispatch,
 Autopilot reconciliation must also terminalize open `system-self-heal` sweep
