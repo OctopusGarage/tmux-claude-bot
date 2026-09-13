@@ -223,8 +223,10 @@ function reconcileOperatorEquivalentSelfHealQueue(input: {
   if (!isOperatorEquivalentSelfHealRequirement(input.requirement)) return;
   if (!Number.isFinite(input.coveredThrough)) return;
   const ledgerById = new Map(input.ledger.listAll().map((record) => [record.taskId, record]));
-  const closureSummary =
-    "Closed from the authoritative successful operator-equivalent self-heal delegation.";
+  const legacyClosureSummaries = new Set([
+    "Closed from the authoritative successful operator-equivalent self-heal delegation.",
+    "Closed from the authoritative successful project recovery delegation.",
+  ]);
   for (const queueRecord of input.coordinator.list()) {
     if (queueRecord.projectId !== "tmux-claude-bot") continue;
     if (queueRecord.source !== "system-self-heal") continue;
@@ -243,7 +245,7 @@ function reconcileOperatorEquivalentSelfHealQueue(input: {
           ["failed", "missing", "running-timeout"].includes(record.status) &&
           record.scheduledAt > input.coveredThrough &&
           record.repairStatus === "fixed" &&
-          record.summary === closureSummary,
+          legacyClosureSummaries.has(record.summary ?? ""),
       )
     ) {
       for (const taskId of sourceIds) {

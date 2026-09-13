@@ -8,6 +8,7 @@ import {
 } from "../../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
+import { reconcileProjectRecoveryArtifacts } from "../../src/core/tasks/project-recovery-service.js";
 import { RepairCoordinator } from "../../src/core/tasks/repair-coordinator.js";
 import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 import {
@@ -357,7 +358,7 @@ describe("autopilot delegated task reconciliation", () => {
     });
   });
 
-  it.each(["pending", "false-closure", "unrelated-closure"])(
+  it.each(["pending", "false-closure", "project-false-closure", "unrelated-closure"])(
     "does not let historical investigation cover a newer sweep: %s",
     async (state) => {
       const runId = arrangeTerminalRun("completed", true);
@@ -398,11 +399,22 @@ describe("autopilot delegated task reconciliation", () => {
           summary:
             state === "false-closure"
               ? "Closed from the authoritative successful operator-equivalent self-heal delegation."
-              : "Fixed by a separate verified repair.",
+              : state === "project-false-closure"
+                ? "Closed from the authoritative successful project recovery delegation."
+                : "Fixed by a separate verified repair.",
         });
       }
-      await reconcileAutopilotDelegatedTasks({ now: 6, ledger });
-      await reconcileAutopilotDelegatedTasks({ now: 7, ledger });
+      for (const now of [6, 7]) {
+        await reconcileAutopilotDelegatedTasks({ now, ledger });
+        await reconcileProjectRecoveryArtifacts({
+          now,
+          records: ledger.listAll(),
+          coordinator,
+          updateRepairStatus: (taskId, repairStatus, summary) => {
+            ledger.markRepairStatus(taskId, { repairStatus, summary, updatedAt: now });
+          },
+        });
+      }
       const expected = state === "unrelated-closure" ? "fixed" : "pending";
       expect(ledger.listAll().find((record) => record.taskId === taskId)?.repairStatus).toBe(
         expected,
