@@ -289,9 +289,14 @@ export class RepairCoordinator {
     records: readonly PendingLedgerRecord[],
     input: { projectId: string; projectPath: string; now: number },
   ): number {
+    const recoveryTaskIds = new Set(
+      this.list()
+        .filter((record) => record.source === "project-recovery" && !isTerminal(record.status))
+        .flatMap((record) => record.linkedTaskIds),
+    );
     let imported = 0;
     for (const record of records) {
-      if (!isEligiblePendingRecord(record)) continue;
+      if (!isEligiblePendingRecord(record) || recoveryTaskIds.has(record.taskId)) continue;
       this.enqueue({
         projectId: input.projectId,
         projectPath: input.projectPath,
