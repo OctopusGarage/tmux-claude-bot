@@ -972,3 +972,13 @@ Verification must exercise two real Git repositories under a non-Git parent,
 invalid identity/root rejection, member verification failures, and preservation
 of repository policies in the generated supervisor prompt. A recovery is complete
 only after the ordinary supervisor and system gates accept its terminal evidence.
+
+Self-heal reconciliation evaluates source occurrences individually after queue
+deduplication. A completed investigation may close existing unresolved deferral
+backlog, including occurrences older than its log lookback, but never occurrences
+created after its scheduled start. Mixed queues retain newer occurrences as pending
+without reopening independently verified older repairs. Generic delegated-success
+closure must defer to this policy. If a historical delegation ledger entry expired,
+its retained, identity-matched WorkOrder and accepted completed system gate still
+allow reconciliation of linked automatic false closures. Another active delegation
+retains ownership of its queue.

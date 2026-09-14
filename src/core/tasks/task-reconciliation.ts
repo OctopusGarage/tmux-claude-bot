@@ -121,18 +121,34 @@ export async function reconcileAutopilotDelegatedTasks(
     }
   }
 
-  for (const task of ledger.listAll()) {
+  const investigationIds = new Set(
+    ledger
+      .listAll()
+      .filter(
+        (task) =>
+          task.source === "autopilot-delegate" &&
+          task.status === "success" &&
+          task.repairStatus === "not-needed",
+      )
+      .map((task) => task.taskId),
+  );
+  // Queue links outlive ledger retention; their accepted WorkOrders remain authoritative.
+  for (const queued of coordinator.list()) {
+    if (queued.source !== "system-self-heal") continue;
+    for (const id of queued.linkedTaskIds)
+      if (id.startsWith("autopilot:")) investigationIds.add(id);
+  }
+  for (const delegatedTaskId of investigationIds) {
+    const runId = delegatedTaskId.startsWith("autopilot:")
+      ? delegatedTaskId.slice("autopilot:".length)
+      : delegatedTaskId;
+    const actionable = actionableByRunId.get(runId);
     if (
-      task.source !== "autopilot-delegate" ||
-      task.status !== "success" ||
-      task.repairStatus !== "not-needed"
+      actionable === undefined ||
+      actionable.workOrder.projectId !== "tmux-claude-bot" ||
+      !isOperatorEquivalentSelfHealRequirement(workOrderRequirement(actionable.workOrder))
     )
       continue;
-    const runId = task.taskId.startsWith("autopilot:")
-      ? task.taskId.slice("autopilot:".length)
-      : task.taskId;
-    const actionable = actionableByRunId.get(runId);
-    if (actionable === undefined) continue;
     const summary = parseSupervisorFinalSummaryFile(actionable.workOrder);
     const gate = readAcceptedSystemGate(
       join(actionable.runDir, "system-gate.json"),
@@ -143,7 +159,7 @@ export async function reconcileAutopilotDelegatedTasks(
     reconcileOperatorEquivalentSelfHealQueue({
       coordinator,
       ledger,
-      delegatedTaskId: task.taskId,
+      delegatedTaskId,
       now,
       requirement: workOrderRequirement(actionable.workOrder),
       projectId: actionable.workOrder.projectId,
@@ -202,7 +218,10 @@ function readAcceptedSystemGate(
       gate.workOrderId !== workOrderId ||
       gate.projectId !== projectId
     ) {
-      return { ok: false, reason: `rejected or mismatched system gate (${path})` };
+      return {
+        ok: false,
+        reason: `rejected or mismatched system gate (${path})`,
+      };
     }
     return { ok: true };
   } catch {
@@ -226,6 +245,7 @@ function reconcileOperatorEquivalentSelfHealQueue(input: {
   const legacyClosureSummaries = new Set([
     "Closed from the authoritative successful operator-equivalent self-heal delegation.",
     "Closed from the authoritative successful project recovery delegation.",
+    "Closed from the authoritative successful delegated repair.",
   ]);
   for (const queueRecord of input.coordinator.list()) {
     if (queueRecord.projectId !== "tmux-claude-bot") continue;
@@ -233,52 +253,79 @@ function reconcileOperatorEquivalentSelfHealQueue(input: {
     const sourceIds = queueRecord.linkedTaskIds.filter((id) => !id.startsWith("autopilot:"));
     const originals = sourceIds.map((id) => ledgerById.get(id));
     const delegatedIds = queueRecord.linkedTaskIds.filter((id) => id.startsWith("autopilot:"));
-    // Repair only the exact legacy closure this historical investigation could not cover.
+    if (
+      delegatedIds.some(
+        (id) => id !== input.delegatedTaskId && ledgerById.get(id)?.status === "running",
+      )
+    )
+      continue;
+    const reopened = new Set<string>();
+    // Reopen only proven automatic false closures; preserve independent repair evidence.
     if (
       queueRecord.status === "fixed" &&
       delegatedIds.length === 1 &&
-      delegatedIds[0] === input.delegatedTaskId &&
-      originals.length > 0 &&
-      originals.every(
-        (record) =>
-          record?.source === "system-self-heal" &&
-          ["failed", "missing", "running-timeout"].includes(record.status) &&
-          record.scheduledAt > input.coveredThrough &&
-          record.repairStatus === "fixed" &&
-          legacyClosureSummaries.has(record.summary ?? ""),
-      )
+      delegatedIds[0] === input.delegatedTaskId
     ) {
-      for (const taskId of sourceIds) {
-        input.ledger.markRepairStatus(taskId, {
+      for (const record of originals) {
+        if (
+          record?.source !== "system-self-heal" ||
+          !["failed", "missing", "running-timeout"].includes(record.status) ||
+          record.scheduledAt <= input.coveredThrough ||
+          record.repairStatus !== "fixed" ||
+          !legacyClosureSummaries.has(record.summary ?? "")
+        )
+          continue;
+        input.ledger.markRepairStatus(record.taskId, {
           repairStatus: "pending",
           updatedAt: input.now,
           summary:
             "Reopened self-heal deferral: the linked investigation predates this occurrence.",
         });
+        reopened.add(record.taskId);
       }
-      input.coordinator.releaseToQueue(queueRecord.id, input.now);
-      continue;
+      if (reopened.size > 0) input.coordinator.releaseToQueue(queueRecord.id, input.now);
     }
-    if (!["pending", "leased", "running", "retry-wait"].includes(queueRecord.status)) continue;
+    if (
+      reopened.size === 0 &&
+      !["pending", "leased", "running", "retry-wait"].includes(queueRecord.status)
+    )
+      continue;
     if (
       queueRecord.createdAt > input.coveredThrough ||
       originals.length === 0 ||
-      originals.some(
-        (record) =>
-          record?.source !== "system-self-heal" || record.scheduledAt > input.coveredThrough,
-      )
+      originals.some((record) => record?.source !== "system-self-heal")
     )
       continue;
-    input.coordinator.linkTaskIds(queueRecord.id, [input.delegatedTaskId], input.now);
-    for (const taskId of sourceIds) {
-      input.ledger.markRepairStatus(taskId, {
+    const covered = originals.filter(
+      (record) =>
+        record !== undefined &&
+        record.scheduledAt <= input.coveredThrough &&
+        ["failed", "missing", "running-timeout"].includes(record.status) &&
+        (record.repairStatus === "pending" || record.repairStatus === "running"),
+    );
+    for (const record of covered) {
+      if (record === undefined) continue;
+      input.ledger.markRepairStatus(record.taskId, {
         repairStatus: "fixed",
         updatedAt: input.now,
         summary:
           "Closed from the authoritative successful operator-equivalent self-heal delegation.",
       });
     }
-    input.coordinator.markTerminal(queueRecord.id, "fixed", input.now);
+    if (covered.length > 0)
+      input.coordinator.linkTaskIds(queueRecord.id, [input.delegatedTaskId], input.now);
+    const resolved = originals.every(
+      (record) =>
+        record !== undefined &&
+        !reopened.has(record.taskId) &&
+        (record.repairStatus === "fixed" || covered.includes(record)),
+    );
+    if (resolved) input.coordinator.markTerminal(queueRecord.id, "fixed", input.now);
+    else if (
+      queueRecord.linkedTaskIds.includes(input.delegatedTaskId) &&
+      ["leased", "running"].includes(queueRecord.status)
+    )
+      input.coordinator.releaseToQueue(queueRecord.id, input.now);
   }
 }
 
@@ -308,6 +355,7 @@ function reconcileDelegatedRepairQueue(input: {
   succeeded: boolean;
 }): void {
   for (const queueRecord of input.coordinator.list()) {
+    if (input.succeeded && queueRecord.source === "system-self-heal") continue;
     if (!queueRecord.linkedTaskIds.includes(input.delegatedTaskId)) continue;
     const originals = queueRecord.linkedTaskIds
       .filter((taskId) => taskId !== input.delegatedTaskId)

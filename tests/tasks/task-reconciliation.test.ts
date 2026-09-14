@@ -284,7 +284,11 @@ describe("autopilot delegated task reconciliation", () => {
       now: 1,
     });
     coordinator.linkTaskIds(queueRecord.id, [`autopilot:${runId}`], 2);
-    coordinator.claimIds([queueRecord.id], { now: 3, leaseId: "repair", limit: 1 });
+    coordinator.claimIds([queueRecord.id], {
+      now: 3,
+      leaseId: "repair",
+      limit: 1,
+    });
     coordinator.markRunning(queueRecord.id, "repair", 4);
 
     const ledger = new DailyTaskLedger();
@@ -295,7 +299,10 @@ describe("autopilot delegated task reconciliation", () => {
       scheduledAt: 1,
     });
     ledger.fail("autopilot:original", { endedAt: 2, error: "invalid-summary" });
-    ledger.markRepairStatus("autopilot:original", { repairStatus: "running", updatedAt: 4 });
+    ledger.markRepairStatus("autopilot:original", {
+      repairStatus: "running",
+      updatedAt: 4,
+    });
     startLedger(runId);
 
     await reconcileAutopilotDelegatedTasks({ now: 6, ledger });
@@ -358,6 +365,90 @@ describe("autopilot delegated task reconciliation", () => {
     });
   });
 
+  it.each(["running", "legacy", "orphaned"])(
+    "settles mixed self-heal occurrences independently: %s",
+    async (state) => {
+      const runId = arrangeTerminalRun("completed", true);
+      const path = join(
+        process.env.TCB_STATE_DIR ?? "",
+        "loop-runs",
+        "tmux-claude-bot",
+        runId,
+        "work-order.json",
+      );
+      const order = JSON.parse(readFileSync(path, "utf8"));
+      order.task = {
+        kind: "active-delegated-task",
+        requirement:
+          "Run an operator-equivalent investigation of automation tasks from the last 24 hours and unresolved repair queues.",
+      };
+      writeFileSync(path, JSON.stringify(order));
+      const ledger = new DailyTaskLedger();
+      if (state !== "orphaned") {
+        startLedger(runId);
+        if (state === "legacy")
+          ledger.finish(`autopilot:${runId}`, {
+            endedAt: 2,
+            summary: "completed",
+          });
+      }
+      const coordinator = new RepairCoordinator();
+      const ids = ["system-self-heal:older", "system-self-heal:newer"];
+      for (const [index, taskId] of ids.entries()) {
+        const scheduledAt = index === 0 ? -172800000 : 4;
+        ledger.expect({
+          taskId,
+          source: "system-self-heal",
+          name: "self-heal",
+          scheduledAt,
+        });
+        ledger.fail(taskId, {
+          endedAt: scheduledAt,
+          error: "admission deferred",
+        });
+        if (state !== "running")
+          ledger.markRepairStatus(taskId, {
+            repairStatus: "fixed",
+            updatedAt: 5,
+            summary: "Closed from the authoritative successful delegated repair.",
+          });
+      }
+      const queued = coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/repo/tmux-claude-bot",
+        source: "system-self-heal",
+        taskFamily: "self-heal",
+        fingerprint: "gate",
+        taskId: ids[0] ?? "",
+        now: -172800000,
+      });
+      coordinator.linkTaskIds(queued.id, [ids[1] ?? "", `autopilot:${runId}`], 5);
+      if (state !== "running") coordinator.markTerminal(queued.id, "fixed", 5);
+      for (const now of [6, 7]) {
+        await reconcileAutopilotDelegatedTasks({ now, ledger });
+        await reconcileProjectRecoveryArtifacts({
+          now,
+          records: ledger.listAll(),
+          coordinator,
+          updateRepairStatus: (taskId, repairStatus, summary) => {
+            ledger.markRepairStatus(taskId, {
+              repairStatus,
+              summary,
+              updatedAt: now,
+            });
+          },
+        });
+      }
+      expect(ledger.listAll().find((record) => record.taskId === ids[0])?.repairStatus).toBe(
+        "fixed",
+      );
+      expect(ledger.listAll().find((record) => record.taskId === ids[1])?.repairStatus).toBe(
+        "pending",
+      );
+      expect(coordinator.list().find((record) => record.id === queued.id)?.status).toBe("pending");
+    },
+  );
+
   it.each(["pending", "false-closure", "project-false-closure", "unrelated-closure"])(
     "does not let historical investigation cover a newer sweep: %s",
     async (state) => {
@@ -375,7 +466,12 @@ describe("autopilot delegated task reconciliation", () => {
       const ledger = new DailyTaskLedger();
       ledger.finish(`autopilot:${runId}`, { endedAt: 2, summary: "completed" });
       const taskId = "system-self-heal:agent-sweep:4";
-      ledger.expect({ taskId, source: "system-self-heal", name: "self-heal", scheduledAt: 4 });
+      ledger.expect({
+        taskId,
+        source: "system-self-heal",
+        name: "self-heal",
+        scheduledAt: 4,
+      });
       ledger.fail(taskId, {
         endedAt: 4,
         error: "automation admission deferred: background-closed",
@@ -411,7 +507,11 @@ describe("autopilot delegated task reconciliation", () => {
           records: ledger.listAll(),
           coordinator,
           updateRepairStatus: (taskId, repairStatus, summary) => {
-            ledger.markRepairStatus(taskId, { repairStatus, summary, updatedAt: now });
+            ledger.markRepairStatus(taskId, {
+              repairStatus,
+              summary,
+              updatedAt: now,
+            });
           },
         });
       }
