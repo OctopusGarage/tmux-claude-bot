@@ -51,11 +51,11 @@ projects:
     }));
     const maintenance = createLoopRemoteBranchMaintenance({
       configFile,
-      runGit: ({ args }) =>
+      runGit: async ({ args }) =>
         args.join(" ") === "rev-parse --show-toplevel"
           ? { status: 0, stdout: `${projectPath}\n`, stderr: "" }
           : { status: 1, stdout: "", stderr: "unexpected git command" },
-      runCommand: ({ command }) =>
+      runCommand: async ({ command }) =>
         command.includes("repo view --json nameWithOwner")
           ? {
               status: 0,
@@ -145,8 +145,8 @@ workspaces:
     }));
     const maintenance = createLoopRemoteBranchMaintenance({
       configFile,
-      runGit: ({ cwd }) => ({ status: 0, stdout: `${cwd}\n`, stderr: "" }),
-      runCommand: ({ cwd }) => ({
+      runGit: async ({ cwd }) => ({ status: 0, stdout: `${cwd}\n`, stderr: "" }),
+      runCommand: async ({ cwd }) => ({
         status: 0,
         stdout: JSON.stringify({
           nameWithOwner:

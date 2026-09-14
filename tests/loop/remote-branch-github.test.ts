@@ -14,7 +14,7 @@ const target = {
 describe("Loop remote branch GitHub adapter", () => {
   it("discovers only a bounded configured Loop prefix through the configured account", async () => {
     const commands: string[] = [];
-    const run: LoopRemoteBranchGitHubRun = (command) => {
+    const run: LoopRemoteBranchGitHubRun = async (command) => {
       commands.push(command);
       if (command.includes("/git/matching-refs/heads/loop%2Ftmux-claude-bot%2F?per_page=1")) {
         return {
@@ -42,7 +42,7 @@ describe("Loop remote branch GitHub adapter", () => {
 
   it("observes exact ref, protection, and associated pull requests", async () => {
     const branch = "loop/tmux-claude-bot/architecture/100-worker";
-    const run: LoopRemoteBranchGitHubRun = (command) => {
+    const run: LoopRemoteBranchGitHubRun = async (command) => {
       if (command.includes("/git/ref/heads/")) {
         return { status: 0, stdout: JSON.stringify({ object: { sha: "abc123" } }), stderr: "" };
       }
@@ -92,7 +92,7 @@ describe("Loop remote branch GitHub adapter", () => {
 
   it("derives an allowlisted external close reason only from an authorized post-close comment", async () => {
     const branch = "loop/tmux-claude-bot/harness-auto/100-worker";
-    const run: LoopRemoteBranchGitHubRun = (command) => {
+    const run: LoopRemoteBranchGitHubRun = async (command) => {
       if (command.includes("/git/ref/heads/")) {
         return { status: 0, stdout: JSON.stringify({ object: { sha: "abc123" } }), stderr: "" };
       }
@@ -173,7 +173,7 @@ describe("Loop remote branch GitHub adapter", () => {
 
   it("deletes only the exact encoded ref and treats absence as idempotent", async () => {
     const commands: string[] = [];
-    const run: LoopRemoteBranchGitHubRun = (command) => {
+    const run: LoopRemoteBranchGitHubRun = async (command) => {
       commands.push(command);
       if (command.includes("missing")) {
         return { status: 1, stdout: "", stderr: "HTTP 422: Reference does not exist" };
@@ -239,4 +239,20 @@ describe("Loop remote branch GitHub adapter", () => {
       reason: "invalid GitHub commit SHA",
     });
   });
+});
+
+it("revalidates ownership after the final awaited SHA lookup", async () => {
+  let active = false;
+  const commands: string[] = [];
+  const github = createLoopRemoteBranchGitHub({
+    run: async (command) => {
+      commands.push(command);
+      await Promise.resolve();
+      active = true;
+      return { status: 0, stdout: JSON.stringify({ object: { sha: "abc123" } }), stderr: "" };
+    },
+  });
+  const result = await github.delete(target, "loop/tmux-claude-bot/a", "abc123", () => !active);
+  expect(result).toMatchObject({ ok: false, reason: "branch ownership changed before deletion" });
+  expect(commands).toHaveLength(1);
 });

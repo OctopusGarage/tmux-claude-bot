@@ -32,8 +32,10 @@ export type LoopRemoteBranchMaintenance = {
 
 export function createLoopRemoteBranchMaintenance(input: {
   configFile: string;
-  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
-  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  runCommand: (
+    invocation: LoopRunCommandInvocation,
+  ) => LoopRunCommandResult | Promise<LoopRunCommandResult>;
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult | Promise<LoopRunCommandResult>;
   reconciler?: Reconciler;
 }): LoopRemoteBranchMaintenance {
   const reconciler =
@@ -44,12 +46,13 @@ export function createLoopRemoteBranchMaintenance(input: {
           input.runCommand({ kind: "pr", command, cwd: dirname(input.configFile), env: {} }),
       }),
       evidence: new LoopRemoteBranchReconciliationStore(),
+      readOwnership: () => readLoopRemoteBranchOwnership(Date.now()),
     });
 
   return {
     reconcile: async (now) => {
       const config = parseLoopConfigYaml(readFileSync(input.configFile, "utf8"));
-      const targets = configuredTargets(
+      const targets = await configuredTargets(
         [
           ...config.projects.flatMap((project) => {
             const branch = project.commit.branch;
@@ -158,7 +161,7 @@ function remoteBranchesForWorkOrder(workOrder: LoopWorkOrder): string[] {
   return branches;
 }
 
-function configuredTargets(
+async function configuredTargets(
   candidates: Array<{
     id: string;
     path: string;
@@ -168,15 +171,17 @@ function configuredTargets(
     switchBack: string;
     branchPrefix: string;
   }>,
-  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult,
-  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
-): LoopRemoteBranchTarget[] {
+  runCommand: (
+    invocation: LoopRunCommandInvocation,
+  ) => LoopRunCommandResult | Promise<LoopRunCommandResult>,
+  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult | Promise<LoopRunCommandResult>,
+): Promise<LoopRemoteBranchTarget[]> {
   const targets: LoopRemoteBranchTarget[] = [];
   for (const candidate of candidates) {
     if (!candidate.enabled || !candidate.branchPrefix.startsWith(`loop/${candidate.id}/`)) {
       continue;
     }
-    const topLevel = runGit({ cwd: candidate.path, args: ["rev-parse", "--show-toplevel"] });
+    const topLevel = await runGit({ cwd: candidate.path, args: ["rev-parse", "--show-toplevel"] });
     if (
       topLevel.status !== 0 ||
       topLevel.stdout.trim() === "" ||
@@ -184,7 +189,7 @@ function configuredTargets(
     ) {
       continue;
     }
-    const repository = runCommand({
+    const repository = await runCommand({
       kind: "pr",
       command: githubCommandForAccount(candidate.account, "repo view --json nameWithOwner"),
       cwd: candidate.path,

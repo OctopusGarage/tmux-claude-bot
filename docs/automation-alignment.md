@@ -377,6 +377,23 @@ worktree dirtiness to the WorkOrder.
 If GitHub rejects auto-merge because the PR head is behind the base branch, the
 system gate must use GitHub's same-PR branch update mechanism and retry
 auto-merge before treating the finalization as failed.
+Remote-branch maintenance must use asynchronous subprocesses for configured
+repository discovery, Git-root checks, and every GitHub operation. Each command
+has a 15-second deadline and a 1 MiB combined output limit; expiry terminates
+only that command's process group and fails closed. Awaiting a network result
+must not block Control responses or keepalive timers. Re-read durable WorkOrder
+and active-lease ownership after remote observations and after the final SHA
+lookup, immediately before issuing DELETE; the initial tick snapshot cannot
+authorize deletion after an await.
+
+Control-socket actions use the shared action registry's immediate/queued policy
+and the shared dispatcher, matching chat adapters. Escape, interrupt, navigation,
+and other immediate actions do not wait behind an active text turn or acquire
+its 30-second queue-consumption deadline. CLI/TUI dangerous-action confirmation
+and dispatcher session/precondition checks remain authoritative. Text always
+uses prompt intake and the per-session queue, including its origin/conflict
+checks; action parity must never become a direct text-send shortcut.
+
 Bot-owned remote branches have a separate terminal lifecycle from local
 forensic worktrees. GitHub delete-on-merge is the normal path; Loop startup and
 a bounded 30-minute maintenance cadence reconcile configured
