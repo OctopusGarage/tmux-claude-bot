@@ -444,6 +444,10 @@ The generic Daily Task Audit repair dispatcher must exclude
 `project-recovery` records because that queue family is owned by the dedicated
 project-recovery admission path; one historical failure must not be dispatched
 through both paths.
+Pending-ledger imports must skip any durable task ID linked to a nonterminal
+`project-recovery` record, preserving its retry timing, attempts, lease, and
+WorkOrder ownership across repeated audit ticks. Terminal recovery records do
+not hold this import guard; unrelated task IDs remain eligible for normal import.
 If an open project-recovery record links only to terminal WorkOrders and no live
 WorkOrder remains for that project, its stale lease must be released before the
 next recovery admission pass; unknown active recoveries remain deferred.

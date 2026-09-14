@@ -533,6 +533,90 @@ describe("RepairCoordinator", () => {
     expect(coordinator.list().map((record) => record.linkedTaskIds[0])).toEqual(["open", "recent"]);
   });
 
+  describe("pending ledger import ownership", () => {
+    const ledgerRecord = (taskId: string) => ({
+      taskId,
+      source: "loop-engineering",
+      name: "tmux-claude-bot architecture",
+      status: "failed",
+      repairStatus: "pending",
+      failureKind: "dispatch-failed",
+      scheduledAt: 1_000,
+      updatedAt: 1_000,
+    });
+    const importContext = {
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/bot",
+      now: 2_000,
+    };
+    const recoveryInput = {
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/bot",
+      source: "project-recovery",
+      taskFamily: "active-delegated-task",
+      fingerprint: "invalid-final-summary",
+      taskId: "task-owned",
+      summary: "Recovery owns this task",
+      now: 1_000,
+    };
+
+    it.each(["pending", "leased", "running", "retry-wait"] as const)(
+      "preserves %s ownership across repeated import and reconciliation ticks",
+      (status) => {
+        const store = new InMemoryRepairQueueStore();
+        const coordinator = new RepairCoordinator(store);
+        const record = coordinator.enqueue(recoveryInput);
+        const owner = {
+          ...record,
+          status,
+          linkedTaskIds: ["task-owned", "task-linked"],
+          attempt: 1,
+          nextAttemptAt: 90_000,
+          leaseId: "recovery-lease",
+          leaseExpiresAt: 100_000,
+          workOrderId: "recovery-work-order",
+        };
+        store.set(owner.id, owner);
+
+        for (const now of [2_000, 3_000]) {
+          coordinator.reconcileDuplicateTaskIds(now);
+          expect(
+            coordinator.importPending([ledgerRecord("task-owned"), ledgerRecord("task-linked")], {
+              ...importContext,
+              now,
+            }),
+          ).toBe(0);
+          expect(coordinator.list()).toEqual([owner]);
+        }
+      },
+    );
+
+    it.each(["fixed", "blocked", "not-reproducible", "superseded", "dead-letter"] as const)(
+      "allows direct ledger import after a %s recovery owner",
+      (status) => {
+        const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+        const owner = coordinator.enqueue(recoveryInput);
+        coordinator.markTerminal(owner.id, status, 1_500);
+
+        expect(coordinator.importPending([ledgerRecord("task-owned")], importContext)).toBe(1);
+        expect(coordinator.list()).toHaveLength(2);
+        expect(coordinator.list()[0]).toMatchObject({ id: owner.id, status });
+      },
+    );
+
+    it.each([
+      { source: "project-recovery", taskId: "unrelated-task" },
+      { source: "runtime-guardian", taskId: "task-owned" },
+    ])("allows import with an unrelated owner %j", (control) => {
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+      const owner = coordinator.enqueue({ ...recoveryInput, ...control });
+
+      expect(coordinator.importPending([ledgerRecord("task-owned")], importContext)).toBe(1);
+      expect(coordinator.list()).toHaveLength(2);
+      expect(coordinator.list()[0]).toEqual(owner);
+    });
+  });
+
   it("imports bot-owned historical failures but does not claim unrelated projects", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const imported = coordinator.importPending(

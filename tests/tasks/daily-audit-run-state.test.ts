@@ -110,6 +110,44 @@ describe("daily audit run state", () => {
     );
   });
 
+  it("preserves retry-wait ownership across repeated audit reconciliation passes", () => {
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:owned-repair",
+      source: "loop-engineering",
+      name: "tmux-claude-bot architecture",
+      scheduledAt: 1_000,
+    });
+    ledger.fail("loop:owned-repair", { endedAt: 2_000, error: "dispatch-failed" });
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const record = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "active-delegated-task",
+      fingerprint: "invalid-final-summary",
+      taskId: "loop:owned-repair",
+      now: 3_000,
+    });
+    const owner = coordinator.releaseForRetry(record.id, 3_001);
+    const ledgerBefore = ledger.listAll();
+
+    for (const now of [4_000, 5_000]) {
+      reconcileDailyAuditRunState({
+        ledger,
+        coordinator,
+        now,
+        repoPath: "/repo/tmux-claude-bot",
+        reconcileRepairState: () => {},
+      });
+      expect(coordinator.list()).toEqual([owner]);
+      reconcileDailyAuditRepairQueue({ ledger, coordinator, now });
+      expect(coordinator.list()).toEqual([owner]);
+      expect(ledger.listAll()).toEqual(ledgerBefore);
+    }
+  });
+
   it("terminalizes pending ledger repairs when no open repair queue owner remains", () => {
     const ledger = new DailyTaskLedger();
     ledger.expect({
