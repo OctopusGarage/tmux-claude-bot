@@ -370,3 +370,76 @@ describe("control operation registry", () => {
     }
   });
 });
+
+describe("Control immediate action parity", () => {
+  it("interrupts a busy session through the shared dispatcher without queueing or expiring", async () => {
+    vi.useFakeTimers();
+    try {
+      const interrupt = vi.fn(async () => {});
+      const enqueue = vi.fn(() => "queued" as const);
+      const cancelQueued = vi.fn();
+      const send = vi.fn();
+      const deps = {
+        config: { projectSessionPrefix: "tmux_" },
+        bridge: { hasSession: vi.fn(async () => true) },
+        agent: { interrupt },
+        queue: { enqueue, cancelQueued },
+      } as unknown as HandlerDeps;
+      await handleControlRequest(
+        deps,
+        { id: 200, op: "control", session: "worker-a", action: "esc" },
+        send,
+      );
+      expect(interrupt).toHaveBeenCalledWith("worker-a");
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(send).toHaveBeenCalledWith({ id: 200, ok: true, data: { status: "received" } });
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({ event: "reply", session: "worker-a" }),
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(cancelQueued).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports immediate dispatch failures without queueing a later interrupt", async () => {
+    const enqueue = vi.fn();
+    const send = vi.fn();
+    const deps = {
+      config: {},
+      bridge: { hasSession: vi.fn(async () => true) },
+      agent: {
+        interrupt: vi.fn(async () => {
+          throw new Error("synthetic key failure");
+        }),
+      },
+      queue: { enqueue },
+    } as unknown as HandlerDeps;
+    await handleControlRequest(
+      deps,
+      { id: 201, op: "control", session: "worker-a", action: "esc" },
+      send,
+    );
+    expect(send).toHaveBeenCalledWith({ id: 201, ok: false, error: "synthetic key failure" });
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+});
+
+it("keeps context-reset preconditions at the shared dispatcher", async () => {
+  const sendKeys = vi.fn();
+  const enqueue = vi.fn();
+  const deps = {
+    config: {},
+    bridge: { hasSession: vi.fn(async () => true), sendKeys },
+    agent: { checkIfRunning: vi.fn(async () => false) },
+    queue: { enqueue },
+  } as unknown as HandlerDeps;
+  await handleControlRequest(
+    deps,
+    { id: 202, op: "control", session: "worker-a", action: "clear" },
+    vi.fn(),
+  );
+  expect(sendKeys).not.toHaveBeenCalled();
+  expect(enqueue).not.toHaveBeenCalled();
+});

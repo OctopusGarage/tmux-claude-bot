@@ -7,6 +7,9 @@ import {
   parseDelegateRequirement,
   startActiveDelegatedTask,
 } from "../../core/autopilot/delegated-task.js";
+import { getActionQueuePolicy } from "../../core/command/action-registry.js";
+import { isMessageAction } from "../../core/command/actions.js";
+import { executeMessage } from "../../core/command/dispatch.js";
 import { newMessageId } from "../../core/command/enqueue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
@@ -250,6 +253,27 @@ async function enqueueControl(
   opts: { origin?: "user" | "system" } = {},
 ): Promise<void> {
   const traceId = currentLogContext().traceId;
+  if (isMessageAction(action) && getActionQueuePolicy(action) === "immediate") {
+    const output = await executeMessage(
+      {
+        id: newMessageId(),
+        text: "",
+        chatId: "control",
+        channel: "control",
+        sessionName: session,
+        action,
+        origin: opts.origin ?? "user",
+        ephemeral: true,
+        ...(traceId !== undefined ? { traceId } : {}),
+        resolve: () => {},
+        reject: () => {},
+      },
+      deps,
+    );
+    ok({ status: "received" });
+    send({ event: "reply", session, output });
+    return;
+  }
   const origin = opts.origin ?? "user";
   const prepared =
     action === "text"

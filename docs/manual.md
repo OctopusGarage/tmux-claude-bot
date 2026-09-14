@@ -275,6 +275,11 @@ AI agent; need the bot running, all accept a project by name and `--json`):
 | `tcb mcp <observer\|home>` | run a role-scoped MCP server over stdio |
 | `tcb mcp install [--profile observer\|home]` | generate MCP profile descriptors in the Home Operator workspace |
 
+`tcb control` dispatches immediate actions such as `esc`, `interrupt`, and
+navigation keys even while that session is processing a queued prompt. Dangerous
+actions keep their confirmation requirement. `tcb send` still uses the session
+queue; it does not interrupt the current turn.
+
 `tcb notify` is for other local projects that need outbound alerts but do not need
 to receive chat messages. It talks to the already-running bot over the local control
 socket, so those projects do not need Telegram tokens, Feishu credentials, chat ids,

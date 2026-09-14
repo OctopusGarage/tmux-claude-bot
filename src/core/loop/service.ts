@@ -61,6 +61,7 @@ import {
   createLoopRemoteBranchMaintenance,
   type LoopRemoteBranchMaintenance,
 } from "./remote-branch-maintenance.js";
+import { runRemoteBranchCommand, runRemoteBranchGit } from "./remote-branch-process.js";
 import { writeLoopRunReport } from "./report.js";
 import { createRepositoryPullRequestGitHub } from "./repository-pr-github.js";
 import {
@@ -2057,8 +2058,8 @@ export async function startLoopEngineering(
     options.remoteBranchMaintenance ??
     createLoopRemoteBranchMaintenance({
       configFile: config.configFile,
-      runCommand: runShellCommand,
-      runGit: runGitCommand,
+      runCommand: runRemoteBranchCommand,
+      runGit: runRemoteBranchGit,
     });
   let remoteBranchReconciliationInFlight = false;
   const reconcileRemoteBranches = async (): Promise<void> => {

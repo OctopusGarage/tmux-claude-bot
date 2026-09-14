@@ -406,3 +406,39 @@ describe("Loop remote branch reconciliation", () => {
     expect(github.discover).toHaveBeenCalledWith(target, 25);
   });
 });
+
+describe("remote branch ownership across awaits", () => {
+  it("refreshes ownership after the second observation before deleting", async () => {
+    const current = observation();
+    let liveBranches = new Set<string>();
+    let observations = 0;
+    const deletion = vi.fn(async () => ({ ok: true, alreadyAbsent: false }));
+    const evidence = fakeEvidence();
+    const reconciler = createLoopRemoteBranchReconciler({
+      github: {
+        discover: async () => ({ defaultBranch: "main", branches: [{ branch: current.branch }] }),
+        observe: async () => {
+          await Promise.resolve();
+          if (++observations === 2) liveBranches = new Set([current.branch]);
+          return current;
+        },
+        delete: deletion,
+      },
+      evidence,
+      readOwnership: () => ({
+        liveBranches,
+        terminalBranches: new Set<string>(),
+        closedReasons: new Map(),
+      }),
+    });
+    const result = await reconciler.reconcile({
+      targets: [target],
+      liveBranches: new Set(),
+      closedReasons: new Map(),
+      now: 1000,
+    });
+    expect(deletion).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ deleted: 0, failed: 1 });
+    expect(evidence.calls).toEqual(["intent", "outcome:failed"]);
+  });
+});

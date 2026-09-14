@@ -39,6 +39,7 @@ export type LoopRemoteBranchGitHub = {
     target: LoopRemoteBranchTarget,
     branch: string,
     expectedSha: string,
+    revalidate?: () => boolean,
   ): Promise<{ ok: boolean; alreadyAbsent: boolean; reason?: string }>;
 };
 
@@ -140,9 +141,16 @@ export type LoopRemoteBranchReconciliationSummary = {
   failed: number;
 };
 
+export type LoopRemoteBranchOwnership = {
+  liveBranches: ReadonlySet<string>;
+  terminalBranches: ReadonlySet<string>;
+  closedReasons: ReadonlyMap<string, LoopRemoteBranchCloseReason>;
+};
+
 export function createLoopRemoteBranchReconciler(input: {
   github: LoopRemoteBranchGitHub;
   evidence: LoopRemoteBranchEvidenceWriter;
+  readOwnership?: () => LoopRemoteBranchOwnership;
 }): {
   reconcile(options: {
     targets: readonly LoopRemoteBranchTarget[];
@@ -164,6 +172,13 @@ export function createLoopRemoteBranchReconciler(input: {
       };
       const limit = options.limitPerRepository ?? 100;
       const terminalBranches = options.terminalBranches ?? new Set<string>();
+      const readOwnership =
+        input.readOwnership ??
+        (() => ({
+          liveBranches: options.liveBranches,
+          terminalBranches,
+          closedReasons: options.closedReasons,
+        }));
       for (const target of options.targets) {
         let branches: Array<{ branch: string }>;
         try {
@@ -184,9 +199,7 @@ export function createLoopRemoteBranchReconciler(input: {
             const plan = planLoopRemoteBranchCleanup({
               target,
               observation: initial,
-              liveBranches: options.liveBranches,
-              terminalBranches,
-              closedReasons: options.closedReasons,
+              ...readOwnership(),
             });
             if (plan.kind === "skip") {
               summary.skipped += 1;
@@ -224,9 +237,7 @@ export function createLoopRemoteBranchReconciler(input: {
             const currentPlan = planLoopRemoteBranchCleanup({
               target,
               observation: current,
-              liveBranches: options.liveBranches,
-              terminalBranches,
-              closedReasons: options.closedReasons,
+              ...readOwnership(),
             });
             if (
               current.sha !== initial.sha ||
@@ -241,7 +252,17 @@ export function createLoopRemoteBranchReconciler(input: {
               summary.failed += 1;
               continue;
             }
-            const deletion = await input.github.delete(target, branch, initial.sha);
+            const deletion = await input.github.delete(target, branch, initial.sha, () => {
+              const latestPlan = planLoopRemoteBranchCleanup({
+                target,
+                observation: current,
+                ...readOwnership(),
+              });
+              return (
+                latestPlan.kind === "delete" &&
+                latestPlan.pullRequestNumber === plan.pullRequestNumber
+              );
+            });
             if (!deletion.ok) {
               input.evidence.finish(intent.id, {
                 status: "failed",

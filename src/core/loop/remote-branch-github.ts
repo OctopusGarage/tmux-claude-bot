@@ -6,15 +6,17 @@ import type {
 } from "./remote-branch-reconciliation.js";
 import type { LoopRunCommandResult } from "./run.js";
 
-export type LoopRemoteBranchGitHubRun = (command: string) => LoopRunCommandResult;
+export type LoopRemoteBranchGitHubRun = (
+  command: string,
+) => LoopRunCommandResult | Promise<LoopRunCommandResult>;
 
 type JsonRecord = Record<string, unknown>;
 
 export function createLoopRemoteBranchGitHub(input: {
   run: LoopRemoteBranchGitHubRun;
 }): LoopRemoteBranchGitHub {
-  const runJson = (target: LoopRemoteBranchTarget, command: string): unknown => {
-    const result = input.run(githubCommandForAccount(target.account, command));
+  const runJson = async (target: LoopRemoteBranchTarget, command: string): Promise<unknown> => {
+    const result = await input.run(githubCommandForAccount(target.account, command));
     if (result.status !== 0) throw new Error(safeGitHubError(result));
     try {
       return JSON.parse(result.stdout) as unknown;
@@ -26,10 +28,10 @@ export function createLoopRemoteBranchGitHub(input: {
   return {
     discover: async (target, limit) => {
       assertTarget(target);
-      const repository = record(runJson(target, `api repos/${target.repository}`));
+      const repository = record(await runJson(target, `api repos/${target.repository}`));
       const prefix = `loop/${target.projectId}/`;
       const refs = array(
-        runJson(
+        await runJson(
           target,
           `api 'repos/${target.repository}/git/matching-refs/heads/${encodeURIComponent(prefix)}?per_page=${boundedLimit(limit)}'`,
         ),
@@ -49,7 +51,7 @@ export function createLoopRemoteBranchGitHub(input: {
       assertTarget(target);
       assertBranch(branch);
       const encodedBranch = encodeURIComponent(branch);
-      const refResult = input.run(
+      const refResult = await input.run(
         githubCommandForAccount(
           target.account,
           `api repos/${target.repository}/git/ref/heads/${encodedBranch}`,
@@ -64,12 +66,12 @@ export function createLoopRemoteBranchGitHub(input: {
         throw new Error("GitHub returned invalid JSON");
       }
       const branchData = record(
-        runJson(target, `api repos/${target.repository}/branches/${encodedBranch}`),
+        await runJson(target, `api repos/${target.repository}/branches/${encodedBranch}`),
       );
-      const repository = record(runJson(target, `api repos/${target.repository}`));
+      const repository = record(await runJson(target, `api repos/${target.repository}`));
       const owner = target.repository.split("/")[0] ?? "";
       const pulls = array(
-        runJson(
+        await runJson(
           target,
           `api 'repos/${target.repository}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=100'`,
         ),
@@ -82,7 +84,7 @@ export function createLoopRemoteBranchGitHub(input: {
       for (const pullRequest of pullRequests) {
         if (pullRequest.state !== "closed" || pullRequest.closedAt === undefined) continue;
         const comments = array(
-          runJson(
+          await runJson(
             target,
             `api 'repos/${target.repository}/issues/${pullRequest.number}/comments?per_page=100'`,
           ),
@@ -99,13 +101,13 @@ export function createLoopRemoteBranchGitHub(input: {
         pullRequests,
       } satisfies LoopRemoteBranchObservation;
     },
-    delete: async (target, branch, expectedSha) => {
+    delete: async (target, branch, expectedSha, revalidate) => {
       try {
         assertTarget(target);
         assertBranch(branch);
         assertSha(expectedSha);
         const encodedBranch = encodeURIComponent(branch);
-        const observed = input.run(
+        const observed = await input.run(
           githubCommandForAccount(
             target.account,
             `api repos/${target.repository}/git/ref/heads/${encodedBranch}`,
@@ -128,7 +130,14 @@ export function createLoopRemoteBranchGitHub(input: {
             reason: "GitHub branch SHA changed before deletion",
           };
         }
-        const result = input.run(
+        if (revalidate !== undefined && !revalidate()) {
+          return {
+            ok: false,
+            alreadyAbsent: false,
+            reason: "branch ownership changed before deletion",
+          };
+        }
+        const result = await input.run(
           githubCommandForAccount(
             target.account,
             `api --method DELETE repos/${target.repository}/git/refs/heads/${encodedBranch}`,
