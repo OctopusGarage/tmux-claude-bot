@@ -517,6 +517,14 @@ function shouldReconsiderBlockedRecovery(record: ScheduledTaskRecord): boolean {
   if (summary.includes("recovery classification: recovery attempt limit reached")) return false;
   if (summary.includes("recovery classification: dead-letter")) return false;
   if (
+    record.status === "missing" &&
+    summary.startsWith(
+      "recovery classification: needs-owner-decision; configured project is unavailable or ambiguous.",
+    )
+  )
+    return true;
+
+  if (
     summary.includes("recovery classification: needs-owner-decision") &&
     !isRecoverableConfiguredTargetSummary(summary)
   )

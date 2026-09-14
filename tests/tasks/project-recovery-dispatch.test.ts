@@ -48,6 +48,31 @@ describe("project recovery dispatch", () => {
     );
   });
 
+  it("retains configured workspace identity through the recovery delegator", async () => {
+    const delegate = createProjectRecoveryDelegator({} as never);
+    await dispatchProjectRecovery(
+      {
+        target: { kind: "workspace", id: "suite", name: "Suite", path: "/repo/suite" },
+        taskFamily: "bug-fix",
+        taskIds: ["workspace-failure"],
+        classification: { classification: "retryable", reason: "worker dispatch failed" },
+        evidence: [],
+      },
+      { projectSessionPrefix: "tmux_proj_", worktreeIsolation: "isolated", delegate },
+    );
+    expect(startActiveDelegatedTask).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        workspaceId: "suite",
+        resourceTrigger: "background",
+        worktreeIsolation: "isolated",
+        requirement: expect.stringContaining(
+          "coordination root is read-only and need not be a Git repository",
+        ),
+      }),
+    );
+  });
+
   it("uses a stable project lock key", () => {
     expect(
       projectRecoveryLockKey({ kind: "workspace", id: "geo", name: "Geo", path: "/repo/geo" }),

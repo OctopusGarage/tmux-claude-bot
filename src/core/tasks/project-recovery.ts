@@ -29,12 +29,18 @@ export type ConfiguredRecoveryTarget = {
   id: string;
   name: string;
   path: string;
+  repositoryPaths?: string[];
 };
 
 export type ConfiguredRecoveryConfig = {
   projects: Array<{ id: string; name: string; path: string }>;
   repositories: Array<{ id: string; name?: string; path: string }>;
-  workspaces: Array<{ id: string; name: string; root: string }>;
+  workspaces: Array<{
+    id: string;
+    name: string;
+    root: string;
+    repositories?: Array<{ path: string }>;
+  }>;
 };
 
 const MAX_RECOVERY_ATTEMPTS = 3;
@@ -103,7 +109,7 @@ export function classifyHistoricalFailure(
       reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
     };
   }
-  if (GENERIC_RETRYABLE_RE.test(evidence)) {
+  if (input.status === "missing" || GENERIC_RETRYABLE_RE.test(evidence)) {
     return {
       classification: "retryable",
       reason: evidence.includes("preflight")
@@ -159,6 +165,9 @@ export function resolveConfiguredRecoveryTarget(
       id: workspace.id,
       name: workspace.name,
       path: workspace.root,
+      repositoryPaths: (workspace.repositories ?? []).map((repository) =>
+        canonicalize(repository.path),
+      ),
     })),
   ];
   const explicitTargetIds = extractExplicitTargetIds(input.artifactText);

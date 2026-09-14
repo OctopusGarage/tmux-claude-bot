@@ -295,6 +295,8 @@ export async function startActiveDelegatedTask(
     session: string;
     requirement: string;
     opportunityIds?: string[];
+    /** Internal configured workspace identity for project recovery. */
+    workspaceId?: string;
     worktreeIsolation?: LoopWorktreeIsolationMode;
     resourceTrigger?: "operator" | "background" | "resource-repair";
     resourceForce?: boolean;
@@ -311,7 +313,19 @@ export async function startActiveDelegatedTask(
     };
   }
 
+  const workspacePolicy =
+    input.workspaceId === undefined
+      ? null
+      : findRecoveryWorkspacePolicy(deps, input.workspaceId, getPathBySession(input.session));
+  if (input.workspaceId !== undefined && workspacePolicy === null) {
+    return {
+      status: "blocked",
+      reason: "configured workspace is unavailable or does not match the recovery target",
+      showQueue: false,
+    };
+  }
   const agent =
+    workspacePolicy?.workspace.agent ??
     (await deps.configResolver.detectAgentKind?.(input.session).catch(() => null)) ??
     deps.config.loopEngineering.supervisor.agent;
   const coordinator = new AutonomousWorkCoordinator({ capacity: new AgentCapacityStore() });
@@ -397,19 +411,36 @@ export async function startActiveDelegatedTask(
     }
   }
 
-  const reservationKey = resolve(projectPath);
-  if (startingActiveDelegationProjects.has(reservationKey)) {
+  if (workspacePolicy !== null) {
+    for (const repository of workspacePolicy.workspace.repositories) {
+      const root = runGitCommand({ cwd: repository.path, args: ["rev-parse", "--show-toplevel"] });
+      if (root.status !== 0 || root.stdout.trim() !== resolve(repository.path)) {
+        return {
+          status: "blocked",
+          reason: `execution worktree isolation failed: configured workspace member ${repository.id} is not its expected Git root`,
+          showQueue: false,
+        };
+      }
+    }
+  }
+  const reservationKeys = [
+    projectPath,
+    ...(workspacePolicy?.workspace.repositories.map((repository) => repository.path) ?? []),
+  ].map((path) => resolve(path));
+  if (reservationKeys.some((key) => startingActiveDelegationProjects.has(key))) {
     return {
       status: "blocked",
       reason: "project already has active automation: active delegated task is being started",
       showQueue: true,
     };
   }
-  startingActiveDelegationProjects.add(reservationKey);
+  for (const key of reservationKeys) startingActiveDelegationProjects.add(key);
 
   try {
-    const conflict = findProjectAutomationConflict(projectPath);
-    if (conflict !== null) {
+    const conflict = reservationKeys
+      .map((path) => findProjectAutomationConflict(path))
+      .find((candidate) => candidate !== null);
+    if (conflict !== undefined) {
       return {
         status: "blocked",
         reason: `project already has active automation: ${conflict.taskKind} ${conflict.runId} (${conflict.status})`,
@@ -434,7 +465,8 @@ export async function startActiveDelegatedTask(
       }
     }
     const now = Date.now();
-    const projectId = projectIdForSession(input.session, projectPath);
+    const projectId =
+      workspacePolicy?.workspace.id ?? projectIdForSession(input.session, projectPath);
     const runId = input.trustedRunId ?? `${now}-${projectId}-active-delegate`;
     const projectPolicy = findLoopProjectPolicy(deps, projectPath);
     let workOrder = buildActiveDelegatedTaskWorkOrder({
@@ -455,6 +487,7 @@ export async function startActiveDelegatedTask(
           ? "autonomous"
           : "interactive"),
       ...(projectPolicy !== null ? { projectPolicy } : {}),
+      ...(workspacePolicy !== null ? { workspacePolicy } : {}),
     });
     const preparationFailures: string[] = [];
     workOrder = prepareLoopExecutionWorktrees({
@@ -471,6 +504,7 @@ export async function startActiveDelegatedTask(
       },
     });
     if (preparationFailures.length > 0) {
+      cleanupPreparedDelegatedWorktree(workOrder);
       return {
         status: "blocked",
         reason: `execution worktree isolation failed: ${preparationFailures.join("; ")}`,
@@ -592,7 +626,7 @@ export async function startActiveDelegatedTask(
       }
     }
   } finally {
-    startingActiveDelegationProjects.delete(reservationKey);
+    for (const key of reservationKeys) startingActiveDelegationProjects.delete(key);
   }
 }
 
@@ -841,6 +875,27 @@ function launchActiveDelegatedTask(
       }
     });
   return true;
+}
+
+function findRecoveryWorkspacePolicy(
+  deps: HandlerDeps,
+  workspaceId: string,
+  projectPath: string | null,
+) {
+  if (projectPath === null) return null;
+  try {
+    const config = parseLoopConfigYaml(
+      readFileSync(deps.config.loopEngineering.configFile, "utf8"),
+    );
+    const workspace = config.workspaces.find(
+      (candidate) =>
+        candidate.id === workspaceId && resolve(candidate.root) === resolve(projectPath),
+    );
+    return workspace === undefined ? null : { config, workspace };
+  } catch (err) {
+    log.warn("workspace recovery could not read configured workspace policy", { err });
+    return null;
+  }
 }
 
 function findLoopProjectPolicy(deps: HandlerDeps, projectPath: string): LoopProjectConfig | null {
@@ -1241,6 +1296,26 @@ function activeDelegatedAdmissionContext(deps: HandlerDeps) {
 }
 
 function cleanupPreparedDelegatedWorktree(workOrder: LoopWorkOrder): void {
+  if (workOrder.workspace !== undefined) {
+    for (const repository of workOrder.workspace.repositories) {
+      if (
+        repository.worktreeIsolation !== "isolated" ||
+        repository.sourcePath === undefined ||
+        repository.path === repository.sourcePath
+      )
+        continue;
+      const cleaned = cleanupLoopExecutionWorktree({
+        worktree: repository.path,
+        sourceWorktree: repository.sourcePath,
+        runGit: runGitCommand,
+      });
+      if (!cleaned)
+        log.warn("failed to clean prepared workspace member after delegation deferral", {
+          data: { runId: workOrder.id, repositoryId: repository.id },
+        });
+    }
+    return;
+  }
   if (
     workOrder.executionIsolation?.preparedBy !== "system-git-worktree" ||
     workOrder.executionIsolation.worktreeIsolation !== "isolated"

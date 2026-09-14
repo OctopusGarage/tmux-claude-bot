@@ -20,6 +20,65 @@ afterEach(() => {
 });
 
 describe("project recovery service", () => {
+  it.each([true, false])(
+    "validates member repositories for workspace recovery: %s",
+    async (valid) => {
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+      const dispatch = vi.fn(async () => ({
+        status: "queued" as const,
+        runId: "workspace-recovery",
+      }));
+      const verifyProjectPath = vi.fn(
+        (path: string) => path === "/repo/suite/api" || (valid && path === "/repo/suite/web"),
+      );
+      const result = await runProjectRecoveryPass({
+        now: 2_000,
+        records: [
+          {
+            taskId: "loop:workspace:suite:bug-fix:1",
+            source: "loop-engineering",
+            name: "suite workspace bug fix",
+            status: "missing",
+            summary:
+              "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. evidence points to a recoverable environment or orchestration failure",
+            scheduledAt: 1_000,
+            updatedAt: 1_500,
+            repairStatus: "blocked",
+          },
+        ],
+        config: {
+          projects: [],
+          repositories: [],
+          workspaces: [
+            {
+              id: "suite",
+              name: "Suite",
+              root: "/repo/suite",
+              repositories: [{ path: "/repo/suite/api" }, { path: "/repo/suite/web" }],
+            },
+          ],
+        },
+        coordinator,
+        dispatch,
+        verifyProjectPath,
+        canonicalize: (path) => path,
+        updateRepairStatus: vi.fn(),
+      });
+      expect(verifyProjectPath).not.toHaveBeenCalledWith("/repo/suite");
+      expect(result).toMatchObject({ dispatched: valid ? 1 : 0, unconfigured: valid ? 0 : 1 });
+      if (valid)
+        expect(dispatch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            target: expect.objectContaining({
+              kind: "workspace",
+              repositoryPaths: ["/repo/suite/api", "/repo/suite/web"],
+            }),
+          }),
+        );
+      else expect(dispatch).not.toHaveBeenCalled();
+    },
+  );
+
   it("uses WorkOrder evidence to recover active-delegate records for repository targets", async () => {
     const stateDir = join(tmpdir(), `project-recovery-work-order-${Date.now()}`);
     process.env.TCB_STATE_DIR = stateDir;

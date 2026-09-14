@@ -122,7 +122,13 @@ export async function runProjectRecoveryPass(input: {
       continue;
     }
     const target = resolveConfiguredRecoveryTarget(input.config, recoveryInput, input.canonicalize);
-    if (target === null || input.verifyProjectPath?.(target.path) === false) {
+    if (
+      target === null ||
+      (target.kind === "workspace"
+        ? !target.repositoryPaths?.length ||
+          target.repositoryPaths.some((path) => input.verifyProjectPath?.(path) === false)
+        : input.verifyProjectPath?.(target.path) === false)
+    ) {
       input.updateRepairStatus(
         record.taskId,
         "blocked",
@@ -267,7 +273,7 @@ export async function runProjectRecoveryPass(input: {
       taskId: records[0]?.taskId ?? target.id,
       source: records[0]?.source ?? "loop-engineering",
       name: records[0]?.name ?? target.id,
-      status: "failed",
+      status: records[0]?.status ?? "failed",
       summary: evidence.join(" "),
       artifactText: evidence.join(" "),
       attempt: 0,

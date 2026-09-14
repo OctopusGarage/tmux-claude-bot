@@ -1244,6 +1244,73 @@ prReview:
     );
   });
 
+  it("preserves workspace repository policies in active recovery requirements", () => {
+    const workspaceConfig = parseLoopConfigYaml(`
+projects: []
+workspaces:
+  - id: suite
+    name: Suite
+    root: /repo/suite
+    architecture:
+      goal: Improve suite architecture.
+    agent: codex
+    worktreeIsolation: isolated
+    allowedActions: [tests, docs]
+    blockedActions: [direct-model-api, broad-rewrite]
+    repositories:
+      - id: api
+        name: API
+        path: /repo/suite/api
+        role: backend
+        agent: claude
+        pullRequest:
+          enabled: true
+          base: release
+          switchBack: release
+          githubAccount: fixture-maintainer
+      - id: web
+        name: Web
+        path: /repo/suite/web
+        role: frontend
+        pullRequest:
+          enabled: true
+          base: dev
+          switchBack: dev
+`);
+    const workspace = workspaceConfig.workspaces[0];
+    if (!workspace) throw new Error("missing workspace fixture");
+    const order = buildActiveDelegatedTaskWorkOrder({
+      session: "tmux_proj_suite",
+      projectId: "suite",
+      projectName: "Suite",
+      projectPath: "/repo/suite",
+      agent: "codex",
+      requirement: "Recover the failed workspace task",
+      scheduledAt: 100,
+      runId: "100-suite-recovery",
+      projectSessionPrefix: "tmux_proj_",
+      workspacePolicy: { config: workspaceConfig, workspace },
+    });
+    expect(order.workspace?.repositories).toMatchObject([
+      {
+        id: "api",
+        agent: "claude",
+        pullRequest: { enabled: true, base: "release", githubAccount: "fixture-maintainer" },
+      },
+      { id: "web", agent: "codex", pullRequest: { enabled: true, base: "dev" } },
+    ]);
+    expect(order).toMatchObject({
+      task: { kind: "active-delegated-task", requirement: "Recover the failed workspace task" },
+      allowedActions: ["tests", "docs"],
+      blockedActions: ["direct-model-api", "broad-rewrite"],
+      executionIsolation: { worktreeIsolation: "isolated" },
+    });
+    const prompt = buildLoopSupervisorPrompt(order);
+    expect(prompt).toContain("Workspace coordination root: /repo/suite");
+    expect(prompt).toContain("fixture-maintainer");
+    expect(prompt).toContain("Recover the failed workspace task");
+  });
+
   it("renders a workspace architecture prompt for coordinated multi-repository work", () => {
     const workspaceConfig = parseLoopConfigYaml(`
 projects:

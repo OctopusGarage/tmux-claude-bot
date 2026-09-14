@@ -337,11 +337,12 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
   timeoutMs?: number;
   projectSessionPrefix?: string;
   projectPolicy?: LoopProjectConfig;
+  workspacePolicy?: { config: LoopConfig; workspace: LoopWorkspaceConfig };
   planning?: LoopWorkOrderPlanning;
   notificationMode?: "interactive" | "autonomous";
 }): LoopWorkOrder {
   const projectPolicy = input.projectPolicy;
-  return {
+  const delegated = {
     id: input.runId,
     scheduledAt: input.scheduledAt,
     task: {
@@ -408,6 +409,29 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
     },
     requiredFinalMarker: finalMarkerForWorkOrder(input.runId),
     finalSummaryPath: finalSummaryPathForWorkOrder(input.projectId, input.runId),
+  } satisfies LoopWorkOrder;
+  if (input.workspacePolicy === undefined) return delegated;
+  const workspace = buildLoopWorkspaceWorkOrder({
+    ...input.workspacePolicy,
+    scheduledAt: input.scheduledAt,
+    runId: input.runId,
+    ...(input.projectSessionPrefix === undefined
+      ? {}
+      : { projectSessionPrefix: input.projectSessionPrefix }),
+    jobKind: "workspace-architecture",
+  });
+  return {
+    ...delegated,
+    ...workspace,
+    task: delegated.task,
+    goal: input.requirement,
+    maxRounds: 1,
+    targetScore: 100,
+    runner: {
+      ...workspace.runner,
+      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+    },
+    notificationSession: input.session,
   };
 }
 

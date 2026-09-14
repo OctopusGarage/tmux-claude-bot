@@ -51,12 +51,14 @@ export function buildResourceGuardianRepairPrompt(input: {
 export function buildProjectRecoveryPrompt(input: {
   projectId: string;
   projectPath: string;
+  targetKind?: "project" | "repository" | "workspace";
   taskFamily: string;
   classification: string;
   reason: string;
   taskIds: string[];
   evidence: string[];
 }): string {
+  const workspace = input.targetKind === "workspace";
   const assessmentContractGuidance = hasAssessmentScoringContractEvidence([
     input.reason,
     ...input.evidence,
@@ -74,17 +76,21 @@ export function buildProjectRecoveryPrompt(input: {
   return [
     "Historical scheduled task recovery for a configured project.",
     `Project: ${input.projectId}`,
-    `Repository: ${input.projectPath}`,
+    `${workspace ? "Workspace coordination root" : "Repository"}: ${input.projectPath}`,
     `Task family: ${input.taskFamily}`,
     `Recovery classification: ${input.classification}`,
     `Classification reason: ${input.reason}`,
     "",
     "Scope:",
-    "- Work only in the configured project repository and its existing Loop worktree policy.",
+    workspace
+      ? "- Work only in the configured workspace member repositories. The coordination root is read-only and need not be a Git repository."
+      : "- Work only in the configured project repository and its existing Loop worktree policy.",
     "- Re-check the original evidence before editing; do not assume the historical failure is a code bug.",
     "- Do not resolve draft PR policy, merge conflicts, external CI/account failures, or design decisions by guessing.",
     "- If the blocker remains, report it as blocked and do not claim a fix.",
-    "- Reuse the project's configured agent, branch, verification profile, and PR policy.",
+    workspace
+      ? "- Preserve each member repository's configured agent, isolated worktree, branch, verification and PR policy from the WorkOrder."
+      : "- Reuse the project's configured agent, branch, verification profile, and PR policy.",
     "",
     "Original task ids that must receive a final report:",
     JSON.stringify(input.taskIds),
@@ -94,7 +100,9 @@ export function buildProjectRecoveryPrompt(input: {
     ...assessmentContractGuidance,
     "",
     "Required finalization:",
-    "- Verify the target worktree and branch before mutation.",
+    workspace
+      ? "- Verify each member repository's expected Git toplevel and branch before mutation; never use the coordination root as a repository."
+      : "- Verify the target worktree and branch before mutation.",
     "- Make the smallest justified repair only when the project caused the failure.",
     "- Run the configured deterministic verification gates.",
     "- Record classification, evidence, changes, verification, commit/PR state, and remaining blockers.",
