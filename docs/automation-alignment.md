@@ -343,9 +343,9 @@ Control-socket write failures are retryable transport failures and must fail
 the in-flight request promptly instead of waiting for the full request timeout.
 Server-side broken-pipe responses must be contained to the affected connection
 and must not leave command delivery ambiguous for automation recovery.
-Safe project-recovery dispatch deferrals remain immediately claimable in the
-Repair Coordinator queue; they must not be delayed until the original cron
-schedule fires again.
+Safe project-recovery dispatch deferrals remain pending in the Repair
+Coordinator queue and re-enter shared admission independently of the original
+cron schedule.
 An admission retry timestamp is a recheck clock, not permission to execute.
 Project Recovery bounds fresh admission deferrals to fifteen minutes and
 rechecks legacy longer deferrals only for never-dispatched pending records
@@ -621,9 +621,9 @@ Runtime Guardian repair admission deferrals caused by quiet hours, resource
 pressure, queue capacity, or active automation are diagnostic DEBUG evidence,
 not repeated WARN-level operator attention.
 System Self-Heal agent-sweep admission deferrals before WorkOrder creation use
-the same boundary: log the deferred attempt, but do not create a failed task
-ledger row or Repair Coordinator item until a sweep actually owns executable
-repair evidence.
+diagnostic logging while retaining a durable `failed/pending` ledger occurrence.
+Shared repair reconciliation owns subsequent queue admission. Do not hide a
+missed investigation as `not-needed`, or reserve a worker merely to record it.
 Daily Task Audit dashboard attention follows the same operator-attention
 boundary: current-window pending repairs caused only by transient admission
 deferrals remain visible in failed/repair-pending counts, but they do not create
