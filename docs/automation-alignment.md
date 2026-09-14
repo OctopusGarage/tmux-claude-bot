@@ -346,6 +346,11 @@ and must not leave command delivery ambiguous for automation recovery.
 Safe project-recovery dispatch deferrals remain immediately claimable in the
 Repair Coordinator queue; they must not be delayed until the original cron
 schedule fires again.
+An admission retry timestamp is a recheck clock, not permission to execute.
+Project Recovery bounds fresh admission deferrals to fifteen minutes and
+rechecks legacy longer deferrals only for never-dispatched pending records
+without lease or WorkOrder ownership. Execution retry backoff remains intact;
+every recheck still passes through normal capacity, power, and conflict gates.
 When a project already has any live WorkOrder, an open recovery remains pending
 and is deferred without claiming or incrementing its retry attempt; admission
 resumes after the live WorkOrder reaches a terminal state.

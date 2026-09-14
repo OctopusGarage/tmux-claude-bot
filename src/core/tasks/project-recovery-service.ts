@@ -18,6 +18,8 @@ import type { ScheduledTaskRecord, ScheduledTaskRepairStatus } from "./task-ledg
 
 type RecoveryRecord = ScheduledTaskRecord & { repairStatus: "pending" | "blocked" };
 
+const ADMISSION_RECHECK_MS = 15 * 60_000;
+
 export type ProjectRecoveryDispatchRequest = {
   target: ConfiguredRecoveryTarget;
   taskFamily: string;
@@ -236,6 +238,19 @@ export async function runProjectRecoveryPass(input: {
       input.now,
     );
     if (input.dispatch === undefined) continue;
+    // Legacy admission stored quota reset times without a bounded recheck. A
+    // never-dispatched pending record can safely re-enter the normal gates;
+    // execution retries and records carrying ownership must keep their clocks.
+    if (
+      queueRecord.status === "pending" &&
+      queueRecord.attempt === 0 &&
+      queueRecord.workOrderId === undefined &&
+      queueRecord.leaseId === undefined &&
+      queueRecord.leaseExpiresAt === undefined &&
+      queueRecord.nextAttemptAt > input.now + ADMISSION_RECHECK_MS
+    ) {
+      input.coordinator.releaseToQueue(queueRecord.id, input.now);
+    }
     const leaseId = `project-recovery:${input.now}:${target.id}`;
     const claimed = input.coordinator.claimIds([queueRecord.id], {
       now: input.now,
@@ -265,7 +280,11 @@ export async function runProjectRecoveryPass(input: {
       evidence,
     });
     if (dispatched.status === "blocked") {
-      input.coordinator.releaseToQueue(queueRecord.id, input.now, dispatched.retryAt);
+      input.coordinator.releaseToQueue(
+        queueRecord.id,
+        input.now,
+        Math.min(dispatched.retryAt ?? input.now, input.now + ADMISSION_RECHECK_MS),
+      );
       for (const record of records) {
         input.updateRepairStatus(
           record.taskId,
