@@ -16,6 +16,29 @@ const base: HistoricalRecoveryInput = {
 };
 
 describe("project recovery", () => {
+  it.each([
+    ["", 0, "retryable"],
+    ["PR requires a design decision", 0, "needs-owner-decision"],
+    ["external service unavailable", 0, "waiting-external"],
+    ["", 3, "dead-letter"],
+  ] as const)(
+    "classifies missing runs without losing stronger evidence: %s",
+    (artifactText, attempt, expected) => {
+      expect(
+        classifyHistoricalFailure({
+          taskId: "loop:suite:architecture:1",
+          source: "loop-engineering",
+          name: "suite architecture",
+          status: "missing",
+          summary:
+            "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. evidence points to a recoverable environment or orchestration failure",
+          artifactText,
+          attempt,
+        }).classification,
+      ).toBe(expected);
+    },
+  );
+
   it("classifies missing project tooling as retryable", () => {
     expect(
       classifyHistoricalFailure({

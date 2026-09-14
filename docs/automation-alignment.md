@@ -982,3 +982,10 @@ closure must defer to this policy. If a historical delegation ledger entry expir
 its retained, identity-matched WorkOrder and accepted completed system gate still
 allow reconciliation of linked automatic false closures. Another active delegation
 retains ownership of its queue.
+
+Missing schedule occurrences retain their retryable execution evidence even when a
+prior configuration check replaced their summary. The audit reconsiders the exact
+unavailable-target classification after configuration repair and validates the
+current target again. Explicit owner decisions, external waits, terminal recovery
+closures and retry exhaustion remain authoritative; missing status does not waive
+them. Tests cover the audit entry point and non-Git workspace parent recovery.

@@ -273,7 +273,7 @@ export async function runProjectRecoveryPass(input: {
       taskId: records[0]?.taskId ?? target.id,
       source: records[0]?.source ?? "loop-engineering",
       name: records[0]?.name ?? target.id,
-      status: "failed",
+      status: records[0]?.status ?? "failed",
       summary: evidence.join(" "),
       artifactText: evidence.join(" "),
       attempt: 0,

@@ -109,7 +109,7 @@ export function classifyHistoricalFailure(
       reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
     };
   }
-  if (GENERIC_RETRYABLE_RE.test(evidence)) {
+  if (input.status === "missing" || GENERIC_RETRYABLE_RE.test(evidence)) {
     return {
       classification: "retryable",
       reason: evidence.includes("preflight")

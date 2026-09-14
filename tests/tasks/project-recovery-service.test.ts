@@ -38,11 +38,12 @@ describe("project recovery service", () => {
             taskId: "loop:workspace:suite:bug-fix:1",
             source: "loop-engineering",
             name: "suite workspace bug fix",
-            status: "failed",
-            error: "worker dispatch failed",
+            status: "missing",
+            summary:
+              "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. evidence points to a recoverable environment or orchestration failure",
             scheduledAt: 1_000,
             updatedAt: 1_500,
-            repairStatus: "pending",
+            repairStatus: "blocked",
           },
         ],
         config: {
