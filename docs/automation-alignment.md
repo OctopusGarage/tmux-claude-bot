@@ -997,9 +997,18 @@ that invocation's completion evidence. A current response or rewritten regular
 file still passes through the existing summary contract and system gates.
 `tests/loop/delegation-continuation.test.ts` covers old summaries during partial
 revision, failure/timeout recovery, identical atomic rewrite and invalid fresh
-artifacts. Persisted queue restoration/attempt generations and other task-family
-rollout remain open in `docs/future/ralph-roadmap-progress.md`; this in-memory
-exclusion must not be described as a completed crash-recovery protocol.
+artifacts.
+
+Managed active-delegation queue entries persist an attempt ID and append-only
+prepared/started/settled records. Both live and restored queue probes use the
+persisted freshness exclusion. Restoration validates the contract, prompt and
+session, claims prepared attempts once, retains started/invalid attempts for
+reconciliation and drops settled attempts from replay. Regression coverage lives
+in `tests/loop/delegation-attempt.test.ts`. Records are transport evidence;
+cross-attempt generations, surviving-worker reconciliation, restored budgets,
+report-publication crash windows and other task families remain open in
+`docs/future/ralph-roadmap-progress.md`. This is not a completed crash-recovery
+protocol.
 
 ### Workspace recovery
 

@@ -10,8 +10,8 @@ not complete the roadmap. The baseline assessment remains
 | ID | Requirement | Current evidence / remaining proof | Status |
 | --- | --- | --- | --- |
 | R1 | Stable WorkOrder identity, complete acceptance items and durable checkpoint context | Pilot reader and handoff tests; broader family contracts still required under R8 | Pilot complete |
-| R2 | Current-attempt evidence and immutable iteration history | Freshness exclusion implemented for active delegation invocations; no immutable attempt journal or durable generation binding | Partial: invocation freshness |
-| R3 | Crash-window reconciliation and single execution ownership | Must cover before/after enqueue, commit, checkpoint, restored queue, stale generation and live native goal; existing leases alone are not completion proof | Open |
+| R2 | Current-attempt evidence and immutable iteration history | Freshness exclusion and append-only prepared/started/settled transport records bind queue IDs, contract, prompt and session; cross-attempt generation binding remains open | Partial: durable transport history |
+| R3 | Crash-window reconciliation and single execution ownership | Prepared queue restoration claims each attempt once; started/invalid records await reconciliation. Before/after enqueue, commit, checkpoint, stale generation and live native goal still need end-to-end proof | Partial |
 | R4 | Independent behavioral verification bound to contract and repository revision | Git facts are system-observed, tests remain agent-reported. Approved command or authoritative CI execution/evidence must gate every required item; never execute checkpoint-supplied commands | Open |
 | R5 | Shared policy, durable budgets and progress-based stopping | Pilot shared continuation/revision caps and absolute deadline pass; full transport accounting, repeated-evidence policy and parent/child budget proofs remain | Partial |
 | R6 | Operator progress, stop reasons, remaining allowance and safe pause/resume | Need command-backed controls and shared CLI/TUI/chat/MCP projections with documented lifecycle semantics, redacted paths and contract tests | Open |
@@ -45,3 +45,5 @@ not complete the roadmap. The baseline assessment remains
 The goal stays active until every requirement and end-to-end scenario has direct
 current-state evidence. No live user jobs, provider integrations, or remote pushes
 are implied by this implementation goal.
+
+- Durable transport history slice: append-only preparation, exclusive start claims, immutable settlement and freshness-aware live/restored queue probes. Prepared restoration validates prompt, session and contract; started/invalid attempts are retained for reconciliation. Full crash recovery and independent acceptance remain open. `npm run verify:local` passed, including coverage tests, type checks, dependency boundaries, lint and smoke.

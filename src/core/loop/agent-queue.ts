@@ -13,6 +13,13 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "../projects/sessionPathMap.js";
+import {
+  claimDelegationAttempt,
+  type DelegationAttempt,
+  prepareDelegationAttempt,
+  settleDelegationAttempt,
+} from "./delegation-attempt.js";
+import { readFreshSupervisorFinalSummary } from "./final-summary-freshness.js";
 import type {
   LoopAgentEvalInvocation,
   LoopAgentTaskInvocation,
@@ -31,7 +38,7 @@ import {
   restoredLoopSupervisorMessage,
   shouldDiscardRestoredLoopSupervisorMessage,
 } from "./supervisor-work-restore.js";
-import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
+import type { LoopWorkOrder } from "./work-order.js";
 
 const log = createLogger("loop.agent-queue");
 const DEFAULT_WORKER_FAILURE_RETAIN_MS = 72 * 60 * 60 * 1000;
@@ -296,9 +303,24 @@ async function enqueueLoopAgentPromptToSession(
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
 
+  const messageId = newMessageId();
+  let attempt: DelegationAttempt | undefined;
+  try {
+    attempt = prepareDelegationAttempt({
+      workOrder,
+      attemptId: messageId,
+      supervisorSession: sessionName,
+      prompt,
+      now: Date.now(),
+    });
+  } catch {
+    releaseFailureLease();
+    return { status: 1, stdout: "", stderr: "delegation attempt preparation failed" };
+  }
   return new Promise((resolve) => {
-    const messageId = newMessageId();
     let consumed = false;
+    let settled = false;
+    let ownsAttempt = true;
     let consumptionTimer: ReturnType<typeof setTimeout> | undefined;
     const abort = (): void => {
       // Cancellation can remove only not-yet-started queue items. In-flight
@@ -311,9 +333,20 @@ async function enqueueLoopAgentPromptToSession(
       if (consumptionTimer !== undefined) clearTimeout(consumptionTimer);
     };
     const settle = (result: LoopRunCommandResult): void => {
+      if (settled) return;
+      settled = true;
+      if (attempt !== undefined && signal?.aborted)
+        result = { status: 1, stdout: result.stdout, stderr: "loop supervisor task was cancelled" };
+      if (attempt !== undefined && ownsAttempt) {
+        try {
+          settleDelegationAttempt(workOrder, attempt, result, signal?.aborted ?? false, Date.now());
+        } catch {
+          result = { status: 1, stdout: "", stderr: "delegation attempt settlement failed" };
+        }
+      }
       signal?.removeEventListener("abort", abort);
       clearConsumptionTimer();
-      if (result.status !== 0) releaseFailureLease();
+      if (result.status !== 0 && ownsAttempt) releaseFailureLease();
       resolve(result);
     };
     const verdict = deps.queue.enqueue({
@@ -328,12 +361,34 @@ async function enqueueLoopAgentPromptToSession(
       ...(timeoutMs !== undefined ? { maxWaitDoneTotalMs: timeoutMs } : {}),
       doneProbe: (output) =>
         output.includes(workOrder.requiredFinalMarker) ||
-        parseSupervisorFinalSummaryFile(workOrder).ok,
-      controlRestore: loopSupervisorControlRestore(workOrder, sessionName, Date.now()),
+        readFreshSupervisorFinalSummary(workOrder, attempt?.freshness).ok,
+      controlRestore: loopSupervisorControlRestore(
+        workOrder,
+        sessionName,
+        Date.now(),
+        attempt?.attemptId,
+      ),
       started: () => {
         if (deferLeaseUntilConsumption) {
           const lease = acquireLease();
           if (lease.status === "unavailable") return false;
+        }
+        if (attempt !== undefined) {
+          let claimed = false;
+          try {
+            claimed = claimDelegationAttempt(workOrder, attempt, Date.now());
+          } catch {
+            /* Reconciliation owns an uncertain claim. */
+          }
+          if (!claimed) {
+            ownsAttempt = false;
+            deps.queue.cancelQueued(
+              sessionName,
+              messageId,
+              "delegation attempt requires reconciliation",
+            );
+            return false;
+          }
         }
         consumed = true;
         clearConsumptionTimer();

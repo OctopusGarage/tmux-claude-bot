@@ -1407,7 +1407,24 @@ contract as normal final summaries. It does not execute artifact content. The
 exclusion travels with the in-memory run result to synchronous and asynchronous
 transport recovery. Other task families keep their existing parsing behavior.
 
-This closes stale-file reuse within an execution invocation. It does not yet
-supply an immutable attempt ID or journal across a bot restart, authenticate which
-worker wrote a new file, or settle crash/late-completion ownership. Those remain
-explicit requirements in the [delivery ledger](future/ralph-roadmap-progress.md).
+### Durable delegation transport attempts
+
+Managed single-repository delegation dispatch writes append-only records under
+`iteration-attempts/<queue-message-id>/`: `prepared.json` before enqueue,
+`started.json` before execution, and `settled.json` after transport completion.
+Preparation binds the WorkOrder contract, worker session, exact prompt hash,
+pre-dispatch summary version and checkpoint snapshot. Settlement preserves the
+transport result and subsequent checkpoint/summary snapshots. Atomic exclusive
+publication prevents a second claim or replacement of the first settlement.
+
+Persisted control messages retain the attempt ID. Restoration permits only a
+matching prepared attempt; started or invalid records await reconciliation, and
+settled attempts are excluded from replay. Live and restored completion probes
+exclude the recorded pre-existing summary. Older queue records keep their legacy
+restoration behavior.
+
+These records describe transport, not independent acceptance. They do not prove
+which worker wrote a new summary or prevent competing attempts with different
+IDs. Cross-attempt ownership, surviving-worker reconciliation, restored budgets
+and report-publication crash windows remain explicit requirements in the
+[delivery ledger](future/ralph-roadmap-progress.md).

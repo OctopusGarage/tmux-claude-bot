@@ -12,6 +12,7 @@ export const LOOP_RUN_ARTIFACTS = {
   evalReport: "eval-report.json",
   handoffJson: "handoff.json",
   handoffMarkdown: "handoff.md",
+  iterationAttempts: "iteration-attempts",
   iterationCheckpoint: "iteration-checkpoint.json",
   checkpointRequired: "checkpoint-required.json",
   delegationBudget: "delegation-budget.json",
