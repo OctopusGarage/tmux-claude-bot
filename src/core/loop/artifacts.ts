@@ -17,6 +17,7 @@ export const LOOP_RUN_ARTIFACTS = {
   checkpointRequired: "checkpoint-required.json",
   delegationBudget: "delegation-budget.json",
   systemGate: "system-gate.json",
+  commandVerifications: "command-verifications",
   workOrder: "work-order.json",
   workOrderState: "work-order-state.json",
   opportunities: "opportunities.json",

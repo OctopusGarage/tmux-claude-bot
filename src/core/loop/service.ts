@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import type { HostPowerConfig, WorktreeIsolationMode } from "../../shared/types.js";
+import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { createWarningCoalescer } from "../../shared/utils/log-coalescer.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { paneHasActiveTurn, paneNeedsConfirm } from "../agents/runner-base.js";
@@ -55,6 +56,7 @@ import {
   supervisorFinalStatusToRunStatus,
 } from "./final-summary-recovery.js";
 import { githubCommandForAccount } from "./github-auth.js";
+import { buildIterationCheckpointTemplate } from "./iteration-checkpoint.js";
 import {
   type LoopPreDispatchAssessment,
   resolveLoopPreDispatchAssessment,
@@ -2732,6 +2734,94 @@ export function runSupervisedSystemGateOutcome(input: {
         output: [input.result.output, reason].join("\n"),
       },
     };
+  }
+  if (input.workOrder.eval?.command !== undefined) {
+    const failures: string[] = [];
+    const root = input.runGit?.({
+      cwd: input.workOrder.projectPath,
+      args: ["rev-parse", "--show-toplevel"],
+    });
+    const head = input.runGit?.({ cwd: input.workOrder.projectPath, args: ["rev-parse", "HEAD"] });
+    const status = input.runGit?.({
+      cwd: input.workOrder.projectPath,
+      args: ["status", "--porcelain"],
+    });
+    const expectedRoot = resolve(input.workOrder.projectPath);
+    if (
+      !input.runGit ||
+      root?.status !== 0 ||
+      resolve((root?.stdout ?? "").trim()) !== expectedRoot
+    )
+      failures.push("independent verification repository mismatch");
+    if (head?.status !== 0 || (head?.stdout ?? "").trim() === "")
+      failures.push("independent verification revision unavailable");
+    if (status?.status !== 0 || (status?.stdout ?? "").trim() !== "")
+      failures.push("independent verification worktree is dirty before command");
+    if (failures.length === 0) {
+      const command = input.runCommand({
+        kind: "eval",
+        command: input.workOrder.eval.command,
+        cwd: input.workOrder.projectPath,
+        env: {},
+      });
+      let parsed: { passed?: unknown; score?: unknown } | undefined;
+      try {
+        parsed = JSON.parse(command.stdout) as { passed?: unknown; score?: unknown };
+      } catch {
+        /* invalid output */
+      }
+      const score = typeof parsed?.score === "number" ? parsed.score : undefined;
+      if (
+        command.status !== 0 ||
+        parsed?.passed !== true ||
+        (input.workOrder.eval.minScore !== undefined &&
+          (score === undefined || score < input.workOrder.eval.minScore))
+      )
+        failures.push("independent evaluation command failed");
+      const after = input.runGit?.({
+        cwd: input.workOrder.projectPath,
+        args: ["rev-parse", "HEAD"],
+      });
+      const afterStatus = input.runGit?.({
+        cwd: input.workOrder.projectPath,
+        args: ["status", "--porcelain"],
+      });
+      if ((after?.stdout ?? "").trim() !== (head?.stdout ?? "").trim())
+        failures.push("independent verification revision changed");
+      if ((afterStatus?.stdout ?? "").trim() !== "")
+        failures.push("independent verification worktree changed");
+      const record = {
+        schemaVersion: 1,
+        source: "system-command",
+        workOrderId: input.workOrder.id,
+        contractHash: buildIterationCheckpointTemplate(input.workOrder).contractHash,
+        revision: (head?.stdout ?? "").trim(),
+        commandHash: createHash("sha256").update(input.workOrder.eval.command).digest("hex"),
+        exitStatus: command.status,
+        passed: parsed?.passed === true,
+        score: score ?? null,
+      };
+      const dir = `${dirname(input.workOrder.finalSummaryPath ?? "")}/command-verifications`;
+      mkdirSync(dir, { recursive: true });
+      writeFileAtomicSync(`${dir}/${Date.now()}.json`, JSON.stringify(record, null, 2));
+    }
+    if (failures.length > 0) {
+      const reason = failures.join("; ");
+      return {
+        result: {
+          status: "supervisor-failed",
+          summary: {
+            ...input.result.summary,
+            status: "failed",
+            finalVerification: "failed",
+            followUps: [...input.result.summary.followUps, reason],
+          },
+          output: `${input.result.output}\n${reason}`,
+        },
+        failures,
+        evidence: [...checkpointGate.evidence, ...failures],
+      };
+    }
   }
   const failures: string[] = [];
   const evidence: string[] = [...checkpointGate.evidence];

@@ -1452,3 +1452,4 @@ attempts; it does not reconcile surviving workers or prove system acceptance.
 Interrupted reservations, restored budgets, legacy-history migration, competing
 acceptance controllers and crashes during report publication remain requirements in the
 [delivery ledger](future/ralph-roadmap-progress.md).
+Configured `eval.command` checks now run as independent system verification after checkpoint acceptance. The command is bound to the WorkOrder contract and Git revision, requires a clean repository before and after execution, and writes an immutable verification artifact. Agent-reported evaluation text cannot substitute for this evidence.

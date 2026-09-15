@@ -1077,3 +1077,4 @@ unavailable-target classification after configuration repair and validates the
 current target again. Explicit owner decisions, external waits, terminal recovery
 closures and retry exhaustion remain authoritative; missing status does not waive
 them. Tests cover the audit entry point and non-Git workspace parent recovery.
+System acceptance executes configured deterministic evaluation commands independently and records revision-bound evidence; supervisor summaries remain advisory for that gate.

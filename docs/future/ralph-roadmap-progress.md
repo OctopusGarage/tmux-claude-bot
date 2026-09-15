@@ -61,3 +61,6 @@ open under R3/R4. Independent behavioral verification is still required under R4
 The goal stays active until every requirement and end-to-end scenario has direct
 current-state evidence. No live user jobs, provider integrations, or remote pushes
 are implied by this implementation goal.
+### 2026-09-15 slice
+
+Configured `eval.command` now executes independently during system acceptance with repository root, clean-worktree, and revision fencing. Results are stored as contract-bound command verification artifacts. Broader CI and task-family evidence remain open.
