@@ -42,6 +42,7 @@ import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 import { LoopBacklogStore } from "./backlog.js";
 import { checkpointAcceptanceGate } from "./checkpoint-acceptance.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
+import { readDelegationRecovery } from "./delegation-recovery.js";
 import {
   cleanupLoopExecutionWorktree,
   isBotOwnedLoopExecutionWorktree,
@@ -2350,30 +2351,41 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
       busyWorkOrderIds.add(record.workOrder.id);
       continue;
     }
+    const attempt = readDelegationRecovery(record.workOrder);
+    if (
+      attempt.kind === "pending" ||
+      (attempt.kind === "settled" && attempt.supervisorSession !== record.state.supervisorSession)
+    ) {
+      busyWorkOrderIds.add(record.workOrder.id);
+      continue;
+    }
     const parsed = parseSupervisorFinalSummaryFile(record.workOrder);
     const staleDispatching =
       staleDispatchingIds.has(record.workOrder.id) &&
       record.state.status === "dispatching" &&
       !parsed.ok;
-    if (!parsed.ok && !staleDispatching) continue;
+    if (attempt.kind !== "settled" && !parsed.ok && !staleDispatching) continue;
     const project = systemGateProjectForRecoveredWorkOrder(config, record.workOrder);
     checked++;
 
-    const recoveredResult: LoopSupervisedRunResult | undefined = staleDispatching
-      ? {
-          status: "dispatch-failed",
-          reason: "dispatch reservation expired before a supervisor worker lease was acquired",
-          output: "dispatch reservation expired before a supervisor worker lease was acquired",
-        }
-      : parsed.ok
-        ? {
-            status: supervisorFinalStatusToRunStatus(parsed.summary.status),
-            summary: parsed.summary,
-            output: `recovered supervisor final summary from ${
-              record.workOrder.finalSummaryPath ?? "work order state"
-            }`,
-          }
-        : undefined;
+    const recoveredResult: LoopSupervisedRunResult | undefined =
+      attempt.kind === "settled"
+        ? attempt.result
+        : staleDispatching
+          ? {
+              status: "dispatch-failed",
+              reason: "dispatch reservation expired before a supervisor worker lease was acquired",
+              output: "dispatch reservation expired before a supervisor worker lease was acquired",
+            }
+          : parsed.ok
+            ? {
+                status: supervisorFinalStatusToRunStatus(parsed.summary.status),
+                summary: parsed.summary,
+                output: `recovered supervisor final summary from ${
+                  record.workOrder.finalSummaryPath ?? "work order state"
+                }`,
+              }
+            : undefined;
     if (recoveredResult === undefined) continue;
     let gate = runSupervisedSystemGateOutcome({
       project,

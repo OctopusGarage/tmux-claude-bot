@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } fr
 import { dirname, join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath, loopRunDir, loopRunsRoot } from "./artifacts.js";
+import { readDelegationRecovery } from "./delegation-recovery.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
@@ -231,36 +232,43 @@ export function readLoopSupervisorWorkOrderRegistry(
   now = Date.now(),
 ): LoopSupervisorWorkOrderRegistry {
   const records = readLoopSupervisorWorkOrderRecords();
+  const recovery = new Map(
+    records.map((record) => [record, readDelegationRecovery(record.workOrder)]),
+  );
+  const hasCompletion = (record: UnfinishedLoopSupervisorWorkOrder): boolean => {
+    const candidate = recovery.get(record);
+    return (
+      candidate?.kind === "settled" ||
+      (candidate?.kind === "legacy" && parseSupervisorFinalSummaryFile(record.workOrder).ok)
+    );
+  };
+  const canProgress = (record: UnfinishedLoopSupervisorWorkOrder): boolean =>
+    recovery.get(record)?.kind !== "legacy" ||
+    unfinishedWorkOrderCanStillProgress(record.state, record.workOrder, now);
+
   const terminal = records.filter(({ state }) => TERMINAL_STATES.has(state.status));
   const nonTerminal = records.filter(({ state }) => !TERMINAL_STATES.has(state.status));
   return {
     records,
     terminal,
-    unfinished: nonTerminal.filter(({ state, workOrder }) =>
-      unfinishedWorkOrderCanStillProgress(state, workOrder, now),
-    ),
-    recoverableFinalSummary: nonTerminal.filter(
-      ({ workOrder }) => parseSupervisorFinalSummaryFile(workOrder).ok,
-    ),
+    unfinished: nonTerminal.filter(canProgress),
+    recoverableFinalSummary: nonTerminal.filter(hasCompletion),
     recoverableFailed: records.filter(
-      ({ state, workOrder }) =>
-        state.status === "failed" &&
-        state.resultStatus !== undefined &&
-        RECOVERABLE_FAILED_RESULTS.has(state.resultStatus) &&
-        parseSupervisorFinalSummaryFile(workOrder).ok &&
-        !existsSync(loopRunArtifactPath(state.projectId, state.runId, "systemGate")),
+      (record) =>
+        record.state.status === "failed" &&
+        record.state.resultStatus !== undefined &&
+        RECOVERABLE_FAILED_RESULTS.has(record.state.resultStatus) &&
+        hasCompletion(record) &&
+        !existsSync(loopRunArtifactPath(record.state.projectId, record.state.runId, "systemGate")),
     ),
-    abandoned: nonTerminal.filter(
-      ({ state, workOrder }) =>
-        !parseSupervisorFinalSummaryFile(workOrder).ok &&
-        !unfinishedWorkOrderCanStillProgress(state, workOrder, now),
-    ),
+    abandoned: nonTerminal.filter((record) => !hasCompletion(record) && !canProgress(record)),
     staleDispatching: records.filter(
-      ({ state }) =>
-        state.status === "dispatching" &&
-        !hasFinalSummaryFileForState(state) &&
-        now - state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS &&
-        now - state.updatedAt <= STALE_UNFINISHED_RESERVATION_MS,
+      (record) =>
+        recovery.get(record)?.kind === "legacy" &&
+        record.state.status === "dispatching" &&
+        !hasFinalSummaryFileForState(record.state) &&
+        now - record.state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS &&
+        now - record.state.updatedAt <= STALE_UNFINISHED_RESERVATION_MS,
     ),
   };
 }

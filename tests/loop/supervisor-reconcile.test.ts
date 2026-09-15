@@ -4,6 +4,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentCapacityStore } from "../../src/core/automation/capacity-store.js";
 import { autonomousCapacityLeaseId } from "../../src/core/automation/coordinator.js";
+import {
+  claimDelegationAttempt,
+  prepareDelegationAttempt,
+  settleDelegationAttempt,
+} from "../../src/core/loop/delegation-attempt.js";
+import {
+  buildIterationCheckpointTemplate,
+  iterationCheckpointPath,
+} from "../../src/core/loop/iteration-checkpoint.js";
 import { listLoopReports } from "../../src/core/loop/report.js";
 import {
   reconcileAutonomousCapacityLeases,
@@ -17,6 +26,10 @@ import {
   readLoopSupervisorWorkOrderRegistry,
   writeLoopSupervisorWorkOrderState,
 } from "../../src/core/loop/supervisor-state.js";
+import {
+  loopSupervisorControlRestore,
+  restoredLoopSupervisorMessage,
+} from "../../src/core/loop/supervisor-work-restore.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
@@ -165,6 +178,155 @@ function writeRecoverableFailedRun(stateDir: string, order: LoopWorkOrder): stri
 }
 
 describe("loop supervisor work order reconciliation", () => {
+  function journalFixture() {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-journal-reconcile-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectPath = mkdtempSync(join(tmpdir(), "tcb-journal-project-"));
+    const order = activeDelegatedWorkOrder(stateDir, projectPath);
+    const runDir = writeUnfinishedRun(stateDir, order);
+    rmSync(order.finalSummaryPath ?? "", { force: true });
+    const prepared = prepareDelegationAttempt({
+      workOrder: order,
+      attemptId: "attempt-1",
+      supervisorSession: "tmux_proj_loop-supervisor",
+      prompt: "Finish",
+      now: 1000,
+    });
+    if (prepared === undefined) throw new Error("expected attempt");
+    const summary = {
+      status: "completed",
+      projectId: "hub",
+      actionsTaken: ["current attempt"],
+      delegatedTasks: [],
+      finalVerification: "passed",
+      commits: [],
+      followUps: [],
+    };
+    const output = `${order.requiredFinalMarker}\n${JSON.stringify(summary)}`;
+    const reconcile = () =>
+      reconcileLoopSupervisorWorkOrders({
+        configFile: writeConfig(projectPath),
+        now: 3000,
+        runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      });
+    return { order, runDir, prepared, summary, output, reconcile };
+  }
+
+  it("does not reconcile a summary while its journaled attempt still owns execution", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1500);
+    writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
+    expect(await f.reconcile()).toMatchObject({ recovered: 0 });
+    expect(listLoopReports()).toEqual([]);
+    expect(readLoopSupervisorWorkOrderRegistry(3000).unfinished).toHaveLength(1);
+  });
+
+  it("routes restored completion through checkpoint acceptance before publishing a report", async () => {
+    const f = journalFixture();
+    const message = restoredLoopSupervisorMessage({
+      id: f.prepared.attemptId,
+      text: "Finish",
+      chatId: "loop-engineering",
+      channel: "control",
+      sessionName: "tmux_proj_loop-supervisor",
+      action: "text",
+      controlRestore: loopSupervisorControlRestore(
+        f.order,
+        "tmux_proj_loop-supervisor",
+        1000,
+        f.prepared.attemptId,
+      ),
+    });
+    expect(message?.started?.()).toBe(true);
+    writeFileSync(
+      iterationCheckpointPath(f.order) ?? "",
+      JSON.stringify(buildIterationCheckpointTemplate(f.order)),
+    );
+    message?.resolve(f.output);
+    expect(listLoopReports()).toEqual([]);
+    expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 1 });
+    expect(listLoopReports()).toEqual([expect.objectContaining({ status: "failed" })]);
+    expect(
+      JSON.parse(readFileSync(join(f.runDir, "system-gate.json"), "utf8")).failures.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("recovers a frozen stdout summary after settlement without a final-summary file or callback", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1500);
+    settleDelegationAttempt(
+      f.order,
+      f.prepared,
+      { status: 0, stdout: f.output, stderr: "" },
+      false,
+      2000,
+      true,
+    );
+    expect(existsSync(f.order.finalSummaryPath ?? "")).toBe(false);
+    expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 0 });
+    expect(listLoopReports()).toEqual([expect.objectContaining({ status: "passed" })]);
+    expect(existsSync(join(f.runDir, "system-gate.json"))).toBe(true);
+    expect(await f.reconcile()).toMatchObject({ recovered: 0 });
+  });
+
+  it("ignores a later mutable summary when the settled attempt has frozen evidence", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1500);
+    settleDelegationAttempt(
+      f.order,
+      f.prepared,
+      { status: 0, stdout: f.output, stderr: "" },
+      false,
+      2000,
+      true,
+    );
+    writeFileSync(
+      f.order.finalSummaryPath ?? "",
+      JSON.stringify({ ...f.summary, status: "failed", finalVerification: "failed" }),
+    );
+    expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 0 });
+    expect(listLoopReports()).toEqual([expect.objectContaining({ status: "passed" })]);
+  });
+
+  it.each([false, true])(
+    "does not recover a successful file over failed transport (cancelled: %s)",
+    async (cancelled) => {
+      const f = journalFixture();
+      claimDelegationAttempt(f.order, f.prepared, 1500);
+      writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
+      settleDelegationAttempt(
+        f.order,
+        f.prepared,
+        { status: 1, stdout: f.output, stderr: "interrupted" },
+        cancelled,
+        2000,
+        true,
+      );
+      expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 1 });
+      expect(readLoopSupervisorWorkOrderRegistry(3000).terminal[0]?.state.status).toBe(
+        cancelled ? "cancelled" : "failed",
+      );
+    },
+  );
+
+  it("rejects a corrupt frozen summary instead of falling back to a mutable file", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1500);
+    settleDelegationAttempt(
+      f.order,
+      f.prepared,
+      { status: 0, stdout: f.output, stderr: "" },
+      false,
+      2000,
+      true,
+    );
+    const path = join(f.runDir, "iteration-attempts", f.prepared.attemptId, "settled.json");
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...record, finalSummary: "{" }));
+    writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
+    expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 1 });
+  });
+
   it("clears stale terminal artifacts when an active delegated work order is relaunched", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-"));
     process.env.TCB_STATE_DIR = stateDir;

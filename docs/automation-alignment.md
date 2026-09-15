@@ -1016,6 +1016,17 @@ other task families remain open in
 `docs/future/ralph-roadmap-progress.md`. This is not a completed crash-recovery
 protocol.
 
+For journaled delegations, restored queue callbacks must not directly publish
+reports or backlog entries. The shared reconciliation controller consumes the
+current settled attempt's frozen summary and invokes the normal system gate
+before publication. Registry classification retains unsettled/invalid ownership
+and recognizes settled stdout-only evidence, including recoverable failed state.
+Mutable final files cannot replace failed, cancelled or corrupt frozen evidence.
+`tests/loop/supervisor-reconcile.test.ts` covers this acceptance path, pending
+checkpoint rejection, lost callbacks and repeated reconciliation. Legacy queues
+without attempt IDs still require a separate rollout; publication transaction
+and concurrent acceptance ownership remain open.
+
 ### Workspace recovery
 
 Workspace recovery remains a known integration gap: generic Project Recovery

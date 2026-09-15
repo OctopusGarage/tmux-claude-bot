@@ -5,6 +5,10 @@ import { z } from "zod";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 import {
+  parseSupervisorFinalSummary,
+  parseSupervisorFinalSummaryJson,
+} from "./final-summary-contract.js";
+import {
   captureFinalSummaryFreshness,
   readFreshSupervisorFinalSummary,
 } from "./final-summary-freshness.js";
@@ -227,6 +231,39 @@ export function readDelegationAttempt(
   }
 }
 
+/** Read the current owner, distinguishing legacy runs from damaged journal state. */
+export function readCurrentDelegationAttempt(
+  workOrder: LoopWorkOrder,
+): DelegationAttemptRead | { phase: "absent" } {
+  if (iterationCheckpointPath(workOrder) === null) return { phase: "absent" };
+  try {
+    lstatSync(dirname(attemptDirectory(workOrder, "unused")));
+  } catch (error) {
+    return { phase: missing(error) ? "absent" : "invalid" };
+  }
+  try {
+    return readOwnership(workOrder).current ?? { phase: "absent" };
+  } catch {
+    return { phase: "invalid" };
+  }
+}
+
+function settlementSummary(
+  workOrder: LoopWorkOrder,
+  prepared: DelegationAttempt,
+  result: LoopRunCommandResult,
+) {
+  const file = readFreshSupervisorFinalSummary(workOrder, prepared.freshness);
+  if (file.ok) return file;
+  const output = parseSupervisorFinalSummary(
+    [result.stdout, result.stderr].filter(Boolean).join("\n"),
+    workOrder.id,
+  );
+  return output.ok
+    ? parseSupervisorFinalSummaryJson(workOrder, JSON.stringify(output.summary))
+    : output;
+}
+
 export function claimDelegationAttempt(
   workOrder: LoopWorkOrder,
   prepared: DelegationAttempt,
@@ -276,7 +313,7 @@ export function settleDelegationAttempt(
       cancelled,
       output: [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-16_000),
       checkpoint: JSON.stringify(readIterationCheckpoint(workOrder)),
-      finalSummary: JSON.stringify(readFreshSupervisorFinalSummary(workOrder, prepared.freshness)),
+      finalSummary: JSON.stringify(settlementSummary(workOrder, prepared, result)),
     }),
   );
 }

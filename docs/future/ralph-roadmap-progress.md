@@ -45,16 +45,18 @@ not complete the roadmap. The baseline assessment remains
 
 - Durable transport history slice: append-only preparation, exclusive start claims, immutable settlement and freshness-aware live/restored queue probes. Prepared restoration validates prompt, session and contract; started/invalid attempts are retained for reconciliation. Full crash recovery and independent acceptance remain open. `npm run verify:local` passed, including coverage tests, type checks, dependency boundaries, lint and smoke.
 
-- Transport ownership slice: reserve one initial/successor attempt per WorkOrder before context reset or lease mutation; fence unclaimed callbacks and atomically arbitrate start versus pre-start cancellation. Ownership failures disable summary recovery. Cross-process reservation and cancellation tests supplement restored-message regressions. Surviving-worker recovery, interrupted reservations and final acceptance reconciliation remain open. `npm run verify:local` passed: 401 test files, 4,463 passing tests and 4 skipped.
+- Transport ownership slice: reserve one initial/successor attempt per WorkOrder before context reset or lease mutation; fence unclaimed callbacks and atomically arbitrate start versus pre-start cancellation. Ownership failures disable summary recovery. Cross-process reservation and cancellation tests supplement restored-message regressions. Surviving-worker recovery, interrupted reservations and final acceptance reconciliation remain open. `npm run verify:local` passed: 401 test files, 4,470 passing tests and 4 skipped.
 
-## Next recovery boundary
+## Recovery acceptance delivery
 
-`completeRestoredSupervisorWork` currently maps the restored summary directly
-into `completeLoopSupervisorRun`. Restored completion must rejoin the normal
-system acceptance path (`runSupervisedSystemGateOutcome`) before publishing
-success or treating follow-ups as final. A settled transport record is not proof
-that acceptance or report publication completed. This remains part of R3/R4,
-alongside recovery of interrupted ownership reservations and surviving workers.
+Journaled restored callbacks now persist transport settlement only. The shared
+reconciliation controller reads current frozen stdout/file evidence and invokes
+`runSupervisedSystemGateOutcome` before publishing success, backlog and terminal
+state. Tests cover missing callbacks/files, pending-checkpoint rejection,
+unsettled owners, later mutable files, cancellation and corrupt frozen summaries.
+The legacy callback path, interrupted reservations, surviving workers, restored
+budgets, concurrent acceptance ownership and crashes during publication remain
+open under R3/R4. Independent behavioral verification is still required under R4.
 
 The goal stays active until every requirement and end-to-end scenario has direct
 current-state evidence. No live user jobs, provider integrations, or remote pushes

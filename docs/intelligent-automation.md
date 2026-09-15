@@ -1436,9 +1436,19 @@ settled attempts are excluded from replay. Live and restored completion probes
 exclude the recorded pre-existing summary. Queue records without an attempt ID keep their legacy
 restoration behavior; unlinked attempt journals await reconciliation.
 
+Journaled restore callbacks only settle transport. The existing reconciliation
+controller reads the current attempt's frozen summary (including summaries
+returned on stdout), runs the normal system acceptance gate, then publishes the
+report and settles WorkOrder state. A crash after settlement but before the
+callback or report can recover through this same path. Failed or cancelled
+transport cannot become success through a summary file. Missing or corrupt
+frozen evidence cannot fall back to a later mutable file. Prepared, started and
+invalid journals remain unfinished and are excluded from summary acceptance and
+stale-reservation cleanup until ownership reconciliation resolves them.
+
 These records describe transport, not independent acceptance. They do not prove
 which worker wrote a new summary. The ownership chain serializes transport
 attempts; it does not reconcile surviving workers or prove system acceptance.
-Interrupted reservations, restored budgets, legacy-history migration and
-report-publication crash windows remain explicit requirements in the
+Interrupted reservations, restored budgets, legacy-history migration, competing
+acceptance controllers and crashes during report publication remain requirements in the
 [delivery ledger](future/ralph-roadmap-progress.md).

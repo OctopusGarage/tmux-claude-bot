@@ -109,7 +109,7 @@ export function restoredLoopSupervisorMessage(
         !settleRestoredAttempt(restore, prepared, 0, output, opts.now, ownsExecution)
       )
         return;
-      completeRestoredSupervisorWork(restore, output, opts.now, prepared);
+      if (prepared === undefined) completeRestoredSupervisorWork(restore, output, opts.now);
     },
     reject: (err) => {
       if (
@@ -117,7 +117,7 @@ export function restoredLoopSupervisorMessage(
         !settleRestoredAttempt(restore, prepared, 1, err.message, opts.now, ownsExecution)
       )
         return;
-      failRestoredSupervisorWork(restore, err, opts.now);
+      if (prepared === undefined) failRestoredSupervisorWork(restore, err, opts.now);
     },
   };
 }
