@@ -7,6 +7,11 @@ import {
 import { reserveDelegationBudget } from "./delegation-budget.js";
 import { inspectDelegationContinuation } from "./delegation-continuation.js";
 import { recoverNonTerminalPullRequestDecisions } from "./final-summary-contract.js";
+import {
+  captureFinalSummaryFreshness,
+  type FinalSummaryFreshness,
+  readFreshSupervisorFinalSummary,
+} from "./final-summary-freshness.js";
 import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
 import { readIterationCheckpoint } from "./iteration-checkpoint.js";
 import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
@@ -14,7 +19,6 @@ import {
   type LoopSupervisorFinalSummary,
   type LoopWorkOrder,
   parseSupervisorFinalSummary,
-  parseSupervisorFinalSummaryFile,
   validateSupervisorFinalSummaryForWorkOrder,
 } from "./work-order.js";
 
@@ -61,6 +65,7 @@ export type LoopSupervisedRunResult = (
   /** Machine-readable ownership for a failure produced by bot infrastructure. */
   repairDisposition?: LoopRepairDisposition;
   finalSummaryRecovery?: "disabled";
+  finalSummaryFreshness?: FinalSummaryFreshness;
 };
 
 export type LoopSupervisedRunnerInput = {
@@ -83,6 +88,7 @@ export type LoopSupervisorRevisionInput = LoopSupervisedRunnerInput & {
 
 type SupervisorPromptSequenceInput = LoopSupervisedRunnerInput & {
   prompt: string;
+  finalSummaryFreshness?: FinalSummaryFreshness;
 };
 
 export async function runLoopSupervisedProjectAsync(
@@ -94,8 +100,10 @@ export async function runLoopSupervisedProjectAsync(
   const reservation = reserveDelegationBudget(input.workOrder, input.timeoutMs);
   if (!reservation.ok) return reservation;
   input = { ...input, timeoutMs: reservation.timeoutMs };
+  const freshness = captureFinalSummaryFreshness(input.workOrder);
+  const freshnessResult = freshness === undefined ? {} : { finalSummaryFreshness: freshness };
   const controller = new AbortController();
-  const dispatch = runSupervisorDispatchSequence(input, controller.signal)
+  const dispatch = runSupervisorDispatchSequence(input, controller.signal, freshness)
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
     .catch((err: unknown): LoopSupervisedRunResult => {
       const message = err instanceof Error ? err.message : String(err);
@@ -118,10 +126,15 @@ export async function runLoopSupervisedProjectAsync(
   cancellation.cleanup();
 
   if (isTimedOutResult(result)) {
-    return { status: "dispatch-timeout", reason: result.reason, output: result.reason };
+    return {
+      status: "dispatch-timeout",
+      reason: result.reason,
+      output: result.reason,
+      ...freshnessResult,
+    };
   }
 
-  return result;
+  return { ...result, ...freshnessResult };
 }
 
 export async function runLoopSupervisorRevisionAsync(
@@ -133,8 +146,10 @@ export async function runLoopSupervisorRevisionAsync(
   const reservation = reserveDelegationBudget(input.workOrder, input.timeoutMs, input.maxAttempts);
   if (!reservation.ok) return reservation;
   input = { ...input, ...reservation };
+  const freshness = captureFinalSummaryFreshness(input.workOrder);
+  const freshnessResult = freshness === undefined ? {} : { finalSummaryFreshness: freshness };
   const controller = new AbortController();
-  const dispatch = runSupervisorRevisionSequence(input, controller.signal)
+  const dispatch = runSupervisorRevisionSequence(input, controller.signal, freshness)
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
     .catch((err: unknown): LoopSupervisedRunResult => {
       const message = err instanceof Error ? err.message : String(err);
@@ -157,19 +172,26 @@ export async function runLoopSupervisorRevisionAsync(
   cancellation.cleanup();
 
   if (isTimedOutResult(result)) {
-    return { status: "dispatch-timeout", reason: result.reason, output: result.reason };
+    return {
+      status: "dispatch-timeout",
+      reason: result.reason,
+      output: result.reason,
+      ...freshnessResult,
+    };
   }
 
-  return result;
+  return { ...result, ...freshnessResult };
 }
 
 async function runSupervisorDispatchSequence(
   input: LoopSupervisedRunnerInput,
   signal: AbortSignal,
+  freshness: FinalSummaryFreshness | undefined,
 ): Promise<LoopSupervisedRunResult> {
   return runSupervisorPromptSequence(
     {
       ...input,
+      ...(freshness === undefined ? {} : { finalSummaryFreshness: freshness }),
       prompt: buildLoopSupervisorPrompt(input.workOrder),
     },
     signal,
@@ -179,10 +201,12 @@ async function runSupervisorDispatchSequence(
 async function runSupervisorRevisionSequence(
   input: LoopSupervisorRevisionInput,
   signal: AbortSignal,
+  freshness: FinalSummaryFreshness | undefined,
 ): Promise<LoopSupervisedRunResult> {
   return runSupervisorPromptSequence(
     {
       ...input,
+      ...(freshness === undefined ? {} : { finalSummaryFreshness: freshness }),
       prompt: buildLoopSupervisorRevisionPrompt({
         workOrder: input.workOrder,
         failures: input.failures,
@@ -206,7 +230,7 @@ async function runSupervisorPromptSequence(
       ? { contextReset: input.resetBeforeWorkOrder }
       : {}),
   });
-  let firstParsed = parseDispatchOutput(first, input.workOrder);
+  let firstParsed = parseDispatchOutput(first, input.workOrder, input.finalSummaryFreshness);
   while (firstParsed.status === "invalid-output" && firstParsed.reason === "missing-final-marker") {
     signal.throwIfAborted();
     const decision = inspectDelegationContinuation(input.workOrder, before, input.runGit);
@@ -231,14 +255,18 @@ async function runSupervisorPromptSequence(
     input = { ...input, timeoutMs: reservation.timeoutMs };
     before = readIterationCheckpoint(input.workOrder);
     first = await dispatchWithProviderTransientRetry(input, signal, { prompt: input.prompt });
-    firstParsed = parseDispatchOutput(first, input.workOrder);
+    firstParsed = parseDispatchOutput(first, input.workOrder, input.finalSummaryFreshness);
   }
   if (firstParsed.status !== "invalid-output") return firstParsed;
 
   const finalization = await dispatchWithProviderTransientRetry(input, signal, {
     prompt: buildLoopSupervisorFinalizationPrompt(input.workOrder, firstParsed.output),
   });
-  const secondParsed = parseDispatchOutput(finalization, input.workOrder);
+  const secondParsed = parseDispatchOutput(
+    finalization,
+    input.workOrder,
+    input.finalSummaryFreshness,
+  );
   if (secondParsed.status !== "invalid-output") return secondParsed;
   return {
     ...secondParsed,
@@ -287,6 +315,7 @@ async function dispatchWithProviderTransientRetry(
 function parseDispatchOutput(
   result: SupervisorDispatchResult,
   workOrder: LoopWorkOrder,
+  freshness: FinalSummaryFreshness | undefined,
 ): LoopSupervisedRunResult {
   const output = joinOutput(result);
   if (result.status !== 0) {
@@ -300,7 +329,7 @@ function parseDispatchOutput(
       repairDisposition: "bot-repairable",
     };
   }
-  const fileParsed = parseSupervisorFinalSummaryFile(workOrder);
+  const fileParsed = readFreshSupervisorFinalSummary(workOrder, freshness);
   const parsed = fileParsed.ok ? fileParsed : parseSupervisorFinalSummary(output, workOrder.id);
   if (!parsed.ok) {
     return invalidSupervisorOutput(parsed.reason, output);

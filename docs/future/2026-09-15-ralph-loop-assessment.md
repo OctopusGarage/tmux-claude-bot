@@ -30,7 +30,9 @@ operator progress/pause/resume controls, external-wait scheduling, workspace
 support and other task-family rollout remain follow-up work. The pilot does not
 add a scheduler, provider client or competing native-goal controller. Repository
 state is independently checked; checkpoint sequence and test evidence remain
-agent-reported. Existing valid final-summary precedence is unchanged.
+agent-reported. Subsequent delivery progress, including summary freshness and
+the full unfinished requirement set, is tracked in the
+[roadmap delivery ledger](ralph-roadmap-progress.md).
 
 ## Scope and conclusion
 

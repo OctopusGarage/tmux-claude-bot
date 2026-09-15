@@ -1379,7 +1379,7 @@ claims. Continuation preserves context and does not repeat the initial reset.
 A blocked, malformed, disappeared, unchanged or repository-mismatched partial
 checkpoint stops dispatch with an explicit reason. Budget/deadline rejection
 also stops; neither path launches finalization or accepts an old summary through
-transport recovery. A valid terminal summary retains precedence and goes through
+transport recovery. A valid current-execution terminal summary retains precedence and goes through
 normal system acceptance. A valid all-passed checkpoint can use the existing
 one-shot finalization fallback. Legacy turns with no checkpoint before or after
 execution keep that fallback too. Once continuation consumes a checkpoint,
@@ -1390,3 +1390,24 @@ and Autopilot through their existing Git adapters. It adds no queue, scheduler,
 worker owner or autonomous retry for external blockers. A stopped run retains
 checkpoint context in its normal handoff for inspection and a separately
 authorized recovery.
+
+### Final-summary freshness during execution
+
+Before dispatching a single-repository active delegation or supervisor revision,
+the runner records the existing final-summary file version using its content and
+filesystem identity/change metadata. An unchanged pre-existing file is excluded
+for that execution invocation, including continuation, finalization and transport
+recovery after a dispatch failure or timeout. The prior artifact is preserved.
+A valid current response can supply the final summary directly; a newly written
+file can also supply it, including an atomic rewrite with identical JSON content.
+
+The freshness-aware reader reads one regular-file descriptor, rejects symbolic
+links/non-regular files and snapshots over 1 MiB, and validates the same JSON
+contract as normal final summaries. It does not execute artifact content. The
+exclusion travels with the in-memory run result to synchronous and asynchronous
+transport recovery. Other task families keep their existing parsing behavior.
+
+This closes stale-file reuse within an execution invocation. It does not yet
+supply an immutable attempt ID or journal across a bot restart, authenticate which
+worker wrote a new file, or settle crash/late-completion ownership. Those remain
+explicit requirements in the [delivery ledger](future/ralph-roadmap-progress.md).

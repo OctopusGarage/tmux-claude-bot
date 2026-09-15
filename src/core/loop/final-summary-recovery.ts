@@ -1,8 +1,8 @@
 import {
-  type LoopSupervisorFinalSummary,
-  type LoopWorkOrder,
-  parseSupervisorFinalSummaryFile,
-} from "./work-order.js";
+  type FinalSummaryFreshness,
+  readFreshSupervisorFinalSummary,
+} from "./final-summary-freshness.js";
+import type { LoopSupervisorFinalSummary, LoopWorkOrder } from "./work-order.js";
 
 type SupervisorRunStatus =
   | "completed"
@@ -22,7 +22,7 @@ type SupervisorRunResult = (
       reason: string;
       output: string;
     }
-) & { finalSummaryRecovery?: "disabled" };
+) & { finalSummaryRecovery?: "disabled"; finalSummaryFreshness?: FinalSummaryFreshness };
 
 export const FINAL_SUMMARY_RECOVERY_TIMEOUT_MS = 2000;
 export const FINAL_SUMMARY_RECOVERY_INTERVAL_MS = 100;
@@ -41,7 +41,7 @@ export function recoverInvalidOutputFromFinalSummary(
 ): SupervisorRunResult {
   if (result.finalSummaryRecovery === "disabled" || !isRecoverableTransportFailure(result.status))
     return result;
-  const parsed = parseSupervisorFinalSummaryFile(workOrder);
+  const parsed = readFreshSupervisorFinalSummary(workOrder, result.finalSummaryFreshness);
   if (!parsed.ok) return result;
   return {
     status: supervisorFinalStatusToRunStatus(parsed.summary.status),

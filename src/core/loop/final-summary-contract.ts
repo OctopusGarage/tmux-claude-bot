@@ -84,7 +84,21 @@ export function parseSupervisorFinalSummaryFile(
     return { ok: false, reason: "missing-final-marker" };
   }
   try {
-    const parsed = JSON.parse(readFileSync(workOrder.finalSummaryPath, "utf8")) as unknown;
+    return parseSupervisorFinalSummaryJson(
+      workOrder,
+      readFileSync(workOrder.finalSummaryPath, "utf8"),
+    );
+  } catch {
+    return { ok: false, reason: "invalid-summary" };
+  }
+}
+
+export function parseSupervisorFinalSummaryJson(
+  workOrder: LoopWorkOrder,
+  text: string,
+): ParseSupervisorFinalSummaryResult {
+  try {
+    const parsed = JSON.parse(text) as unknown;
     const parsedSummary = parseSummaryObject(parsed);
     const summary =
       parsedSummary === null

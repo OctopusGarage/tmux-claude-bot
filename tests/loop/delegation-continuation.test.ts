@@ -1,8 +1,21 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  recoverInvalidOutputFromFinalSummary,
+  recoverInvalidOutputFromFinalSummaryAsync,
+} from "../../src/core/loop/final-summary-recovery.js";
 import {
   buildIterationCheckpointTemplate,
   iterationCheckpointPath,
@@ -99,6 +112,129 @@ function terminal(status = "completed") {
 }
 
 describe("partial delegation continuation", () => {
+  it("ignores an earlier summary while a revision makes partial progress", async () => {
+    const f = fixture();
+    writeFileSync(join(f.dir, "final.json"), terminal().stdout.split("\n")[1] ?? "");
+    let calls = 0;
+    const dispatch = vi.fn(async () => {
+      if (++calls === 1) {
+        f.checkpoint(1);
+        return partial;
+      }
+      return terminal("blocked");
+    });
+    const result = await runLoopSupervisorRevisionAsync({
+      ...f,
+      supervisorSession: "worker",
+      timeoutMs: 10000,
+      dispatch,
+      failures: ["required behavior failed"],
+      attempt: 1,
+      maxAttempts: 2,
+      previousOutput: "old completed claim",
+    });
+    expect(result.status).toBe("blocked");
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not recover an unchanged old summary after a failed current dispatch", async () => {
+    const f = fixture();
+    const summary = terminal().stdout.split("\n")[1] ?? "";
+    writeFileSync(join(f.dir, "final.json"), summary);
+    const dispatch = vi.fn(async () => ({
+      status: 1,
+      stdout: "",
+      stderr: "current dispatch failed",
+    }));
+    const result = await runLoopSupervisedProjectAsync({
+      ...f,
+      supervisorSession: "worker",
+      timeoutMs: 10000,
+      dispatch,
+    });
+    expect(recoverInvalidOutputFromFinalSummary(f.workOrder, result).status).toBe(
+      "dispatch-failed",
+    );
+    expect(
+      (
+        await recoverInvalidOutputFromFinalSummaryAsync(f.workOrder, result, {
+          timeoutMs: 5,
+          intervalMs: 1,
+        })
+      ).status,
+    ).toBe("dispatch-failed");
+    expect(readFileSync(join(f.dir, "final.json"), "utf8")).toBe(summary);
+    writeFileSync(join(f.dir, "fresh.json"), summary);
+    renameSync(join(f.dir, "fresh.json"), join(f.dir, "final.json"));
+    expect(recoverInvalidOutputFromFinalSummary(f.workOrder, result).status).toBe("completed");
+  });
+
+  it("rejects an unchanged old summary after the current attempt times out", async () => {
+    const f = fixture();
+    writeFileSync(join(f.dir, "final.json"), terminal().stdout.split("\n")[1] ?? "");
+    const running = runLoopSupervisedProjectAsync({
+      ...f,
+      supervisorSession: "worker",
+      timeoutMs: 10,
+      dispatch: async () => new Promise(() => {}),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const result = await running;
+    expect(result.status).toBe("dispatch-timeout");
+    expect(recoverInvalidOutputFromFinalSummary(f.workOrder, result).status).toBe(
+      "dispatch-timeout",
+    );
+  });
+
+  it("accepts an identical summary atomically rewritten during the current turn", async () => {
+    const f = fixture();
+    const summary = terminal().stdout.split("\n")[1] ?? "";
+    writeFileSync(join(f.dir, "final.json"), summary);
+    const dispatch = vi.fn(async () => {
+      writeFileSync(join(f.dir, "fresh.json"), summary);
+      renameSync(join(f.dir, "fresh.json"), join(f.dir, "final.json"));
+      return partial;
+    });
+    expect(
+      (
+        await runLoopSupervisedProjectAsync({
+          ...f,
+          supervisorSession: "worker",
+          timeoutMs: 10000,
+          dispatch,
+        })
+      ).status,
+    ).toBe("completed");
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["symlink", "directory", "oversized", "malformed"])(
+    "does not recover a fresh but invalid summary artifact: %s",
+    async (kind) => {
+      const f = fixture();
+      const path = join(f.dir, "final.json");
+      const dispatch = vi.fn(async () => {
+        if (kind === "symlink") {
+          const target = join(f.dir, "untrusted.json");
+          writeFileSync(target, terminal().stdout.split("\n")[1] ?? "");
+          symlinkSync(target, path);
+        } else if (kind === "directory") mkdirSync(path);
+        else if (kind === "oversized") writeFileSync(path, " ".repeat(1_048_577));
+        else writeFileSync(path, "{");
+        return { status: 1, stdout: "", stderr: "transport failed" };
+      });
+      const result = await runLoopSupervisedProjectAsync({
+        ...f,
+        supervisorSession: "worker",
+        timeoutMs: 10000,
+        dispatch,
+      });
+      expect(recoverInvalidOutputFromFinalSummary(f.workOrder, result).status).toBe(
+        "dispatch-failed",
+      );
+    },
+  );
+
   it("repeats the same prompt and session using fresh durable progress", async () => {
     const f = fixture();
     const prompts: string[] = [];
