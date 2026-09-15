@@ -25,7 +25,7 @@ import type {
   LoopAgentTaskInvocation,
   LoopRunCommandResult,
 } from "./run.js";
-import type { SupervisorDispatchRequest } from "./supervised-runner.js";
+import type { SupervisorDispatchRequest, SupervisorDispatchResult } from "./supervised-runner.js";
 import {
   leaseLoopSupervisorWorker,
   readLoopSupervisorWorkerLeaseState,
@@ -223,7 +223,7 @@ async function enqueueLoopAgentPromptToSession(
   signal?: AbortSignal,
   timeoutMs?: number,
   deferLeaseUntilConsumption = false,
-): Promise<LoopRunCommandResult> {
+): Promise<SupervisorDispatchResult> {
   if (signal?.aborted) {
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
@@ -237,6 +237,47 @@ async function enqueueLoopAgentPromptToSession(
   if (signal?.aborted) {
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
+
+  const messageId = newMessageId();
+  let attempt: DelegationAttempt | undefined;
+  try {
+    attempt = prepareDelegationAttempt({
+      workOrder,
+      attemptId: messageId,
+      supervisorSession: sessionName,
+      prompt,
+      now: Date.now(),
+    });
+  } catch {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: "delegation attempt preparation failed",
+      finalSummaryRecovery: "disabled",
+    };
+  }
+  const settlePreparationFailure = (result: SupervisorDispatchResult): SupervisorDispatchResult => {
+    if (attempt !== undefined) {
+      try {
+        settleDelegationAttempt(
+          workOrder,
+          attempt,
+          result,
+          signal?.aborted ?? false,
+          Date.now(),
+          false,
+        );
+      } catch {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "delegation attempt settlement failed",
+          finalSummaryRecovery: "disabled",
+        };
+      }
+    }
+    return result;
+  };
 
   let leaseAcquired = false;
   const acquireLease = (): { status: "acquired" } | { status: "unavailable"; reason: string } => {
@@ -285,38 +326,28 @@ async function enqueueLoopAgentPromptToSession(
   if (!deferLeaseUntilConsumption) {
     const lease = acquireLease();
     if (lease.status === "unavailable") {
-      return {
+      return settlePreparationFailure({
         status: 1,
         stdout: "",
         stderr: lease.reason,
-      };
+      });
     }
   }
 
   const resetResult = await enqueueContextResetIfNeeded(deps, sessionName, contextReset);
   if (resetResult !== null && resetResult.status !== 0) {
     releaseFailureLease();
-    return resetResult;
+    return settlePreparationFailure(resetResult);
   }
   if (signal?.aborted) {
     releaseFailureLease();
-    return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
+    return settlePreparationFailure({
+      status: 1,
+      stdout: "",
+      stderr: "loop supervisor task was cancelled before enqueue",
+    });
   }
 
-  const messageId = newMessageId();
-  let attempt: DelegationAttempt | undefined;
-  try {
-    attempt = prepareDelegationAttempt({
-      workOrder,
-      attemptId: messageId,
-      supervisorSession: sessionName,
-      prompt,
-      now: Date.now(),
-    });
-  } catch {
-    releaseFailureLease();
-    return { status: 1, stdout: "", stderr: "delegation attempt preparation failed" };
-  }
   return new Promise((resolve) => {
     let consumed = false;
     let settled = false;
@@ -332,16 +363,29 @@ async function enqueueLoopAgentPromptToSession(
     const clearConsumptionTimer = (): void => {
       if (consumptionTimer !== undefined) clearTimeout(consumptionTimer);
     };
-    const settle = (result: LoopRunCommandResult): void => {
+    const settle = (result: SupervisorDispatchResult): void => {
       if (settled) return;
       settled = true;
+      if (!ownsAttempt) result = { ...result, status: 1, finalSummaryRecovery: "disabled" };
       if (attempt !== undefined && signal?.aborted)
         result = { status: 1, stdout: result.stdout, stderr: "loop supervisor task was cancelled" };
       if (attempt !== undefined && ownsAttempt) {
         try {
-          settleDelegationAttempt(workOrder, attempt, result, signal?.aborted ?? false, Date.now());
+          settleDelegationAttempt(
+            workOrder,
+            attempt,
+            result,
+            signal?.aborted ?? false,
+            Date.now(),
+            consumed,
+          );
         } catch {
-          result = { status: 1, stdout: "", stderr: "delegation attempt settlement failed" };
+          result = {
+            status: 1,
+            stdout: "",
+            stderr: "delegation attempt settlement failed",
+            finalSummaryRecovery: "disabled",
+          };
         }
       }
       signal?.removeEventListener("abort", abort);
@@ -497,7 +541,7 @@ export function createLoopQueueAgentEvalRunner(
 export function createLoopSupervisorTaskRunner(
   deps: QueueDeps,
   options: { deferLeaseUntilConsumption?: boolean } = {},
-): (request: SupervisorDispatchRequest) => Promise<LoopRunCommandResult> {
+): (request: SupervisorDispatchRequest) => Promise<SupervisorDispatchResult> {
   return (request) =>
     enqueueLoopAgentPromptToSession(
       deps,

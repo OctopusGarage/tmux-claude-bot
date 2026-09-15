@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { linkSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
@@ -17,6 +17,9 @@ import type { LoopRunCommandResult } from "./run.js";
 import type { LoopWorkOrder } from "./work-order-contract.js";
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
+const ownerSchema = z
+  .object({ attemptId: idSchema, supervisorSession: z.string().min(1) })
+  .strict();
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const preparedSchema = z
   .object({
@@ -38,7 +41,13 @@ const preparedSchema = z
     checkpoint: z.string().max(1_048_576),
   })
   .strict();
-const startedSchema = z.object({ attemptId: idSchema, startedAt: z.number().finite() }).strict();
+const startedSchema = z
+  .object({
+    attemptId: idSchema,
+    startedAt: z.number().finite(),
+    cancelledBeforeStart: z.boolean().optional(),
+  })
+  .strict();
 const settledSchema = z
   .object({
     attemptId: idSchema,
@@ -87,6 +96,51 @@ function writeOnce(path: string, record: unknown): boolean {
   }
 }
 
+/** Each settled attempt can publish only one successor; no mutable owner pointer is needed. */
+function readOwnership(workOrder: LoopWorkOrder): {
+  nextSlot: string;
+  current?: Exclude<DelegationAttemptRead, { phase: "invalid" }>;
+} {
+  const root = dirname(attemptDirectory(workOrder, "unused"));
+  if (!lstatSync(root).isDirectory()) throw new Error("invalid attempt directory");
+  let slot = join(root, "first.json");
+  let current: Exclude<DelegationAttemptRead, { phase: "invalid" }> | undefined;
+  const seen = new Set<string>();
+  for (;;) {
+    let owner: z.infer<typeof ownerSchema>;
+    try {
+      owner = ownerSchema.parse(readRecord(slot));
+    } catch (error) {
+      if (!missing(error)) throw error;
+      // Unlinked historical attempts or interrupted publication require reconciliation.
+      if (current === undefined && readdirSync(root).length !== 0)
+        throw new Error("unlinked delegation attempts require reconciliation");
+      return { nextSlot: slot, ...(current === undefined ? {} : { current }) };
+    }
+    if (seen.has(owner.attemptId) || seen.size >= 10_000)
+      throw new Error("invalid attempt ownership chain");
+    seen.add(owner.attemptId);
+    if (current !== undefined && current.phase !== "settled")
+      throw new Error("unsettled attempt has a successor");
+    const attempt = readDelegationAttempt(workOrder, owner.supervisorSession, owner.attemptId);
+    if (attempt.phase === "invalid") throw new Error("attempt ownership requires reconciliation");
+    current = attempt;
+    slot = join(attemptDirectory(workOrder, owner.attemptId), "next.json");
+  }
+}
+
+function ownsCurrentAttempt(workOrder: LoopWorkOrder, prepared: DelegationAttempt): boolean {
+  try {
+    const owner = readOwnership(workOrder).current?.prepared;
+    return (
+      owner?.attemptId === prepared.attemptId &&
+      owner.supervisorSession === prepared.supervisorSession
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function prepareDelegationAttempt(input: {
   workOrder: LoopWorkOrder;
   attemptId: string;
@@ -98,7 +152,6 @@ export function prepareDelegationAttempt(input: {
   const dir = attemptDirectory(input.workOrder, input.attemptId);
   mkdirSync(dirname(dir), { recursive: true });
   if (!lstatSync(dirname(dir)).isDirectory()) throw new Error("invalid attempt directory");
-  mkdirSync(dir);
   const prepared = preparedSchema.parse({
     schemaVersion: 1,
     attemptId: input.attemptId,
@@ -110,6 +163,25 @@ export function prepareDelegationAttempt(input: {
     freshness: captureFinalSummaryFreshness(input.workOrder) ?? {},
     checkpoint: JSON.stringify(readIterationCheckpoint(input.workOrder)),
   });
+  try {
+    lstatSync(dir);
+    throw new Error("attempt ID already exists");
+  } catch (error) {
+    if (!missing(error)) throw error;
+  }
+  const ownership = readOwnership(input.workOrder);
+  if (ownership.current !== undefined && ownership.current.phase !== "settled")
+    throw new Error("delegation attempt already owns this WorkOrder");
+  // Reserve before preparing or enqueueing. A crash here keeps the owner visible,
+  // so another process cannot infer that an absent queue item permits new work.
+  if (
+    !writeOnce(ownership.nextSlot, {
+      attemptId: input.attemptId,
+      supervisorSession: input.supervisorSession,
+    })
+  )
+    throw new Error("delegation attempt reservation lost");
+  mkdirSync(dir);
   if (!writeOnce(join(dir, "prepared.json"), prepared)) throw new Error("attempt already prepared");
   return prepared;
 }
@@ -132,10 +204,12 @@ export function readDelegationAttempt(
     )
       return { phase: "invalid" };
     let phase: "prepared" | "started" = "prepared";
+    let cancelledBeforeStart = false;
     try {
       const started = startedSchema.parse(readRecord(join(dir, "started.json")));
       if (started.attemptId !== attemptId) return { phase: "invalid" };
-      phase = "started";
+      cancelledBeforeStart = started.cancelledBeforeStart === true;
+      if (!cancelledBeforeStart) phase = "started";
     } catch (error) {
       if (!missing(error)) throw error;
     }
@@ -147,7 +221,7 @@ export function readDelegationAttempt(
     } catch (error) {
       if (!missing(error)) throw error;
     }
-    return { phase, prepared };
+    return cancelledBeforeStart ? { phase: "invalid" } : { phase, prepared };
   } catch {
     return { phase: "invalid" };
   }
@@ -159,7 +233,7 @@ export function claimDelegationAttempt(
   now: number,
 ): boolean {
   const current = readDelegationAttempt(workOrder, prepared.supervisorSession, prepared.attemptId);
-  if (current.phase !== "prepared") return false;
+  if (current.phase !== "prepared" || !ownsCurrentAttempt(workOrder, prepared)) return false;
   return writeOnce(join(attemptDirectory(workOrder, prepared.attemptId), "started.json"), {
     attemptId: prepared.attemptId,
     startedAt: now,
@@ -172,12 +246,27 @@ export function settleDelegationAttempt(
   result: LoopRunCommandResult,
   cancelled: boolean,
   now: number,
+  ownsExecution: boolean,
 ): boolean {
   const current = readDelegationAttempt(workOrder, prepared.supervisorSession, prepared.attemptId);
   if (current.phase === "invalid") throw new Error("invalid attempt settlement");
   if (current.phase === "settled") return false;
+  if (!ownsCurrentAttempt(workOrder, prepared))
+    throw new Error("attempt does not own this WorkOrder");
   if (current.phase === "prepared" && result.status === 0)
     throw new Error("unstarted attempt cannot succeed");
+  if (current.phase === "started" && !ownsExecution) return false;
+  // A pre-start failure competes with start for the same exclusive event file.
+  // Once start wins, only its claimant can settle the transport.
+  if (
+    current.phase === "prepared" &&
+    !writeOnce(join(attemptDirectory(workOrder, prepared.attemptId), "started.json"), {
+      attemptId: prepared.attemptId,
+      startedAt: now,
+      cancelledBeforeStart: true,
+    })
+  )
+    return false;
   return writeOnce(
     join(attemptDirectory(workOrder, prepared.attemptId), "settled.json"),
     settledSchema.parse({

@@ -61,6 +61,7 @@ export function restoredLoopSupervisorMessage(
     prepared.promptHash !== createHash("sha256").update(persisted.text).digest("hex")
   )
     return null;
+  let ownsExecution = false;
   return {
     id: persisted.id,
     text: persisted.text,
@@ -84,8 +85,12 @@ export function restoredLoopSupervisorMessage(
     started: () => {
       if (prepared !== undefined) {
         try {
-          if (!claimDelegationAttempt(restore.workOrder, prepared, opts.now?.() ?? Date.now()))
-            return false;
+          ownsExecution = claimDelegationAttempt(
+            restore.workOrder,
+            prepared,
+            opts.now?.() ?? Date.now(),
+          );
+          if (!ownsExecution) return false;
         } catch {
           return false;
         }
@@ -99,14 +104,17 @@ export function restoredLoopSupervisorMessage(
       return prepared === undefined ? undefined : true;
     },
     resolve: (output) => {
-      if (prepared !== undefined && !settleRestoredAttempt(restore, prepared, 0, output, opts.now))
+      if (
+        prepared !== undefined &&
+        !settleRestoredAttempt(restore, prepared, 0, output, opts.now, ownsExecution)
+      )
         return;
       completeRestoredSupervisorWork(restore, output, opts.now, prepared);
     },
     reject: (err) => {
       if (
         prepared !== undefined &&
-        !settleRestoredAttempt(restore, prepared, 1, err.message, opts.now)
+        !settleRestoredAttempt(restore, prepared, 1, err.message, opts.now, ownsExecution)
       )
         return;
       failRestoredSupervisorWork(restore, err, opts.now);
@@ -244,6 +252,7 @@ function settleRestoredAttempt(
   status: number,
   output: string,
   now: (() => number) | undefined,
+  ownsExecution: boolean,
 ): boolean {
   try {
     return settleDelegationAttempt(
@@ -252,6 +261,7 @@ function settleRestoredAttempt(
       { status, stdout: status === 0 ? output : "", stderr: status === 0 ? "" : output },
       false,
       now?.() ?? Date.now(),
+      ownsExecution,
     );
   } catch {
     // Preserve uncertain history for reconciliation; never publish a terminal report from it.

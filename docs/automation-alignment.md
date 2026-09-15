@@ -1004,9 +1004,15 @@ prepared/started/settled records. Both live and restored queue probes use the
 persisted freshness exclusion. Restoration validates the contract, prompt and
 session, claims prepared attempts once, retains started/invalid attempts for
 reconciliation and drops settled attempts from replay. Regression coverage lives
-in `tests/loop/delegation-attempt.test.ts`. Records are transport evidence;
-cross-attempt generations, surviving-worker reconciliation, restored budgets,
-report-publication crash windows and other task families remain open in
+in `tests/loop/delegation-attempt.test.ts`. Append-only `first.json`/`next.json`
+reservations serialize different attempt IDs before context reset or lease
+changes. Start and pre-start cancellation share an exclusive decision record;
+unclaimed restored callbacks cannot settle a started turn. Ownership failures
+must disable summary recovery through the shared runner. Cross-process tests
+cover initial/successor reservations and start/cancellation races. Records remain
+transport evidence; surviving-worker reconciliation, interrupted reservations,
+legacy-history migration, restored budgets, report-publication crash windows and
+other task families remain open in
 `docs/future/ralph-roadmap-progress.md`. This is not a completed crash-recovery
 protocol.
 

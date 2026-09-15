@@ -36,6 +36,7 @@ export type SupervisorDispatchResult = {
   status: number;
   stdout: string;
   stderr: string;
+  finalSummaryRecovery?: "disabled";
 };
 
 export type LoopRepairDisposition = "bot-repairable" | "target-or-external-blocker";
@@ -295,6 +296,7 @@ async function dispatchWithProviderTransientRetry(
       });
       signal.throwIfAborted();
       last = result;
+      if (result.finalSummaryRecovery === "disabled") return result;
       const output = joinOutput(result);
       if (!isProviderTransientFailure(output)) return result;
       lastTransientOutput = output;
@@ -318,6 +320,14 @@ function parseDispatchOutput(
   freshness: FinalSummaryFreshness | undefined,
 ): LoopSupervisedRunResult {
   const output = joinOutput(result);
+  if (result.finalSummaryRecovery === "disabled") {
+    return {
+      status: "dispatch-failed",
+      reason: result.stderr || "dispatch ownership unavailable",
+      output,
+      finalSummaryRecovery: "disabled",
+    };
+  }
   if (result.status !== 0) {
     return { status: "dispatch-failed", reason: result.stderr || "dispatch failed", output };
   }

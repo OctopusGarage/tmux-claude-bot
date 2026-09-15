@@ -1411,20 +1411,34 @@ transport recovery. Other task families keep their existing parsing behavior.
 
 Managed single-repository delegation dispatch writes append-only records under
 `iteration-attempts/<queue-message-id>/`: `prepared.json` before enqueue,
-`started.json` before execution, and `settled.json` after transport completion.
+`started.json` for the start or pre-start cancellation decision, and
+`settled.json` after transport completion.
 Preparation binds the WorkOrder contract, worker session, exact prompt hash,
 pre-dispatch summary version and checkpoint snapshot. Settlement preserves the
 transport result and subsequent checkpoint/summary snapshots. Atomic exclusive
 publication prevents a second claim or replacement of the first settlement.
 
+A WorkOrder reserves its first attempt through `first.json`; each settled attempt
+can publish one successor through `next.json`. These append-only links serialize
+different queue IDs across processes without a replaceable current-owner file.
+Reservation precedes context reset and worker lease changes. Prepared, started,
+corrupt or incompletely published attempts block a new reservation. Existing
+unlinked attempt history requires reconciliation rather than automatic adoption.
+Start and pre-start cancellation compete for the same exclusive event record;
+`cancelledBeforeStart: true` records the latter without claiming that a worker
+ran. Only a callback that acquired execution may settle a started attempt.
+Ownership/preparation/settlement failures disable final-summary recovery, so a
+rejected dispatch cannot adopt a surviving worker's output.
+
 Persisted control messages retain the attempt ID. Restoration permits only a
 matching prepared attempt; started or invalid records await reconciliation, and
 settled attempts are excluded from replay. Live and restored completion probes
-exclude the recorded pre-existing summary. Older queue records keep their legacy
-restoration behavior.
+exclude the recorded pre-existing summary. Queue records without an attempt ID keep their legacy
+restoration behavior; unlinked attempt journals await reconciliation.
 
 These records describe transport, not independent acceptance. They do not prove
-which worker wrote a new summary or prevent competing attempts with different
-IDs. Cross-attempt ownership, surviving-worker reconciliation, restored budgets
-and report-publication crash windows remain explicit requirements in the
+which worker wrote a new summary. The ownership chain serializes transport
+attempts; it does not reconcile surviving workers or prove system acceptance.
+Interrupted reservations, restored budgets, legacy-history migration and
+report-publication crash windows remain explicit requirements in the
 [delivery ledger](future/ralph-roadmap-progress.md).

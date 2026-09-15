@@ -1,8 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import type { PersistedMessage } from "../../src/core/command/queue.js";
+import { promisify } from "node:util";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PersistedMessage, QueuedMessage } from "../../src/core/command/queue.js";
 import { MessageQueue } from "../../src/core/command/queue.js";
 import { createLoopSupervisorTaskRunner } from "../../src/core/loop/agent-queue.js";
 import {
@@ -15,6 +17,7 @@ import {
   buildIterationCheckpointTemplate,
   iterationCheckpointPath,
 } from "../../src/core/loop/iteration-checkpoint.js";
+import { runLoopSupervisedProjectAsync } from "../../src/core/loop/supervised-runner.js";
 import {
   loopSupervisorControlRestore,
   restoredLoopSupervisorMessage,
@@ -91,6 +94,190 @@ describe("durable delegation attempts", () => {
     };
   }
 
+  async function childAttempt(action: "prepare" | "claim" | "cancel", payload: unknown) {
+    const source = `
+      import { prepareDelegationAttempt, claimDelegationAttempt, settleDelegationAttempt } from ${JSON.stringify(new URL("../../src/core/loop/delegation-attempt.ts", import.meta.url).href)};
+      const input = JSON.parse(process.argv[1]);
+      let ok = false;
+      try {
+        if (input.action === "prepare") ok = prepareDelegationAttempt(input.payload) !== undefined;
+        else if (input.action === "claim") ok = claimDelegationAttempt(input.payload.workOrder, input.payload.prepared, 2);
+        else ok = settleDelegationAttempt(input.payload.workOrder, input.payload.prepared, {status: 1, stdout: "", stderr: "cancelled before start"}, true, 2, false);
+      } catch {}
+      process.stdout.write(JSON.stringify({ok}));
+    `;
+    const result = await promisify(execFile)(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", source, JSON.stringify({ action, payload })],
+      { timeout: 15_000 },
+    );
+    return JSON.parse(result.stdout) as { ok: boolean };
+  }
+
+  it.each([false, true])(
+    "allows one cross-process reservation (existing settled attempt: %s)",
+    async (withPrevious) => {
+      const f = fixture();
+      if (withPrevious) {
+        const first = prepare(f);
+        settleDelegationAttempt(
+          f.workOrder,
+          first,
+          { status: 1, stdout: "", stderr: "not queued" },
+          false,
+          2,
+          false,
+        );
+      }
+      const results = await Promise.all(
+        ["worker-a", "worker-b"].map((id) =>
+          childAttempt("prepare", {
+            workOrder: f.workOrder,
+            attemptId: id,
+            supervisorSession: id,
+            prompt: "Finish",
+            now: 3,
+          }),
+        ),
+      );
+      expect(results.filter((result) => result.ok)).toHaveLength(1);
+      const winner = results[0]?.ok ? "worker-a" : "worker-b";
+      expect(readDelegationAttempt(f.workOrder, winner, winner).phase).toBe("prepared");
+    },
+  );
+
+  it("makes cross-process start and pre-start cancellation mutually exclusive", async () => {
+    const f = fixture();
+    const prepared = prepare(f);
+    const [claim, cancel] = await Promise.all([
+      childAttempt("claim", { workOrder: f.workOrder, prepared }),
+      childAttempt("cancel", { workOrder: f.workOrder, prepared }),
+    ]);
+    expect(Number(claim.ok) + Number(cancel.ok)).toBe(1);
+    expect(readDelegationAttempt(f.workOrder, "isolated-worker", prepared.attemptId).phase).toBe(
+      claim.ok ? "started" : "settled",
+    );
+  });
+
+  it("fences different attempt IDs until the preceding transport settles", () => {
+    const f = fixture();
+    const first = prepare(f);
+    expect(() => prepare(f, "attempt-2")).toThrow();
+    expect(claimDelegationAttempt(f.workOrder, first, 2)).toBe(true);
+    expect(() => prepare(f, "attempt-3")).toThrow();
+    expect(
+      settleDelegationAttempt(
+        f.workOrder,
+        first,
+        { status: 0, stdout: "partial", stderr: "" },
+        false,
+        3,
+        true,
+      ),
+    ).toBe(true);
+    const next = prepare(f, "attempt-4");
+    expect(claimDelegationAttempt(f.workOrder, next, 4)).toBe(true);
+    expect(claimDelegationAttempt(f.workOrder, first, 5)).toBe(false);
+    expect(
+      settleDelegationAttempt(
+        f.workOrder,
+        first,
+        { status: 1, stdout: "", stderr: "late" },
+        false,
+        5,
+        true,
+      ),
+    ).toBe(false);
+    expect(readDelegationAttempt(f.workOrder, "isolated-worker", next.attemptId).phase).toBe(
+      "started",
+    );
+  });
+
+  it("disables final-summary recovery when dispatch cannot acquire attempt ownership", async () => {
+    const f = fixture();
+    prepare(f);
+    const enqueue = vi.fn(() => "queued" as const);
+    const dispatch = createLoopSupervisorTaskRunner({
+      config: { projectSessionPrefix: "project-" },
+      bridge: { hasSession: async () => true },
+      queue: { enqueue, cancelQueued: () => false },
+    });
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder: f.workOrder,
+      supervisorSession: "isolated-worker",
+      timeoutMs: 10000,
+      dispatch,
+    });
+    expect(result.status).toBe("dispatch-failed");
+    expect(result.finalSummaryRecovery).toBe("disabled");
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("does not reset or enqueue a second invocation while another attempt owns the WorkOrder", async () => {
+    const f = fixture();
+    const queued: QueuedMessage[] = [];
+    const runner = createLoopSupervisorTaskRunner({
+      config: { projectSessionPrefix: "project-" },
+      bridge: { hasSession: async () => true },
+      queue: {
+        enqueue: (message) => {
+          queued.push(message);
+          if (message.action !== "text") message.resolve("reset");
+          return "queued" as const;
+        },
+        cancelQueued: () => false,
+      },
+    });
+    const invocation = {
+      session: "isolated-worker",
+      prompt: "Finish",
+      signal: new AbortController().signal,
+      workOrder: f.workOrder,
+    };
+    const first = runner(invocation);
+    await vi.waitFor(() => expect(queued).toHaveLength(1));
+    try {
+      const second = await runner({ ...invocation, contextReset: "clear" });
+      expect(second.status).toBe(1);
+      expect(queued.map((message) => message.action)).toEqual(["text"]);
+    } finally {
+      queued[0]?.reject(new Error("test cleanup"));
+      await first;
+    }
+  });
+
+  it("rejects reuse of a settled ID without damaging the next reservation", () => {
+    const f = fixture();
+    const first = prepare(f);
+    settleDelegationAttempt(
+      f.workOrder,
+      first,
+      { status: 1, stdout: "", stderr: "not queued" },
+      false,
+      2,
+      true,
+    );
+    expect(() => prepare(f)).toThrow();
+    expect(() => prepare(f, "fresh-id")).not.toThrow();
+  });
+
+  it("does not bypass a crash between reserving an owner and preparing its record", () => {
+    const f = fixture();
+    const root = join(f.dir, "iteration-attempts");
+    mkdirSync(root);
+    writeFileSync(
+      join(root, "first.json"),
+      JSON.stringify({ attemptId: "interrupted", supervisorSession: "isolated-worker" }),
+    );
+    expect(() => prepare(f)).toThrow();
+  });
+
+  it("requires reconciliation for attempt history without ownership links", () => {
+    const f = fixture();
+    mkdirSync(join(f.dir, "iteration-attempts", "legacy-attempt"), { recursive: true });
+    expect(() => prepare(f)).toThrow();
+  });
+
   it("restores only a prepared attempt and claims it once across reconstructed messages", () => {
     const f = fixture();
     const prepared = prepare(f);
@@ -105,6 +292,26 @@ describe("durable delegation attempts", () => {
     expect(shouldDiscardRestoredLoopSupervisorMessage(persisted)).toBe(false);
   });
 
+  it("does not let an unclaimed restored callback settle another message's active turn", () => {
+    const f = fixture();
+    const prepared = prepare(f);
+    const record = restoreRecord(f, prepared.attemptId);
+    const owner = restoredLoopSupervisorMessage(record);
+    const stale = restoredLoopSupervisorMessage(record);
+    expect(owner?.started?.()).toBe(true);
+    stale?.reject(new Error("stale cancellation"));
+    expect(readDelegationAttempt(f.workOrder, "isolated-worker", prepared.attemptId).phase).toBe(
+      "started",
+    );
+    expect(stale?.started?.()).toBe(false);
+    stale?.resolve("late result from rejected claim");
+    expect(() => prepare(f, "competing-turn")).toThrow();
+    owner?.resolve("owner result");
+    const state = readDelegationAttempt(f.workOrder, "isolated-worker", prepared.attemptId);
+    expect(state.phase).toBe("settled");
+    if (state.phase === "settled") expect(state.settled.output).toBe("owner result");
+  });
+
   it("preserves immutable settlement and discards a settled attempt from replay", () => {
     const f = fixture();
     const prepared = prepare(f);
@@ -116,6 +323,7 @@ describe("durable delegation attempts", () => {
         { status: 0, stdout: "first result", stderr: "" },
         false,
         3,
+        true,
       ),
     ).toBe(true);
     expect(
@@ -125,6 +333,7 @@ describe("durable delegation attempts", () => {
         { status: 1, stdout: "", stderr: "late failure" },
         true,
         4,
+        true,
       ),
     ).toBe(false);
     const state = readDelegationAttempt(f.workOrder, "isolated-worker", prepared.attemptId);
