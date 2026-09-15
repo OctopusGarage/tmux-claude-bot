@@ -945,23 +945,32 @@ installation.
 
 Single-repository active delegation checkpoint instructions must remain identical
 across initial, revision and finalization prompts. The producer is the existing
-agent; the consumer is the strict checkpoint reader used by supervisor handoff
-reporting. The artifact catalog owns `iteration-checkpoint.json`; it is internal
-run state, not a user configuration file.
+agent; consumers are the strict handoff reader and system acceptance gate. The
+artifact catalog owns `iteration-checkpoint.json`, `checkpoint-required.json`
+and `delegation-budget.json`; all are internal run state, not configuration.
 
 The full WorkOrder hash and complete acceptance-item list bind recovery context
-to its authorized task. Revision consistency is checked within the reported
-snapshot. No agent-owned checkpoint can claim system provenance, change a run
-outcome, consume or renew a trusted budget, or dispatch another worker.
-Workspace and other task-family rollouts need their own contract tests.
+to its authorized task. Before existing Git/PR mutations, the system checks
+required item completion and independently reads repository toplevel, HEAD and
+cleanliness. Once observed, deleting a checkpoint cannot bypass acceptance.
+Reported test commands are never executed; behavioral evidence remains
+agent-reported and cannot claim system provenance. Workspace and other
+task-family rollouts need their own contract tests.
 
-`tests/loop/iteration-checkpoint.test.ts` covers prompt parity, partial progress
-without a final summary, timeout handoff, malformed/stale/foreign input,
-acceptance-item preservation, revision mismatch and evidence provenance. Existing
-handoff tests cover backward compatibility when no checkpoint exists. Future
-continuation must separately verify current repository/attempt ownership and
-preserve budgets across restarts; those guarantees are not supplied by this
-checkpoint reader.
+The shared supervised runner owns durable deadline and revision reservations for
+both scheduled and recovered execution, including Autopilot callers. It writes
+before dispatch and never expands an established limit. Budget rejection disables
+final-summary transport recovery. Cancellation fences late responses before any
+finalization/retry. Existing WorkOrder serialization and session isolation remain
+the execution owners; state files do not introduce a separate scheduler or lease.
+
+`tests/loop/iteration-checkpoint.test.ts` covers prompt parity, partial progress,
+timeout handoff, invalid/foreign input, provenance, real-repository acceptance
+and deletion downgrade prevention. `tests/loop/delegation-budget.test.ts` covers
+resumed deadlines, reset caller counters, corrupt state, final-summary bypass
+and late cancellation. Existing handoff and runner tests preserve compatibility
+for absent legacy checkpoints and other task families. Generic partial-turn
+continuation and independent behavioral verification remain separate work.
 
 ### Workspace recovery
 

@@ -1324,11 +1324,33 @@ results. Invalid records produce a bounded diagnostic without copying their
 contents into recovery instructions. Missing checkpoints preserve compatibility
 with older agents and artifacts.
 
-This is a recovery-context contract, not system acceptance. The reader validates
-the record's internal consistency; it does not observe current Git HEAD, execute
-the reported commands, authenticate artifacts, or authorize another turn.
-Checkpoint sequence is not an enforced iteration budget. Final summaries,
-system gates, cancellation and existing round limits retain their authority.
-There is no automatic continuation, immutable iteration journal, or new operator
-configuration/command in this slice. Current revision observation, durable attempt
-budgets and continuation decisions require the subsequent executor integration.
+The reader validates internal consistency; completion additionally passes a
+system checkpoint gate before existing Git/PR mutations. Once a checkpoint is
+observed, an internal `checkpoint-required.json` marker prevents a later missing
+checkpoint from silently restoring legacy acceptance. Required items must all
+be reported passed, and the configured repository must match Git's toplevel,
+current HEAD and clean worktree state. Missing checkpoints on older runs that
+have never opted into the protocol remain compatible. Incomplete, invalid,
+stale or dirty checkpoints enter the existing bounded supervisor revision path;
+unavailable or mismatched repositories block it.
+
+These checks verify repository facts, not behavioral correctness. Checkpoint
+commands are untrusted text and are never executed by the gate. Test results and
+artifact contents remain agent-reported; final-summary validation and existing
+system/PR/CI gates retain their authority. Checkpoint sequence is not a budget.
+
+The shared supervised runner persists `delegation-budget.json` before dispatch
+for this task family. It binds the full WorkOrder contract to an absolute deadline
+and consumed revision count. Recovery cannot renew the deadline or expand an
+established revision limit, including when a caller resets its in-memory counter.
+Corrupt state fails closed; budget rejection cannot be converted into completion
+by an old final-summary file. A cancelled or timed-out dispatch cannot start
+finalization or another transient retry when its late response arrives.
+
+Budget writes rely on existing WorkOrder serialization, not a new cross-process
+lease. These internal files are operational state, not tamper-proof storage
+against an agent with the same filesystem permissions. Legacy runs acquire a
+budget on their first dispatch through the updated runner; historical elapsed
+time is not reconstructed. General continuation from a partial turn, immutable
+iteration history and external-wait scheduling remain follow-up work. There is
+no new operator configuration or command in this slice.

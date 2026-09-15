@@ -40,6 +40,7 @@ import {
 } from "./agent-queue.js";
 import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 import { LoopBacklogStore } from "./backlog.js";
+import { checkpointAcceptanceGate } from "./checkpoint-acceptance.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
 import {
   cleanupLoopExecutionWorktree,
@@ -2699,8 +2700,25 @@ export function runSupervisedSystemGateOutcome(input: {
     };
   }
 
+  const checkpointGate = checkpointAcceptanceGate(input.workOrder, input.runGit);
+  if (checkpointGate.failures.length > 0) {
+    const reason = checkpointGate.failures.join("; ");
+    return {
+      ...checkpointGate,
+      result: {
+        status: "supervisor-failed",
+        summary: {
+          ...input.result.summary,
+          status: "failed",
+          finalVerification: "failed",
+          followUps: [...input.result.summary.followUps, reason],
+        },
+        output: [input.result.output, reason].join("\n"),
+      },
+    };
+  }
   const failures: string[] = [];
-  const evidence: string[] = [];
+  const evidence: string[] = [...checkpointGate.evidence];
   const evalReport = buildEvalReportFromSupervisorSummary({
     workOrderId: input.workOrder.id,
     taskId: input.workOrder.task?.kind ?? "architecture",
@@ -3248,6 +3266,7 @@ export function supervisorRevisionFailures(failures: string[]): string[] {
 }
 
 function isRecoverableSupervisorGateFailure(failure: string): boolean {
+  if (failure.startsWith("checkpoint repository ")) return false;
   if (isSystemOwnedSystemGateFailure(failure)) return false;
   if (failure.startsWith("GitHub account ")) return false;
   if (failure.startsWith("PR state is ")) return false;

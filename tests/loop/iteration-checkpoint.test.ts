@@ -1,7 +1,16 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { checkpointAcceptanceGate } from "../../src/core/loop/checkpoint-acceptance.js";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import {
   buildIterationCheckpointTemplate,
@@ -9,6 +18,10 @@ import {
   readIterationCheckpoint,
 } from "../../src/core/loop/iteration-checkpoint.js";
 import { defaultActiveDelegationPlanning } from "../../src/core/loop/planning.js";
+import {
+  runSupervisedSystemGateOutcome,
+  systemGateProjectFromWorkOrder,
+} from "../../src/core/loop/service.js";
 import { writeLoopSupervisorReport } from "../../src/core/loop/supervisor-report.js";
 import {
   buildLoopSupervisorFinalizationPrompt,
@@ -87,6 +100,116 @@ function partial(workOrder: LoopWorkOrder) {
 }
 
 describe("iteration checkpoints", () => {
+  it("does not downgrade to legacy acceptance after an observed checkpoint is deleted", () => {
+    const workOrder = fixture();
+    const path = save(workOrder, partial(workOrder));
+    expect(checkpointAcceptanceGate(workOrder, undefined).failures.length).toBeGreaterThan(0);
+    unlinkSync(path);
+    expect(checkpointAcceptanceGate(workOrder, undefined).failures).toEqual([
+      "checkpoint required artifact is missing",
+    ]);
+  });
+
+  it.each(["pending", "stale-head", "dirty", "wrong-root", "valid", "corrupt"])(
+    "system acceptance checks a real repository: %s",
+    (scenario) => {
+      const workOrder = fixture();
+      const repo = realpathSync(mkdtempSync(join(tmpdir(), "tcb-checkpoint-git-")));
+      const git = (args: string[]) => {
+        const result = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+        if (result.status !== 0) throw new Error(result.stderr);
+        return result.stdout.trim();
+      };
+      git(["init", "-b", "main"]);
+      git([
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "fixture",
+      ]);
+      workOrder.projectPath = repo;
+      const checkpoint = partial(workOrder);
+      checkpoint.repositoryRevision = git(["rev-parse", "HEAD"]);
+      for (const item of checkpoint.items) {
+        item.status = scenario === "pending" ? "pending" : "reported-passed";
+        item.evidence = [
+          {
+            source: "agent-reported",
+            revision: checkpoint.repositoryRevision,
+            command: "untrusted command must not execute",
+            result: "passed",
+            artifact: "result.txt",
+          },
+        ];
+      }
+      if (scenario === "stale-head") {
+        git([
+          "-c",
+          "user.name=Fixture",
+          "-c",
+          "user.email=fixture@example.test",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "new revision",
+        ]);
+      }
+      if (scenario === "dirty") writeFileSync(join(repo, "untracked.txt"), "owner work");
+      if (scenario === "wrong-root") {
+        workOrder.projectPath = join(repo, "subdir");
+        mkdirSync(workOrder.projectPath);
+        checkpoint.contractHash = buildIterationCheckpointTemplate(workOrder).contractHash;
+      }
+      save(workOrder, scenario === "corrupt" ? {} : checkpoint);
+      const calls: string[][] = [];
+      const gate = runSupervisedSystemGateOutcome({
+        project: systemGateProjectFromWorkOrder(workOrder),
+        workOrder,
+        result: {
+          status: "completed",
+          output: "done",
+          summary: {
+            status: "completed",
+            projectId: workOrder.projectId,
+            actionsTaken: [],
+            delegatedTasks: [],
+            commits: [],
+            followUps: [],
+            finalVerification: "passed",
+            planReview: {
+              checklistCompleted: true,
+              targetScoreMet: "not-applicable",
+              stopConditionReached: true,
+              overOptimizationAvoided: true,
+              verificationCompleted: true,
+              remainingRisks: [],
+            },
+          },
+        },
+        runCommand: () => {
+          throw new Error("must not execute checkpoint commands");
+        },
+        runGit: ({ cwd, args }) => {
+          calls.push(args);
+          const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+          return {
+            status: result.status ?? 1,
+            stdout: result.stdout ?? "",
+            stderr: result.stderr ?? "",
+          };
+        },
+      });
+      expect(gate.result.status, JSON.stringify(gate)).toBe(
+        scenario === "valid" ? "completed" : "supervisor-failed",
+      );
+      if (scenario === "valid") expect(gate.evidence.join(" ")).toContain("checkpoint repository");
+      if (scenario === "wrong-root") expect(calls).toEqual([["rev-parse", "--show-toplevel"]]);
+    },
+  );
   it("preserves partial progress without requiring a final summary", () => {
     const workOrder = fixture();
     const checkpoint = partial(workOrder);

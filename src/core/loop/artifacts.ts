@@ -13,6 +13,8 @@ export const LOOP_RUN_ARTIFACTS = {
   handoffJson: "handoff.json",
   handoffMarkdown: "handoff.md",
   iterationCheckpoint: "iteration-checkpoint.json",
+  checkpointRequired: "checkpoint-required.json",
+  delegationBudget: "delegation-budget.json",
   systemGate: "system-gate.json",
   workOrder: "work-order.json",
   workOrderState: "work-order-state.json",

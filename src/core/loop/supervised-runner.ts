@@ -4,6 +4,7 @@ import {
   buildLoopSupervisorPrompt,
   buildLoopSupervisorRevisionPrompt,
 } from "../prompts/loop-supervisor.js";
+import { reserveDelegationBudget } from "./delegation-budget.js";
 import { recoverNonTerminalPullRequestDecisions } from "./final-summary-contract.js";
 import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
 import {
@@ -56,6 +57,7 @@ export type LoopSupervisedRunResult = (
 ) & {
   /** Machine-readable ownership for a failure produced by bot infrastructure. */
   repairDisposition?: LoopRepairDisposition;
+  finalSummaryRecovery?: "disabled";
 };
 
 export type LoopSupervisedRunnerInput = {
@@ -85,6 +87,9 @@ export async function runLoopSupervisedProjectAsync(
   if (input.cancelSignal?.aborted) {
     return cancelledRunResult(input.workOrder, abortReason(input.cancelSignal));
   }
+  const reservation = reserveDelegationBudget(input.workOrder, input.timeoutMs);
+  if (!reservation.ok) return reservation;
+  input = { ...input, timeoutMs: reservation.timeoutMs };
   const controller = new AbortController();
   const dispatch = runSupervisorDispatchSequence(input, controller.signal)
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
@@ -121,6 +126,9 @@ export async function runLoopSupervisorRevisionAsync(
   if (input.cancelSignal?.aborted) {
     return cancelledRunResult(input.workOrder, abortReason(input.cancelSignal));
   }
+  const reservation = reserveDelegationBudget(input.workOrder, input.timeoutMs, input.maxAttempts);
+  if (!reservation.ok) return reservation;
+  input = { ...input, ...reservation };
   const controller = new AbortController();
   const dispatch = runSupervisorRevisionSequence(input, controller.signal)
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
@@ -218,6 +226,7 @@ async function dispatchWithProviderTransientRetry(
   let last: SupervisorDispatchResult | undefined;
   let lastTransientOutput: string | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    signal.throwIfAborted();
     try {
       const result = await input.dispatch({
         session: input.supervisorSession,
@@ -227,6 +236,7 @@ async function dispatchWithProviderTransientRetry(
         timeoutMs: input.timeoutMs,
         ...(request.contextReset !== undefined ? { contextReset: request.contextReset } : {}),
       });
+      signal.throwIfAborted();
       last = result;
       const output = joinOutput(result);
       if (!isProviderTransientFailure(output)) return result;
