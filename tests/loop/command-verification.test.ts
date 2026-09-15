@@ -84,6 +84,9 @@ describe("system command verification", () => {
       exitStatus: 0,
     });
     expect(record.contractHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(record.startedAt).toEqual(expect.any(String));
+    expect(record.endedAt).toEqual(expect.any(String));
+    expect(record.outputHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it.each([
