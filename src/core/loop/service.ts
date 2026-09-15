@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
@@ -2758,12 +2758,14 @@ export function runSupervisedSystemGateOutcome(input: {
     if (status?.status !== 0 || (status?.stdout ?? "").trim() !== "")
       failures.push("independent verification worktree is dirty before command");
     if (failures.length === 0) {
+      const startedAt = new Date().toISOString();
       const command = input.runCommand({
         kind: "eval",
         command: input.workOrder.eval.command,
         cwd: input.workOrder.projectPath,
-        env: {},
+        env: { LOOP_WORK_ORDER_ID: input.workOrder.id },
       });
+      const endedAt = new Date().toISOString();
       let parsed: { passed?: unknown; score?: unknown } | undefined;
       try {
         parsed = JSON.parse(command.stdout) as { passed?: unknown; score?: unknown };
@@ -2800,10 +2802,18 @@ export function runSupervisedSystemGateOutcome(input: {
         exitStatus: command.status,
         passed: parsed?.passed === true,
         score: score ?? null,
+        startedAt,
+        endedAt,
+        outputHash: createHash("sha256")
+          .update(`${command.stdout}\n${command.stderr}`)
+          .digest("hex"),
       };
       const dir = `${dirname(input.workOrder.finalSummaryPath ?? "")}/command-verifications`;
       mkdirSync(dir, { recursive: true });
-      writeFileAtomicSync(`${dir}/${Date.now()}.json`, JSON.stringify(record, null, 2));
+      writeFileAtomicSync(
+        `${dir}/${Date.now()}-${randomUUID()}.json`,
+        JSON.stringify(record, null, 2),
+      );
     }
     if (failures.length > 0) {
       const reason = failures.join("; ");
