@@ -170,6 +170,7 @@ export function iterationCheckpointPolicy(workOrder: LoopWorkOrder): string[] {
     "- Set repositoryRevision to the full lowercase git HEAD hash and worktreeDirty from git status. Keep both null until observed. Record actual command, result and evidence artifact for each item; evidence source must remain agent-reported.",
     "- Each evidence revision must match repositoryRevision. After code changes, clear stale evidence and return affected items to pending until reverified. Use reported-passed only for a clean revision with nonempty evidence whose results are all passed. Record blocked work and its next action; do not omit or defer required items.",
     "- Checkpoints do not complete the WorkOrder, replace the final summary or bypass system gates. A checkpoint does not authorize another iteration or extend the existing budget. Keep existing cancellation and stop policies.",
+    "- If a turn ends without a final summary, the runner may repeat the same prompt when a fresh partial checkpoint matches the actual repository and budget remains. It allows at most maxRounds minus one partial continuations across this WorkOrder. Re-read the checkpoint, advance pending work, and preserve the session. Unchanged sequences, blocked items or repository mismatches stop continuation; a sequence increase is reported progress, not proof of correctness.",
     "- Template (keep identity, contractHash, item IDs and descriptions unchanged):",
     JSON.stringify(buildIterationCheckpointTemplate(workOrder), null, 2),
   ];

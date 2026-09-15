@@ -863,6 +863,7 @@ export async function runLoopServiceTickAsync(input: {
           DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
         resetBeforeWorkOrder: supervisorContextReset,
         dispatch: input.runSupervisorTask,
+        ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
       });
       if (
         isSupervisorDispatchReadinessFailure(result) &&
@@ -887,6 +888,7 @@ export async function runLoopServiceTickAsync(input: {
               DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
             resetBeforeWorkOrder: supervisorContextReset,
             dispatch: input.runSupervisorTask,
+            ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
           });
         }
       }
@@ -936,6 +938,7 @@ export async function runLoopServiceTickAsync(input: {
           input.defaultSupervisorTimeoutMs ??
           DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
         dispatch: input.runSupervisorTask,
+        ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
         failures: revisionFailures,
         attempt: revisionAttempt,
         maxAttempts: maxSupervisorRevisionAttempts,
@@ -1961,6 +1964,7 @@ export async function startLoopEngineering(
               ? input.workOrder.runner.timeoutMs
               : undefined) ?? deps.config.maxWaitDoneTotalMs,
           dispatch: recoveredRevisionDispatch,
+          runGit: runGitCommand,
           resetBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
         });
       }

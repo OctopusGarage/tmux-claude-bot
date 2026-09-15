@@ -1351,6 +1351,42 @@ Budget writes rely on existing WorkOrder serialization, not a new cross-process
 lease. These internal files are operational state, not tamper-proof storage
 against an agent with the same filesystem permissions. Legacy runs acquire a
 budget on their first dispatch through the updated runner; historical elapsed
-time is not reconstructed. General continuation from a partial turn, immutable
-iteration history and external-wait scheduling remain follow-up work. There is
-no new operator configuration or command in this slice.
+time is not reconstructed. Immutable iteration history and external-wait
+scheduling remain follow-up work. There is no new operator configuration or
+command in this slice.
+
+### Bounded continuation after partial turns
+
+When a successful dispatch ends without a final marker or valid final-summary
+file, the shared runner can repeat exactly the same prompt in the same isolated
+supervisor session. It reads the checkpoint before and after the turn. A fresh
+sequence must retain pending work, contain no blocked item, and pass strict
+contract validation. The system then independently checks configured Git
+toplevel, current HEAD and dirty state against the checkpoint. Dirty partial
+work may continue when it is accurately reported; completion still requires a
+clean revision. Checkpoint commands are never executed by this decision.
+
+Before each additional partial turn, the existing budget atomically records
+`continuationsUsed` and `lastContinuationSequence`. At most `maxRounds - 1`
+partial continuations are granted across initial and revision execution combined;
+these counters are separate from the existing system-gate revision limit and
+share its absolute deadline. Version-1 budgets without these new counters read
+as zero. A checkpoint sequence must also exceed the last consumed sequence,
+preventing replay after restoration. Sequence growth is reported progress, not
+proof of changed code or successful behavioral tests; the hard cap bounds such
+claims. Continuation preserves context and does not repeat the initial reset.
+
+A blocked, malformed, disappeared, unchanged or repository-mismatched partial
+checkpoint stops dispatch with an explicit reason. Budget/deadline rejection
+also stops; neither path launches finalization or accepts an old summary through
+transport recovery. A valid terminal summary retains precedence and goes through
+normal system acceptance. A valid all-passed checkpoint can use the existing
+one-shot finalization fallback. Legacy turns with no checkpoint before or after
+execution keep that fallback too. Once continuation consumes a checkpoint,
+acceptance remains required even if its file is later deleted.
+
+This decision is shared by scheduled execution, recovered supervisor revisions
+and Autopilot through their existing Git adapters. It adds no queue, scheduler,
+worker owner or autonomous retry for external blockers. A stopped run retains
+checkpoint context in its normal handoff for inspection and a separately
+authorized recovery.

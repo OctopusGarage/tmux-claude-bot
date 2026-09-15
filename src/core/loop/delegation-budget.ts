@@ -15,6 +15,8 @@ const budgetSchema = z
     contractHash: z.string(),
     deadlineAt: z.number().int().safe().positive(),
     revisionsUsed: z.number().int().safe().nonnegative(),
+    continuationsUsed: z.number().int().safe().nonnegative().default(0),
+    lastContinuationSequence: z.number().int().safe().nonnegative().default(0),
     revisionLimit: z.number().int().safe().nonnegative().nullable(),
   })
   .strict();
@@ -34,6 +36,7 @@ export function reserveDelegationBudget(
   workOrder: LoopWorkOrder,
   timeoutMs: number,
   maxAttempts?: number,
+  continuationSequence?: number,
 ): Reservation {
   const checkpointPath = iterationCheckpointPath(workOrder);
   if (checkpointPath === null) return { ok: true, timeoutMs };
@@ -76,6 +79,35 @@ export function reserveDelegationBudget(
         return deny("delegation revision budget exhausted");
       }
       state.revisionsUsed += 1;
+    }
+    if (continuationSequence !== undefined) {
+      if (
+        !Number.isSafeInteger(continuationSequence) ||
+        continuationSequence <= state.lastContinuationSequence
+      ) {
+        return deny("delegation continuation checkpoint sequence already consumed or invalid");
+      }
+      if (state.continuationsUsed >= Math.max(0, workOrder.maxRounds - 1)) {
+        return deny("delegation continuation budget exhausted");
+      }
+      // Establish sticky checkpoint acceptance before granting another worker turn.
+      const requiredPath = join(dirname(checkpointPath), LOOP_RUN_ARTIFACTS.checkpointRequired);
+      const requirement = JSON.stringify({ schemaVersion: 1, contractHash });
+      try {
+        const stat = lstatSync(requiredPath);
+        if (
+          !stat.isFile() ||
+          stat.size > 1024 ||
+          readFileSync(requiredPath, "utf8") !== requirement
+        ) {
+          return deny("delegation continuation checkpoint requirement invalid");
+        }
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+        writeFileAtomicSync(requiredPath, requirement);
+      }
+      state.continuationsUsed += 1;
+      state.lastContinuationSequence = continuationSequence;
     }
     writeFileAtomicSync(path, JSON.stringify(state));
     return {

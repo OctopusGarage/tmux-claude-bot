@@ -969,8 +969,26 @@ timeout handoff, invalid/foreign input, provenance, real-repository acceptance
 and deletion downgrade prevention. `tests/loop/delegation-budget.test.ts` covers
 resumed deadlines, reset caller counters, corrupt state, final-summary bypass
 and late cancellation. Existing handoff and runner tests preserve compatibility
-for absent legacy checkpoints and other task families. Generic partial-turn
-continuation and independent behavioral verification remain separate work.
+for absent legacy checkpoints and other task families.
+
+Partial continuation runs inside the shared prompt sequence before finalization.
+It repeats the same prompt/session without another context reset only for a
+fresh, contract-valid checkpoint with pending work and no blocked items. All
+scheduled, readiness-retry, recovered-revision and Autopilot call sites must
+provide their existing Git adapter: the decision checks configured toplevel,
+HEAD and reported dirty state. No checkpoint command text is executable input.
+The budget persists `continuationsUsed` and `lastContinuationSequence` before
+dispatch, with zero defaults for old version-1 records. The cap is `maxRounds - 1`
+additional partial turns across initial/revision sequences, separate from gate
+revision attempts and sharing the same nonrenewable deadline. Consuming a
+checkpoint establishes sticky acceptance without overwriting invalid state.
+
+`tests/loop/delegation-continuation.test.ts` covers repeated prompt/session,
+no repeated reset, blocked/invalid/stale/unchanged progress, wrong repositories,
+missing adapters, cross-sequence budget exhaustion, replay after restoration,
+corrupt requirement records, cancellation, deadlines, legacy fallback and
+explicit terminal outcomes. Sequence advances remain agent-reported; independent
+behavioral verification and external-wait scheduling remain separate work.
 
 ### Workspace recovery
 

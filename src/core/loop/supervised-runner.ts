@@ -5,8 +5,11 @@ import {
   buildLoopSupervisorRevisionPrompt,
 } from "../prompts/loop-supervisor.js";
 import { reserveDelegationBudget } from "./delegation-budget.js";
+import { inspectDelegationContinuation } from "./delegation-continuation.js";
 import { recoverNonTerminalPullRequestDecisions } from "./final-summary-contract.js";
 import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
+import { readIterationCheckpoint } from "./iteration-checkpoint.js";
+import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
 import {
   type LoopSupervisorFinalSummary,
   type LoopWorkOrder,
@@ -67,6 +70,7 @@ export type LoopSupervisedRunnerInput = {
   resetBeforeWorkOrder?: "none" | "compact" | "clear";
   cancelSignal?: AbortSignal;
   transientDispatchMaxAttempts?: number;
+  runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
   dispatch: (request: SupervisorDispatchRequest) => Promise<SupervisorDispatchResult>;
 };
 
@@ -195,16 +199,41 @@ async function runSupervisorPromptSequence(
   input: SupervisorPromptSequenceInput,
   signal: AbortSignal,
 ): Promise<LoopSupervisedRunResult> {
-  const first = await dispatchWithProviderTransientRetry(input, signal, {
+  let before = readIterationCheckpoint(input.workOrder);
+  let first = await dispatchWithProviderTransientRetry(input, signal, {
     prompt: input.prompt,
     ...(input.resetBeforeWorkOrder !== undefined
       ? { contextReset: input.resetBeforeWorkOrder }
       : {}),
   });
-  const firstParsed = parseDispatchOutput(first, input.workOrder);
-  if (firstParsed.status !== "invalid-output") {
-    return firstParsed;
+  let firstParsed = parseDispatchOutput(first, input.workOrder);
+  while (firstParsed.status === "invalid-output" && firstParsed.reason === "missing-final-marker") {
+    signal.throwIfAborted();
+    const decision = inspectDelegationContinuation(input.workOrder, before, input.runGit);
+    if (decision.kind === "finalize") break;
+    if (decision.kind === "stop") {
+      return {
+        status: "dispatch-failed",
+        reason: decision.reason,
+        output: [firstParsed.output, decision.reason].join("\n"),
+        repairDisposition: "target-or-external-blocker",
+        finalSummaryRecovery: "disabled",
+      };
+    }
+    const reservation = reserveDelegationBudget(
+      input.workOrder,
+      input.timeoutMs,
+      undefined,
+      decision.sequence,
+    );
+    if (!reservation.ok)
+      return { ...reservation, output: [firstParsed.output, reservation.output].join("\n") };
+    input = { ...input, timeoutMs: reservation.timeoutMs };
+    before = readIterationCheckpoint(input.workOrder);
+    first = await dispatchWithProviderTransientRetry(input, signal, { prompt: input.prompt });
+    firstParsed = parseDispatchOutput(first, input.workOrder);
   }
+  if (firstParsed.status !== "invalid-output") return firstParsed;
 
   const finalization = await dispatchWithProviderTransientRetry(input, signal, {
     prompt: buildLoopSupervisorFinalizationPrompt(input.workOrder, firstParsed.output),

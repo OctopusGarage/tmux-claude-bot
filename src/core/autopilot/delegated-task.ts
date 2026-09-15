@@ -977,6 +977,7 @@ async function runActiveDelegatedTaskInBackground(
     resetBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
     cancelSignal,
     dispatch,
+    runGit: runGitCommand,
   });
   if (
     isActiveDelegationSupervisorReadinessFailure(result) &&
@@ -998,6 +999,7 @@ async function runActiveDelegatedTaskInBackground(
       resetBeforeWorkOrder: deps.config.loopEngineering.supervisor.resetBeforeWorkOrder,
       cancelSignal,
       dispatch,
+      runGit: runGitCommand,
     });
   }
 
@@ -1031,6 +1033,7 @@ async function runActiveDelegatedTaskInBackground(
       supervisorSession,
       timeoutMs: DEFAULT_ACTIVE_DELEGATE_TIMEOUT_MS,
       dispatch,
+      runGit: runGitCommand,
       failures: revisionFailures,
       attempt: revisionAttempt,
       maxAttempts: DEFAULT_REVISION_MAX_ATTEMPTS,
