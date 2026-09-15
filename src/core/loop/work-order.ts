@@ -17,6 +17,7 @@ import type {
   LoopWorkspaceConfig,
 } from "./config.js";
 import { finalMarkerForWorkOrder, SUPERVISOR_FINAL_STATUS_LIST } from "./final-summary-contract.js";
+import { iterationCheckpointPolicy } from "./iteration-checkpoint.js";
 import { defaultActiveDelegationPlanning, type LoopWorkOrderPlanning } from "./planning.js";
 import { loopTaskFamilyGovernance } from "./task-family.js";
 import type {
@@ -650,6 +651,7 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
     commitBranchPolicy(workOrder),
     ghIdentityPolicy,
     ...agentSessionPolicy(workOrder, cli),
+    ...iterationCheckpointPolicy(workOrder),
     "",
     "Available control commands:",
     `- ${cli} dashboard --json`,
@@ -1420,6 +1422,7 @@ export function buildLoopSupervisorFinalizationPrompt(
     "- Do not call model-provider APIs.",
     "- Do not add model SDKs, model API keys, or direct model HTTP integrations.",
     "- Do not narrate progress in this response.",
+    ...iterationCheckpointPolicy(workOrder),
     "",
     "Required final response:",
     `- Write the strict JSON final summary to ${shellQuote(finalSummaryPath)} before printing the final marker.`,
@@ -1468,6 +1471,7 @@ export function buildLoopSupervisorRevisionPrompt(input: {
     "- Do not call model-provider APIs.",
     "- Do not add model SDKs, model API keys, or direct model HTTP integrations.",
     "- Do not narrate progress in this response.",
+    ...iterationCheckpointPolicy(input.workOrder),
     "",
     "Required final response:",
     `- Write the strict JSON final summary to ${shellQuote(finalSummaryPath)} before printing the final marker.`,

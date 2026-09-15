@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { buildEvalReportFromSupervisorSummary } from "../eval/report.js";
 import { LOOP_RUN_ARTIFACTS, loopRunDir } from "./artifacts.js";
+import {
+  type IterationCheckpointRead,
+  iterationCheckpointPath,
+  readIterationCheckpoint,
+} from "./iteration-checkpoint.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import type { LoopSupervisorFinalSummary, LoopWorkOrder } from "./work-order.js";
 
@@ -69,6 +74,7 @@ type LoopSupervisorHandoff = {
   };
   planning?: NonNullable<LoopWorkOrder["planning"]>;
   progress: {
+    iterationCheckpoint?: Exclude<IterationCheckpointRead, { status: "absent" }>;
     actionsTaken: string[];
     commits: string[];
     finalVerification: LoopSupervisorFinalSummary["finalVerification"] | "not-available";
@@ -180,6 +186,8 @@ function buildHandoff(
   const status = input.result.status;
   const followUps = summary?.followUps ?? [];
   const planning = input.workOrder.planning;
+  const checkpoint = readIterationCheckpoint(input.workOrder);
+  const checkpointPath = iterationCheckpointPath(input.workOrder);
   const risks = [
     ...(summary?.planReview?.remainingRisks ?? []),
     ...(status === "completed" ? [] : [reason ?? `supervisor result status is ${status}`]),
@@ -218,6 +226,7 @@ function buildHandoff(
     },
     ...(planning !== undefined ? { planning } : {}),
     progress: {
+      ...(checkpoint.status === "absent" ? {} : { iterationCheckpoint: checkpoint }),
       actionsTaken: summary?.actionsTaken ?? [],
       commits: summary?.commits ?? [],
       finalVerification: summary?.finalVerification ?? "not-available",
@@ -229,6 +238,7 @@ function buildHandoff(
     },
     nextAgent: {
       resumeFrom: [
+        ...(checkpoint.status === "available" && checkpointPath !== null ? [checkpointPath] : []),
         paths.summaryPath,
         paths.markdownPath,
         ...(paths.evalReportPath !== undefined ? [paths.evalReportPath] : []),
@@ -271,6 +281,27 @@ function renderLearning(handoff: LoopSupervisorHandoff): string[] {
   ];
 }
 
+function renderIterationCheckpoint(
+  checkpoint: Exclude<IterationCheckpointRead, { status: "absent" }> | undefined,
+): string[] {
+  if (checkpoint === undefined) return [];
+  if (checkpoint.status === "invalid") {
+    return ["", "## Iteration Checkpoint", "", `- Checkpoint unavailable: ${checkpoint.reason}`];
+  }
+  return [
+    "",
+    "## Iteration Checkpoint",
+    "",
+    "Agent-reported progress; not system acceptance. Revalidate the current repository before reuse.",
+    `- Reported sequence: ${checkpoint.checkpoint.sequence}`,
+    `- Reported revision: ${checkpoint.checkpoint.repositoryRevision ?? "not observed"}`,
+    ...checkpoint.checkpoint.items.map(
+      (item) => `- ${item.id}: ${item.status} — ${item.description}`,
+    ),
+    `- Next action: ${checkpoint.checkpoint.nextAction}`,
+  ];
+}
+
 function renderHandoffMarkdown(handoff: LoopSupervisorHandoff): string {
   return [
     "# Loop WorkOrder Handoff",
@@ -300,6 +331,7 @@ function renderHandoffMarkdown(handoff: LoopSupervisorHandoff): string {
     "## Commits",
     "",
     ...renderList(handoff.progress.commits, "No commits were reported."),
+    ...renderIterationCheckpoint(handoff.progress.iterationCheckpoint),
     "",
     "## Review Evidence",
     "",

@@ -1296,3 +1296,39 @@ When changing intelligent automation behavior, update all relevant surfaces:
 Avoid adding direct model-provider SDKs or API-key paths for bot-owned AI
 behavior. AI-backed work must route through the existing Claude/Codex agent
 sessions and control surface.
+
+## Active Delegation Iteration Checkpoints
+
+Single-repository active delegations receive an `iteration-checkpoint.json`
+template in initial, revision and finalization supervisor prompts. The agent
+writes this internal sidecar beside the final-summary artifact after each bounded
+slice, using a temporary sibling and atomic rename. It can therefore preserve
+progress before a final summary exists. Workspace tasks and other task families
+do not receive this protocol yet.
+
+The version-1 record contains WorkOrder and project identity, a hash of the
+complete WorkOrder contract, a reported sequence, reported repository HEAD and
+dirty state, the complete acceptance-item list, per-item command/result/artifact
+evidence, and the next action. Acceptance IDs are deterministic within the
+contract. A legacy delegation without planning uses its goal as the required item.
+
+The reader rejects malformed or oversized input, unsupported schema versions,
+non-regular files, mismatched identities/contracts, missing or duplicate items,
+and evidence for a different reported revision. A `reported-passed` item needs
+a reported clean revision and nonempty evidence whose results are all passed.
+Items may otherwise be pending or blocked; they cannot silently disappear.
+Evidence source is always `agent-reported`.
+
+Handoff JSON and Markdown expose validated checkpoint context even for timeout
+results. Invalid records produce a bounded diagnostic without copying their
+contents into recovery instructions. Missing checkpoints preserve compatibility
+with older agents and artifacts.
+
+This is a recovery-context contract, not system acceptance. The reader validates
+the record's internal consistency; it does not observe current Git HEAD, execute
+the reported commands, authenticate artifacts, or authorize another turn.
+Checkpoint sequence is not an enforced iteration budget. Final summaries,
+system gates, cancellation and existing round limits retain their authority.
+There is no automatic continuation, immutable iteration journal, or new operator
+configuration/command in this slice. Current revision observation, durable attempt
+budgets and continuation decisions require the subsequent executor integration.
