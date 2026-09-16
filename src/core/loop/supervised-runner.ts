@@ -267,7 +267,7 @@ function parseDispatchOutput(
     if (isAgentStartupFailureOutput(output)) {
       return {
         status: "dispatch-failed",
-        reason: "agent startup reported authentication or MCP initialization failure",
+        reason: "agent startup reported authentication, MCP, or hook initialization failure",
         output,
         repairDisposition: "bot-repairable",
       };
@@ -315,7 +315,8 @@ function isAgentStartupFailureOutput(output: string): boolean {
   const normalized = output.toLowerCase();
   return (
     normalized.includes("access token could not be refreshed") ||
-    normalized.includes("mcp startup incomplete")
+    normalized.includes("mcp startup incomplete") ||
+    (normalized.includes("hook failed") && normalized.includes("hook exited with code"))
   );
 }
 

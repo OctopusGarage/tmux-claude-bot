@@ -193,7 +193,31 @@ describe("runLoopSupervisedProjectAsync", () => {
 
     expect(result).toEqual({
       status: "dispatch-failed",
-      reason: "agent startup reported authentication or MCP initialization failure",
+      reason: "agent startup reported authentication, MCP, or hook initialization failure",
+      output,
+      repairDisposition: "bot-repairable",
+    });
+    expect(dispatches).toBe(1);
+  });
+
+  it("classifies Codex startup hook failures as dispatch failures", async () => {
+    const output = ["Hook failed", "hook exited with code 1", "Ask Codex to do anything"].join(
+      "\n",
+    );
+    let dispatches = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        dispatches += 1;
+        return { status: 0, stdout: output, stderr: "" };
+      },
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "agent startup reported authentication, MCP, or hook initialization failure",
       output,
       repairDisposition: "bot-repairable",
     });
