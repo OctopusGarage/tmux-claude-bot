@@ -256,6 +256,7 @@ export async function runRuntimeGuardianTick(input: {
 
 function isTransientRepairAdmissionDeferral(detail: string): boolean {
   return (
+    detail === "no due findings" ||
     isAgentTransientFailure(detail) ||
     /^(automation admission deferred:|project already has active automation:|supervisor .*busy|supervisor .*lease|queue full|no available)/i.test(
       detail,

@@ -116,6 +116,9 @@ adapters may discover and render findings, but claim, immediate deferral,
 retry-backoff, and queue terminalization must not be reimplemented by an
 adapter. Shared automation notification intent owns severity and content facts;
 Telegram and Lark remain the only channel-rendering adapters.
+An empty Repair Coordinator window (`no due findings`) is normal deferral
+evidence. Runtime Guardian must not emit a warning, mark findings handled, or
+consume its repair cooldown for that response.
 Long-task completion notifications must only describe a credible current task
 window. Implausibly stale task windows are cleanup signals, not user-facing
 completion events, and must not read old transcript history or deliver chat
