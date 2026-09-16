@@ -1473,6 +1473,130 @@ describe("project recovery service", () => {
     );
   });
 
+  it("reopens an older accepted blocked recovery when newer source divergence is retryable", async () => {
+    const oldRunDir = join(tmpdir(), `project-recovery-old-blocked-${Date.now()}`);
+    const newRunDir = join(tmpdir(), `project-recovery-new-divergence-${Date.now()}`);
+    await mkdir(oldRunDir, { recursive: true });
+    await mkdir(newRunDir, { recursive: true });
+    await writeFile(
+      join(oldRunDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["verified no project-owned source bug"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: { decision: "block" },
+        commits: [],
+        followUps: ["External system action is required before retrying."],
+      }),
+    );
+    await writeFile(
+      join(oldRunDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        workOrderId: "old-blocked-recovery",
+        projectId: "tmux-claude-bot",
+      }),
+    );
+    await writeFile(
+      join(newRunDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["Confirmed source dev is 12 ahead and 5 behind origin/dev."],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        reviewGate: { decision: "block" },
+        commits: [],
+        followUps: ["Reconcile source branch divergence before retrying project recovery."],
+      }),
+    );
+    await writeFile(
+      join(newRunDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        workOrderId: "new-divergence-recovery",
+        projectId: "tmux-claude-bot",
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "invalid-final-summary",
+      taskId: "autopilot:original-failure",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(
+      queue.id,
+      ["autopilot:old-blocked-recovery", "autopilot:new-divergence-recovery"],
+      1_000,
+    );
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "autopilot:original-failure",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "running",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:old-blocked-recovery",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "blocked",
+          error: "active delegation ended with blocked",
+          reportPath: oldRunDir,
+          scheduledAt: 1_100,
+          updatedAt: 1_600,
+        },
+        {
+          taskId: "autopilot:new-divergence-recovery",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          error: "active delegation ended with blocked",
+          reportPath: newRunDir,
+          scheduledAt: 1_200,
+          updatedAt: 1_700,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ fixed: 0, blocked: 0 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "pending",
+      nextAttemptAt: 2_000,
+    });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:original-failure",
+      "pending",
+      expect.stringContaining("returned to the repair queue"),
+    );
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:new-divergence-recovery",
+      "pending",
+      expect.stringContaining("returned to the repair queue"),
+    );
+  });
+
   it("returns accepted blocked worker-control failures to the recovery queue", async () => {
     const runDir = join(tmpdir(), `project-recovery-worker-control-${Date.now()}`);
     await mkdir(runDir, { recursive: true });

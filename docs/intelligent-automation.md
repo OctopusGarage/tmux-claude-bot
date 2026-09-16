@@ -53,6 +53,9 @@ together so a successful environment repair does not remain falsely pending.
 Verified source worktree or source branch divergence is still retryable
 automation repair work; an accepted blocked supervisor summary must not
 terminalize that case as an owner decision.
+If a shared project-recovery queue contains an older accepted blocked attempt,
+a newer authoritative artifact with source-divergence evidence reopens the queue
+instead of inheriting the historical terminal classification.
 When a ledger `reportPath` names a run directory, recovery classification reads
 the final supervisor summary and system gate inside that directory. It must not
 discard those artifacts and turn recoverable orchestration evidence into a
@@ -97,6 +100,9 @@ structured boundary code. Evidence prose cannot create that state. A PR may be c
 an evidence-backed `duplicate`, `obsolete`, `non-actionable`, or `invalid`
 reason. Draft, conflict, age, pending checks, and ordinary repair failures are
 not close reasons by themselves.
+A global admission closure moves repository-review retries that would become due
+inside the closed window to the shared retry time without consuming attempts, so
+operator views do not advertise a retry that cannot run yet.
 A supervised repair or recovery that proves the repository already healthy is a
 successful no-delta completion. Even when commit and PR policy are enabled, it
 must record a clean worktree, passing deterministic verification, and
