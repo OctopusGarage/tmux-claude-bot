@@ -106,6 +106,10 @@ protected work and be covered by an ordering regression test when changed.
 Source worktree or configured source-branch divergence from its remote base is
 retryable automation repair evidence, not an accepted blocked closure, even when
 the worker blocked after verifying the divergence.
+When one project-recovery queue links multiple attempts, a newer authoritative
+artifact with that retryable evidence must reopen an older accepted blocked
+attempt; historical terminal evidence must not win solely because it appears
+first in the linked record set.
 When a system gate or execution-isolation producer knows that a finding belongs
 to a target or external boundary, it must persist a structured repair
 disposition; Runtime Guardian must never infer terminal ownership from log or
@@ -170,6 +174,8 @@ When that top-level precheck or a per-item repository-review dispatch precheck
 defers ready work, the queue must move `nextAttemptAt` to the admission retry
 time without incrementing the attempt count, so dashboards do not advertise
 already-past automatic retry times during quiet hours or closed admission.
+The top-level deferral also coalesces retries scheduled to become due before the
+admission retry time; retries already scheduled later remain unchanged.
 System Self-Heal broad agent sweeps must leave durable retryable failure ledger
 evidence when admission blocks the sweep before WorkOrder creation; otherwise
 the hourly operator-equivalent check can disappear from the next audit window.
