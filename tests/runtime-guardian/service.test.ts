@@ -883,6 +883,59 @@ projects:
     );
   });
 
+  it("keeps no-due-finding coordinator responses out of warning logs and cooldown", async () => {
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: "no due findings",
+    }));
+    const pendingFinding = finding({ runId: "run-not-due" });
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [pendingFinding],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBeUndefined();
+    expect(
+      store.lastHandledAt("terminal-system-gate-failure:tmux-claude-bot:run-not-due"),
+    ).toBeUndefined();
+    expect(readLogEntries()).not.toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
+  });
+
+  it("does not suppress non-contract variants of the no-due-finding response", async () => {
+    const store = new RuntimeGuardianStore();
+
+    await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [finding({ runId: "run-non-contract-response" })],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair: async () => ({ status: "blocked", detail: "No due findings" }),
+    });
+
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBe(10_000);
+    expect(readLogEntries()).toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
+  });
+
   it("does not mark readiness admission deferrals handled or start repair cooldown", async () => {
     const store = new RuntimeGuardianStore();
     const dispatchRepair = vi.fn(async () => ({
