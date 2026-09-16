@@ -264,6 +264,14 @@ function parseDispatchOutput(
   const fileParsed = parseSupervisorFinalSummaryFile(workOrder);
   const parsed = fileParsed.ok ? fileParsed : parseSupervisorFinalSummary(output, workOrder.id);
   if (!parsed.ok) {
+    if (isAgentStartupFailureOutput(output)) {
+      return {
+        status: "dispatch-failed",
+        reason: "agent startup reported authentication, MCP, or hook initialization failure",
+        output,
+        repairDisposition: "bot-repairable",
+      };
+    }
     return invalidSupervisorOutput(parsed.reason, output);
   }
   const summary = recoverNonTerminalPullRequestDecisions(workOrder, parsed.summary);
@@ -300,6 +308,15 @@ function isAgentNotRunningOutput(output: string): boolean {
     (normalized.includes("no está en ejecución") &&
       normalized.includes("/resume") &&
       normalized.includes("/start"))
+  );
+}
+
+function isAgentStartupFailureOutput(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return (
+    normalized.includes("access token could not be refreshed") ||
+    normalized.includes("mcp startup incomplete") ||
+    (normalized.includes("hook failed") && normalized.includes("hook exited with code"))
   );
 }
 
