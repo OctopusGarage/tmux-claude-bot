@@ -1,12 +1,16 @@
 import { resolve } from "node:path";
-import { type IterationCheckpointRead, readIterationCheckpoint } from "./iteration-checkpoint.js";
+import {
+  checkpointProgressFingerprint,
+  type IterationCheckpointRead,
+  readIterationCheckpoint,
+} from "./iteration-checkpoint.js";
 import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
 import type { LoopWorkOrder } from "./work-order-contract.js";
 
 type ContinuationDecision =
   | { kind: "finalize" }
   | { kind: "stop"; reason: string }
-  | { kind: "continue"; sequence: number };
+  | { kind: "continue"; sequence: number; fingerprint: string };
 
 /** A checkpoint requests a turn; repository checks and the durable budget authorize it. */
 export function inspectDelegationContinuation(
@@ -49,5 +53,11 @@ export function inspectDelegationContinuation(
   } catch {
     return stop("repository inspection failed");
   }
-  return pending ? { kind: "continue", sequence: checkpoint.sequence } : { kind: "finalize" };
+  return pending
+    ? {
+        kind: "continue",
+        sequence: checkpoint.sequence,
+        fingerprint: checkpointProgressFingerprint(checkpoint),
+      }
+    : { kind: "finalize" };
 }

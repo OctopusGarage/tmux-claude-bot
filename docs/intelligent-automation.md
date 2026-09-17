@@ -1376,6 +1376,17 @@ preventing replay after restoration. Sequence growth is reported progress, not
 proof of changed code or successful behavioral tests; the hard cap bounds such
 claims. Continuation preserves context and does not repeat the initial reset.
 
+Each granted partial turn also exclusively claims a content fingerprint under
+`continuation-evidence/`. The fingerprint covers revision, dirty-state report,
+item identity/status and deduplicated evidence; it excludes sequence, next-action
+wording and array order. Previously consumed reports, including A/B/A cycles,
+cannot grant another turn after checkpoint deletion or runner restart. Claims
+precede budget publication and dispatch: interrupted claims remain consumed and
+fail closed rather than authorizing an unaccounted retry. Older budgets retain
+their counters and deadline; historical reports without claims are not inferred.
+These are replay guards for agent reports, not proof of independent acceptance
+or a complete cross-process budget transaction.
+
 A blocked, malformed, disappeared, unchanged or repository-mismatched partial
 checkpoint stops dispatch with an explicit reason. Budget/deadline rejection
 also stops; neither path launches finalization or accepts an old summary through

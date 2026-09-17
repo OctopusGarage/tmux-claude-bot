@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
@@ -37,6 +37,7 @@ export function reserveDelegationBudget(
   timeoutMs: number,
   maxAttempts?: number,
   continuationSequence?: number,
+  continuationFingerprint?: string,
 ): Reservation {
   const checkpointPath = iterationCheckpointPath(workOrder);
   if (checkpointPath === null) return { ok: true, timeoutMs };
@@ -90,6 +91,8 @@ export function reserveDelegationBudget(
       if (state.continuationsUsed >= Math.max(0, workOrder.maxRounds - 1)) {
         return deny("delegation continuation budget exhausted");
       }
+      if (continuationFingerprint === undefined || !/^[a-f0-9]{64}$/.test(continuationFingerprint))
+        return deny("delegation continuation fingerprint invalid");
       // Establish sticky checkpoint acceptance before granting another worker turn.
       const requiredPath = join(dirname(checkpointPath), LOOP_RUN_ARTIFACTS.checkpointRequired);
       const requirement = JSON.stringify({ schemaVersion: 1, contractHash });
@@ -105,6 +108,20 @@ export function reserveDelegationBudget(
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
         writeFileAtomicSync(requiredPath, requirement);
+      }
+      // Claim before granting a turn. An interrupted reservation fails closed on replay.
+      const evidenceDir = join(dirname(checkpointPath), LOOP_RUN_ARTIFACTS.continuationEvidence);
+      mkdirSync(evidenceDir, { recursive: true });
+      try {
+        writeFileSync(
+          join(evidenceDir, `${continuationFingerprint}.json`),
+          JSON.stringify({ contractHash, sequence: continuationSequence }),
+          { flag: "wx" },
+        );
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "EEXIST")
+          return deny("delegation continuation rejected repeated checkpoint evidence");
+        throw error;
       }
       state.continuationsUsed += 1;
       state.lastContinuationSequence = continuationSequence;

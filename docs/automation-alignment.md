@@ -1081,3 +1081,8 @@ System acceptance executes configured deterministic evaluation commands independ
 Post-command repository root, HEAD, and status observations must succeed before
 acceptance. Artifacts record the system verdict and failure reasons, including
 command exit errors and score rejection, rather than copying command-reported success.
+Partial continuation shares durable content-replay rejection across initial and
+revision execution. Sequence-only changes, reworded next actions and reordered
+evidence must not bypass it. Preserve consumed `continuation-evidence/` claims
+during restoration; an interrupted claim blocks replay without accepting a final
+summary. This report-level guard does not replace independent acceptance gates.

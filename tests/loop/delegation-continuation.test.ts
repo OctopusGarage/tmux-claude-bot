@@ -18,6 +18,7 @@ import {
 } from "../../src/core/loop/final-summary-recovery.js";
 import {
   buildIterationCheckpointTemplate,
+  checkpointProgressFingerprint,
   iterationCheckpointPath,
 } from "../../src/core/loop/iteration-checkpoint.js";
 import {
@@ -112,6 +113,111 @@ function terminal(status = "completed") {
 }
 
 describe("partial delegation continuation", () => {
+  it("does not overwrite an interrupted evidence claim or grant another turn", async () => {
+    const f = fixture();
+    const checkpoint = f.checkpoint(1);
+    const evidenceDir = join(f.dir, "continuation-evidence");
+    mkdirSync(evidenceDir);
+    const claim = join(evidenceDir, `${checkpointProgressFingerprint(checkpoint)}.json`);
+    writeFileSync(claim, "{");
+    const dispatch = vi.fn(async () => {
+      f.checkpoint(2);
+      return partial;
+    });
+    const result = await runLoopSupervisedProjectAsync({
+      ...f,
+      supervisorSession: "worker",
+      timeoutMs: 10000,
+      dispatch,
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(result.output).toContain("repeated checkpoint evidence");
+    expect(result.finalSummaryRecovery).toBe("disabled");
+    expect(readFileSync(claim, "utf8")).toBe("{");
+    expect(
+      JSON.parse(readFileSync(join(f.dir, "delegation-budget.json"), "utf8")).continuationsUsed,
+    ).toBe(0);
+  });
+
+  it("ignores evidence ordering and duplication when identifying a report", () => {
+    const f = fixture();
+    const first = f.checkpoint(1);
+    const item = first.items[0];
+    if (!item || !first.repositoryRevision) throw new Error("missing checkpoint item");
+    const evidence = {
+      source: "agent-reported" as const,
+      revision: first.repositoryRevision,
+      command: "npm test",
+      result: "failed" as const,
+      artifact: "test.log",
+    };
+    item.evidence = [evidence, { ...evidence, command: "npm run lint" }];
+    const next = structuredClone(first);
+    next.sequence++;
+    next.nextAction = "Rephrased next step";
+    const nextItem = next.items[0];
+    if (!nextItem) throw new Error("missing item");
+    nextItem.evidence.reverse();
+    nextItem.evidence.push(evidence);
+    expect(checkpointProgressFingerprint(next)).toBe(checkpointProgressFingerprint(first));
+    nextItem.evidence[0] = { ...evidence, result: "passed" };
+    expect(checkpointProgressFingerprint(next)).not.toBe(checkpointProgressFingerprint(first));
+  });
+
+  it("rejects a report cycle after an intervening different report", async () => {
+    const f = fixture();
+    f.workOrder.maxRounds = 10;
+    let sequence = 0;
+    const dispatch = vi.fn(async () => {
+      const checkpoint = f.checkpoint(++sequence);
+      const item = checkpoint.items[0];
+      if (!item || !checkpoint.repositoryRevision) throw new Error("missing checkpoint item");
+      item.evidence = [
+        {
+          source: "agent-reported",
+          revision: checkpoint.repositoryRevision,
+          command: sequence === 2 ? "npm run lint" : "npm test",
+          result: "failed",
+          artifact: "check.log",
+        },
+      ];
+      writeFileSync(f.checkpointPath, JSON.stringify(checkpoint));
+      return partial;
+    });
+    const result = await runLoopSupervisedProjectAsync({
+      ...f,
+      supervisorSession: "worker",
+      timeoutMs: 10000,
+      dispatch,
+    });
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(result.output).toContain("repeated checkpoint evidence");
+  });
+
+  it("rejects repeated evidence despite increasing sequences and survives checkpoint removal", async () => {
+    const f = fixture();
+    f.workOrder.maxRounds = 10;
+    let sequence = 0;
+    const dispatch = vi.fn(async () => {
+      const checkpoint = f.checkpoint(++sequence);
+      checkpoint.nextAction = `Rephrased action ${sequence}`;
+      writeFileSync(f.checkpointPath, JSON.stringify(checkpoint));
+      return partial;
+    });
+    const input = { ...f, supervisorSession: "worker", timeoutMs: 10000, dispatch };
+    const first = await runLoopSupervisedProjectAsync(input);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(first.output).toContain("repeated checkpoint evidence");
+    expect(first.finalSummaryRecovery).toBe("disabled");
+    rmSync(f.checkpointPath);
+    const resumed = await runLoopSupervisedProjectAsync(input);
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(resumed.output).toContain("repeated checkpoint evidence");
+    expect(
+      JSON.parse(readFileSync(join(f.dir, "delegation-budget.json"), "utf8")).continuationsUsed,
+    ).toBe(1);
+  });
+
   it("ignores an earlier summary while a revision makes partial progress", async () => {
     const f = fixture();
     writeFileSync(join(f.dir, "final.json"), terminal().stdout.split("\n")[1] ?? "");
@@ -241,6 +347,24 @@ describe("partial delegation continuation", () => {
     const dispatch = vi.fn(async (request: SupervisorDispatchRequest) => {
       prompts.push(request.prompt);
       if (prompts.length < 3) {
+        writeFileSync(join(f.workOrder.projectPath, "slice.txt"), `slice ${prompts.length}`);
+        expect(f.runGit({ cwd: f.workOrder.projectPath, args: ["add", "slice.txt"] }).status).toBe(
+          0,
+        );
+        expect(
+          f.runGit({
+            cwd: f.workOrder.projectPath,
+            args: [
+              "-c",
+              "user.name=Test",
+              "-c",
+              "user.email=test@example.invalid",
+              "commit",
+              "-m",
+              `slice ${prompts.length}`,
+            ],
+          }).status,
+        ).toBe(0);
         f.checkpoint(prompts.length);
         return partial;
       }

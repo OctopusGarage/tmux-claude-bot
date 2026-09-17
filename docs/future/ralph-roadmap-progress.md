@@ -13,7 +13,7 @@ not complete the roadmap. The baseline assessment remains
 | R2 | Current-attempt evidence and immutable iteration history | Freshness exclusion and append-only prepared/started/settled transport records bind queue IDs, contract, prompt and session; append-only successor links serialize transport attempts; acceptance-generation binding remains open | Partial: durable transport history |
 | R3 | Crash-window reconciliation and single execution ownership | Prepared queue restoration claims each attempt once; append-only ownership links fence different IDs and start/cancellation races across processes. Started/invalid records await reconciliation. Before/after enqueue, commit, checkpoint, stale generation and live native goal still need end-to-end proof | Partial |
 | R4 | Independent behavioral verification bound to contract and repository revision | Configured `eval.command` is independently executed with Git root/HEAD/clean-worktree fencing and immutable command-verification artifacts. Broader CI and task-family evidence remain required; never execute checkpoint-supplied commands | Partial |
-| R5 | Shared policy, durable budgets and progress-based stopping | Pilot shared continuation/revision caps and absolute deadline pass; full transport accounting, repeated-evidence policy and parent/child budget proofs remain | Partial |
+| R5 | Shared policy, durable budgets and progress-based stopping | Shared continuation/revision caps, absolute deadline and durable consumed-report fingerprints reject repeated/cyclic evidence across restart. Full transport accounting, independent progress proof and parent/child budgets remain | Partial |
 | R6 | Operator progress, stop reasons, remaining allowance and safe pause/resume | Need command-backed controls and shared CLI/TUI/chat/MCP projections with documented lifecycle semantics, redacted paths and contract tests | Open |
 | R7 | External CI/quota/quiet-hours waiting and admission | Need persisted retry conditions, no agent polling, capacity release without losing workspace ownership, and nonrenewable lifetime deadline | Open |
 | R8 | Task-family rollout and task-specific stop policy | Bug-fix/test coverage, architecture/security, parent-budget harness, same-repository PR repair, daily audit/project recovery/runtime guardian and read-only opportunity discovery need explicit contracts and acceptance tests | Open |
@@ -26,7 +26,7 @@ not complete the roadmap. The baseline assessment remains
 - [ ] Complete a three-item task across slices without repeated verified work or a second WorkOrder/branch/PR.
 - [x] Reject claimed completion with pending mandatory items (pilot checkpoint acceptance tests).
 - [x] Reject stale revision and foreign-contract evidence (pilot real Git and reader tests).
-- [ ] Stop or change bounded diagnosis for repeated identical evidence, rather than trusting sequence growth.
+- [ ] Stop or change bounded diagnosis for repeated identical evidence, rather than trusting sequence growth. Report-level replay and cycle rejection is verified; independent evidence remains under R5.
 - [ ] Reconcile crashes before enqueue, after enqueue, after commit and after checkpoint without duplicate active workers or external effects.
 - [x] Preserve revision/continuation consumption and deadline across runner reentry (pilot budget tests; queue restoration still R3).
 - [ ] Prove cancellation, late completion and shutdown races across live/restored execution, not just the local runner.
@@ -72,3 +72,13 @@ looks unchanged or empty. The repository root is checked again after evaluation.
 Non-finite scores are rejected; verification artifacts store the system decision
 and rejection reasons. Regression tests reproduce the previous false successes.
 This repairs R4's command gate; it does not complete broader CI or family coverage.
+
+### 2026-09-17 repeated-report stopping
+
+Continuation reserves a content fingerprint before granting a new turn. Exclusive
+claims survive runner reentry and checkpoint deletion and reject A/B/A cycles.
+Sequence, next-action wording and evidence ordering/duplication do not count as
+new progress. Interrupted claims fail closed. Tests cover replay after restart,
+cycles, canonical evidence and real repository changes enabling continued work.
+This completes report-level replay detection only; R5 still requires independent
+progress evidence, complete transport accounting and parent/child budget proofs.

@@ -250,6 +250,7 @@ async function runSupervisorPromptSequence(
       input.timeoutMs,
       undefined,
       decision.sequence,
+      decision.fingerprint,
     );
     if (!reservation.ok)
       return { ...reservation, output: [firstParsed.output, reservation.output].join("\n") };

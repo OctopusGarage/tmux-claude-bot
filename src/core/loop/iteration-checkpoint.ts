@@ -69,6 +69,21 @@ function hash(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
+/** Report identity for replay rejection, never independent acceptance evidence. */
+export function checkpointProgressFingerprint(checkpoint: IterationCheckpoint): string {
+  return hash({
+    repositoryRevision: checkpoint.repositoryRevision,
+    worktreeDirty: checkpoint.worktreeDirty,
+    items: checkpoint.items
+      .map((item) => ({
+        id: item.id,
+        status: item.status,
+        evidence: [...new Set(item.evidence.map(canonicalJson))].sort(),
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  });
+}
+
 export function iterationCheckpointPath(workOrder: LoopWorkOrder): string | null {
   if (workOrder.task?.kind !== "active-delegated-task" || workOrder.workspace !== undefined) {
     return null;
@@ -171,6 +186,7 @@ export function iterationCheckpointPolicy(workOrder: LoopWorkOrder): string[] {
     "- Each evidence revision must match repositoryRevision. After code changes, clear stale evidence and return affected items to pending until reverified. Use reported-passed only for a clean revision with nonempty evidence whose results are all passed. Record blocked work and its next action; do not omit or defer required items.",
     "- Checkpoints do not complete the WorkOrder, replace the final summary or bypass system gates. A checkpoint does not authorize another iteration or extend the existing budget. Keep existing cancellation and stop policies.",
     "- If a turn ends without a final summary, the runner may repeat the same prompt when a fresh partial checkpoint matches the actual repository and budget remains. It allows at most maxRounds minus one partial continuations across this WorkOrder. Re-read the checkpoint, advance pending work, and preserve the session. Unchanged sequences, blocked items or repository mismatches stop continuation; a sequence increase is reported progress, not proof of correctness.",
+    "- Repeating previously consumed checkpoint evidence stops continuation, including after restart. Changing only the sequence, next-action wording, item order or evidence order/duplication does not establish new progress. Do not remove or modify system-owned continuation-evidence records.",
     "- Template (keep identity, contractHash, item IDs and descriptions unchanged):",
     JSON.stringify(buildIterationCheckpointTemplate(workOrder), null, 2),
   ];
