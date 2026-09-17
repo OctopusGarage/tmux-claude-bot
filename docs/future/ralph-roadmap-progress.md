@@ -64,3 +64,11 @@ are implied by this implementation goal.
 ### 2026-09-15 slice
 
 Configured `eval.command` now executes independently during system acceptance with repository root, clean-worktree, and revision fencing. Results are stored as contract-bound command verification artifacts. Broader CI and task-family evidence remain open.
+
+### 2026-09-17 verification failure handling
+
+Post-command Git observation failures now reject acceptance even when stdout
+looks unchanged or empty. The repository root is checked again after evaluation.
+Non-finite scores are rejected; verification artifacts store the system decision
+and rejection reasons. Regression tests reproduce the previous false successes.
+This repairs R4's command gate; it does not complete broader CI or family coverage.

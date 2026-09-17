@@ -1078,3 +1078,6 @@ current target again. Explicit owner decisions, external waits, terminal recover
 closures and retry exhaustion remain authoritative; missing status does not waive
 them. Tests cover the audit entry point and non-Git workspace parent recovery.
 System acceptance executes configured deterministic evaluation commands independently and records revision-bound evidence; supervisor summaries remain advisory for that gate. Each artifact includes command and output hashes for replay auditing.
+Post-command repository root, HEAD, and status observations must succeed before
+acceptance. Artifacts record the system verdict and failure reasons, including
+command exit errors and score rejection, rather than copying command-reported success.

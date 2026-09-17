@@ -30,6 +30,7 @@ import {
   startOrPickAfterCreate,
 } from "../../../src/adapters/lark/views.js";
 import { projectPathToHistoryDir } from "../../../src/core/agents/claude/claude-history.js";
+import * as takeoverService from "../../../src/core/agents/takeover-service.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import { bindGroup, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
@@ -819,12 +820,14 @@ describe("sendGroupMenu", () => {
 describe("sendOrphanList", () => {
   it("replies the empty-text hint when no adoptable processes are found", async () => {
     const channel = fakeChannel();
-    // In the test host no unmanaged claude/codex process is expected; assert
-    // the path lands on one of the two valid branches and observably replied.
-    await sendOrphanList(channel, "chat-1");
-    const repliedEmpty = channel.texts().includes("没有发现可接管的进程");
-    const repliedCard = channel.cards().length === 1;
-    expect(repliedEmpty || repliedCard).toBe(true);
+    const discovery = vi.spyOn(takeoverService, "findAdoptableOrphans").mockResolvedValue([]);
+    try {
+      await sendOrphanList(channel, "chat-1");
+      expect(channel.texts()).toContain("没有发现可接管的进程");
+      expect(channel.cards()).toHaveLength(0);
+    } finally {
+      discovery.mockRestore();
+    }
   });
 });
 

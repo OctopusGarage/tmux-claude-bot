@@ -2776,6 +2776,7 @@ export function runSupervisedSystemGateOutcome(input: {
       if (
         command.status !== 0 ||
         parsed?.passed !== true ||
+        (parsed?.score !== undefined && (score === undefined || !Number.isFinite(score))) ||
         (input.workOrder.eval.minScore !== undefined &&
           (score === undefined || score < input.workOrder.eval.minScore))
       )
@@ -2788,9 +2789,15 @@ export function runSupervisedSystemGateOutcome(input: {
         cwd: input.workOrder.projectPath,
         args: ["status", "--porcelain"],
       });
-      if ((after?.stdout ?? "").trim() !== (head?.stdout ?? "").trim())
+      const afterRoot = input.runGit?.({
+        cwd: input.workOrder.projectPath,
+        args: ["rev-parse", "--show-toplevel"],
+      });
+      if (afterRoot?.status !== 0 || resolve(afterRoot.stdout.trim()) !== expectedRoot)
+        failures.push("independent verification repository changed or unavailable");
+      if (after?.status !== 0 || after.stdout.trim() !== (head?.stdout ?? "").trim())
         failures.push("independent verification revision changed");
-      if ((afterStatus?.stdout ?? "").trim() !== "")
+      if (afterStatus?.status !== 0 || afterStatus.stdout.trim() !== "")
         failures.push("independent verification worktree changed");
       const record = {
         schemaVersion: 1,
@@ -2800,7 +2807,8 @@ export function runSupervisedSystemGateOutcome(input: {
         revision: (head?.stdout ?? "").trim(),
         commandHash: createHash("sha256").update(input.workOrder.eval.command).digest("hex"),
         exitStatus: command.status,
-        passed: parsed?.passed === true,
+        passed: failures.length === 0,
+        failures,
         score: score ?? null,
         startedAt,
         endedAt,

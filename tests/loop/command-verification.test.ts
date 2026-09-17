@@ -94,9 +94,35 @@ describe("system command verification", () => {
     [0, '{"passed":false,"score":95}'],
     [0, '{"passed":true,"score":80}'],
     [0, "unstructured success"],
+    [0, '{"passed":true,"score":1e400}'],
   ])("rejects agent success when system evaluation fails (%s, %s)", (status, stdout) => {
     const f = fixture();
     f.runCommand.mockReturnValue({ status, stdout, stderr: "" });
+    expect(runSupervisedSystemGateOutcome(f.input).result.status).toBe("supervisor-failed");
+    const files = readdirSync(join(f.dir, "command-verifications"));
+    const record = JSON.parse(
+      readFileSync(join(f.dir, "command-verifications", files[0] ?? ""), "utf8"),
+    );
+    expect(record.passed).toBe(false);
+  });
+
+  it.each(["root", "head", "status"])("rejects failed post-command %s observations", (fault) => {
+    const f = fixture();
+    f.runCommand.mockImplementation(() => {
+      f.runGit.mockImplementation(({ args }) => {
+        const kind = args.includes("--show-toplevel")
+          ? "root"
+          : args.includes("HEAD")
+            ? "head"
+            : "status";
+        return {
+          status: kind === fault ? 1 : 0,
+          stdout: kind === "root" ? "/repo/app" : kind === "head" ? f.head : "",
+          stderr: "observation failed",
+        };
+      });
+      return { status: 0, stdout: '{"passed":true,"score":95}', stderr: "" };
+    });
     expect(runSupervisedSystemGateOutcome(f.input).result.status).toBe("supervisor-failed");
   });
 
