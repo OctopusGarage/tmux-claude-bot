@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -370,7 +370,7 @@ describe("createLoopSupervisorTaskRunner", () => {
     ]);
   });
 
-  it("marks supervisor queue work done when the final marker or final summary is visible", async () => {
+  it("only marks supervisor queue work done for a valid marker summary or final summary file", async () => {
     const queue = new MessageQueue(
       30,
       join(mkdtempSync(join(tmpdir(), "tcb-loop-queue-")), "pending.json"),
@@ -407,8 +407,35 @@ describe("createLoopSupervisorTaskRunner", () => {
     );
     const probes: boolean[] = [];
     queue.setHandler(async (message) => {
+      rmSync(workOrderWithSummaryPath.finalSummaryPath, { force: true });
       probes.push(message.doneProbe?.("still shows active turn") ?? false);
-      probes.push(message.doneProbe?.(`${workOrder.requiredFinalMarker}\nsummary`) ?? false);
+      probes.push(message.doneProbe?.(workOrder.requiredFinalMarker) ?? false);
+      probes.push(
+        message.doneProbe?.(
+          `${workOrder.requiredFinalMarker}\n${JSON.stringify({
+            status: "completed",
+            projectId: workOrder.projectId,
+            actionsTaken: ["done"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          })}`,
+        ) ?? false,
+      );
+      writeFileSync(
+        workOrderWithSummaryPath.finalSummaryPath,
+        `${JSON.stringify({
+          status: "completed",
+          projectId: workOrder.projectId,
+          actionsTaken: ["done"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        })}\n`,
+      );
+      probes.push(message.doneProbe?.("still shows active turn") ?? false);
       message.resolve("supervisor done");
     });
 
@@ -420,7 +447,7 @@ describe("createLoopSupervisorTaskRunner", () => {
     });
 
     expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
-    expect(probes).toEqual([true, true]);
+    expect(probes).toEqual([false, false, true, true]);
   });
 
   it("blocks supervisor work when the worker is already leased", async () => {

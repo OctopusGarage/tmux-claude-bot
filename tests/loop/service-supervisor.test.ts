@@ -296,6 +296,61 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     ]);
   });
 
+  it("coalesces repository retries that become due during a global admission closure", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-repository-admission-window-"),
+    );
+    const now = Date.parse("2026-07-16T18:18:00Z");
+    const retryAt = Date.parse("2026-07-17T01:30:00Z");
+    const queue = new RepositoryReviewQueue();
+    const duringClosure = queue.enqueue({
+      repositoryId: "repo-during-closure",
+      scheduledAt: now,
+      priority: 1000,
+      now,
+    });
+    const afterClosure = queue.enqueue({
+      repositoryId: "repo-after-closure",
+      scheduledAt: now + 1,
+      priority: 1000,
+      now,
+    });
+    queue.deferReady(
+      duringClosure.id,
+      now,
+      now + 10 * 60_000,
+      "recovered supervisor work order result: invalid-output",
+    );
+    queue.deferReady(
+      afterClosure.id,
+      now,
+      retryAt + 10 * 60_000,
+      "recovered supervisor work order result: invalid-output",
+    );
+
+    expect(
+      deferReadyRepositoryReviewsForAdmission({
+        queue,
+        now,
+        nextAttemptAt: retryAt,
+        reason: "quiet-hours",
+      }),
+    ).toBe(1);
+
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({
+        id: duringClosure.id,
+        nextAttemptAt: retryAt,
+        lastError: "automation admission deferred: quiet-hours",
+      }),
+      expect.objectContaining({
+        id: afterClosure.id,
+        nextAttemptAt: retryAt + 10 * 60_000,
+        lastError: "recovered supervisor work order result: invalid-output",
+      }),
+    ]);
+  });
+
   it("reconciles remote Loop branches at startup and on a bounded maintenance cadence", async () => {
     vi.useFakeTimers();
     try {

@@ -106,6 +106,10 @@ protected work and be covered by an ordering regression test when changed.
 Source worktree or configured source-branch divergence from its remote base is
 retryable automation repair evidence, not an accepted blocked closure, even when
 the worker blocked after verifying the divergence.
+When one project-recovery queue links multiple attempts, a newer authoritative
+artifact with that retryable evidence must reopen an older accepted blocked
+attempt; historical terminal evidence must not win solely because it appears
+first in the linked record set.
 When a system gate or execution-isolation producer knows that a finding belongs
 to a target or external boundary, it must persist a structured repair
 disposition; Runtime Guardian must never infer terminal ownership from log or
@@ -116,6 +120,9 @@ adapters may discover and render findings, but claim, immediate deferral,
 retry-backoff, and queue terminalization must not be reimplemented by an
 adapter. Shared automation notification intent owns severity and content facts;
 Telegram and Lark remain the only channel-rendering adapters.
+An empty Repair Coordinator window (`no due findings`) is normal deferral
+evidence. Runtime Guardian must not emit a warning, mark findings handled, or
+consume its repair cooldown for that response.
 Long-task completion notifications must only describe a credible current task
 window. Implausibly stale task windows are cleanup signals, not user-facing
 completion events, and must not read old transcript history or deliver chat
@@ -167,6 +174,8 @@ When that top-level precheck or a per-item repository-review dispatch precheck
 defers ready work, the queue must move `nextAttemptAt` to the admission retry
 time without incrementing the attempt count, so dashboards do not advertise
 already-past automatic retry times during quiet hours or closed admission.
+The top-level deferral also coalesces retries scheduled to become due before the
+admission retry time; retries already scheduled later remain unchanged.
 System Self-Heal broad agent sweeps must leave durable retryable failure ledger
 evidence when admission blocks the sweep before WorkOrder creation; otherwise
 the hourly operator-equivalent check can disappear from the next audit window.
@@ -1086,3 +1095,6 @@ revision execution. Sequence-only changes, reworded next actions and reordered
 evidence must not bypass it. Preserve consumed `continuation-evidence/` claims
 during restoration; an interrupted claim blocks replay without accepting a final
 summary. This report-level guard does not replace independent acceptance gates.
+Live and restored journaled supervisor completion probes both require a valid
+current summary. A bare completion marker or pre-attempt summary cannot finish
+the queue item; restoration retains the same attempt identity and freshness fence.

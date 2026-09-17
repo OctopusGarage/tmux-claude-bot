@@ -482,7 +482,18 @@ export async function reconcileProjectRecoveryArtifacts(input: {
           ["failed", "missing", "running-timeout"].includes(record.status) &&
           acceptedBlockedRecoveryArtifact(record.reportPath),
       );
-      if (acceptedBlockedRecoveries.length > 0) {
+      const newestAcceptedBlockedAt = Math.max(
+        ...acceptedBlockedRecoveries.map((record) => record.updatedAt),
+      );
+      const newerRetryableRecoveryExists = linked.some(
+        (record) =>
+          record.source === "autopilot-delegate" &&
+          record.taskId !== queueRecord.linkedTaskIds[0] &&
+          ["failed", "missing", "running-timeout"].includes(record.status) &&
+          record.updatedAt > newestAcceptedBlockedAt &&
+          retryableBlockedRecoveryArtifact(record.reportPath),
+      );
+      if (acceptedBlockedRecoveries.length > 0 && !newerRetryableRecoveryExists) {
         const summary =
           "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains.";
         for (const record of linkedAcceptedBlockedClosureRecords(
@@ -874,6 +885,16 @@ function acceptedBlockedRecoveryArtifact(reportPath: string | undefined): boolea
   const systemGate = readJson(join(dirname(summaryPath), "system-gate.json"));
   if (summary === undefined) return false;
   return isAcceptedBlockedNoRepairSummary(summary, systemGate);
+}
+
+function retryableBlockedRecoveryArtifact(reportPath: string | undefined): boolean {
+  if (reportPath === undefined) return false;
+  const summaryPath = readFinalSummaryPath(reportPath);
+  if (summaryPath === undefined) return false;
+  const summary = readJson(summaryPath);
+  if (summary === undefined || summary.status !== "blocked") return false;
+  const systemGate = readJson(join(dirname(summaryPath), "system-gate.json"));
+  return hasRetryableProjectRecoveryEvidence(summary, systemGate);
 }
 
 function hasRetryableProjectRecoveryEvidence(

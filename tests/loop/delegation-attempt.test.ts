@@ -361,7 +361,23 @@ describe("durable delegation attempts", () => {
     );
     const prepared = prepare(f);
     const persisted = restoreRecord(f, prepared.attemptId);
-    expect(restoredLoopSupervisorMessage(persisted)).not.toBeNull();
+    const restored = restoredLoopSupervisorMessage(persisted);
+    expect(restored).not.toBeNull();
+    expect(restored?.doneProbe?.("still working")).toBe(false);
+    expect(restored?.doneProbe?.(f.workOrder.requiredFinalMarker)).toBe(false);
+    expect(
+      restored?.doneProbe?.(
+        `${f.workOrder.requiredFinalMarker}\n${JSON.stringify({
+          status: "completed",
+          projectId: "app",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        })}`,
+      ),
+    ).toBe(true);
     expect(shouldDiscardRestoredLoopSupervisorMessage(persisted)).toBe(false);
   });
 

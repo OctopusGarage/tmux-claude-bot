@@ -38,7 +38,7 @@ import {
   restoredLoopSupervisorMessage,
   shouldDiscardRestoredLoopSupervisorMessage,
 } from "./supervisor-work-restore.js";
-import type { LoopWorkOrder } from "./work-order.js";
+import { type LoopWorkOrder, parseSupervisorFinalSummary } from "./work-order.js";
 
 const log = createLogger("loop.agent-queue");
 const DEFAULT_WORKER_FAILURE_RETAIN_MS = 72 * 60 * 60 * 1000;
@@ -404,8 +404,8 @@ async function enqueueLoopAgentPromptToSession(
       promptSource: "control",
       ...(timeoutMs !== undefined ? { maxWaitDoneTotalMs: timeoutMs } : {}),
       doneProbe: (output) =>
-        output.includes(workOrder.requiredFinalMarker) ||
-        readFreshSupervisorFinalSummary(workOrder, attempt?.freshness).ok,
+        readFreshSupervisorFinalSummary(workOrder, attempt?.freshness).ok ||
+        parseSupervisorFinalSummary(output, workOrder.id).ok,
       controlRestore: loopSupervisorControlRestore(
         workOrder,
         sessionName,

@@ -79,8 +79,8 @@ export function restoredLoopSupervisorMessage(
       ? {}
       : {
           doneProbe: (output: string) =>
-            output.includes(restore.workOrder.requiredFinalMarker) ||
-            readFreshSupervisorFinalSummary(restore.workOrder, prepared.freshness).ok,
+            readFreshSupervisorFinalSummary(restore.workOrder, prepared.freshness).ok ||
+            parseSupervisorFinalSummary(output, restore.workOrder.id).ok,
         }),
     started: () => {
       if (prepared !== undefined) {

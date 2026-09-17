@@ -370,9 +370,9 @@ export function deferReadyRepositoryReviewsForAdmission(input: {
   reason: string;
 }): number {
   let deferred = 0;
-  for (const item of input.queue.listReady(input.now)) {
+  for (const item of input.queue.list({ all: true })) {
     if (
-      input.queue.deferReady(
+      input.queue.deferUntil(
         item.id,
         input.now,
         input.nextAttemptAt,

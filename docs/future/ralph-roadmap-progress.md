@@ -82,3 +82,11 @@ new progress. Interrupted claims fail closed. Tests cover replay after restart,
 cycles, canonical evidence and real repository changes enabling continued work.
 This completes report-level replay detection only; R5 still requires independent
 progress evidence, complete transport accounting and parent/child budget proofs.
+
+### 2026-09-17 upstream integration
+
+Integrate upstream `dev` through `6d8001ae`, preserving startup-failure
+classification, retryable scheduling and dependency updates. Combine valid-summary
+completion probing with the local attempt freshness fence, including restored
+journaled queue messages. Regression coverage rejects both a pre-attempt summary
+and a bare marker while accepting a valid current output summary.
