@@ -17,7 +17,7 @@ vi.setConfig({ testTimeout: 30_000 });
  * foundation every agent relies on — "send a command through tmux and read the
  * result" — actually works against real tmux.
  *
- * Auto-skips when tmux isn't on PATH (e.g. CI), so `npm test` stays green there;
+ * Auto-skips when tmux isn't on PATH (e.g. CI), so `pnpm test` stays green there;
  * run locally where tmux exists.
  */
 

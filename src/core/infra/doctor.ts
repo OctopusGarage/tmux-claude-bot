@@ -26,7 +26,7 @@ import { type InstalledAgentSkill, listAgentSkills } from "../skills/registry.js
 import { parseEnv, validateTokenShape } from "./onboarding.js";
 
 /**
- * Health checks for an installed bot, shared by the `npm run doctor` CLI and
+ * Health checks for an installed bot, shared by the `pnpm doctor` CLI and
  * the `/doctor` chat command. System access goes through {@link DoctorProbes}
  * so checks are unit-testable; renderers decide presentation — the chat one
  * is redacted (no app ids), the CLI one keeps full detail.
@@ -157,7 +157,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
   // 1. .env + at least one chat adapter (Telegram via TELEGRAM_BOT_TOKEN, Feishu via LARK_*)
   const envMap = probes.readEnv();
   if (!envMap) {
-    bad("no .env found", "run: npm run setup");
+    bad("no .env found", "run: pnpm setup");
   } else {
     const token = envMap.get("TELEGRAM_BOT_TOKEN") ?? envMap.get("BOT_TOKEN") ?? "";
     const telegram = validateTokenShape(token);
@@ -168,14 +168,14 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
 
     if (telegram) ok("Telegram configured (well-formed TELEGRAM_BOT_TOKEN)");
     else if (token)
-      bad("TELEGRAM_BOT_TOKEN is set but looks invalid", "run: npm run setup:reconfigure");
+      bad("TELEGRAM_BOT_TOKEN is set but looks invalid", "run: pnpm setup:reconfigure");
     else info("Telegram not configured (no TELEGRAM_BOT_TOKEN)");
 
     if (lark) ok("Feishu/Lark configured", `app ${envMap.get("LARK_APP_ID")}`);
-    else info("Feishu/Lark not configured (run: npm run setup:lark)");
+    else info("Feishu/Lark not configured (run: pnpm setup:lark)");
 
     if (!telegram && !lark) {
-      bad("no chat adapter configured", "run: npm run setup  (choose Telegram, Feishu, or both)");
+      bad("no chat adapter configured", "run: pnpm setup  (choose Telegram, Feishu, or both)");
     }
   }
 
@@ -267,7 +267,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
   const restartHint = managedRestartCommand();
 
   if (await probes.serviceLoaded()) ok(`${serviceName} is loaded`);
-  else bad(`${serviceName} not loaded`, "run: npm run service:install");
+  else bad(`${serviceName} not loaded`, "run: pnpm service:install");
 
   // 4. single-instance (the 409 trap)
   const n = await probes.botProcessCount();
@@ -285,7 +285,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
   const mlxBin = envMap?.get("MLX_WHISPER_BIN") ?? "";
   const langPref = envMap?.get("WHISPER_LANGUAGE") || "zh";
   if (!mlxBin) {
-    info("voice transcription disabled (MLX_WHISPER_BIN empty; npm run whisper:install)");
+    info("voice transcription disabled (MLX_WHISPER_BIN empty; pnpm whisper:install)");
   } else {
     const voice = voiceTranscriptionReadiness({
       env: envObj,
@@ -298,7 +298,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
     } else {
       bad(
         `voice: MLX_WHISPER_BIN set but binary is ${voice.status === "not-executable" ? "not executable" : "missing"}`,
-        "run: npm run whisper:install",
+        "run: pnpm whisper:install",
       );
     }
   }
@@ -328,7 +328,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
             `prompt translation: ${channel} argos ${cfg.from}->${cfg.to} python is ${
               argos.status === "not-executable" ? "not executable" : "missing"
             }`,
-            "run: npm run translate:install",
+            "run: pnpm translate:install",
           );
         }
       }

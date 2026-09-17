@@ -1,7 +1,7 @@
 /**
  * Guided setup wizard: prompts for the values that have no sane default,
  * validates the bot token live, auto-captures the operator's Telegram id,
- * and writes a 0600 `.env`. Run via `npm run setup` (add `--reconfigure`
+ * and writes a 0600 `.env`. Run via `pnpm setup` (add `--reconfigure`
  * to edit an existing config, `--yes` for non-interactive).
  */
 import { existsSync, readFileSync } from "node:fs";

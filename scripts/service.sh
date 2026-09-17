@@ -60,13 +60,13 @@ case "$cmd" in
   running) launchctl list "$LABEL" >/dev/null 2>&1 ;;
   pause)
     if launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null; then
-      echo "paused (booted out) - resume with: npm run service:resume"
+      echo "paused (booted out) - resume with: pnpm service:resume"
     else
       echo "already stopped / not loaded"
     fi
     ;;
   resume)
-    [ -f "$PLIST" ] || { echo "plist not found: $PLIST (run: npm run service:install)" >&2; exit 1; }
+    [ -f "$PLIST" ] || { echo "plist not found: $PLIST (run: pnpm service:install)" >&2; exit 1; }
     launchctl bootstrap "$DOMAIN" "$PLIST" && echo "resumed"
     ;;
   restart)

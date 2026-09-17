@@ -18,7 +18,7 @@ Constants: launchd label `com.octopusgarage.tmux-claude-bot` · deploy dir
 
 ## status
 
-- `npm run service:status` — managed service + bot process.
+- `pnpm service:status` — managed service + bot process.
 - `pgrep -fl "tmux-claude-bot.*(src/index.ts|dist/cli.js)"` — instance count (>1 ⇒ 409 risk). Managed runs `dist/cli.js`; a `./dev.sh` clone runs `src/index.ts`.
 - Whether `./dev.sh` is currently running (paused prod + clone in hot-reload).
 
@@ -40,20 +40,20 @@ is paused for the duration.
 
 1. `kill` the `dev.sh` process (SIGTERM, NOT `-9`) — its `trap` resumes the
    managed service automatically. If you only killed the watcher, or used `-9`,
-   run `npm run service:resume` yourself.
-2. Confirm with `npm run service:status` — exactly one healthy managed instance.
+   run `pnpm service:resume` yourself.
+2. Confirm with `pnpm service:status` — exactly one healthy managed instance.
 
 ## Debugging recipes
 
-- Health check: `cd ~/.tmux-claude-bot && npm run doctor` (or in the clone).
-- Logs: `npm run service:logs` (managed), or watch the `./dev.sh` output.
+- Health check: `cd ~/.tmux-claude-bot && pnpm doctor` (or in the clone).
+- Logs: `pnpm service:logs` (managed), or watch the `./dev.sh` output.
 - Inspect a project's pane: the bot's `/peek`, or `tmux attach -t <session>`.
 - **NEVER `curl .../getUpdates` (or otherwise poll) the bot's token** to debug —
   it competes with the running bot's long-poll and stalls it (409). Read the
   bot's own logs / `doctor` instead.
 - "Only `已接收`, no result" usually means the current project points at this bot's
   OWN repo session (a nesting loop) — switch to a real project, never the bot repo.
-- Gate before a PR or CI-readiness claim: `npm run verify:local`.
+- Gate before a PR or CI-readiness claim: `pnpm verify:local`.
 
 ## Report
 

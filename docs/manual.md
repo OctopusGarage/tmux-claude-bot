@@ -62,7 +62,7 @@ descriptions is in [docs/commands.md](commands.md)**; this is the orientation.
 - **Send any text** → it's typed into the current session's agent; the reply comes
   back when the agent finishes. **Voice messages** are transcribed and sent as text.
   Optional local prompt translation can be enabled with
-  `npm run translate:install` or `/translate_install`, plus `PROMPT_TRANSLATE_MODE=argos`,
+  `pnpm translate:install` or `/translate_install`, plus `PROMPT_TRANSLATE_MODE=argos`,
   `PROMPT_TRANSLATE_FROM=zh`, and `PROMPT_TRANSLATE_TO=en`; it applies to text,
   voice transcriptions, TUI input, and `tcb send`. Change it at runtime with
   `/prompt_translate status|off|on [from] [to]` in Telegram/Feishu, or
@@ -131,7 +131,7 @@ for the full guide. In brief:
 
 ```bash
 tcb tui        # managed install
-npm run tui    # dev
+pnpm tui    # dev
 ```
 
 Sessions list + live peek; `i` compose a prompt (multi-line paste works), `c`
@@ -350,7 +350,7 @@ explicitly want the global convenience copy at
 operator-home and global copies, and `tcb skill uninstall --scope global` to
 remove both current and legacy global skill names.
 
-`npm run <dev\|tui\|doctor\|service:*>` are the dev-profile equivalents.
+`pnpm <dev\|tui\|doctor\|service:*>` are the dev-profile equivalents.
 
 **Observer MCP server.** `tcb mcp observer` exposes read-only tools for AI clients
 that support local stdio MCP servers:
@@ -643,7 +643,7 @@ projects:
     maxRounds: 3
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
     commit:
@@ -689,7 +689,7 @@ projects:
       riskAssessment:
         # Replace with a project-owned deterministic command that emits the
         # documented risk-assessment JSON contract.
-        command: npm run security:assess
+        command: pnpm security:assess
         actionThreshold: 70
         criticalThreshold: 90
       allowDependencyUpdates: true
@@ -939,7 +939,7 @@ call `tcb task report` from their own scheduler or status exporter because their
 domain-specific health rules belong in the owning project. Auto-repair is
 deliberately scoped: the supervisor must inspect evidence, classify each
 failure, fix only tmux-claude-bot bugs on the repair branch, run
-`npm run verify:local`, review the diff, and commit verified fixes.
+`pnpm verify:local`, review the diff, and commit verified fixes.
 Target-project failures and external service, auth, or network failures are
 reported as blockers rather than patched blindly.
 

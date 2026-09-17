@@ -85,7 +85,7 @@ describe("createLoopQueueAgentTaskRunner", () => {
         autofixSafety: "safe",
         affectedFiles: ["tests/parser.test.ts"],
         prompt: "Add focused tests",
-        verificationCommands: ["npm test -- tests/parser.test.ts"],
+        verificationCommands: ["pnpm test -- tests/parser.test.ts"],
       },
     });
 
@@ -119,7 +119,7 @@ describe("createLoopQueueAgentTaskRunner", () => {
         autofixSafety: "safe",
         affectedFiles: ["tests/parser.test.ts"],
         prompt: "Add focused tests",
-        verificationCommands: ["npm test -- tests/parser.test.ts"],
+        verificationCommands: ["pnpm test -- tests/parser.test.ts"],
       },
     });
 
@@ -152,7 +152,7 @@ describe("createLoopQueueAgentTaskRunner", () => {
         autofixSafety: "safe",
         affectedFiles: ["tests/parser.test.ts"],
         prompt: "Add focused tests",
-        verificationCommands: ["npm test -- tests/parser.test.ts"],
+        verificationCommands: ["pnpm test -- tests/parser.test.ts"],
       },
     });
     await new Promise((resolve) => setImmediate(resolve));
@@ -189,7 +189,7 @@ describe("createLoopQueueAgentTaskRunner", () => {
         autofixSafety: "safe",
         affectedFiles: ["tests/parser.test.ts"],
         prompt: "Add focused tests",
-        verificationCommands: ["npm test -- tests/parser.test.ts"],
+        verificationCommands: ["pnpm test -- tests/parser.test.ts"],
       },
     });
 
@@ -251,7 +251,7 @@ describe("createLoopQueueAgentTaskRunner", () => {
         autofixSafety: "safe",
         affectedFiles: ["tests/parser.test.ts"],
         prompt: "Add focused tests",
-        verificationCommands: ["npm test -- tests/parser.test.ts"],
+        verificationCommands: ["pnpm test -- tests/parser.test.ts"],
       },
     });
 
@@ -278,7 +278,7 @@ describe("createLoopQueueAgentTaskRunner", () => {
         autofixSafety: "safe",
         affectedFiles: ["tests/parser.test.ts"],
         prompt: "Add focused tests",
-        verificationCommands: ["npm test -- tests/parser.test.ts"],
+        verificationCommands: ["pnpm test -- tests/parser.test.ts"],
       },
     });
 
@@ -304,7 +304,7 @@ describe("createLoopSupervisorTaskRunner", () => {
     blockedActions: ["direct-model-api"],
     skills: { approved: [] },
     preflight: { commands: [], repair: { agent: false } },
-    assessment: { command: "npm run assess" },
+    assessment: { command: "pnpm assess" },
     execution: { agent: true },
     recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: true },

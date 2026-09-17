@@ -74,7 +74,7 @@ export function larkChannelOptions(
 export function startLark(deps: HandlerDeps): void {
   const cfg = deps.config.lark;
   if (!cfg) {
-    log.info("disabled — skipping (run `npm run setup:lark` to onboard via QR scan)");
+    log.info("disabled — skipping (run `pnpm setup:lark` to onboard via QR scan)");
     return;
   }
   const domain = cfg.domain === "lark" ? Domain.Lark : Domain.Feishu;

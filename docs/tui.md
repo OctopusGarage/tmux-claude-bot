@@ -19,10 +19,10 @@ The bot must be running (the TUI connects to its control socket at
 # Managed service (normal install) — uses the same state dir as the service:
 tcb tui
 
-# Dev: start the bot, then run the TUI — `npm run tui` resolves the same dev
-# profile/state dir as `npm run dev`, so it finds the running bot's socket:
-npm run dev    # in one terminal (leave it running)
-npm run tui    # in another
+# Dev: start the bot, then run the TUI — `pnpm tui` resolves the same dev
+# profile/state dir as `pnpm dev`, so it finds the running bot's socket:
+pnpm dev    # in one terminal (leave it running)
+pnpm tui    # in another
 ```
 
 If the bot isn't up (or you piped it instead of running it in a real terminal) it

@@ -83,7 +83,7 @@ ${input.projectExtra ?? ""}
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: ${JSON.stringify(input.assessmentCommand ?? "npm run assess")}
+      command: ${JSON.stringify(input.assessmentCommand ?? "pnpm assess")}
     execution:
       agent: true
     allowedActions: [tests]
@@ -1588,7 +1588,9 @@ prReview:
           finalVerification: "passed",
           reviewGate: {
             preMutationReview: ["local Node tools were initially missing"],
-            postMutationReview: ["npm ci restored local tooling and final checks passed"],
+            postMutationReview: [
+              "pnpm install --frozen-lockfile restored local tooling and final checks passed",
+            ],
             aiReview: "not-applicable",
             deterministicGates: [
               {
@@ -1599,7 +1601,7 @@ prReview:
               },
               {
                 name: "environment-repair",
-                command: "npm ci",
+                command: "pnpm install --frozen-lockfile",
                 result: "passed",
                 evidence: "installed dependencies without tracked changes",
               },
@@ -1611,7 +1613,7 @@ prReview:
               },
               {
                 name: "typecheck",
-                command: "npm run lint:types",
+                command: "pnpm lint:types",
                 result: "passed",
                 evidence: "tsc --noEmit exited 0",
               },

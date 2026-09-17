@@ -17,6 +17,6 @@ export TCB_ENV_FILE="$PROJECT_DIR/state/.env"
 export TCB_LOG_DIR="$PROJECT_DIR/logs"
 cd "$PROJECT_DIR"
 
-# Run the bundled CLI (built by install.sh via `npm run build`). No tsx loader:
+# Run the bundled CLI (built by install.sh via `pnpm build`). No tsx loader:
 # dist is plain node ESM, so a restart runs whatever was last built.
 exec "$NODE_BIN" "$PROJECT_DIR/dist/cli.js" run

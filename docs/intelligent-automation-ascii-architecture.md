@@ -425,7 +425,7 @@ QUALITY AND RELEASE GATES
 
  local gates
 --------------------------------------------------------------------------------
- - npm run verify:local
+ - pnpm verify:local
  - pre-push hook
  - typecheck, tests, coverage, knip, dependency graph, lint, smoke, audit
 

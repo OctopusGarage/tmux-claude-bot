@@ -40,12 +40,12 @@ not complete the roadmap. The baseline assessment remains
 ## Slices
 
 - Pilot merged: `7dfdf5bf`, `0907c0d7`, `180c0603`; assessment: `89f78a53`.
-- Invocation freshness slice: reject pre-existing final-summary files during active delegation execution and transport recovery; preserve a newly written or explicitly returned current summary. Regression tests cover partial revision, failure/timeout recovery, atomic rewrites and invalid artifacts. Focused Loop/Autopilot suite: 52 files, 678 passing tests. `npm run verify:local` passed: 400 files, 4,445 tests passed and 4 skipped.
+- Invocation freshness slice: reject pre-existing final-summary files during active delegation execution and transport recovery; preserve a newly written or explicitly returned current summary. Regression tests cover partial revision, failure/timeout recovery, atomic rewrites and invalid artifacts. Focused Loop/Autopilot suite: 52 files, 678 passing tests. `pnpm verify:local` passed: 400 files, 4,445 tests passed and 4 skipped.
 
 
-- Durable transport history slice: append-only preparation, exclusive start claims, immutable settlement and freshness-aware live/restored queue probes. Prepared restoration validates prompt, session and contract; started/invalid attempts are retained for reconciliation. Full crash recovery and independent acceptance remain open. `npm run verify:local` passed, including coverage tests, type checks, dependency boundaries, lint and smoke.
+- Durable transport history slice: append-only preparation, exclusive start claims, immutable settlement and freshness-aware live/restored queue probes. Prepared restoration validates prompt, session and contract; started/invalid attempts are retained for reconciliation. Full crash recovery and independent acceptance remain open. `pnpm verify:local` passed, including coverage tests, type checks, dependency boundaries, lint and smoke.
 
-- Transport ownership slice: reserve one initial/successor attempt per WorkOrder before context reset or lease mutation; fence unclaimed callbacks and atomically arbitrate start versus pre-start cancellation. Ownership failures disable summary recovery. Cross-process reservation and cancellation tests supplement restored-message regressions. Surviving-worker recovery, interrupted reservations and final acceptance reconciliation remain open. `npm run verify:local` passed: 401 test files, 4,470 passing tests and 4 skipped.
+- Transport ownership slice: reserve one initial/successor attempt per WorkOrder before context reset or lease mutation; fence unclaimed callbacks and atomically arbitrate start versus pre-start cancellation. Ownership failures disable summary recovery. Cross-process reservation and cancellation tests supplement restored-message regressions. Surviving-worker recovery, interrupted reservations and final acceptance reconciliation remain open. `pnpm verify:local` passed: 401 test files, 4,470 passing tests and 4 skipped.
 
 ## Recovery acceptance delivery
 

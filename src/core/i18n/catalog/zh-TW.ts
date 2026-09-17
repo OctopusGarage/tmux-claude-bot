@@ -27,7 +27,7 @@ export const zhTW: Messages = {
   promptTranslateInstalling: "🌐 正在安裝 prompt 翻譯相依套件 · 首次需下載模型，稍候…",
   promptTranslateInstallOk: "🌐 prompt 翻譯相依套件已就緒 · 現在可以開啟翻譯模式",
   promptTranslateInstallFailed: (e) =>
-    `🌐 安裝失敗 · ${e} · 可在主機執行 npm run translate:install 查看詳情`,
+    `🌐 安裝失敗 · ${e} · 可在主機執行 pnpm translate:install 查看詳情`,
   promptTranslateCommandUsage: (usage) => `用法：/prompt_translate ${usage}`,
   promptTranslateUnavailable: (error) => `Prompt translation 不可用：${error}`,
   promptTranslateDisabledFor: (source) => `已關閉 ${source} 的 prompt translation`,
@@ -37,7 +37,7 @@ export const zhTW: Messages = {
   promptTranslateEnabledLine: (line) => `已開啟。${line}`,
   voiceEmpty: "沒聽清楚 · 請再說一遍或改傳文字",
   voiceUnsupported: "語音轉錄僅支援 Apple Silicon",
-  voiceNotInstalled: "語音轉錄尚未安裝（在儲存庫執行 npm run whisper:install）",
+  voiceNotInstalled: "語音轉錄尚未安裝（在儲存庫執行 pnpm whisper:install）",
 
   currentProjectIs: (project) => `${UI_ICONS.session.current} 目前工作階段：${project}`,
   projectStatusSession: (alive) =>
@@ -294,12 +294,12 @@ export const zhTW: Messages = {
   noShortId: (id) => `找不到短 ID：${id}`,
   pathNotAllowed: (dirs) => `路徑不在允許清單 · 允許：${dirs.join("、")}`,
   voiceNotEnabled:
-    "🎙️ 語音功能未啟用 · 傳送 /voice_install 一鍵安裝（僅 Apple Silicon），或在主機執行 npm run whisper:install",
+    "🎙️ 語音功能未啟用 · 傳送 /voice_install 一鍵安裝（僅 Apple Silicon），或在主機執行 pnpm whisper:install",
   voiceNeedsAppleSilicon: "🎙️ 語音轉錄需要 Apple Silicon（macOS arm64）· 目前主機不支援，請改傳文字",
   voiceAlreadyInstalled: "🎙️ 語音功能已就緒 · 直接傳語音即可",
   voiceInstalling: "🎙️ 正在安裝語音功能 · 首次需下載相依套件（約 1-2 分鐘），稍候…",
   voiceInstallOk: "🎙️ 語音功能已就緒 · 現在可以直接傳語音了",
-  voiceInstallFailed: (e) => `🎙️ 安裝失敗 · ${e} · 可在主機執行 npm run whisper:install 查看詳情`,
+  voiceInstallFailed: (e) => `🎙️ 安裝失敗 · ${e} · 可在主機執行 pnpm whisper:install 查看詳情`,
   voiceLangCurrent: (lang) =>
     `🎙️ 目前辨識語言：${lang === "auto" ? "自動偵測" : lang} · 點下方按鈕切換`,
   voiceLangSet: (lang) => `🎙️ 辨識語言已設為 ${lang === "auto" ? "自動偵測" : lang} · 下則語音生效`,

@@ -159,31 +159,31 @@ Start here:
 ## Development
 
 ```bash
-npm install
-npm run setup:lark
-npm run doctor
-npm run service:install
-npm run service:uninstall
-npm run dev
-npm run build
-npm test
-npm run lint
-npm run lint:types
+pnpm install
+pnpm setup:lark
+pnpm doctor
+pnpm service:install
+pnpm service:uninstall
+pnpm dev
+pnpm build
+pnpm test
+pnpm lint
+pnpm lint:types
 ```
 
 Before pushing or claiming CI readiness:
 
 ```bash
-npm run verify:local
+pnpm verify:local
 ```
 
 Deeper checks:
 
 ```bash
-npm run test:coverage
-npm run knip
-npm run mutation
-npm run audit
+pnpm test:coverage
+pnpm knip
+pnpm mutation
+pnpm audit
 ```
 
 ## Contributing

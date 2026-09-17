@@ -40,7 +40,7 @@ describe("eval report", () => {
         deterministicGates: [
           {
             name: "config-command-contract",
-            command: "npm test -- tests/config-command.test.ts",
+            command: "pnpm test -- tests/config-command.test.ts",
             result: "passed",
             evidence: "12 tests passed",
           },
@@ -97,7 +97,7 @@ describe("eval report", () => {
         {
           name: "config-command-contract",
           result: "passed",
-          command: "npm test -- tests/config-command.test.ts",
+          command: "pnpm test -- tests/config-command.test.ts",
           evidence: "12 tests passed",
         },
       ],
@@ -144,7 +144,9 @@ describe("eval report", () => {
       summary: summary({
         reviewGate: {
           preMutationReview: ["local Node tools were initially missing"],
-          postMutationReview: ["npm ci restored local tooling and final checks passed"],
+          postMutationReview: [
+            "pnpm install --frozen-lockfile restored local tooling and final checks passed",
+          ],
           aiReview: "not-applicable",
           deterministicGates: [
             {
@@ -155,7 +157,7 @@ describe("eval report", () => {
             },
             {
               name: "environment-repair",
-              command: "npm ci",
+              command: "pnpm install --frozen-lockfile",
               result: "passed",
               evidence: "installed dependencies without tracked changes",
             },
@@ -167,7 +169,7 @@ describe("eval report", () => {
             },
             {
               name: "typecheck",
-              command: "npm run lint:types",
+              command: "pnpm lint:types",
               result: "passed",
               evidence: "tsc --noEmit exited 0",
             },
@@ -191,7 +193,7 @@ describe("eval report", () => {
         reviewGate: {
           preMutationReview: ["initial tool preflight failed"],
           postMutationReview: [
-            "npm install repaired dependencies and post-repair preflight passed",
+            "pnpm install repaired dependencies and post-repair preflight passed",
           ],
           aiReview: "not-applicable",
           deterministicGates: [
@@ -203,7 +205,7 @@ describe("eval report", () => {
             },
             {
               name: "environment repair",
-              command: "npm install",
+              command: "pnpm install",
               result: "passed",
               evidence: "dependency installation completed",
             },
@@ -425,13 +427,13 @@ describe("eval report", () => {
         reviewGate: {
           preMutationReview: ["verified prior evidence in the isolated worktree"],
           postMutationReview: [
-            "Regression risk: npm run verify:local passed in the isolated worktree; no runtime behavior changed because no source patch was made.",
+            "Regression risk: pnpm verify:local passed in the isolated worktree; no runtime behavior changed because no source patch was made.",
           ],
           aiReview: "passed",
           deterministicGates: [
             {
               name: "local verification",
-              command: "npm run verify:local",
+              command: "pnpm verify:local",
               result: "passed",
               evidence: "verify-local ok",
             },

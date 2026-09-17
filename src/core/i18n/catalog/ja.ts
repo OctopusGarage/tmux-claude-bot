@@ -29,7 +29,7 @@ export const ja: Messages = {
   promptTranslateInstallOk:
     "🌐 プロンプト翻訳の依存関係が準備できました · 翻訳モードを有効化できます",
   promptTranslateInstallFailed: (e) =>
-    `🌐 インストール失敗 · ${e} · ホストで npm run translate:install を実行して詳細を確認してください`,
+    `🌐 インストール失敗 · ${e} · ホストで pnpm translate:install を実行して詳細を確認してください`,
   promptTranslateCommandUsage: (usage) => `使い方: /prompt_translate ${usage}`,
   promptTranslateUnavailable: (error) => `プロンプト翻訳を利用できません: ${error}`,
   promptTranslateDisabledFor: (source) => `${source} のプロンプト翻訳を無効化しました`,
@@ -39,7 +39,7 @@ export const ja: Messages = {
   promptTranslateEnabledLine: (line) => `有効化しました。${line}`,
   voiceEmpty: "聞き取れませんでした · もう一度話すかテキストを送信してください",
   voiceUnsupported: "音声の文字起こしは Apple Silicon のみ対応",
-  voiceNotInstalled: "音声未インストール（リポジトリで npm run whisper:install を実行）",
+  voiceNotInstalled: "音声未インストール（リポジトリで pnpm whisper:install を実行）",
 
   currentProjectIs: (project) => `${UI_ICONS.session.current} 現在のセッション：${project}`,
   projectStatusSession: (alive) =>
@@ -308,7 +308,7 @@ export const ja: Messages = {
   noShortId: (id) => `短縮 ID が見つかりません：${id}`,
   pathNotAllowed: (dirs) => `パスが許可リストにありません · 許可：${dirs.join("、")}`,
   voiceNotEnabled:
-    "🎙️ 音声機能が無効です · /voice_install でワンタップ導入（Apple Silicon のみ）、またはホストで npm run whisper:install を実行",
+    "🎙️ 音声機能が無効です · /voice_install でワンタップ導入（Apple Silicon のみ）、またはホストで pnpm whisper:install を実行",
   voiceNeedsAppleSilicon:
     "🎙️ 音声の文字起こしには Apple Silicon（macOS arm64）が必要です · このホストは非対応のためテキストを送信してください",
   voiceAlreadyInstalled: "🎙️ 音声機能は準備完了 · そのまま音声を送信してください",
@@ -316,7 +316,7 @@ export const ja: Messages = {
     "🎙️ 音声機能を導入中 · 初回は依存関係をダウンロードします（約1-2分）。お待ちください…",
   voiceInstallOk: "🎙️ 音声機能の準備が完了 · 音声を送信できます",
   voiceInstallFailed: (e) =>
-    `🎙️ 導入に失敗 · ${e} · 詳細はホストで npm run whisper:install を実行して確認`,
+    `🎙️ 導入に失敗 · ${e} · 詳細はホストで pnpm whisper:install を実行して確認`,
   voiceLangCurrent: (lang) =>
     `🎙️ 現在の認識言語：${lang === "auto" ? "自動検出" : lang} · 下のボタンで切替`,
   voiceLangSet: (lang) =>

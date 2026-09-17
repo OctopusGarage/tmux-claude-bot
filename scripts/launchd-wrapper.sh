@@ -19,8 +19,8 @@ cd "$PROJECT_DIR"
 
 # Keep-awake (TCB_KEEP_AWAKE) is handled inside the bot process (caffeinate spawned
 # from src/core/platform/keep-awake.ts), NOT here -- so it works the same for the
-# managed service, `npm run dev`, and a manual run. See that module.
+# managed service, `pnpm dev`, and a manual run. See that module.
 
-# Run the bundled CLI (built by install.sh via `npm run build`). No tsx loader:
+# Run the bundled CLI (built by install.sh via `pnpm build`). No tsx loader:
 # the dist is plain node ESM, so a restart runs whatever was last built.
 exec "$NODE_BIN" "$PROJECT_DIR/dist/cli.js" run

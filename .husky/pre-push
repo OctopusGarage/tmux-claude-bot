@@ -2,4 +2,4 @@
 . "$(dirname "$0")/../scripts/git-worktree-config-guard.sh"
 install_git_worktree_config_guard
 
-npm run verify:local
+pnpm verify:local

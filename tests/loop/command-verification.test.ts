@@ -21,7 +21,7 @@ projects:
     goal: Verify the authorized task.
     maxRounds: 1
     targetScore: 90
-    assessment: { command: npm run assess }
+    assessment: { command: pnpm assess }
     eval: { command: node verify.cjs, minScore: 90 }
     execution: { agent: true }
 `);

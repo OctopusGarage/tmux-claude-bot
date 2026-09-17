@@ -56,7 +56,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `,
     );
     const schedulerStore = new LoopSchedulerStore();
@@ -132,7 +132,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `,
     );
     const schedulerStore = new LoopSchedulerStore();
@@ -278,9 +278,9 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
-      command: npm run loop-eval
+      command: pnpm loop-eval
       minScore: 95
 `,
     );
@@ -345,7 +345,7 @@ projects:
     execution:
       agent: true
     assessment:
-      command: npm run assess
+      command: pnpm assess
     allowedActions: [tests]
 `,
     );
@@ -371,7 +371,7 @@ projects:
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add a focused parser regression test.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -415,7 +415,7 @@ projects:
     execution:
       agent: true
     assessment:
-      command: npm run assess
+      command: pnpm assess
     allowedActions: [tests]
 `,
     );
@@ -441,7 +441,7 @@ projects:
                     autofixSafety: "safe",
                     affectedFiles: ["tests/parser.test.ts"],
                     prompt: "Add a focused parser regression test.",
-                    verificationCommands: ["npm test -- tests/parser.test.ts"],
+                    verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                   },
                 ],
               }),
@@ -497,7 +497,7 @@ projects:
       agent: true
       maxAttempts: 1
     assessment:
-      command: npm run assess
+      command: pnpm assess
     allowedActions: [tests]
 `,
     );
@@ -522,7 +522,7 @@ projects:
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add a focused parser regression test.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),

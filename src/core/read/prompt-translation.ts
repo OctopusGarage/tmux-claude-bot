@@ -461,7 +461,7 @@ export async function translateWithArgos(
   const python = resolveArgosPython();
   const canImport = deps.canImport ?? canImportArgosTranslate;
   if (!canImport(python)) {
-    throw new Error(`argostranslate is not installed for ${python}; run npm run translate:install`);
+    throw new Error(`argostranslate is not installed for ${python}; run pnpm translate:install`);
   }
   const code = [
     "import sys",

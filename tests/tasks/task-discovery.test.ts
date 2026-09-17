@@ -867,7 +867,7 @@ projects:
     maxRounds: 3
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     preflight:
       commands: []
       repair:
@@ -875,7 +875,7 @@ projects:
     execution:
       agent: true
     eval:
-      command: npm run eval
+      command: pnpm eval
       minScore: 95
     runner:
       kind: agent-supervised
@@ -1422,7 +1422,7 @@ projects:
     maxRounds: 3
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     preflight:
       commands: []
       repair:
@@ -1430,7 +1430,7 @@ projects:
     execution:
       agent: true
     eval:
-      command: npm run eval
+      command: pnpm eval
       minScore: 95
     runner:
       kind: agent-supervised
@@ -1510,7 +1510,7 @@ projects:
     maxRounds: 3
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     preflight:
       commands: []
       repair:
@@ -1518,7 +1518,7 @@ projects:
     execution:
       agent: true
     eval:
-      command: npm run eval
+      command: pnpm eval
       minScore: 95
     runner:
       kind: agent-supervised
@@ -1592,7 +1592,7 @@ projects:
     maxRounds: 3
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     preflight:
       commands: []
       repair:
@@ -1600,7 +1600,7 @@ projects:
     execution:
       agent: true
     eval:
-      command: npm run eval
+      command: pnpm eval
       minScore: 95
     runner:
       kind: agent-supervised
@@ -1674,7 +1674,7 @@ projects:
     maxRounds: 1
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
     allowedActions: []
@@ -1731,7 +1731,7 @@ projects:
     maxRounds: 1
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
     allowedActions: []
@@ -1787,7 +1787,7 @@ projects:
     maxRounds: 1
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
     allowedActions: []
@@ -1846,7 +1846,7 @@ projects:
     maxRounds: 1
     targetScore: 95
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
     allowedActions: []

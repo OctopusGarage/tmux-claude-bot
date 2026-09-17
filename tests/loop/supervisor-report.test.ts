@@ -28,7 +28,7 @@ const workOrder = {
   blockedActions: ["direct-model-api"],
   skills: { approved: [] },
   preflight: { commands: [], repair: { agent: false } },
-  assessment: { command: "npm run assess" },
+  assessment: { command: "pnpm assess" },
   execution: { agent: true },
   recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
   commitPolicy: { enabled: false, perRound: true },
@@ -69,7 +69,7 @@ describe("writeLoopSupervisorReport", () => {
             deterministicGates: [
               {
                 name: "focused tests",
-                command: "npm test tests/loop/supervisor-report.test.ts",
+                command: "pnpm test tests/loop/supervisor-report.test.ts",
                 result: "passed",
                 evidence: "handoff artifact assertions passed",
               },
@@ -206,7 +206,7 @@ describe("writeLoopSupervisorReport", () => {
         {
           name: "focused tests",
           result: "passed",
-          command: "npm test tests/loop/supervisor-report.test.ts",
+          command: "pnpm test tests/loop/supervisor-report.test.ts",
         },
       ],
       learningCandidates: {

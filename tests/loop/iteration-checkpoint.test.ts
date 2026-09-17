@@ -45,7 +45,7 @@ projects:
     maxRounds: 3
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
 `);
@@ -90,7 +90,7 @@ function partial(workOrder: LoopWorkOrder) {
     {
       source: "agent-reported",
       revision: checkpoint.repositoryRevision,
-      command: "npm test -- first-behavior",
+      command: "pnpm test -- first-behavior",
       result: "passed",
       artifact: "verification/first.txt",
     },
@@ -323,7 +323,7 @@ describe("iteration checkpoints", () => {
     const item = value.items[0];
     const evidence = item?.evidence[0];
     if (!item || !evidence) throw new Error("missing evidence");
-    item.evidence.push({ ...evidence, command: "npm test -- regression", result: "failed" });
+    item.evidence.push({ ...evidence, command: "pnpm test -- regression", result: "failed" });
     save(workOrder, value);
     expect(readIterationCheckpoint(workOrder).status).toBe("invalid");
   });

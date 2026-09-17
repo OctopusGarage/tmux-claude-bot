@@ -13,6 +13,13 @@
   "publishConfig": {
     "access": "public"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "node-pty",
+      "protobufjs"
+    ]
+  },
   "bin": {
     "tmux-claude-bot": "dist/cli.js"
   },
@@ -32,7 +39,7 @@
     "dev": "scripts/dev-env.sh tsx watch src/index.ts",
     "tui": "scripts/dev-env.sh tsx src/cli.ts tui",
     "build": "tsup",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "pnpm build",
     "start": "node dist/cli.js run",
     "setup": "NODE_NO_WARNINGS=1 tsx src/scripts/setup.ts",
     "setup:reconfigure": "NODE_NO_WARNINGS=1 tsx src/scripts/setup.ts --reconfigure",
@@ -64,7 +71,7 @@
     "lint:deep": "eslint src",
     "verify:local": "scripts/verify-local.sh",
     "mutation": "stryker run",
-    "audit": "npm audit --audit-level=high",
+    "audit": "pnpm audit --audit-level high",
     "prepare": "husky 2>/dev/null || true"
   },
   "dependencies": {
@@ -116,5 +123,6 @@
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.8"
-  }
+  },
+  "packageManager": "pnpm@10.32.1"
 }

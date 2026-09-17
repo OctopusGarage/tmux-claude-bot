@@ -157,9 +157,9 @@ describe("managed install and release script contracts", () => {
   it("keeps release tagging behind local verification", () => {
     const releaseScript = readFileSync(nodePath.join(ROOT, "scripts", "release.sh"), "utf8");
 
-    expect(releaseScript).toContain("npm run verify:local");
+    expect(releaseScript).toContain("pnpm verify:local");
     expect(releaseScript).toContain("TCB_RELEASE_SKIP_VERIFY");
-    expect(releaseScript.indexOf("npm run verify:local")).toBeLessThan(
+    expect(releaseScript.indexOf("pnpm verify:local")).toBeLessThan(
       releaseScript.indexOf("npm version"),
     );
   });

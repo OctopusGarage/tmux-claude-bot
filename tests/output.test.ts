@@ -264,7 +264,7 @@ describe("markSemantics", () => {
   });
 
   it("prefixes a labelled failure mid-line", () => {
-    expect(markSemantics("npm test FAILED: 2 specs")).toBe("❌ npm test FAILED: 2 specs");
+    expect(markSemantics("pnpm test FAILED: 2 specs")).toBe("❌ pnpm test FAILED: 2 specs");
   });
 
   it("does NOT flag reassuring prose with a plural", () => {

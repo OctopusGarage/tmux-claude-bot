@@ -1,8 +1,8 @@
 /**
  * Feishu/Lark onboarding wizard. Scan a QR code with the Feishu app to create a
  * PersonalAgent application; the resulting credentials are written into `.env`
- * (LARK_* keys) using the same atomic 0600 writer as `npm run setup`. The
- * scanning user is auto-added to the allowlist. Run via `npm run setup:lark`.
+ * (LARK_* keys) using the same atomic 0600 writer as `pnpm setup`. The
+ * scanning user is auto-added to the allowlist. Run via `pnpm setup:lark`.
  */
 import { createInterface } from "node:readline/promises";
 import { runLarkOnboardingWizard } from "../adapters/lark/onboarding-wizard.js";

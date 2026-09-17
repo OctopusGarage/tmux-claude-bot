@@ -260,7 +260,7 @@ Use these gates:
 
 | Change Type | Required Gate |
 | --- | --- |
-| Documentation-only prompt inventory update | Docs review plus `npm run verify:local` when practical. |
+| Documentation-only prompt inventory update | Docs review plus `pnpm verify:local` when practical. |
 | Prompt metadata change | Registry completeness tests. |
 | Loop Supervisor contract change | Contract tests for final marker, summary schema, deterministic gates, timeout rule, active-agent boundary, and model-provider prohibition. |
 | Task-family policy change | Contract tests for action scope, stop condition, and task-specific safety rules. |
@@ -308,4 +308,4 @@ When adding or changing a governed prompt:
 9. Update `docs/automation-alignment.md` if the change affects task families,
    WorkOrder behavior, PR review, self-repair, or AI/eval behavior.
 10. Update user-facing docs only when the prompt changes visible behavior.
-11. Run focused tests and `npm run verify:local` before claiming completion.
+11. Run focused tests and `pnpm verify:local` before claiming completion.

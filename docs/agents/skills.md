@@ -3,7 +3,7 @@
 Loop Engineering tasks drive the coding agent by asking it to run a **skill** — e.g.
 *"use your code-review skill if one is available."* The skill lives in the
 **agent's** environment (Claude Code / Codex running in the project session),
-**not** in this repo, so it is not installed by `npm install` / the deploy.
+**not** in this repo, so it is not installed by `pnpm install` / the deploy.
 
 The task-family capability dependency registry lives under
 `src/core/capabilities`. It says which curated external skills/tools a task

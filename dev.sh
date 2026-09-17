@@ -26,7 +26,7 @@ PROD_ENV="$STATE_DIR/.env"
 PAUSED=0
 if scripts/service.sh running; then
   echo "=> Pausing managed service to avoid a 409 (resumes on exit)..."
-  npm run service:pause || true
+  pnpm service:pause || true
   PAUSED=1
 fi
 
@@ -35,7 +35,7 @@ resume() {
     echo ""
     echo "=> Resuming managed service..."
     # bootstrap right after a bootout can hit a transient I/O error; retry once.
-    npm run service:resume 2>/dev/null || { sleep 3; npm run service:resume || true; }
+    pnpm service:resume 2>/dev/null || { sleep 3; pnpm service:resume || true; }
   fi
 }
 trap resume EXIT INT TERM
@@ -44,4 +44,4 @@ echo "=> Dev mode: clone code + deployed config ($PROD_ENV) + deployed state, ho
 echo "   Edit and save -> reloads instantly. Ctrl-C to stop and resume prod."
 # Borrow prod's state dir too (recent_projects / session_path_map / current
 # project) so dev mirrors the real projects instead of the checkout's files.
-TCB_ENV_FILE="$PROD_ENV" TCB_STATE_DIR="$STATE_DIR" npm run dev
+TCB_ENV_FILE="$PROD_ENV" TCB_STATE_DIR="$STATE_DIR" pnpm dev

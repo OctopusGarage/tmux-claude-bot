@@ -242,7 +242,7 @@ describe("runDailyTaskAuditServiceTick", () => {
         "    maxRounds: 3",
         "    targetScore: 95",
         "    assessment:",
-        "      command: npm run assess",
+        "      command: pnpm assess",
         "prReview:",
         "  repositories: []",
         "workspaces: []",

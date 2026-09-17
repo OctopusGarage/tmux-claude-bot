@@ -33,7 +33,7 @@ const workOrder = {
   blockedActions: ["direct-model-api"],
   skills: { approved: [] },
   preflight: { commands: [], repair: { agent: false } },
-  assessment: { command: "npm run assess" },
+  assessment: { command: "pnpm assess" },
   execution: { agent: true },
   recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
   commitPolicy: { enabled: false, perRound: true },

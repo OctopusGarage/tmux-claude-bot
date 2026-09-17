@@ -51,7 +51,7 @@ function fixture() {
     blockedActions: [],
     skills: { approved: [] },
     preflight: { commands: [], repair: { agent: false } },
-    assessment: { command: "npm test" },
+    assessment: { command: "pnpm test" },
     execution: { agent: true },
     recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: true },

@@ -28,7 +28,7 @@ function summary(overrides: Partial<LoopRunSummary> = {}): LoopRunSummary {
     commands: [
       {
         kind: "assessment",
-        command: "npm run assess",
+        command: "pnpm assess",
         cwd: "/repo/hub",
         env: {},
         status: 0,
@@ -106,7 +106,7 @@ describe("loop reports and backlog", () => {
       blockedActions: ["direct-model-api"],
       skills: { approved: [] },
       preflight: { commands: [], repair: { agent: false } },
-      assessment: { command: "npm run assess" },
+      assessment: { command: "pnpm assess" },
       execution: { agent: true },
       recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
       commitPolicy: { enabled: false, perRound: true },

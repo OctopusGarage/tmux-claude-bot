@@ -29,7 +29,7 @@ export const en: Messages = {
   promptTranslateInstallOk:
     "🌐 Prompt translation dependencies are ready · you can enable translation mode now",
   promptTranslateInstallFailed: (e) =>
-    `🌐 Install failed · ${e} · run npm run translate:install on the host for details`,
+    `🌐 Install failed · ${e} · run pnpm translate:install on the host for details`,
   promptTranslateCommandUsage: (usage) => `Usage: /prompt_translate ${usage}`,
   promptTranslateUnavailable: (error) => `Prompt translation unavailable: ${error}`,
   promptTranslateDisabledFor: (source) => `Prompt translation disabled for ${source}`,
@@ -39,7 +39,7 @@ export const en: Messages = {
   promptTranslateEnabledLine: (line) => `Enabled. ${line}`,
   voiceEmpty: "Didn’t catch that · say it again or send text",
   voiceUnsupported: "Voice transcription needs Apple Silicon",
-  voiceNotInstalled: "Voice not installed (run `npm run whisper:install` in the repo)",
+  voiceNotInstalled: "Voice not installed (run `pnpm whisper:install` in the repo)",
 
   currentProjectIs: (project) => `${UI_ICONS.session.current} Current session: ${project}`,
   projectStatusSession: (alive) =>
@@ -301,14 +301,14 @@ export const en: Messages = {
   noShortId: (id) => `Short ID not found: ${id}`,
   pathNotAllowed: (dirs) => `Path not in the allow-list · allowed: ${dirs.join(", ")}`,
   voiceNotEnabled:
-    "🎙️ Voice not enabled · send /voice_install (Apple Silicon only), or run `npm run whisper:install` on the host",
+    "🎙️ Voice not enabled · send /voice_install (Apple Silicon only), or run `pnpm whisper:install` on the host",
   voiceNeedsAppleSilicon:
     "🎙️ Voice transcription needs Apple Silicon (macOS arm64) · this host can't, send text instead",
   voiceAlreadyInstalled: "🎙️ Voice is ready · just send a voice message",
   voiceInstalling: "🎙️ Installing voice · first run downloads deps (~1-2 min), hold on…",
   voiceInstallOk: "🎙️ Voice is ready · you can send voice messages now",
   voiceInstallFailed: (e) =>
-    `🎙️ Install failed · ${e} · run \`npm run whisper:install\` on the host for details`,
+    `🎙️ Install failed · ${e} · run \`pnpm whisper:install\` on the host for details`,
   voiceLangCurrent: (lang) =>
     `🎙️ Recognition language: ${lang === "auto" ? "auto-detect" : lang} · tap below to switch`,
   voiceLangSet: (lang) =>

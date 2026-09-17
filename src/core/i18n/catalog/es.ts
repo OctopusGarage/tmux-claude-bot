@@ -29,7 +29,7 @@ export const es: Messages = {
   promptTranslateInstallOk:
     "🌐 Las dependencias de traducción de prompts están listas · ya puedes activar el modo",
   promptTranslateInstallFailed: (e) =>
-    `🌐 Falló la instalación · ${e} · ejecuta npm run translate:install en el host para más detalle`,
+    `🌐 Falló la instalación · ${e} · ejecuta pnpm translate:install en el host para más detalle`,
   promptTranslateCommandUsage: (usage) => `Uso: /prompt_translate ${usage}`,
   promptTranslateUnavailable: (error) => `Traducción de prompts no disponible: ${error}`,
   promptTranslateDisabledFor: (source) => `Traducción de prompts desactivada para ${source}`,
@@ -39,7 +39,7 @@ export const es: Messages = {
   promptTranslateEnabledLine: (line) => `Activada. ${line}`,
   voiceEmpty: "No te entendí · repítelo o envía texto",
   voiceUnsupported: "La transcripción de voz requiere Apple Silicon",
-  voiceNotInstalled: "Voz no instalada (ejecuta `npm run whisper:install` en el repo)",
+  voiceNotInstalled: "Voz no instalada (ejecuta `pnpm whisper:install` en el repo)",
 
   currentProjectIs: (project) => `${UI_ICONS.session.current} Sesión actual: ${project}`,
   projectStatusSession: (alive) =>
@@ -310,14 +310,14 @@ export const es: Messages = {
   noShortId: (id) => `ID corto no encontrado: ${id}`,
   pathNotAllowed: (dirs) => `Ruta fuera de la lista permitida · permitidas: ${dirs.join(", ")}`,
   voiceNotEnabled:
-    "🎙️ Voz no habilitada · envía /voice_install (solo Apple Silicon), o ejecuta `npm run whisper:install` en el host",
+    "🎙️ Voz no habilitada · envía /voice_install (solo Apple Silicon), o ejecuta `pnpm whisper:install` en el host",
   voiceNeedsAppleSilicon:
     "🎙️ La transcripción de voz requiere Apple Silicon (macOS arm64) · este host no puede, envía texto",
   voiceAlreadyInstalled: "🎙️ La voz está lista · solo envía un mensaje de voz",
   voiceInstalling: "🎙️ Instalando voz · la primera vez descarga dependencias (~1-2 min), espera…",
   voiceInstallOk: "🎙️ La voz está lista · ya puedes enviar mensajes de voz",
   voiceInstallFailed: (e) =>
-    `🎙️ Falló la instalación · ${e} · ejecuta \`npm run whisper:install\` en el host para más detalles`,
+    `🎙️ Falló la instalación · ${e} · ejecuta \`pnpm whisper:install\` en el host para más detalles`,
   voiceLangCurrent: (lang) =>
     `🎙️ Idioma de reconocimiento: ${lang === "auto" ? "detección automática" : lang} · toca abajo para cambiar`,
   voiceLangSet: (lang) =>

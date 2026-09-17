@@ -141,7 +141,7 @@ const larkEnabled = Boolean(config.lark);
 
 if (!telegramEnabled && !larkEnabled) {
   log.error(
-    "No chat adapter configured. Set TELEGRAM_BOT_TOKEN for Telegram and/or run `npm run setup:lark` for Feishu/Lark, then restart.",
+    "No chat adapter configured. Set TELEGRAM_BOT_TOKEN for Telegram and/or run `pnpm setup:lark` for Feishu/Lark, then restart.",
   );
   process.exit(1);
 }

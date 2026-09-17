@@ -35,9 +35,9 @@ projects:
     maxRounds: 3
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
-      command: npm run loop-eval
+      command: pnpm loop-eval
       minScore: 95
     commit:
       enabled: false
@@ -84,8 +84,8 @@ describe("parseLoopConfigYaml", () => {
       targetScore: 90,
       cleanupPolicy: "conservative",
       execution: { agent: false },
-      assessment: { command: "npm run assess" },
-      eval: { command: "npm run loop-eval", minScore: 95 },
+      assessment: { command: "pnpm assess" },
+      eval: { command: "pnpm loop-eval", minScore: 95 },
       commit: { enabled: false, perRound: true },
     });
   });
@@ -105,7 +105,7 @@ projects:
     maxRounds: 3
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     bugFix:
       enabled: true
       schedule: "10 2 * * *"
@@ -183,7 +183,7 @@ projects:
     maxRounds: 3
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
 workspaces:
@@ -748,14 +748,14 @@ workspaces:
 
   it("rejects unsupported agent-backed assessment in phase one", () => {
     expect(() =>
-      parseLoopConfigYaml(validConfig.replace("command: npm run assess", "agent: true")),
+      parseLoopConfigYaml(validConfig.replace("command: pnpm assess", "agent: true")),
     ).toThrow(/assessment.agent is not implemented/i);
   });
 
   it("accepts agent-backed eval for active-agent evaluation", () => {
     const config = parseLoopConfigYaml(
       validConfig.replace(
-        "command: npm run loop-eval\n      minScore: 95",
+        "command: pnpm loop-eval\n      minScore: 95",
         "agent: true\n      minScore: 95",
       ),
     );
@@ -763,7 +763,7 @@ workspaces:
     expect(config.projects[0]?.eval).toMatchObject({ agent: true, minScore: 95 });
     const summary = validateLoopConfig(
       validConfig.replace(
-        "command: npm run loop-eval\n      minScore: 95",
+        "command: pnpm loop-eval\n      minScore: 95",
         "agent: true\n      minScore: 95",
       ),
     );

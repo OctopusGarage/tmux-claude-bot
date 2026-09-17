@@ -8,32 +8,32 @@ panes. It runs on Node via the `tsx` loader — there is no build step for runni
 ```bash
 git clone https://github.com/OctopusGarage/tmux-claude-bot.git
 cd tmux-claude-bot
-npm install
-npm run setup        # guided wizard, writes a 0600 .env (BOT_TOKEN, etc.)
-npm run dev          # tsx watch src/index.ts, hot reload (./dev.sh runs it proxy-free)
+pnpm install
+pnpm setup        # guided wizard, writes a 0600 .env (BOT_TOKEN, etc.)
+pnpm dev          # tsx watch src/index.ts, hot reload (./dev.sh runs it proxy-free)
 ```
 
-Health check anytime with `npm run doctor`. The **`/dev`** Claude command drives this
+Health check anytime with `pnpm doctor`. The **`/dev`** Claude command drives this
 whole loop (safe start/stop + debug recipes).
 
 > **One bot instance at a time.** Two long-pollers on the same token = 409 Conflict, so
-> a `npm run dev` session and the production launchd service can't share a `BOT_TOKEN`.
+> a `pnpm dev` session and the production launchd service can't share a `BOT_TOKEN`.
 > Two ways to coexist:
 >
 > - **Recommended — a separate dev bot.** Give this clone's `.env` its own token (a second
->   bot from [@BotFather](https://t.me/BotFather)). Then `npm run dev` never touches prod.
+>   bot from [@BotFather](https://t.me/BotFather)). Then `pnpm dev` never touches prod.
 >   `./dev.sh` warns you if it detects the same token as the running service.
-> - **Or pause prod** for the session: `npm run service:pause` … develop … `npm run service:resume`.
+> - **Or pause prod** for the session: `pnpm service:pause` … develop … `pnpm service:resume`.
 
 ### Managing the local service
 
 ```bash
-npm run service:status     # is the managed bot loaded / running?
-npm run service:pause      # stop it (before dev, to avoid 409)
-npm run service:resume     # start it again
-npm run service:restart    # reload latest code in ~/.tmux-claude-bot
-npm run service:logs       # tail the launchd stdout log
-npm run service:install    # (re)install the launchd plist
+pnpm service:status     # is the managed bot loaded / running?
+pnpm service:pause      # stop it (before dev, to avoid 409)
+pnpm service:resume     # start it again
+pnpm service:restart    # reload latest code in ~/.tmux-claude-bot
+pnpm service:logs       # tail the launchd stdout log
+pnpm service:install    # (re)install the launchd plist
 ```
 
 ### Editor / Claude Code feedback
@@ -43,7 +43,7 @@ it on clone without configuring an editor:
 
 - A `PostToolUse` hook in `.claude/settings.json` runs **Biome** on every file
   Claude Code edits — lint/format issues surface immediately, in any clone.
-- Types and dead code are gated by `npm run lint:types` / `lint:deep` / `knip`
+- Types and dead code are gated by `pnpm lint:types` / `lint:deep` / `knip`
   (and CI), independent of any editor or language server.
 
 Claude Code's built-in **TypeScript LSP** (live go-to-def / diagnostics while
@@ -56,7 +56,7 @@ want it. Nothing here depends on it.
 Everything must be green locally before push. Run the CI-equivalent local gate:
 
 ```bash
-npm run verify:local
+pnpm verify:local
 ```
 
 The pre-push hook runs the same command. If GitHub Actions catches a problem
@@ -66,11 +66,11 @@ the next contributor or agent gets the failure locally.
 For narrower iteration, these are the main component checks:
 
 ```bash
-npm test                                   # vitest (TDD: add/keep tests)
-npm run lint                               # biome
-npm run lint:types && npm run lint:types:tests
-npm run knip                               # dead-code / unused deps
-npm run depcruise                          # dependency rules / cycles
+pnpm test                                   # vitest (TDD: add/keep tests)
+pnpm lint                               # biome
+pnpm lint:types && pnpm lint:types:tests
+pnpm knip                               # dead-code / unused deps
+pnpm depcruise                          # dependency rules / cycles
 ```
 
 New behavior is test-first. Match the surrounding style; keep changes surgical.
@@ -113,8 +113,8 @@ curl -fsSL https://raw.githubusercontent.com/OctopusGarage/tmux-claude-bot/main/
 Manage the service:
 
 ```bash
-npm run service:install        # install/refresh the launchd plist
-npm run service:uninstall
+pnpm service:install        # install/refresh the launchd plist
+pnpm service:uninstall
 launchctl kickstart -k gui/$(id -u)/com.octopusgarage.tmux-claude-bot   # restart
 launchctl list | grep com.octopusgarage.tmux-claude-bot                 # status
 ```
@@ -126,10 +126,10 @@ verification suite, then bumps, tags, and pushes; CI publishes the GitHub Releas
 and it redeploys + verifies this machine. The mechanics it drives:
 
 ```bash
-npm run release -- patch       # or minor | major | X.Y.Z
+pnpm release -- patch       # or minor | major | X.Y.Z
 ```
 
-`npm run release` (`scripts/release.sh`) bumps the version, creates the `vX.Y.Z`
+`pnpm release` (`scripts/release.sh`) bumps the version, creates the `vX.Y.Z`
 tag, and pushes with `--follow-tags`. The `Release` workflow then publishes the
 GitHub Release from the tag. Add `no-deploy` to `/release` to skip the local
 redeploy.

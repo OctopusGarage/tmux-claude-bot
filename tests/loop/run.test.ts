@@ -17,9 +17,9 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
-      command: npm run loop-eval
+      command: pnpm loop-eval
       minScore: 95
 `;
 
@@ -33,7 +33,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
       agent: true
       minScore: 95
@@ -51,7 +51,7 @@ projects:
     execution:
       agent: true
     assessment:
-      command: npm run assess
+      command: pnpm assess
     commit:
       enabled: true
       perRound: true
@@ -72,7 +72,7 @@ projects:
     execution:
       agent: true
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
       agent: true
       minScore: 90
@@ -111,7 +111,7 @@ projects:
       dirtyWorktree: true
       maxAttempts: 1
     assessment:
-      command: npm run assess
+      command: pnpm assess
     commit:
       enabled: true
       perRound: true
@@ -144,8 +144,8 @@ describe("runLoopProject", () => {
     expect(
       invocations.map((invocation) => [invocation.kind, invocation.command, invocation.cwd]),
     ).toEqual([
-      ["assessment", "npm run assess", "/repo/hub"],
-      ["eval", "npm run loop-eval", "/repo/hub"],
+      ["assessment", "pnpm assess", "/repo/hub"],
+      ["eval", "pnpm loop-eval", "/repo/hub"],
     ]);
     expect(invocations[0]?.env).toMatchObject({
       LOOP_PROJECT_ID: "hub",
@@ -272,7 +272,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
                 {
                   id: "unsafe",
@@ -281,7 +281,7 @@ describe("runLoopProject", () => {
                   confidence: "high",
                   autofixSafety: "safe",
                   affectedFiles: ["src/index.ts"],
-                  verificationCommands: ["npm test"],
+                  verificationCommands: ["pnpm test"],
                 },
               ],
             }),
@@ -380,7 +380,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -441,7 +441,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -542,7 +542,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -714,7 +714,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
               suggestedBotImprovements: [],
@@ -794,7 +794,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "guarded",
                   affectedFiles: ["src"],
                   prompt: "Add a focused architecture guard.",
-                  verificationCommands: ["npm test"],
+                  verificationCommands: ["pnpm test"],
                 },
               ],
             }),
@@ -862,7 +862,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "guarded",
                   affectedFiles: ["src"],
                   prompt: "Add a focused architecture guard.",
-                  verificationCommands: ["npm test"],
+                  verificationCommands: ["pnpm test"],
                 },
               ],
             }),
@@ -934,7 +934,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["src", "tests"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -1007,7 +1007,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -1130,7 +1130,7 @@ describe("runLoopProject", () => {
       ["status", "--porcelain"],
       ["status", "--porcelain"],
     ]);
-    expect(summary.commands.map((command) => command.command)).not.toContain("npm run assess");
+    expect(summary.commands.map((command) => command.command)).not.toContain("pnpm assess");
   });
 
   it("fails dirty-worktree recovery when git state cannot be inspected", () => {
@@ -1153,7 +1153,7 @@ describe("runLoopProject", () => {
         reason: "dirty worktree recovery requires a git adapter",
       }),
     ]);
-    expect(summary.commands.map((command) => command.command)).not.toContain("npm run assess");
+    expect(summary.commands.map((command) => command.command)).not.toContain("pnpm assess");
   });
 
   it("runs one recovery attempt after verification fails and commits if the retry passes", () => {
@@ -1182,7 +1182,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -1246,7 +1246,7 @@ describe("runLoopProject", () => {
                   confidence: "high",
                   autofixSafety: "safe",
                   affectedFiles: ["package.json"],
-                  verificationCommands: ["npm test"],
+                  verificationCommands: ["pnpm test"],
                 },
                 {
                   id: "low-confidence",
@@ -1255,7 +1255,7 @@ describe("runLoopProject", () => {
                   confidence: 0.7,
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
                 {
                   id: "unsafe-autofix",
@@ -1264,7 +1264,7 @@ describe("runLoopProject", () => {
                   confidence: "high",
                   autofixSafety: "risky",
                   affectedFiles: ["src/core/scheduler"],
-                  verificationCommands: ["npm test -- tests/scheduler"],
+                  verificationCommands: ["pnpm test -- tests/scheduler"],
                 },
                 {
                   id: "missing-files",
@@ -1298,7 +1298,7 @@ describe("runLoopProject", () => {
                   confidence: 0.95,
                   autofixSafety: "low",
                   affectedFiles: ["tests/loop/run.test.ts"],
-                  verificationCommands: ["npm test -- tests/loop/run.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/loop/run.test.ts"],
                 },
               ],
             }),
@@ -1363,7 +1363,7 @@ describe("runLoopProject", () => {
           autofixSafety: "safe",
           affectedFiles: ["tests/loop/run.test.ts"],
           prompt: "Add focused run tests.",
-          verificationCommands: ["npm test -- tests/loop/run.test.ts"],
+          verificationCommands: ["pnpm test -- tests/loop/run.test.ts"],
         },
       ],
     });

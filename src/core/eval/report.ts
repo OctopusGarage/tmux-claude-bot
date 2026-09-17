@@ -342,7 +342,9 @@ function passedGateEvidenceText(gate: LoopSupervisorReviewGateDeterministicGate)
 }
 
 function isEnvironmentRepairEvidence(text: string): boolean {
-  return /\b(environment[- ]repair|preflight[- ]repair|npm ci|npm install|uv sync)\b/.test(text);
+  return /\b(environment[- ]repair|preflight[- ]repair|pnpm install --frozen-lockfile|pnpm install|uv sync)\b/.test(
+    text,
+  );
 }
 
 function isPostRepairPreflightEvidence(text: string): boolean {

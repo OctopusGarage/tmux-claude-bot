@@ -146,9 +146,9 @@ For each round from 1 to max rounds:
 
 4. Run verification:
    - focused tests for the touched behavior
-   - `npm run lint:types`
-   - `npm run lint`
-   - full `npm test` when touching `src/core`, shared state, adapters, or a
+   - `pnpm lint:types`
+   - `pnpm lint`
+   - full `pnpm test` when touching `src/core`, shared state, adapters, or a
      cross-surface read model
 
 5. Re-score using the same rubric.

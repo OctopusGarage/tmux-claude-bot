@@ -14,9 +14,9 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
-      command: npm run loop-eval
+      command: pnpm loop-eval
       minScore: 95
     allowedActions: [tests]
 `;
@@ -54,7 +54,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `;
 
 const configWithCatalogOnlyText = `
@@ -78,7 +78,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `;
 
 const runnableConfigText = `
@@ -138,7 +138,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 prReview:
   repositories:
     - id: hub-all-prs

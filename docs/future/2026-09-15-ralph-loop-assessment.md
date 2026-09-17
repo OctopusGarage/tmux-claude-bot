@@ -20,7 +20,7 @@ Three bounded slices are implemented for single-repository active delegations:
 - `180c0603`: repeat the same prompt/session for fresh partial checkpoints within
   a durable `maxRounds - 1` continuation cap; preserve normal final acceptance.
 
-The final implementation passed `npm run verify:local`: 400 test files,
+The final implementation passed `pnpm verify:local`: 400 test files,
 4,437 passing tests and 4 skipped tests. This supersedes the research-only
 verification scope recorded near the end of the original assessment.
 
@@ -436,14 +436,14 @@ the opt-in pilot and expand only after these scenarios and observed runs support
 
 ## Verification performed for this assessment
 
-- `npx vitest run tests/loop/supervised-runner.test.ts tests/loop/supervisor-report.test.ts tests/core/eval/report.test.ts tests/loop/service-supervisor.test.ts tests/autopilot/delegated-task-supervisor-pool.test.ts tests/loop/run.test.ts`
+- `pnpm exec vitest run tests/loop/supervised-runner.test.ts tests/loop/supervisor-report.test.ts tests/core/eval/report.test.ts tests/loop/service-supervisor.test.ts tests/autopilot/delegated-task-supervisor-pool.test.ts tests/loop/run.test.ts`
   — 6 files, 209 tests passed.
-- `npx depcruise src --config .dependency-cruiser.cjs --output-type err`
+- `pnpm exec depcruise src --config .dependency-cruiser.cjs --output-type err`
   — no dependency violations; 403 modules and 2,025 dependencies checked.
 
 These validate inspected existing behavior, not the proposed implementation.
 No live automation, plugin installation, provider request, deployment or push was
-performed. Full `npm run verify:local` was not run; this is not a CI-readiness claim.
+performed. Full `pnpm verify:local` was not run; this is not a CI-readiness claim.
 
 ## Summary
 

@@ -96,16 +96,16 @@ describe("repository PR decision contract", () => {
             { round: 2, task: "verify local", result: "passed" },
             { result: "reported final state" },
           ],
-          finalVerification: { command: "npm run verify:local", result: "passed" },
+          finalVerification: { command: "pnpm verify:local", result: "passed" },
           reviewGate: {
             preMutationReview: [],
             postMutationReview: ["reviewed diff"],
             aiReview: "not-applicable",
             deterministicGates: [
-              "npm test",
+              "pnpm test",
               {
                 name: "verify local",
-                command: "npm run verify:local",
+                command: "pnpm verify:local",
                 evidence: "exit 0",
                 result: "passed",
               },
@@ -156,10 +156,10 @@ describe("repository PR decision contract", () => {
       expect(result.summary.finalVerification).toBe("passed");
       expect(result.summary.reviewGate?.notes).toEqual(["reviewer=codex; result=accepted"]);
       expect(result.summary.reviewGate?.deterministicGates).toEqual([
-        "npm test",
+        "pnpm test",
         {
           name: "verify local",
-          command: "npm run verify:local",
+          command: "pnpm verify:local",
           evidence: "exit 0",
           result: "passed",
         },

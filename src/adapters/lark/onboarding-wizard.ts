@@ -12,7 +12,7 @@ export interface WizardLog {
  * Run the Feishu/Lark QR onboarding: render a QR code in the terminal, wait for
  * the user to scan it and create a PersonalAgent app, and return the resulting
  * LARK_* env values (the caller persists them to `.env`). Shared by the unified
- * `npm run setup` (inline) and the standalone `npm run setup:lark`. `msgs` is
+ * `pnpm setup` (inline) and the standalone `pnpm setup:lark`. `msgs` is
  * the setup catalog for the language the operator picked at the start.
  */
 export async function runLarkOnboardingWizard(

@@ -16,18 +16,18 @@ run() {
   return "$status"
 }
 
-run npm run lint
-run npm run lint:types
-run npm run lint:types:tests
-run npm run test:coverage
-run npm run knip
-run npm run depcruise
-run npm run lint:deep
-run npm run smoke
+run pnpm lint
+run pnpm lint:types
+run pnpm lint:types:tests
+run pnpm test:coverage
+run pnpm knip
+run pnpm depcruise
+run pnpm lint:deep
+run pnpm smoke
 run scripts/audit-high.sh
 
 if command -v shellcheck >/dev/null 2>&1; then
-  run npm run lint:sh
+  run pnpm lint:sh
 else
   printf '\n==> skip shellcheck: command not found\n'
   git_worktree_config_checkpoint "verify-local:skip:shellcheck"

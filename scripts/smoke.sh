@@ -23,7 +23,7 @@ if rg -n --glob '!scripts/smoke.sh' \
   -e "https?://api\\.(openai|anthropic)\\.com/v1/" \
   -e "https?://api\\.(deepseek|mistral)\\.com/v1/" \
   -e "https?://generativelanguage\\.googleapis\\.com/v1" \
-  src scripts .env.example package.json package-lock.json >/dev/null
+  src scripts .env.example package.json pnpm-lock.yaml >/dev/null
 then
   printf 'smoke failed: direct model-provider API integration found; route AI work through the managed agent surface\n' >&2
   exit 1
@@ -40,7 +40,7 @@ export TCB_ENV_FILE="$tmp/.env"
 mkdir -p "$TCB_STATE_DIR"
 touch "$TCB_ENV_FILE"
 
-npm run build >/dev/null
+pnpm build >/dev/null
 
 node dist/cli.js --help >/dev/null
 node dist/cli.js --version >/dev/null

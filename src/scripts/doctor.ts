@@ -1,7 +1,7 @@
 /**
  * Health check for an installed bot. Prints a ✓/✗ checklist and exits non-zero
  * if anything is wrong — notably MORE THAN ONE bot process (the documented 409
- * single-instance trap). Run via `npm run doctor`.
+ * single-instance trap). Run via `pnpm doctor`.
  *
  * Check logic lives in core/doctor.ts (shared with the /doctor chat command);
  * this wrapper only renders with ANSI colors — including sensitive details

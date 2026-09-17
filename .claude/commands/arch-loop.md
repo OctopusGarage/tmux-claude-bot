@@ -53,9 +53,9 @@ workflow file is missing, stop and report that the command cannot run.
    - implement the smallest behavior-preserving change,
    - rerun the focused test.
 9. After each round, run focused verification plus:
-   - `npm run lint:types`
-   - `npm run lint`
-   - full `npm test` when touching `src/core`, shared state, adapters, or a
+   - `pnpm lint:types`
+   - `pnpm lint`
+   - full `pnpm test` when touching `src/core`, shared state, adapters, or a
      cross-surface read model.
 10. Re-score after every round and stop when:
     - score >= target,

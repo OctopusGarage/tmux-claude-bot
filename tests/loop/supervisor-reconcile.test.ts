@@ -59,7 +59,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
 ${projectExtra}
@@ -86,7 +86,7 @@ function workOrder(stateDir: string, projectPath: string): LoopWorkOrder {
     blockedActions: [],
     skills: { approved: [] },
     preflight: { commands: [], repair: { agent: false } },
-    assessment: { command: "npm run assess" },
+    assessment: { command: "pnpm assess" },
     execution: { agent: true },
     recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: true },
@@ -601,7 +601,7 @@ describe("loop supervisor work order reconciliation", () => {
             {
               name: "local-verification",
               result: "passed",
-              command: "npm run verify:local",
+              command: "pnpm verify:local",
               evidence: "verify-local ok",
             },
           ],

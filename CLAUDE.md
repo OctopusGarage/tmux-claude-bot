@@ -102,7 +102,7 @@ unless they are clearly synthetic fixtures or generic examples.
 
 ## Verification
 
-Before pushing or claiming CI readiness, run `npm run verify:local`. The
+Before pushing or claiming CI readiness, run `pnpm verify:local`. The
 pre-push hook runs the same command. If remote CI finds a class of issue not
 covered locally, update `scripts/verify-local.sh`, the hook, or these rules so
 future agents see the same failure before push.

@@ -24,7 +24,7 @@ function workOrder(overrides: Partial<LoopWorkOrder> = {}): LoopWorkOrder {
     blockedActions: [],
     skills: { approved: [] },
     preflight: { commands: [], repair: { agent: false } },
-    assessment: { command: "npm run assess" },
+    assessment: { command: "pnpm assess" },
     execution: { agent: true },
     recovery: { agent: true, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: false },

@@ -25,7 +25,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     bugFix:
       enabled: true
       schedule: "10 2 * * *"

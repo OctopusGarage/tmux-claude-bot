@@ -37,8 +37,8 @@ fi
 MATERIALIZE=0
 if [ -n "${TCB_MATERIALIZE_FROM:-}" ]; then
   # Materialize mode: provision the managed runtime from an already-built copy
-  # (the installed npm package) instead of downloading. Used by `tmux-claude-bot
-  # install` so an `npm i -g` install can stand up the launchd service from a
+# (the installed npm package) instead of downloading. Used by `tmux-claude-bot
+# install` so an `npm i -g` install can stand up the launchd service from a
   # stable ~/.tmux-claude-bot, without re-downloading or rebuilding. dist is
   # prebuilt in the package, so the deps step below only installs runtime deps.
   MATERIALIZE=1
@@ -141,20 +141,38 @@ command -v node >/dev/null 2>&1 || { err "node not found - install via nvm: http
 command -v tmux >/dev/null 2>&1 || warn "tmux not found - install it (macOS: brew install tmux | Debian/Ubuntu: sudo apt install tmux)"
 command -v claude >/dev/null 2>&1 || warn "Claude Code CLI not found - see https://docs.anthropic.com/en/docs/claude-code (or set CLAUDE_START_COMMAND)."
 
+ensure_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    return
+  fi
+  command -v corepack >/dev/null 2>&1 || {
+    err "pnpm not found and corepack is unavailable. Install pnpm first: https://pnpm.io/installation"
+    exit 1
+  }
+  info "Enabling pnpm via corepack..."
+  corepack enable pnpm >/dev/null 2>&1 || corepack prepare pnpm@10.32.1 --activate
+  command -v pnpm >/dev/null 2>&1 || {
+    err "pnpm is still unavailable after corepack activation."
+    exit 1
+  }
+}
+
+ensure_pnpm
+
 if [ "$MATERIALIZE" = 1 ]; then
   # Materialize mode ships a prebuilt dist - only runtime deps are needed.
   info "Installing runtime dependencies..."
-  HUSKY=0 npm install --omit=dev
+  HUSKY=0 pnpm install --prod --frozen-lockfile
 else
   # Full install (dev deps included) so the tsup build can run, then build the
   # bundled dist the launchd service runs, then prune dev deps back out. Skip
   # husky - end users need no git hooks; tarball installs have no .git anyway.
   info "Installing dependencies..."
-  HUSKY=0 npm ci || HUSKY=0 npm install
+  HUSKY=0 pnpm install --frozen-lockfile || HUSKY=0 pnpm install
   info "Building..."
-  npm run build
+  pnpm build
   info "Pruning dev dependencies..."
-  HUSKY=0 npm prune --omit=dev
+  HUSKY=0 pnpm prune --prod
 fi
 
 # Global launchers follow the same production bundle and state directory as the
@@ -167,7 +185,7 @@ case ":$PATH:" in
 esac
 
 # Guided setup (read prompts from the terminal even when piped via curl). Driven
-# through the built CLI, not `npm run setup` (= tsx src/...): the materialized npm
+# through the built CLI, not `pnpm setup` (= tsx src/...): the materialized npm
 # package ships dist only, no src.
 # Migrate a legacy root-level .env into state/ before the check, so an existing
 # install isn't re-prompted for setup after the state/ split.

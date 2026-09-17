@@ -49,7 +49,7 @@ projects:
     maxRounds: 3
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
     allowedActions: [tests, docs, small-refactor]
@@ -621,7 +621,7 @@ describe("loop supervisor work order", () => {
         mergeMethod: "squash" as const,
       },
       eval: {
-        command: "npm run eval",
+        command: "pnpm eval",
         minScore: 95,
       },
     };
@@ -1096,7 +1096,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 prReview:
   repositories:
     - id: tmux-claude-bot
@@ -1204,7 +1204,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 prReview:
   repositories:
     - id: legacy-review
@@ -1322,7 +1322,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 workspaces:
   - id: geo
     name: Geo Workspace
@@ -1463,7 +1463,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 workspaces:
   - id: geo
     name: Geo Workspace
@@ -1550,7 +1550,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 workspaces:
   - id: geo
     name: Geo Workspace
@@ -1632,7 +1632,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 workspaces:
   - id: geo
     name: Geo Workspace
@@ -1705,7 +1705,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 prReview:
   repositories:
     - id: release-prs
@@ -1831,7 +1831,7 @@ prReview:
       [
         "done",
         "[LOOP_SUPERVISOR_DONE:wo-1]",
-        '{"status":"completed","projectId":"datavibe","actionsTaken":["verified"],"delegatedTasks":[],"finalVerification":"passed","reviewGate":{"preMutationReview":["confirmed bounded issue"],"postMutationReview":["diff reviewed"],"aiReview":"passed","deterministicGates":["npm test"],"decision":"pass","notes":[]},"commits":[],"followUps":[]}',
+        '{"status":"completed","projectId":"datavibe","actionsTaken":["verified"],"delegatedTasks":[],"finalVerification":"passed","reviewGate":{"preMutationReview":["confirmed bounded issue"],"postMutationReview":["diff reviewed"],"aiReview":"passed","deterministicGates":["pnpm test"],"decision":"pass","notes":[]},"commits":[],"followUps":[]}',
       ].join("\n"),
       "wo-1",
     );
@@ -1843,7 +1843,7 @@ prReview:
       expect(result.summary.reviewGate).toMatchObject({
         aiReview: "passed",
         decision: "pass",
-        deterministicGates: ["npm test"],
+        deterministicGates: ["pnpm test"],
       });
     }
   });
@@ -1910,7 +1910,7 @@ prReview:
             preMutationReview: ["confirmed task was bounded"],
             postMutationReview: ["reviewed final behavior"],
             aiReview: "passed",
-            deterministicGates: ["npm test"],
+            deterministicGates: ["pnpm test"],
             decision: "pass",
             notes: [],
             evidence: [
@@ -1972,14 +1972,14 @@ prReview:
             preMutationReview: ["confirmed bounded task"],
             postMutationReview: ["reviewed final state"],
             aiReview: "passed",
-            deterministicGates: ["npm test"],
+            deterministicGates: ["pnpm test"],
             decision: "pass",
             notes: [],
             evidence: [
               {
                 questionInvestigated: "Was the historical failure reproducible?",
                 conclusion: "The failure was environment-only.",
-                evidence: "npm ci restored the missing local toolchain.",
+                evidence: "pnpm install --frozen-lockfile restored the missing local toolchain.",
                 uncertainty: "The original lease failure was not reproducible.",
                 recommendedNextStep: "Monitor the next worker lease.",
               },
@@ -1995,7 +1995,11 @@ prReview:
     expect(result).toMatchObject({
       ok: true,
       summary: {
-        reviewGate: { evidence: [{ evidence: ["npm ci restored the missing local toolchain."] }] },
+        reviewGate: {
+          evidence: [
+            { evidence: ["pnpm install --frozen-lockfile restored the missing local toolchain."] },
+          ],
+        },
       },
     });
   });
@@ -2018,7 +2022,7 @@ prReview:
             deterministicGates: [
               {
                 name: "verify",
-                command: "npm run verify:local",
+                command: "pnpm verify:local",
                 result: "passed",
                 evidence: "ok",
               },
@@ -2113,7 +2117,7 @@ prReview:
               deterministicGates: [
                 {
                   name: "assessment",
-                  command: "npm run assess",
+                  command: "pnpm assess",
                   result: "passed",
                   evidence: "score 100",
                 },
@@ -2169,7 +2173,7 @@ prReview:
             deterministicGates: [
               {
                 name: "project health",
-                command: "npm run verify:local",
+                command: "pnpm verify:local",
                 result: "passed",
                 evidence: "all checks passed",
               },
@@ -2268,7 +2272,7 @@ prReview:
             deterministicGates: [
               {
                 name: "full test",
-                command: "npm test",
+                command: "pnpm test",
                 result: "failed",
                 evidence: "timeout",
               },

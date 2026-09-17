@@ -74,7 +74,7 @@ function fixture() {
     blockedActions: [],
     skills: { approved: [] },
     preflight: { commands: [], repair: { agent: false } },
-    assessment: { command: "npm run assess" },
+    assessment: { command: "pnpm assess" },
     execution: { agent: true },
     recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: true },
@@ -147,11 +147,11 @@ describe("partial delegation continuation", () => {
     const evidence = {
       source: "agent-reported" as const,
       revision: first.repositoryRevision,
-      command: "npm test",
+      command: "pnpm test",
       result: "failed" as const,
       artifact: "test.log",
     };
-    item.evidence = [evidence, { ...evidence, command: "npm run lint" }];
+    item.evidence = [evidence, { ...evidence, command: "pnpm lint" }];
     const next = structuredClone(first);
     next.sequence++;
     next.nextAction = "Rephrased next step";
@@ -176,7 +176,7 @@ describe("partial delegation continuation", () => {
         {
           source: "agent-reported",
           revision: checkpoint.repositoryRevision,
-          command: sequence === 2 ? "npm run lint" : "npm test",
+          command: sequence === 2 ? "pnpm lint" : "pnpm test",
           result: "failed",
           artifact: "check.log",
         },
@@ -562,7 +562,7 @@ describe("partial delegation continuation", () => {
           {
             source: "agent-reported",
             revision: value.repositoryRevision ?? "",
-            command: "npm test",
+            command: "pnpm test",
             result: "passed",
             artifact: "test.log",
           },

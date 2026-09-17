@@ -35,7 +35,7 @@ describe("buildDailyAuditRepairPrompt", () => {
       "AI review/eval may be used only through the existing Claude Code / Codex control surface",
     );
     expect(prompt).toContain("deterministic gates remain authoritative");
-    expect(prompt).toContain("npm run verify:local");
+    expect(prompt).toContain("pnpm verify:local");
     expect(prompt).toContain("commit");
     expect(prompt).toContain("radar:daily:failed");
   });

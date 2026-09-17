@@ -140,8 +140,8 @@ describe("docs contract", () => {
     const release = read(".claude/commands/release.md");
     const dev = read(".claude/commands/dev.md");
 
-    expect(release).toContain("npm run verify:local");
-    expect(dev).toContain("npm run verify:local");
+    expect(release).toContain("pnpm verify:local");
+    expect(dev).toContain("pnpm verify:local");
     expect(release).toContain("docs/cli-reference.md");
     expect(release).toContain("docs/automation-capability-matrix.md");
     expect(release).not.toContain("command tables in `CLAUDE.md`");
@@ -221,16 +221,9 @@ describe("docs contract", () => {
       expect(declared, `${pkg} must not be declared as a project dependency`).not.toContain(pkg);
     }
 
-    const lock = readJson<{
-      packages?: Record<string, unknown>;
-      dependencies?: Record<string, unknown>;
-    }>("package-lock.json");
-    const locked = new Set([
-      ...Object.keys(lock.dependencies ?? {}),
-      ...Object.keys(lock.packages ?? {}).map((pkgPath) => pkgPath.replace(/^node_modules\//, "")),
-    ]);
+    const locked = read("pnpm-lock.yaml");
     for (const pkg of forbiddenPackages) {
-      expect(locked, `${pkg} must not be present in package-lock.json`).not.toContain(pkg);
+      expect(locked, `${pkg} must not be present in pnpm-lock.yaml`).not.toContain(pkg);
     }
   });
 
@@ -463,10 +456,10 @@ describe("docs contract", () => {
   it("README documents the operational entry points", () => {
     const readme = read("README.md");
     for (const phrase of [
-      "npm run setup:lark",
-      "npm run doctor",
-      "npm run service:install",
-      "npm run service:uninstall",
+      "pnpm setup:lark",
+      "pnpm doctor",
+      "pnpm service:install",
+      "pnpm service:uninstall",
     ]) {
       expect(readme, `missing "${phrase}" in README.md`).toContain(phrase);
     }

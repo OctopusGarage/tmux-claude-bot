@@ -42,7 +42,7 @@ the app; their own open_id is captured as the allow-list.
 
 **Send a prompt / get a reply** → just send text in the chat; it's typed into the
 current session's agent and the reply returns when the agent finishes. Voice messages
-are auto-transcribed. Optional local prompt translation: run `npm run translate:install`
+are auto-transcribed. Optional local prompt translation: run `pnpm translate:install`
 or send `/translate_install` in Telegram/Feishu, then set `PROMPT_TRANSLATE_MODE=argos`,
 `PROMPT_TRANSLATE_FROM=zh`,
 `PROMPT_TRANSLATE_TO=en` (or source-specific `TELEGRAM_...` / `LARK_...` /
@@ -77,7 +77,7 @@ sequence in the CLI admin section below, diagnose current configuration with
 `tcb power history --since 24h`.
 A closed lid and battery operation continue to follow normal macOS behavior.
 
-**Use it from the PC terminal** → `tcb tui` (managed) or `npm run tui` (dev). Needs the
+**Use it from the PC terminal** → `tcb tui` (managed) or `pnpm tui` (dev). Needs the
 bot running. Keys: `j/k` move, `i` compose a prompt (multi-line paste works), `c`
 controls, `s` projects (switch/start), `R` recover, `l` logs, `m` machine load, `u`
 re-run input, `a` attach to the real session pane, `q` quit, `?` for all keys. Detail: tui.md.
@@ -362,7 +362,7 @@ for one accidentally exited current project use
   `automation capacity status|history` ·
   `resource status|incidents|mode|profile` · `tui` · `recover` · `logs` · `install` ·
   `service <install|uninstall|status|pause|resume|restart|logs>`.
-  (`npm run dev|tui|doctor|service:*` for dev.)
+  (`pnpm dev|tui|doctor|service:*` for dev.)
 
   To enable the default 02:00–09:30 Asia/Singapore natural-sleep window, run
   `tcb config set TCB_KEEP_AWAKE_MODE scheduled`, then

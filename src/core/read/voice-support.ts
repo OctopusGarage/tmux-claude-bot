@@ -20,7 +20,7 @@ const INSTALL_TIMEOUT_MS = 300_000;
 
 const ROOT = process.cwd();
 
-/** Binary produced by `npm run whisper:install` (project-managed venv). */
+/** Binary produced by `pnpm whisper:install` (project-managed venv). */
 export const WHISPER_VENV_BIN = nodePath.join(ROOT, ".venv", "bin", "mlx_whisper");
 /** The install script the in-bot `/voice_install` command runs. */
 export const INSTALL_SCRIPT = nodePath.join(ROOT, "scripts", "install-whisper.sh");

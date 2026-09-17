@@ -28,7 +28,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
   - id: manual
     name: Manual
     path: /repo/manual
@@ -37,7 +37,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `;
 
 const configText = `
@@ -180,10 +180,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules pull request review jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    pullRequest:",
@@ -217,10 +217,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules automation governance review jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    automationGovernanceReview:",
@@ -254,10 +254,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules bug-fix jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    bugFix:",
@@ -290,10 +290,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules test-coverage jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    testCoverage:",
@@ -327,10 +327,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules security-maintenance jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    securityMaintenance:",
@@ -363,10 +363,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules harness-auto jobs independently from component jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    harnessAuto:",
@@ -399,10 +399,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules opportunity-discovery jobs independently from implementation jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    opportunityDiscovery:",
@@ -434,10 +434,10 @@ describe("runLoopSchedulerTick", () => {
   it("counts architecture and pull request review as separate checked jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    pullRequest:",
@@ -461,10 +461,10 @@ describe("runLoopSchedulerTick", () => {
   it("counts architecture and bug-fix as separate checked jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    bugFix:",
@@ -486,10 +486,10 @@ describe("runLoopSchedulerTick", () => {
   it("counts architecture and test-coverage as separate checked jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    testCoverage:",
@@ -912,7 +912,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `);
     const scheduledAt = Date.parse("2026-07-16T10:00:00Z");
     const firstStartup = scheduledAt + 20 * 60_000;

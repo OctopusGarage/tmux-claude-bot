@@ -32,7 +32,7 @@ describe("repair prompts", () => {
     expect(prompt).toContain("pre-mutation review");
     expect(prompt).toContain("post-mutation review");
     expect(prompt).toContain("git pull --rebase origin dev");
-    expect(prompt).toContain("npm run verify:local");
+    expect(prompt).toContain("pnpm verify:local");
   });
 
   it("keeps Runtime Guardian repair limited to tmux-claude-bot runtime logic", () => {
@@ -96,7 +96,7 @@ describe("Resource Guardian repair prompt", () => {
     expect(prompt).toContain("never edit a target project");
     expect(prompt).toContain("rev-parse --show-toplevel");
     expect(prompt).toContain("Explore -> Plan -> Code -> Verify -> Review -> Record");
-    expect(prompt).toContain("npm run verify:local");
+    expect(prompt).toContain("pnpm verify:local");
     expect(prompt).toContain("Do not create or open a PR");
     expect(prompt).toContain(
       "Stop when the evidence does not prove a bot-owned reproducible defect",

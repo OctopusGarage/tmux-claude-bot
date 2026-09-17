@@ -29,7 +29,7 @@ Constants: repo `OctopusGarage/tmux-claude-bot` · launchd label
    ```
    **Footgun (learned the hard way):** do NOT run `./install.sh` from inside the
    repo clone expecting a deploy — the installer would treat the clone as a local
-   install, rebuild it in place, and `npm install --omit=dev` would strip its
+   install, rebuild it in place, and `pnpm install --prod` would strip its
    devDeps (breaking `tsc`/tests there). install.sh now guards this (piped stdin
    and a set `TMUX_CLAUDE_BOT_VERSION` both force install-dir mode), and the `/tmp`
    form above is immune regardless of cwd. The ONLY intended in-place build is a

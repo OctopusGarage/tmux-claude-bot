@@ -152,7 +152,7 @@ describe("runDoctorChecks", () => {
     const report = await runDoctorChecks(healthyProbes({ readEnv: () => null }));
     const noEnv = report.checks.find((c) => c.text.includes("no .env"));
     expect(noEnv?.status).toBe("bad");
-    expect(noEnv?.fix).toContain("npm run setup");
+    expect(noEnv?.fix).toContain("pnpm setup");
     expect(report.failures).toBeGreaterThan(0);
   });
 
@@ -374,7 +374,7 @@ describe("renderDoctorReport", () => {
 
     expect(text).toContain("✅");
     expect(text).toContain("❌");
-    expect(text).toContain("fix: run: npm run service:install");
+    expect(text).toContain("fix: run: pnpm service:install");
     expect(text).not.toContain("cli_secret123");
     // Chat output must carry no ANSI escapes.
     expect(text).not.toContain("\x1b[");

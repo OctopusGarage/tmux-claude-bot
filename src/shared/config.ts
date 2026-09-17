@@ -303,7 +303,7 @@ export function parseStartCommands(env: NodeJS.ProcessEnv, primary: string): Sta
 }
 
 /**
- * Load `.env` into process.env. Honors `TCB_ENV_FILE` so `npm run dev` can borrow
+ * Load `.env` into process.env. Honors `TCB_ENV_FILE` so `pnpm dev` can borrow
  * the deployed (prod) config — develop against the real token/proxy/Feishu with
  * hot reload, with no second `.env` to drift. Otherwise `.env` lives in the state
  * dir (alongside the other state files, written there by `env-store`/the setup

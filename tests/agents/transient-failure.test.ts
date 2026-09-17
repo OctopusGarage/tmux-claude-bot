@@ -43,7 +43,7 @@ describe("agent transient failure classification", () => {
   });
 
   it("does not classify ordinary task failures as transient agent failures", () => {
-    expect(classifyAgentTransientFailure("npm test failed with assertion errors")).toBeNull();
-    expect(isAgentTransientFailure("npm test failed with assertion errors")).toBe(false);
+    expect(classifyAgentTransientFailure("pnpm test failed with assertion errors")).toBeNull();
+    expect(isAgentTransientFailure("pnpm test failed with assertion errors")).toBe(false);
   });
 });

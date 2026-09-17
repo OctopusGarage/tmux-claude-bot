@@ -42,7 +42,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/command/action-reg
 | `opportunity` | Review proactive Loop Engineering suggestions: `/opportunity [list\|show\|discuss\|dismiss\|snooze <number\|id>]`; `discuss` opens project-agent discussion and `snooze` hides an item from the active numbered list for 14 days. Suggestion cards keep each item readable and offer per-item show/discuss/dismiss actions plus batch actions. After approval, use Autopilot's Continue via supervisor action so execution goes through the same active-delegation pipeline. Owner-only in private chat; Lark also works in a bound project group. |
 | `dashboard` | Show the read-only Runtime Overview: overall health, attention, active Work, Automation Families, AI Interfaces, recent outcomes, and Project Sessions. Owner-only (Lark: 1:1 chat only). |
 | `sysload` | Show machine load, thermal state, top CPU, runaway/orphan shells (with a `kill -9` hint), and the current Resource Guardian state. Owner-only (Lark: 1:1 chat only). Guardian control remains the local `tcb resource` CLI surface; no chat button is added. |
-| `doctor` | Run install health checks (same checks as `npm run doctor`, redacted for chat) |
+| `doctor` | Run install health checks (same checks as `pnpm doctor`, redacted for chat) |
 | `voice_install` | Install voice transcription (Apple Silicon) |
 | `voice_lang` | Set voice recognition language (zh/en/yue/ja/es/auto) |
 | `prompt_translate` | Set prompt translation for this source: `/prompt_translate status\|off\|on [from] [to]` |

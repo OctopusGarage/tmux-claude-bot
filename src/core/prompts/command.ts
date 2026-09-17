@@ -478,7 +478,7 @@ projects:
     maxRounds: 2
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
     commit:

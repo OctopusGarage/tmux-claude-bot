@@ -19,10 +19,10 @@ Supported modes:
   config and state.
 - Managed dev: source hot-reload through the dev supervisor, persistent
   launchd/systemd service, usually borrowing prod config and state.
-- `npm run dev`: foreground source run, no persistence.
+- `pnpm dev`: foreground source run, no persistence.
 - `./dev.sh`: foreground dev helper that pauses the managed service and resumes
   it on exit.
-- `npm run tui`: control-socket client, not a bot instance.
+- `pnpm tui`: control-socket client, not a bot instance.
 
 The global `tcb` launcher must follow the managed service mode. Switching to
 managed dev points it at this repository's source CLI and the deployed state
@@ -44,9 +44,9 @@ Use the service manager, not legacy process scripts, for persistent services:
 
 - macOS launchd: `launchctl kickstart -k "gui/$(id -u)/com.octopusgarage.tmux-claude-bot"`.
 - Linux systemd: `systemctl --user restart tmux-claude-bot`.
-- Cross-platform project helpers: `npm run service:status`,
-  `npm run service:dev`, `npm run service:prod`, `npm run service:pause`, and
-  `npm run service:resume`.
+- Cross-platform project helpers: `pnpm service:status`,
+  `pnpm service:dev`, `pnpm service:prod`, `pnpm service:pause`, and
+  `pnpm service:resume`.
 
 Identify bot processes with both the project path and entrypoint
 (`dist/cli.js` or `src/index.ts`). Do not use broad process patterns such as
@@ -420,12 +420,12 @@ not shorten the independent local failure-worktree retention window.
 
 ## Verification And Coverage
 
-Before pushing or claiming CI readiness, run `npm run verify:local`. If remote
+Before pushing or claiming CI readiness, run `pnpm verify:local`. If remote
 CI finds a class of issue not covered locally, update the local verification
 script, hook, or instructions.
 
 Release tags must not bypass the local gate. Keep `scripts/release.sh` running
-`npm run verify:local` before `npm version`; `TCB_RELEASE_SKIP_VERIFY=1` is a
+`pnpm verify:local` before `npm version`; `TCB_RELEASE_SKIP_VERIFY=1` is a
 manual emergency escape hatch and should not be used for routine releases.
 
 Git hooks must be safe in linked automation worktrees. Keep the worktree config
@@ -444,7 +444,7 @@ trace is written to `<git-common-dir>/tcb-git-config-guard.log`; tests and
 diagnostic runs may override it with `TCB_GIT_CONFIG_TRACE_FILE`. Each line
 records the stage, cwd, common git dir, config path, config checksum,
 `core.bare`, `core.worktree`, and inherited Git-local environment variables.
-`npm run verify:local` checkpoints before and after every command it runs, so
+`pnpm verify:local` checkpoints before and after every command it runs, so
 the first adjacent before/after pair whose checksum or value changes is the
 command boundary to investigate. Treat inherited `GIT_DIR`/`GIT_WORK_TREE` as
 evidence of wrong-repository targeting risk; treat an observed value transition
