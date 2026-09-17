@@ -1264,10 +1264,23 @@ projects:
       JSON.stringify({
         accepted: false,
         resultStatus: "supervisor-failed",
+        repairDisposition: "bot-repairable",
         failures: [
           "git status failed: spawnSync /usr/bin/git ENOENT",
           "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
           "GitHub account Kingson4Wu permission check failed: spawnSync sh ENOENT",
+        ],
+        findings: [
+          {
+            code: "system-gate-bot-repairable",
+            repairDisposition: "bot-repairable",
+            retry: "automatic",
+            evidence: [
+              "git status failed: spawnSync /usr/bin/git ENOENT",
+              "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+              "GitHub account Kingson4Wu permission check failed: spawnSync sh ENOENT",
+            ],
+          },
         ],
       }),
     );
