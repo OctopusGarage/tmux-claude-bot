@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -1026,6 +1026,107 @@ describe("production Runtime Overview readers", () => {
         expect.objectContaining({
           id,
           repairStatus: "superseded",
+        }),
+      ]);
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("attaches closed repair status for legacy executable gate failures with successful final summaries", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = 10_000;
+      const scheduledAt = now - 2_000;
+      const id = "run-legacy-git-enoent";
+      const runDir = join(stateDir, "loop-runs", "english-pilot", id);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(
+        join(runDir, "supervisor-final-summary.json"),
+        `${JSON.stringify({
+          status: "completed",
+          projectId: "english-pilot",
+          actionsTaken: ["proved no code delta was needed"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+          commits: [],
+          followUps: [],
+        })}\n`,
+      );
+      writeFileSync(
+        join(runDir, "system-gate.json"),
+        `${JSON.stringify({
+          accepted: false,
+          resultStatus: "supervisor-failed",
+          repairDisposition: "bot-repairable",
+          failures: [
+            "git status failed: spawnSync /usr/bin/git ENOENT",
+            "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+          ],
+          findings: [
+            {
+              code: "system-gate-bot-repairable",
+              repairDisposition: "bot-repairable",
+              retry: "automatic",
+              evidence: [
+                "git status failed: spawnSync /usr/bin/git ENOENT",
+                "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+              ],
+            },
+          ],
+        })}\n`,
+      );
+
+      registryRead.mockReset();
+      registryRead.mockReturnValue({
+        ...emptyRegistry(),
+        terminal: [
+          {
+            workOrder: {
+              id,
+              projectId: "english-pilot",
+              projectName: "english-pilot",
+              projectPath: "/tmp/project",
+              scheduledAt,
+              requiredFinalMarker: "FINAL",
+              task: { kind: "harness-auto" },
+            },
+            state: {
+              status: "failed",
+              projectId: "english-pilot",
+              runId: id,
+              supervisorSession: "tmux_proj_loop-supervisor-1",
+              scheduledAt,
+              updatedAt: now - 1_000,
+              resultStatus: "supervisor-failed",
+            },
+            runDir,
+          },
+        ],
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {} as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).workOrders();
+
+      expect(result.terminal).toEqual([
+        expect.objectContaining({
+          id,
+          repairStatus: "not-reproducible",
         }),
       ]);
     } finally {

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { readAiToolReadiness } from "../ai-tools/install-contract.js";
 import {
@@ -79,6 +81,50 @@ function repairStatusForWorkOrder(
     if (repairStatus !== undefined) return repairStatus;
   }
   return undefined;
+}
+
+function legacySuccessfulGateRepairStatus(runDir: string): ScheduledTaskRepairStatus | undefined {
+  const summary = readJsonRecord(join(runDir, "supervisor-final-summary.json"));
+  const reviewGate = isRecord(summary?.reviewGate) ? summary.reviewGate : null;
+  if (
+    summary?.status !== "completed" ||
+    summary.finalVerification !== "passed" ||
+    reviewGate?.decision !== "pass"
+  ) {
+    return undefined;
+  }
+  const gate = readJsonRecord(join(runDir, "system-gate.json"));
+  if (!isRecord(gate) || gate.accepted === true) return undefined;
+  const failures = Array.isArray(gate.failures)
+    ? gate.failures.filter((failure): failure is string => typeof failure === "string")
+    : [];
+  return failures.length > 0 && failures.every(isLegacyExecutableGateFailure)
+    ? "not-reproducible"
+    : undefined;
+}
+
+function isLegacyExecutableGateFailure(failure: string): boolean {
+  return (
+    /^isolated worktree is on "[^"]*", expected WorkOrder branch "[^"]+"$/.test(failure) ||
+    failure === "git status failed: spawnSync git ENOENT" ||
+    failure === "git status failed: spawnSync /usr/bin/git ENOENT" ||
+    failure === "isolated worktree branch check failed: spawnSync git ENOENT" ||
+    failure === "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT" ||
+    /\bspawnSync (?:git|sh|\/usr\/bin\/git|\/bin\/sh|\/usr\/bin\/sh) ENOENT$/.test(failure)
+  );
+}
+
+function readJsonRecord(path: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function closedRepositoryReviewRepairClosure(
@@ -319,12 +365,13 @@ export function createRuntimeOverviewReaders(input: {
           scheduledAt: record.workOrder.scheduledAt,
           updatedAt: record.state.updatedAt,
           ...(() => {
-            const repairStatus = repairStatusForWorkOrder(ledgerRecords, {
-              id: record.workOrder.id,
-              projectId: record.workOrder.projectId,
-              taskKind: record.workOrder.task?.kind ?? "loop",
-              scheduledAt: record.workOrder.scheduledAt,
-            });
+            const repairStatus =
+              repairStatusForWorkOrder(ledgerRecords, {
+                id: record.workOrder.id,
+                projectId: record.workOrder.projectId,
+                taskKind: record.workOrder.task?.kind ?? "loop",
+                scheduledAt: record.workOrder.scheduledAt,
+              }) ?? legacySuccessfulGateRepairStatus(record.runDir);
             return repairStatus === undefined ? {} : { repairStatus };
           })(),
         });

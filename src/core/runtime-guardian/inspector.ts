@@ -202,6 +202,15 @@ function systemGateFailure(
   const recoverableFailures = Array.isArray(parsed.recoverableFailures)
     ? parsed.recoverableFailures.filter((value): value is string => typeof value === "string")
     : [];
+  if (
+    hasRawSuccessfulSummary(finalSummaryPath) &&
+    failures.length > 0 &&
+    failures.every((failure) =>
+      isIgnorableLegacySuccessfulSummaryFailure(record, finalSummaryPath, failure),
+    )
+  ) {
+    return null;
+  }
   const structured = Array.isArray(parsed.findings) ? parsed.findings : [];
   const structuredDisposition =
     structured
@@ -222,16 +231,6 @@ function systemGateFailure(
     failures.length > 0 &&
     recoverableFailures.length === failures.length &&
     failures.every((failure) => recoverableFailures.includes(failure))
-  ) {
-    return null;
-  }
-  if (
-    disposition === undefined &&
-    hasRawSuccessfulSummary(finalSummaryPath) &&
-    failures.length > 0 &&
-    failures.every((failure) =>
-      isIgnorableLegacySuccessfulSummaryFailure(record, finalSummaryPath, failure),
-    )
   ) {
     return null;
   }

@@ -115,6 +115,9 @@ to a target or external boundary, it must persist a structured repair
 disposition; Runtime Guardian must never infer terminal ownership from log or
 failure wording. Legacy artifacts without that disposition remain repairable
 until a current flow classifies them.
+Legacy executable ENOENT gate artifacts with an authoritative successful final
+summary remain non-findings even when stale structured metadata labels the gate
+bot-repairable.
 Recovery admission is the shared lifecycle module for bot-owned repair queues:
 adapters may discover and render findings, but claim, immediate deferral,
 retry-backoff, and queue terminalization must not be reimplemented by an
