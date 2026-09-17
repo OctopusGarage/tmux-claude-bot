@@ -225,7 +225,7 @@ function realDeps(): SupervisorDeps {
   const statusFile = join(stateDir, "dev-supervisor.json");
   return {
     startChild() {
-      const cp = spawn(process.execPath, [join(repo, "node_modules/.bin/tsx"), "src/index.ts"], {
+      const cp = spawn(join(repo, "node_modules/.bin/tsx"), ["src/index.ts"], {
         cwd: repo,
         detached: true,
         stdio: "inherit",
@@ -271,7 +271,7 @@ function realDeps(): SupervisorDeps {
     },
     runTypecheck() {
       return new Promise((resolve) => {
-        const cp = spawn(process.execPath, [join(repo, "node_modules/.bin/tsc"), "--noEmit"], {
+        const cp = spawn(join(repo, "node_modules/.bin/tsc"), ["--noEmit"], {
           cwd: repo,
           stdio: "inherit",
         });

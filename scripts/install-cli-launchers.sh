@@ -28,7 +28,7 @@ BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
 if [ -n "$CLI_LOADER" ]; then
-  EXEC_LINE="exec \"$NODE_BIN\" \"$CLI_LOADER\" \"$CLI_ENTRY\" \"\$@\""
+  EXEC_LINE="exec \"$CLI_LOADER\" \"$CLI_ENTRY\" \"\$@\""
 else
   EXEC_LINE="exec \"$NODE_BIN\" \"$CLI_ENTRY\" \"\$@\""
 fi
