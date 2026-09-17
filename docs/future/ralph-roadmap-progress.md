@@ -12,7 +12,7 @@ not complete the roadmap. The baseline assessment remains
 | R1 | Stable WorkOrder identity, complete acceptance items and durable checkpoint context | Pilot reader and handoff tests; broader family contracts still required under R8 | Pilot complete |
 | R2 | Current-attempt evidence and immutable iteration history | Freshness exclusion and append-only prepared/started/settled transport records bind queue IDs, contract, prompt and session; append-only successor links serialize transport attempts; acceptance-generation binding remains open | Partial: durable transport history |
 | R3 | Crash-window reconciliation and single execution ownership | Prepared queue restoration claims each attempt once; append-only ownership links fence different IDs and start/cancellation races across processes. Started/invalid records await reconciliation. Before/after enqueue, commit, checkpoint, stale generation and live native goal still need end-to-end proof | Partial |
-| R4 | Independent behavioral verification bound to contract and repository revision | Configured `eval.command` is independently executed with Git root/HEAD/clean-worktree fencing and immutable command-verification artifacts. Broader CI and task-family evidence remain required; never execute checkpoint-supplied commands | Partial |
+| R4 | Independent behavioral verification bound to contract and repository revision | Configured `eval.command` is independently executed with Git root/HEAD/clean-worktree fencing and immutable command-verification artifacts. Fully reported checkpoints now require a passed system-command artifact for the same WorkOrder, contract hash and revision. Broader CI and task-family evidence remain required; never execute checkpoint-supplied commands | Partial |
 | R5 | Shared policy, durable budgets and progress-based stopping | Shared continuation/revision caps, absolute deadline and durable consumed-report fingerprints reject repeated/cyclic evidence across restart. Full transport accounting, independent progress proof and parent/child budgets remain | Partial |
 | R6 | Operator progress, stop reasons, remaining allowance and safe pause/resume | Need command-backed controls and shared CLI/TUI/chat/MCP projections with documented lifecycle semantics, redacted paths and contract tests | Open |
 | R7 | External CI/quota/quiet-hours waiting and admission | Need persisted retry conditions, no agent polling, capacity release without losing workspace ownership, and nonrenewable lifetime deadline | Open |
@@ -72,6 +72,17 @@ looks unchanged or empty. The repository root is checked again after evaluation.
 Non-finite scores are rejected; verification artifacts store the system decision
 and rejection reasons. Regression tests reproduce the previous false successes.
 This repairs R4's command gate; it does not complete broader CI or family coverage.
+
+### 2026-09-17 checkpoint system verification binding
+
+Final checkpoint acceptance now requires a passed `system-command` verification
+record matching the active WorkOrder, contract hash and repository revision.
+The current `eval.command` record is passed directly into the checkpoint gate and
+durable `command-verifications` records are also accepted on restoration. Missing,
+failed, stale-revision, foreign-contract and foreign-WorkOrder artifacts fail
+closed. This moves all-passed checkpoint acceptance from agent-reported evidence
+toward system-observed verification, while broader CI/task-family proof remains
+open under R4/R8.
 
 ### 2026-09-17 repeated-report stopping
 

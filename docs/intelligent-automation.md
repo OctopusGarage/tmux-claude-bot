@@ -1344,6 +1344,12 @@ These checks verify repository facts, not behavioral correctness. Checkpoint
 commands are untrusted text and are never executed by the gate. Test results and
 artifact contents remain agent-reported; final-summary validation and existing
 system/PR/CI gates retain their authority. Checkpoint sequence is not a budget.
+When every item is reported passed, checkpoint acceptance also requires a passed
+`system-command` verification artifact for the same WorkOrder, contract hash and
+repository revision. The current `eval.command` run can supply that artifact; a
+stale, failed, foreign-contract or missing verification fails closed. This binds
+final checkpoint acceptance to system-observed behavior without executing
+checkpoint-supplied commands.
 
 The shared supervised runner persists `delegation-budget.json` before dispatch
 for this task family. It binds the full WorkOrder contract to an absolute deadline
@@ -1391,7 +1397,9 @@ precede budget publication and dispatch: interrupted claims remain consumed and
 fail closed rather than authorizing an unaccounted retry. Older budgets retain
 their counters and deadline; historical reports without claims are not inferred.
 These are replay guards for agent reports, not proof of independent acceptance
-or a complete cross-process budget transaction.
+or a complete cross-process budget transaction. Independent acceptance is only
+available at the final checkpoint gate when a matching system-command
+verification artifact exists for the reported revision.
 
 A blocked, malformed, disappeared, unchanged or repository-mismatched partial
 checkpoint stops dispatch with an explicit reason. Budget/deadline rejection

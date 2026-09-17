@@ -963,8 +963,11 @@ to its authorized task. Before existing Git/PR mutations, the system checks
 required item completion and independently reads repository toplevel, HEAD and
 cleanliness. Once observed, deleting a checkpoint cannot bypass acceptance.
 Reported test commands are never executed; behavioral evidence remains
-agent-reported and cannot claim system provenance. Workspace and other
-task-family rollouts need their own contract tests.
+agent-reported and cannot claim system provenance. A fully reported checkpoint
+must also match a passed `system-command` verification artifact for the same
+WorkOrder, contract hash and repository revision before final checkpoint
+acceptance can pass. Workspace and other task-family rollouts need their own
+contract tests.
 
 The shared supervised runner owns durable deadline and revision reservations for
 both scheduled and recovered execution, including Autopilot callers. It writes
@@ -974,8 +977,9 @@ finalization/retry. Existing WorkOrder serialization and session isolation remai
 the execution owners; state files do not introduce a separate scheduler or lease.
 
 `tests/loop/iteration-checkpoint.test.ts` covers prompt parity, partial progress,
-timeout handoff, invalid/foreign input, provenance, real-repository acceptance
-and deletion downgrade prevention. `tests/loop/delegation-budget.test.ts` covers
+timeout handoff, invalid/foreign input, provenance, real-repository acceptance,
+system-command verification binding and deletion downgrade prevention.
+`tests/loop/delegation-budget.test.ts` covers
 resumed deadlines, reset caller counters, corrupt state, final-summary bypass
 and late cancellation. Existing handoff and runner tests preserve compatibility
 for absent legacy checkpoints and other task families.
@@ -997,7 +1001,8 @@ no repeated reset, blocked/invalid/stale/unchanged progress, wrong repositories,
 missing adapters, cross-sequence budget exhaustion, replay after restoration,
 corrupt requirement records, cancellation, deadlines, legacy fallback and
 explicit terminal outcomes. Sequence advances remain agent-reported; independent
-behavioral verification and external-wait scheduling remain separate work.
+behavioral verification for final checkpoint acceptance is bound to
+system-command artifacts; broader external-wait scheduling remains separate work.
 
 Freshness-aware summary parsing is shared by active delegation dispatch,
 revision, continuation/finalization and synchronous/asynchronous transport

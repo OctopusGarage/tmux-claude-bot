@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
@@ -10,10 +10,20 @@ import {
 import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
 import type { LoopWorkOrder } from "./work-order-contract.js";
 
+export type CheckpointSystemVerification = {
+  schemaVersion: 1;
+  source: "system-command";
+  workOrderId: string;
+  contractHash: string;
+  revision: string;
+  passed: boolean;
+};
+
 /** Checks repository facts, not the truth of agent-reported behavioral tests. */
 export function checkpointAcceptanceGate(
   workOrder: LoopWorkOrder,
   runGit: ((invocation: LoopGitInvocation) => LoopRunCommandResult) | undefined,
+  systemVerifications: readonly CheckpointSystemVerification[] = [],
 ): { failures: string[]; evidence: string[] } {
   const checkpoint = readIterationCheckpoint(workOrder);
   const reject = (reason: string) => ({ failures: [reason], evidence: [] });
@@ -68,11 +78,68 @@ export function checkpointAcceptanceGate(
   if (status.status !== 0) return reject("checkpoint repository status unavailable");
   if (status.stdout.trim() !== "")
     return reject("checkpoint worktree is dirty; acceptance deferred");
+  const revision = head.stdout.trim();
+  const verifications = [...systemVerifications, ...readDurableSystemVerifications(dirname(path))];
+  if (
+    !verifications.some(
+      (verification) =>
+        verification.source === "system-command" &&
+        verification.workOrderId === workOrder.id &&
+        verification.contractHash === contractHash &&
+        verification.revision === revision &&
+        verification.passed === true,
+    )
+  ) {
+    return reject(
+      "checkpoint system verification artifact is missing or not passed for current revision",
+    );
+  }
   return {
     failures: [],
     evidence: [
-      `checkpoint repository identity, HEAD and clean state verified at ${head.stdout.trim()}`,
-      "checkpoint behavioral verification remains agent-reported; existing system gates still apply",
+      `checkpoint repository identity, HEAD and clean state verified at ${revision}`,
+      "checkpoint behavioral verification matched a passed system command artifact",
     ],
   };
+}
+
+function readDurableSystemVerifications(runDir: string): CheckpointSystemVerification[] {
+  const dir = join(runDir, LOOP_RUN_ARTIFACTS.commandVerifications);
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    return [];
+  }
+  const records: CheckpointSystemVerification[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    try {
+      const path = join(dir, entry);
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.size > 65_536) continue;
+      const value = JSON.parse(readFileSync(path, "utf8")) as Partial<CheckpointSystemVerification>;
+      if (
+        value.schemaVersion === 1 &&
+        value.source === "system-command" &&
+        typeof value.workOrderId === "string" &&
+        typeof value.contractHash === "string" &&
+        typeof value.revision === "string" &&
+        typeof value.passed === "boolean"
+      ) {
+        records.push({
+          schemaVersion: 1,
+          source: "system-command",
+          workOrderId: value.workOrderId,
+          contractHash: value.contractHash,
+          revision: value.revision,
+          passed: value.passed,
+        });
+      }
+    } catch {
+      /* Ignore malformed historical verification artifacts; absence still fails closed. */
+    }
+  }
+  return records;
 }

@@ -41,7 +41,10 @@ import {
 } from "./agent-queue.js";
 import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 import { LoopBacklogStore } from "./backlog.js";
-import { checkpointAcceptanceGate } from "./checkpoint-acceptance.js";
+import {
+  type CheckpointSystemVerification,
+  checkpointAcceptanceGate,
+} from "./checkpoint-acceptance.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
 import { readDelegationRecovery } from "./delegation-recovery.js";
 import {
@@ -2718,11 +2721,17 @@ export function runSupervisedSystemGateOutcome(input: {
     };
   }
 
-  const checkpointGate = checkpointAcceptanceGate(input.workOrder, input.runGit);
-  if (checkpointGate.failures.length > 0) {
-    const reason = checkpointGate.failures.join("; ");
+  const missingCheckpointSystemVerification =
+    "checkpoint system verification artifact is missing or not passed for current revision";
+  const preliminaryCheckpointGate = checkpointAcceptanceGate(input.workOrder, input.runGit);
+  if (
+    preliminaryCheckpointGate.failures.length > 0 &&
+    (preliminaryCheckpointGate.failures.length !== 1 ||
+      preliminaryCheckpointGate.failures[0] !== missingCheckpointSystemVerification)
+  ) {
+    const reason = preliminaryCheckpointGate.failures.join("; ");
     return {
-      ...checkpointGate,
+      ...preliminaryCheckpointGate,
       result: {
         status: "supervisor-failed",
         summary: {
@@ -2735,6 +2744,8 @@ export function runSupervisedSystemGateOutcome(input: {
       },
     };
   }
+
+  const currentSystemVerifications: CheckpointSystemVerification[] = [];
   if (input.workOrder.eval?.command !== undefined) {
     const failures: string[] = [];
     const root = input.runGit?.({
@@ -2800,8 +2811,8 @@ export function runSupervisedSystemGateOutcome(input: {
       if (afterStatus?.status !== 0 || afterStatus.stdout.trim() !== "")
         failures.push("independent verification worktree changed");
       const record = {
-        schemaVersion: 1,
-        source: "system-command",
+        schemaVersion: 1 as const,
+        source: "system-command" as const,
         workOrderId: input.workOrder.id,
         contractHash: buildIterationCheckpointTemplate(input.workOrder).contractHash,
         revision: (head?.stdout ?? "").trim(),
@@ -2816,10 +2827,14 @@ export function runSupervisedSystemGateOutcome(input: {
           .update(`${command.stdout}\n${command.stderr}`)
           .digest("hex"),
       };
-      const dir = `${dirname(input.workOrder.finalSummaryPath ?? "")}/command-verifications`;
+      currentSystemVerifications.push(record);
+      const dir = join(
+        dirname(input.workOrder.finalSummaryPath ?? ""),
+        LOOP_RUN_ARTIFACTS.commandVerifications,
+      );
       mkdirSync(dir, { recursive: true });
       writeFileAtomicSync(
-        `${dir}/${Date.now()}-${randomUUID()}.json`,
+        join(dir, `${Date.now()}-${randomUUID()}.json`),
         JSON.stringify(record, null, 2),
       );
     }
@@ -2837,9 +2852,30 @@ export function runSupervisedSystemGateOutcome(input: {
           output: `${input.result.output}\n${reason}`,
         },
         failures,
-        evidence: [...checkpointGate.evidence, ...failures],
+        evidence: failures,
       };
     }
+  }
+  const checkpointGate = checkpointAcceptanceGate(
+    input.workOrder,
+    input.runGit,
+    currentSystemVerifications,
+  );
+  if (checkpointGate.failures.length > 0) {
+    const reason = checkpointGate.failures.join("; ");
+    return {
+      ...checkpointGate,
+      result: {
+        status: "supervisor-failed",
+        summary: {
+          ...input.result.summary,
+          status: "failed",
+          finalVerification: "failed",
+          followUps: [...input.result.summary.followUps, reason],
+        },
+        output: [input.result.output, reason].join("\n"),
+      },
+    };
   }
   const failures: string[] = [];
   const evidence: string[] = [...checkpointGate.evidence];
