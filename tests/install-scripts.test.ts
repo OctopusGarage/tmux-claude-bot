@@ -92,6 +92,10 @@ describe("managed install and release script contracts", () => {
       expect(devLauncher).toContain(`export TCB_STATE_DIR="${installedHome}/state"`);
       expect(devLauncher).toContain(`${ROOT}/node_modules/.bin/tsx`);
       expect(devLauncher).toContain(`${ROOT}/src/cli.ts`);
+      expect(devLauncher).toContain(
+        `exec "${ROOT}/node_modules/.bin/tsx" "${ROOT}/src/cli.ts" "$@"`,
+      );
+      expect(devLauncher).not.toContain(`node" "${ROOT}/node_modules/.bin/tsx"`);
 
       await execFile(launcherInstaller, [], { env: { ...process.env, HOME: home } });
       const productionLauncher = readFileSync(launcherPath, "utf8");
@@ -119,6 +123,34 @@ describe("managed install and release script contracts", () => {
       expect(serviceInstaller).toContain("install-cli-launchers.sh");
       expect(serviceInstaller).toContain('LAUNCHER_ARGS=("--dev")');
     }
+  });
+
+  it("runs package-bin shell shims directly from dev entrypoints", () => {
+    const devLaunchdWrapper = readFileSync(
+      nodePath.join(ROOT, "scripts", "dev-launchd-wrapper.sh"),
+      "utf8",
+    );
+    const devSystemdWrapper = readFileSync(
+      nodePath.join(ROOT, "scripts", "dev-systemd-wrapper.sh"),
+      "utf8",
+    );
+    const devSupervisor = readFileSync(
+      nodePath.join(ROOT, "src/scripts/dev-supervisor.ts"),
+      "utf8",
+    );
+
+    for (const wrapper of [devLaunchdWrapper, devSystemdWrapper]) {
+      expect(wrapper).toContain('exec "$REPO_DIR/node_modules/.bin/tsx"');
+      expect(wrapper).not.toContain('exec "$NODE_BIN" "$REPO_DIR/node_modules/.bin/tsx"');
+    }
+    expect(devSupervisor).not.toContain(
+      'spawn(process.execPath, [join(repo, "node_modules/.bin/tsx")',
+    );
+    expect(devSupervisor).not.toContain(
+      'spawn(process.execPath, [join(repo, "node_modules/.bin/tsc")',
+    );
+    expect(devSupervisor).toContain('spawn(join(repo, "node_modules/.bin/tsx"), ["src/index.ts"]');
+    expect(devSupervisor).toContain('spawn(join(repo, "node_modules/.bin/tsc"), ["--noEmit"]');
   });
 
   it("keeps managed install isolated while refreshing MCP profile descriptors", () => {
