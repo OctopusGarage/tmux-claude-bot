@@ -120,6 +120,7 @@ export class DailyTaskLedger {
   start(taskId: string, startedAt: number): ScheduledTaskRecord | null {
     const existing = this.store.get(taskId);
     if (!existing) return null;
+    if (isTerminalTaskRecord(existing)) return existing;
     const record: ScheduledTaskRecord = {
       ...existing,
       status: "running",

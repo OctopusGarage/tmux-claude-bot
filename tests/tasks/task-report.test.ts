@@ -190,6 +190,40 @@ describe("recordExternalTaskReport", () => {
     });
   });
 
+  it("does not reopen a successful task when a stale running report arrives later", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-stale-running-"));
+    const scheduledAt = Date.parse("2026-07-27T03:00:00Z");
+    const endedAt = Date.parse("2026-07-27T03:05:00Z");
+
+    recordExternalTaskReport({
+      taskId: "radar:daily:stale-running",
+      source: "radar-monitor",
+      name: "daily radar monitor",
+      scheduledAt,
+      status: "success",
+      endedAt,
+      summary: "generated report",
+    });
+    recordExternalTaskReport({
+      taskId: "radar:daily:stale-running",
+      source: "radar-monitor",
+      name: "daily radar monitor",
+      scheduledAt,
+      status: "running",
+      startedAt: scheduledAt + 1_000,
+      summary: "late heartbeat",
+    });
+
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-27"))[0]).toMatchObject({
+      taskId: "radar:daily:stale-running",
+      status: "success",
+      endedAt,
+      summary: "generated report",
+      repairStatus: "not-needed",
+      updatedAt: endedAt,
+    });
+  });
+
   it("rejects invalid task timestamps before writing corrupt ledger records", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-invalid-"));
 
