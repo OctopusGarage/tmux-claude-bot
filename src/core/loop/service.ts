@@ -4347,14 +4347,32 @@ function systemGateChildProcessEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export function runGitCommand(invocation: LoopGitInvocation): LoopRunCommandResult {
-  const result = spawnSync(resolveSystemGateGitExecutable(process.env), invocation.args, {
+  const executable = resolveSystemGateGitExecutable(process.env);
+  const env = systemGateChildProcessEnv(process.env);
+  const result = spawnSync(executable, invocation.args, {
     cwd: invocation.cwd,
-    env: systemGateChildProcessEnv(process.env),
+    env,
     encoding: "utf8",
   });
+  if (executable !== "git" && result.error instanceof Error && isSpawnEnoent(result.error)) {
+    const retry = spawnSync("git", invocation.args, {
+      cwd: invocation.cwd,
+      env,
+      encoding: "utf8",
+    });
+    return {
+      status: retry.status ?? 1,
+      stdout: retry.stdout,
+      stderr: retry.error instanceof Error ? retry.error.message : retry.stderr,
+    };
+  }
   return {
     status: result.status ?? 1,
     stdout: result.stdout,
     stderr: result.error instanceof Error ? result.error.message : result.stderr,
   };
+}
+
+function isSpawnEnoent(error: Error): boolean {
+  return "code" in error ? error.code === "ENOENT" : error.message.includes("ENOENT");
 }

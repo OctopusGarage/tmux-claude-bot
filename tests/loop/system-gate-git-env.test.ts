@@ -56,4 +56,37 @@ describe("system gate git environment", () => {
       }),
     );
   });
+
+  it("retries through the service-safe PATH when a resolved absolute git path is unavailable", async () => {
+    spawnSyncMock.mockImplementation((command: string) => {
+      if (command === "/bin/sh") {
+        return { status: 0, stdout: "/usr/bin/git\n", stderr: "" };
+      }
+      if (command === "/usr/bin/git") {
+        return {
+          status: null,
+          stdout: "",
+          stderr: "",
+          error: new Error("spawnSync /usr/bin/git ENOENT"),
+        };
+      }
+      return { status: 0, stdout: "clean\n", stderr: "" };
+    });
+    const { runGitCommand } = await import("../../src/core/loop/service.js");
+
+    const result = runGitCommand({ cwd: "/tmp/repo", args: ["status", "--porcelain"] });
+
+    expect(result).toEqual({ status: 0, stdout: "clean\n", stderr: "" });
+    expect(spawnSyncMock).toHaveBeenLastCalledWith(
+      "git",
+      ["status", "--porcelain"],
+      expect.objectContaining({
+        cwd: "/tmp/repo",
+        encoding: "utf8",
+        env: expect.objectContaining({
+          PATH: expect.stringContaining("/usr/bin"),
+        }),
+      }),
+    );
+  });
 });
