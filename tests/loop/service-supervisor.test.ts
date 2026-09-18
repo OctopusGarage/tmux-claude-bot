@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AutomationOccurrenceStore } from "../../src/core/automation/occurrence-window.js";
 import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import { RepositoryReviewQueue } from "../../src/core/loop/repository-review-queue.js";
@@ -533,6 +534,64 @@ describe("runLoopServiceTickAsync supervised routing", () => {
 
     expect(active.supervisorSessions).toEqual(new Set(["tmux_proj_loop-supervisor"]));
     expect(active.resourcePaths).toEqual(new Set(["/repo/hub"]));
+  });
+
+  it("settles planned occurrence windows for task keys disabled in the current config", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-disabled-occurrence-"));
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-disabled-workspace-"));
+    const backend = join(root, "backend");
+    const frontend = join(root, "frontend");
+    mkdirSync(backend);
+    mkdirSync(frontend);
+    const configFile = join(root, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+workspaces:
+  - id: geo
+    name: Geo
+    root: ${root}
+    agent: codex
+    repositories:
+      - id: backend
+        name: Backend
+        path: ${backend}
+        role: backend
+      - id: frontend
+        name: Frontend
+        path: ${frontend}
+        role: frontend
+    architecture:
+      enabled: false
+      schedule: "0 7 * * *"
+      goal: Keep the workspace architecture healthy.
+      maxRounds: 1
+      targetScore: 95
+      runner:
+        kind: agent-supervised
+        requireConfirmation: false
+`,
+    );
+    const store = new AutomationOccurrenceStore({ randomOffset: () => 0 });
+    const occurrence = store.plan({
+      key: "workspace:geo:architecture:workspace-architecture",
+      scheduledAt: 1_000,
+      windowMs: 0,
+      now: 1_000,
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: 2_000,
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+    });
+
+    expect(result).toMatchObject({ due: 0, ran: 0, failed: 0 });
+    expect(new AutomationOccurrenceStore().get(occurrence.id)).toMatchObject({
+      status: "settled",
+      updatedAt: 2_000,
+    });
   });
 
   it("keeps a repository review pending when every configured supervisor has an active lease", async () => {

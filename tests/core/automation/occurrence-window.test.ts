@@ -77,6 +77,46 @@ describe("AutomationOccurrenceStore", () => {
     expect(store.get(latest.id)).toMatchObject({ status: "planned" });
   });
 
+  it("settles open occurrences whose scheduled key is no longer active", () => {
+    const store = new AutomationOccurrenceStore({ randomOffset: () => 0 });
+    const disabled = store.plan({
+      key: "workspace:geo:architecture:workspace-architecture",
+      scheduledAt: 1_000,
+      windowMs: 0,
+      now: 1_000,
+    });
+    const active = store.plan({
+      key: "project-a:security-maintenance:security-maintenance",
+      scheduledAt: 2_000,
+      windowMs: 0,
+      now: 2_000,
+    });
+
+    const settled = store.reconcileActiveScheduledKeys(
+      new Set(["project-a:security-maintenance:security-maintenance"]),
+      3_000,
+    );
+
+    expect(settled).toBe(1);
+    expect(store.get(disabled.id)).toMatchObject({ status: "settled", updatedAt: 3_000 });
+    expect(store.get(active.id)).toMatchObject({ status: "planned" });
+  });
+
+  it("does not settle open occurrences when the active key set is unavailable", () => {
+    const store = new AutomationOccurrenceStore({ randomOffset: () => 0 });
+    const occurrence = store.plan({
+      key: "project-a:architecture",
+      scheduledAt: 1_000,
+      windowMs: 0,
+      now: 1_000,
+    });
+
+    const settled = store.reconcileActiveScheduledKeys(null, 3_000);
+
+    expect(settled).toBe(0);
+    expect(store.get(occurrence.id)).toMatchObject({ status: "planned" });
+  });
+
   it("writes only bounded structured occurrence evidence", () => {
     mkdirSync(join(stateDir, "automation-admission"), { recursive: true });
     new AutomationOccurrenceStore({ randomOffset: () => 0 }).plan({
