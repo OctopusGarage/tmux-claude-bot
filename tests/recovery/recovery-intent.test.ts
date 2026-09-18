@@ -7,6 +7,7 @@ import {
   clearRecoveryIntent,
   hasRecoveryIntent,
   markRecoveryIntent,
+  recoveryIntentFor,
 } from "../../src/core/recovery/recovery-intent.js";
 import { cleanupWorkerSessionRecords } from "../../src/core/recovery/worker-session-cleanup.js";
 
@@ -56,6 +57,16 @@ describe("recovery intent", () => {
 
     expect(clearRecoveryIntent("tmux_proj_a", "msg-a")).toBe(true);
     expect(clearRecoveryIntent("tmux_proj_a", "msg-b")).toBe(false);
+  });
+
+  it("replaces a stale unfinished-task marker when a new task starts", () => {
+    markRecoveryIntent("tmux_proj_a", "stale-msg", 1000);
+    markRecoveryIntent("tmux_proj_a", "current-msg", 1000 + 25 * 60 * 60 * 1000);
+
+    expect(recoveryIntentFor("tmux_proj_a")).toEqual({
+      taskId: "current-msg",
+      startedAt: 1000 + 25 * 60 * 60 * 1000,
+    });
   });
 
   it("clears loop worker intents when worker session records are cleaned up", () => {
