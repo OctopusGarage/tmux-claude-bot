@@ -328,6 +328,11 @@ Architecture occurrences. Their settlement identity must include
 `active-delegated-task` so a completed delegation cannot advance the plain
 project Architecture `lastFired` checkpoint or overwrite the Architecture
 ledger task id.
+Active-delegation iteration checkpoints may normalize known legacy
+agent-authored field aliases only into `source: agent-reported` evidence.
+Compatibility parsing must never create system evidence, bypass repository
+identity/clean-worktree checks, or replace the required independent system
+command verification artifact.
 Security alignment invariant: every project Security Maintenance schedule must
 run its configured deterministic risk assessment before creating a WorkOrder.
 The default action threshold is 70 and the default critical threshold is 90;

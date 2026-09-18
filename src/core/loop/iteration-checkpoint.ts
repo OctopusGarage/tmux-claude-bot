@@ -116,7 +116,7 @@ export function buildIterationCheckpointTemplate(workOrder: LoopWorkOrder): Iter
 }
 
 function validateCheckpoint(workOrder: LoopWorkOrder, value: unknown): IterationCheckpointRead {
-  const parsed = checkpointSchema.safeParse(value);
+  const parsed = checkpointSchema.safeParse(normalizeCheckpointCompatibility(value));
   if (!parsed.success) return { status: "invalid", reason: "invalid-checkpoint" };
   const checkpoint = parsed.data;
   const expected = buildIterationCheckpointTemplate(workOrder);
@@ -154,6 +154,37 @@ function validateCheckpoint(workOrder: LoopWorkOrder, value: unknown): Iteration
       return { status: "invalid", reason: "missing-passing-evidence" };
   }
   return { status: "available", checkpoint };
+}
+
+function normalizeCheckpointCompatibility(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const checkpoint = value as { items?: unknown };
+  if (!Array.isArray(checkpoint.items)) return value;
+  return {
+    ...checkpoint,
+    items: checkpoint.items.map((item) => {
+      if (item === null || typeof item !== "object" || Array.isArray(item)) return item;
+      const candidate = item as { evidence?: unknown };
+      if (!Array.isArray(candidate.evidence)) return item;
+      return {
+        ...candidate,
+        evidence: candidate.evidence.map(normalizeEvidenceCompatibility),
+      };
+    }),
+  };
+}
+
+function normalizeEvidenceCompatibility(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const evidence = value as { artifact?: unknown; evidenceArtifact?: unknown; source?: unknown };
+  if (evidence.source !== undefined || evidence.artifact !== undefined) return value;
+  if (typeof evidence.evidenceArtifact !== "string") return value;
+  const { evidenceArtifact, ...normalized } = evidence;
+  return {
+    ...normalized,
+    source: "agent-reported",
+    artifact: evidenceArtifact,
+  };
 }
 
 /** Agent-owned input is recovery context only, never system acceptance evidence. */
