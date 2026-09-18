@@ -471,6 +471,52 @@ describe("iteration checkpoints", () => {
     expect(readIterationCheckpoint(workOrder).status).toBe("invalid");
   });
 
+  it("normalizes legacy agent evidence fields without making them system evidence", () => {
+    const workOrder = fixture();
+    const value = partial(workOrder);
+    const item = value.items[0];
+    const evidence = item?.evidence[0];
+    if (!item || !evidence) throw new Error("missing evidence");
+    item.evidence = [
+      {
+        revision: evidence.revision,
+        command: evidence.command,
+        result: evidence.result,
+        evidenceArtifact: evidence.artifact,
+      },
+    ] as never;
+    save(workOrder, value);
+    const result = readIterationCheckpoint(workOrder);
+    expect(result.status).toBe("available");
+    if (result.status !== "available") throw new Error("checkpoint unavailable");
+    expect(result.checkpoint.items[0]?.evidence[0]).toMatchObject({
+      source: "agent-reported",
+      artifact: evidence.artifact,
+    });
+  });
+
+  it("does not normalize legacy artifact aliases over explicit provenance", () => {
+    const workOrder = fixture();
+    const value = partial(workOrder);
+    const item = value.items[0];
+    const evidence = item?.evidence[0];
+    if (!item || !evidence) throw new Error("missing evidence");
+    item.evidence = [
+      {
+        source: "system",
+        revision: evidence.revision,
+        command: evidence.command,
+        result: evidence.result,
+        evidenceArtifact: evidence.artifact,
+      },
+    ] as never;
+    save(workOrder, value);
+    expect(readIterationCheckpoint(workOrder)).toMatchObject({
+      status: "invalid",
+      reason: "invalid-checkpoint",
+    });
+  });
+
   it("distinguishes absent, corrupt and oversized files", () => {
     const workOrder = fixture();
     expect(readIterationCheckpoint(workOrder)).toEqual({ status: "absent" });
