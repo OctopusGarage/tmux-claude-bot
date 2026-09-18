@@ -6,12 +6,16 @@ export type RecoveryIntent = {
 };
 
 const store = new JsonMapStore<RecoveryIntent>("recovery_intents.json");
+const STALE_RECOVERY_INTENT_MS = 24 * 60 * 60 * 1000;
 
 /** Record that a bot-dispatched task may need to be resumed after a crash. */
 export function markRecoveryIntent(session: string, taskId: string, startedAt = Date.now()): void {
   // A session is serialized by MessageQueue. Keeping the first active marker
   // prevents a later queued item from hiding the task that was interrupted.
-  if (!store.has(session)) store.set(session, { taskId, startedAt });
+  const current = store.get(session);
+  if (!current || startedAt - current.startedAt > STALE_RECOVERY_INTENT_MS) {
+    store.set(session, { taskId, startedAt });
+  }
 }
 
 /** Return the task that authorizes automatic recovery, if one exists. */
