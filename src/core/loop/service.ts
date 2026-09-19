@@ -23,7 +23,10 @@ import {
   type AutonomousWorkIntent,
   autonomousCapacityLeaseId,
 } from "../automation/coordinator.js";
-import { automationOccurrenceId } from "../automation/occurrence-window.js";
+import {
+  AutomationOccurrenceStore,
+  automationOccurrenceId,
+} from "../automation/occurrence-window.js";
 import { agentIsIdle } from "../command/agent-ready.js";
 import type { HandlerDeps } from "../deps.js";
 import { buildEvalReportFromSupervisorSummary } from "../eval/report.js";
@@ -119,7 +122,7 @@ import {
   workOrderStateForResult,
   writeLoopSupervisorWorkOrderState,
 } from "./supervisor-state.js";
-import type { LoopTaskSchedulerJobKind } from "./task-family.js";
+import { type LoopTaskSchedulerJobKind, loopScheduledJobs } from "./task-family.js";
 import type { LoopWorkOrder } from "./work-order.js";
 import {
   buildLoopWorkOrder,
@@ -538,6 +541,15 @@ export async function runLoopServiceTickAsync(input: {
     now: input.now,
     lastFired: previousLastFired,
   });
+  const settledInactiveOccurrences = new AutomationOccurrenceStore().reconcileActiveScheduledKeys(
+    activeScheduledOccurrenceKeys(config),
+    input.now,
+  );
+  if (settledInactiveOccurrences > 0) {
+    log.info("loop engineering settled inactive automation occurrence windows", {
+      data: { settled: settledInactiveOccurrences },
+    });
+  }
   logSchedulerTick({ configFile: input.configFile, now: input.now, scheduler });
   let ran = 0;
   let failed = 0;
@@ -1755,6 +1767,16 @@ function restoreLastFired(
   const previous = previousLastFired[jobKey];
   if (previous === undefined) store.clearLastFired(jobKey);
   else store.setLastFired(jobKey, previous);
+}
+
+function activeScheduledOccurrenceKeys(
+  config: ReturnType<typeof parseLoopConfigYaml>,
+): Set<string> {
+  return new Set(
+    loopScheduledJobs(config)
+      .filter((job) => job.schedule !== undefined)
+      .map((job) => `${job.jobKey}:${job.jobKind}`),
+  );
 }
 
 export function reconcileRepositoryReviewQueueLedgerClosures(

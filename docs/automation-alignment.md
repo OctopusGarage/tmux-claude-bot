@@ -304,6 +304,9 @@ Agent Capacity views must reconcile planned/admitted occurrence-window records
 from authoritative terminal task-ledger repair statuses before reporting open
 planned load, so completed historical occurrences do not keep capacity degraded
 or display stale next-occurrence timestamps.
+Loop ticks must also settle planned/admitted occurrence-window records whose
+task-family key is no longer enabled with a schedule in the current Loop config,
+so disabled or removed scheduled work cannot keep Agent Capacity degraded.
 When planned work is overdue because admission is closed or serialized behind an
 active autonomous lease, keep the planned backlog count visible, but do not
 render that overdue timestamp as the next future occurrence on dashboard, TUI,

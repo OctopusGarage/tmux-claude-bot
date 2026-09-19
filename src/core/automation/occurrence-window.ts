@@ -175,6 +175,18 @@ export class AutomationOccurrenceStore {
     return settled;
   }
 
+  reconcileActiveScheduledKeys(activeKeys: ReadonlySet<string> | null, now: number): number {
+    if (activeKeys === null) return 0;
+    let settled = 0;
+    for (const occurrence of this.list()) {
+      if (occurrence.status !== "planned" && occurrence.status !== "admitted") continue;
+      if (activeKeys.has(occurrence.key)) continue;
+      this.records.set(occurrence.id, { ...occurrence, status: "settled", updatedAt: now });
+      settled++;
+    }
+    return settled;
+  }
+
   prune(now: number): number {
     let deleted = 0;
     this.records.update((records) => {
