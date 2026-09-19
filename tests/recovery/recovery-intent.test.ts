@@ -42,7 +42,7 @@ describe("recovery intent", () => {
   });
 
   it("records an unfinished task per session and clears the matching task", () => {
-    markRecoveryIntent("tmux_proj_a", "msg-a", 1000);
+    markRecoveryIntent("tmux_proj_a", "msg-a");
 
     expect(hasRecoveryIntent("tmux_proj_a")).toBe(true);
     expect(clearRecoveryIntent("tmux_proj_a", "other-msg")).toBe(false);
@@ -52,25 +52,27 @@ describe("recovery intent", () => {
   });
 
   it("does not let a later task hide an active intent", () => {
-    markRecoveryIntent("tmux_proj_a", "msg-a", 1000);
-    markRecoveryIntent("tmux_proj_a", "msg-b", 2000);
+    const now = Date.now();
+    markRecoveryIntent("tmux_proj_a", "msg-a", now);
+    markRecoveryIntent("tmux_proj_a", "msg-b", now + 1000);
 
     expect(clearRecoveryIntent("tmux_proj_a", "msg-a")).toBe(true);
     expect(clearRecoveryIntent("tmux_proj_a", "msg-b")).toBe(false);
   });
 
   it("replaces a stale unfinished-task marker when a new task starts", () => {
-    markRecoveryIntent("tmux_proj_a", "stale-msg", 1000);
-    markRecoveryIntent("tmux_proj_a", "current-msg", 1000 + 25 * 60 * 60 * 1000);
+    const now = Date.now();
+    markRecoveryIntent("tmux_proj_a", "stale-msg", now - 25 * 60 * 60 * 1000);
+    markRecoveryIntent("tmux_proj_a", "current-msg", now);
 
     expect(recoveryIntentFor("tmux_proj_a")).toEqual({
       taskId: "current-msg",
-      startedAt: 1000 + 25 * 60 * 60 * 1000,
+      startedAt: now,
     });
   });
 
   it("clears loop worker intents when worker session records are cleaned up", () => {
-    markRecoveryIntent("tmux_proj_loop-worker-api", "msg-a", 1000);
+    markRecoveryIntent("tmux_proj_loop-worker-api", "msg-a");
 
     cleanupWorkerSessionRecords("tmux_proj_loop-worker-api");
 

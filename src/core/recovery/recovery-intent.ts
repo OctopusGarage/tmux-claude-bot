@@ -8,6 +8,10 @@ export type RecoveryIntent = {
 const store = new JsonMapStore<RecoveryIntent>("recovery_intents.json");
 const STALE_RECOVERY_INTENT_MS = 24 * 60 * 60 * 1000;
 
+function isFresh(intent: RecoveryIntent, now = Date.now()): boolean {
+  return now - intent.startedAt <= STALE_RECOVERY_INTENT_MS;
+}
+
 /** Record that a bot-dispatched task may need to be resumed after a crash. */
 export function markRecoveryIntent(session: string, taskId: string, startedAt = Date.now()): void {
   // A session is serialized by MessageQueue. Keeping the first active marker
@@ -20,11 +24,13 @@ export function markRecoveryIntent(session: string, taskId: string, startedAt = 
 
 /** Return the task that authorizes automatic recovery, if one exists. */
 export function recoveryIntentFor(session: string): RecoveryIntent | null {
-  return store.get(session) ?? null;
+  const intent = store.get(session);
+  if (!intent || !isFresh(intent)) return null;
+  return intent;
 }
 
 export function hasRecoveryIntent(session: string): boolean {
-  return store.has(session);
+  return recoveryIntentFor(session) !== null;
 }
 
 /** Clear an intent only when its task id still owns the session marker. */
