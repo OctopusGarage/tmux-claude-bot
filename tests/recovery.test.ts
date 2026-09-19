@@ -80,7 +80,7 @@ describe("recoverProjects", () => {
     setAgentKind("tmux_proj_active", "claude");
     setStartCommand("tmux_proj_active", "claude");
     recordLiveSessionId("tmux_proj_active", "uuid-active");
-    markRecoveryIntent("tmux_proj_active", "msg-active", 1000);
+    markRecoveryIntent("tmux_proj_active", "msg-active");
     const deps = recoverDeps({ paneAlive: false });
 
     const res = await recoverProjects(deps, { autoOnly: true, staggerMs: 0 });
@@ -92,6 +92,21 @@ describe("recoverProjects", () => {
       "claude",
     );
     expect(hasRecoveryIntent("tmux_proj_active")).toBe(false);
+  });
+
+  it("auto recovery skips a session with only a stale unfinished task intent", async () => {
+    setPathForSession("tmux_proj_stale_intent", realDir);
+    markSessionRunning("tmux_proj_stale_intent");
+    setAgentKind("tmux_proj_stale_intent", "claude");
+    setStartCommand("tmux_proj_stale_intent", "claude");
+    recordLiveSessionId("tmux_proj_stale_intent", "uuid-stale");
+    markRecoveryIntent("tmux_proj_stale_intent", "msg-stale", Date.now() - 25 * 60 * 60 * 1000);
+    const deps = recoverDeps({ paneAlive: false });
+
+    const res = await recoverProjects(deps, { autoOnly: true, staggerMs: 0 });
+
+    expect(res.launched).toHaveLength(0);
+    expect(deps.agent.startWithResume).not.toHaveBeenCalled();
   });
 
   it("starts fresh (no resume) when no session id was recorded", async () => {
