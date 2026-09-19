@@ -869,6 +869,75 @@ describe("project recovery service", () => {
     });
   });
 
+  it("closes pending project recovery when successful recovery mentions the WorkOrder run id", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot automation-governance-review",
+      fingerprint: "invalid-final-summary",
+      taskId: "loop:tmux-claude-bot:automation-governance-review:1789785300000",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(
+      queue.id,
+      ["autopilot:1789799523423-tmux-claude-bot-active-delegate"],
+      1_001,
+    );
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:tmux-claude-bot:automation-governance-review:1789785300000",
+          source: "loop-engineering",
+          name: "tmux-claude-bot automation-governance-review",
+          status: "failed",
+          repairStatus: "pending",
+          summary:
+            "Recovery dispatch deferred: automation admission deferred: capacity-constrained",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:1789799523423-tmux-claude-bot-active-delegate",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "superseded",
+          summary: "Superseded by later successful task.",
+          scheduledAt: 1_100,
+          updatedAt: 1_600,
+        },
+        {
+          taskId: "autopilot:1789803353639-tmux-claude-bot-active-delegate",
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "success",
+          repairStatus: "not-needed",
+          summary:
+            "Classified the failed automation-governance WorkOrder 1789785300000-tmux-claude-bot-automation-governance-review as bot-owned dispatch-timeout with recovery already represented.",
+          scheduledAt: 1_200,
+          updatedAt: 1_700,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:tmux-claude-bot:automation-governance-review:1789785300000",
+      "fixed",
+      "Closed from the authoritative successful project recovery delegation.",
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "fixed",
+    });
+  });
+
   it("supersedes failed delegated recoveries when the original task is already fixed", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const queue = coordinator.enqueue({
