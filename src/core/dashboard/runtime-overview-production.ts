@@ -175,7 +175,19 @@ function isTransientAdmissionReason(reason: string): boolean {
 function admissionOccurrenceIdsFor(item: ScheduledTaskRecord): Set<string> {
   const ids = new Set<string>([item.taskId]);
   const parts = item.taskId.split(":");
-  if (parts[0] === "loop" && parts.length >= 4) {
+  if (parts[0] !== "loop") return ids;
+
+  if (parts.length === 3) {
+    const projectId = parts[1];
+    const scheduledAt = parts[2];
+    if (projectId !== undefined && scheduledAt !== undefined) {
+      ids.add(`${projectId}:${scheduledAt}`);
+      ids.add(`${projectId}:architecture@${scheduledAt}`);
+    }
+    return ids;
+  }
+
+  if (parts.length >= 4) {
     const scheduledAt = parts.at(-1);
     if (scheduledAt !== undefined) {
       if (parts[1] === "pr-review" && parts[2] !== undefined) {

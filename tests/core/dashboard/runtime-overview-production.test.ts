@@ -706,6 +706,53 @@ describe("production Runtime Overview readers", () => {
     }
   });
 
+  it("matches admission deferrals for architecture task IDs", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
+    const originalStateDir = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      const now = Date.parse("2026-08-31T04:10:00+08:00");
+      const scheduledAt = Date.parse("2026-08-30T15:20:00+08:00");
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId: `loop:tmux-claude-bot:${scheduledAt}`,
+        source: "loop-engineering",
+        name: "tmux-claude-bot architecture",
+        scheduledAt,
+        summary: "loop-engineering schedule discovered; no explicit run record was found yet",
+      });
+      appendAutomationAdmissionEvent({
+        at: now - 60_000,
+        kind: "deferred",
+        source: "loop-engineering",
+        intentId: `tmux-claude-bot:${scheduledAt}`,
+        agent: "codex",
+        occurrenceId: `tmux-claude-bot:architecture@${scheduledAt}`,
+        reason: "capacity-unknown-active-lease",
+      });
+
+      const result = await createRuntimeOverviewReaders({
+        deps: {
+          config: {
+            taskAudit: { enabled: true, tickMs: 300_000 },
+          },
+        } as HandlerDeps,
+        now,
+        operatorSessionRunning: false,
+      }).dailyAudit();
+
+      expect(result.summary).toMatchObject({
+        failed: 1,
+        attention: 0,
+        repairPending: 1,
+      });
+    } finally {
+      if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = originalStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps planned occurrence-window work out of current Daily Task Audit attention", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-dashboard-overview-"));
     const originalStateDir = process.env.TCB_STATE_DIR;
