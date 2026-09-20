@@ -2715,7 +2715,10 @@ function isTargetOrExternalSystemGateFailure(failure: string): boolean {
 }
 
 function isBotRepairableSystemGateFailure(failure: string): boolean {
-  return /\bspawnSync (?:git|sh|\/usr\/bin\/git|\/bin\/sh|\/usr\/bin\/sh) ENOENT$/.test(failure);
+  return (
+    failure === "opportunity discovery report is missing or invalid" ||
+    /\bspawnSync (?:git|sh|\/usr\/bin\/git|\/bin\/sh|\/usr\/bin\/sh) ENOENT$/.test(failure)
+  );
 }
 
 function isSystemOwnedSystemGateFailure(failure: string): boolean {
@@ -2935,6 +2938,13 @@ export function runSupervisedSystemGateOutcome(input: {
     }
   }
   const discoveryOnlyTask = input.workOrder.task?.kind === "opportunity-discovery";
+  if (discoveryOnlyTask) {
+    if (parseOpportunityDiscoveryReportFile(input.workOrder.opportunityReportPath) === null) {
+      failures.push("opportunity discovery report is missing or invalid");
+    } else {
+      evidence.push("opportunity discovery report parsed successfully");
+    }
+  }
   const requiresGitGate =
     !discoveryOnlyTask && (input.project.commit.enabled || input.project.pullRequest.enabled);
   const sourceWorktree = input.workOrder.executionIsolation?.sourceWorktree;

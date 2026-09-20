@@ -1537,6 +1537,83 @@ prReview:
     expect(outcome.result.status).toBe("supervisor-failed");
   });
 
+  it("rejects completed opportunity discovery when its report is missing or invalid", () => {
+    const reportPath = join(
+      mkdtempSync(join(tmpdir(), "tcb-invalid-opportunity-report-")),
+      "opportunities.json",
+    );
+    writeFileSync(reportPath, JSON.stringify({ projectId: "hub", generatedAt: Date.now() }));
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        task: {
+          kind: "opportunity-discovery",
+          maxRounds: 1,
+          maxSuggestions: 3,
+          minConfidence: "medium",
+          categories: [],
+          cooldownDays: 14,
+          requireEvidence: true,
+        },
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+        opportunityReportPath: reportPath,
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["wrote the opportunity report"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "not-applicable",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: () => ({
+        kind: "system",
+        command: "",
+        cwd: "/tmp/hub",
+        status: 0,
+        stdout: "",
+        stderr: "",
+      }),
+    });
+
+    expect(outcome.failures).toContain("opportunity discovery report is missing or invalid");
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
   it("rejects completed supervisor results when eval outcome fails", async () => {
     const outcome = runSupervisedSystemGateOutcome({
       project: {

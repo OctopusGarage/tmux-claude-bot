@@ -961,8 +961,27 @@ describe("loop supervisor work order reconciliation", () => {
         "1784196600000-hub-opportunity-discovery",
         "supervisor-final-summary.json",
       ),
+      opportunityReportPath: join(
+        stateDir,
+        "loop-runs",
+        "hub",
+        "1784196600000-hub-opportunity-discovery",
+        "opportunities.json",
+      ),
     } satisfies LoopWorkOrder;
     const runDir = writeUnfinishedRun(stateDir, order);
+    writeFileSync(
+      order.opportunityReportPath ?? "",
+      JSON.stringify({
+        projectId: "hub",
+        projectName: "Hub",
+        generatedAt: new Date(1_000).toISOString(),
+        coverage: "complete",
+        checkedSignals: ["repository"],
+        skippedSignals: [],
+        suggestions: [],
+      }),
+    );
     writeFileSync(
       order.finalSummaryPath ?? "",
       `${JSON.stringify({
