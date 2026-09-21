@@ -16,6 +16,7 @@ run() {
   return "$status"
 }
 
+run scripts/verify-node.sh
 run pnpm lint
 run pnpm lint:types
 run pnpm lint:types:tests

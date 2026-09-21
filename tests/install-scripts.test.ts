@@ -62,6 +62,30 @@ exit 0
   return { root, uvLog: readFileSync(nodePath.join(root, "uv.log"), "utf8") };
 }
 
+async function runNodePreflight(version: string): Promise<{ code: number; output: string }> {
+  const root = await mkdtemp(nodePath.join(tmpdir(), "tcb-node-preflight-"));
+  const bin = nodePath.join(root, "bin");
+  const node = nodePath.join(bin, "node");
+  mkdirSync(bin, { recursive: true });
+  writeExecutable(node, `#!/bin/sh\nprintf '%s\\n' '${version}'\n`);
+
+  try {
+    const result = await execFile(nodePath.join(ROOT, "scripts", "verify-node.sh"), [], {
+      cwd: ROOT,
+      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+    });
+    return { code: 0, output: `${result.stdout}${result.stderr}` };
+  } catch (error) {
+    const failure = error as { code?: number; stdout?: string; stderr?: string };
+    return {
+      code: typeof failure.code === "number" ? failure.code : 1,
+      output: `${failure.stdout ?? ""}${failure.stderr ?? ""}`,
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 describe("install scripts preserve an existing shared venv", () => {
   it.each([
     ["install-argos-translate.sh", "translation"],
@@ -79,6 +103,21 @@ describe("install scripts preserve an existing shared venv", () => {
 });
 
 describe("managed install and release script contracts", () => {
+  it("requires Node.js 22 or newer before local verification", async () => {
+    const unsupported = await runNodePreflight("v21.9.0");
+    expect(unsupported.code).not.toBe(0);
+    expect(unsupported.output).toContain("Node.js 22+");
+
+    const supported = await runNodePreflight("v22.0.0");
+    expect(supported.code).toBe(0);
+    expect(supported.output).toContain("v22.0.0");
+
+    const verifyScript = readFileSync(nodePath.join(ROOT, "scripts", "verify-local.sh"), "utf8");
+    expect(verifyScript.indexOf("run scripts/verify-node.sh")).toBeLessThan(
+      verifyScript.indexOf("run pnpm lint"),
+    );
+  });
+
   it("keeps the global CLI launcher aligned with the active dev or production service", async () => {
     const home = await mkdtemp(nodePath.join(tmpdir(), "tcb-cli-launcher-"));
     const installedHome = nodePath.join(home, "installed");
