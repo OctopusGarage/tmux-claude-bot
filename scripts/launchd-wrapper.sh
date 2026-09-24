@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# shellcheck source=scripts/sanitize-service-environment.sh
+. "$SCRIPT_DIR/sanitize-service-environment.sh"
+tcb_sanitize_inherited_environment
+
 # shellcheck source=scripts/resolve-node.sh
 . "$SCRIPT_DIR/resolve-node.sh"
 

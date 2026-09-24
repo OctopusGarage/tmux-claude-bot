@@ -29,10 +29,11 @@
   <string>__PROJECT_DIR__/logs/launchd.err.log</string>
 
   <!--
-    Only PATH is set here. Proxy and all other config live in .env (single
-    source of truth) and are loaded by dotenv at startup. Do NOT set HTTP_PROXY
-    here: launchd EnvironmentVariables become process.env, and dotenv does not
-    override existing env vars, so a value here (even empty) would shadow .env.
+    Only PATH is set here. The wrapper first removes the closed set of sanitized
+    inherited credential-shaped names, then selects the trusted state .env.
+    That explicit file is loaded by dotenv with override semantics, so managed
+    service configuration wins over remaining inherited values. Do not duplicate
+    managed configuration in launchd EnvironmentVariables.
   -->
   <key>EnvironmentVariables</key>
   <dict>

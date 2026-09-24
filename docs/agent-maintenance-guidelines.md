@@ -56,6 +56,19 @@ Identify bot processes with both the project path and entrypoint
 (`dist/cli.js` or `src/index.ts`). Do not use broad process patterns such as
 `node` or `tsx` alone.
 
+Managed launchd and systemd wrappers must remove credential-shaped variables
+from the inherited service-manager environment before resolving or starting the
+runtime. The closed, low-false-positive match list is exactly these
+case-insensitive underscore-delimited components: `TOKEN`, `SECRET`, `PASSWORD`,
+`PASSWD`, `CREDENTIAL`, `CREDENTIALS`, `API_KEY`, `ACCESS_KEY`, and
+`PRIVATE_KEY`. Do not claim this boundary removes credential-bearing variables
+with any other name. Preserve ordinary process context such as `HOME`, `PATH`,
+locale, and `SSH_AUTH_SOCK`; do not replace the environment with an empty
+allowlist. After sanitization, wrappers set the trusted
+`TCB_STATE_DIR`, `TCB_ENV_FILE`, and `TCB_LOG_DIR` paths, and dotenv remains the
+owner of managed service configuration. The managed-service environment
+contract test must cover both sanitization behavior and every wrapper entrypoint.
+
 ### Host power and quiet hours
 
 Keep host power policy separate from automation admission. `off` lets macOS
