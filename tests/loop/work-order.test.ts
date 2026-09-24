@@ -372,6 +372,10 @@ describe("loop supervisor work order", () => {
         dirtyWorktree: true,
         maxAttempts: 2,
       },
+      eval: {
+        command: "pnpm verify:delegation",
+        minScore: 95,
+      },
       allowedActions: ["tests", "docs", "small-refactor", "dependency-upgrade"],
       blockedActions: ["direct-model-api", "broad-rewrite"],
     };
@@ -406,6 +410,10 @@ describe("loop supervisor work order", () => {
       agent: true,
       dirtyWorktree: true,
       maxAttempts: 2,
+    });
+    expect(workOrder.eval).toEqual({
+      command: "pnpm verify:delegation",
+      minScore: 95,
     });
     expect(workOrder.allowedActions).toContain("dependency-upgrade");
     expect(prompt).toContain("git -C '/repo/datavibe' fetch origin dev");
