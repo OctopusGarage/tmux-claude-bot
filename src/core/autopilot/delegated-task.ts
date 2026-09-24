@@ -33,6 +33,7 @@ import {
   writeSupervisedSystemGateArtifact,
 } from "../loop/service.js";
 import {
+  isAgentStartupFailureResult,
   type LoopSupervisedRunResult,
   runLoopSupervisedProjectAsync,
   runLoopSupervisorRevisionAsync,
@@ -44,7 +45,11 @@ import {
   releaseLoopSupervisorWorker,
   writeLoopSupervisorWorkerLeaseState,
 } from "../loop/supervisor-pool.js";
-import { loopSupervisorSessionNames, startLoopSupervisor } from "../loop/supervisor-session.js";
+import {
+  loopSupervisorSessionNames,
+  restartLoopSupervisor,
+  startLoopSupervisor,
+} from "../loop/supervisor-session.js";
 import {
   listUnfinishedLoopSupervisorWorkOrders,
   readLoopSupervisorWorkOrderRegistry,
@@ -982,7 +987,9 @@ async function runActiveDelegatedTaskInBackground(
   if (
     isActiveDelegationSupervisorReadinessFailure(result) &&
     !cancelSignal.aborted &&
-    (await startLoopSupervisor(deps, undefined, supervisorSession))
+    (await (isAgentStartupFailureResult(result)
+      ? restartLoopSupervisor(deps, supervisorSession)
+      : startLoopSupervisor(deps, undefined, supervisorSession)))
   ) {
     log.warn("active delegated task supervisor dispatch readiness failed; retrying after ensure", {
       data: {
@@ -1062,7 +1069,8 @@ function isActiveDelegationSupervisorReadinessFailure(
   return (
     text.includes("did not become ready") ||
     text.includes("no live loop supervisor session") ||
-    text.includes("loop supervisor task queue is full")
+    text.includes("loop supervisor task queue is full") ||
+    isAgentStartupFailureResult(result)
   );
 }
 

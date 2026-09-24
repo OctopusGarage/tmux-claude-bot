@@ -74,6 +74,12 @@ Recovery alignment invariant: Daily Task Audit and Runtime Guardian must treat
 worker-consumption timeout as retryable delivery, deduplicate project recovery
 by project identity while an active recovery exists, and reconcile ledger plus
 repair-queue state only from an authoritative passing supervisor final summary.
+Recognized supervisor agent startup failures (authentication refresh, MCP
+startup, or hook initialization) must enter the same bounded readiness recovery:
+recreate the supervisor session identified by that current dispatch result and
+retry the WorkOrder once.
+Process liveness alone must not return that pane to the available pool, and a
+repeated failure must remain durable bot-repairable evidence.
 Project recovery must resolve a run-directory `reportPath` to its final summary
 and system gate before classifying a generic failure; missing a directory read
 must not manufacture an owner-decision outcome.
@@ -215,6 +221,10 @@ worktrees as soon as they are safe to verify and must retain only recent
 unreferenced supervisor worktree directories by default. The orphan fallback
 retention window is one week; active WorkOrders, active leases, and currently
 owned worker sessions remain protected from directory-based cleanup.
+When cleanup refuses a bot-owned path because Git cannot prove that path is the
+expected worktree, retain the path and coalesce repeated refusals into bounded
+periodic warnings with suppressed-repeat evidence; never trade log quietness for
+unsafe recursive deletion.
 That durable evidence is a `failed/pending` repair candidate, because no
 WorkOrder was created and the next scheduled sweep alone is not enough evidence
 that the operator-equivalent check actually ran.

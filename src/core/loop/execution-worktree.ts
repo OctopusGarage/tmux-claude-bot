@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
+import { createWarningCoalescer } from "../../shared/utils/log-coalescer.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
 import {
@@ -12,6 +13,10 @@ import {
 } from "./work-order.js";
 
 const log = createLogger("loop.execution-worktree");
+const logUnexpectedWorktreeRefusal = createWarningCoalescer(log, {
+  intervalMs: 60 * 60_000,
+  maxKeys: 1,
+});
 
 export function prepareLoopExecutionWorktrees(input: {
   workOrder: LoopWorkOrder;
@@ -245,12 +250,16 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
   }
   const topLevel = runGit({ cwd: worktree, args: ["rev-parse", "--show-toplevel"] });
   if (topLevel.status !== 0 || resolvePath(topLevel.stdout.trim()) !== worktree) {
-    log.warn("loop refused to remove path that is not the expected git worktree", {
-      data: {
-        worktree,
-        reason: topLevel.stderr || topLevel.stdout || "git toplevel verification failed",
+    logUnexpectedWorktreeRefusal(
+      "not-expected-git-worktree",
+      "loop refused to remove path that is not the expected git worktree",
+      {
+        data: {
+          worktree,
+          reason: topLevel.stderr || topLevel.stdout || "git toplevel verification failed",
+        },
       },
-    });
+    );
     return "failed";
   }
   if (input.expectedBranch !== undefined) {

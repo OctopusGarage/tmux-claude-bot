@@ -181,6 +181,29 @@ export async function startLoopSupervisor(
   }
 }
 
+export async function restartLoopSupervisor(
+  deps: HandlerDeps,
+  sessionName: string,
+  performStart: typeof defaultPerformStart = defaultPerformStart,
+): Promise<boolean> {
+  if (!deps.config.loopEngineering.supervisor.enabled) return false;
+  try {
+    if (await deps.bridge.isPaneAlive(sessionName)) {
+      await deps.bridge.killSession(sessionName);
+    }
+    log.warn("recreating loop supervisor session after agent startup failure", {
+      data: { session: sessionName },
+    });
+    return startLoopSupervisor(deps, performStart, sessionName);
+  } catch (err) {
+    log.error("failed to recreate loop supervisor session after agent startup failure", {
+      err,
+      data: { session: sessionName },
+    });
+    return false;
+  }
+}
+
 async function cleanupExpiredRetainedSupervisorWorker(
   deps: HandlerDeps,
   sessionName: string,
