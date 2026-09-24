@@ -31,6 +31,10 @@ Service installers refresh the launcher through `install-cli-launchers.sh` so
 the command surface cannot silently lag behind the running service.
 In managed dev, clean hot reloads must defer while an active Loop Supervisor
 worker lease is present so operator automation is not interrupted mid-WorkOrder.
+The dev supervisor retries one failed source typecheck after a bounded delay so
+a transient failure during a branch update cannot leave a clean merged revision
+unapplied indefinitely. A repeated failure keeps the last-good child and waits
+for the next source change rather than creating a typecheck loop.
 
 Managed install owns the full onboarding surface: runtime build, global
 launchers, guided setup, launchd/systemd registration, isolated Home Operator

@@ -30,6 +30,7 @@ export interface SupervisorDeps {
   now(): number;
   debounceMs: number;
   reloadDeferRecheckMs?: number;
+  typecheckFailureRecheckMs?: number;
   backoff: BackoffConfig;
 }
 
@@ -82,16 +83,18 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
   let running = false;
   let pending = false;
   let stopped = false;
+  let consecutiveTypecheckFailures = 0;
   let current = spawnChild(deps, crashes, (next) => {
     current = next;
   });
   const reloadDeferRecheckMs = deps.reloadDeferRecheckMs ?? 30_000;
+  const typecheckFailureRecheckMs = deps.typecheckFailureRecheckMs ?? 30_000;
 
-  function scheduleDeferredReloadCheck(): void {
+  function scheduleReloadCheck(delayMs: number): void {
     timer = setTimeout(() => {
       pending = true;
       void maybeRun();
-    }, reloadDeferRecheckMs);
+    }, delayMs);
     timer.unref();
   }
 
@@ -105,8 +108,13 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
         ),
       );
       log.warn("typecheck failed; holding last-good child", { data: { code } });
+      if (consecutiveTypecheckFailures === 0) {
+        consecutiveTypecheckFailures = 1;
+        scheduleReloadCheck(typecheckFailureRecheckMs);
+      }
       return;
     }
+    consecutiveTypecheckFailures = 0;
     if (deps.shouldDeferReload?.() === true) {
       deps.writeStatus(
         buildStatus(
@@ -119,7 +127,7 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
         ),
       );
       log.warn("clean typecheck reload deferred because automation is active");
-      scheduleDeferredReloadCheck();
+      scheduleReloadCheck(reloadDeferRecheckMs);
       return;
     }
     const old = current;
@@ -155,6 +163,7 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
   const unwatch = deps.watchSrc((rel) => {
     if (!shouldTriggerReload(rel)) return;
     if (timer) clearTimeout(timer);
+    consecutiveTypecheckFailures = 0;
     timer = setTimeout(() => {
       pending = true;
       void maybeRun();

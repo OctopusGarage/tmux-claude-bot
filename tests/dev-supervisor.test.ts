@@ -139,6 +139,55 @@ describe("startSupervisor", () => {
     expect(statuses.at(-1)?.state).toBe("typecheck-failed");
   });
 
+  it("rechecks one transient typecheck failure and reloads after it passes", async () => {
+    const runTypecheck = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    const { deps, children, statuses, startChild, fire } = makeDeps({
+      runTypecheck,
+      typecheckFailureRecheckMs: 100,
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
+    expect(statuses.at(-1)?.state).toBe("typecheck-failed");
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(2);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledWith("SIGTERM");
+    expect(startChild).toHaveBeenCalledTimes(1);
+    expect(statuses.at(-1)?.state).toBe("running");
+  });
+
+  it("stops rechecking after a persistent typecheck failure", async () => {
+    const runTypecheck = vi.fn(async () => 1);
+    const { deps, children, statuses, startChild, fire } = makeDeps({
+      runTypecheck,
+      typecheckFailureRecheckMs: 100,
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAll();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(2);
+    expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
+    expect(startChild).not.toHaveBeenCalled();
+    expect(statuses.at(-1)?.state).toBe("typecheck-failed");
+  });
+
   it("defers clean reloads while active automation is using the bot process", async () => {
     const shouldDeferReload = vi.fn(() => true);
     const { deps, children, statuses, startChild, runTypecheck, fire } = makeDeps({
