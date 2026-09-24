@@ -74,6 +74,10 @@ Recovery alignment invariant: Daily Task Audit and Runtime Guardian must treat
 worker-consumption timeout as retryable delivery, deduplicate project recovery
 by project identity while an active recovery exists, and reconcile ledger plus
 repair-queue state only from an authoritative passing supervisor final summary.
+Managed-development reload alignment invariant: after a source change, the dev
+supervisor must retry one failed typecheck after a bounded delay. A later pass
+continues through the active-automation deferral gate, while a repeated failure
+keeps the last-good child and waits for a new source change.
 Recognized supervisor agent startup failures (authentication refresh, MCP
 startup, or hook initialization) must enter the same bounded readiness recovery:
 recreate the supervisor session identified by that current dispatch result and
