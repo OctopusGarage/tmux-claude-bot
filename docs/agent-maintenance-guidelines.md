@@ -214,6 +214,11 @@ warning with the suppressed-repeat count. Pass failures through `err` rather
 than embedding stacks in `msg`, and put identifiers and measurements in
 structured `data`.
 
+Unsafe execution-worktree cleanup refusals follow that same contract. Preserve
+the first warning and an hourly suppressed-repeat count across stale paths;
+keep individual repeats at `DEBUG`, and never delete a path that fails the Git
+toplevel safety check merely to silence the warning.
+
 The shared logger recursively redacts credential-shaped keys and common secret
 forms, bounds messages, stacks, collections, and structured payloads, and adds
 the emitting process id. Do not bypass it for runtime diagnostics. JSONL logs
@@ -313,6 +318,10 @@ acceptance. Keep these responsibilities separate:
   footer or the current `Worked for <duration>` completion banner supersedes an
   earlier visible `esc to interrupt` line; a later working marker supersedes
   that completion again.
+- Treat a current authentication refresh, MCP startup, or hook initialization
+  failure as unhealthy supervisor capacity even when the process is alive.
+  Recreate that supervisor session and retry the same WorkOrder once; preserve
+  repeated failure as bot-repairable evidence for the shared recovery path.
 - Treat a final-summary file as intermediate evidence while the owning
   supervisor queue is still busy. Periodic reconciliation must defer both
   outcome settlement and abandoned-resource cleanup until that live queue owner

@@ -13,6 +13,7 @@ import {
   loopSupervisorDir,
   loopSupervisorSessionName,
   provisionLoopSupervisorHome,
+  restartLoopSupervisor,
   staleLoopSupervisorSessions,
   startLoopSupervisor,
 } from "../../src/core/loop/supervisor-session.js";
@@ -287,6 +288,51 @@ describe("loop supervisor session", () => {
     expect(createSession).not.toHaveBeenCalled();
     expect(waitUntilReady).toHaveBeenCalledWith("tmux_proj_loop-supervisor");
     expect(performStart.mock.calls[0]?.[2]).toContain("--dangerously-skip-permissions");
+  });
+
+  it("recreates a supervisor after the current dispatch reports an agent startup failure", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const session = "tmux_proj_loop-supervisor";
+    const createSession = vi.fn(async () => true);
+    const killSession = vi.fn(async () => {});
+    const isPaneAlive = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const waitUntilReady = vi.fn(async () => {});
+    const deps = {
+      bridge: { createSession, isPaneAlive, killSession },
+      agent: { waitUntilReady },
+      config: {
+        projectSessionPrefix: "tmux_proj_",
+        loopEngineering: {
+          configFile: "",
+          tickMs: 0,
+          supervisor: {
+            enabled: true,
+            dir: "",
+            agent: "codex" as const,
+            poolSize: 1,
+            resetBeforeWorkOrder: "clear" as const,
+            worktreeIsolation: "isolated" as const,
+          },
+        },
+        startCommands: [{ agent: "codex" as const, command: "codex", label: "codex" }],
+        claudeStartCommand: "claude",
+      },
+    };
+    const performStart = vi.fn(
+      async (_deps: HandlerDeps, _session: string, _command?: string) => "started" as const,
+    );
+
+    await expect(restartLoopSupervisor(deps as never, session, performStart)).resolves.toBe(true);
+
+    expect(killSession).toHaveBeenCalledWith(session);
+    expect(createSession).toHaveBeenCalledWith(session, join(stateDir, "loop-supervisor"));
+    expect(performStart).toHaveBeenCalledWith(deps, session, expect.stringContaining("codex"));
+    rmSync(stateDir, { recursive: true, force: true });
   });
 
   it("reports ensured when the supervisor pane is alive even if the input-ready probe is slow", async () => {

@@ -39,6 +39,14 @@ remains queued because the worker never becomes ready is cancelled with an
 explicit retryable delivery failure; it is not left indefinitely in an
 ambiguous queued state.
 
+A supervisor pane that reports a recognized agent startup failure such as an
+authentication refresh, MCP startup, or hook initialization failure is not
+healthy capacity merely because its process remains alive. The dispatcher
+recreates that supervisor session and retries the same WorkOrder once through
+the existing bounded readiness path. A repeated failure remains durable
+bot-repairable evidence for normal recovery instead of causing an unbounded
+restart loop.
+
 Supervisor concurrency and supervisor queueing are separate controls. The pool
 size limits active supervisor workers, while each supervisor session has the
 configured message queue capacity (30 by default). A task may wait in that

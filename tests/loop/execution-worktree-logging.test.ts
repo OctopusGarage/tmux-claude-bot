@@ -21,6 +21,7 @@ let stateDir: string;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.resetModules();
   stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-logging-"));
   process.env.TCB_STATE_DIR = stateDir;
 });
@@ -32,6 +33,32 @@ afterEach(() => {
 });
 
 describe("loop execution worktree cleanup logging", () => {
+  it("coalesces repeated non-worktree cleanup refusals", async () => {
+    const { cleanupLoopExecutionWorktree } = await import(
+      "../../src/core/loop/execution-worktree.js"
+    );
+    const first = join(stateDir, "loop-worktrees", "hub", "first-stale-run");
+    const second = join(stateDir, "loop-worktrees", "hub", "second-stale-run");
+    mkdirSync(first, { recursive: true });
+    mkdirSync(second, { recursive: true });
+    const runGit = (): LoopRunCommandResult => ({
+      status: 0,
+      stdout: `${stateDir}\n`,
+      stderr: "",
+    });
+
+    expect(cleanupLoopExecutionWorktree({ worktree: first, runGit })).toBe(false);
+    expect(cleanupLoopExecutionWorktree({ worktree: second, runGit })).toBe(false);
+
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.debug).toHaveBeenCalledWith(
+      "loop refused to remove path that is not the expected git worktree",
+      expect.objectContaining({
+        data: expect.objectContaining({ worktree: second, coalesced: true }),
+      }),
+    );
+  });
+
   it("keeps already-reconciled missing worktree cleanup out of info logs", async () => {
     const { cleanupLoopExecutionWorktree } = await import(
       "../../src/core/loop/execution-worktree.js"
