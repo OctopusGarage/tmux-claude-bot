@@ -296,10 +296,18 @@ Project recovery reconciliation applies the same passing-summary terminalization
 to both scheduled Loop records and Autopilot delegation records; neither source
 should require a second worker solely because its earlier state file remained
 failed.
+Do not terminalize either record from the summary alone. Require the adjacent
+accepted system gate to match the run-directory WorkOrder id, summary project,
+completed result, and review-gate snapshot; otherwise return the record and its
+Repair Coordinator item to pending.
 If a valid final summary exists but the WorkOrder is still non-terminal and its
 system gate is absent, treat the run as settling rather than failed. Keep the
 ledger running and the project reserved until the gate or terminal state is
 durable; never release and redispatch the recovery inside that write-order gap.
+For a journaled started delegation, the persisted deadline overrides a stale
+busy-pane signal. Before the deadline, preserve the owner without replay; after
+it, interrupt the exact recorded supervisor, write immutable timeout settlement
+evidence, settle the matching lease, and ignore any later mutable summary.
 
 ## Supervisor And System Gates
 

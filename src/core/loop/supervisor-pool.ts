@@ -173,19 +173,23 @@ export function leaseLoopSupervisorWorker(input: {
 export function releaseLoopSupervisorWorker(input: {
   state: LoopSupervisorWorkerLeaseState;
   workOrderId: string;
+  workerSession?: string;
   result: "success" | "failure";
   now: number;
   retainFailureForMs: number;
 }): LoopSupervisorWorkerLeaseState {
   const state = pruneExpiredRetainedLeases(input.state, input.now);
+  const ownsLease = (lease: LoopSupervisorWorkerLease): boolean =>
+    lease.workOrderId === input.workOrderId &&
+    (input.workerSession === undefined || lease.workerSession === input.workerSession);
   if (input.result === "success") {
     return {
-      leases: state.leases.filter((lease) => lease.workOrderId !== input.workOrderId),
+      leases: state.leases.filter((lease) => !ownsLease(lease)),
     };
   }
   return {
     leases: state.leases.map((lease) =>
-      lease.workOrderId === input.workOrderId
+      ownsLease(lease)
         ? {
             ...lease,
             status: "retained",

@@ -31,6 +31,22 @@ type Reservation =
       finalSummaryRecovery: "disabled";
     };
 
+export function readDelegationDeadline(workOrder: LoopWorkOrder): number | undefined {
+  const checkpointPath = iterationCheckpointPath(workOrder);
+  if (checkpointPath === null) return undefined;
+  try {
+    const path = join(dirname(checkpointPath), LOOP_RUN_ARTIFACTS.delegationBudget);
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > 16_384) return undefined;
+    const state = budgetSchema.parse(JSON.parse(readFileSync(path, "utf8")));
+    return state.contractHash === buildIterationCheckpointTemplate(workOrder).contractHash
+      ? state.deadlineAt
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Reserve synchronously before dispatch; the WorkOrder queue owns execution serialization. */
 export function reserveDelegationBudget(
   workOrder: LoopWorkOrder,

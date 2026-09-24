@@ -1,4 +1,5 @@
-import { readCurrentDelegationAttempt } from "./delegation-attempt.js";
+import { readCurrentDelegationAttempt, settleDelegationAttempt } from "./delegation-attempt.js";
+import { readDelegationDeadline } from "./delegation-budget.js";
 import { parseSupervisorFinalSummaryJson } from "./final-summary-contract.js";
 import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
@@ -40,6 +41,13 @@ export function readDelegationRecovery(workOrder: LoopWorkOrder): Recovery {
       output: settled.output,
       finalSummaryRecovery: "disabled",
     });
+  if (settled.resultStatus === "dispatch-timeout")
+    return candidate({
+      status: "dispatch-timeout",
+      reason: settled.output || "delegation deadline exhausted after restart",
+      output: settled.output,
+      finalSummaryRecovery: "disabled",
+    });
   if (settled.status !== 0)
     return candidate({
       status: "dispatch-failed",
@@ -73,4 +81,48 @@ export function readDelegationRecovery(workOrder: LoopWorkOrder): Recovery {
     output: settled.output,
     finalSummaryRecovery: "disabled",
   });
+}
+
+export function startedDelegationAttemptDeadlineExpired(
+  workOrder: LoopWorkOrder,
+  supervisorSession: string,
+  now: number,
+): boolean {
+  const attempt = readCurrentDelegationAttempt(workOrder);
+  const deadline = readDelegationDeadline(workOrder);
+  return (
+    attempt.phase === "started" &&
+    attempt.prepared.supervisorSession === supervisorSession &&
+    deadline !== undefined &&
+    deadline <= now
+  );
+}
+
+export function settleExpiredStartedDelegationAttempt(
+  workOrder: LoopWorkOrder,
+  supervisorSession: string,
+  now: number,
+): boolean {
+  const attempt = readCurrentDelegationAttempt(workOrder);
+  const deadline = readDelegationDeadline(workOrder);
+  if (
+    attempt.phase !== "started" ||
+    attempt.prepared.supervisorSession !== supervisorSession ||
+    deadline === undefined ||
+    deadline > now
+  )
+    return false;
+  return settleDelegationAttempt(
+    workOrder,
+    attempt.prepared,
+    {
+      status: 1,
+      stdout: "",
+      stderr: "delegation deadline exhausted after restart",
+    },
+    false,
+    now,
+    true,
+    "dispatch-timeout",
+  );
 }

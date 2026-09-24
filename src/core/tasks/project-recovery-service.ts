@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { parseSupervisorReviewGate } from "../loop/final-summary-contract.js";
 import {
   readLoopSupervisorWorkOrderRegistry,
   type UnfinishedLoopSupervisorWorkOrder,
@@ -580,13 +582,13 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     }
     if (queueRecord !== undefined && isRepairTerminal(queueRecord.status)) continue;
     const reviewGate = summary.reviewGate;
-    const passed =
+    const supervisorPassed =
       summary.status === "completed" &&
       summary.finalVerification === "passed" &&
       reviewGate !== null &&
       typeof reviewGate === "object" &&
       (reviewGate as Record<string, unknown>).decision === "pass";
-    if (passed) {
+    if (supervisorPassed && acceptedCompletedSystemGate(summaryPath, summary, systemGate)) {
       input.updateRepairStatus(
         record.taskId,
         "fixed",
@@ -595,6 +597,15 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       if (queueRecord !== undefined)
         input.coordinator.markTerminal(queueRecord.id, "fixed", input.now);
       result.fixed++;
+      continue;
+    }
+    if (supervisorPassed) {
+      input.updateRepairStatus(
+        record.taskId,
+        "pending",
+        "Passing supervisor summary is missing a matching accepted system gate; returned to the repair queue.",
+      );
+      if (queueRecord !== undefined) input.coordinator.releaseToQueue(queueRecord.id, input.now);
       continue;
     }
     if (isAcceptedBlockedNoRepairSummary(summary, systemGate)) {
@@ -730,6 +741,23 @@ function isAcceptedBlockedNoRepairSummary(
     systemGate?.accepted === true &&
     systemGate.resultStatus === "blocked" &&
     !hasRetryableProjectRecoveryEvidence(summary, systemGate)
+  );
+}
+
+function acceptedCompletedSystemGate(
+  summaryPath: string,
+  summary: Record<string, unknown>,
+  systemGate: Record<string, unknown> | undefined,
+): boolean {
+  const normalizedReviewGate = parseSupervisorReviewGate(summary.reviewGate);
+  return (
+    systemGate?.accepted === true &&
+    systemGate.resultStatus === "completed" &&
+    systemGate.workOrderId === basename(dirname(summaryPath)) &&
+    systemGate.projectId === summary.projectId &&
+    (isDeepStrictEqual(systemGate.supervisorReviewGate, summary.reviewGate) ||
+      (normalizedReviewGate !== null &&
+        isDeepStrictEqual(systemGate.supervisorReviewGate, normalizedReviewGate)))
   );
 }
 
