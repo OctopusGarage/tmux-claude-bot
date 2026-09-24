@@ -93,6 +93,7 @@ import {
 } from "./run.js";
 import { LoopSchedulerStore, runLoopSchedulerTick } from "./scheduler.js";
 import {
+  isAgentStartupFailureResult,
   type LoopSupervisedRunResult,
   runLoopSupervisedProjectAsync,
   runLoopSupervisorRevisionAsync,
@@ -113,7 +114,11 @@ import {
   writeLoopSupervisorWorkerLeaseState,
 } from "./supervisor-pool.js";
 import { reconcileTerminalSupervisorResources } from "./supervisor-resource-reconciliation.js";
-import { loopSupervisorSessionNames, startLoopSupervisor } from "./supervisor-session.js";
+import {
+  loopSupervisorSessionNames,
+  restartLoopSupervisor,
+  startLoopSupervisor,
+} from "./supervisor-session.js";
 import {
   type LoopSupervisorWorkOrderStateStatus,
   listTerminalLoopSupervisorWorkOrders,
@@ -519,6 +524,7 @@ export async function runLoopServiceTickAsync(input: {
   resetSupervisorBeforeWorkOrder?: LoopSupervisorResetMode;
   supervisorWorktreeIsolation?: WorktreeIsolationMode;
   ensureSupervisorSession?: (sessionName: string) => Promise<boolean>;
+  restartSupervisorSession?: (sessionName: string) => Promise<boolean>;
   isSupervisorSessionAvailable?: (sessionName: string) => Promise<boolean>;
   defaultSupervisorTimeoutMs?: number;
   supervisorRevisionMaxAttempts?: number;
@@ -896,7 +902,10 @@ export async function runLoopServiceTickAsync(input: {
             reason: result.reason,
           },
         });
-        if (await input.ensureSupervisorSession(supervisorSession)) {
+        const recoverSupervisor = isAgentStartupFailureResult(result)
+          ? (input.restartSupervisorSession ?? input.ensureSupervisorSession)
+          : input.ensureSupervisorSession;
+        if (await recoverSupervisor(supervisorSession)) {
           result = await runLoopSupervisedProjectAsync({
             workOrder,
             supervisorSession,
@@ -2163,6 +2172,8 @@ export async function startLoopEngineering(
           ? {
               ensureSupervisorSession: async (sessionName) =>
                 startLoopSupervisor(deps, undefined, sessionName),
+              restartSupervisorSession: async (sessionName) =>
+                restartLoopSupervisor(deps, sessionName),
               isSupervisorSessionAvailable: async (sessionName) =>
                 supervisorSessionIsAvailable(deps, sessionName),
             }
@@ -2243,6 +2254,8 @@ export async function startLoopEngineering(
           ? {
               ensureSupervisorSession: async (sessionName) =>
                 startLoopSupervisor(deps, undefined, sessionName),
+              restartSupervisorSession: async (sessionName) =>
+                restartLoopSupervisor(deps, sessionName),
               isSupervisorSessionAvailable: async (sessionName) =>
                 supervisorSessionIsAvailable(deps, sessionName),
             }
@@ -3717,7 +3730,8 @@ function isSupervisorDispatchReadinessFailure(
   return (
     text.includes("did not become ready") ||
     text.includes("no live loop supervisor session") ||
-    text.includes("loop supervisor task queue is full")
+    text.includes("loop supervisor task queue is full") ||
+    isAgentStartupFailureResult(result)
   );
 }
 

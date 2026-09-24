@@ -4852,45 +4852,59 @@ prReview:
     expect(ensureSupervisorSession).toHaveBeenCalledWith("tmux_proj_loop-supervisor");
   });
 
-  it("re-ensures and retries once when supervisor dispatch fails readiness", async () => {
-    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
-    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
-    const file = writeLoopConfig({
-      projectPath: projectDir,
-      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
-    });
-    const ensureSupervisorSession = vi.fn(async () => true);
-    const dispatches: string[] = [];
+  it.each([
+    { status: 1, output: "Codex did not become ready in time", recovery: "ensure" },
+    {
+      status: 0,
+      output:
+        "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+      recovery: "restart",
+    },
+  ])(
+    "re-ensures and retries once when supervisor dispatch fails startup: $output",
+    async ({ status, output, recovery }) => {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+      const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+      const file = writeLoopConfig({
+        projectPath: projectDir,
+        runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      });
+      const ensureSupervisorSession = vi.fn(async () => true);
+      const restartSupervisorSession = vi.fn(async () => true);
+      const dispatches: string[] = [];
 
-    const result = await runLoopServiceTickAsync({
-      configFile: file,
-      now: Date.parse("2026-07-16T10:10:00Z"),
-      schedulerStore: new LoopSchedulerStore(),
-      runCommand: (invocation) => {
-        const assessment = mockArchitectureAssessment(invocation);
-        if (assessment !== undefined) return assessment;
-        throw new Error("system runner should not run");
-      },
-      runSupervisorTask: async (request) => {
-        dispatches.push(request.session);
-        if (dispatches.length === 1) {
-          return { status: 1, stdout: "", stderr: "Codex did not become ready in time" };
-        }
-        const marker = finalMarkerFromPrompt(request.prompt);
-        return {
-          status: 0,
-          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["retried supervisor dispatch"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}`,
-          stderr: "",
-        };
-      },
-      supervisorSessionName: "tmux_proj_loop-supervisor",
-      ensureSupervisorSession,
-    });
+      const result = await runLoopServiceTickAsync({
+        configFile: file,
+        now: Date.parse("2026-07-16T10:10:00Z"),
+        schedulerStore: new LoopSchedulerStore(),
+        runCommand: (invocation) => {
+          const assessment = mockArchitectureAssessment(invocation);
+          if (assessment !== undefined) return assessment;
+          throw new Error("system runner should not run");
+        },
+        runSupervisorTask: async (request) => {
+          dispatches.push(request.session);
+          if (dispatches.length === 1) {
+            return { status, stdout: output, stderr: "" };
+          }
+          const marker = finalMarkerFromPrompt(request.prompt);
+          return {
+            status: 0,
+            stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["retried supervisor dispatch"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}`,
+            stderr: "",
+          };
+        },
+        supervisorSessionName: "tmux_proj_loop-supervisor",
+        ensureSupervisorSession,
+        restartSupervisorSession,
+      });
 
-    expect(result).toMatchObject({ ran: 1, failed: 0 });
-    expect(dispatches).toEqual(["tmux_proj_loop-supervisor", "tmux_proj_loop-supervisor"]);
-    expect(ensureSupervisorSession).toHaveBeenCalledTimes(2);
-  });
+      expect(result).toMatchObject({ ran: 1, failed: 0 });
+      expect(dispatches).toEqual(["tmux_proj_loop-supervisor", "tmux_proj_loop-supervisor"]);
+      expect(ensureSupervisorSession).toHaveBeenCalledTimes(recovery === "ensure" ? 2 : 1);
+      expect(restartSupervisorSession).toHaveBeenCalledTimes(recovery === "restart" ? 1 : 0);
+    },
+  );
 
   it("dispatches agent-supervised projects to the supervisor runner without running system commands", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
