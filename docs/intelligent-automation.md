@@ -1358,6 +1358,11 @@ repository revision. The current `eval.command` run can supply that artifact; a
 stale, failed, foreign-contract or missing verification fails closed. This binds
 final checkpoint acceptance to system-observed behavior without executing
 checkpoint-supplied commands.
+Active delegation inherits the matched project's complete eval policy when the
+WorkOrder is materialized, so a configured deterministic `eval.command` remains
+available to this gate. An agent-only eval policy cannot create system-command
+provenance and therefore leaves a fully reported checkpoint blocked until a
+deterministic evaluator is configured through the owning project policy.
 
 The shared supervised runner persists `delegation-budget.json` before dispatch
 for this task family. It binds the full WorkOrder contract to an absolute deadline

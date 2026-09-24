@@ -398,6 +398,7 @@ export function buildActiveDelegatedTaskWorkOrder(input: {
     skills: input.skills ?? { approved: [] },
     preflight: activeDelegatedPreflight(input.requirement, projectPolicy),
     assessment: projectPolicy?.assessment ?? { command: "true" },
+    ...(projectPolicy?.eval === undefined ? {} : { eval: projectPolicy.eval }),
     execution: projectPolicy?.execution ?? { agent: true },
     recovery: projectPolicy?.recovery ?? { agent: true, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: activeDelegatedCommitPolicy(projectPolicy, input.projectId, input.runId),

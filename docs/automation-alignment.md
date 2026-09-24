@@ -1004,8 +1004,11 @@ Reported test commands are never executed; behavioral evidence remains
 agent-reported and cannot claim system provenance. A fully reported checkpoint
 must also match a passed `system-command` verification artifact for the same
 WorkOrder, contract hash and repository revision before final checkpoint
-acceptance can pass. Workspace and other task-family rollouts need their own
-contract tests.
+acceptance can pass. Active delegation must preserve the matched project's eval
+policy when it materializes the WorkOrder; silently dropping a configured
+`eval.command` makes valid system verification impossible. Agent-only eval
+remains advisory and does not satisfy this provenance requirement. Workspace and
+other task-family rollouts need their own contract tests.
 
 The shared supervised runner owns durable deadline and revision reservations for
 both scheduled and recovered execution, including Autopilot callers. It writes
@@ -1017,6 +1020,8 @@ the execution owners; state files do not introduce a separate scheduler or lease
 `tests/loop/iteration-checkpoint.test.ts` covers prompt parity, partial progress,
 timeout handoff, invalid/foreign input, provenance, real-repository acceptance,
 system-command verification binding and deletion downgrade prevention.
+`tests/loop/work-order.test.ts` covers active-delegation inheritance of the
+configured project eval policy.
 `tests/loop/delegation-budget.test.ts` covers
 resumed deadlines, reset caller counters, corrupt state, final-summary bypass
 and late cancellation. Existing handoff and runner tests preserve compatibility
