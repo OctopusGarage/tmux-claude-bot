@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -72,33 +72,23 @@ describe("managed-service environment isolation", () => {
     expect(environment.get("API_KEYSTONE")).toBe("preserve");
   });
 
-  it("does not expose inherited credentials to a PATH-shadowed external command", () => {
+  it("does not invoke tr while inherited credentials are present", () => {
     const trapDirectory = mkdtempSync(join(tmpdir(), "tcb-service-env-trap-"));
     const marker = join(trapDirectory, "credential-exposed");
-    writeFileSync(
-      join(trapDirectory, "tr"),
-      `#!/bin/sh
-if [ "\${PROJECT_TOKEN+x}" = x ]; then
-  : > "$TCB_TRAP_MARKER"
-fi
-exec /usr/bin/tr "$@"
-`,
-      { mode: 0o755 },
-    );
 
     try {
       const result = spawnSync(
         "/bin/bash",
         [
           "-c",
-          `set -e; . "$1"; tcb_sanitize_inherited_environment; printf '%s\\n%s\\n' "\${PROJECT_TOKEN+present}" "$PATH"`,
+          `set -e; . "$1"; tr() { if [ "\${PROJECT_TOKEN+x}" = x ]; then : > "$TCB_TRAP_MARKER"; fi; command /usr/bin/tr "$@"; }; tcb_path_before="$PATH"; tcb_sanitize_inherited_environment; printf '%s\\n%s\\n%s\\n' "\${PROJECT_TOKEN+present}" "$tcb_path_before" "$PATH"`,
           "bash",
           helper,
         ],
         {
           encoding: "utf8",
           env: {
-            PATH: trapDirectory,
+            PATH: process.env.PATH ?? "/usr/bin:/bin",
             PROJECT_TOKEN: "synthetic",
             TCB_TRAP_MARKER: marker,
           },
@@ -107,7 +97,9 @@ exec /usr/bin/tr "$@"
 
       expect(result.status, result.stderr).toBe(0);
       expect(existsSync(marker)).toBe(false);
-      expect(result.stdout.split("\n").slice(0, 2)).toEqual(["", trapDirectory]);
+      const [credentialPresence, pathBefore, pathAfter] = result.stdout.split("\n");
+      expect(credentialPresence).toBe("");
+      expect(pathAfter).toBe(pathBefore);
     } finally {
       rmSync(trapDirectory, { recursive: true, force: true });
     }
